@@ -882,3 +882,419 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Bypass Mode Tests
+
+/// Tests for selective arithmetic coding bypass mode.
+final class J2KBypassModeTests: XCTestCase {
+    
+    // MARK: - CodingOptions Tests
+    
+    func testCodingOptionsDefault() throws {
+        let options = CodingOptions.default
+        XCTAssertFalse(options.bypassEnabled, "Default options should not enable bypass")
+        XCTAssertEqual(options.bypassThreshold, 0, "Default threshold should be 0")
+    }
+    
+    func testCodingOptionsFastEncoding() throws {
+        let options = CodingOptions.fastEncoding
+        XCTAssertTrue(options.bypassEnabled, "Fast encoding should enable bypass")
+        XCTAssertGreaterThan(options.bypassThreshold, 0, "Fast encoding should have non-zero threshold")
+    }
+    
+    func testCodingOptionsCustom() throws {
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: 3)
+        XCTAssertTrue(options.bypassEnabled)
+        XCTAssertEqual(options.bypassThreshold, 3)
+    }
+    
+    func testCodingOptionsNegativeThreshold() throws {
+        // Negative threshold should be clamped to 0
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: -5)
+        XCTAssertEqual(options.bypassThreshold, 0, "Negative threshold should be clamped to 0")
+    }
+    
+    // MARK: - Bit-Plane Coder with Bypass Tests
+    
+    func testBitPlaneCoderWithBypass() throws {
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
+        let coder = BitPlaneCoder(width: 16, height: 16, subband: .ll, options: options)
+        
+        var coefficients = [Int32](repeating: 0, count: 16 * 16)
+        for i in 0..<coefficients.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            coefficients[i] = sign * Int32((i % 100) + 1)
+        }
+        
+        let (data, passCount, zeroBitPlanes) = try coder.encode(
+            coefficients: coefficients,
+            bitDepth: 8
+        )
+        
+        XCTAssertGreaterThan(data.count, 0, "Encoded data should not be empty")
+        XCTAssertGreaterThan(passCount, 0, "Should have at least one coding pass")
+    }
+    
+    func testBitPlaneCoderBypassVsNormal() throws {
+        let width = 32
+        let height = 32
+        let bitDepth = 10
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            let sign: Int32 = (i % 3 == 0) ? -1 : 1
+            coefficients[i] = sign * Int32((i * 7) % 512)
+        }
+        
+        // Encode without bypass
+        let normalCoder = BitPlaneCoder(width: width, height: height, subband: .ll)
+        let (normalData, normalPasses, normalZero) = try normalCoder.encode(
+            coefficients: coefficients,
+            bitDepth: bitDepth
+        )
+        
+        // Encode with bypass
+        let bypassOptions = CodingOptions(bypassEnabled: true, bypassThreshold: 5)
+        let bypassCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: bypassOptions)
+        let (bypassData, bypassPasses, bypassZero) = try bypassCoder.encode(
+            coefficients: coefficients,
+            bitDepth: bitDepth
+        )
+        
+        // Both should produce valid data
+        XCTAssertGreaterThan(normalData.count, 0, "Normal encoding should produce data")
+        XCTAssertGreaterThan(bypassData.count, 0, "Bypass encoding should produce data")
+        
+        // Pass counts should be the same
+        XCTAssertEqual(normalPasses, bypassPasses, "Pass counts should match")
+        XCTAssertEqual(normalZero, bypassZero, "Zero bit-planes should match")
+        
+        // Bypass encoding may produce slightly different size due to less context adaptation
+        // But both should be reasonable
+        let sizeDiff = abs(normalData.count - bypassData.count)
+        let maxAcceptableDiff = max(normalData.count, bypassData.count) / 2
+        XCTAssertLessThanOrEqual(sizeDiff, maxAcceptableDiff, "Size difference should be reasonable")
+    }
+    
+    // MARK: - Code-Block Encoder/Decoder with Bypass Tests
+    
+    func testCodeBlockBypassRoundTrip() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 12
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i * 13) % 2000)
+        }
+        
+        let options = CodingOptions.fastEncoding
+        
+        // Encode with bypass
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Decode with same options
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Verify exact round-trip
+        XCTAssertEqual(decoded, original, "Bypass round-trip should be exact")
+    }
+    
+    func testCodeBlockBypassAllSubbands() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 10
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: 3)
+        
+        let subbands: [J2KSubband] = [.ll, .hl, .lh, .hh]
+        
+        for subband in subbands {
+            var original = [Int32](repeating: 0, count: width * height)
+            for i in 0..<original.count {
+                let sign: Int32 = (i % 3 == 0) ? -1 : 1
+                original[i] = sign * Int32((i * 11) % 512)
+            }
+            
+            // Encode
+            let codeBlock = try encoder.encode(
+                coefficients: original,
+                width: width,
+                height: height,
+                subband: subband,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            // Decode
+            let decoded = try decoder.decode(
+                codeBlock: codeBlock,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            // Verify
+            XCTAssertEqual(decoded, original, "Bypass round-trip for \(subband) should be exact")
+        }
+    }
+    
+    func testCodeBlockBypassZeros() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        let options = CodingOptions.fastEncoding
+        
+        let original = [Int32](repeating: 0, count: width * height)
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Bypass round-trip for all zeros should be exact")
+    }
+    
+    func testCodeBlockBypassSparse() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 10
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: 6)
+        
+        // Create sparse data
+        var original = [Int32](repeating: 0, count: width * height)
+        original[0] = 511
+        original[width - 1] = -400
+        original[width * height / 2] = 300
+        original[width * height - 1] = -200
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Bypass round-trip for sparse data should be exact")
+    }
+    
+    func testCodeBlockBypassHighBitDepth() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 16
+        let options = CodingOptions(bypassEnabled: true, bypassThreshold: 8)
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i * 257) % 32768)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Bypass round-trip for high bit-depth should be exact")
+    }
+    
+    func testCodeBlockBypassVariousThresholds() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            original[i] = Int32((i % 201) - 100)
+        }
+        
+        // Test with different bypass thresholds
+        let thresholds = [0, 1, 2, 4, 6, 8]
+        
+        for threshold in thresholds {
+            let options = CodingOptions(bypassEnabled: true, bypassThreshold: threshold)
+            
+            // Encode
+            let codeBlock = try encoder.encode(
+                coefficients: original,
+                width: width,
+                height: height,
+                subband: .ll,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            // Decode
+            let decoded = try decoder.decode(
+                codeBlock: codeBlock,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            // Verify
+            XCTAssertEqual(
+                decoded,
+                original,
+                "Bypass round-trip with threshold \(threshold) should be exact"
+            )
+        }
+    }
+    
+    func testCodeBlockBypassLargeBlock() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 64
+        let height = 64
+        let bitDepth = 12
+        let options = CodingOptions.fastEncoding
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 5 == 0) ? -1 : 1
+            original[i] = sign * Int32((i * 17) % 2048)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Bypass round-trip for large block should be exact")
+    }
+    
+    // MARK: - Performance Tests
+    
+    func testBypassEncodingPerformance() throws {
+        let width = 64
+        let height = 64
+        let bitDepth = 12
+        let options = CodingOptions.fastEncoding
+        
+        let encoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: options)
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 2001) - 1000)
+        }
+        
+        measure {
+            _ = try? encoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        }
+    }
+    
+    func testNormalVsBypassEncodingSpeed() throws {
+        let width = 32
+        let height = 32
+        let bitDepth = 10
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 1001) - 500)
+        }
+        
+        // Measure normal encoding
+        let normalCoder = BitPlaneCoder(width: width, height: height, subband: .ll)
+        let normalStart = Date()
+        for _ in 0..<10 {
+            _ = try? normalCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        }
+        let normalTime = Date().timeIntervalSince(normalStart)
+        
+        // Measure bypass encoding
+        let bypassOptions = CodingOptions.fastEncoding
+        let bypassCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: bypassOptions)
+        let bypassStart = Date()
+        for _ in 0..<10 {
+            _ = try? bypassCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        }
+        let bypassTime = Date().timeIntervalSince(bypassStart)
+        
+        // Bypass should typically be faster (though this is not a strict requirement in debug builds)
+        print("Normal encoding time: \(normalTime)s")
+        print("Bypass encoding time: \(bypassTime)s")
+        print("Speedup: \(normalTime / bypassTime)x")
+        
+        // Just verify both completed successfully
+        XCTAssertGreaterThan(normalTime, 0)
+        XCTAssertGreaterThan(bypassTime, 0)
+    }
+}

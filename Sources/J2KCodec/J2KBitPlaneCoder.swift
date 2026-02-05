@@ -33,6 +33,44 @@ public enum CodingPassType: Sendable {
     case cleanup
 }
 
+// MARK: - Coding Options
+
+/// Configuration options for bit-plane coding.
+///
+/// These options control the encoding behavior, including bypass mode and termination.
+public struct CodingOptions: Sendable {
+    /// Enable selective arithmetic coding bypass mode.
+    ///
+    /// When enabled, magnitude refinement passes after a certain bit-plane
+    /// use raw (bypass) mode instead of context-adaptive arithmetic coding.
+    public let bypassEnabled: Bool
+    
+    /// The bit-plane index at which to start using bypass mode.
+    ///
+    /// Only applies when `bypassEnabled` is true. Bypass mode is used for
+    /// magnitude refinement passes in bit-planes less than this threshold.
+    /// A value of 0 disables bypass mode effectively.
+    public let bypassThreshold: Int
+    
+    /// Creates new coding options.
+    ///
+    /// - Parameters:
+    ///   - bypassEnabled: Enable bypass mode (default: false).
+    ///   - bypassThreshold: Bit-plane threshold for bypass (default: 0).
+    public init(bypassEnabled: Bool = false, bypassThreshold: Int = 0) {
+        self.bypassEnabled = bypassEnabled
+        self.bypassThreshold = max(0, bypassThreshold)
+    }
+    
+    /// Default coding options (no bypass).
+    public static let `default` = CodingOptions()
+    
+    /// Typical bypass configuration for improved speed.
+    ///
+    /// Enables bypass mode for magnitude refinement passes in the lower 4 bit-planes.
+    public static let fastEncoding = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
+}
+
 // MARK: - Bit-Plane Coder
 
 /// Encodes wavelet coefficients using EBCOT bit-plane coding.
@@ -64,18 +102,23 @@ public struct BitPlaneCoder: Sendable {
     /// The neighbor calculator.
     private let neighborCalculator: NeighborCalculator
     
+    /// Coding options for this encoder.
+    private let options: CodingOptions
+    
     /// Creates a new bit-plane coder for the specified dimensions and subband.
     ///
     /// - Parameters:
     ///   - width: The width of the code-block in samples.
     ///   - height: The height of the code-block in samples.
     ///   - subband: The wavelet subband type.
-    public init(width: Int, height: Int, subband: J2KSubband) {
+    ///   - options: Coding options (default: `.default`).
+    public init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
         self.width = width
         self.height = height
         self.subband = subband
         self.contextModeler = ContextModeler(subband: subband)
         self.neighborCalculator = NeighborCalculator(width: width, height: height)
+        self.options = options
     }
     
     /// Encodes wavelet coefficients using EBCOT bit-plane coding.
@@ -117,6 +160,9 @@ public struct BitPlaneCoder: Sendable {
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
             
+            // Determine if bypass mode should be used for this bit-plane
+            let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
+            
             // Pass 1: Significance Propagation Pass
             if passCount < maxPassLimit {
                 encodeSignificancePropagationPass(
@@ -138,7 +184,8 @@ public struct BitPlaneCoder: Sendable {
                     firstRefineFlags: &firstRefineFlags,
                     bitMask: bitMask,
                     encoder: &encoder,
-                    contexts: &contextStates
+                    contexts: &contextStates,
+                    useBypass: useBypass
                 )
                 passCount += 1
             }
@@ -251,14 +298,25 @@ public struct BitPlaneCoder: Sendable {
     /// Encodes the magnitude refinement pass.
     ///
     /// This pass refines the magnitude of coefficients that are already significant
-    /// by coding additional bits from subsequent bit-planes.
+    /// by coding additional bits from subsequent bit-planes. Can use bypass mode
+    /// for improved encoding speed.
+    ///
+    /// - Parameters:
+    ///   - magnitudes: The coefficient magnitudes.
+    ///   - states: The coefficient states.
+    ///   - firstRefineFlags: Flags indicating first refinement for each coefficient.
+    ///   - bitMask: The bit mask for this bit-plane.
+    ///   - encoder: The MQ encoder.
+    ///   - contexts: The context states.
+    ///   - useBypass: Whether to use bypass (raw) mode instead of arithmetic coding.
     private func encodeMagnitudeRefinementPass(
         magnitudes: [UInt32],
         states: inout [CoefficientState],
         firstRefineFlags: inout [Bool],
         bitMask: UInt32,
         encoder: inout MQEncoder,
-        contexts: inout ContextStateArray
+        contexts: inout ContextStateArray,
+        useBypass: Bool = false
     ) {
         for y in 0..<height {
             for x in 0..<width {
@@ -268,27 +326,33 @@ public struct BitPlaneCoder: Sendable {
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
                 
-                // Check if this is the first refinement
-                let isFirstRefinement = !firstRefineFlags[idx]
-                
-                // Get neighbors to determine context
-                let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
-                let hasSignificantNeighbors = neighbors.hasAny
-                
-                // Get magnitude refinement context
-                let magContext = contextModeler.magnitudeRefinementContext(
-                    firstRefinement: isFirstRefinement,
-                    neighborsWereSignificant: hasSignificantNeighbors
-                )
-                
                 // Get the bit value
                 let bitValue = (magnitudes[idx] & bitMask) != 0
                 
-                // Encode the magnitude bit
-                encoder.encode(symbol: bitValue, context: &contexts[magContext])
+                if useBypass {
+                    // Use bypass (raw) mode - no context
+                    encoder.encodeBypass(symbol: bitValue)
+                } else {
+                    // Use context-adaptive arithmetic coding
+                    // Check if this is the first refinement
+                    let isFirstRefinement = !firstRefineFlags[idx]
+                    
+                    // Get neighbors to determine context
+                    let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
+                    let hasSignificantNeighbors = neighbors.hasAny
+                    
+                    // Get magnitude refinement context
+                    let magContext = contextModeler.magnitudeRefinementContext(
+                        firstRefinement: isFirstRefinement,
+                        neighborsWereSignificant: hasSignificantNeighbors
+                    )
+                    
+                    // Encode the magnitude bit
+                    encoder.encode(symbol: bitValue, context: &contexts[magContext])
+                }
                 
                 // Update refinement flag
-                if isFirstRefinement {
+                if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
                 
@@ -477,18 +541,23 @@ public struct BitPlaneDecoder: Sendable {
     /// The neighbor calculator.
     private let neighborCalculator: NeighborCalculator
     
+    /// Coding options for this decoder.
+    private let options: CodingOptions
+    
     /// Creates a new bit-plane decoder for the specified dimensions and subband.
     ///
     /// - Parameters:
     ///   - width: The width of the code-block in samples.
     ///   - height: The height of the code-block in samples.
     ///   - subband: The wavelet subband type.
-    public init(width: Int, height: Int, subband: J2KSubband) {
+    ///   - options: Coding options (default: `.default`).
+    public init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
         self.width = width
         self.height = height
         self.subband = subband
         self.contextModeler = ContextModeler(subband: subband)
         self.neighborCalculator = NeighborCalculator(width: width, height: height)
+        self.options = options
     }
     
     /// Decodes wavelet coefficients from EBCOT encoded data.
@@ -523,6 +592,9 @@ public struct BitPlaneDecoder: Sendable {
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
             
+            // Determine if bypass mode should be used for this bit-plane
+            let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
+            
             // Pass 1: Significance Propagation Pass
             if passesDecoded < passCount {
                 decodeSignificancePropagationPass(
@@ -544,7 +616,8 @@ public struct BitPlaneDecoder: Sendable {
                     firstRefineFlags: &firstRefineFlags,
                     bitMask: bitMask,
                     decoder: &decoder,
-                    contexts: &contextStates
+                    contexts: &contextStates,
+                    useBypass: useBypass
                 )
                 passesDecoded += 1
             }
@@ -642,13 +715,23 @@ public struct BitPlaneDecoder: Sendable {
     // MARK: - Magnitude Refinement Pass (Decode)
     
     /// Decodes the magnitude refinement pass.
+    ///
+    /// - Parameters:
+    ///   - magnitudes: The coefficient magnitudes being reconstructed.
+    ///   - states: The coefficient states.
+    ///   - firstRefineFlags: Flags indicating first refinement for each coefficient.
+    ///   - bitMask: The bit mask for this bit-plane.
+    ///   - decoder: The MQ decoder.
+    ///   - contexts: The context states.
+    ///   - useBypass: Whether bypass (raw) mode was used during encoding.
     private func decodeMagnitudeRefinementPass(
         magnitudes: inout [UInt32],
         states: inout [CoefficientState],
         firstRefineFlags: inout [Bool],
         bitMask: UInt32,
         decoder: inout MQDecoder,
-        contexts: inout ContextStateArray
+        contexts: inout ContextStateArray,
+        useBypass: Bool = false
     ) {
         for y in 0..<height {
             for x in 0..<width {
@@ -658,21 +741,28 @@ public struct BitPlaneDecoder: Sendable {
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
                 
-                // Check if this is the first refinement
-                let isFirstRefinement = !firstRefineFlags[idx]
-                
-                // Get neighbors to determine context
-                let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
-                let hasSignificantNeighbors = neighbors.hasAny
-                
-                // Get magnitude refinement context
-                let magContext = contextModeler.magnitudeRefinementContext(
-                    firstRefinement: isFirstRefinement,
-                    neighborsWereSignificant: hasSignificantNeighbors
-                )
-                
                 // Decode the magnitude bit
-                let bitValue = decoder.decode(context: &contexts[magContext])
+                let bitValue: Bool
+                if useBypass {
+                    // Use bypass (raw) mode - no context
+                    bitValue = decoder.decodeBypass()
+                } else {
+                    // Use context-adaptive arithmetic decoding
+                    // Check if this is the first refinement
+                    let isFirstRefinement = !firstRefineFlags[idx]
+                    
+                    // Get neighbors to determine context
+                    let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
+                    let hasSignificantNeighbors = neighbors.hasAny
+                    
+                    // Get magnitude refinement context
+                    let magContext = contextModeler.magnitudeRefinementContext(
+                        firstRefinement: isFirstRefinement,
+                        neighborsWereSignificant: hasSignificantNeighbors
+                    )
+                    
+                    bitValue = decoder.decode(context: &contexts[magContext])
+                }
                 
                 // Update magnitude
                 if bitValue {
@@ -680,7 +770,7 @@ public struct BitPlaneDecoder: Sendable {
                 }
                 
                 // Update refinement flag
-                if isFirstRefinement {
+                if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
                 
@@ -820,7 +910,7 @@ public struct CodeBlockEncoder: Sendable {
     /// Creates a new code-block encoder.
     public init() {}
     
-    /// Encodes a code-block.
+    /// Encodes a code-block with default options.
     ///
     /// - Parameters:
     ///   - coefficients: The wavelet coefficients in the code-block.
@@ -837,7 +927,36 @@ public struct CodeBlockEncoder: Sendable {
         subband: J2KSubband,
         bitDepth: Int
     ) throws -> J2KCodeBlock {
-        let coder = BitPlaneCoder(width: width, height: height, subband: subband)
+        return try encode(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: subband,
+            bitDepth: bitDepth,
+            options: .default
+        )
+    }
+    
+    /// Encodes a code-block with custom coding options.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in the code-block.
+    ///   - width: The width of the code-block.
+    ///   - height: The height of the code-block.
+    ///   - subband: The subband type.
+    ///   - bitDepth: The bit depth of the coefficients.
+    ///   - options: Coding options (bypass mode, termination, etc.).
+    /// - Returns: The encoded code-block data with metadata.
+    /// - Throws: ``J2KError`` if encoding fails.
+    public func encode(
+        coefficients: [Int32],
+        width: Int,
+        height: Int,
+        subband: J2KSubband,
+        bitDepth: Int,
+        options: CodingOptions
+    ) throws -> J2KCodeBlock {
+        let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
         let (data, passCount, zeroBitPlanes) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
@@ -867,7 +986,7 @@ public struct CodeBlockDecoder: Sendable {
     /// Creates a new code-block decoder.
     public init() {}
     
-    /// Decodes a code-block.
+    /// Decodes a code-block with default options.
     ///
     /// - Parameters:
     ///   - codeBlock: The encoded code-block.
@@ -878,10 +997,27 @@ public struct CodeBlockDecoder: Sendable {
         codeBlock: J2KCodeBlock,
         bitDepth: Int
     ) throws -> [Int32] {
+        return try decode(codeBlock: codeBlock, bitDepth: bitDepth, options: .default)
+    }
+    
+    /// Decodes a code-block with custom coding options.
+    ///
+    /// - Parameters:
+    ///   - codeBlock: The encoded code-block.
+    ///   - bitDepth: The bit depth of the coefficients.
+    ///   - options: Coding options that were used during encoding.
+    /// - Returns: The decoded wavelet coefficients.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decode(
+        codeBlock: J2KCodeBlock,
+        bitDepth: Int,
+        options: CodingOptions
+    ) throws -> [Int32] {
         let decoder = BitPlaneDecoder(
             width: codeBlock.width,
             height: codeBlock.height,
-            subband: codeBlock.subband
+            subband: codeBlock.subband,
+            options: options
         )
         
         return try decoder.decode(
