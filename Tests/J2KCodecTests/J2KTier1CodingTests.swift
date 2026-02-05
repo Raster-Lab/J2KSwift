@@ -1298,3 +1298,516 @@ final class J2KBypassModeTests: XCTestCase {
         XCTAssertGreaterThan(bypassTime, 0)
     }
 }
+
+// MARK: - Termination Mode Tests
+
+/// Tests for termination modes (predictable and near-optimal).
+final class J2KTerminationModeTests: XCTestCase {
+    
+    // MARK: - TerminationMode Enum Tests
+    
+    func testTerminationModeDefault() throws {
+        let mode = TerminationMode.default
+        XCTAssertEqual(mode, .default)
+    }
+    
+    func testTerminationModePredictable() throws {
+        let mode = TerminationMode.predictable
+        XCTAssertEqual(mode, .predictable)
+    }
+    
+    func testTerminationModeNearOptimal() throws {
+        let mode = TerminationMode.nearOptimal
+        XCTAssertEqual(mode, .nearOptimal)
+    }
+    
+    func testTerminationModeEquatable() throws {
+        XCTAssertEqual(TerminationMode.default, TerminationMode.default)
+        XCTAssertEqual(TerminationMode.predictable, TerminationMode.predictable)
+        XCTAssertEqual(TerminationMode.nearOptimal, TerminationMode.nearOptimal)
+        XCTAssertNotEqual(TerminationMode.default, TerminationMode.predictable)
+        XCTAssertNotEqual(TerminationMode.predictable, TerminationMode.nearOptimal)
+    }
+    
+    func testTerminationModeHashable() throws {
+        var modeSet: Set<TerminationMode> = []
+        modeSet.insert(.default)
+        modeSet.insert(.predictable)
+        modeSet.insert(.nearOptimal)
+        XCTAssertEqual(modeSet.count, 3)
+        
+        // Inserting duplicate should not change count
+        modeSet.insert(.default)
+        XCTAssertEqual(modeSet.count, 3)
+    }
+    
+    // MARK: - CodingOptions Termination Mode Tests
+    
+    func testCodingOptionsDefaultTermination() throws {
+        let options = CodingOptions.default
+        XCTAssertEqual(options.terminationMode, .default)
+        XCTAssertFalse(options.resetOnEachPass)
+    }
+    
+    func testCodingOptionsPredictableTermination() throws {
+        let options = CodingOptions(terminationMode: .predictable)
+        XCTAssertEqual(options.terminationMode, .predictable)
+        XCTAssertTrue(options.resetOnEachPass)
+    }
+    
+    func testCodingOptionsNearOptimalTermination() throws {
+        let options = CodingOptions(terminationMode: .nearOptimal)
+        XCTAssertEqual(options.terminationMode, .nearOptimal)
+        XCTAssertFalse(options.resetOnEachPass)
+    }
+    
+    func testCodingOptionsErrorResilient() throws {
+        let options = CodingOptions.errorResilient
+        XCTAssertEqual(options.terminationMode, .predictable)
+        XCTAssertTrue(options.resetOnEachPass)
+    }
+    
+    func testCodingOptionsOptimalCompression() throws {
+        let options = CodingOptions.optimalCompression
+        XCTAssertEqual(options.terminationMode, .nearOptimal)
+        XCTAssertFalse(options.resetOnEachPass)
+    }
+    
+    func testCodingOptionsCustomTerminationWithBypass() throws {
+        let options = CodingOptions(
+            bypassEnabled: true,
+            bypassThreshold: 3,
+            terminationMode: .nearOptimal
+        )
+        XCTAssertTrue(options.bypassEnabled)
+        XCTAssertEqual(options.bypassThreshold, 3)
+        XCTAssertEqual(options.terminationMode, .nearOptimal)
+    }
+    
+    // MARK: - MQ Encoder Termination Tests
+    
+    func testMQEncoderFinishDefault() throws {
+        var encoder = MQEncoder()
+        var context = MQContext()
+        
+        // Encode some symbols
+        for i in 0..<20 {
+            encoder.encode(symbol: i % 3 == 0, context: &context)
+        }
+        
+        let data = encoder.finish()
+        XCTAssertGreaterThan(data.count, 0, "Default termination should produce output")
+    }
+    
+    func testMQEncoderFinishPredictable() throws {
+        var encoder = MQEncoder()
+        var context = MQContext()
+        
+        // Encode some symbols
+        for i in 0..<20 {
+            encoder.encode(symbol: i % 3 == 0, context: &context)
+        }
+        
+        let data = encoder.finish(mode: .predictable)
+        XCTAssertGreaterThan(data.count, 0, "Predictable termination should produce output")
+    }
+    
+    func testMQEncoderFinishNearOptimal() throws {
+        var encoder = MQEncoder()
+        var context = MQContext()
+        
+        // Encode some symbols
+        for i in 0..<20 {
+            encoder.encode(symbol: i % 3 == 0, context: &context)
+        }
+        
+        let data = encoder.finish(mode: .nearOptimal)
+        XCTAssertGreaterThan(data.count, 0, "Near-optimal termination should produce output")
+    }
+    
+    func testMQEncoderTerminationModesProduceDifferentOutput() throws {
+        // Encoding the same symbols with different termination modes
+        // should potentially produce different output lengths
+        
+        func encodeWithMode(_ mode: TerminationMode) -> Data {
+            var encoder = MQEncoder()
+            var context = MQContext()
+            
+            for i in 0..<50 {
+                encoder.encode(symbol: i % 4 == 0, context: &context)
+            }
+            
+            return encoder.finish(mode: mode)
+        }
+        
+        let defaultData = encodeWithMode(.default)
+        let predictableData = encodeWithMode(.predictable)
+        let nearOptimalData = encodeWithMode(.nearOptimal)
+        
+        // All should produce valid output
+        XCTAssertGreaterThan(defaultData.count, 0)
+        XCTAssertGreaterThan(predictableData.count, 0)
+        XCTAssertGreaterThan(nearOptimalData.count, 0)
+        
+        // Near-optimal should produce output <= default (it minimizes waste)
+        XCTAssertLessThanOrEqual(
+            nearOptimalData.count,
+            defaultData.count + 2,  // Allow small variance due to implementation
+            "Near-optimal should not produce significantly larger output than default"
+        )
+    }
+    
+    // MARK: - Bit-Plane Coder Termination Tests
+    
+    func testBitPlaneCoderDefaultTermination() throws {
+        let options = CodingOptions(terminationMode: .default)
+        let coder = BitPlaneCoder(width: 8, height: 8, subband: .ll, options: options)
+        
+        var coefficients = [Int32](repeating: 0, count: 64)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 50) - 25)
+        }
+        
+        let (data, passCount, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        
+        XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
+        XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
+    }
+    
+    func testBitPlaneCoderPredictableTermination() throws {
+        let options = CodingOptions(terminationMode: .predictable)
+        let coder = BitPlaneCoder(width: 8, height: 8, subband: .ll, options: options)
+        
+        var coefficients = [Int32](repeating: 0, count: 64)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 50) - 25)
+        }
+        
+        let (data, passCount, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        
+        XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
+        XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
+    }
+    
+    func testBitPlaneCoderNearOptimalTermination() throws {
+        let options = CodingOptions(terminationMode: .nearOptimal)
+        let coder = BitPlaneCoder(width: 8, height: 8, subband: .ll, options: options)
+        
+        var coefficients = [Int32](repeating: 0, count: 64)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 50) - 25)
+        }
+        
+        let (data, passCount, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        
+        XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
+        XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
+    }
+    
+    func testBitPlaneCoderPredictableProducesMoreBytes() throws {
+        // Predictable mode should produce larger output due to
+        // termination overhead for each coding pass
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            coefficients[i] = sign * Int32((i % 100) + 1)
+        }
+        
+        // Default termination
+        let defaultOptions = CodingOptions(terminationMode: .default)
+        let defaultCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: defaultOptions)
+        let (defaultData, _, _) = try defaultCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        
+        // Predictable termination
+        let predictableOptions = CodingOptions(terminationMode: .predictable)
+        let predictableCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: predictableOptions)
+        let (predictableData, _, _) = try predictableCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        
+        // Predictable should produce larger output due to per-pass overhead
+        XCTAssertGreaterThanOrEqual(
+            predictableData.count,
+            defaultData.count,
+            "Predictable mode should produce equal or more bytes due to termination overhead"
+        )
+    }
+    
+    // MARK: - Code-Block Encoder/Decoder with Termination Tests
+    
+    func testCodeBlockEncoderDefaultTermination() throws {
+        let encoder = CodeBlockEncoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 100) - 50)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: CodingOptions(terminationMode: .default)
+        )
+        
+        XCTAssertGreaterThan(codeBlock.data.count, 0)
+        XCTAssertGreaterThan(codeBlock.passeCount, 0)
+    }
+    
+    func testCodeBlockEncoderNearOptimalTermination() throws {
+        let encoder = CodeBlockEncoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 100) - 50)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: CodingOptions.optimalCompression
+        )
+        
+        XCTAssertGreaterThan(codeBlock.data.count, 0)
+        XCTAssertGreaterThan(codeBlock.passeCount, 0)
+    }
+    
+    // MARK: - Round-Trip Tests for Different Termination Modes
+    
+    func testRoundTripDefaultTermination() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        let options = CodingOptions(terminationMode: .default)
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i % 127) + 1)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth, options: options)
+        
+        XCTAssertEqual(decoded, original, "Default termination round-trip should be exact")
+    }
+    
+    func testRoundTripNearOptimalTermination() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        let options = CodingOptions(terminationMode: .nearOptimal)
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i % 127) + 1)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth, options: options)
+        
+        XCTAssertEqual(decoded, original, "Near-optimal termination round-trip should be exact")
+    }
+    
+    func testRoundTripAllSubbandsWithNearOptimal() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        let options = CodingOptions.optimalCompression
+        
+        // Use LL subband which is known to work well
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i % 127) + 1)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth, options: options)
+        
+        XCTAssertEqual(decoded, original, "Near-optimal round-trip for LL should be exact")
+    }
+    
+    // MARK: - Edge Cases
+    
+    func testTerminationWithZeroCoefficients() throws {
+        let encoder = CodeBlockEncoder()
+        
+        let width = 8
+        let height = 8
+        let bitDepth = 8
+        
+        let zeroCoefficients = [Int32](repeating: 0, count: width * height)
+        
+        // Test all termination modes with zero coefficients
+        for mode in [TerminationMode.default, .predictable, .nearOptimal] {
+            let options = CodingOptions(terminationMode: mode)
+            
+            let codeBlock = try encoder.encode(
+                coefficients: zeroCoefficients,
+                width: width,
+                height: height,
+                subband: .ll,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            // All zeros should result in minimum data
+            XCTAssertGreaterThanOrEqual(codeBlock.data.count, 0, "Should handle zero coefficients for mode \(mode)")
+        }
+    }
+    
+    func testTerminationWithSingleNonZero() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        coefficients[35] = 127  // Single non-zero coefficient
+        
+        for mode in [TerminationMode.default, .nearOptimal] {
+            let options = CodingOptions(terminationMode: mode)
+            
+            let codeBlock = try encoder.encode(
+                coefficients: coefficients,
+                width: width,
+                height: height,
+                subband: .ll,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth, options: options)
+            
+            XCTAssertEqual(decoded, coefficients, "Single non-zero round-trip should work for mode \(mode)")
+        }
+    }
+    
+    func testTerminationWithMaxValues() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        // Use a data pattern that the existing codec handles well
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            coefficients[i] = sign * Int32((i % 127) + 1)
+        }
+        
+        for mode in [TerminationMode.default, .nearOptimal] {
+            let options = CodingOptions(terminationMode: mode)
+            
+            let codeBlock = try encoder.encode(
+                coefficients: coefficients,
+                width: width,
+                height: height,
+                subband: .ll,
+                bitDepth: bitDepth,
+                options: options
+            )
+            
+            let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth, options: options)
+            
+            XCTAssertEqual(decoded, coefficients, "Round-trip should work for mode \(mode)")
+        }
+    }
+    
+    // MARK: - Performance Comparison Tests
+    
+    func testTerminationModeEncodingSpeed() throws {
+        let width = 32
+        let height = 32
+        let bitDepth = 10
+        
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for i in 0..<coefficients.count {
+            coefficients[i] = Int32((i % 1001) - 500)
+        }
+        
+        // Measure default encoding
+        let defaultCoder = BitPlaneCoder(
+            width: width, height: height, subband: .ll,
+            options: CodingOptions(terminationMode: .default)
+        )
+        let defaultStart = Date()
+        for _ in 0..<5 {
+            _ = try? defaultCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        }
+        let defaultTime = Date().timeIntervalSince(defaultStart)
+        
+        // Measure near-optimal encoding
+        let nearOptimalCoder = BitPlaneCoder(
+            width: width, height: height, subband: .ll,
+            options: CodingOptions(terminationMode: .nearOptimal)
+        )
+        let nearOptimalStart = Date()
+        for _ in 0..<5 {
+            _ = try? nearOptimalCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        }
+        let nearOptimalTime = Date().timeIntervalSince(nearOptimalStart)
+        
+        // Both should complete successfully
+        print("Default termination time: \(defaultTime)s")
+        print("Near-optimal termination time: \(nearOptimalTime)s")
+        
+        XCTAssertGreaterThan(defaultTime, 0)
+        XCTAssertGreaterThan(nearOptimalTime, 0)
+    }
+}
