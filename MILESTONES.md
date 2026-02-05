@@ -92,12 +92,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 **Goal**: Implement discrete wavelet transforms with multiple filter types.
 
-### Week 26-28: 1D DWT Foundation
-- [ ] Implement 1D forward DWT
-- [ ] Add 1D inverse DWT
-- [ ] Support for 5/3 reversible filter
-- [ ] Support for 9/7 irreversible filter
-- [ ] Handle boundary extensions correctly
+### Week 26-28: 1D DWT Foundation ✅
+- [x] Implement 1D forward DWT
+- [x] Add 1D inverse DWT
+- [x] Support for 5/3 reversible filter
+- [x] Support for 9/7 irreversible filter
+- [x] Handle boundary extensions correctly
 
 ### Week 29-31: 2D DWT Implementation
 - [ ] Extend to 2D forward DWT
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 1 Complete - Moving to Phase 2 
-**Next Milestone**: Phase 2, Week 26-28 - 1D DWT Foundation (Discrete Wavelet Transform)
+**Current Phase**: Phase 2 - Wavelet Transform (Week 26-28 Complete)
+**Next Milestone**: Phase 2, Week 29-31 - 2D DWT Implementation
