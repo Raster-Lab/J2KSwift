@@ -42,11 +42,11 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add validation for input data
 
 ### Week 9-10: Testing Framework
-- [ ] Create comprehensive unit test suite
-- [ ] Add integration test infrastructure
-- [ ] Implement test image generators
-- [ ] Create benchmarking harness
-- [ ] Set up code coverage reporting
+- [x] Create comprehensive unit test suite
+- [x] Add integration test infrastructure
+- [x] Implement test image generators
+- [x] Create benchmarking harness
+- [x] Set up code coverage reporting
 
 ## Phase 1: Entropy Coding (Weeks 11-25)
 
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 0 (Week 1-8) ✅
-**Next Milestone**: Testing Framework (Week 9-10)
+**Current Phase**: Phase 0 (Week 9-10) ✅
+**Next Milestone**: Tier-1 Coding Primitives (Week 11-13)
