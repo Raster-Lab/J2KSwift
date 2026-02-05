@@ -34,12 +34,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement reference counting for large buffers
 - [x] Add memory usage tracking and limits
 
-### Week 7-8: Basic I/O Infrastructure
-- [ ] Implement bitstream reader/writer
-- [ ] Add byte-aligned reading/writing
-- [ ] Create marker segment parser framework
-- [ ] Implement basic file format detection
-- [ ] Add validation for input data
+### Week 7-8: Basic I/O Infrastructure ✅
+- [x] Implement bitstream reader/writer
+- [x] Add byte-aligned reading/writing
+- [x] Create marker segment parser framework
+- [x] Implement basic file format detection
+- [x] Add validation for input data
 
 ### Week 9-10: Testing Framework
 - [ ] Create comprehensive unit test suite
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 0 (Week 1-6) ✅
-**Next Milestone**: Basic I/O Infrastructure (Week 7-8)
+**Current Phase**: Phase 0 (Week 1-8) ✅
+**Next Milestone**: Testing Framework (Week 9-10)
