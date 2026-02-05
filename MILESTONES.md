@@ -19,13 +19,13 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Set up SwiftLint configuration
 - [x] Create documentation structure
 
-### Week 3-4: Core Type System
-- [ ] Define `J2KImage` with full metadata support
-- [ ] Implement `J2KComponent` for multi-component images
-- [ ] Create `J2KTile` and tiling infrastructure
-- [ ] Define `J2KCodeBlock` for entropy coding units
-- [ ] Implement `J2KPrecinct` for spatial organization
-- [ ] Add comprehensive error types
+### Week 3-4: Core Type System ✅
+- [x] Define `J2KImage` with full metadata support
+- [x] Implement `J2KComponent` for multi-component images
+- [x] Create `J2KTile` and tiling infrastructure
+- [x] Define `J2KCodeBlock` for entropy coding units
+- [x] Implement `J2KPrecinct` for spatial organization
+- [x] Add comprehensive error types
 
 ### Week 5-6: Memory Management
 - [ ] Implement efficient buffer management
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 0 (Week 1-2) ✅
-**Next Milestone**: Core Type System (Week 3-4)
+**Current Phase**: Phase 0 (Week 1-4) ✅
+**Next Milestone**: Memory Management (Week 5-6)
