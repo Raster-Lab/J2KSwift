@@ -315,6 +315,185 @@ final class J2KContextModelingTests: XCTestCase {
         array.reset()
         XCTAssertEqual(array[.uniform].stateIndex, 46)
     }
+    
+    // MARK: - Performance Tests
+    
+    /// Measures performance of neighbor calculation without sign tracking.
+    /// This is the most common hot path in EBCOT encoding.
+    func testNeighborCalculatorPerformanceNoSigns() throws {
+        let width = 64
+        let height = 64
+        let calc = NeighborCalculator(width: width, height: height)
+        
+        // Create a realistic state pattern with some significant coefficients
+        var states = [CoefficientState](repeating: [], count: width * height)
+        for i in 0..<states.count {
+            if i % 3 == 0 {
+                states[i] = .significant
+            }
+        }
+        
+        // Warm up
+        for y in 0..<height {
+            for x in 0..<width {
+                _ = calc.calculate(x: x, y: y, states: states)
+            }
+        }
+        
+        // Measure performance
+        measure {
+            for y in 0..<height {
+                for x in 0..<width {
+                    _ = calc.calculate(x: x, y: y, states: states)
+                }
+            }
+        }
+    }
+    
+    /// Measures performance of neighbor calculation with sign tracking.
+    /// This is used during sign coding passes.
+    func testNeighborCalculatorPerformanceWithSigns() throws {
+        let width = 64
+        let height = 64
+        let calc = NeighborCalculator(width: width, height: height)
+        
+        // Create realistic state and sign patterns
+        var states = [CoefficientState](repeating: [], count: width * height)
+        var signs = [Bool](repeating: false, count: width * height)
+        for i in 0..<states.count {
+            if i % 3 == 0 {
+                states[i] = .significant
+                signs[i] = (i % 2 == 0)
+            }
+        }
+        
+        // Warm up
+        for y in 0..<height {
+            for x in 0..<width {
+                _ = calc.calculate(x: x, y: y, states: states, signs: signs)
+            }
+        }
+        
+        // Measure performance
+        measure {
+            for y in 0..<height {
+                for x in 0..<width {
+                    _ = calc.calculate(x: x, y: y, states: states, signs: signs)
+                }
+            }
+        }
+    }
+    
+    /// Measures performance of significance context formation.
+    func testSignificanceContextPerformance() throws {
+        let modeler = ContextModeler(subband: .ll)
+        
+        // Create various neighbor patterns
+        let patterns = [
+            NeighborContribution(),
+            NeighborContribution(horizontal: 1, vertical: 0, diagonal: 0),
+            NeighborContribution(horizontal: 0, vertical: 1, diagonal: 0),
+            NeighborContribution(horizontal: 1, vertical: 1, diagonal: 0),
+            NeighborContribution(horizontal: 0, vertical: 0, diagonal: 1),
+            NeighborContribution(horizontal: 2, vertical: 2, diagonal: 4),
+        ]
+        
+        // Warm up
+        for _ in 0..<1000 {
+            for pattern in patterns {
+                _ = modeler.significanceContext(neighbors: pattern)
+            }
+        }
+        
+        // Measure performance
+        measure {
+            for _ in 0..<10000 {
+                for pattern in patterns {
+                    _ = modeler.significanceContext(neighbors: pattern)
+                }
+            }
+        }
+    }
+    
+    /// Measures performance of sign context formation.
+    func testSignContextPerformance() throws {
+        let modeler = ContextModeler(subband: .ll)
+        
+        // Create various sign patterns
+        let patterns = [
+            NeighborContribution(horizontal: 1, vertical: 1, diagonal: 0, horizontalSign: 1, verticalSign: 1),
+            NeighborContribution(horizontal: 1, vertical: 1, diagonal: 0, horizontalSign: -1, verticalSign: 1),
+            NeighborContribution(horizontal: 1, vertical: 1, diagonal: 0, horizontalSign: 1, verticalSign: -1),
+            NeighborContribution(horizontal: 1, vertical: 1, diagonal: 0, horizontalSign: -1, verticalSign: -1),
+            NeighborContribution(horizontal: 2, vertical: 0, diagonal: 0, horizontalSign: 2, verticalSign: 0),
+            NeighborContribution(horizontal: 0, vertical: 2, diagonal: 0, horizontalSign: 0, verticalSign: -2),
+        ]
+        
+        // Warm up
+        for _ in 0..<1000 {
+            for pattern in patterns {
+                _ = modeler.signContext(neighbors: pattern)
+            }
+        }
+        
+        // Measure performance
+        measure {
+            for _ in 0..<10000 {
+                for pattern in patterns {
+                    _ = modeler.signContext(neighbors: pattern)
+                }
+            }
+        }
+    }
+    
+    /// Full integration benchmark: context formation during realistic encoding scenario.
+    func testContextFormationIntegrationPerformance() throws {
+        let width = 32
+        let height = 32
+        let calc = NeighborCalculator(width: width, height: height)
+        let modeler = ContextModeler(subband: .ll)
+        
+        // Create realistic state pattern
+        var states = [CoefficientState](repeating: [], count: width * height)
+        var signs = [Bool](repeating: false, count: width * height)
+        
+        // Simulate a typical wavelet coefficient distribution
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = y * width + x
+                // More coefficients become significant near the DC coefficient
+                let distFromDC = sqrt(Double(x * x + y * y))
+                if distFromDC < Double(min(width, height)) / 3.0 || (x + y) % 5 == 0 {
+                    states[idx] = .significant
+                    signs[idx] = ((x + y) % 2 == 0)
+                }
+            }
+        }
+        
+        // Warm up
+        for y in 0..<height {
+            for x in 0..<width {
+                let neighbors = calc.calculate(x: x, y: y, states: states, signs: signs)
+                _ = modeler.significanceContext(neighbors: neighbors)
+                if states[y * width + x].contains(.significant) {
+                    _ = modeler.signContext(neighbors: neighbors)
+                }
+            }
+        }
+        
+        // Measure full context formation pipeline
+        measure {
+            for y in 0..<height {
+                for x in 0..<width {
+                    let neighbors = calc.calculate(x: x, y: y, states: states, signs: signs)
+                    _ = modeler.significanceContext(neighbors: neighbors)
+                    if states[y * width + x].contains(.significant) {
+                        _ = modeler.signContext(neighbors: neighbors)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Tests for bit-plane coding.
