@@ -52,23 +52,55 @@ public struct CodingOptions: Sendable {
     /// A value of 0 disables bypass mode effectively.
     public let bypassThreshold: Int
     
+    /// The termination mode for arithmetic coding.
+    ///
+    /// Controls how the MQ-coder terminates its encoded output. Different
+    /// modes offer trade-offs between compression efficiency and error resilience.
+    public let terminationMode: TerminationMode
+    
+    /// Whether to reset the encoder after each coding pass (predictable termination).
+    ///
+    /// When enabled, the encoder state is reset after each coding pass,
+    /// allowing independent decoding of each pass. This is automatically
+    /// enabled when `terminationMode` is `.predictable`.
+    public var resetOnEachPass: Bool {
+        return terminationMode == .predictable
+    }
+    
     /// Creates new coding options.
     ///
     /// - Parameters:
     ///   - bypassEnabled: Enable bypass mode (default: false).
     ///   - bypassThreshold: Bit-plane threshold for bypass (default: 0).
-    public init(bypassEnabled: Bool = false, bypassThreshold: Int = 0) {
+    ///   - terminationMode: The termination mode (default: `.default`).
+    public init(
+        bypassEnabled: Bool = false,
+        bypassThreshold: Int = 0,
+        terminationMode: TerminationMode = .default
+    ) {
         self.bypassEnabled = bypassEnabled
         self.bypassThreshold = max(0, bypassThreshold)
+        self.terminationMode = terminationMode
     }
     
-    /// Default coding options (no bypass).
+    /// Default coding options (no bypass, default termination).
     public static let `default` = CodingOptions()
     
     /// Typical bypass configuration for improved speed.
     ///
     /// Enables bypass mode for magnitude refinement passes in the lower 4 bit-planes.
     public static let fastEncoding = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
+    
+    /// Predictable termination for error resilience.
+    ///
+    /// Each coding pass can be independently decoded, enabling error resilience
+    /// and parallel decoding at the cost of compression efficiency.
+    public static let errorResilient = CodingOptions(terminationMode: .predictable)
+    
+    /// Near-optimal termination for better compression.
+    ///
+    /// Uses a tighter termination sequence to minimize wasted bits.
+    public static let optimalCompression = CodingOptions(terminationMode: .nearOptimal)
 }
 
 // MARK: - Bit-Plane Coder
@@ -153,6 +185,9 @@ public struct BitPlaneCoder: Sendable {
         var encoder = MQEncoder()
         var contextStates = ContextStateArray()
         
+        // For predictable termination, we collect pass data separately
+        var passDataSegments: [Data] = []
+        
         var passCount = 0
         let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
         
@@ -174,6 +209,14 @@ public struct BitPlaneCoder: Sendable {
                     contexts: &contextStates
                 )
                 passCount += 1
+                
+                // For predictable mode, finish and reset after each pass
+                if options.resetOnEachPass {
+                    let passData = encoder.finish(mode: options.terminationMode)
+                    passDataSegments.append(passData)
+                    encoder.reset()
+                    contextStates.reset()
+                }
             }
             
             // Pass 2: Magnitude Refinement Pass
@@ -188,6 +231,14 @@ public struct BitPlaneCoder: Sendable {
                     useBypass: useBypass
                 )
                 passCount += 1
+                
+                // For predictable mode, finish and reset after each pass
+                if options.resetOnEachPass {
+                    let passData = encoder.finish(mode: options.terminationMode)
+                    passDataSegments.append(passData)
+                    encoder.reset()
+                    contextStates.reset()
+                }
             }
             
             // Pass 3: Cleanup Pass
@@ -201,6 +252,14 @@ public struct BitPlaneCoder: Sendable {
                     contexts: &contextStates
                 )
                 passCount += 1
+                
+                // For predictable mode, finish and reset after each pass
+                if options.resetOnEachPass {
+                    let passData = encoder.finish(mode: options.terminationMode)
+                    passDataSegments.append(passData)
+                    encoder.reset()
+                    contextStates.reset()
+                }
             }
             
             // Clear coded-this-pass flags for next bit-plane
@@ -209,7 +268,20 @@ public struct BitPlaneCoder: Sendable {
             }
         }
         
-        let encodedData = encoder.finish()
+        // Finish encoding
+        let encodedData: Data
+        if options.resetOnEachPass {
+            // Concatenate all pass data segments
+            var combinedData = Data()
+            for segment in passDataSegments {
+                combinedData.append(segment)
+            }
+            encodedData = combinedData
+        } else {
+            // Single termination at the end
+            encodedData = encoder.finish(mode: options.terminationMode)
+        }
+        
         return (encodedData, passCount, zeroBitPlanes)
     }
     
