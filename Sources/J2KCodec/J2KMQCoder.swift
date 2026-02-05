@@ -150,9 +150,21 @@ public struct MQContext: Sendable {
 
 /// Encodes binary symbols using the MQ arithmetic coding algorithm.
 public struct MQEncoder: Sendable {
+    // MARK: - Constants
+    
+    /// Initial counter value for the MQ-coder (number of bits before first byte output).
+    /// This is defined by the JPEG 2000 standard (ISO/IEC 15444-1 Annex C).
+    private static let initialCounterBits = 12
+    
+    /// Stuffing byte used after 0xFF to avoid marker conflicts in JPEG 2000.
+    /// A 0x7F ensures that the next byte doesn't start with 0x90 or higher.
+    private static let stuffingByte: UInt8 = 0x7F
+    
+    // MARK: - State
+    
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
-    private var ct: Int = 12
+    private var ct: Int = initialCounterBits
     private var buffer: Int = -1
     private var output: [UInt8] = []
     
@@ -313,7 +325,7 @@ public struct MQEncoder: Sendable {
         // We need to emit enough bytes to guarantee decodability
         
         // First, renormalize to ensure we have bits to emit
-        var bitsToFlush = 12 - ct
+        var bitsToFlush = Self.initialCounterBits - ct
         if bitsToFlush < 0 {
             bitsToFlush = 0
         }
@@ -337,8 +349,9 @@ public struct MQEncoder: Sendable {
         if buffer >= 0 && buffer <= 0xFF {
             output.append(UInt8(buffer & 0xFF))
             // For predictable mode, if we emitted 0xFF, add a stuffing byte
+            // to avoid marker confusion (JPEG 2000 markers start with 0xFF 0x90+)
             if buffer == 0xFF {
-                output.append(0x7F)  // Stuffing byte after 0xFF
+                output.append(Self.stuffingByte)
             }
         }
         
@@ -351,14 +364,19 @@ public struct MQEncoder: Sendable {
     /// still ensuring correct decoding. It follows the approach described in
     /// the JPEG 2000 standard for rate-optimal termination.
     ///
-    /// Note: This implementation uses the same termination as default mode.
-    /// True near-optimal termination requires analysis of the decoder state
-    /// to determine the minimum number of bytes needed.
+    /// - Note: This implementation currently uses the same termination as default mode.
+    ///   True near-optimal termination requires analysis of the decoder state
+    ///   to determine the minimum number of bytes needed.
+    ///
+    /// - TODO: Implement true near-optimal termination by analyzing the interval (A)
+    ///   and code register (C) to determine if fewer termination bytes are sufficient.
+    ///   This could save 1-2 bytes per code-block termination.
     private mutating func finishNearOptimal() -> Data {
         // For now, use the default termination which is safe and correct.
         // A true near-optimal termination would analyze the interval (A)
         // and code register (C) to determine if fewer bytes are sufficient.
         //
+        // TODO: Implement proper near-optimal termination algorithm per JPEG 2000 standard
         // The default termination always produces a valid output,
         // while near-optimal would potentially save 1-2 bytes in some cases.
         return finishDefault()
@@ -368,7 +386,7 @@ public struct MQEncoder: Sendable {
     public mutating func reset() {
         c = 0
         a = 0x8000
-        ct = 12
+        ct = Self.initialCounterBits
         buffer = -1
         output.removeAll(keepingCapacity: true)
     }
