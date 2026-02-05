@@ -75,9 +75,9 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add quality layer generation
 
 ### Week 20-22: Performance Optimization
-- [ ] Profile entropy coding performance
-- [ ] Optimize hot paths in MQ-coder
-- [ ] Parallelize code-block coding
+- [x] Profile entropy coding performance
+- [x] Optimize hot paths in MQ-coder
+- [ ] Parallelize code-block coding (deferred - requires higher-level architecture)
 - [ ] Add SIMD optimizations where applicable
 - [ ] Benchmark against reference implementations
 
