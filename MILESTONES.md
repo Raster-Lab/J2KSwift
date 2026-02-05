@@ -63,7 +63,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 ### Week 14-16: Code-Block Coding
 - [x] Implement complete code-block encoder
 - [x] Add code-block decoder
-- [ ] Implement selective arithmetic coding bypass
+- [x] Implement selective arithmetic coding bypass
 - [ ] Add termination modes (predictable, near-optimal)
 - [ ] Optimize context formation
 
