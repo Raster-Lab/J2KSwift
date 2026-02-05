@@ -27,12 +27,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement `J2KPrecinct` for spatial organization
 - [x] Add comprehensive error types
 
-### Week 5-6: Memory Management
-- [ ] Implement efficient buffer management
-- [ ] Create copy-on-write image buffers
-- [ ] Add memory pool for temporary allocations
-- [ ] Implement reference counting for large buffers
-- [ ] Add memory usage tracking and limits
+### Week 5-6: Memory Management ✅
+- [x] Implement efficient buffer management
+- [x] Create copy-on-write image buffers
+- [x] Add memory pool for temporary allocations
+- [x] Implement reference counting for large buffers
+- [x] Add memory usage tracking and limits
 
 ### Week 7-8: Basic I/O Infrastructure
 - [ ] Implement bitstream reader/writer
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 0 (Week 1-4) ✅
-**Next Milestone**: Memory Management (Week 5-6)
+**Current Phase**: Phase 0 (Week 1-6) ✅
+**Next Milestone**: Basic I/O Infrastructure (Week 7-8)
