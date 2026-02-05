@@ -139,7 +139,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Project initialization (Weeks 1-2)
 - [x] Core type system (Weeks 3-4)
 - [x] Memory management (Weeks 5-6)
-- [ ] Basic I/O infrastructure (Weeks 7-8)
+- [x] Basic I/O infrastructure (Weeks 7-8)
 - [ ] Testing framework (Weeks 9-10)
 
 ## 🌟 Features
@@ -154,6 +154,9 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Efficient memory management with copy-on-write buffers
 - ✅ Memory pooling for temporary allocations
 - ✅ Memory usage tracking and limits
+- ✅ Bitstream reader/writer with bit-level operations
+- ✅ JPEG 2000 marker segment parser
+- ✅ File format detection (JP2, J2K, JPX, JPM)
 
 ### Planned Features
 
