@@ -458,12 +458,15 @@ final class J2KContextModelingTests: XCTestCase {
         var signs = [Bool](repeating: false, count: width * height)
         
         // Simulate a typical wavelet coefficient distribution
+        let thresholdSquared = Double(min(width, height)) / 3.0
+        let thresholdSquaredValue = thresholdSquared * thresholdSquared
+        
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
                 // More coefficients become significant near the DC coefficient
-                let distFromDC = sqrt(Double(x * x + y * y))
-                if distFromDC < Double(min(width, height)) / 3.0 || (x + y) % 5 == 0 {
+                let distSquared = Double(x * x + y * y)
+                if distSquared < thresholdSquaredValue || (x + y) % 5 == 0 {
                     states[idx] = .significant
                     signs[idx] = ((x + y) % 2 == 0)
                 }
