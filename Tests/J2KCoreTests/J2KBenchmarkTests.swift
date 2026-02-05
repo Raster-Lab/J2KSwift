@@ -263,6 +263,10 @@ public struct BenchmarkComparison: Sendable, CustomStringConvertible {
 }
 
 /// A benchmark runner that collects and reports multiple benchmark results.
+///
+/// This class uses `@unchecked Sendable` because it manually synchronizes access
+/// to mutable state using `NSLock`. All public methods acquire the lock before
+/// accessing or modifying `results`, ensuring thread-safe operation.
 public final class J2KBenchmarkRunner: @unchecked Sendable {
     /// Results collected by the runner.
     private var results: [BenchmarkResult] = []
@@ -355,9 +359,11 @@ public struct J2KMemoryBenchmark: Sendable {
     private static func getMemoryUsage() -> Int {
         #if os(Linux)
         // On Linux, read from /proc/self/statm
+        // Format: size resident shared text lib data dt (all in pages)
         if let contents = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8) {
             let parts = contents.split(separator: " ")
-            if let residentPages = Int(parts[1]) {
+            // Check bounds before accessing parts[1] (resident memory)
+            if parts.count > 1, let residentPages = Int(parts[1]) {
                 // Multiply by page size (typically 4096)
                 return residentPages * 4096
             }

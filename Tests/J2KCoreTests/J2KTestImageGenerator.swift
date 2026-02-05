@@ -74,13 +74,16 @@ public struct J2KTestImageGenerator: Sendable {
         J2KImage(width: width, height: height, components: components, bitDepth: bitDepth)
     }
     
-    /// Generates a test image with pixel data.
+    /// Generates a test image buffer with pixel data for a single component.
+    ///
+    /// This method creates a single-component (grayscale) image buffer with the
+    /// specified pattern. For multi-component images, use `generateComponent`
+    /// multiple times and combine them into a `J2KImage`.
     ///
     /// - Parameters:
-    ///   - width: The width of the image in pixels.
-    ///   - height: The height of the image in pixels.
-    ///   - components: The number of color components.
-    ///   - bitDepth: The bit depth per component (default: 8).
+    ///   - width: The width of the buffer in pixels.
+    ///   - height: The height of the buffer in pixels.
+    ///   - bitDepth: The bit depth per pixel (default: 8, clamped to 1-16).
     ///   - pattern: The pattern to generate (default: solid).
     ///   - seed: Random seed for noise pattern (default: 12345).
     /// - Returns: A J2KImageBuffer with the specified pattern.
@@ -91,8 +94,9 @@ public struct J2KTestImageGenerator: Sendable {
         pattern: Pattern = .solid,
         seed: UInt64 = 12345
     ) -> J2KImageBuffer {
-        var buffer = J2KImageBuffer(width: width, height: height, bitDepth: bitDepth)
-        let maxValue = (1 << min(bitDepth, 16)) - 1
+        let clampedBitDepth = max(1, min(bitDepth, 16))
+        var buffer = J2KImageBuffer(width: width, height: height, bitDepth: clampedBitDepth)
+        let maxValue = (1 << clampedBitDepth) - 1
         
         switch pattern {
         case .solid:
