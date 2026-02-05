@@ -1,4 +1,4 @@
-# SwiftLint Configuration for J2KCore
+# SwiftLint Configuration for J2KSwift
 
 # Paths to include for linting
 included:
@@ -150,7 +150,7 @@ file_header:
   required_pattern: |
                     \/\/
                     \/\/ .*?\.swift
-                    \/\/ J2KCore
+                    \/\/ J2KSwift
                     \/\/
 
 # Custom rules

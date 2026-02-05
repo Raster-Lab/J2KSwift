@@ -1,10 +1,10 @@
-# J2KCore Development Milestones
+# J2KSwift Development Milestones
 
 A comprehensive 100-week roadmap for implementing a complete JPEG 2000 framework in Swift 6.
 
 ## Overview
 
-This document outlines the phased development approach for J2KCore, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity.
+This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
