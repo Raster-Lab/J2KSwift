@@ -173,7 +173,18 @@ public struct MQEncoder: Sendable {
         output.reserveCapacity(1024)
     }
     
+    /// Creates a new MQ encoder with the specified capacity hint.
+    ///
+    /// Use this initializer when you have an estimate of the output size
+    /// to avoid memory reallocations during encoding.
+    ///
+    /// - Parameter estimatedSize: Estimated output size in bytes.
+    public init(estimatedSize: Int) {
+        output.reserveCapacity(max(estimatedSize, 256))
+    }
+    
     /// Encodes a binary symbol using the specified context.
+    @inline(__always)
     public mutating func encode(symbol: Bool, context: inout MQContext) {
         let state = context.state
         let qe = state.qe
@@ -181,7 +192,7 @@ public struct MQEncoder: Sendable {
         a -= qe
         
         if symbol == context.mps {
-            // MPS
+            // MPS path - most common case
             if a < 0x8000 {
                 if a < qe {
                     c += a
@@ -191,7 +202,7 @@ public struct MQEncoder: Sendable {
                 renormalize()
             }
         } else {
-            // LPS
+            // LPS path - less common
             if a >= qe {
                 c += a
                 a = qe
@@ -205,6 +216,7 @@ public struct MQEncoder: Sendable {
     }
     
     /// Encodes a symbol using uniform (bypass) coding.
+    @inline(__always)
     public mutating func encodeBypass(symbol: Bool) {
         c <<= 1
         if symbol {
@@ -217,6 +229,7 @@ public struct MQEncoder: Sendable {
     }
     
     /// Renormalizes the encoder state.
+    @inline(__always)
     private mutating func renormalize() {
         while a < 0x8000 {
             a <<= 1
@@ -457,6 +470,7 @@ public struct MQDecoder: Sendable {
     }
     
     /// Decodes a binary symbol using the specified context.
+    @inline(__always)
     public mutating func decode(context: inout MQContext) -> Bool {
         let state = context.state
         let qe = state.qe
@@ -464,10 +478,10 @@ public struct MQDecoder: Sendable {
         a -= qe
         
         let mps = context.mps
-        var symbol: Bool
+        let symbol: Bool
         
         if (c >> 16) < a {
-            // MPS region
+            // MPS region - most common case
             if a < 0x8000 {
                 if a < qe {
                     // Conditional exchange
@@ -485,7 +499,7 @@ public struct MQDecoder: Sendable {
                 symbol = mps
             }
         } else {
-            // LPS region
+            // LPS region - less common
             c -= a << 16
             if a < qe {
                 // Conditional exchange
@@ -506,6 +520,7 @@ public struct MQDecoder: Sendable {
     }
     
     /// Decodes a symbol using uniform (bypass) coding.
+    @inline(__always)
     public mutating func decodeBypass() -> Bool {
         if ct == 0 {
             fillC()
@@ -521,6 +536,7 @@ public struct MQDecoder: Sendable {
     }
     
     /// Renormalizes the decoder state.
+    @inline(__always)
     private mutating func renormalizeDecoder() {
         while a < 0x8000 {
             if ct == 0 {
