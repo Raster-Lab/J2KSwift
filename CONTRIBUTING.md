@@ -1,6 +1,6 @@
-# Contributing to J2KCore
+# Contributing to J2KSwift
 
-Thank you for your interest in contributing to J2KCore! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to J2KSwift! This document provides guidelines and instructions for contributing to the project.
 
 ## Table of Contents
 
@@ -40,7 +40,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ### Prerequisites
 
 - Xcode 15.0 or later (for Apple platform development)
-- Swift 6.0 or later
+- Swift 6.2 or later
 - Git
 - SwiftLint (optional but recommended)
 
@@ -49,13 +49,13 @@ We are committed to providing a welcoming and inclusive environment for all cont
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/J2KCore.git
-   cd J2KCore
+   git clone https://github.com/YOUR_USERNAME/J2KSwift.git
+   cd J2KSwift
    ```
 
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/Raster-Lab/J2KCore.git
+   git remote add upstream https://github.com/Raster-Lab/J2KSwift.git
    ```
 
 4. Install SwiftLint (optional):
@@ -392,8 +392,8 @@ Contributors will be recognized in:
 
 ## License
 
-By contributing to J2KCore, you agree that your contributions will be licensed under the MIT License.
+By contributing to J2KSwift, you agree that your contributions will be licensed under the MIT License.
 
 ---
 
-Thank you for contributing to J2KCore! Your efforts help make JPEG 2000 support better for the Swift community. 🎉
+Thank you for contributing to J2KSwift! Your efforts help make JPEG 2000 support better for the Swift community. 🎉

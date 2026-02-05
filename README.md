@@ -1,10 +1,10 @@
-# J2KCore
+# J2KSwift
 
 A pure Swift 6 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
 ## 🎯 Project Goals
 
-J2KCore aims to provide a modern, safe, and performant JPEG 2000 implementation for Swift applications with the following objectives:
+J2KSwift aims to provide a modern, safe, and performant JPEG 2000 implementation for Swift applications with the following objectives:
 
 - **Swift 6 Native**: Built from the ground up with Swift 6's strict concurrency model
 - **Cross-Platform**: Support for macOS, iOS, tvOS, watchOS, and visionOS
@@ -18,11 +18,11 @@ J2KCore aims to provide a modern, safe, and performant JPEG 2000 implementation 
 
 ### Installation
 
-Add J2KCore to your Swift package dependencies:
+Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KCore.git", from: "1.0.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.0.0")
 ]
 ```
 
@@ -32,9 +32,9 @@ Then add the specific modules you need to your target dependencies:
 .target(
     name: "YourTarget",
     dependencies: [
-        .product(name: "J2KCore", package: "J2KCore"),
-        .product(name: "J2KCodec", package: "J2KCore"),
-        .product(name: "J2KFileFormat", package: "J2KCore"),
+        .product(name: "J2KCore", package: "J2KSwift"),
+        .product(name: "J2KCodec", package: "J2KSwift"),
+        .product(name: "J2KFileFormat", package: "J2KSwift"),
     ]
 )
 ```
@@ -193,7 +193,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ## 📄 License
 
-J2KCore is released under the MIT License. See [LICENSE](LICENSE) for details.
+J2KSwift is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 📚 Resources
 
@@ -211,7 +211,7 @@ J2KCore is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-J2KCore is inspired by and references:
+J2KSwift is inspired by and references:
 
 - OpenJPEG open source implementation
 - JPEG 2000 standard specifications
@@ -219,8 +219,8 @@ J2KCore is inspired by and references:
 
 ## 📧 Contact
 
-- GitHub Issues: [Report bugs or request features](https://github.com/Raster-Lab/J2KCore/issues)
-- Discussions: [Ask questions and share ideas](https://github.com/Raster-Lab/J2KCore/discussions)
+- GitHub Issues: [Report bugs or request features](https://github.com/Raster-Lab/J2KSwift/issues)
+- Discussions: [Ask questions and share ideas](https://github.com/Raster-Lab/J2KSwift/discussions)
 
 ---
 

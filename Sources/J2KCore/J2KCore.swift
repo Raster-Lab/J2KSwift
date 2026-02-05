@@ -3,7 +3,7 @@
 /// Core module for JPEG 2000 encoding and decoding functionality.
 ///
 /// This module provides the foundational types, protocols, and utilities for JPEG 2000 image
-/// processing. It defines the basic building blocks used by other modules in the J2KCore framework.
+/// processing. It defines the basic building blocks used by other modules in the J2KSwift framework.
 ///
 /// ## Topics
 ///
@@ -71,7 +71,7 @@ public struct J2KConfiguration: Sendable {
     }
 }
 
-/// Returns the version of the J2KCore framework.
+/// Returns the version of the J2KSwift framework.
 ///
 /// - Returns: A string representing the current version.
 public func getVersion() -> String {
