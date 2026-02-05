@@ -1,13 +1,13 @@
 # J2KSwift
 
-A pure Swift 6 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
+A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
 ## 🎯 Project Goals
 
 J2KSwift aims to provide a modern, safe, and performant JPEG 2000 implementation for Swift applications with the following objectives:
 
-- **Swift 6 Native**: Built from the ground up with Swift 6's strict concurrency model
-- **Cross-Platform**: Support for macOS, iOS, tvOS, watchOS, and visionOS
+- **Swift 6.2 Native**: Built from the ground up with Swift 6.2's strict concurrency model
+- **Cross-Platform**: Support for macOS 13+, iOS 16+, tvOS 16+, watchOS 9+, and visionOS 1+
 - **Standards Compliant**: Full implementation of JPEG 2000 Part 1 (ISO/IEC 15444-1)
 - **Performance**: Hardware-accelerated operations using platform-specific frameworks
 - **Network Streaming**: JPIP (JPEG 2000 Interactive Protocol) support for efficient image streaming
@@ -15,6 +15,11 @@ J2KSwift aims to provide a modern, safe, and performant JPEG 2000 implementation
 - **Well Documented**: Extensive documentation with examples and tutorials
 
 ## 🚀 Quick Start
+
+### Requirements
+
+- Swift 6.2 or later
+- macOS 13+ / iOS 16+ / tvOS 16+ / watchOS 9+ / visionOS 1+
 
 ### Installation
 
@@ -140,9 +145,11 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 
 ### Current Features
 
-- ✅ Swift 6 with strict concurrency
+- ✅ Swift 6.2 with strict concurrency
 - ✅ Basic type system and error handling
 - ✅ Module structure for organized development
+- ✅ Comprehensive CI/CD pipeline with automated testing and linting
+- ✅ Cross-platform support (macOS, iOS, tvOS, watchOS, visionOS, Linux)
 
 ### Planned Features
 
@@ -180,6 +187,18 @@ The project uses SwiftLint for code style and quality checks:
 ```bash
 swiftlint
 ```
+
+### Continuous Integration
+
+J2KSwift uses GitHub Actions for continuous integration with the following workflows:
+
+- **Linting**: SwiftLint checks on all code
+- **Building**: Multi-platform builds (macOS, iOS, Linux)
+- **Testing**: Comprehensive test suite with code coverage
+- **Documentation**: Automated documentation generation
+- **Static Analysis**: Build warnings and validation checks
+
+All CI checks run automatically on pull requests and commits to the main and develop branches.
 
 ## 🤝 Contributing
 
