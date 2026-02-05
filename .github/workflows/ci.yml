@@ -7,10 +7,15 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: SwiftLint
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,6 +29,8 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         xcode: ['15.0', '15.1', '15.2']
@@ -45,6 +52,8 @@ jobs:
     name: Test macOS
     runs-on: macos-latest
     needs: build-macos
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,6 +81,8 @@ jobs:
   test-linux:
     name: Test Linux
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     container:
       image: swift:5.9
     steps:
@@ -91,6 +102,8 @@ jobs:
   build-ios:
     name: Build iOS
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,6 +122,8 @@ jobs:
   documentation:
     name: Documentation
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -124,6 +139,8 @@ jobs:
     name: Static Analysis
     runs-on: macos-latest
     needs: lint
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -143,6 +160,8 @@ jobs:
   validate:
     name: Validate Package
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -156,6 +175,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, build-macos, test-macos, test-linux, validate]
     if: success()
+    permissions:
+      contents: read
     steps:
       - name: Success
         run: echo "✅ All CI checks passed!"
