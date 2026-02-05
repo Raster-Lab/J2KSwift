@@ -15,6 +15,12 @@
 /// - ``J2KPrecinct``
 /// - ``J2KCodeBlock``
 ///
+/// ### Memory Management
+/// - ``J2KBuffer``
+/// - ``J2KImageBuffer``
+/// - ``J2KMemoryPool``
+/// - ``J2KMemoryTracker``
+///
 /// ### Enumerations
 /// - ``J2KSubband``
 /// - ``J2KColorSpace``
