@@ -319,27 +319,36 @@ public struct BitPlaneCoder: Sendable {
             let stripeEnd = min(stripeY + stripeHeight, height)
             
             for x in 0..<width {
-                // Try to use run-length coding
-                if canUseRunLengthCoding(
+                // Check if this column is eligible for run-length coding
+                if isEligibleForRunLengthCoding(
                     x: x,
                     stripeStart: stripeY,
                     stripeEnd: stripeEnd,
-                    states: states,
-                    magnitudes: magnitudes,
-                    bitMask: bitMask
+                    states: states
                 ) {
-                    // All coefficients in this stripe column are insignificant with no neighbors
-                    encoder.encode(symbol: false, context: &contexts[.runLength])
+                    // Check if any coefficient in the column becomes significant
+                    let hasSignificant = anyBecomeSignificant(
+                        x: x,
+                        stripeStart: stripeY,
+                        stripeEnd: stripeEnd,
+                        magnitudes: magnitudes,
+                        bitMask: bitMask
+                    )
                     
-                    // Mark as coded
-                    for y in stripeY..<stripeEnd {
-                        let idx = y * width + x
-                        states[idx].insert(.codedThisPass)
+                    // Encode run-length flag: true if at least one becomes significant
+                    encoder.encode(symbol: hasSignificant, context: &contexts[.runLength])
+                    
+                    if !hasSignificant {
+                        // All coefficients remain zero, mark as coded and skip
+                        for y in stripeY..<stripeEnd {
+                            let idx = y * width + x
+                            states[idx].insert(.codedThisPass)
+                        }
+                        continue
                     }
-                    continue
                 }
                 
-                // Can't use run-length, process individually
+                // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
@@ -384,25 +393,21 @@ public struct BitPlaneCoder: Sendable {
         }
     }
     
-    /// Checks if run-length coding can be used for a column in a stripe.
-    private func canUseRunLengthCoding(
+    /// Checks if a column is eligible for run-length coding.
+    ///
+    /// A column is eligible if all coefficients are not yet significant,
+    /// not already coded, and have no significant neighbors.
+    private func isEligibleForRunLengthCoding(
         x: Int,
         stripeStart: Int,
         stripeEnd: Int,
-        states: [CoefficientState],
-        magnitudes: [UInt32],
-        bitMask: UInt32
+        states: [CoefficientState]
     ) -> Bool {
         for y in stripeStart..<stripeEnd {
             let idx = y * width + x
             
             // Can't use RLC if any coefficient is already significant or coded
             if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
-                return false
-            }
-            
-            // Can't use RLC if this coefficient becomes significant
-            if (magnitudes[idx] & bitMask) != 0 {
                 return false
             }
             
@@ -414,6 +419,39 @@ public struct BitPlaneCoder: Sendable {
         }
         
         return true
+    }
+    
+    /// Checks if any coefficient in a column becomes significant at this bit-plane.
+    private func anyBecomeSignificant(
+        x: Int,
+        stripeStart: Int,
+        stripeEnd: Int,
+        magnitudes: [UInt32],
+        bitMask: UInt32
+    ) -> Bool {
+        for y in stripeStart..<stripeEnd {
+            let idx = y * width + x
+            if (magnitudes[idx] & bitMask) != 0 {
+                return true
+            }
+        }
+        return false
+    }
+    
+    /// Checks if run-length coding can be used for a column in a stripe (legacy method for encoder).
+    ///
+    /// This checks both eligibility AND that no coefficients become significant.
+    /// Kept for backwards compatibility but prefer using isEligibleForRunLengthCoding + anyBecomeSignificant.
+    private func canUseRunLengthCoding(
+        x: Int,
+        stripeStart: Int,
+        stripeEnd: Int,
+        states: [CoefficientState],
+        magnitudes: [UInt32],
+        bitMask: UInt32
+    ) -> Bool {
+        return isEligibleForRunLengthCoding(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, states: states) &&
+               !anyBecomeSignificant(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, magnitudes: magnitudes, bitMask: bitMask)
     }
 }
 
@@ -669,18 +707,18 @@ public struct BitPlaneDecoder: Sendable {
             let stripeEnd = min(stripeY + stripeHeight, height)
             
             for x in 0..<width {
-                // Check if we can use run-length decoding
+                // Check if this column is eligible for run-length decoding
                 if canUseRunLengthDecoding(
                     x: x,
                     stripeStart: stripeY,
                     stripeEnd: stripeEnd,
                     states: states
                 ) {
-                    // Decode run-length flag
-                    let allZero = !decoder.decode(context: &contexts[.runLength])
+                    // Decode run-length flag: true if at least one becomes significant
+                    let hasSignificant = decoder.decode(context: &contexts[.runLength])
                     
-                    if allZero {
-                        // All coefficients in this stripe column are zero
+                    if !hasSignificant {
+                        // All coefficients remain zero, mark as coded and skip
                         for y in stripeY..<stripeEnd {
                             let idx = y * width + x
                             states[idx].insert(.codedThisPass)
@@ -689,7 +727,7 @@ public struct BitPlaneDecoder: Sendable {
                     }
                 }
                 
-                // Process individually
+                // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     

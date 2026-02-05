@@ -52,7 +52,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 **Goal**: Implement the EBCOT (Embedded Block Coding with Optimized Truncation) engine.
 
-### Week 11-13: Tier-1 Coding Primitives
+### Week 11-13: Tier-1 Coding Primitives ✅
 - [x] Implement bit-plane coding
 - [x] Add context modeling for arithmetic coding
 - [x] Create MQ-coder (arithmetic entropy coder)
@@ -62,7 +62,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 ### Week 14-16: Code-Block Coding
 - [x] Implement complete code-block encoder
-- [ ] Add code-block decoder
+- [x] Add code-block decoder
 - [ ] Implement selective arithmetic coding bypass
 - [ ] Add termination modes (predictable, near-optimal)
 - [ ] Optimize context formation
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 1 (Week 11-13) ✅
-**Next Milestone**: Code-Block Coding (Week 14-16)
+**Current Phase**: Phase 1 (Week 14-16)
+**Next Milestone**: Code-Block Coding - Selective arithmetic coding bypass (Week 14-16)

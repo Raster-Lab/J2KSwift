@@ -484,6 +484,384 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         XCTAssertGreaterThan(codeBlock.data.count, 0)
     }
     
+    // MARK: - Code-Block Decoder Tests
+    
+    func testCodeBlockDecoderSimple() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 8
+        
+        // Create test coefficients
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            original[i] = Int32((i % 201) - 100)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded.count, original.count)
+        XCTAssertEqual(decoded, original, "Decoded coefficients should match original")
+    }
+    
+    func testCodeBlockRoundTripZeros() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        let original = [Int32](repeating: 0, count: width * height)
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for all zeros should be exact")
+    }
+    
+    func testCodeBlockRoundTripPositiveOnly() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 8
+        let height = 8
+        let bitDepth = 8
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            original[i] = Int32(i % 128)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for positive values should be exact")
+    }
+    
+    func testCodeBlockRoundTripNegativeOnly() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 8
+        let height = 8
+        let bitDepth = 8
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            original[i] = -Int32(i % 128)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for negative values should be exact")
+    }
+    
+    func testCodeBlockRoundTripMixed() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i % 127) + 1)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for mixed signs should be exact")
+    }
+    
+    func testCodeBlockRoundTripAllSubbands() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 12
+        
+        let subbands: [J2KSubband] = [.ll, .hl, .lh, .hh]
+        
+        for subband in subbands {
+            var original = [Int32](repeating: 0, count: width * height)
+            for i in 0..<original.count {
+                let sign: Int32 = (i % 3 == 0) ? -1 : 1
+                original[i] = sign * Int32((i * 7) % 1000)
+            }
+            
+            // Encode
+            let codeBlock = try encoder.encode(
+                coefficients: original,
+                width: width,
+                height: height,
+                subband: subband,
+                bitDepth: bitDepth
+            )
+            
+            // Decode
+            let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+            
+            // Verify
+            XCTAssertEqual(decoded, original, "Round-trip for \(subband) subband should be exact")
+        }
+    }
+    
+    func testCodeBlockRoundTripLargeBlock() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 64
+        let height = 64
+        let bitDepth = 12
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 5 == 0) ? -1 : 1
+            original[i] = sign * Int32((i * 13) % 2048)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for large block should be exact")
+    }
+    
+    func testCodeBlockRoundTripHighBitDepth() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 16
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            original[i] = sign * Int32((i * 257) % 32768)
+        }
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for high bit-depth should be exact")
+    }
+    
+    func testCodeBlockRoundTripSparse() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 8
+        
+        // Create sparse data (mostly zeros with some non-zero values)
+        var original = [Int32](repeating: 0, count: width * height)
+        original[0] = 127
+        original[width - 1] = -100
+        original[width * height / 2] = 50
+        original[width * height - 1] = -75
+        
+        // Encode
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        // Decode
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        
+        // Verify
+        XCTAssertEqual(decoded, original, "Round-trip for sparse data should be exact")
+    }
+    
+    func testCodeBlockRoundTripEdgeCases() throws {
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 16
+        let height = 16
+        let bitDepth = 8
+        
+        // Test with maximum positive values
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            original[i] = 127 // Max for 8-bit
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        let decoded = try decoder.decode(codeBlock: codeBlock, bitDepth: bitDepth)
+        XCTAssertEqual(decoded, original, "Round-trip for max positive values should be exact")
+        
+        // Test with maximum negative values
+        for i in 0..<original.count {
+            original[i] = -128 // Min for 8-bit signed
+        }
+        
+        let codeBlock2 = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth
+        )
+        
+        let decoded2 = try decoder.decode(codeBlock: codeBlock2, bitDepth: bitDepth)
+        XCTAssertEqual(decoded2, original, "Round-trip for max negative values should be exact")
+    }
+    
+    // MARK: - Bit-Plane Decoder Direct Tests
+    
+    func testBitPlaneDecoderRoundTrip4x4() throws {
+        let width = 4
+        let height = 4
+        let bitDepth = 8
+        
+        let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
+        let decoder = BitPlaneDecoder(width: width, height: height, subband: .ll)
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        original[0] = 100
+        original[5] = -50
+        original[10] = 25
+        original[15] = -10
+        
+        let (data, passCount, zeroBitPlanes) = try encoder.encode(
+            coefficients: original,
+            bitDepth: bitDepth
+        )
+        
+        let decoded = try decoder.decode(
+            data: data,
+            passCount: passCount,
+            bitDepth: bitDepth,
+            zeroBitPlanes: zeroBitPlanes
+        )
+        
+        XCTAssertEqual(decoded, original, "Small block round-trip should be exact")
+    }
+    
+    func testBitPlaneDecoderRoundTripDifferentSubbands() throws {
+        let width = 16
+        let height = 16
+        let bitDepth = 10
+        
+        let subbands: [J2KSubband] = [.ll, .hl, .lh, .hh]
+        
+        for subband in subbands {
+            let encoder = BitPlaneCoder(width: width, height: height, subband: subband)
+            let decoder = BitPlaneDecoder(width: width, height: height, subband: subband)
+            
+            var original = [Int32](repeating: 0, count: width * height)
+            for i in 0..<original.count {
+                let sign: Int32 = (i % 2 == 0) ? 1 : -1
+                original[i] = sign * Int32((i * 11) % 512)
+            }
+            
+            let (data, passCount, zeroBitPlanes) = try encoder.encode(
+                coefficients: original,
+                bitDepth: bitDepth
+            )
+            
+            let decoded = try decoder.decode(
+                data: data,
+                passCount: passCount,
+                bitDepth: bitDepth,
+                zeroBitPlanes: zeroBitPlanes
+            )
+            
+            XCTAssertEqual(decoded, original, "Round-trip for \(subband) should be exact")
+        }
+    }
+    
     // MARK: - Performance Tests
     
     func testBitPlaneEncodingPerformance() throws {
