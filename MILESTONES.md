@@ -65,7 +65,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add code-block decoder
 - [x] Implement selective arithmetic coding bypass
 - [x] Add termination modes (predictable, near-optimal)
-- [ ] Optimize context formation
+- [x] Optimize context formation
 
 ### Week 17-19: Tier-2 Coding
 - [ ] Implement packet header encoding/decoding
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 1 (Week 14-16)
-**Next Milestone**: Code-Block Coding - Optimize context formation (Week 14-16)
+**Current Phase**: Phase 1 (Week 17-19)
+**Next Milestone**: Tier-2 Coding - Implement packet header encoding/decoding (Week 17-19)
