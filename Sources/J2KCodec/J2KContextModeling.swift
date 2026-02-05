@@ -235,24 +235,17 @@ public struct ContextModeler: Sendable {
         }
     }
     
-    /// Context formation for HL subband.
+    /// Context formation for HL subband (horizontal details).
+    /// Optimized to remove redundant branches and simplify logic.
     private func significanceContextHL(h: Int, v: Int, d: Int) -> EBCOTContext {
+        // Vertical neighbor presence has priority in HL subband
         if v >= 1 {
-            if h >= 1 {
-                return .sigPropHL_h
-            } else if d >= 1 {
-                return .sigPropHL_v
-            } else {
-                return .sigPropHL_v
-            }
+            // Any vertical neighbor: use HL_v context (or HL_h if horizontal also present)
+            return h >= 1 ? .sigPropHL_h : .sigPropHL_v
         } else if h >= 2 {
             return .sigPropHL_h
         } else if h == 1 {
-            if d >= 1 {
-                return .sigPropHL_h
-            } else {
-                return .sigPropLL_LH_1d
-            }
+            return d >= 1 ? .sigPropHL_h : .sigPropLL_LH_1d
         } else if d >= 2 {
             return .sigPropLL_LH_2
         } else if d == 1 {
@@ -262,24 +255,18 @@ public struct ContextModeler: Sendable {
         }
     }
     
-    /// Context formation for LH (and LL) subband.
+    /// Context formation for LH (and LL) subband (vertical details).
+    /// Optimized to remove redundant branches and simplify logic.
     private func significanceContextLH(h: Int, v: Int, d: Int) -> EBCOTContext {
+        // Horizontal neighbor presence has priority in LH subband
         if h >= 1 {
-            if v >= 1 {
-                return .sigPropLL_LH_2
-            } else if d >= 1 {
-                return .sigPropLL_LH_1h
-            } else {
-                return .sigPropLL_LH_1h
-            }
+            // Horizontal neighbor present
+            return v >= 1 ? .sigPropLL_LH_2 : .sigPropLL_LH_1h
         } else if v >= 2 {
             return .sigPropLL_LH_2
         } else if v == 1 {
-            if d >= 1 {
-                return .sigPropLL_LH_1v
-            } else {
-                return .sigPropLL_LH_1v
-            }
+            // Single vertical neighbor, same context regardless of diagonal
+            return .sigPropLL_LH_1v
         } else if d >= 2 {
             return .sigPropLL_LH_2
         } else if d == 1 {
@@ -324,6 +311,7 @@ public struct ContextModeler: Sendable {
     ///
     /// The sign context depends on the signs of significant horizontal and
     /// vertical neighbors. The context is symmetric with an XOR sign prediction.
+    /// Optimized to reduce branching and simplify XOR logic.
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: A tuple containing the context label and the sign prediction (XOR bit).
@@ -331,34 +319,13 @@ public struct ContextModeler: Sendable {
         let hSign = neighbors.horizontalSign
         let vSign = neighbors.verticalSign
         
-        // Compute the context based on sign contributions
-        // The sign prediction is the XOR of the two sign contributions
+        // XOR prediction is true when exactly one contribution is negative
+        let xorBit = (hSign < 0) != (vSign < 0)
         
-        let hContrib: Int
-        let vContrib: Int
-        var xorBit = false
+        // Normalize contributions to -1, 0, +1 and map to context
+        let hContrib = hSign == 0 ? 0 : (hSign > 0 ? 1 : -1)
+        let vContrib = vSign == 0 ? 0 : (vSign > 0 ? 1 : -1)
         
-        // Horizontal contribution
-        if hSign > 0 {
-            hContrib = 1
-        } else if hSign < 0 {
-            hContrib = -1
-            xorBit = !xorBit
-        } else {
-            hContrib = 0
-        }
-        
-        // Vertical contribution
-        if vSign > 0 {
-            vContrib = 1
-        } else if vSign < 0 {
-            vContrib = -1
-            xorBit = !xorBit
-        } else {
-            vContrib = 0
-        }
-        
-        // Map to context
         let context = signContextFromContributions(h: hContrib, v: vContrib)
         
         return (context, xorBit)
@@ -444,6 +411,12 @@ public struct NeighborCalculator: Sendable {
     
     /// Calculates the neighbor contribution for a coefficient.
     ///
+    /// This method is performance-critical and called once per coefficient per coding pass.
+    /// Optimizations include:
+    /// - Caching row offsets to avoid repeated multiplication
+    /// - Hoisting sign array check outside loops
+    /// - Minimizing redundant boundary checks
+    ///
     /// - Parameters:
     ///   - x: The x-coordinate of the coefficient.
     ///   - y: The y-coordinate of the coefficient.
@@ -458,74 +431,108 @@ public struct NeighborCalculator: Sendable {
     ) -> NeighborContribution {
         var contribution = NeighborContribution()
         
-        // Check bounds and add contributions
+        // Pre-compute row offsets to avoid repeated multiplication
+        let currentRowOffset = y * width
+        let topRowOffset = (y - 1) * width
+        let bottomRowOffset = (y + 1) * width
+        
+        // Check boundary conditions
         let hasLeft = x > 0
         let hasRight = x < width - 1
         let hasTop = y > 0
         let hasBottom = y < height - 1
         
-        // Horizontal neighbors
-        if hasLeft {
-            let idx = y * width + (x - 1)
-            if states[idx].contains(.significant) {
-                contribution.horizontal += 1
-                if let signs = signs {
+        // Branch on sign array presence once to avoid repeated optional checks
+        if let signs = signs {
+            // With sign tracking
+            
+            // Horizontal neighbors
+            if hasLeft {
+                let idx = currentRowOffset + (x - 1)
+                if states[idx].contains(.significant) {
+                    contribution.horizontal += 1
                     contribution.horizontalSign += signs[idx] ? -1 : 1
                 }
             }
-        }
-        if hasRight {
-            let idx = y * width + (x + 1)
-            if states[idx].contains(.significant) {
-                contribution.horizontal += 1
-                if let signs = signs {
+            if hasRight {
+                let idx = currentRowOffset + (x + 1)
+                if states[idx].contains(.significant) {
+                    contribution.horizontal += 1
                     contribution.horizontalSign += signs[idx] ? -1 : 1
                 }
             }
-        }
-        
-        // Vertical neighbors
-        if hasTop {
-            let idx = (y - 1) * width + x
-            if states[idx].contains(.significant) {
-                contribution.vertical += 1
-                if let signs = signs {
+            
+            // Vertical neighbors
+            if hasTop {
+                let idx = topRowOffset + x
+                if states[idx].contains(.significant) {
+                    contribution.vertical += 1
                     contribution.verticalSign += signs[idx] ? -1 : 1
                 }
             }
-        }
-        if hasBottom {
-            let idx = (y + 1) * width + x
-            if states[idx].contains(.significant) {
-                contribution.vertical += 1
-                if let signs = signs {
+            if hasBottom {
+                let idx = bottomRowOffset + x
+                if states[idx].contains(.significant) {
+                    contribution.vertical += 1
                     contribution.verticalSign += signs[idx] ? -1 : 1
                 }
             }
-        }
-        
-        // Diagonal neighbors
-        if hasTop && hasLeft {
-            let idx = (y - 1) * width + (x - 1)
-            if states[idx].contains(.significant) {
+            
+            // Diagonal neighbors (signs not tracked for diagonals)
+            if hasTop && hasLeft {
+                let idx = topRowOffset + (x - 1)
+                if states[idx].contains(.significant) {
+                    contribution.diagonal += 1
+                }
+            }
+            if hasTop && hasRight {
+                let idx = topRowOffset + (x + 1)
+                if states[idx].contains(.significant) {
+                    contribution.diagonal += 1
+                }
+            }
+            if hasBottom && hasLeft {
+                let idx = bottomRowOffset + (x - 1)
+                if states[idx].contains(.significant) {
+                    contribution.diagonal += 1
+                }
+            }
+            if hasBottom && hasRight {
+                let idx = bottomRowOffset + (x + 1)
+                if states[idx].contains(.significant) {
+                    contribution.diagonal += 1
+                }
+            }
+        } else {
+            // Without sign tracking (faster path)
+            
+            // Horizontal neighbors
+            if hasLeft && states[currentRowOffset + (x - 1)].contains(.significant) {
+                contribution.horizontal += 1
+            }
+            if hasRight && states[currentRowOffset + (x + 1)].contains(.significant) {
+                contribution.horizontal += 1
+            }
+            
+            // Vertical neighbors
+            if hasTop && states[topRowOffset + x].contains(.significant) {
+                contribution.vertical += 1
+            }
+            if hasBottom && states[bottomRowOffset + x].contains(.significant) {
+                contribution.vertical += 1
+            }
+            
+            // Diagonal neighbors
+            if hasTop && hasLeft && states[topRowOffset + (x - 1)].contains(.significant) {
                 contribution.diagonal += 1
             }
-        }
-        if hasTop && hasRight {
-            let idx = (y - 1) * width + (x + 1)
-            if states[idx].contains(.significant) {
+            if hasTop && hasRight && states[topRowOffset + (x + 1)].contains(.significant) {
                 contribution.diagonal += 1
             }
-        }
-        if hasBottom && hasLeft {
-            let idx = (y + 1) * width + (x - 1)
-            if states[idx].contains(.significant) {
+            if hasBottom && hasLeft && states[bottomRowOffset + (x - 1)].contains(.significant) {
                 contribution.diagonal += 1
             }
-        }
-        if hasBottom && hasRight {
-            let idx = (y + 1) * width + (x + 1)
-            if states[idx].contains(.significant) {
+            if hasBottom && hasRight && states[bottomRowOffset + (x + 1)].contains(.significant) {
                 contribution.diagonal += 1
             }
         }
