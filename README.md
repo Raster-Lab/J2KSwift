@@ -134,13 +134,13 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 0 - Foundation (Weeks 1-10)
+### Current Status: Phase 1 - Entropy Coding (Weeks 11-25)
 
-- [x] Project initialization (Weeks 1-2)
-- [x] Core type system (Weeks 3-4)
-- [x] Memory management (Weeks 5-6)
-- [x] Basic I/O infrastructure (Weeks 7-8)
-- [ ] Testing framework (Weeks 9-10)
+- [x] Tier-1 Coding Primitives (Weeks 11-13)
+- [x] Code-Block Coding (Weeks 14-16)
+- [x] Tier-2 Coding (Weeks 17-19)
+- [ ] Performance Optimization (Weeks 20-22)
+- [ ] Testing & Validation (Weeks 23-25)
 
 ## 🌟 Features
 
@@ -157,6 +157,9 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Bitstream reader/writer with bit-level operations
 - ✅ JPEG 2000 marker segment parser
 - ✅ File format detection (JP2, J2K, JPX, JPM)
+- ✅ Tier-1 coding (bit-plane coding, MQ-coder, context modeling)
+- ✅ Code-block encoding/decoding with EBCOT
+- ✅ Tier-2 coding (packet headers, progression orders, layer formation)
 
 ### Planned Features
 
