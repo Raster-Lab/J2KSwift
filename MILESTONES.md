@@ -67,12 +67,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add termination modes (predictable, near-optimal)
 - [x] Optimize context formation
 
-### Week 17-19: Tier-2 Coding
-- [ ] Implement packet header encoding/decoding
-- [ ] Add progression order support (LRCP, RLCP, RPCL, PCRL, CPRL)
-- [ ] Create layer formation algorithm
-- [ ] Implement rate-distortion optimization
-- [ ] Add quality layer generation
+### Week 17-19: Tier-2 Coding ✅
+- [x] Implement packet header encoding/decoding
+- [x] Add progression order support (LRCP, RLCP, RPCL, PCRL, CPRL)
+- [x] Create layer formation algorithm
+- [ ] Implement rate-distortion optimization (basic placeholder added)
+- [x] Add quality layer generation
 
 ### Week 20-22: Performance Optimization
 - [ ] Profile entropy coding performance
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-05
-**Current Phase**: Phase 1 (Week 17-19)
-**Next Milestone**: Tier-2 Coding - Implement packet header encoding/decoding (Week 17-19)
+**Current Phase**: Phase 1 (Week 20-22)
+**Next Milestone**: Performance Optimization - Profile and optimize entropy coding (Week 20-22)
