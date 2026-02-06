@@ -261,34 +261,7 @@ public actor JPIPClient {
     }
 }
 
-/// A JPIP server for serving JPEG 2000 images.
-///
-/// Server implementation is planned for Phase 6, Weeks 78-80.
-public actor JPIPServer {
-    /// The port to listen on.
-    public let port: Int
-    
-    /// Creates a new JPIP server.
-    ///
-    /// - Parameter port: The port to listen on (default: 8080).
-    public init(port: Int = 8080) {
-        self.port = port
-    }
-    
-    /// Starts the server.
-    ///
-    /// - Throws: ``J2KError`` if the server cannot start.
-    public func start() async throws {
-        throw J2KError.notImplemented("JPIP server not yet implemented")
-    }
-    
-    /// Stops the server.
-    ///
-    /// - Throws: ``J2KError`` if stopping fails.
-    public func stop() async throws {
-        throw J2KError.notImplemented("JPIP server not yet implemented")
-    }
-}
+// Server is now implemented in JPIPServer.swift
 
 extension J2KError {
     /// Creates a not implemented error.
