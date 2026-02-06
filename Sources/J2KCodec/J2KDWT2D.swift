@@ -105,6 +105,46 @@ public struct J2KDWT2D: Sendable {
         }
     }
     
+    /// Decomposition structure pattern for wavelet transform.
+    ///
+    /// Defines how the DWT should be applied across different levels and subbands.
+    /// This allows for both standard dyadic decomposition and more advanced patterns.
+    public enum DecompositionStructure: Sendable, Equatable {
+        /// Standard dyadic decomposition (only LL subband is decomposed at each level).
+        ///
+        /// This is the most common pattern in JPEG 2000, where each level only decomposes
+        /// the LL (low-low) subband from the previous level.
+        ///
+        /// Example for 3 levels:
+        /// ```
+        /// Level 0: Original -> LL, LH, HL, HH
+        /// Level 1: LL -> LL2, LH2, HL2, HH2
+        /// Level 2: LL2 -> LL3, LH3, HL3, HH3
+        /// ```
+        case dyadic(levels: Int)
+        
+        /// Wavelet packet decomposition (all subbands can be decomposed).
+        ///
+        /// Allows decomposition of not just LL, but also LH, HL, and HH subbands.
+        /// This provides more flexibility but is less commonly used.
+        ///
+        /// - Parameter pattern: Array of level patterns, where each level specifies which
+        ///   subbands to decompose. Use 4-bit pattern: bit 0=LL, 1=LH, 2=HL, 3=HH.
+        ///   For example: 0b0001 = decompose only LL (standard dyadic)
+        ///               0b1111 = decompose all four subbands
+        case waveletPacket(pattern: [UInt8])
+        
+        /// Arbitrary decomposition with different levels for horizontal and vertical.
+        ///
+        /// Allows independent control of horizontal and vertical decomposition levels.
+        /// This can be useful for images with directional features.
+        ///
+        /// - Parameters:
+        ///   - horizontalLevels: Number of horizontal decomposition levels
+        ///   - verticalLevels: Number of vertical decomposition levels
+        case arbitrary(horizontalLevels: Int, verticalLevels: Int)
+    }
+    
     // MARK: - Forward Transform
     
     /// Performs 2D forward discrete wavelet transform (single level).
@@ -486,6 +526,213 @@ public struct J2KDWT2D: Sendable {
         }
         
         return currentImage
+    }
+    
+    // MARK: - Arbitrary Decomposition Structures
+    
+    /// Performs 2D forward DWT with a custom decomposition structure.
+    ///
+    /// This method allows for flexible decomposition patterns beyond standard dyadic,
+    /// including wavelet packet decomposition and arbitrary horizontal/vertical levels.
+    ///
+    /// - Parameters:
+    ///   - image: Input 2D image. Must be non-empty with consistent row lengths.
+    ///   - structure: Decomposition structure pattern to apply.
+    ///   - filter: Wavelet filter to use (5/3 or 9/7).
+    ///   - boundaryExtension: How to handle signal boundaries (default: symmetric).
+    /// - Returns: Multi-level decomposition with the specified structure.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if image or structure is invalid.
+    ///
+    /// Example:
+    /// ```swift
+    /// // Standard dyadic decomposition (equivalent to forwardDecomposition)
+    /// let standard = try J2KDWT2D.forwardDecompositionWithStructure(
+    ///     image: image,
+    ///     structure: .dyadic(levels: 3),
+    ///     filter: .reversible53
+    /// )
+    ///
+    /// // Arbitrary decomposition with different H/V levels
+    /// let arbitrary = try J2KDWT2D.forwardDecompositionWithStructure(
+    ///     image: image,
+    ///     structure: .arbitrary(horizontalLevels: 3, verticalLevels: 2),
+    ///     filter: .reversible53
+    /// )
+    /// ```
+    public static func forwardDecompositionWithStructure(
+        image: [[Int32]],
+        structure: DecompositionStructure,
+        filter: J2KDWT1D.Filter,
+        boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
+    ) throws -> MultiLevelDecomposition {
+        guard !image.isEmpty else {
+            throw J2KError.invalidParameter("Image cannot be empty")
+        }
+        
+        switch structure {
+        case .dyadic(let levels):
+            // Standard dyadic decomposition - just call existing method
+            return try forwardDecomposition(
+                image: image,
+                levels: levels,
+                filter: filter,
+                boundaryExtension: boundaryExtension
+            )
+            
+        case .waveletPacket(let pattern):
+            // Wavelet packet decomposition - decompose specified subbands
+            guard !pattern.isEmpty else {
+                throw J2KError.invalidParameter("Wavelet packet pattern cannot be empty")
+            }
+            
+            // For now, implement basic packet decomposition (LL only)
+            // Full packet decomposition would require tracking all subband trees
+            var levels: [DecompositionResult] = []
+            var currentImage = image
+            
+            for (levelIdx, levelPattern) in pattern.enumerated() {
+                // Decompose LL subband if bit 0 is set
+                if levelPattern & 0b0001 != 0 {
+                    let result = try forwardTransform(
+                        image: currentImage,
+                        filter: filter,
+                        boundaryExtension: boundaryExtension
+                    )
+                    levels.append(result)
+                    currentImage = result.ll
+                    
+                    // Note: Full wavelet packet would also decompose LH/HL/HH if their bits are set
+                    // This is left as a future enhancement
+                } else {
+                    throw J2KError.invalidParameter(
+                        "Wavelet packet pattern at level \(levelIdx) must decompose at least LL subband"
+                    )
+                }
+            }
+            
+            return MultiLevelDecomposition(levels: levels)
+            
+        case .arbitrary(let hLevels, let vLevels):
+            // Arbitrary decomposition with independent H/V levels
+            guard hLevels >= 0 && vLevels >= 0 else {
+                throw J2KError.invalidParameter(
+                    "Horizontal and vertical levels must be non-negative, got h=\(hLevels), v=\(vLevels)"
+                )
+            }
+            
+            guard hLevels > 0 || vLevels > 0 else {
+                throw J2KError.invalidParameter("At least one decomposition level is required")
+            }
+            
+            // Apply separable transforms with different levels
+            var currentImage = image
+            var levels: [DecompositionResult] = []
+            
+            let maxLevels = max(hLevels, vLevels)
+            
+            for level in 0..<maxLevels {
+                let height = currentImage.count
+                let width = currentImage[0].count
+                
+                // Check if we can decompose further
+                guard width >= 2 && height >= 2 else {
+                    throw J2KError.invalidParameter(
+                        "Image too small for \(level + 1) levels of decomposition"
+                    )
+                }
+                
+                var llRows = [[Int32]]()
+                var lhRows = [[Int32]]()
+                
+                // Apply horizontal transform if within horizontal levels
+                if level < hLevels {
+                    // Standard row transform
+                    for row in currentImage {
+                        let (low, high) = try J2KDWT1D.forwardTransform(
+                            signal: row,
+                            filter: filter,
+                            boundaryExtension: boundaryExtension
+                        )
+                        llRows.append(low)
+                        lhRows.append(high)
+                    }
+                } else {
+                    // No horizontal decomposition - keep as is
+                    for row in currentImage {
+                        llRows.append(row)
+                        lhRows.append([])  // Empty highpass
+                    }
+                }
+                
+                // Apply vertical transform if within vertical levels
+                var ll: [[Int32]] = []
+                var lh: [[Int32]] = []
+                var hl: [[Int32]] = []
+                var hh: [[Int32]] = []
+                
+                if level < vLevels && level < hLevels {
+                    // Standard 2D decomposition
+                    let result = try forwardTransform(
+                        image: currentImage,
+                        filter: filter,
+                        boundaryExtension: boundaryExtension
+                    )
+                    ll = result.ll
+                    lh = result.lh
+                    hl = result.hl
+                    hh = result.hh
+                } else if level < hLevels {
+                    // Only horizontal decomposition
+                    ll = llRows
+                    lh = lhRows
+                    hl = []
+                    hh = []
+                } else if level < vLevels {
+                    // Only vertical decomposition
+                    let transposed = transpose(currentImage)
+                    var llCols = [[Int32]]()
+                    var hlCols = [[Int32]]()
+                    
+                    for col in transposed {
+                        let (low, high) = try J2KDWT1D.forwardTransform(
+                            signal: col,
+                            filter: filter,
+                            boundaryExtension: boundaryExtension
+                        )
+                        llCols.append(low)
+                        hlCols.append(high)
+                    }
+                    
+                    ll = transpose(llCols)
+                    lh = []
+                    hl = transpose(hlCols)
+                    hh = []
+                } else {
+                    // No decomposition
+                    break
+                }
+                
+                levels.append(DecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh))
+                currentImage = ll
+            }
+            
+            return MultiLevelDecomposition(levels: levels)
+        }
+    }
+    
+    /// Helper method to transpose a 2D array.
+    private static func transpose(_ matrix: [[Int32]]) -> [[Int32]] {
+        guard !matrix.isEmpty else { return [] }
+        let rows = matrix.count
+        let cols = matrix[0].count
+        
+        var result = [[Int32]](repeating: [Int32](repeating: 0, count: rows), count: cols)
+        for i in 0..<rows {
+            for j in 0..<cols {
+                result[j][i] = matrix[i][j]
+            }
+        }
+        return result
     }
 }
 

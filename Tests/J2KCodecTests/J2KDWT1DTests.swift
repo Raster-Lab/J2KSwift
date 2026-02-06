@@ -630,6 +630,142 @@ final class J2KDWT1DTests: XCTestCase {
             }
         }
     }
+    
+    // MARK: - Custom Filter Tests
+    
+    func testCustomFilterCDF97Equivalent() throws {
+        // Test that custom CDF 9/7 filter produces same results as built-in 9/7
+        let signal: [Int32] = Array(1...32)
+        
+        let result97 = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .irreversible97
+        )
+        
+        let resultCustom = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .custom(.cdf97)
+        )
+        
+        // Should produce nearly identical results (within floating-point precision after rounding)
+        XCTAssertEqual(result97.lowpass.count, resultCustom.lowpass.count)
+        XCTAssertEqual(result97.highpass.count, resultCustom.highpass.count)
+        
+        for i in 0..<result97.lowpass.count {
+            let diff = abs(result97.lowpass[i] - resultCustom.lowpass[i])
+            XCTAssertLessThanOrEqual(diff, 1, "Lowpass should match within 1 at index \(i)")
+        }
+        
+        for i in 0..<result97.highpass.count {
+            let diff = abs(result97.highpass[i] - resultCustom.highpass[i])
+            XCTAssertLessThanOrEqual(diff, 1, "Highpass should match within 1 at index \(i)")
+        }
+    }
+    
+    func testCustomFilterLeGall53Equivalent() throws {
+        // Test that custom Le Gall 5/3 filter produces similar results
+        let signal: [Int32] = Array(1...32)
+        
+        let result53 = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .reversible53
+        )
+        
+        let resultCustom = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .custom(.leGall53)
+        )
+        
+        // Should produce nearly identical results (custom uses floating-point)
+        XCTAssertEqual(result53.lowpass.count, resultCustom.lowpass.count)
+        XCTAssertEqual(result53.highpass.count, resultCustom.highpass.count)
+        
+        for i in 0..<result53.lowpass.count {
+            let diff = abs(result53.lowpass[i] - resultCustom.lowpass[i])
+            XCTAssertLessThanOrEqual(diff, 1, "Lowpass should match within 1 at index \(i)")
+        }
+        
+        for i in 0..<result53.highpass.count {
+            let diff = abs(result53.highpass[i] - resultCustom.highpass[i])
+            XCTAssertLessThanOrEqual(diff, 1, "Highpass should match within 1 at index \(i)")
+        }
+    }
+    
+    func testCustomFilterReconstruction() throws {
+        // Test that custom filter has good reconstruction
+        let signal: [Int32] = Array(1...64)
+        
+        let (low, high) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .custom(.cdf97)
+        )
+        
+        let reconstructed = try J2KDWT1D.inverseTransform(
+            lowpass: low,
+            highpass: high,
+            filter: .custom(.cdf97)
+        )
+        
+        // Allow small error for floating-point custom filter
+        XCTAssertEqual(reconstructed.count, signal.count)
+        for i in 0..<signal.count {
+            let diff = abs(reconstructed[i] - signal[i])
+            XCTAssertLessThanOrEqual(diff, 2, "Reconstruction error should be <= 2 at index \(i)")
+        }
+    }
+    
+    func testCustomFilterWithSimpleCoefficients() throws {
+        // Test custom filter with simple coefficients
+        let customFilter = J2KDWT1D.CustomFilter(
+            steps: [
+                J2KDWT1D.LiftingStep(coefficients: [-0.5], isPredict: true),
+                J2KDWT1D.LiftingStep(coefficients: [0.25], isPredict: false),
+            ],
+            lowpassScale: 1.0,
+            highpassScale: 1.0,
+            isReversible: false
+        )
+        
+        let signal: [Int32] = [1, 2, 3, 4, 5, 6, 7, 8]
+        
+        let (low, high) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: .custom(customFilter)
+        )
+        
+        // Should produce subbands
+        XCTAssertEqual(low.count, 4)
+        XCTAssertEqual(high.count, 4)
+        
+        // Test reconstruction
+        let reconstructed = try J2KDWT1D.inverseTransform(
+            lowpass: low,
+            highpass: high,
+            filter: .custom(customFilter)
+        )
+        
+        XCTAssertEqual(reconstructed.count, signal.count)
+    }
+    
+    func testCustomFilterEquality() {
+        // Test Equatable conformance for CustomFilter
+        let filter1 = J2KDWT1D.CustomFilter.cdf97
+        let filter2 = J2KDWT1D.CustomFilter.cdf97
+        let filter3 = J2KDWT1D.CustomFilter.leGall53
+        
+        XCTAssertEqual(filter1, filter2)
+        XCTAssertNotEqual(filter1, filter3)
+    }
+    
+    func testLiftingStepEquality() {
+        // Test Equatable conformance for LiftingStep
+        let step1 = J2KDWT1D.LiftingStep(coefficients: [-0.5], isPredict: true)
+        let step2 = J2KDWT1D.LiftingStep(coefficients: [-0.5], isPredict: true)
+        let step3 = J2KDWT1D.LiftingStep(coefficients: [0.25], isPredict: false)
+        
+        XCTAssertEqual(step1, step2)
+        XCTAssertNotEqual(step1, step3)
+    }
 }
 
 // MARK: - Helper: Seeded Random Number Generator

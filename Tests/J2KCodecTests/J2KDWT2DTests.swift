@@ -674,4 +674,326 @@ final class J2KDWT2DTests: XCTestCase {
         
         XCTAssertEqual(reconstructed, image)
     }
+    
+    // MARK: - Arbitrary Decomposition Structure Tests
+    
+    func testDyadicDecompositionStructure() throws {
+        // Test that dyadic structure produces same results as standard decomposition
+        let image = generateTestImage(width: 32, height: 32)
+        
+        let standard = try J2KDWT2D.forwardDecomposition(
+            image: image,
+            levels: 3,
+            filter: .reversible53
+        )
+        
+        let dyadic = try J2KDWT2D.forwardDecompositionWithStructure(
+            image: image,
+            structure: .dyadic(levels: 3),
+            filter: .reversible53
+        )
+        
+        // Should produce identical results
+        XCTAssertEqual(standard.levelCount, dyadic.levelCount)
+        XCTAssertEqual(standard.coarsestLL, dyadic.coarsestLL)
+        
+        for level in 0..<standard.levelCount {
+            XCTAssertEqual(standard.levels[level].ll, dyadic.levels[level].ll)
+            XCTAssertEqual(standard.levels[level].lh, dyadic.levels[level].lh)
+            XCTAssertEqual(standard.levels[level].hl, dyadic.levels[level].hl)
+            XCTAssertEqual(standard.levels[level].hh, dyadic.levels[level].hh)
+        }
+    }
+    
+    func testWaveletPacketDecomposition() throws {
+        // Test wavelet packet with pattern specifying LL decomposition at each level
+        let image = generateTestImage(width: 16, height: 16)
+        
+        // Pattern: 0b0001 = decompose only LL subband (standard dyadic)
+        let pattern: [UInt8] = [0b0001, 0b0001, 0b0001]
+        
+        let result = try J2KDWT2D.forwardDecompositionWithStructure(
+            image: image,
+            structure: .waveletPacket(pattern: pattern),
+            filter: .reversible53
+        )
+        
+        XCTAssertEqual(result.levelCount, 3)
+        
+        // Verify each level has proper subbands
+        for level in result.levels {
+            XCTAssertFalse(level.ll.isEmpty, "LL subband should not be empty")
+            XCTAssertFalse(level.lh.isEmpty, "LH subband should not be empty")
+            XCTAssertFalse(level.hl.isEmpty, "HL subband should not be empty")
+            XCTAssertFalse(level.hh.isEmpty, "HH subband should not be empty")
+        }
+    }
+    
+    func testWaveletPacketEmptyPatternError() throws {
+        let image = generateTestImage(width: 16, height: 16)
+        
+        XCTAssertThrowsError(
+            try J2KDWT2D.forwardDecompositionWithStructure(
+                image: image,
+                structure: .waveletPacket(pattern: []),
+                filter: .reversible53
+            )
+        ) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("cannot be empty"))
+        }
+    }
+    
+    func testWaveletPacketInvalidPatternError() throws {
+        let image = generateTestImage(width: 16, height: 16)
+        
+        // Pattern with 0b0000 = decompose nothing (invalid)
+        let pattern: [UInt8] = [0b0000]
+        
+        XCTAssertThrowsError(
+            try J2KDWT2D.forwardDecompositionWithStructure(
+                image: image,
+                structure: .waveletPacket(pattern: pattern),
+                filter: .reversible53
+            )
+        ) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("must decompose at least LL"))
+        }
+    }
+    
+    func testArbitraryDecompositionEqualLevels() throws {
+        // Test arbitrary decomposition with equal H/V levels
+        let image = generateTestImage(width: 32, height: 32)
+        
+        let result = try J2KDWT2D.forwardDecompositionWithStructure(
+            image: image,
+            structure: .arbitrary(horizontalLevels: 2, verticalLevels: 2),
+            filter: .reversible53
+        )
+        
+        XCTAssertEqual(result.levelCount, 2)
+        
+        // Verify all subbands are non-empty for standard 2D decomposition
+        for level in result.levels {
+            XCTAssertFalse(level.ll.isEmpty, "LL subband should not be empty")
+            XCTAssertFalse(level.lh.isEmpty, "LH subband should not be empty")
+            XCTAssertFalse(level.hl.isEmpty, "HL subband should not be empty")
+            XCTAssertFalse(level.hh.isEmpty, "HH subband should not be empty")
+        }
+    }
+    
+    func testArbitraryDecompositionDifferentLevels() throws {
+        // Test arbitrary decomposition with more horizontal than vertical
+        let image = generateTestImage(width: 32, height: 32)
+        
+        let result = try J2KDWT2D.forwardDecompositionWithStructure(
+            image: image,
+            structure: .arbitrary(horizontalLevels: 3, verticalLevels: 2),
+            filter: .reversible53
+        )
+        
+        XCTAssertEqual(result.levelCount, 3, "Should have 3 levels (max of H and V)")
+        
+        // First 2 levels should be full 2D decomposition
+        for level in 0..<2 {
+            XCTAssertFalse(result.levels[level].ll.isEmpty)
+            XCTAssertFalse(result.levels[level].lh.isEmpty)
+            XCTAssertFalse(result.levels[level].hl.isEmpty)
+            XCTAssertFalse(result.levels[level].hh.isEmpty)
+        }
+    }
+    
+    func testArbitraryDecompositionZeroLevelsError() throws {
+        let image = generateTestImage(width: 16, height: 16)
+        
+        XCTAssertThrowsError(
+            try J2KDWT2D.forwardDecompositionWithStructure(
+                image: image,
+                structure: .arbitrary(horizontalLevels: 0, verticalLevels: 0),
+                filter: .reversible53
+            )
+        ) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("At least one decomposition level"))
+        }
+    }
+    
+    func testArbitraryDecompositionNegativeLevelsError() throws {
+        let image = generateTestImage(width: 16, height: 16)
+        
+        XCTAssertThrowsError(
+            try J2KDWT2D.forwardDecompositionWithStructure(
+                image: image,
+                structure: .arbitrary(horizontalLevels: -1, verticalLevels: 2),
+                filter: .reversible53
+            )
+        ) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("non-negative"))
+        }
+    }
+    
+    func testDecompositionStructureEquality() {
+        // Test Equatable conformance
+        XCTAssertEqual(
+            J2KDWT2D.DecompositionStructure.dyadic(levels: 3),
+            J2KDWT2D.DecompositionStructure.dyadic(levels: 3)
+        )
+        
+        XCTAssertNotEqual(
+            J2KDWT2D.DecompositionStructure.dyadic(levels: 3),
+            J2KDWT2D.DecompositionStructure.dyadic(levels: 2)
+        )
+        
+        XCTAssertEqual(
+            J2KDWT2D.DecompositionStructure.waveletPacket(pattern: [0b0001, 0b0001]),
+            J2KDWT2D.DecompositionStructure.waveletPacket(pattern: [0b0001, 0b0001])
+        )
+        
+        XCTAssertEqual(
+            J2KDWT2D.DecompositionStructure.arbitrary(horizontalLevels: 3, verticalLevels: 2),
+            J2KDWT2D.DecompositionStructure.arbitrary(horizontalLevels: 3, verticalLevels: 2)
+        )
+        
+        XCTAssertNotEqual(
+            J2KDWT2D.DecompositionStructure.arbitrary(horizontalLevels: 3, verticalLevels: 2),
+            J2KDWT2D.DecompositionStructure.arbitrary(horizontalLevels: 2, verticalLevels: 3)
+        )
+    }
+    
+    func testVariousImageSizes() throws {
+        // Test with power-of-2 sizes
+        for size in [8, 16, 32, 64, 128] {
+            let image = generateTestImage(width: size, height: size)
+            
+            let result = try J2KDWT2D.forwardDecomposition(
+                image: image,
+                levels: 2,
+                filter: .reversible53
+            )
+            
+            XCTAssertEqual(result.levelCount, 2, "Should have 2 levels for \(size)x\(size) image")
+        }
+        
+        // Test with non-power-of-2 sizes
+        for size in [7, 15, 31, 63, 127] {
+            let image = generateTestImage(width: size, height: size)
+            
+            let result = try J2KDWT2D.forwardDecomposition(
+                image: image,
+                levels: 2,
+                filter: .reversible53
+            )
+            
+            XCTAssertEqual(result.levelCount, 2, "Should have 2 levels for \(size)x\(size) image")
+        }
+    }
+    
+    func testNonSquareImages() throws {
+        // Test with rectangular images
+        let testCases: [(width: Int, height: Int)] = [
+            (32, 16),  // Wide
+            (16, 32),  // Tall
+            (64, 32),  // 2:1 ratio
+            (48, 24),  // Non-power-of-2
+        ]
+        
+        for testCase in testCases {
+            let image = generateTestImage(width: testCase.width, height: testCase.height)
+            
+            let result = try J2KDWT2D.forwardDecomposition(
+                image: image,
+                levels: 2,
+                filter: .reversible53
+            )
+            
+            XCTAssertEqual(
+                result.levelCount, 2,
+                "Should have 2 levels for \(testCase.width)x\(testCase.height) image"
+            )
+            
+            // Verify reconstruction
+            let reconstructed = try J2KDWT2D.inverseDecomposition(
+                decomposition: result,
+                filter: .reversible53
+            )
+            
+            XCTAssertEqual(reconstructed.count, testCase.height)
+            XCTAssertEqual(reconstructed[0].count, testCase.width)
+        }
+    }
+    
+    func testTransformReversibilityWithBothFilters() throws {
+        // Test reversibility with 5/3 filter (perfect reconstruction)
+        let image53 = generateTestImage(width: 32, height: 32)
+        
+        let result53 = try J2KDWT2D.forwardDecomposition(
+            image: image53,
+            levels: 3,
+            filter: .reversible53
+        )
+        
+        let reconstructed53 = try J2KDWT2D.inverseDecomposition(
+            decomposition: result53,
+            filter: .reversible53
+        )
+        
+        XCTAssertEqual(reconstructed53, image53, "5/3 filter should have perfect reconstruction")
+        
+        // Test reversibility with 9/7 filter (near-perfect reconstruction)
+        let image97 = generateTestImage(width: 32, height: 32)
+        
+        let result97 = try J2KDWT2D.forwardDecomposition(
+            image: image97,
+            levels: 3,
+            filter: .irreversible97
+        )
+        
+        let reconstructed97 = try J2KDWT2D.inverseDecomposition(
+            decomposition: result97,
+            filter: .irreversible97
+        )
+        
+        // For 9/7, allow small floating-point error
+        XCTAssertEqual(reconstructed97.count, image97.count)
+        XCTAssertEqual(reconstructed97[0].count, image97[0].count)
+        
+        for i in 0..<image97.count {
+            for j in 0..<image97[0].count {
+                let diff = abs(reconstructed97[i][j] - image97[i][j])
+                XCTAssertLessThanOrEqual(
+                    diff, 2,
+                    "9/7 filter reconstruction error should be <= 2 at (\(i),\(j))"
+                )
+            }
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func generateTestImage(width: Int, height: Int) -> [[Int32]] {
+        var image = [[Int32]]()
+        for i in 0..<height {
+            var row = [Int32]()
+            for j in 0..<width {
+                // Generate a simple pattern with some structure
+                row.append(Int32((i * width + j) % 256))
+            }
+            image.append(row)
+        }
+        return image
+    }
 }

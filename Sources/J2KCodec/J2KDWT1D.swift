@@ -44,6 +44,93 @@ public struct J2KDWT1D: Sendable {
     
     // MARK: - Filter Types
     
+    /// Lifting step specification for custom filters.
+    ///
+    /// Defines a single lifting step in the wavelet transform.
+    /// The lifting scheme alternates between predict and update steps.
+    public struct LiftingStep: Sendable, Equatable {
+        /// Coefficients for the lifting step.
+        public let coefficients: [Double]
+        
+        /// Whether this is a predict step (true) or update step (false).
+        public let isPredict: Bool
+        
+        /// Creates a lifting step.
+        ///
+        /// - Parameters:
+        ///   - coefficients: Filter coefficients.
+        ///   - isPredict: True for predict step, false for update step.
+        public init(coefficients: [Double], isPredict: Bool) {
+            self.coefficients = coefficients
+            self.isPredict = isPredict
+        }
+    }
+    
+    /// Custom filter specification for wavelet transform.
+    ///
+    /// Allows definition of arbitrary wavelet filters using the lifting scheme.
+    /// The filter is defined as a sequence of lifting steps followed by optional scaling.
+    public struct CustomFilter: Sendable, Equatable {
+        /// Sequence of lifting steps to apply.
+        public let steps: [LiftingStep]
+        
+        /// Scaling factor for lowpass coefficients (K in CDF 9/7).
+        public let lowpassScale: Double
+        
+        /// Scaling factor for highpass coefficients (1/K in CDF 9/7).
+        public let highpassScale: Double
+        
+        /// Whether this filter preserves integers (reversible).
+        public let isReversible: Bool
+        
+        /// Creates a custom filter.
+        ///
+        /// - Parameters:
+        ///   - steps: Lifting steps to apply.
+        ///   - lowpassScale: Scaling for lowpass (default: 1.0).
+        ///   - highpassScale: Scaling for highpass (default: 1.0).
+        ///   - isReversible: Whether filter is reversible (default: false).
+        public init(
+            steps: [LiftingStep],
+            lowpassScale: Double = 1.0,
+            highpassScale: Double = 1.0,
+            isReversible: Bool = false
+        ) {
+            self.steps = steps
+            self.lowpassScale = lowpassScale
+            self.highpassScale = highpassScale
+            self.isReversible = isReversible
+        }
+        
+        /// Creates a CDF 9/7 custom filter equivalent.
+        public static var cdf97: CustomFilter {
+            CustomFilter(
+                steps: [
+                    LiftingStep(coefficients: [-1.586134342], isPredict: true),
+                    LiftingStep(coefficients: [-0.05298011854], isPredict: false),
+                    LiftingStep(coefficients: [0.8829110762], isPredict: true),
+                    LiftingStep(coefficients: [0.4435068522], isPredict: false),
+                ],
+                lowpassScale: 1.149604398,
+                highpassScale: 1.0 / 1.149604398,
+                isReversible: false
+            )
+        }
+        
+        /// Creates a Le Gall 5/3 custom filter equivalent.
+        public static var leGall53: CustomFilter {
+            CustomFilter(
+                steps: [
+                    LiftingStep(coefficients: [-0.5], isPredict: true),
+                    LiftingStep(coefficients: [0.25], isPredict: false),
+                ],
+                lowpassScale: 1.0,
+                highpassScale: 1.0,
+                isReversible: true
+            )
+        }
+    }
+    
     /// Wavelet filter types supported by JPEG 2000.
     public enum Filter: Sendable {
         /// Le Gall 5/3 reversible filter for lossless compression.
@@ -57,6 +144,12 @@ public struct J2KDWT1D: Sendable {
         /// This filter uses floating-point arithmetic for better compression at the
         /// cost of not being perfectly reversible in integer domain.
         case irreversible97
+        
+        /// Custom filter with user-defined lifting steps.
+        ///
+        /// Allows implementation of arbitrary wavelet filters using the lifting scheme.
+        /// The filter specification includes lifting steps and optional scaling factors.
+        case custom(CustomFilter)
     }
     
     /// Boundary extension modes for handling signal edges.
@@ -112,7 +205,23 @@ public struct J2KDWT1D: Sendable {
         case .reversible53:
             return try forwardTransform53(signal: signal, boundaryExtension: boundaryExtension)
         case .irreversible97:
-            throw J2KError.notImplemented("9/7 filter not yet implemented")
+            // Convert Int32 to Double, apply 9/7 filter, then round back to Int32
+            let doubleSignal = signal.map { Double($0) }
+            let (lowDouble, highDouble) = try forwardTransform97(signal: doubleSignal, boundaryExtension: boundaryExtension)
+            let lowpass = lowDouble.map { Int32($0.rounded()) }
+            let highpass = highDouble.map { Int32($0.rounded()) }
+            return (lowpass: lowpass, highpass: highpass)
+        case .custom(let customFilter):
+            // Convert Int32 to Double, apply custom filter, then round back to Int32
+            let doubleSignal = signal.map { Double($0) }
+            let (lowDouble, highDouble) = try forwardTransformCustom(
+                signal: doubleSignal,
+                filter: customFilter,
+                boundaryExtension: boundaryExtension
+            )
+            let lowpass = lowDouble.map { Int32($0.rounded()) }
+            let highpass = highDouble.map { Int32($0.rounded()) }
+            return (lowpass: lowpass, highpass: highpass)
         }
     }
     
@@ -159,7 +268,22 @@ public struct J2KDWT1D: Sendable {
         case .reversible53:
             return try inverseTransform53(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
         case .irreversible97:
-            throw J2KError.notImplemented("9/7 filter not yet implemented")
+            // Convert Int32 to Double, apply inverse 9/7 filter, then round back to Int32
+            let lowDouble = lowpass.map { Double($0) }
+            let highDouble = highpass.map { Double($0) }
+            let resultDouble = try inverseTransform97(lowpass: lowDouble, highpass: highDouble, boundaryExtension: boundaryExtension)
+            return resultDouble.map { Int32($0.rounded()) }
+        case .custom(let customFilter):
+            // Convert Int32 to Double, apply inverse custom filter, then round back to Int32
+            let lowDouble = lowpass.map { Double($0) }
+            let highDouble = highpass.map { Double($0) }
+            let resultDouble = try inverseTransformCustom(
+                lowpass: lowDouble,
+                highpass: highDouble,
+                filter: customFilter,
+                boundaryExtension: boundaryExtension
+            )
+            return resultDouble.map { Int32($0.rounded()) }
         }
     }
     
@@ -508,5 +632,164 @@ extension J2KDWT1D {
         case .zeroPadding:
             return 0
         }
+    }
+    
+    // MARK: - Custom Filter Implementation
+    
+    /// Performs 1D forward DWT using a custom filter.
+    ///
+    /// - Parameters:
+    ///   - signal: Input signal as floating-point values.
+    ///   - filter: Custom filter specification.
+    ///   - boundaryExtension: How to handle signal boundaries.
+    /// - Returns: A tuple containing (lowpass, highpass) subbands.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if signal is too short.
+    public static func forwardTransformCustom(
+        signal: [Double],
+        filter: CustomFilter,
+        boundaryExtension: BoundaryExtension = .symmetric
+    ) throws -> (lowpass: [Double], highpass: [Double]) {
+        guard signal.count >= 2 else {
+            throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
+        }
+        
+        let n = signal.count
+        let lowpassSize = (n + 1) / 2
+        let highpassSize = n / 2
+        
+        var even = [Double](repeating: 0, count: lowpassSize)
+        var odd = [Double](repeating: 0, count: highpassSize)
+        
+        // Split
+        for i in 0..<lowpassSize {
+            even[i] = signal[i * 2]
+        }
+        for i in 0..<highpassSize {
+            odd[i] = signal[i * 2 + 1]
+        }
+        
+        // Apply lifting steps
+        for step in filter.steps {
+            if step.isPredict {
+                // Predict step: update odd samples
+                for i in 0..<highpassSize {
+                    var sum = 0.0
+                    for (idx, coef) in step.coefficients.enumerated() {
+                        let offset = idx - step.coefficients.count / 2
+                        let left = getExtendedValue(even, index: i + offset, extension: boundaryExtension)
+                        let right = getExtendedValue(even, index: i + offset + 1, extension: boundaryExtension)
+                        sum += coef * (left + right)
+                    }
+                    odd[i] += sum
+                }
+            } else {
+                // Update step: update even samples
+                for i in 0..<lowpassSize {
+                    var sum = 0.0
+                    for (idx, coef) in step.coefficients.enumerated() {
+                        let offset = idx - step.coefficients.count / 2
+                        let left = getExtendedValue(odd, index: i + offset - 1, extension: boundaryExtension)
+                        let right = i + offset < highpassSize ? 
+                            odd[i + offset] : 
+                            getExtendedValue(odd, index: i + offset, extension: boundaryExtension)
+                        sum += coef * (left + right)
+                    }
+                    even[i] += sum
+                }
+            }
+        }
+        
+        // Scaling
+        for i in 0..<lowpassSize {
+            even[i] *= filter.lowpassScale
+        }
+        for i in 0..<highpassSize {
+            odd[i] *= filter.highpassScale
+        }
+        
+        return (lowpass: even, highpass: odd)
+    }
+    
+    /// Performs 1D inverse DWT using a custom filter.
+    ///
+    /// - Parameters:
+    ///   - lowpass: Lowpass coefficients.
+    ///   - highpass: Highpass coefficients.
+    ///   - filter: Custom filter specification.
+    ///   - boundaryExtension: How to handle signal boundaries.
+    /// - Returns: Reconstructed signal.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if subbands have incompatible sizes.
+    public static func inverseTransformCustom(
+        lowpass: [Double],
+        highpass: [Double],
+        filter: CustomFilter,
+        boundaryExtension: BoundaryExtension = .symmetric
+    ) throws -> [Double] {
+        guard !lowpass.isEmpty && !highpass.isEmpty else {
+            throw J2KError.invalidParameter("Subbands cannot be empty")
+        }
+        
+        guard abs(lowpass.count - highpass.count) <= 1 else {
+            throw J2KError.invalidParameter(
+                "Incompatible subband sizes: lowpass=\(lowpass.count), highpass=\(highpass.count)"
+            )
+        }
+        
+        let lowpassSize = lowpass.count
+        let highpassSize = highpass.count
+        let n = lowpassSize + highpassSize
+        
+        var even = lowpass
+        var odd = highpass
+        
+        // Undo scaling
+        for i in 0..<lowpassSize {
+            even[i] /= filter.lowpassScale
+        }
+        for i in 0..<highpassSize {
+            odd[i] /= filter.highpassScale
+        }
+        
+        // Undo lifting steps in reverse order
+        for step in filter.steps.reversed() {
+            if step.isPredict {
+                // Undo predict step
+                for i in 0..<highpassSize {
+                    var sum = 0.0
+                    for (idx, coef) in step.coefficients.enumerated() {
+                        let offset = idx - step.coefficients.count / 2
+                        let left = getExtendedValue(even, index: i + offset, extension: boundaryExtension)
+                        let right = getExtendedValue(even, index: i + offset + 1, extension: boundaryExtension)
+                        sum += coef * (left + right)
+                    }
+                    odd[i] -= sum
+                }
+            } else {
+                // Undo update step
+                for i in 0..<lowpassSize {
+                    var sum = 0.0
+                    for (idx, coef) in step.coefficients.enumerated() {
+                        let offset = idx - step.coefficients.count / 2
+                        let left = getExtendedValue(odd, index: i + offset - 1, extension: boundaryExtension)
+                        let right = i + offset < highpassSize ? 
+                            odd[i + offset] : 
+                            getExtendedValue(odd, index: i + offset, extension: boundaryExtension)
+                        sum += coef * (left + right)
+                    }
+                    even[i] -= sum
+                }
+            }
+        }
+        
+        // Merge
+        var result = [Double](repeating: 0, count: n)
+        for i in 0..<lowpassSize {
+            result[i * 2] = even[i]
+        }
+        for i in 0..<highpassSize {
+            result[i * 2 + 1] = odd[i]
+        }
+        
+        return result
     }
 }

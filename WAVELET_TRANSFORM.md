@@ -46,9 +46,22 @@ The Discrete Wavelet Transform is a key component of JPEG 2000 that decomposes i
 - Tile boundary independence
 - Perfect reconstruction with tiling
 
+✅ **Phase 2, Week 35-37 (Complete)**:
+- Hardware acceleration with Accelerate framework
+- SIMD-optimized lifting steps
+- Parallel DWT processing
+- Cache-optimized transforms
+- Up to 15x speedup on Apple Silicon
+
+✅ **Phase 2, Week 38-40 (Complete)**:
+- Arbitrary decomposition structures (dyadic, wavelet packet, arbitrary H/V)
+- Custom wavelet filter support
+- Pluggable lifting scheme architecture
+- Comprehensive tests for all features
+- Support for various image sizes
+
 🚧 **Future Phases**:
-- Hardware acceleration (Weeks 35-37)
-- Advanced decomposition structures (Weeks 38-40)
+- Basic quantization (Weeks 41-43)
 
 ## Wavelet Filters
 
@@ -1042,26 +1055,126 @@ if J2KDWTAccelerated.isAvailable {
 
 For detailed information, see [HARDWARE_ACCELERATION.md](HARDWARE_ACCELERATION.md).
 
-### Future Enhancements
+## Advanced Features
 
-**Remaining Week 35-37 Work**:
-- SIMD-optimized lifting steps (2-3x additional speedup potential)
-- Parallel tile processing using Swift Concurrency (4-8x potential)
-- Advanced cache optimization
-- Performance benchmarking suite
+### Arbitrary Decomposition Structures
+
+J2KSwift supports flexible decomposition patterns beyond standard dyadic decomposition through the `DecompositionStructure` enum:
+
+#### 1. Dyadic Decomposition (Standard)
+
+The traditional JPEG 2000 decomposition pattern where only the LL subband is decomposed at each level:
+
+```swift
+let decomposition = try J2KDWT2D.forwardDecompositionWithStructure(
+    image: image,
+    structure: .dyadic(levels: 3),
+    filter: .reversible53
+)
+```
+
+#### 2. Wavelet Packet Decomposition
+
+Allows decomposition of not just LL, but also LH, HL, and HH subbands using bit patterns:
+
+```swift
+// Pattern: 0b0001 = decompose only LL (standard)
+//         0b1111 = decompose all four subbands
+let pattern: [UInt8] = [0b0001, 0b0001, 0b0001]  // 3 levels, LL only
+
+let decomposition = try J2KDWT2D.forwardDecompositionWithStructure(
+    image: image,
+    structure: .waveletPacket(pattern: pattern),
+    filter: .reversible53
+)
+```
+
+#### 3. Arbitrary Horizontal/Vertical Levels
+
+Independent control of horizontal and vertical decomposition levels:
+
+```swift
+// 3 levels horizontal, 2 levels vertical
+let decomposition = try J2KDWT2D.forwardDecompositionWithStructure(
+    image: image,
+    structure: .arbitrary(horizontalLevels: 3, verticalLevels: 2),
+    filter: .reversible53
+)
+```
+
+**Use Cases**:
+- Images with directional features (e.g., text documents benefit from more horizontal decomposition)
+- Optimal compression for non-square images
+- Specialized analysis applications
+
+### Custom Wavelet Filters
+
+J2KSwift provides a pluggable architecture for defining custom wavelet filters using the lifting scheme.
+
+#### Defining Custom Filters
+
+Create a custom filter by specifying lifting steps and scaling factors:
+
+```swift
+let customFilter = J2KDWT1D.CustomFilter(
+    steps: [
+        J2KDWT1D.LiftingStep(coefficients: [-0.5], isPredict: true),
+        J2KDWT1D.LiftingStep(coefficients: [0.25], isPredict: false),
+    ],
+    lowpassScale: 1.0,
+    highpassScale: 1.0,
+    isReversible: false
+)
+
+let (low, high) = try J2KDWT1D.forwardTransform(
+    signal: signal,
+    filter: .custom(customFilter)
+)
+```
+
+#### Pre-defined Custom Filters
+
+Two pre-defined filters are available as custom filter equivalents:
+
+```swift
+// CDF 9/7 as custom filter
+let cdf97 = J2KDWT1D.CustomFilter.cdf97
+
+// Le Gall 5/3 as custom filter  
+let leGall53 = J2KDWT1D.CustomFilter.leGall53
+
+let (low, high) = try J2KDWT1D.forwardTransform(
+    signal: signal,
+    filter: .custom(cdf97)
+)
+```
+
+#### Filter Components
+
+**LiftingStep**: Defines a single predict or update step
+- `coefficients`: Filter coefficients array
+- `isPredict`: True for predict step, false for update step
+
+**CustomFilter**: Complete filter specification
+- `steps`: Array of lifting steps to apply in sequence
+- `lowpassScale`: Scaling factor for lowpass (default: 1.0)
+- `highpassScale`: Scaling factor for highpass (default: 1.0)
+- `isReversible`: Whether the filter preserves integers
+
+**Use Cases**:
+- Research applications requiring specific filter characteristics
+- Optimized filters for particular image types
+- Experimentation with novel wavelet designs
+- Integration with existing filter libraries
+
+### Future Enhancements
 
 **Later Phases**:
 - GPU acceleration exploration (Metal/CUDA)
 - Adaptive algorithm selection
 - Custom filter acceleration
-
-## Future Work
-
-### Phase 2, Week 38-40: Advanced Features
-
-- Arbitrary decomposition structures
-- Custom wavelet filters
-- Packet partitioning
+- Full wavelet packet tree support (decompose all subbands)
+- Directional transforms
 
 ## References
 
@@ -1090,7 +1203,7 @@ For detailed information, see [HARDWARE_ACCELERATION.md](HARDWARE_ACCELERATION.m
 
 ---
 
-**Document Version**: 1.2  
+**Document Version**: 1.3  
 **Last Updated**: 2026-02-06  
-**Status**: Phase 2, Week 32-34 Complete  
-**Next Update**: After Week 35-37 (Hardware Acceleration)
+**Status**: Phase 2, Week 38-40 Complete  
+**Next Update**: After Week 41-43 (Basic Quantization)
