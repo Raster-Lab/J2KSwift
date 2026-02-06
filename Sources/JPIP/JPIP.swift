@@ -146,6 +146,112 @@ public actor JPIPClient {
         return try await createSession(target: target)
     }
     
+    /// Requests progressive quality layers for an image.
+    ///
+    /// - Parameters:
+    ///   - imageID: The identifier of the image.
+    ///   - upToLayers: The maximum number of quality layers to request.
+    /// - Returns: The image with progressive quality.
+    /// - Throws: ``J2KError`` if the request fails.
+    public func requestProgressiveQuality(imageID: String, upToLayers: Int) async throws -> J2KImage {
+        // Get or create session
+        let currentSession = try await getOrCreateSession(target: imageID)
+        
+        // Build progressive quality request
+        var request = JPIPRequest.progressiveQualityRequest(target: imageID, upToLayers: upToLayers)
+        
+        if let channelID = await currentSession.channelID {
+            request.cid = channelID
+        }
+        
+        // Send request
+        _ = try await transport.send(request)
+        
+        // TODO: Parse response data and construct J2KImage with progressive quality
+        throw J2KError.notImplemented("Progressive quality parsing from JPIP response not yet implemented")
+    }
+    
+    /// Requests a specific resolution level of an image.
+    ///
+    /// - Parameters:
+    ///   - imageID: The identifier of the image.
+    ///   - level: The resolution level (0 = full resolution, higher values = lower resolution).
+    ///   - layers: Optional number of quality layers.
+    /// - Returns: The image at the specified resolution level.
+    /// - Throws: ``J2KError`` if the request fails.
+    public func requestResolutionLevel(imageID: String, level: Int, layers: Int? = nil) async throws -> J2KImage {
+        // Get or create session
+        let currentSession = try await getOrCreateSession(target: imageID)
+        
+        // Build resolution level request
+        var request = JPIPRequest.resolutionLevelRequest(target: imageID, level: level, layers: layers)
+        
+        if let channelID = await currentSession.channelID {
+            request.cid = channelID
+        }
+        
+        // Send request
+        _ = try await transport.send(request)
+        
+        // TODO: Parse response data and construct J2KImage at specified resolution
+        throw J2KError.notImplemented("Resolution level parsing from JPIP response not yet implemented")
+    }
+    
+    /// Requests specific components of an image.
+    ///
+    /// - Parameters:
+    ///   - imageID: The identifier of the image.
+    ///   - components: Array of component indices to request (e.g., [0, 1] for R and G channels).
+    ///   - layers: Optional number of quality layers.
+    /// - Returns: The image with only the specified components.
+    /// - Throws: ``J2KError`` if the request fails.
+    public func requestComponents(imageID: String, components: [Int], layers: Int? = nil) async throws -> J2KImage {
+        // Get or create session
+        let currentSession = try await getOrCreateSession(target: imageID)
+        
+        // Build component request
+        var request = JPIPRequest.componentRequest(target: imageID, components: components, layers: layers)
+        
+        if let channelID = await currentSession.channelID {
+            request.cid = channelID
+        }
+        
+        // Send request
+        _ = try await transport.send(request)
+        
+        // TODO: Parse response data and construct J2KImage with specified components
+        throw J2KError.notImplemented("Component selection parsing from JPIP response not yet implemented")
+    }
+    
+    /// Requests metadata for an image without transferring image data.
+    ///
+    /// - Parameter imageID: The identifier of the image.
+    /// - Returns: A dictionary containing the image metadata.
+    /// - Throws: ``J2KError`` if the request fails.
+    public func requestMetadata(imageID: String) async throws -> [String: Any] {
+        // Get or create session
+        let currentSession = try await getOrCreateSession(target: imageID)
+        
+        // Build metadata request
+        var request = JPIPRequest.metadataRequest(target: imageID)
+        
+        if let channelID = await currentSession.channelID {
+            request.cid = channelID
+        }
+        
+        // Send request
+        let response = try await transport.send(request)
+        
+        // TODO: Parse metadata from response
+        // For now, return basic info from headers
+        var metadata: [String: Any] = [:]
+        metadata["channelID"] = response.channelID ?? "none"
+        metadata["statusCode"] = response.statusCode
+        metadata["dataSize"] = response.data.count
+        
+        return metadata
+    }
+    
     /// Closes the client and any active sessions.
     public func close() async throws {
         if let currentSession = self.session {

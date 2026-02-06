@@ -255,12 +255,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add session management
 - [x] Support persistent connections
 
-### Week 72-74: Data Streaming
-- [ ] Implement progressive quality requests
-- [ ] Add region of interest requests
-- [ ] Implement resolution level requests
-- [ ] Add component selection
-- [ ] Support metadata requests
+### Week 72-74: Data Streaming ✅
+- [x] Implement progressive quality requests
+- [x] Add region of interest requests
+- [x] Implement resolution level requests
+- [x] Add component selection
+- [x] Support metadata requests
 
 ### Week 75-77: Cache Management
 - [ ] Implement client-side cache
@@ -394,5 +394,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 6 - JPIP Protocol (Week 69-71 Complete ✅)
-**Next Milestone**: Phase 6, Week 72-74 - Data Streaming
+**Current Phase**: Phase 6 - JPIP Protocol (Week 72-74 Complete ✅)
+**Next Milestone**: Phase 6, Week 75-77 - Cache Management

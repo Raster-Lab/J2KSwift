@@ -123,6 +123,29 @@ Task {
             region: (x: 100, y: 100, width: 512, height: 512)
         )
         
+        // Progressive quality streaming (Week 72-74) ✅
+        let progressiveImage = try await client.requestProgressiveQuality(
+            imageID: "sample.jp2",
+            upToLayers: 5
+        )
+        
+        // Resolution level request (Week 72-74) ✅
+        let thumbnail = try await client.requestResolutionLevel(
+            imageID: "sample.jp2",
+            level: 3,
+            layers: 2
+        )
+        
+        // Component selection (Week 72-74) ✅
+        let rgImage = try await client.requestComponents(
+            imageID: "sample.jp2",
+            components: [0, 1],  // Red and Green channels only
+            layers: 3
+        )
+        
+        // Metadata-only request (Week 72-74) ✅
+        let metadata = try await client.requestMetadata(imageID: "sample.jp2")
+        
         print("Received image: \(image.width)x\(image.height)")
     } catch {
         print("Request failed: \(error)")
@@ -151,9 +174,22 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 6 In Progress - JPIP Protocol (Week 69-71) 🚧
+### Current Status: Phase 6 In Progress - JPIP Protocol (Week 72-74 Complete) ✅
 
 > **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
+
+**Completed Phases:**
+- ✅ Phase 0: Foundation (Weeks 1-10)
+- ✅ Phase 1: Entropy Coding (Weeks 11-25)
+- ✅ Phase 2: Wavelet Transform (Weeks 26-40)
+- ✅ Phase 3: Quantization (Weeks 41-48)
+- ✅ Phase 4: Color Transforms (Weeks 49-56)
+- ✅ Phase 5: File Format (Weeks 57-68)
+- 🚧 Phase 6: JPIP Protocol (Weeks 69-74 Complete, 75-80 In Progress)
+  - ✅ Week 69-71: JPIP Client Basics
+  - ✅ Week 72-74: Data Streaming (Progressive quality, Resolution levels, Component selection, Metadata requests)
+  - 🚧 Week 75-77: Cache Management (Next)
+  - 🚧 Week 78-80: JPIP Server
 
 **Phase 1 Complete** ✅:
 - [x] Tier-1 Coding Primitives (Weeks 11-13)

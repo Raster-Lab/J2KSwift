@@ -300,4 +300,175 @@ final class JPIPTests: XCTestCase {
         XCTAssertEqual(JPIPChannelType.http.rawValue, "http")
         XCTAssertEqual(JPIPChannelType.httpTcp.rawValue, "http-tcp")
     }
+    
+    // MARK: - Data Streaming Tests (Week 72-74)
+    
+    func testProgressiveQualityRequest() {
+        let request = JPIPRequest.progressiveQualityRequest(target: "test.jp2", upToLayers: 5)
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.layers, 5)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["layers"], "5")
+    }
+    
+    func testResolutionLevelRequest() {
+        let request = JPIPRequest.resolutionLevelRequest(target: "test.jp2", level: 2, layers: 3)
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.reslevels, 2)
+        XCTAssertEqual(request.layers, 3)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["reslevels"], "2")
+        XCTAssertEqual(items["layers"], "3")
+    }
+    
+    func testResolutionLevelRequestWithoutLayers() {
+        let request = JPIPRequest.resolutionLevelRequest(target: "test.jp2", level: 1)
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.reslevels, 1)
+        XCTAssertNil(request.layers)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["reslevels"], "1")
+        XCTAssertNil(items["layers"])
+    }
+    
+    func testComponentRequest() {
+        let request = JPIPRequest.componentRequest(target: "test.jp2", components: [0, 1], layers: 2)
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.comps, [0, 1])
+        XCTAssertEqual(request.layers, 2)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["comps"], "0,1")
+        XCTAssertEqual(items["layers"], "2")
+    }
+    
+    func testComponentRequestWithSingleComponent() {
+        let request = JPIPRequest.componentRequest(target: "test.jp2", components: [2])
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.comps, [2])
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["comps"], "2")
+    }
+    
+    func testComponentRequestWithMultipleComponents() {
+        let request = JPIPRequest.componentRequest(target: "test.jp2", components: [0, 1, 2])
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.comps, [0, 1, 2])
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["comps"], "0,1,2")
+    }
+    
+    func testMetadataRequest() {
+        let request = JPIPRequest.metadataRequest(target: "test.jp2")
+        XCTAssertEqual(request.target, "test.jp2")
+        XCTAssertEqual(request.metadata, true)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["meta"], "yes")
+    }
+    
+    func testRequestWithAllParameters() {
+        var request = JPIPRequest(target: "test.jp2")
+        request.fsiz = (1024, 768)
+        request.rsiz = (512, 384)
+        request.roff = (256, 192)
+        request.layers = 4
+        request.cid = "channel123"
+        request.cnew = .http
+        request.len = 65536
+        request.comps = [0, 1, 2]
+        request.reslevels = 3
+        request.metadata = true
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertEqual(items["fsiz"], "1024,768")
+        XCTAssertEqual(items["rsiz"], "512,384")
+        XCTAssertEqual(items["roff"], "256,192")
+        XCTAssertEqual(items["layers"], "4")
+        XCTAssertEqual(items["cid"], "channel123")
+        XCTAssertEqual(items["cnew"], "http")
+        XCTAssertEqual(items["len"], "65536")
+        XCTAssertEqual(items["comps"], "0,1,2")
+        XCTAssertEqual(items["reslevels"], "3")
+        XCTAssertEqual(items["meta"], "yes")
+    }
+    
+    func testEmptyComponentsNotIncludedInQueryItems() {
+        var request = JPIPRequest(target: "test.jp2")
+        request.comps = []
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertNil(items["comps"])
+    }
+    
+    func testMetadataFalseNotIncludedInQueryItems() {
+        var request = JPIPRequest(target: "test.jp2")
+        request.metadata = false
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "test.jp2")
+        XCTAssertNil(items["meta"])
+    }
+    
+    func testResolutionLevelZero() {
+        let request = JPIPRequest.resolutionLevelRequest(target: "test.jp2", level: 0)
+        XCTAssertEqual(request.reslevels, 0)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["reslevels"], "0")
+    }
+    
+    func testCompleteProgressiveQualityRequestWithAllOptions() {
+        var request = JPIPRequest.progressiveQualityRequest(target: "image.jp2", upToLayers: 8)
+        request.fsiz = (2048, 1536)
+        request.cid = "session-abc"
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "image.jp2")
+        XCTAssertEqual(items["layers"], "8")
+        XCTAssertEqual(items["fsiz"], "2048,1536")
+        XCTAssertEqual(items["cid"], "session-abc")
+    }
+    
+    func testCompleteResolutionLevelRequestWithRegion() {
+        var request = JPIPRequest.resolutionLevelRequest(target: "image.jp2", level: 2, layers: 4)
+        request.roff = (100, 200)
+        request.rsiz = (400, 300)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "image.jp2")
+        XCTAssertEqual(items["reslevels"], "2")
+        XCTAssertEqual(items["layers"], "4")
+        XCTAssertEqual(items["roff"], "100,200")
+        XCTAssertEqual(items["rsiz"], "400,300")
+    }
+    
+    func testCompleteComponentRequestWithResolutionAndRegion() {
+        var request = JPIPRequest.componentRequest(target: "image.jp2", components: [0, 2], layers: 3)
+        request.reslevels = 1
+        request.roff = (50, 50)
+        request.rsiz = (200, 200)
+        
+        let items = request.buildQueryItems()
+        XCTAssertEqual(items["target"], "image.jp2")
+        XCTAssertEqual(items["comps"], "0,2")
+        XCTAssertEqual(items["layers"], "3")
+        XCTAssertEqual(items["reslevels"], "1")
+        XCTAssertEqual(items["roff"], "50,50")
+        XCTAssertEqual(items["rsiz"], "200,200")
+    }
 }
