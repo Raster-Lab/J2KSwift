@@ -414,4 +414,347 @@ final class J2KColorTransformBenchmarkTests: XCTestCase {
         block()
         return Date().timeIntervalSince(start)
     }
+    
+    // MARK: - ICT Benchmarks
+    
+    func testICTSmallImageForward() throws {
+        // 256×256 pixels
+        let size = 256 * 256
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTMediumImageForward() throws {
+        // 512×512 pixels
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTLargeImageForward() throws {
+        // 1024×1024 pixels
+        let size = 1024 * 1024
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTVeryLargeImageForward() throws {
+        // 2048×2048 pixels
+        let size = 2048 * 2048
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTSmallImageInverse() throws {
+        // 256×256 pixels
+        let size = 256 * 256
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let y = createDoubleTestData(count: size, baseValue: 80)
+        let cb = createDoubleTestData(count: size, baseValue: -20)
+        let cr = createDoubleTestData(count: size, baseValue: 20)
+        
+        measure {
+            _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+        }
+    }
+    
+    func testICTMediumImageInverse() throws {
+        // 512×512 pixels
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let y = createDoubleTestData(count: size, baseValue: 80)
+        let cb = createDoubleTestData(count: size, baseValue: -20)
+        let cr = createDoubleTestData(count: size, baseValue: 20)
+        
+        measure {
+            _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+        }
+    }
+    
+    func testICTLargeImageInverse() throws {
+        // 1024×1024 pixels
+        let size = 1024 * 1024
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let y = createDoubleTestData(count: size, baseValue: 80)
+        let cb = createDoubleTestData(count: size, baseValue: -20)
+        let cr = createDoubleTestData(count: size, baseValue: 20)
+        
+        measure {
+            _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+        }
+    }
+    
+    func testICTRoundTripSmall() throws {
+        // 256×256 pixels
+        let size = 256 * 256
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            if let (y, cb, cr) = try? transform.forwardICT(red: red, green: green, blue: blue) {
+                _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+            }
+        }
+    }
+    
+    func testICTRoundTripMedium() throws {
+        // 512×512 pixels
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            if let (y, cb, cr) = try? transform.forwardICT(red: red, green: green, blue: blue) {
+                _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+            }
+        }
+    }
+    
+    func testICTRoundTripLarge() throws {
+        // 1024×1024 pixels
+        let size = 1024 * 1024
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        measure {
+            if let (y, cb, cr) = try? transform.forwardICT(red: red, green: green, blue: blue) {
+                _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+            }
+        }
+    }
+    
+    func testICTWithRandomData() throws {
+        // 512×512 pixels with random data
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, randomize: true)
+        let green = createDoubleTestData(count: size, randomize: true)
+        let blue = createDoubleTestData(count: size, randomize: true)
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTComponentAPISmall() throws {
+        // 256×256 pixels
+        let size = 256
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let redComp = createTestComponent(index: 0, width: size, height: size, fillValue: 100)
+        let greenComp = createTestComponent(index: 1, width: size, height: size, fillValue: 80)
+        let blueComp = createTestComponent(index: 2, width: size, height: size, fillValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(
+                redComponent: redComp,
+                greenComponent: greenComp,
+                blueComponent: blueComp
+            )
+        }
+    }
+    
+    func testICTComponentAPIMedium() throws {
+        // 512×512 pixels
+        let size = 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let redComp = createTestComponent(index: 0, width: size, height: size, fillValue: 100)
+        let greenComp = createTestComponent(index: 1, width: size, height: size, fillValue: 80)
+        let blueComp = createTestComponent(index: 2, width: size, height: size, fillValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(
+                redComponent: redComp,
+                greenComponent: greenComp,
+                blueComponent: blueComp
+            )
+        }
+    }
+    
+    func testICTComponentAPILarge() throws {
+        // 1024×1024 pixels
+        let size = 1024
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let redComp = createTestComponent(index: 0, width: size, height: size, fillValue: 100)
+        let greenComp = createTestComponent(index: 1, width: size, height: size, fillValue: 80)
+        let blueComp = createTestComponent(index: 2, width: size, height: size, fillValue: 60)
+        
+        measure {
+            _ = try? transform.forwardICT(
+                redComponent: redComp,
+                greenComponent: greenComp,
+                blueComponent: blueComp
+            )
+        }
+    }
+    
+    func testICTBatchProcessingSmall() throws {
+        // Process 100 small images (64×64)
+        let size = 64 * 64
+        let batchSize = 100
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        var batches: [([Double], [Double], [Double])] = []
+        for _ in 0..<batchSize {
+            let red = createDoubleTestData(count: size, randomize: true)
+            let green = createDoubleTestData(count: size, randomize: true)
+            let blue = createDoubleTestData(count: size, randomize: true)
+            batches.append((red, green, blue))
+        }
+        
+        measure {
+            for (red, green, blue) in batches {
+                _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+            }
+        }
+    }
+    
+    func testICTBatchProcessingMedium() throws {
+        // Process 10 medium images (256×256)
+        let size = 256 * 256
+        let batchSize = 10
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        var batches: [([Double], [Double], [Double])] = []
+        for _ in 0..<batchSize {
+            let red = createDoubleTestData(count: size, randomize: true)
+            let green = createDoubleTestData(count: size, randomize: true)
+            let blue = createDoubleTestData(count: size, randomize: true)
+            batches.append((red, green, blue))
+        }
+        
+        measure {
+            for (red, green, blue) in batches {
+                _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+            }
+        }
+    }
+    
+    func testICTMemoryAllocation() throws {
+        // Test memory allocation overhead
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        measure {
+            let red = createDoubleTestData(count: size, baseValue: 100)
+            let green = createDoubleTestData(count: size, baseValue: 80)
+            let blue = createDoubleTestData(count: size, baseValue: 60)
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTForwardVsInverse() throws {
+        // Compare forward vs inverse performance
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red = createDoubleTestData(count: size, baseValue: 100)
+        let green = createDoubleTestData(count: size, baseValue: 80)
+        let blue = createDoubleTestData(count: size, baseValue: 60)
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        
+        // Measure only the inverse
+        measure {
+            _ = try? transform.inverseICT(y: y, cb: cb, cr: cr)
+        }
+    }
+    
+    func testICTDecorrelationPerformance() throws {
+        // Test with highly correlated data (common in natural images)
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        var red = [Double](repeating: 0, count: size)
+        var green = [Double](repeating: 0, count: size)
+        var blue = [Double](repeating: 0, count: size)
+        
+        for i in 0..<size {
+            let base = Double(i % 256)
+            red[i] = base + 10
+            green[i] = base + 5
+            blue[i] = base - 5
+        }
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    func testICTWithExtremeValues() throws {
+        // Test with extreme values (stress test)
+        let size = 512 * 512
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        var red = [Double](repeating: 0, count: size)
+        var green = [Double](repeating: 0, count: size)
+        var blue = [Double](repeating: 0, count: size)
+        
+        for i in 0..<size {
+            red[i] = Double((i % 2 == 0) ? 4095 : -4095)
+            green[i] = Double((i % 3 == 0) ? 4095 : -4095)
+            blue[i] = Double((i % 5 == 0) ? 4095 : -4095)
+        }
+        
+        measure {
+            _ = try? transform.forwardICT(red: red, green: green, blue: blue)
+        }
+    }
+    
+    // MARK: - Helper Methods for ICT Benchmarks
+    
+    private func createDoubleTestData(count: Int, baseValue: Double = 0, randomize: Bool = false) -> [Double] {
+        if randomize {
+            var result = [Double](repeating: 0, count: count)
+            for i in 0..<count {
+                result[i] = Double((i * 17) % 256) - 128
+            }
+            return result
+        } else {
+            return [Double](repeating: baseValue, count: count)
+        }
+    }
 }
