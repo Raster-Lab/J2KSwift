@@ -168,12 +168,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Handle component subsampling
 - [x] Validate transform reversibility
 
-### Week 52-54: Irreversible Color Transform (ICT)
-- [ ] Implement RGB to YCbCr (ICT)
-- [ ] Add YCbCr to RGB (inverse ICT)
-- [ ] Support floating-point precision
-- [ ] Implement component decorrelation
-- [ ] Optimize using hardware acceleration
+### Week 52-54: Irreversible Color Transform (ICT) ✅
+- [x] Implement RGB to YCbCr (ICT)
+- [x] Add YCbCr to RGB (inverse ICT)
+- [x] Support floating-point precision
+- [x] Implement component decorrelation
+- [ ] Optimize using hardware acceleration (deferred to future phase)
 
 ### Week 55-56: Advanced Color Support
 - [ ] Support arbitrary color spaces
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 4 - Color Transforms (Week 49-51 Complete ✅)
-**Next Milestone**: Phase 4, Week 52-54 - Irreversible Color Transform (ICT)
+**Current Phase**: Phase 4 - Color Transforms (Week 49-51 Complete ✅, Week 52-54 Complete ✅)
+**Next Milestone**: Phase 4, Week 55-56 - Advanced Color Support

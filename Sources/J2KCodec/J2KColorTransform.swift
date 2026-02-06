@@ -319,6 +319,238 @@ public struct J2KColorTransform: Sendable {
         return (redComponent, greenComponent, blueComponent)
     }
     
+    // MARK: - Irreversible Color Transform (ICT)
+    
+    /// Applies the forward Irreversible Color Transform (RGB → YCbCr).
+    ///
+    /// Transforms RGB components to YCbCr using floating-point arithmetic for better decorrelation.
+    /// This transform is not reversible due to floating-point rounding, but provides better
+    /// compression for lossy encoding.
+    ///
+    /// Forward transform formulas (ISO/IEC 15444-1, Annex G.3):
+    /// ```
+    /// Y  = 0.299 × R + 0.587 × G + 0.114 × B
+    /// Cb = -0.168736 × R - 0.331264 × G + 0.5 × B
+    /// Cr = 0.5 × R - 0.418688 × G - 0.081312 × B
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - red: The red component data (floating-point).
+    ///   - green: The green component data (floating-point).
+    ///   - blue: The blue component data (floating-point).
+    /// - Returns: A tuple containing (Y, Cb, Cr) component data as floating-point values.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    ///
+    /// - Note: For unsigned 8-bit input, subtract 128 from each component before calling this method.
+    ///         The output will be in the range suitable for quantization.
+    public func forwardICT(
+        red: [Double],
+        green: [Double],
+        blue: [Double]
+    ) throws -> (y: [Double], cb: [Double], cr: [Double]) {
+        // Validate input
+        guard red.count == green.count && green.count == blue.count else {
+            throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
+        }
+        
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = red.count
+        var y = [Double](repeating: 0, count: count)
+        var cb = [Double](repeating: 0, count: count)
+        var cr = [Double](repeating: 0, count: count)
+        
+        // ICT coefficients from ISO/IEC 15444-1 Annex G.3
+        let coeffY_R: Double = 0.299
+        let coeffY_G: Double = 0.587
+        let coeffY_B: Double = 0.114
+        
+        let coeffCb_R: Double = -0.168736
+        let coeffCb_G: Double = -0.331264
+        let coeffCb_B: Double = 0.5
+        
+        let coeffCr_R: Double = 0.5
+        let coeffCr_G: Double = -0.418688
+        let coeffCr_B: Double = -0.081312
+        
+        // Apply ICT transform
+        for i in 0..<count {
+            let r = red[i]
+            let g = green[i]
+            let b = blue[i]
+            
+            y[i] = coeffY_R * r + coeffY_G * g + coeffY_B * b
+            cb[i] = coeffCb_R * r + coeffCb_G * g + coeffCb_B * b
+            cr[i] = coeffCr_R * r + coeffCr_G * g + coeffCr_B * b
+        }
+        
+        return (y, cb, cr)
+    }
+    
+    /// Applies the inverse Irreversible Color Transform (YCbCr → RGB).
+    ///
+    /// Transforms YCbCr components back to RGB using floating-point arithmetic.
+    /// Due to floating-point rounding, the reconstruction is not perfect.
+    ///
+    /// Inverse transform formulas (ISO/IEC 15444-1, Annex G.3):
+    /// ```
+    /// R = Y + 1.402 × Cr
+    /// G = Y - 0.344136 × Cb - 0.714136 × Cr
+    /// B = Y + 1.772 × Cb
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - y: The Y (luminance) component data (floating-point).
+    ///   - cb: The Cb (blue-difference) component data (floating-point).
+    ///   - cr: The Cr (red-difference) component data (floating-point).
+    /// - Returns: A tuple containing (R, G, B) component data as floating-point values.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    ///
+    /// - Note: For unsigned 8-bit output, add 128 to each component after calling this method
+    ///         and clamp to [0, 255] range.
+    public func inverseICT(
+        y: [Double],
+        cb: [Double],
+        cr: [Double]
+    ) throws -> (red: [Double], green: [Double], blue: [Double]) {
+        // Validate input
+        guard y.count == cb.count && cb.count == cr.count else {
+            throw J2KError.invalidParameter("Component sizes must match: Y=\(y.count), Cb=\(cb.count), Cr=\(cr.count)")
+        }
+        
+        guard !y.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = y.count
+        var red = [Double](repeating: 0, count: count)
+        var green = [Double](repeating: 0, count: count)
+        var blue = [Double](repeating: 0, count: count)
+        
+        // Inverse ICT coefficients from ISO/IEC 15444-1 Annex G.3
+        let coeffR_Cr: Double = 1.402
+        let coeffG_Cb: Double = -0.344136
+        let coeffG_Cr: Double = -0.714136
+        let coeffB_Cb: Double = 1.772
+        
+        // Apply inverse ICT transform
+        for i in 0..<count {
+            let yVal = y[i]
+            let cbVal = cb[i]
+            let crVal = cr[i]
+            
+            red[i] = yVal + coeffR_Cr * crVal
+            green[i] = yVal + coeffG_Cb * cbVal + coeffG_Cr * crVal
+            blue[i] = yVal + coeffB_Cb * cbVal
+        }
+        
+        return (red, green, blue)
+    }
+    
+    /// Applies the forward ICT to multi-component image data.
+    ///
+    /// This is a convenience method that works with J2KComponent objects.
+    ///
+    /// - Parameters:
+    ///   - redComponent: The red component.
+    ///   - greenComponent: The green component.
+    ///   - blueComponent: The blue component.
+    /// - Returns: A tuple containing (Y, Cb, Cr) components.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if components are invalid or mismatched.
+    public func forwardICT(
+        redComponent: J2KComponent,
+        greenComponent: J2KComponent,
+        blueComponent: J2KComponent
+    ) throws -> (y: J2KComponent, cb: J2KComponent, cr: J2KComponent) {
+        // Validate components
+        guard redComponent.width == greenComponent.width &&
+              greenComponent.width == blueComponent.width &&
+              redComponent.height == greenComponent.height &&
+              greenComponent.height == blueComponent.height else {
+            throw J2KError.invalidComponentConfiguration("Component dimensions must match")
+        }
+        
+        // Convert to Double arrays
+        let red = try convertToDoubleArray(redComponent)
+        let green = try convertToDoubleArray(greenComponent)
+        let blue = try convertToDoubleArray(blueComponent)
+        
+        // Apply transform
+        let (y, cb, cr) = try forwardICT(red: red, green: green, blue: blue)
+        
+        // Convert back to components
+        let yComponent = try createComponentFromDouble(
+            from: y,
+            template: redComponent,
+            index: 0
+        )
+        let cbComponent = try createComponentFromDouble(
+            from: cb,
+            template: greenComponent,
+            index: 1
+        )
+        let crComponent = try createComponentFromDouble(
+            from: cr,
+            template: blueComponent,
+            index: 2
+        )
+        
+        return (yComponent, cbComponent, crComponent)
+    }
+    
+    /// Applies the inverse ICT to multi-component image data.
+    ///
+    /// This is a convenience method that works with J2KComponent objects.
+    ///
+    /// - Parameters:
+    ///   - yComponent: The Y (luminance) component.
+    ///   - cbComponent: The Cb (blue-difference) component.
+    ///   - crComponent: The Cr (red-difference) component.
+    /// - Returns: A tuple containing (R, G, B) components.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if components are invalid or mismatched.
+    public func inverseICT(
+        yComponent: J2KComponent,
+        cbComponent: J2KComponent,
+        crComponent: J2KComponent
+    ) throws -> (red: J2KComponent, green: J2KComponent, blue: J2KComponent) {
+        // Validate components
+        guard yComponent.width == cbComponent.width &&
+              cbComponent.width == crComponent.width &&
+              yComponent.height == cbComponent.height &&
+              cbComponent.height == crComponent.height else {
+            throw J2KError.invalidComponentConfiguration("Component dimensions must match")
+        }
+        
+        // Convert to Double arrays
+        let y = try convertToDoubleArray(yComponent)
+        let cb = try convertToDoubleArray(cbComponent)
+        let cr = try convertToDoubleArray(crComponent)
+        
+        // Apply transform
+        let (red, green, blue) = try inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Convert back to components
+        let redComponent = try createComponentFromDouble(
+            from: red,
+            template: yComponent,
+            index: 0
+        )
+        let greenComponent = try createComponentFromDouble(
+            from: green,
+            template: cbComponent,
+            index: 1
+        )
+        let blueComponent = try createComponentFromDouble(
+            from: blue,
+            template: crComponent,
+            index: 2
+        )
+        
+        return (redComponent, greenComponent, blueComponent)
+    }
+    
     // MARK: - Component Subsampling Support
     
     /// Information about component subsampling.
@@ -393,6 +625,28 @@ public struct J2KColorTransform: Sendable {
         return result
     }
     
+    /// Converts a J2KComponent to a Double array.
+    private func convertToDoubleArray(_ component: J2KComponent) throws -> [Double] {
+        let pixelCount = component.width * component.height
+        var result = [Double](repeating: 0, count: pixelCount)
+        
+        // For now, assume data is stored as Int32 in native byte order
+        // In a real implementation, this would handle various bit depths and formats
+        guard component.data.count >= pixelCount * MemoryLayout<Int32>.size else {
+            throw J2KError.invalidData("Component data size insufficient")
+        }
+        
+        component.data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<pixelCount {
+                result[i] = Double(int32Ptr[i])
+            }
+        }
+        
+        return result
+    }
+    
     /// Creates a J2KComponent from an Int32 array.
     private func createComponent(
         from data: [Int32],
@@ -406,6 +660,35 @@ public struct J2KColorTransform: Sendable {
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
             for i in 0..<data.count {
                 int32Ptr[i] = data[i]
+            }
+        }
+        
+        return J2KComponent(
+            index: index,
+            bitDepth: template.bitDepth,
+            signed: template.signed,
+            width: template.width,
+            height: template.height,
+            subsamplingX: template.subsamplingX,
+            subsamplingY: template.subsamplingY,
+            data: componentData
+        )
+    }
+    
+    /// Creates a J2KComponent from a Double array.
+    private func createComponentFromDouble(
+        from data: [Double],
+        template: J2KComponent,
+        index: Int
+    ) throws -> J2KComponent {
+        var componentData = Data(count: data.count * MemoryLayout<Int32>.size)
+        
+        componentData.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<data.count {
+                // Round to nearest integer
+                int32Ptr[i] = Int32(data[i].rounded())
             }
         }
         
