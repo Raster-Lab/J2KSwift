@@ -48,6 +48,8 @@ Then add the specific modules you need to your target dependencies:
 
 #### Encoding an Image
 
+> **Note**: The top-level `J2KEncoder.encode()` pipeline is not yet implemented. Individual codec components (wavelet transform, quantization, entropy coding, color transform) are available for direct use. The example below shows the planned API.
+
 ```swift
 import J2KCore
 import J2KCodec
@@ -66,6 +68,8 @@ do {
 
 #### Decoding an Image
 
+> **Note**: The top-level `J2KDecoder.decode()` pipeline is not yet implemented. The example below shows the planned API.
+
 ```swift
 import J2KCore
 import J2KCodec
@@ -82,6 +86,8 @@ do {
 
 #### File I/O
 
+> **Note**: Full JP2 box parsing is planned for Phase 5. Basic file format detection and reader/writer scaffolding is available.
+
 ```swift
 import J2KFileFormat
 
@@ -97,6 +103,8 @@ do {
 ```
 
 #### Network Streaming with JPIP
+
+> **Note**: JPIP is planned for Phase 6 and is not yet implemented. The example below shows the planned API.
 
 ```swift
 import JPIP
@@ -122,7 +130,7 @@ Core types, protocols, and utilities used by all other modules.
 Encoding and decoding functionality for JPEG 2000 images.
 
 ### J2KAccelerate
-Hardware-accelerated operations using platform-specific frameworks (e.g., Accelerate on Apple platforms).
+Hardware-accelerated operations using platform-specific frameworks (Accelerate on Apple platforms). On non-Apple platforms, software fallback implementations are used automatically.
 
 ### J2KFileFormat
 File format support for JP2, J2K, JPX, and other JPEG 2000 container formats.
@@ -134,7 +142,9 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 3 In Progress - Quantization 🚧
+### Current Status: Phase 4 Complete - Color Transforms ✅
+
+> **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
 **Phase 1 Complete** ✅:
 - [x] Tier-1 Coding Primitives (Weeks 11-13)
@@ -366,6 +376,6 @@ J2KSwift is inspired by and references:
 
 ---
 
-**Status**: 🚧 Early Development - Not yet ready for production use
+**Status**: 🚧 Active Development - Phase 4 Complete, Phase 5+ In Progress
 
-This project is in active development. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
+This project is in active development. The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. The top-level encode/decode pipeline, file format support, and JPIP are still in progress. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
