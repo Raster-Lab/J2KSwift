@@ -497,16 +497,17 @@ final class J2KDWT2DTests: XCTestCase {
     
     func testIncompatibleSubbandsError() {
         // Test that incompatible subband sizes throw error
-        let ll: [[Int32]] = [[1, 2], [3, 4]]
-        let lh: [[Int32]] = [[1]]  // Wrong size
-        let hl: [[Int32]] = [[1, 2], [3, 4]]
-        let hh: [[Int32]] = [[1, 2], [3, 4]]
+        // Using subbands with width differences > 1 to trigger error
+        let ll: [[Int32]] = [[1, 2, 3], [4, 5, 6]]  // 2x3
+        let lh: [[Int32]] = [[1], [2]]  // 2x1 - width difference of 2 from LL
+        let hl: [[Int32]] = [[1, 2], [3, 4]]  // 2x2
+        let hh: [[Int32]] = [[1, 2], [3, 4]]  // 2x2
         
         XCTAssertThrowsError(
             try J2KDWT2D.inverseTransform(ll: ll, lh: lh, hl: hl, hh: hh, filter: .reversible53)
         ) { error in
             guard case J2KError.invalidParameter = error else {
-                XCTFail("Expected invalidParameter error")
+                XCTFail("Expected invalidParameter error, got: \(error)")
                 return
             }
         }
