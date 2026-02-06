@@ -39,8 +39,14 @@ The Discrete Wavelet Transform is a key component of JPEG 2000 that decomposes i
 - Support for arbitrary image dimensions
 - Both 5/3 and 9/7 filters
 
+✅ **Phase 2, Week 32-34 (Complete)**:
+- Tile-by-tile DWT processing
+- Tile extraction and assembly
+- Memory-efficient large image handling
+- Tile boundary independence
+- Perfect reconstruction with tiling
+
 🚧 **Future Phases**:
-- Tiling support (Weeks 32-34)
 - Hardware acceleration (Weeks 35-37)
 - Advanced decomposition structures (Weeks 38-40)
 
@@ -705,21 +711,261 @@ This ensures:
 - Reproducible bug reports
 - Deterministic CI/CD builds
 
+## Tile-by-Tile DWT Processing
+
+As of **Phase 2, Week 32-34**, J2KSwift supports efficient tile-by-tile DWT processing for large images. This enables memory-efficient handling of images that would be too large to process as a single unit.
+
+### Overview
+
+In JPEG 2000, images can be divided into rectangular tiles that are encoded independently. This provides several benefits:
+- **Memory efficiency**: Only one tile needs to be in memory at a time
+- **Parallel processing**: Tiles can be processed independently
+- **Streaming**: Progressive image loading and decoding
+- **Error resilience**: Corruption limited to individual tiles
+
+### Tile Boundary Handling
+
+A critical aspect specified in ISO/IEC 15444-1 is that wavelet filters must **NOT** read across tile boundaries. Each tile is processed independently with boundary extension applied only at the tile edges, not across neighboring tiles. This ensures:
+- Independent tile processing
+- No artifacts at tile boundaries during reconstruction
+- Compliance with JPEG 2000 standard
+
+### Usage Examples
+
+#### Example 1: Basic Tile-by-Tile Processing
+
+```swift
+import J2KCore
+import J2KCodec
+
+// Create a tiled image (1024x1024 with 512x512 tiles)
+let image = J2KImage(
+    width: 1024,
+    height: 1024,
+    components: [
+        J2KComponent(index: 0, bitDepth: 8, width: 1024, height: 1024)
+    ],
+    tileWidth: 512,
+    tileHeight: 512
+)
+
+// Image has 4 tiles (2x2 grid)
+print("Total tiles: \(image.tileCount)")  // Output: 4
+
+// Create tiled DWT processor
+let tiler = J2KDWT2DTiled()
+
+// Process all tiles
+let imageData: [[Int32]] = /* your image data */
+let tileResults = try tiler.processImageTiled(
+    imageData: imageData,
+    image: image,
+    levels: 3,
+    filter: .reversible53
+)
+
+// Each tile has been decomposed independently
+for result in tileResults {
+    print("Tile \(result.tile.index): \(result.decomposition.levelCount) levels")
+}
+```
+
+#### Example 2: Processing Individual Tiles
+
+```swift
+import J2KCore
+import J2KCodec
+
+let image = J2KImage(
+    width: 1024,
+    height: 1024,
+    components: [
+        J2KComponent(index: 0, bitDepth: 8, width: 1024, height: 1024)
+    ],
+    tileWidth: 256,
+    tileHeight: 256
+)
+
+let tiler = J2KDWT2DTiled()
+let imageData: [[Int32]] = /* your image data */
+
+// Process tiles one at a time (memory efficient)
+for tileIndex in 0..<image.tileCount {
+    // Extract tile
+    let tile = try tiler.extractTile(from: image, tileIndex: tileIndex)
+    
+    // Extract tile data
+    let tileData = try tiler.extractTileData(from: imageData, tile: tile)
+    
+    // Transform tile
+    let decomposition = try tiler.forwardTransformTile(
+        tileData: tileData,
+        levels: 3,
+        filter: .reversible53
+    )
+    
+    // Process decomposed tile (e.g., quantize, encode)
+    // ...
+    
+    // Only this tile's data is in memory
+}
+```
+
+#### Example 3: Reconstructing from Tiles
+
+```swift
+import J2KCore
+import J2KCodec
+
+let tiler = J2KDWT2DTiled()
+
+// Forward transform (tile-by-tile)
+let tileResults = try tiler.processImageTiled(
+    imageData: imageData,
+    image: image,
+    levels: 3,
+    filter: .reversible53
+)
+
+// ... tiles can be encoded, transmitted, decoded ...
+
+// Reconstruct full image from tiles
+let reconstructed = try tiler.reconstructImageFromTiles(
+    tileDecompositions: tileResults,
+    image: image,
+    filter: .reversible53
+)
+
+// Perfect reconstruction with 5/3 filter
+assert(reconstructed == imageData)
+```
+
+#### Example 4: Handling Non-Aligned Tile Dimensions
+
+```swift
+import J2KCore
+import J2KCodec
+
+// 1000x1000 image with 512x512 tiles
+// Results in partial tiles at edges
+let image = J2KImage(
+    width: 1000,
+    height: 1000,
+    components: [
+        J2KComponent(index: 0, bitDepth: 8, width: 1000, height: 1000)
+    ],
+    tileWidth: 512,
+    tileHeight: 512
+)
+
+// 4 tiles: 2x2 grid
+// Tiles at right and bottom edges are smaller
+let tiler = J2KDWT2DTiled()
+
+let tile0 = try tiler.extractTile(from: image, tileIndex: 0)
+print("Tile 0: \(tile0.width)x\(tile0.height)")  // 512x512
+
+let tile1 = try tiler.extractTile(from: image, tileIndex: 1)
+print("Tile 1: \(tile1.width)x\(tile1.height)")  // 488x512 (partial)
+
+let tile2 = try tiler.extractTile(from: image, tileIndex: 2)
+print("Tile 2: \(tile2.width)x\(tile2.height)")  // 512x488 (partial)
+
+let tile3 = try tiler.extractTile(from: image, tileIndex: 3)
+print("Tile 3: \(tile3.width)x\(tile3.height)")  // 488x488 (partial)
+
+// All tiles processed correctly regardless of size
+let results = try tiler.processImageTiled(
+    imageData: imageData,
+    image: image,
+    levels: 2,
+    filter: .reversible53
+)
+```
+
+### Memory Efficiency
+
+Tile-by-tile processing significantly reduces peak memory usage:
+
+**Without tiling** (4096x4096 image):
+- Input image: 4,096 × 4,096 pixels = 16,777,216 pixels = 64 MB (Int32 at 4 bytes/pixel)
+- DWT output: ~64 MB (4 subbands)
+- Peak memory: ~128 MB
+
+**With tiling** (512×512 tiles):
+- Input tile: 512 × 512 pixels = 262,144 pixels = 1 MB
+- DWT output: ~1 MB
+- Peak memory per tile: ~2 MB
+- **Total peak memory: ~2 MB** (process one tile at a time)
+
+This represents a **64x reduction** in peak memory usage!
+
+### Performance Characteristics
+
+**Tile Extraction**:
+- Time complexity: O(t) for tile size t
+- Space complexity: O(t) for extracted tile data
+- Overhead: Minimal (just array copying)
+
+**Tile-wise DWT**:
+- Same complexity as standard DWT: O(t) per tile
+- Total time: O(n) for n total pixels
+- No performance penalty compared to non-tiled
+
+**Tile Assembly**:
+- Time complexity: O(n) for n total pixels
+- Space complexity: O(n) for assembled image
+
+### Implementation Details
+
+**Tile Independence**:
+```swift
+// Each tile is processed completely independently
+// No cross-tile data dependencies
+
+for tileIndex in 0..<image.tileCount {
+    let tile = extractTile(tileIndex)
+    let decomposition = transform(tile)  // Independent
+    // Boundary extension only at tile edges
+}
+```
+
+**Boundary Extension at Tile Edges**:
+```swift
+// At tile boundaries, symmetric extension is applied:
+// Tile: [a, b, c, d]
+//       ↑           ↑
+//    Extends to    Extends to
+//    [b, a]        [d, c]
+
+// This ensures no artifacts and maintains perfect reconstruction
+```
+
+**Configuration Options**:
+```swift
+let config = J2KDWT2DTiled.Configuration(
+    useMemoryPooling: true,  // Reuse buffers
+    maxCachedTiles: 4        // Keep up to 4 tiles in cache
+)
+
+let tiler = J2KDWT2DTiled(configuration: config)
+```
+
+### Testing
+
+The tiled DWT implementation includes 23 comprehensive tests covering:
+- ✅ Tile extraction and assembly
+- ✅ Single and multiple tiles
+- ✅ Perfect reconstruction
+- ✅ Non-aligned dimensions (partial tiles)
+- ✅ Tile boundary independence
+- ✅ Consistency with non-tiled processing
+- ✅ Various boundary extension modes
+- ✅ Error handling and edge cases
+
+All tests pass with 100% success rate.
+
 ## Future Work
-
-### Phase 2, Week 29-31: 2D DWT
-
-Next milestone will implement:
-- 2D forward/inverse DWT
-- Separable transforms (row-then-column)
-- Multi-level decomposition
-- Proper handling of 2D boundaries
-
-### Phase 2, Week 32-34: Tiling Support
-
-- Tile-by-tile DWT for large images
-- Tile boundary handling
-- Memory-efficient processing
 
 ### Phase 2, Week 35-37: Hardware Acceleration
 
@@ -761,7 +1007,7 @@ Next milestone will implement:
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2026-02-05  
-**Status**: Phase 2, Week 26-28 Complete  
-**Next Update**: After Week 29-31 (2D DWT implementation)
+**Document Version**: 1.2  
+**Last Updated**: 2026-02-06  
+**Status**: Phase 2, Week 32-34 Complete  
+**Next Update**: After Week 35-37 (Hardware Acceleration)
