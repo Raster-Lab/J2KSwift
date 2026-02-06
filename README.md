@@ -146,6 +146,25 @@ Task {
         // Metadata-only request (Week 72-74) ✅
         let metadata = try await client.requestMetadata(imageID: "sample.jp2")
         
+        // Cache management (Week 75-77) ✅
+        let cacheStats = await session.getCacheStatistics()
+        print("Cache hit rate: \(cacheStats.hitRate * 100)%")
+        print("Cache size: \(cacheStats.totalSize) bytes, entries: \(cacheStats.entryCount)")
+        
+        // Check if data is cached
+        if await session.hasDataBin(binClass: .mainHeader, binID: 1) {
+            let dataBin = await session.getDataBin(binClass: .mainHeader, binID: 1)
+            print("Retrieved from cache: \(dataBin?.data.count ?? 0) bytes")
+        }
+        
+        // Get precinct cache statistics
+        let precinctStats = await session.getPrecinctStatistics()
+        print("Precincts: \(precinctStats.totalPrecincts) total")
+        print("Completion rate: \(precinctStats.completionRate * 100)%")
+        
+        // Invalidate cache by bin class
+        await session.invalidateCache(binClass: .precinct)
+        
         print("Received image: \(image.width)x\(image.height)")
     } catch {
         print("Request failed: \(error)")
@@ -185,11 +204,11 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Phase 3: Quantization (Weeks 41-48)
 - ✅ Phase 4: Color Transforms (Weeks 49-56)
 - ✅ Phase 5: File Format (Weeks 57-68)
-- 🚧 Phase 6: JPIP Protocol (Weeks 69-74 Complete, 75-80 In Progress)
+- 🚧 Phase 6: JPIP Protocol (Weeks 69-77 Complete, 78-80 In Progress)
   - ✅ Week 69-71: JPIP Client Basics
   - ✅ Week 72-74: Data Streaming (Progressive quality, Resolution levels, Component selection, Metadata requests)
-  - 🚧 Week 75-77: Cache Management (Next)
-  - 🚧 Week 78-80: JPIP Server
+  - ✅ Week 75-77: Cache Management (LRU eviction, Precinct caching, Statistics tracking)
+  - 🚧 Week 78-80: JPIP Server (Next)
 
 **Phase 1 Complete** ✅:
 - [x] Tier-1 Coding Primitives (Weeks 11-13)
@@ -223,8 +242,8 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 
 **Phase 6 In Progress** 🚧:
 - [x] JPIP Client Basics (Week 69-71) ✅
-- [ ] Data Streaming (Week 72-74)
-- [ ] Cache Management (Week 75-77)
+- [x] Data Streaming (Week 72-74) ✅
+- [x] Cache Management (Week 75-77) ✅
 - [ ] JPIP Server (Week 78-80)
 
 ## 🌟 Features
