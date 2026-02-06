@@ -229,16 +229,16 @@ public struct J2KDWTAccelerated: Sendable {
         }
         
         // Undo update 2: even[n] -= delta * (odd[n-1] + odd[n])
-        try applyLiftingStep(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
         
         // Undo predict 2: odd[n] -= gamma * (even[n] + even[n+1])
-        try applyLiftingStep(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
         
         // Undo update 1: even[n] -= beta * (odd[n-1] + odd[n])
-        try applyLiftingStep(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
         
         // Undo predict 1: odd[n] -= alpha * (even[n] + even[n+1])
-        try applyLiftingStep(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
         
         // Merge even and odd samples
         var result = [Double](repeating: 0, count: n)
@@ -306,6 +306,137 @@ public struct J2KDWTAccelerated: Sendable {
             
             target[i] += coefficient * (left + right)
         }
+    }
+    
+    /// SIMD-optimized lifting step for interior elements with boundary handling.
+    ///
+    /// This method uses vDSP operations for vectorized processing of interior elements,
+    /// falling back to scalar operations only for boundary elements. This provides
+    /// significant performance improvement over the naive scalar loop.
+    ///
+    /// - Parameters:
+    ///   - target: Array to be updated (modified in place).
+    ///   - reference: Reference array for the lifting operation.
+    ///   - coefficient: Lifting coefficient to apply.
+    ///   - isPredict: If true, applies predict step; if false, applies update step.
+    ///   - extension: Boundary extension mode.
+    /// - Throws: ``J2KError`` if the operation fails.
+    private func applyLiftingStepOptimized(
+        _ target: inout [Double],
+        reference: [Double],
+        coefficient: Double,
+        isPredict: Bool,
+        extension boundaryExtension: BoundaryExtension
+    ) throws {
+        #if canImport(Accelerate)
+        let targetSize = target.count
+        let refSize = reference.count
+        
+        guard targetSize > 0 && refSize > 0 else { return }
+        
+        // Determine interior range (where no boundary extension is needed)
+        let interiorStart: Int
+        let interiorEnd: Int
+        
+        if isPredict {
+            // Predict: target[n] += coef * (ref[n] + ref[n+1])
+            // Interior: 0 <= n < targetSize where n+1 < refSize
+            interiorStart = 0
+            interiorEnd = min(targetSize, refSize - 1)
+        } else {
+            // Update: target[n] += coef * (ref[n-1] + ref[n])
+            // Interior: 0 < n < targetSize where n < refSize
+            interiorStart = 1
+            interiorEnd = min(targetSize, refSize)
+        }
+        
+        // Process interior elements with vDSP (vectorized)
+        if interiorEnd > interiorStart {
+            let interiorCount = interiorEnd - interiorStart
+            
+            // Allocate temporary arrays for vectorized operations
+            var leftValues = [Double](repeating: 0, count: interiorCount)
+            var rightValues = [Double](repeating: 0, count: interiorCount)
+            var sumValues = [Double](repeating: 0, count: interiorCount)
+            var scaledValues = [Double](repeating: 0, count: interiorCount)
+            
+            if isPredict {
+                // Copy ref[i] and ref[i+1] for interior elements
+                reference.withUnsafeBufferPointer { refPtr in
+                    for i in 0..<interiorCount {
+                        leftValues[i] = refPtr[interiorStart + i]
+                        rightValues[i] = refPtr[interiorStart + i + 1]
+                    }
+                }
+            } else {
+                // Copy ref[i-1] and ref[i] for interior elements
+                reference.withUnsafeBufferPointer { refPtr in
+                    for i in 0..<interiorCount {
+                        leftValues[i] = refPtr[interiorStart + i - 1]
+                        rightValues[i] = refPtr[interiorStart + i]
+                    }
+                }
+            }
+            
+            // Vectorized addition: sum = left + right
+            vDSP_vaddD(leftValues, 1, rightValues, 1, &sumValues, 1, vDSP_Length(interiorCount))
+            
+            // Vectorized scaling: scaled = coefficient * sum
+            var coef = coefficient
+            vDSP_vsmulD(sumValues, 1, &coef, &scaledValues, 1, vDSP_Length(interiorCount))
+            
+            // Vectorized accumulation: target += scaled
+            target.withUnsafeMutableBufferPointer { targetPtr in
+                scaledValues.withUnsafeBufferPointer { scaledPtr in
+                    vDSP_vaddD(
+                        targetPtr.baseAddress! + interiorStart, 1,
+                        scaledPtr.baseAddress!, 1,
+                        targetPtr.baseAddress! + interiorStart, 1,
+                        vDSP_Length(interiorCount)
+                    )
+                }
+            }
+        }
+        
+        // Handle boundary elements with scalar operations
+        if interiorStart > 0 {
+            for i in 0..<interiorStart {
+                let left: Double
+                let right: Double
+                
+                if isPredict {
+                    left = reference[i]
+                    right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
+                } else {
+                    left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
+                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                }
+                
+                target[i] += coefficient * (left + right)
+            }
+        }
+        
+        if interiorEnd < targetSize {
+            for i in interiorEnd..<targetSize {
+                let left: Double
+                let right: Double
+                
+                if isPredict {
+                    left = reference[i]
+                    right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
+                } else {
+                    left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
+                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                }
+                
+                target[i] += coefficient * (left + right)
+            }
+        }
+        #else
+        // Fallback to non-optimized version on platforms without Accelerate
+        try applyLiftingStep(&target, reference: reference, coefficient: coefficient, 
+                           isPredict: isPredict, extension: boundaryExtension)
+        #endif
     }
     
     /// Gets a value from an array with boundary extension.
