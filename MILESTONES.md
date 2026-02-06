@@ -126,11 +126,11 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Benchmark performance improvements (15 comprehensive benchmarks)
 
 ### Week 38-40: Advanced Features
-- [ ] Implement arbitrary decomposition structures
-- [ ] Add custom wavelet filter support
-- [ ] Implement packet partition for DWT
-- [ ] Test with various image sizes
-- [ ] Validate transform reversibility
+- [x] Implement arbitrary decomposition structures
+- [x] Add custom wavelet filter support
+- [x] Implement packet partition for DWT
+- [x] Test with various image sizes
+- [x] Validate transform reversibility
 
 ## Phase 3: Quantization (Weeks 41-48)
 
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 2 - Wavelet Transform (Week 35-37 Complete ✅)
-**Next Milestone**: Phase 2, Week 38-40 - Advanced DWT Features (arbitrary decomposition, custom filters)
+**Current Phase**: Phase 2 - Wavelet Transform (Week 38-40 Complete ✅)
+**Next Milestone**: Phase 3, Week 41-43 - Basic Quantization
