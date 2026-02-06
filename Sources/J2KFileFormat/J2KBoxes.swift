@@ -1969,3 +1969,911 @@ public struct J2KXMLBox: J2KBox {
         self.xmlString = string
     }
 }
+
+// MARK: - Fragment Table Box (JPX)
+
+/// Fragment table box.
+///
+/// The fragment table box ('ftbl') is a superbox that contains a fragment list box.
+/// It enables fragmented codestreams where the image data is distributed across
+/// multiple non-contiguous fragments in the file. This is useful for:
+/// - Progressive image streaming
+/// - Efficient partial updates
+/// - Complex multi-layer compositions
+///
+/// ## Box Structure
+///
+/// - Type: 'ftbl' (0x6674626C)
+/// - Length: Variable
+/// - Content: Contains one 'flst' box
+///
+/// Example:
+/// ```swift
+/// let fragments = [
+///     J2KFragment(offset: 1000, length: 5000),
+///     J2KFragment(offset: 8000, length: 3000)
+/// ]
+/// let fragmentList = J2KFragmentListBox(fragments: fragments)
+/// let fragmentTable = J2KFragmentTableBox(fragmentList: fragmentList)
+/// ```
+public struct J2KFragmentTableBox: J2KBox {
+    /// The fragment list contained in this table.
+    public var fragmentList: J2KFragmentListBox
+    
+    public var boxType: J2KBoxType {
+        .ftbl
+    }
+    
+    /// Creates a new fragment table box.
+    ///
+    /// - Parameter fragmentList: The fragment list for this table.
+    public init(fragmentList: J2KFragmentListBox) {
+        self.fragmentList = fragmentList
+    }
+    
+    public func write() throws -> Data {
+        var writer = J2KBoxWriter()
+        try writer.writeBox(fragmentList)
+        return writer.data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        var reader = J2KBoxReader(data: data)
+        
+        // Read the fragment list box
+        guard let boxInfo = try reader.readNextBox() else {
+            throw J2KError.fileFormatError("Fragment table box is empty")
+        }
+        
+        guard boxInfo.type == .flst else {
+            throw J2KError.fileFormatError(
+                "Expected fragment list box ('flst'), found '\(boxInfo.type.stringValue)'"
+            )
+        }
+        
+        let content = reader.extractContent(from: boxInfo)
+        var flst = J2KFragmentListBox(fragments: [])
+        try flst.read(from: content)
+        self.fragmentList = flst
+    }
+}
+
+// MARK: - Fragment List Box (JPX)
+
+/// A single fragment in a codestream.
+///
+/// Represents a contiguous segment of codestream data at a specific location in the file.
+public struct J2KFragment: Sendable, Equatable {
+    /// The byte offset of this fragment from the start of the file.
+    public var offset: UInt64
+    
+    /// The length of this fragment in bytes.
+    public var length: UInt32
+    
+    /// Creates a new fragment.
+    ///
+    /// - Parameters:
+    ///   - offset: The byte offset from the start of the file.
+    ///   - length: The length in bytes.
+    public init(offset: UInt64, length: UInt32) {
+        self.offset = offset
+        self.length = length
+    }
+}
+
+/// Fragment list box.
+///
+/// The fragment list box ('flst') contains an ordered list of fragments that
+/// together make up a complete codestream. The fragments are concatenated in
+/// the order they appear in this list to reconstruct the full codestream.
+///
+/// ## Box Structure
+///
+/// - Type: 'flst' (0x666C7374)
+/// - Length: Variable
+/// - Content:
+///   - Fragment count (2 bytes): Number of fragments (NF)
+///   - Fragment data size (2 bytes): Size of fragment data field (DR)
+///   - For each fragment:
+///     - Offset (DR bytes): Byte offset from file start
+///     - Length (4 bytes): Fragment length
+///
+/// Example:
+/// ```swift
+/// let fragments = [
+///     J2KFragment(offset: 1000, length: 5000),
+///     J2KFragment(offset: 8000, length: 3000),
+///     J2KFragment(offset: 12000, length: 2000)
+/// ]
+/// let box = J2KFragmentListBox(fragments: fragments)
+/// ```
+public struct J2KFragmentListBox: J2KBox {
+    /// The list of fragments making up the codestream.
+    public var fragments: [J2KFragment]
+    
+    public var boxType: J2KBoxType {
+        .flst
+    }
+    
+    /// Creates a new fragment list box.
+    ///
+    /// - Parameter fragments: The list of fragments.
+    public init(fragments: [J2KFragment]) {
+        self.fragments = fragments
+    }
+    
+    public func write() throws -> Data {
+        guard fragments.count <= UInt16.max else {
+            throw J2KError.fileFormatError("Too many fragments: \(fragments.count), maximum is \(UInt16.max)")
+        }
+        
+        // Determine the minimum DR (fragment data size) needed
+        // DR can be 4 or 8 bytes depending on the maximum offset
+        let maxOffset = fragments.map { $0.offset }.max() ?? 0
+        let dr: UInt16 = maxOffset > UInt32.max ? 8 : 4
+        
+        var output = Data()
+        output.reserveCapacity(4 + fragments.count * (Int(dr) + 4))
+        
+        // Fragment count (2 bytes)
+        let nf = UInt16(fragments.count)
+        output.append(UInt8((nf >> 8) & 0xFF))
+        output.append(UInt8(nf & 0xFF))
+        
+        // Fragment data size (2 bytes)
+        output.append(UInt8((dr >> 8) & 0xFF))
+        output.append(UInt8(dr & 0xFF))
+        
+        // Write each fragment
+        for fragment in fragments {
+            if dr == 8 {
+                // Write 8-byte offset
+                output.append(UInt8((fragment.offset >> 56) & 0xFF))
+                output.append(UInt8((fragment.offset >> 48) & 0xFF))
+                output.append(UInt8((fragment.offset >> 40) & 0xFF))
+                output.append(UInt8((fragment.offset >> 32) & 0xFF))
+                output.append(UInt8((fragment.offset >> 24) & 0xFF))
+                output.append(UInt8((fragment.offset >> 16) & 0xFF))
+                output.append(UInt8((fragment.offset >> 8) & 0xFF))
+                output.append(UInt8(fragment.offset & 0xFF))
+            } else {
+                // Write 4-byte offset
+                let offset32 = UInt32(fragment.offset)
+                output.append(UInt8((offset32 >> 24) & 0xFF))
+                output.append(UInt8((offset32 >> 16) & 0xFF))
+                output.append(UInt8((offset32 >> 8) & 0xFF))
+                output.append(UInt8(offset32 & 0xFF))
+            }
+            
+            // Write length (4 bytes)
+            output.append(UInt8((fragment.length >> 24) & 0xFF))
+            output.append(UInt8((fragment.length >> 16) & 0xFF))
+            output.append(UInt8((fragment.length >> 8) & 0xFF))
+            output.append(UInt8(fragment.length & 0xFF))
+        }
+        
+        return output
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 4 else {
+            throw J2KError.fileFormatError("Invalid fragment list box length: \(data.count), expected at least 4")
+        }
+        
+        // Fragment count (2 bytes)
+        let nf = UInt16(data[0]) << 8 | UInt16(data[1])
+        
+        // Fragment data size (2 bytes)
+        let dr = UInt16(data[2]) << 8 | UInt16(data[3])
+        
+        guard dr == 4 || dr == 8 else {
+            throw J2KError.fileFormatError("Invalid fragment data size: \(dr), expected 4 or 8")
+        }
+        
+        // Calculate expected size
+        let expectedSize = 4 + Int(nf) * (Int(dr) + 4)
+        guard data.count >= expectedSize else {
+            throw J2KError.fileFormatError(
+                "Invalid fragment list box length: \(data.count), expected at least \(expectedSize)"
+            )
+        }
+        
+        // Read fragments
+        var offset = 4
+        var result: [J2KFragment] = []
+        result.reserveCapacity(Int(nf))
+        
+        for _ in 0..<nf {
+            // Read offset (dr bytes)
+            let fragmentOffset: UInt64
+            if dr == 8 {
+                fragmentOffset = UInt64(data[offset]) << 56 |
+                               UInt64(data[offset + 1]) << 48 |
+                               UInt64(data[offset + 2]) << 40 |
+                               UInt64(data[offset + 3]) << 32 |
+                               UInt64(data[offset + 4]) << 24 |
+                               UInt64(data[offset + 5]) << 16 |
+                               UInt64(data[offset + 6]) << 8 |
+                               UInt64(data[offset + 7])
+                offset += 8
+            } else {
+                let offset32 = UInt32(data[offset]) << 24 |
+                             UInt32(data[offset + 1]) << 16 |
+                             UInt32(data[offset + 2]) << 8 |
+                             UInt32(data[offset + 3])
+                fragmentOffset = UInt64(offset32)
+                offset += 4
+            }
+            
+            // Read length (4 bytes)
+            let fragmentLength = UInt32(data[offset]) << 24 |
+                               UInt32(data[offset + 1]) << 16 |
+                               UInt32(data[offset + 2]) << 8 |
+                               UInt32(data[offset + 3])
+            offset += 4
+            
+            result.append(J2KFragment(offset: fragmentOffset, length: fragmentLength))
+        }
+        
+        self.fragments = result
+    }
+}
+
+// MARK: - Composition Box (JPX)
+
+/// Composition instruction.
+///
+/// Defines how to compose a single layer in the final image, including its
+/// position, size, and compositing options.
+public struct J2KCompositionInstruction: Sendable, Equatable {
+    /// The width of the composition layer in pixels.
+    public var width: UInt32
+    
+    /// The height of the composition layer in pixels.
+    public var height: UInt32
+    
+    /// The horizontal offset of the layer from the origin.
+    public var horizontalOffset: UInt32
+    
+    /// The vertical offset of the layer from the origin.
+    public var verticalOffset: UInt32
+    
+    /// The index of the codestream to use for this layer (0-based).
+    public var codestreamIndex: UInt16
+    
+    /// Compositing mode for blending layers.
+    public enum CompositingMode: UInt8, Sendable {
+        /// Replace mode - layer replaces background
+        case replace = 0
+        
+        /// Alpha blending mode
+        case alphaBlend = 1
+        
+        /// Pre-multiplied alpha blending
+        case preMulAlphaBlend = 2
+    }
+    
+    /// The compositing mode for this layer.
+    public var compositingMode: CompositingMode
+    
+    /// Creates a new composition instruction.
+    ///
+    /// - Parameters:
+    ///   - width: Layer width in pixels.
+    ///   - height: Layer height in pixels.
+    ///   - horizontalOffset: Horizontal position offset.
+    ///   - verticalOffset: Vertical position offset.
+    ///   - codestreamIndex: Index of the codestream to use.
+    ///   - compositingMode: How to blend this layer (default: replace).
+    public init(
+        width: UInt32,
+        height: UInt32,
+        horizontalOffset: UInt32 = 0,
+        verticalOffset: UInt32 = 0,
+        codestreamIndex: UInt16,
+        compositingMode: CompositingMode = .replace
+    ) {
+        self.width = width
+        self.height = height
+        self.horizontalOffset = horizontalOffset
+        self.verticalOffset = verticalOffset
+        self.codestreamIndex = codestreamIndex
+        self.compositingMode = compositingMode
+    }
+}
+
+/// Composition box.
+///
+/// The composition box ('comp') defines how multiple codestreams are composed
+/// into a final rendered image. It can specify layering, positioning, cropping,
+/// and blending operations. For animation, multiple composition instructions
+/// can define a sequence of frames.
+///
+/// ## Box Structure
+///
+/// - Type: 'comp' (0x636F6D70)
+/// - Length: Variable
+/// - Content:
+///   - Width (4 bytes): Composition canvas width
+///   - Height (4 bytes): Composition canvas height
+///   - Loop count (2 bytes): For animation (0 = infinite, 1+ = repeat count)
+///   - Instruction count (2 bytes): Number of composition instructions
+///   - Instructions: Array of composition instruction structures
+///
+/// Each instruction (19 bytes minimum):
+/// - Layer width (4 bytes)
+/// - Layer height (4 bytes)
+/// - Horizontal offset (4 bytes)
+/// - Vertical offset (4 bytes)
+/// - Codestream index (2 bytes)
+/// - Compositing mode (1 byte)
+///
+/// Example:
+/// ```swift
+/// // Single layer composition
+/// let instruction = J2KCompositionInstruction(
+///     width: 1024,
+///     height: 768,
+///     codestreamIndex: 0
+/// )
+/// let box = J2KCompositionBox(
+///     width: 1024,
+///     height: 768,
+///     instructions: [instruction]
+/// )
+///
+/// // Multi-layer composition with animation
+/// let frame1 = J2KCompositionInstruction(width: 800, height: 600, codestreamIndex: 0)
+/// let frame2 = J2KCompositionInstruction(width: 800, height: 600, codestreamIndex: 1)
+/// let animation = J2KCompositionBox(
+///     width: 800,
+///     height: 600,
+///     instructions: [frame1, frame2],
+///     loopCount: 0  // Infinite loop
+/// )
+/// ```
+public struct J2KCompositionBox: J2KBox {
+    /// The width of the composition canvas in pixels.
+    public var width: UInt32
+    
+    /// The height of the composition canvas in pixels.
+    public var height: UInt32
+    
+    /// The number of times to loop through the composition sequence.
+    /// - 0: Loop infinitely (for animations)
+    /// - 1: Play once (single image or single animation playthrough)
+    /// - N: Play N times
+    public var loopCount: UInt16
+    
+    /// The list of composition instructions.
+    /// For animations, each instruction represents a frame.
+    public var instructions: [J2KCompositionInstruction]
+    
+    public var boxType: J2KBoxType {
+        .comp
+    }
+    
+    /// Creates a new composition box.
+    ///
+    /// - Parameters:
+    ///   - width: Composition canvas width.
+    ///   - height: Composition canvas height.
+    ///   - instructions: List of composition instructions.
+    ///   - loopCount: Loop count for animations (default: 1).
+    public init(
+        width: UInt32,
+        height: UInt32,
+        instructions: [J2KCompositionInstruction],
+        loopCount: UInt16 = 1
+    ) {
+        self.width = width
+        self.height = height
+        self.loopCount = loopCount
+        self.instructions = instructions
+    }
+    
+    public func write() throws -> Data {
+        guard instructions.count <= UInt16.max else {
+            throw J2KError.fileFormatError(
+                "Too many composition instructions: \(instructions.count), maximum is \(UInt16.max)"
+            )
+        }
+        
+        var output = Data()
+        output.reserveCapacity(8 + instructions.count * 19)
+        
+        // Width (4 bytes)
+        output.append(UInt8((width >> 24) & 0xFF))
+        output.append(UInt8((width >> 16) & 0xFF))
+        output.append(UInt8((width >> 8) & 0xFF))
+        output.append(UInt8(width & 0xFF))
+        
+        // Height (4 bytes)
+        output.append(UInt8((height >> 24) & 0xFF))
+        output.append(UInt8((height >> 16) & 0xFF))
+        output.append(UInt8((height >> 8) & 0xFF))
+        output.append(UInt8(height & 0xFF))
+        
+        // Loop count (2 bytes)
+        output.append(UInt8((loopCount >> 8) & 0xFF))
+        output.append(UInt8(loopCount & 0xFF))
+        
+        // Instruction count (2 bytes)
+        let count = UInt16(instructions.count)
+        output.append(UInt8((count >> 8) & 0xFF))
+        output.append(UInt8(count & 0xFF))
+        
+        // Write each instruction
+        for instruction in instructions {
+            // Layer width (4 bytes)
+            output.append(UInt8((instruction.width >> 24) & 0xFF))
+            output.append(UInt8((instruction.width >> 16) & 0xFF))
+            output.append(UInt8((instruction.width >> 8) & 0xFF))
+            output.append(UInt8(instruction.width & 0xFF))
+            
+            // Layer height (4 bytes)
+            output.append(UInt8((instruction.height >> 24) & 0xFF))
+            output.append(UInt8((instruction.height >> 16) & 0xFF))
+            output.append(UInt8((instruction.height >> 8) & 0xFF))
+            output.append(UInt8(instruction.height & 0xFF))
+            
+            // Horizontal offset (4 bytes)
+            output.append(UInt8((instruction.horizontalOffset >> 24) & 0xFF))
+            output.append(UInt8((instruction.horizontalOffset >> 16) & 0xFF))
+            output.append(UInt8((instruction.horizontalOffset >> 8) & 0xFF))
+            output.append(UInt8(instruction.horizontalOffset & 0xFF))
+            
+            // Vertical offset (4 bytes)
+            output.append(UInt8((instruction.verticalOffset >> 24) & 0xFF))
+            output.append(UInt8((instruction.verticalOffset >> 16) & 0xFF))
+            output.append(UInt8((instruction.verticalOffset >> 8) & 0xFF))
+            output.append(UInt8(instruction.verticalOffset & 0xFF))
+            
+            // Codestream index (2 bytes)
+            output.append(UInt8((instruction.codestreamIndex >> 8) & 0xFF))
+            output.append(UInt8(instruction.codestreamIndex & 0xFF))
+            
+            // Compositing mode (1 byte)
+            output.append(instruction.compositingMode.rawValue)
+        }
+        
+        return output
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 12 else {
+            throw J2KError.fileFormatError(
+                "Invalid composition box length: \(data.count), expected at least 12"
+            )
+        }
+        
+        // Width (4 bytes)
+        self.width = UInt32(data[0]) << 24 |
+                    UInt32(data[1]) << 16 |
+                    UInt32(data[2]) << 8 |
+                    UInt32(data[3])
+        
+        // Height (4 bytes)
+        self.height = UInt32(data[4]) << 24 |
+                     UInt32(data[5]) << 16 |
+                     UInt32(data[6]) << 8 |
+                     UInt32(data[7])
+        
+        // Loop count (2 bytes)
+        self.loopCount = UInt16(data[8]) << 8 | UInt16(data[9])
+        
+        // Instruction count (2 bytes)
+        let count = UInt16(data[10]) << 8 | UInt16(data[11])
+        
+        // Calculate expected size
+        let expectedSize = 12 + Int(count) * 19
+        guard data.count >= expectedSize else {
+            throw J2KError.fileFormatError(
+                "Invalid composition box length: \(data.count), expected at least \(expectedSize)"
+            )
+        }
+        
+        // Read instructions
+        var offset = 12
+        var result: [J2KCompositionInstruction] = []
+        result.reserveCapacity(Int(count))
+        
+        for _ in 0..<count {
+            // Layer width (4 bytes)
+            let layerWidth = UInt32(data[offset]) << 24 |
+                           UInt32(data[offset + 1]) << 16 |
+                           UInt32(data[offset + 2]) << 8 |
+                           UInt32(data[offset + 3])
+            offset += 4
+            
+            // Layer height (4 bytes)
+            let layerHeight = UInt32(data[offset]) << 24 |
+                            UInt32(data[offset + 1]) << 16 |
+                            UInt32(data[offset + 2]) << 8 |
+                            UInt32(data[offset + 3])
+            offset += 4
+            
+            // Horizontal offset (4 bytes)
+            let hOffset = UInt32(data[offset]) << 24 |
+                        UInt32(data[offset + 1]) << 16 |
+                        UInt32(data[offset + 2]) << 8 |
+                        UInt32(data[offset + 3])
+            offset += 4
+            
+            // Vertical offset (4 bytes)
+            let vOffset = UInt32(data[offset]) << 24 |
+                        UInt32(data[offset + 1]) << 16 |
+                        UInt32(data[offset + 2]) << 8 |
+                        UInt32(data[offset + 3])
+            offset += 4
+            
+            // Codestream index (2 bytes)
+            let csIndex = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+            offset += 2
+            
+            // Compositing mode (1 byte)
+            guard let mode = J2KCompositionInstruction.CompositingMode(rawValue: data[offset]) else {
+                throw J2KError.fileFormatError("Invalid compositing mode: \(data[offset])")
+            }
+            offset += 1
+            
+            let instruction = J2KCompositionInstruction(
+                width: layerWidth,
+                height: layerHeight,
+                horizontalOffset: hOffset,
+                verticalOffset: vOffset,
+                codestreamIndex: csIndex,
+                compositingMode: mode
+            )
+            result.append(instruction)
+        }
+        
+        self.instructions = result
+    }
+}
+
+// MARK: - Page Collection Box (JPM)
+
+/// Page collection box.
+///
+/// The page collection box ('pcol') is a superbox that contains multiple page boxes,
+/// enabling multi-page document support in JPM format. This is essential for
+/// document imaging applications like digital faxes, scanned documents, and PDFs.
+///
+/// ## Box Structure
+///
+/// - Type: 'pcol' (0x70636F6C)
+/// - Length: Variable
+/// - Content: Contains one or more 'page' boxes
+///
+/// Example:
+/// ```swift
+/// let page1 = J2KPageBox(pageNumber: 0, width: 2480, height: 3508)
+/// let page2 = J2KPageBox(pageNumber: 1, width: 2480, height: 3508)
+/// let collection = J2KPageCollectionBox(pages: [page1, page2])
+/// ```
+public struct J2KPageCollectionBox: J2KBox {
+    /// The pages in this collection.
+    public var pages: [J2KPageBox]
+    
+    public var boxType: J2KBoxType {
+        .pcol
+    }
+    
+    /// Creates a new page collection box.
+    ///
+    /// - Parameter pages: The list of pages.
+    public init(pages: [J2KPageBox]) {
+        self.pages = pages
+    }
+    
+    public func write() throws -> Data {
+        var writer = J2KBoxWriter()
+        for page in pages {
+            try writer.writeBox(page)
+        }
+        return writer.data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        var reader = J2KBoxReader(data: data)
+        var result: [J2KPageBox] = []
+        
+        // Read all page boxes
+        while let boxInfo = try reader.readNextBox() {
+            guard boxInfo.type == .page else {
+                throw J2KError.fileFormatError(
+                    "Expected page box ('page'), found '\(boxInfo.type.stringValue)'"
+                )
+            }
+            
+            let content = reader.extractContent(from: boxInfo)
+            var page = J2KPageBox(pageNumber: 0, width: 0, height: 0)
+            try page.read(from: content)
+            result.append(page)
+        }
+        
+        self.pages = result
+    }
+}
+
+// MARK: - Page Box (JPM)
+
+/// Page box.
+///
+/// The page box ('page') represents a single page in a multi-page JPM document.
+/// Each page has its own dimensions and can reference one or more codestreams
+/// for different layers (e.g., background, foreground, text masks in Mixed
+/// Raster Content documents).
+///
+/// ## Box Structure
+///
+/// - Type: 'page' (0x70616765)
+/// - Length: Variable
+/// - Content:
+///   - Page number (2 bytes): Zero-based page index
+///   - Width (4 bytes): Page width in pixels
+///   - Height (4 bytes): Page height in pixels
+///   - Optional: Layout boxes and codestream references
+///
+/// Example:
+/// ```swift
+/// // Simple page
+/// let page = J2KPageBox(pageNumber: 0, width: 2480, height: 3508)
+///
+/// // A4 page at 300 DPI
+/// let a4Page = J2KPageBox(pageNumber: 0, width: 2480, height: 3508)
+/// ```
+public struct J2KPageBox: J2KBox {
+    /// The page number (0-based index).
+    public var pageNumber: UInt16
+    
+    /// The width of the page in pixels.
+    public var width: UInt32
+    
+    /// The height of the page in pixels.
+    public var height: UInt32
+    
+    /// Optional layout information for objects on this page.
+    public var layouts: [J2KLayoutBox]
+    
+    public var boxType: J2KBoxType {
+        .page
+    }
+    
+    /// Creates a new page box.
+    ///
+    /// - Parameters:
+    ///   - pageNumber: The page number (0-based).
+    ///   - width: Page width in pixels.
+    ///   - height: Page height in pixels.
+    ///   - layouts: Optional layout boxes (default: empty).
+    public init(
+        pageNumber: UInt16,
+        width: UInt32,
+        height: UInt32,
+        layouts: [J2KLayoutBox] = []
+    ) {
+        self.pageNumber = pageNumber
+        self.width = width
+        self.height = height
+        self.layouts = layouts
+    }
+    
+    public func write() throws -> Data {
+        var output = Data()
+        output.reserveCapacity(10)
+        
+        // Page number (2 bytes)
+        output.append(UInt8((pageNumber >> 8) & 0xFF))
+        output.append(UInt8(pageNumber & 0xFF))
+        
+        // Width (4 bytes)
+        output.append(UInt8((width >> 24) & 0xFF))
+        output.append(UInt8((width >> 16) & 0xFF))
+        output.append(UInt8((width >> 8) & 0xFF))
+        output.append(UInt8(width & 0xFF))
+        
+        // Height (4 bytes)
+        output.append(UInt8((height >> 24) & 0xFF))
+        output.append(UInt8((height >> 16) & 0xFF))
+        output.append(UInt8((height >> 8) & 0xFF))
+        output.append(UInt8(height & 0xFF))
+        
+        // Write layout boxes if any
+        if !layouts.isEmpty {
+            var writer = J2KBoxWriter()
+            for layout in layouts {
+                try writer.writeBox(layout)
+            }
+            output.append(writer.data)
+        }
+        
+        return output
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 10 else {
+            throw J2KError.fileFormatError(
+                "Invalid page box length: \(data.count), expected at least 10"
+            )
+        }
+        
+        // Page number (2 bytes)
+        self.pageNumber = UInt16(data[0]) << 8 | UInt16(data[1])
+        
+        // Width (4 bytes)
+        self.width = UInt32(data[2]) << 24 |
+                    UInt32(data[3]) << 16 |
+                    UInt32(data[4]) << 8 |
+                    UInt32(data[5])
+        
+        // Height (4 bytes)
+        self.height = UInt32(data[6]) << 24 |
+                     UInt32(data[7]) << 16 |
+                     UInt32(data[8]) << 8 |
+                     UInt32(data[9])
+        
+        // Read layout boxes if present
+        if data.count > 10 {
+            let layoutData = Data(data.suffix(from: 10))  // Create a new Data to avoid slice issues
+            var reader = J2KBoxReader(data: layoutData)
+            var result: [J2KLayoutBox] = []
+            
+            while let boxInfo = try reader.readNextBox() {
+                if boxInfo.type == .lobj {
+                    let content = reader.extractContent(from: boxInfo)
+                    var layout = J2KLayoutBox(objectID: 0, x: 0, y: 0, width: 0, height: 0)
+                    try layout.read(from: content)
+                    result.append(layout)
+                }
+            }
+            
+            self.layouts = result
+        } else {
+            self.layouts = []
+        }
+    }
+}
+
+// MARK: - Layout Box (JPM)
+
+/// Layout box.
+///
+/// The layout box ('lobj') defines the position and size of an object within
+/// a page. In JPM, objects can be images, text masks, or other graphical elements
+/// that need to be positioned on the page.
+///
+/// ## Box Structure
+///
+/// - Type: 'lobj' (0x6C6F626A)
+/// - Length: Variable (minimum 18 bytes)
+/// - Content:
+///   - Object ID (2 bytes): Unique identifier for this object
+///   - X position (4 bytes): Horizontal position on page
+///   - Y position (4 bytes): Vertical position on page
+///   - Width (4 bytes): Object width
+///   - Height (4 bytes): Object height
+///
+/// Example:
+/// ```swift
+/// // Position an image at (100, 200) with size 800x600
+/// let layout = J2KLayoutBox(
+///     objectID: 0,
+///     x: 100,
+///     y: 200,
+///     width: 800,
+///     height: 600
+/// )
+/// ```
+public struct J2KLayoutBox: J2KBox {
+    /// The unique identifier for this object.
+    public var objectID: UInt16
+    
+    /// The horizontal position on the page in pixels.
+    public var x: UInt32
+    
+    /// The vertical position on the page in pixels.
+    public var y: UInt32
+    
+    /// The width of the object in pixels.
+    public var width: UInt32
+    
+    /// The height of the object in pixels.
+    public var height: UInt32
+    
+    public var boxType: J2KBoxType {
+        .lobj
+    }
+    
+    /// Creates a new layout box.
+    ///
+    /// - Parameters:
+    ///   - objectID: Unique object identifier.
+    ///   - x: Horizontal position.
+    ///   - y: Vertical position.
+    ///   - width: Object width.
+    ///   - height: Object height.
+    public init(
+        objectID: UInt16,
+        x: UInt32,
+        y: UInt32,
+        width: UInt32,
+        height: UInt32
+    ) {
+        self.objectID = objectID
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+    
+    public func write() throws -> Data {
+        var output = Data(capacity: 18)
+        
+        // Object ID (2 bytes)
+        output.append(UInt8((objectID >> 8) & 0xFF))
+        output.append(UInt8(objectID & 0xFF))
+        
+        // X position (4 bytes)
+        output.append(UInt8((x >> 24) & 0xFF))
+        output.append(UInt8((x >> 16) & 0xFF))
+        output.append(UInt8((x >> 8) & 0xFF))
+        output.append(UInt8(x & 0xFF))
+        
+        // Y position (4 bytes)
+        output.append(UInt8((y >> 24) & 0xFF))
+        output.append(UInt8((y >> 16) & 0xFF))
+        output.append(UInt8((y >> 8) & 0xFF))
+        output.append(UInt8(y & 0xFF))
+        
+        // Width (4 bytes)
+        output.append(UInt8((width >> 24) & 0xFF))
+        output.append(UInt8((width >> 16) & 0xFF))
+        output.append(UInt8((width >> 8) & 0xFF))
+        output.append(UInt8(width & 0xFF))
+        
+        // Height (4 bytes)
+        output.append(UInt8((height >> 24) & 0xFF))
+        output.append(UInt8((height >> 16) & 0xFF))
+        output.append(UInt8((height >> 8) & 0xFF))
+        output.append(UInt8(height & 0xFF))
+        
+        return output
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 18 else {
+            throw J2KError.fileFormatError(
+                "Invalid layout box length: \(data.count), expected at least 18"
+            )
+        }
+        
+        // Object ID (2 bytes)
+        self.objectID = UInt16(data[0]) << 8 | UInt16(data[1])
+        
+        // X position (4 bytes)
+        self.x = UInt32(data[2]) << 24 |
+                UInt32(data[3]) << 16 |
+                UInt32(data[4]) << 8 |
+                UInt32(data[5])
+        
+        // Y position (4 bytes)
+        self.y = UInt32(data[6]) << 24 |
+                UInt32(data[7]) << 16 |
+                UInt32(data[8]) << 8 |
+                UInt32(data[9])
+        
+        // Width (4 bytes)
+        self.width = UInt32(data[10]) << 24 |
+                    UInt32(data[11]) << 16 |
+                    UInt32(data[12]) << 8 |
+                    UInt32(data[13])
+        
+        // Height (4 bytes)
+        self.height = UInt32(data[14]) << 24 |
+                     UInt32(data[15]) << 16 |
+                     UInt32(data[16]) << 8 |
+                     UInt32(data[17])
+    }
+}

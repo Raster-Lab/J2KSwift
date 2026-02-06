@@ -237,12 +237,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] 48 comprehensive tests (100% pass rate)
 - [x] Documentation with examples
 
-### Week 66-68: Advanced Features
-- [ ] Implement JPX extended format support
-- [ ] Add JPM multi-page format support
-- [ ] Implement fragment table boxes
-- [ ] Support for animation (JPX)
-- [ ] Test with complex file structures
+### Week 66-68: Advanced Features ✅
+- [x] Implement JPX extended format support
+- [x] Add JPM multi-page format support
+- [x] Implement fragment table boxes (ftbl, flst)
+- [x] Support for animation (JPX) via composition boxes
+- [x] Test with complex file structures
 
 ## Phase 6: JPIP Protocol (Weeks 69-80)
 
@@ -394,5 +394,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 5 - File Format (In Progress)
-**Next Milestone**: Phase 5, Week 66-68 - Advanced Features
+**Current Phase**: Phase 5 - File Format (Complete ✅)
+**Next Milestone**: Phase 6 - JPIP Protocol (Weeks 69-80)

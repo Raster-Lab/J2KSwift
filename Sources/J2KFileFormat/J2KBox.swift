@@ -135,6 +135,34 @@ public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
     
     /// XML box ('xml ') - XML metadata
     public static let xml = J2KBoxType(string: "xml ")
+    
+    // MARK: - JPX Box Types (ISO/IEC 15444-2)
+    
+    /// Reader requirements box ('rreq') - Requirements for reading the file
+    public static let rreq = J2KBoxType(string: "rreq")
+    
+    /// Fragment table box ('ftbl') - Container for fragment list
+    public static let ftbl = J2KBoxType(string: "ftbl")
+    
+    /// Fragment list box ('flst') - List of codestream fragments
+    public static let flst = J2KBoxType(string: "flst")
+    
+    /// Composition box ('comp') - Instructions for composing layers
+    public static let comp = J2KBoxType(string: "comp")
+    
+    /// Compositing layer header box ('cgrp') - Grouping of composition layers
+    public static let cgrp = J2KBoxType(string: "cgrp")
+    
+    // MARK: - JPM Box Types (ISO/IEC 15444-6)
+    
+    /// Page collection box ('pcol') - Container for pages
+    public static let pcol = J2KBoxType(string: "pcol")
+    
+    /// Page box ('page') - Single page in a multi-page document
+    public static let page = J2KBoxType(string: "page")
+    
+    /// Layout box ('lobj') - Layout information for objects
+    public static let lobj = J2KBoxType(string: "lobj")
 }
 
 /// Reader for parsing JP2 boxes from binary data.
