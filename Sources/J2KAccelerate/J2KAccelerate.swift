@@ -229,16 +229,16 @@ public struct J2KDWTAccelerated: Sendable {
         }
         
         // Undo update 2: even[n] -= delta * (odd[n-1] + odd[n])
-        try applyLiftingStep(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
         
         // Undo predict 2: odd[n] -= gamma * (even[n] + even[n+1])
-        try applyLiftingStep(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
         
         // Undo update 1: even[n] -= beta * (odd[n-1] + odd[n])
-        try applyLiftingStep(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
         
         // Undo predict 1: odd[n] -= alpha * (even[n] + even[n+1])
-        try applyLiftingStep(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
         
         // Merge even and odd samples
         var result = [Double](repeating: 0, count: n)
@@ -306,6 +306,137 @@ public struct J2KDWTAccelerated: Sendable {
             
             target[i] += coefficient * (left + right)
         }
+    }
+    
+    /// SIMD-optimized lifting step for interior elements with boundary handling.
+    ///
+    /// This method uses vDSP operations for vectorized processing of interior elements,
+    /// falling back to scalar operations only for boundary elements. This provides
+    /// significant performance improvement over the naive scalar loop.
+    ///
+    /// - Parameters:
+    ///   - target: Array to be updated (modified in place).
+    ///   - reference: Reference array for the lifting operation.
+    ///   - coefficient: Lifting coefficient to apply.
+    ///   - isPredict: If true, applies predict step; if false, applies update step.
+    ///   - extension: Boundary extension mode.
+    /// - Throws: ``J2KError`` if the operation fails.
+    private func applyLiftingStepOptimized(
+        _ target: inout [Double],
+        reference: [Double],
+        coefficient: Double,
+        isPredict: Bool,
+        extension boundaryExtension: BoundaryExtension
+    ) throws {
+        #if canImport(Accelerate)
+        let targetSize = target.count
+        let refSize = reference.count
+        
+        guard targetSize > 0 && refSize > 0 else { return }
+        
+        // Determine interior range (where no boundary extension is needed)
+        let interiorStart: Int
+        let interiorEnd: Int
+        
+        if isPredict {
+            // Predict: target[n] += coef * (ref[n] + ref[n+1])
+            // Interior: 0 <= n < targetSize where n+1 < refSize
+            interiorStart = 0
+            interiorEnd = min(targetSize, refSize - 1)
+        } else {
+            // Update: target[n] += coef * (ref[n-1] + ref[n])
+            // Interior: 0 < n < targetSize where n < refSize
+            interiorStart = 1
+            interiorEnd = min(targetSize, refSize)
+        }
+        
+        // Process interior elements with vDSP (vectorized)
+        if interiorEnd > interiorStart {
+            let interiorCount = interiorEnd - interiorStart
+            
+            // Allocate temporary arrays for vectorized operations
+            var leftValues = [Double](repeating: 0, count: interiorCount)
+            var rightValues = [Double](repeating: 0, count: interiorCount)
+            var sumValues = [Double](repeating: 0, count: interiorCount)
+            var scaledValues = [Double](repeating: 0, count: interiorCount)
+            
+            if isPredict {
+                // Copy ref[i] and ref[i+1] for interior elements
+                reference.withUnsafeBufferPointer { refPtr in
+                    for i in 0..<interiorCount {
+                        leftValues[i] = refPtr[interiorStart + i]
+                        rightValues[i] = refPtr[interiorStart + i + 1]
+                    }
+                }
+            } else {
+                // Copy ref[i-1] and ref[i] for interior elements
+                reference.withUnsafeBufferPointer { refPtr in
+                    for i in 0..<interiorCount {
+                        leftValues[i] = refPtr[interiorStart + i - 1]
+                        rightValues[i] = refPtr[interiorStart + i]
+                    }
+                }
+            }
+            
+            // Vectorized addition: sum = left + right
+            vDSP_vaddD(leftValues, 1, rightValues, 1, &sumValues, 1, vDSP_Length(interiorCount))
+            
+            // Vectorized scaling: scaled = coefficient * sum
+            var coef = coefficient
+            vDSP_vsmulD(sumValues, 1, &coef, &scaledValues, 1, vDSP_Length(interiorCount))
+            
+            // Vectorized accumulation: target += scaled
+            target.withUnsafeMutableBufferPointer { targetPtr in
+                scaledValues.withUnsafeBufferPointer { scaledPtr in
+                    vDSP_vaddD(
+                        targetPtr.baseAddress! + interiorStart, 1,
+                        scaledPtr.baseAddress!, 1,
+                        targetPtr.baseAddress! + interiorStart, 1,
+                        vDSP_Length(interiorCount)
+                    )
+                }
+            }
+        }
+        
+        // Handle boundary elements with scalar operations
+        if interiorStart > 0 {
+            for i in 0..<interiorStart {
+                let left: Double
+                let right: Double
+                
+                if isPredict {
+                    left = reference[i]
+                    right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
+                } else {
+                    left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
+                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                }
+                
+                target[i] += coefficient * (left + right)
+            }
+        }
+        
+        if interiorEnd < targetSize {
+            for i in interiorEnd..<targetSize {
+                let left: Double
+                let right: Double
+                
+                if isPredict {
+                    left = reference[i]
+                    right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
+                } else {
+                    left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
+                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                }
+                
+                target[i] += coefficient * (left + right)
+            }
+        }
+        #else
+        // Fallback to non-optimized version on platforms without Accelerate
+        try applyLiftingStep(&target, reference: reference, coefficient: coefficient, 
+                           isPredict: isPredict, extension: boundaryExtension)
+        #endif
     }
     
     /// Gets a value from an array with boundary extension.
@@ -488,6 +619,328 @@ public struct J2KDWTAccelerated: Sendable {
         #endif
     }
     
+    /// Performs parallel 2D forward DWT on image data using hardware acceleration and Swift Concurrency.
+    ///
+    /// This method processes rows and columns in parallel using Swift's TaskGroup for improved
+    /// performance on multi-core systems. Provides significant speedup over sequential processing,
+    /// especially for large images.
+    ///
+    /// - Parameters:
+    ///   - data: Image data in row-major order (height × width elements).
+    ///   - width: Image width in pixels.
+    ///   - height: Image height in pixels.
+    ///   - levels: Number of decomposition levels (default: 1).
+    ///   - boundaryExtension: Boundary extension mode (default: symmetric).
+    ///   - maxConcurrentTasks: Maximum number of concurrent tasks (default: 8).
+    /// - Returns: Array of decomposition levels, one per level.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if dimensions are invalid.
+    /// - Throws: ``J2KError.unsupportedFeature(_:)`` if acceleration is not available.
+    ///
+    /// Example:
+    /// ```swift
+    /// let dwt = J2KDWTAccelerated()
+    /// let data = [Double](repeating: 0, count: 1024 * 1024)
+    /// let decompositions = try await dwt.forwardTransform2DParallel(
+    ///     data: data,
+    ///     width: 1024,
+    ///     height: 1024,
+    ///     levels: 5
+    /// )
+    /// ```
+    public func forwardTransform2DParallel(
+        data: [Double],
+        width: Int,
+        height: Int,
+        levels: Int = 1,
+        boundaryExtension: BoundaryExtension = .symmetric,
+        maxConcurrentTasks: Int = 8
+    ) async throws -> [DecompositionLevel] {
+        #if canImport(Accelerate)
+        guard width >= 2 && height >= 2 else {
+            throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
+        }
+        
+        guard levels >= 1 else {
+            throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
+        }
+        
+        guard data.count == width * height else {
+            throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
+        }
+        
+        var currentData = data
+        var currentWidth = width
+        var currentHeight = height
+        var results: [DecompositionLevel] = []
+        
+        for level in 0..<levels {
+            guard currentWidth >= 2 && currentHeight >= 2 else {
+                throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
+            }
+            
+            // Transform rows in parallel
+            var rowTransformed = [Double](repeating: 0, count: currentData.count)
+            
+            try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
+                // Limit concurrent tasks to avoid overwhelming the system
+                var activeTasks = 0
+                
+                for row in 0..<currentHeight {
+                    // Wait if we've reached the limit
+                    if activeTasks >= maxConcurrentTasks {
+                        let (rowIdx, low, high) = try await group.next()!
+                        let outputRowStart = rowIdx * currentWidth
+                        for i in 0..<low.count {
+                            rowTransformed[outputRowStart + i] = low[i]
+                        }
+                        for i in 0..<high.count {
+                            rowTransformed[outputRowStart + low.count + i] = high[i]
+                        }
+                        activeTasks -= 1
+                    }
+                    
+                    let rowStart = row * currentWidth
+                    let rowEnd = rowStart + currentWidth
+                    let rowData = Array(currentData[rowStart..<rowEnd])
+                    
+                    group.addTask {
+                        let (low, high) = try self.forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
+                        return (row, low, high)
+                    }
+                    activeTasks += 1
+                }
+                
+                // Collect remaining results
+                while let (rowIdx, low, high) = try await group.next() {
+                    let outputRowStart = rowIdx * currentWidth
+                    for i in 0..<low.count {
+                        rowTransformed[outputRowStart + i] = low[i]
+                    }
+                    for i in 0..<high.count {
+                        rowTransformed[outputRowStart + low.count + i] = high[i]
+                    }
+                }
+            }
+            
+            // Transform columns in parallel
+            var colTransformed = [Double](repeating: 0, count: currentData.count)
+            
+            try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
+                var activeTasks = 0
+                
+                for col in 0..<currentWidth {
+                    // Wait if we've reached the limit
+                    if activeTasks >= maxConcurrentTasks {
+                        let (colIdx, low, high) = try await group.next()!
+                        for i in 0..<low.count {
+                            colTransformed[i * currentWidth + colIdx] = low[i]
+                        }
+                        for i in 0..<high.count {
+                            colTransformed[(low.count + i) * currentWidth + colIdx] = high[i]
+                        }
+                        activeTasks -= 1
+                    }
+                    
+                    var colData = [Double](repeating: 0, count: currentHeight)
+                    for row in 0..<currentHeight {
+                        colData[row] = rowTransformed[row * currentWidth + col]
+                    }
+                    
+                    group.addTask {
+                        let (low, high) = try self.forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
+                        return (col, low, high)
+                    }
+                    activeTasks += 1
+                }
+                
+                // Collect remaining results
+                while let (colIdx, low, high) = try await group.next() {
+                    for i in 0..<low.count {
+                        colTransformed[i * currentWidth + colIdx] = low[i]
+                    }
+                    for i in 0..<high.count {
+                        colTransformed[(low.count + i) * currentWidth + colIdx] = high[i]
+                    }
+                }
+            }
+            
+            // Calculate subband dimensions
+            let llWidth = (currentWidth + 1) / 2
+            let llHeight = (currentHeight + 1) / 2
+            let lhWidth = currentWidth / 2
+            let lhHeight = llHeight
+            let hlWidth = llWidth
+            let hlHeight = currentHeight / 2
+            let hhWidth = lhWidth
+            let hhHeight = hlHeight
+            
+            // Extract subbands
+            let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            
+            results.append(DecompositionLevel(
+                ll: ll,
+                lh: lh,
+                hl: hl,
+                hh: hh,
+                llWidth: llWidth,
+                llHeight: llHeight,
+                level: level
+            ))
+            
+            // For next level, use only the LL subband
+            currentData = ll
+            currentWidth = llWidth
+            currentHeight = llHeight
+        }
+        
+        return results
+        #else
+        throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
+        #endif
+    }
+    
+    /// Performs cache-optimized 2D forward DWT using matrix transpose.
+    ///
+    /// This method uses hardware-accelerated matrix transpose to convert column operations
+    /// into row operations, providing better cache locality and improved performance.
+    /// Especially beneficial for large images where column access patterns cause cache misses.
+    ///
+    /// - Parameters:
+    ///   - data: Image data in row-major order (height × width elements).
+    ///   - width: Image width in pixels.
+    ///   - height: Image height in pixels.
+    ///   - levels: Number of decomposition levels (default: 1).
+    ///   - boundaryExtension: Boundary extension mode (default: symmetric).
+    /// - Returns: Array of decomposition levels, one per level.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if dimensions are invalid.
+    /// - Throws: ``J2KError.unsupportedFeature(_:)`` if acceleration is not available.
+    ///
+    /// Example:
+    /// ```swift
+    /// let dwt = J2KDWTAccelerated()
+    /// let data = [Double](repeating: 0, count: 512 * 512)
+    /// let decompositions = try dwt.forwardTransform2DCacheOptimized(
+    ///     data: data,
+    ///     width: 512,
+    ///     height: 512,
+    ///     levels: 3
+    /// )
+    /// ```
+    public func forwardTransform2DCacheOptimized(
+        data: [Double],
+        width: Int,
+        height: Int,
+        levels: Int = 1,
+        boundaryExtension: BoundaryExtension = .symmetric
+    ) throws -> [DecompositionLevel] {
+        #if canImport(Accelerate)
+        guard width >= 2 && height >= 2 else {
+            throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
+        }
+        
+        guard levels >= 1 else {
+            throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
+        }
+        
+        guard data.count == width * height else {
+            throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
+        }
+        
+        var currentData = data
+        var currentWidth = width
+        var currentHeight = height
+        var results: [DecompositionLevel] = []
+        
+        for level in 0..<levels {
+            guard currentWidth >= 2 && currentHeight >= 2 else {
+                throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
+            }
+            
+            // Transform rows (already contiguous - good cache locality)
+            var rowTransformed = [Double](repeating: 0, count: currentData.count)
+            for row in 0..<currentHeight {
+                let rowStart = row * currentWidth
+                let rowEnd = rowStart + currentWidth
+                let rowData = Array(currentData[rowStart..<rowEnd])
+                
+                let (low, high) = try forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
+                
+                // Store transformed row: [LL...LL|LH...LH]
+                let outputRowStart = row * currentWidth
+                for i in 0..<low.count {
+                    rowTransformed[outputRowStart + i] = low[i]
+                }
+                for i in 0..<high.count {
+                    rowTransformed[outputRowStart + low.count + i] = high[i]
+                }
+            }
+            
+            // Transpose matrix to make columns contiguous
+            let transposed = transposeMatrix(rowTransformed, rows: currentHeight, cols: currentWidth)
+            
+            // Transform "rows" in transposed matrix (which are columns in original)
+            var colTransformed = [Double](repeating: 0, count: transposed.count)
+            for col in 0..<currentWidth {
+                let colStart = col * currentHeight
+                let colEnd = colStart + currentHeight
+                let colData = Array(transposed[colStart..<colEnd])
+                
+                let (low, high) = try forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
+                
+                // Store transformed "row" in transposed space
+                let outputColStart = col * currentHeight
+                for i in 0..<low.count {
+                    colTransformed[outputColStart + i] = low[i]
+                }
+                for i in 0..<high.count {
+                    colTransformed[outputColStart + low.count + i] = high[i]
+                }
+            }
+            
+            // Transpose back to original orientation
+            let finalTransformed = transposeMatrix(colTransformed, rows: currentWidth, cols: currentHeight)
+            
+            // Calculate subband dimensions
+            let llWidth = (currentWidth + 1) / 2
+            let llHeight = (currentHeight + 1) / 2
+            let lhWidth = currentWidth / 2
+            let lhHeight = llHeight
+            let hlWidth = llWidth
+            let hlHeight = currentHeight / 2
+            let hhWidth = lhWidth
+            let hhHeight = hlHeight
+            
+            // Extract subbands
+            let ll = extractSubband(from: finalTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(from: finalTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(from: finalTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(from: finalTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            
+            results.append(DecompositionLevel(
+                ll: ll,
+                lh: lh,
+                hl: hl,
+                hh: hh,
+                llWidth: llWidth,
+                llHeight: llHeight,
+                level: level
+            ))
+            
+            // For next level, use only the LL subband
+            currentData = ll
+            currentWidth = llWidth
+            currentHeight = llHeight
+        }
+        
+        return results
+        #else
+        throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
+        #endif
+    }
+    
     /// Performs 2D inverse DWT on decomposed image data using hardware acceleration.
     ///
     /// Reconstructs image data from wavelet decomposition using the accelerated inverse
@@ -614,6 +1067,39 @@ public struct J2KDWTAccelerated: Sendable {
     }
     
     #if canImport(Accelerate)
+    /// Transposes a 2D matrix using hardware acceleration for cache-friendly access.
+    ///
+    /// This method uses vDSP's matrix transpose operation which is cache-optimized,
+    /// providing significant performance improvements over naive element-by-element copying.
+    ///
+    /// - Parameters:
+    ///   - data: Input matrix in row-major order.
+    ///   - rows: Number of rows in the input matrix.
+    ///   - cols: Number of columns in the input matrix.
+    /// - Returns: Transposed matrix in row-major order (original columns become rows).
+    private func transposeMatrix(
+        _ data: [Double],
+        rows: Int,
+        cols: Int
+    ) -> [Double] {
+        var result = [Double](repeating: 0, count: data.count)
+        
+        data.withUnsafeBufferPointer { srcPtr in
+            result.withUnsafeMutableBufferPointer { dstPtr in
+                // vDSP_mtrans performs optimized matrix transpose
+                // C = A^T where A is rows×cols, C is cols×rows
+                vDSP_mtransD(
+                    srcPtr.baseAddress!, 1,  // Source matrix
+                    dstPtr.baseAddress!, 1,  // Destination matrix
+                    vDSP_Length(cols),       // Columns in source (rows in dest)
+                    vDSP_Length(rows)        // Rows in source (cols in dest)
+                )
+            }
+        }
+        
+        return result
+    }
+    
     /// Extracts a subband from the transformed data.
     private func extractSubband(
         from data: [Double],
