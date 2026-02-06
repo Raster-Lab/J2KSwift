@@ -1442,4 +1442,583 @@ final class J2KBoxTests: XCTestCase {
         XCTAssertEqual(decodedCmap.mappings.count, 3)
         XCTAssertEqual(decodedCdef.channels.count, 3)
     }
+    
+    // MARK: - Resolution Box Tests
+    
+    func testCaptureResolutionBox() throws {
+        // Create capture resolution box with 72 DPI
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (72, 1, 0),
+            verticalResolution: (72, 1, 0),
+            unit: .inch
+        )
+        
+        // Write and read
+        let data = try box.write()
+        XCTAssertEqual(data.count, 19) // Fixed size
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.numerator, 72)
+        XCTAssertEqual(decoded.horizontalResolution.denominator, 1)
+        XCTAssertEqual(decoded.horizontalResolution.exponent, 0)
+        XCTAssertEqual(decoded.verticalResolution.numerator, 72)
+        XCTAssertEqual(decoded.verticalResolution.denominator, 1)
+        XCTAssertEqual(decoded.verticalResolution.exponent, 0)
+        XCTAssertEqual(decoded.unit, .inch)
+    }
+    
+    func testCaptureResolutionBoxHighDPI() throws {
+        // Create capture resolution box with 300 DPI
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (300, 1, 0),
+            verticalResolution: (300, 1, 0),
+            unit: .inch
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.numerator, 300)
+        XCTAssertEqual(decoded.verticalResolution.numerator, 300)
+        XCTAssertEqual(decoded.unit, .inch)
+    }
+    
+    func testCaptureResolutionBoxWithExponent() throws {
+        // Create resolution with exponent: 72 × 10^2 = 7200
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (72, 1, 2),
+            verticalResolution: (72, 1, 2),
+            unit: .metre
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.exponent, 2)
+        XCTAssertEqual(decoded.verticalResolution.exponent, 2)
+    }
+    
+    func testCaptureResolutionBoxWithNegativeExponent() throws {
+        // Create resolution with negative exponent: 720 × 10^-1 = 72
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (720, 1, -1),
+            verticalResolution: (720, 1, -1),
+            unit: .inch
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.exponent, -1)
+        XCTAssertEqual(decoded.verticalResolution.exponent, -1)
+    }
+    
+    func testCaptureResolutionBoxWithFraction() throws {
+        // Create resolution with fraction: 7200 / 100 = 72
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (7200, 100, 0),
+            verticalResolution: (7200, 100, 0),
+            unit: .inch
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.numerator, 7200)
+        XCTAssertEqual(decoded.horizontalResolution.denominator, 100)
+    }
+    
+    func testCaptureResolutionBoxUnknownUnit() throws {
+        let box = J2KCaptureResolutionBox(
+            horizontalResolution: (100, 1, 0),
+            verticalResolution: (100, 1, 0),
+            unit: .unknown
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCaptureResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .inch
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.unit, .unknown)
+    }
+    
+    func testDisplayResolutionBox() throws {
+        // Create display resolution box with 96 DPI
+        let box = J2KDisplayResolutionBox(
+            horizontalResolution: (96, 1, 0),
+            verticalResolution: (96, 1, 0),
+            unit: .inch
+        )
+        
+        let data = try box.write()
+        XCTAssertEqual(data.count, 19)
+        
+        var decoded = J2KDisplayResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.numerator, 96)
+        XCTAssertEqual(decoded.verticalResolution.numerator, 96)
+        XCTAssertEqual(decoded.unit, .inch)
+    }
+    
+    func testDisplayResolutionBoxMetres() throws {
+        // Create resolution in pixels per metre: 2835 ppm ≈ 72 DPI
+        let box = J2KDisplayResolutionBox(
+            horizontalResolution: (2835, 1, 0),
+            verticalResolution: (2835, 1, 0),
+            unit: .metre
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KDisplayResolutionBox(
+            horizontalResolution: (0, 0, 0),
+            verticalResolution: (0, 0, 0),
+            unit: .unknown
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.horizontalResolution.numerator, 2835)
+        XCTAssertEqual(decoded.unit, .metre)
+    }
+    
+    func testResolutionBox() throws {
+        let captureRes = J2KCaptureResolutionBox(
+            horizontalResolution: (300, 1, 0),
+            verticalResolution: (300, 1, 0),
+            unit: .inch
+        )
+        
+        let displayRes = J2KDisplayResolutionBox(
+            horizontalResolution: (72, 1, 0),
+            verticalResolution: (72, 1, 0),
+            unit: .inch
+        )
+        
+        let box = J2KResolutionBox(
+            captureResolution: captureRes,
+            displayResolution: displayRes
+        )
+        
+        let data = try box.write()
+        
+        // Should contain two complete boxes (header + content for each)
+        XCTAssertGreaterThan(data.count, 0)
+        
+        var decoded = J2KResolutionBox()
+        try decoded.read(from: data)
+        
+        XCTAssertNotNil(decoded.captureResolution)
+        XCTAssertNotNil(decoded.displayResolution)
+        XCTAssertEqual(decoded.captureResolution?.horizontalResolution.numerator, 300)
+        XCTAssertEqual(decoded.displayResolution?.horizontalResolution.numerator, 72)
+    }
+    
+    func testResolutionBoxCaptureOnly() throws {
+        let captureRes = J2KCaptureResolutionBox(
+            horizontalResolution: (150, 1, 0),
+            verticalResolution: (150, 1, 0),
+            unit: .inch
+        )
+        
+        let box = J2KResolutionBox(captureResolution: captureRes, displayResolution: nil)
+        
+        let data = try box.write()
+        
+        var decoded = J2KResolutionBox()
+        try decoded.read(from: data)
+        
+        XCTAssertNotNil(decoded.captureResolution)
+        XCTAssertNil(decoded.displayResolution)
+        XCTAssertEqual(decoded.captureResolution?.horizontalResolution.numerator, 150)
+    }
+    
+    func testResolutionBoxDisplayOnly() throws {
+        let displayRes = J2KDisplayResolutionBox(
+            horizontalResolution: (96, 1, 0),
+            verticalResolution: (96, 1, 0),
+            unit: .inch
+        )
+        
+        let box = J2KResolutionBox(captureResolution: nil, displayResolution: displayRes)
+        
+        let data = try box.write()
+        
+        var decoded = J2KResolutionBox()
+        try decoded.read(from: data)
+        
+        XCTAssertNil(decoded.captureResolution)
+        XCTAssertNotNil(decoded.displayResolution)
+        XCTAssertEqual(decoded.displayResolution?.horizontalResolution.numerator, 96)
+    }
+    
+    func testResolutionBoxEmpty() throws {
+        let box = J2KResolutionBox()
+        
+        let data = try box.write()
+        XCTAssertEqual(data.count, 0) // Empty box
+        
+        var decoded = J2KResolutionBox()
+        try decoded.read(from: data)
+        
+        XCTAssertNil(decoded.captureResolution)
+        XCTAssertNil(decoded.displayResolution)
+    }
+    
+    // MARK: - UUID Box Tests
+    
+    func testUUIDBox() throws {
+        let uuid = UUID()
+        let customData = "Custom metadata".data(using: .utf8)!
+        
+        let box = J2KUUIDBox(uuid: uuid, data: customData)
+        
+        let data = try box.write()
+        XCTAssertEqual(data.count, 16 + customData.count)
+        
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.uuid, uuid)
+        XCTAssertEqual(decoded.data, customData)
+    }
+    
+    func testUUIDBoxEmptyData() throws {
+        let uuid = UUID()
+        let box = J2KUUIDBox(uuid: uuid, data: Data())
+        
+        let data = try box.write()
+        XCTAssertEqual(data.count, 16)
+        
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.uuid, uuid)
+        XCTAssertEqual(decoded.data.count, 0)
+    }
+    
+    func testUUIDBoxLargeData() throws {
+        let uuid = UUID()
+        let largeData = Data(repeating: 0x42, count: 10000)
+        
+        let box = J2KUUIDBox(uuid: uuid, data: largeData)
+        
+        let data = try box.write()
+        XCTAssertEqual(data.count, 16 + 10000)
+        
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.uuid, uuid)
+        XCTAssertEqual(decoded.data.count, 10000)
+        XCTAssertEqual(decoded.data.first, 0x42)
+    }
+    
+    func testUUIDBoxPreservesUUID() throws {
+        // Test that UUID is preserved exactly through write/read
+        let uuidString = "550e8400-e29b-41d4-a716-446655440000"
+        let uuid = UUID(uuidString: uuidString)!
+        
+        let box = J2KUUIDBox(uuid: uuid, data: Data([1, 2, 3]))
+        
+        let data = try box.write()
+        
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.uuid.uuidString.uppercased(), uuidString.uppercased())
+    }
+    
+    func testUUIDBoxBinaryData() throws {
+        let uuid = UUID()
+        let binaryData = Data([0x00, 0xFF, 0x01, 0xFE, 0x7F, 0x80])
+        
+        let box = J2KUUIDBox(uuid: uuid, data: binaryData)
+        
+        let data = try box.write()
+        
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.data, binaryData)
+    }
+    
+    // MARK: - XML Box Tests
+    
+    func testXMLBox() throws {
+        let xmlString = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <metadata>
+            <title>Sample Image</title>
+            <author>John Doe</author>
+        </metadata>
+        """
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        XCTAssertGreaterThan(data.count, 0)
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    func testXMLBoxMinimal() throws {
+        let xmlString = "<root/>"
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    func testXMLBoxComplex() throws {
+        let xmlString = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <image xmlns="http://example.com/schema">
+            <metadata>
+                <title>Test Image</title>
+                <description>A test image with metadata</description>
+                <keywords>
+                    <keyword>test</keyword>
+                    <keyword>jpeg2000</keyword>
+                </keywords>
+            </metadata>
+            <technical>
+                <width>1920</width>
+                <height>1080</height>
+                <colorSpace>sRGB</colorSpace>
+            </technical>
+        </image>
+        """
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    func testXMLBoxWithUnicode() throws {
+        let xmlString = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <metadata>
+            <title>测试图像</title>
+            <description>Тестовое изображение</description>
+            <author>José García</author>
+        </metadata>
+        """
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    func testXMLBoxWithSpecialCharacters() throws {
+        let xmlString = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <data>
+            <value>&lt;![CDATA[Special &amp; characters]]&gt;</value>
+            <escaped>&quot;Quotes&quot; and &apos;apostrophes&apos;</escaped>
+        </data>
+        """
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    func testXMLBoxFromData() throws {
+        let xmlString = "<root><item>Test</item></root>"
+        let xmlData = xmlString.data(using: .utf8)!
+        
+        let box = try J2KXMLBox(data: xmlData)
+        
+        XCTAssertEqual(box.xmlString, xmlString)
+    }
+    
+    func testXMLBoxFromDataInvalidUTF8() throws {
+        // Invalid UTF-8 sequence
+        let invalidData = Data([0xFF, 0xFE, 0xFD])
+        
+        XCTAssertThrowsError(try J2KXMLBox(data: invalidData)) { error in
+            if case J2KError.fileFormatError(let message) = error {
+                XCTAssertTrue(message.contains("UTF-8"))
+            } else {
+                XCTFail("Expected fileFormatError")
+            }
+        }
+    }
+    
+    func testXMLBoxLarge() throws {
+        // Test with a large XML document
+        var xmlString = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<items>\n"
+        for i in 0..<1000 {
+            xmlString += "    <item id=\"\(i)\">Value \(i)</item>\n"
+        }
+        xmlString += "</items>"
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        let data = try box.write()
+        
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
+    
+    // MARK: - Integration Tests
+    
+    func testResolutionBoxWithinHeaderBox() throws {
+        // Test that resolution box works within a JP2 header
+        let captureRes = J2KCaptureResolutionBox(
+            horizontalResolution: (300, 1, 0),
+            verticalResolution: (300, 1, 0),
+            unit: .inch
+        )
+        
+        let displayRes = J2KDisplayResolutionBox(
+            horizontalResolution: (72, 1, 0),
+            verticalResolution: (72, 1, 0),
+            unit: .inch
+        )
+        
+        let resBox = J2KResolutionBox(
+            captureResolution: captureRes,
+            displayResolution: displayRes
+        )
+        
+        // Write resolution box with full headers
+        var writer = J2KBoxWriter()
+        try writer.writeBox(resBox)
+        let data = writer.data
+        
+        // Read it back
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .res)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = J2KResolutionBox()
+        try decoded.read(from: content)
+        
+        XCTAssertNotNil(decoded.captureResolution)
+        XCTAssertNotNil(decoded.displayResolution)
+    }
+    
+    func testUUIDBoxWithinFile() throws {
+        // Test UUID box as part of a JP2 file structure
+        let uuid = UUID()
+        let metadata = """
+        {"format": "JPEG 2000", "version": "1.0"}
+        """.data(using: .utf8)!
+        
+        let box = J2KUUIDBox(uuid: uuid, data: metadata)
+        
+        var writer = J2KBoxWriter()
+        try writer.writeBox(box)
+        let data = writer.data
+        
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .uuid)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = J2KUUIDBox(uuid: UUID(), data: Data())
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.uuid, uuid)
+        XCTAssertEqual(decoded.data, metadata)
+    }
+    
+    func testXMLBoxWithinFile() throws {
+        // Test XML box as part of a JP2 file structure
+        let xmlString = """
+        <?xml version="1.0"?>
+        <metadata>
+            <creator>Test Suite</creator>
+        </metadata>
+        """
+        
+        let box = try J2KXMLBox(xmlString: xmlString)
+        
+        var writer = J2KBoxWriter()
+        try writer.writeBox(box)
+        let data = writer.data
+        
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .xml)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = try J2KXMLBox(xmlString: "")
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.xmlString, xmlString)
+    }
 }

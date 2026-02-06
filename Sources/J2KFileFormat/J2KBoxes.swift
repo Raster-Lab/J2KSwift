@@ -1416,3 +1416,556 @@ public struct J2KChannelDefinitionBox: J2KBox {
         }
     }
 }
+
+// MARK: - Resolution Boxes
+
+/// Resolution box.
+///
+/// The resolution box ('res ') is a superbox that contains resolution information
+/// for the image. It contains one or both of the Capture Resolution Box ('resc')
+/// and the Display Resolution Box ('resd').
+///
+/// ## Box Structure
+///
+/// - Type: 'res ' (0x72657320)
+/// - Length: Variable (superbox container)
+/// - Content: Contains 'resc' and/or 'resd' boxes
+///
+/// Example:
+/// ```swift
+/// let captureRes = J2KCaptureResolutionBox(
+///     horizontalResolution: (72, 1, 0),
+///     verticalResolution: (72, 1, 0),
+///     unit: .inch
+/// )
+/// let displayRes = J2KDisplayResolutionBox(
+///     horizontalResolution: (72, 1, 0),
+///     verticalResolution: (72, 1, 0),
+///     unit: .inch
+/// )
+/// let resBox = J2KResolutionBox(
+///     captureResolution: captureRes,
+///     displayResolution: displayRes
+/// )
+/// ```
+public struct J2KResolutionBox: J2KBox {
+    /// The capture resolution box (optional).
+    public var captureResolution: J2KCaptureResolutionBox?
+    
+    /// The display resolution box (optional).
+    public var displayResolution: J2KDisplayResolutionBox?
+    
+    public var boxType: J2KBoxType {
+        .res
+    }
+    
+    /// Creates a new resolution box.
+    ///
+    /// - Parameters:
+    ///   - captureResolution: The capture resolution box (optional).
+    ///   - displayResolution: The display resolution box (optional).
+    public init(
+        captureResolution: J2KCaptureResolutionBox? = nil,
+        displayResolution: J2KDisplayResolutionBox? = nil
+    ) {
+        self.captureResolution = captureResolution
+        self.displayResolution = displayResolution
+    }
+    
+    public func write() throws -> Data {
+        var writer = J2KBoxWriter()
+        
+        // Write capture resolution box if present
+        if let captureRes = captureResolution {
+            try writer.writeBox(captureRes)
+        }
+        
+        // Write display resolution box if present
+        if let displayRes = displayResolution {
+            try writer.writeBox(displayRes)
+        }
+        
+        return writer.data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        var reader = J2KBoxReader(data: data)
+        
+        while let boxInfo = try reader.readNextBox() {
+            let content = reader.extractContent(from: boxInfo)
+            
+            switch boxInfo.type {
+            case .resc:
+                var captureRes = J2KCaptureResolutionBox(
+                    horizontalResolution: (1, 1, 0),
+                    verticalResolution: (1, 1, 0),
+                    unit: .unknown
+                )
+                try captureRes.read(from: content)
+                self.captureResolution = captureRes
+                
+            case .resd:
+                var displayRes = J2KDisplayResolutionBox(
+                    horizontalResolution: (1, 1, 0),
+                    verticalResolution: (1, 1, 0),
+                    unit: .unknown
+                )
+                try displayRes.read(from: content)
+                self.displayResolution = displayRes
+                
+            default:
+                // Ignore unknown boxes
+                break
+            }
+        }
+    }
+}
+
+/// Capture resolution box.
+///
+/// The capture resolution box ('resc') specifies the resolution at which
+/// the image was originally captured or created.
+///
+/// ## Box Structure
+///
+/// - Type: 'resc' (0x72657363)
+/// - Length: 27 bytes (fixed)
+/// - Content:
+///   - HRcN (4 bytes): Horizontal resolution numerator
+///   - HRcD (4 bytes): Horizontal resolution denominator
+///   - HRcE (1 byte): Horizontal resolution exponent (signed)
+///   - VRcN (4 bytes): Vertical resolution numerator
+///   - VRcD (4 bytes): Vertical resolution denominator
+///   - VRcE (1 byte): Vertical resolution exponent (signed)
+///   - Unit (1 byte): Resolution unit
+///
+/// The resolution is calculated as: (numerator / denominator) × 10^exponent
+///
+/// Example:
+/// ```swift
+/// // 72 DPI (dots per inch)
+/// let box = J2KCaptureResolutionBox(
+///     horizontalResolution: (72, 1, 0),
+///     verticalResolution: (72, 1, 0),
+///     unit: .inch
+/// )
+///
+/// // 300 DPI
+/// let box2 = J2KCaptureResolutionBox(
+///     horizontalResolution: (300, 1, 0),
+///     verticalResolution: (300, 1, 0),
+///     unit: .inch
+/// )
+/// ```
+public struct J2KCaptureResolutionBox: J2KBox {
+    /// Resolution units.
+    public enum Unit: UInt8, Sendable {
+        /// Unknown or unspecified units
+        case unknown = 0
+        
+        /// Pixels per metre
+        case metre = 1
+        
+        /// Pixels per inch
+        case inch = 2
+    }
+    
+    /// Horizontal resolution (numerator, denominator, exponent).
+    public var horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
+    
+    /// Vertical resolution (numerator, denominator, exponent).
+    public var verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
+    
+    /// Resolution unit.
+    public var unit: Unit
+    
+    public var boxType: J2KBoxType {
+        .resc
+    }
+    
+    /// Creates a new capture resolution box.
+    ///
+    /// - Parameters:
+    ///   - horizontalResolution: The horizontal resolution as (numerator, denominator, exponent).
+    ///   - verticalResolution: The vertical resolution as (numerator, denominator, exponent).
+    ///   - unit: The resolution unit.
+    public init(
+        horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8),
+        verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8),
+        unit: Unit
+    ) {
+        self.horizontalResolution = horizontalResolution
+        self.verticalResolution = verticalResolution
+        self.unit = unit
+    }
+    
+    public func write() throws -> Data {
+        var data = Data(capacity: 19)
+        
+        // HRcN (4 bytes)
+        data.append(UInt8((horizontalResolution.numerator >> 24) & 0xFF))
+        data.append(UInt8((horizontalResolution.numerator >> 16) & 0xFF))
+        data.append(UInt8((horizontalResolution.numerator >> 8) & 0xFF))
+        data.append(UInt8(horizontalResolution.numerator & 0xFF))
+        
+        // HRcD (4 bytes)
+        data.append(UInt8((horizontalResolution.denominator >> 24) & 0xFF))
+        data.append(UInt8((horizontalResolution.denominator >> 16) & 0xFF))
+        data.append(UInt8((horizontalResolution.denominator >> 8) & 0xFF))
+        data.append(UInt8(horizontalResolution.denominator & 0xFF))
+        
+        // HRcE (1 byte)
+        data.append(UInt8(bitPattern: horizontalResolution.exponent))
+        
+        // VRcN (4 bytes)
+        data.append(UInt8((verticalResolution.numerator >> 24) & 0xFF))
+        data.append(UInt8((verticalResolution.numerator >> 16) & 0xFF))
+        data.append(UInt8((verticalResolution.numerator >> 8) & 0xFF))
+        data.append(UInt8(verticalResolution.numerator & 0xFF))
+        
+        // VRcD (4 bytes)
+        data.append(UInt8((verticalResolution.denominator >> 24) & 0xFF))
+        data.append(UInt8((verticalResolution.denominator >> 16) & 0xFF))
+        data.append(UInt8((verticalResolution.denominator >> 8) & 0xFF))
+        data.append(UInt8(verticalResolution.denominator & 0xFF))
+        
+        // VRcE (1 byte)
+        data.append(UInt8(bitPattern: verticalResolution.exponent))
+        
+        // Unit (1 byte)
+        data.append(unit.rawValue)
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count == 19 else {
+            throw J2KError.fileFormatError("Invalid capture resolution box length: \(data.count), expected 19")
+        }
+        
+        // HRcN (4 bytes)
+        let hrcn = UInt32(data[0]) << 24 |
+                   UInt32(data[1]) << 16 |
+                   UInt32(data[2]) << 8 |
+                   UInt32(data[3])
+        
+        // HRcD (4 bytes)
+        let hrcd = UInt32(data[4]) << 24 |
+                   UInt32(data[5]) << 16 |
+                   UInt32(data[6]) << 8 |
+                   UInt32(data[7])
+        
+        // HRcE (1 byte, signed)
+        let hrce = Int8(bitPattern: data[8])
+        
+        // VRcN (4 bytes)
+        let vrcn = UInt32(data[9]) << 24 |
+                   UInt32(data[10]) << 16 |
+                   UInt32(data[11]) << 8 |
+                   UInt32(data[12])
+        
+        // VRcD (4 bytes)
+        let vrcd = UInt32(data[13]) << 24 |
+                   UInt32(data[14]) << 16 |
+                   UInt32(data[15]) << 8 |
+                   UInt32(data[16])
+        
+        // VRcE (1 byte, signed)
+        let vrce = Int8(bitPattern: data[17])
+        
+        // Unit (1 byte)
+        guard let unitValue = Unit(rawValue: data[18]) else {
+            throw J2KError.fileFormatError("Invalid resolution unit: \(data[18])")
+        }
+        
+        self.horizontalResolution = (hrcn, hrcd, hrce)
+        self.verticalResolution = (vrcn, vrcd, vrce)
+        self.unit = unitValue
+    }
+}
+
+/// Display resolution box.
+///
+/// The display resolution box ('resd') specifies the recommended resolution
+/// at which the image should be displayed.
+///
+/// ## Box Structure
+///
+/// - Type: 'resd' (0x72657364)
+/// - Length: 27 bytes (fixed)
+/// - Content: Same structure as Capture Resolution Box
+///
+/// Example:
+/// ```swift
+/// let box = J2KDisplayResolutionBox(
+///     horizontalResolution: (72, 1, 0),
+///     verticalResolution: (72, 1, 0),
+///     unit: .inch
+/// )
+/// ```
+public struct J2KDisplayResolutionBox: J2KBox {
+    /// Resolution units (same as Capture Resolution Box).
+    public typealias Unit = J2KCaptureResolutionBox.Unit
+    
+    /// Horizontal resolution (numerator, denominator, exponent).
+    public var horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
+    
+    /// Vertical resolution (numerator, denominator, exponent).
+    public var verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
+    
+    /// Resolution unit.
+    public var unit: Unit
+    
+    public var boxType: J2KBoxType {
+        .resd
+    }
+    
+    /// Creates a new display resolution box.
+    ///
+    /// - Parameters:
+    ///   - horizontalResolution: The horizontal resolution as (numerator, denominator, exponent).
+    ///   - verticalResolution: The vertical resolution as (numerator, denominator, exponent).
+    ///   - unit: The resolution unit.
+    public init(
+        horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8),
+        verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8),
+        unit: Unit
+    ) {
+        self.horizontalResolution = horizontalResolution
+        self.verticalResolution = verticalResolution
+        self.unit = unit
+    }
+    
+    public func write() throws -> Data {
+        var data = Data(capacity: 19)
+        
+        // HRdN (4 bytes)
+        data.append(UInt8((horizontalResolution.numerator >> 24) & 0xFF))
+        data.append(UInt8((horizontalResolution.numerator >> 16) & 0xFF))
+        data.append(UInt8((horizontalResolution.numerator >> 8) & 0xFF))
+        data.append(UInt8(horizontalResolution.numerator & 0xFF))
+        
+        // HRdD (4 bytes)
+        data.append(UInt8((horizontalResolution.denominator >> 24) & 0xFF))
+        data.append(UInt8((horizontalResolution.denominator >> 16) & 0xFF))
+        data.append(UInt8((horizontalResolution.denominator >> 8) & 0xFF))
+        data.append(UInt8(horizontalResolution.denominator & 0xFF))
+        
+        // HRdE (1 byte)
+        data.append(UInt8(bitPattern: horizontalResolution.exponent))
+        
+        // VRdN (4 bytes)
+        data.append(UInt8((verticalResolution.numerator >> 24) & 0xFF))
+        data.append(UInt8((verticalResolution.numerator >> 16) & 0xFF))
+        data.append(UInt8((verticalResolution.numerator >> 8) & 0xFF))
+        data.append(UInt8(verticalResolution.numerator & 0xFF))
+        
+        // VRdD (4 bytes)
+        data.append(UInt8((verticalResolution.denominator >> 24) & 0xFF))
+        data.append(UInt8((verticalResolution.denominator >> 16) & 0xFF))
+        data.append(UInt8((verticalResolution.denominator >> 8) & 0xFF))
+        data.append(UInt8(verticalResolution.denominator & 0xFF))
+        
+        // VRdE (1 byte)
+        data.append(UInt8(bitPattern: verticalResolution.exponent))
+        
+        // Unit (1 byte)
+        data.append(unit.rawValue)
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count == 19 else {
+            throw J2KError.fileFormatError("Invalid display resolution box length: \(data.count), expected 19")
+        }
+        
+        // HRdN (4 bytes)
+        let hrdn = UInt32(data[0]) << 24 |
+                   UInt32(data[1]) << 16 |
+                   UInt32(data[2]) << 8 |
+                   UInt32(data[3])
+        
+        // HRdD (4 bytes)
+        let hrdd = UInt32(data[4]) << 24 |
+                   UInt32(data[5]) << 16 |
+                   UInt32(data[6]) << 8 |
+                   UInt32(data[7])
+        
+        // HRdE (1 byte, signed)
+        let hrde = Int8(bitPattern: data[8])
+        
+        // VRdN (4 bytes)
+        let vrdn = UInt32(data[9]) << 24 |
+                   UInt32(data[10]) << 16 |
+                   UInt32(data[11]) << 8 |
+                   UInt32(data[12])
+        
+        // VRdD (4 bytes)
+        let vrdd = UInt32(data[13]) << 24 |
+                   UInt32(data[14]) << 16 |
+                   UInt32(data[15]) << 8 |
+                   UInt32(data[16])
+        
+        // VRdE (1 byte, signed)
+        let vrde = Int8(bitPattern: data[17])
+        
+        // Unit (1 byte)
+        guard let unitValue = Unit(rawValue: data[18]) else {
+            throw J2KError.fileFormatError("Invalid resolution unit: \(data[18])")
+        }
+        
+        self.horizontalResolution = (hrdn, hrdd, hrde)
+        self.verticalResolution = (vrdn, vrdd, vrde)
+        self.unit = unitValue
+    }
+}
+
+// MARK: - UUID Box
+
+/// UUID box.
+///
+/// The UUID box ('uuid') allows for vendor-specific or application-specific
+/// extensions to the JP2 format. The box is identified by a 16-byte UUID
+/// (Universally Unique Identifier) that uniquely identifies the type of data.
+///
+/// ## Box Structure
+///
+/// - Type: 'uuid' (0x75756964)
+/// - Length: Variable
+/// - Content:
+///   - UUID (16 bytes): Unique identifier
+///   - Data (N bytes): Application-specific data
+///
+/// Example:
+/// ```swift
+/// import Foundation
+///
+/// let uuid = UUID()
+/// let customData = "Custom metadata".data(using: .utf8)!
+/// let box = J2KUUIDBox(uuid: uuid, data: customData)
+/// ```
+public struct J2KUUIDBox: J2KBox {
+    /// The 16-byte UUID identifying this box's content type.
+    public var uuid: UUID
+    
+    /// The application-specific data.
+    public var data: Data
+    
+    public var boxType: J2KBoxType {
+        .uuid
+    }
+    
+    /// Creates a new UUID box.
+    ///
+    /// - Parameters:
+    ///   - uuid: The UUID identifying the content type.
+    ///   - data: The application-specific data.
+    public init(uuid: UUID, data: Data) {
+        self.uuid = uuid
+        self.data = data
+    }
+    
+    public func write() throws -> Data {
+        var output = Data(capacity: 16 + data.count)
+        
+        // Write UUID (16 bytes)
+        var uuidBytes = uuid.uuid
+        withUnsafeBytes(of: &uuidBytes) { bytes in
+            output.append(contentsOf: bytes)
+        }
+        
+        // Write data
+        output.append(data)
+        
+        return output
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 16 else {
+            throw J2KError.fileFormatError("Invalid UUID box length: \(data.count), expected at least 16")
+        }
+        
+        // Read UUID (16 bytes)
+        let uuidBytes = data.prefix(16)
+        var uuidTuple: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        _ = withUnsafeMutableBytes(of: &uuidTuple) { buffer in
+            uuidBytes.copyBytes(to: buffer)
+        }
+        self.uuid = UUID(uuid: uuidTuple)
+        
+        // Read remaining data
+        self.data = data.suffix(from: 16)
+    }
+}
+
+// MARK: - XML Box
+
+/// XML box.
+///
+/// The XML box ('xml ') embeds XML-formatted metadata within the JP2 file.
+/// The content must be valid, well-formed XML encoded as UTF-8.
+///
+/// ## Box Structure
+///
+/// - Type: 'xml ' (0x786D6C20)
+/// - Length: Variable
+/// - Content: UTF-8 encoded XML data
+///
+/// Example:
+/// ```swift
+/// let xmlString = """
+/// <?xml version="1.0" encoding="UTF-8"?>
+/// <metadata>
+///     <title>Sample Image</title>
+///     <author>John Doe</author>
+///     <date>2024-01-01</date>
+/// </metadata>
+/// """
+/// let box = try J2KXMLBox(xmlString: xmlString)
+/// ```
+public struct J2KXMLBox: J2KBox {
+    /// The XML content as a string.
+    public var xmlString: String
+    
+    public var boxType: J2KBoxType {
+        .xml
+    }
+    
+    /// Creates a new XML box.
+    ///
+    /// - Parameter xmlString: The XML content as a string.
+    /// - Throws: ``J2KError/fileFormatError(_:)`` if the string cannot be encoded as UTF-8.
+    public init(xmlString: String) throws {
+        // Validate that the string can be encoded as UTF-8
+        guard xmlString.data(using: .utf8) != nil else {
+            throw J2KError.fileFormatError("XML string cannot be encoded as UTF-8")
+        }
+        self.xmlString = xmlString
+    }
+    
+    /// Creates a new XML box from raw data.
+    ///
+    /// - Parameter data: The XML content as UTF-8 encoded data.
+    /// - Throws: ``J2KError/fileFormatError(_:)`` if the data is not valid UTF-8.
+    public init(data: Data) throws {
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw J2KError.fileFormatError("XML box data is not valid UTF-8")
+        }
+        self.xmlString = string
+    }
+    
+    public func write() throws -> Data {
+        guard let data = xmlString.data(using: .utf8) else {
+            throw J2KError.fileFormatError("Failed to encode XML as UTF-8")
+        }
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw J2KError.fileFormatError("XML box data is not valid UTF-8")
+        }
+        self.xmlString = string
+    }
+}
