@@ -161,12 +161,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 **Goal**: Implement color space transformations and multi-component processing.
 
-### Week 49-51: Reversible Color Transform (RCT)
-- [ ] Implement RGB to YCbCr (RCT)
-- [ ] Add YCbCr to RGB (inverse RCT)
-- [ ] Support multi-component images
-- [ ] Handle component subsampling
-- [ ] Validate transform reversibility
+### Week 49-51: Reversible Color Transform (RCT) ✅
+- [x] Implement RGB to YCbCr (RCT)
+- [x] Add YCbCr to RGB (inverse RCT)
+- [x] Support multi-component images
+- [x] Handle component subsampling
+- [x] Validate transform reversibility
 
 ### Week 52-54: Irreversible Color Transform (ICT)
 - [ ] Implement RGB to YCbCr (ICT)
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 3 - Quantization (Week 46-48 Complete ✅)
-**Next Milestone**: Phase 4, Week 49-51 - Reversible Color Transform (RCT)
+**Current Phase**: Phase 4 - Color Transforms (Week 49-51 Complete ✅)
+**Next Milestone**: Phase 4, Week 52-54 - Irreversible Color Transform (ICT)

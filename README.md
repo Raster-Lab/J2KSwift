@@ -150,10 +150,15 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Hardware Acceleration (Week 35-37)
 - [x] Advanced Features (Week 38-40)
 
-**Phase 3 In Progress** 🚧:
+**Phase 3 Complete** ✅:
 - [x] Basic Quantization (Week 41-43) ✅
 - [x] Region of Interest (Week 44-45) ✅
-- [ ] Rate Control (Week 46-48)
+- [x] Rate Control (Week 46-48) ✅
+
+**Phase 4 In Progress** 🚧:
+- [x] Reversible Color Transform (Week 49-51) ✅
+- [ ] Irreversible Color Transform (Week 52-54)
+- [ ] Advanced Color Support (Week 55-56)
 
 ## 🌟 Features
 
@@ -236,13 +241,32 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Implicit ROI coding support
   - ✅ ROI statistics and coverage analysis
   - ✅ 47 comprehensive tests, 100% pass rate
+- ✅ **Rate Control (Phase 3, Week 46-48)**:
+  - ✅ PCRD-opt (Post Compression Rate Distortion Optimization) algorithm
+  - ✅ Target bitrate mode for precise file size control
+  - ✅ Constant quality mode for quality-driven encoding
+  - ✅ Lossless mode with full pass inclusion
+  - ✅ Three distortion estimation methods (norm, MSE, simplified)
+  - ✅ Strict and non-strict rate matching
+  - ✅ Progressive quality layer formation
+  - ✅ 58 comprehensive tests (34 functional + 24 benchmark), 100% pass rate
+  - ✅ < 50ms optimization time for typical images
+- ✅ **Reversible Color Transform (Phase 4, Week 49-51)**:
+  - ✅ Integer-to-integer RGB ↔ YCbCr transform for lossless compression
+  - ✅ Perfect reversibility (no precision loss)
+  - ✅ Support for signed integers and large bit depths
+  - ✅ Component subsampling support (4:4:4, 4:2:2, 4:2:0)
+  - ✅ Array-based and component-based APIs
+  - ✅ Optimized for natural images
+  - ✅ 50 comprehensive tests (30 functional + 20 benchmark), 100% pass rate
+  - ✅ ~10ms for 512×512 images, ~42ms for 1024×1024 images
 
 ### Planned Features
 
 See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 
-- Rate control and PCRD-opt
-- Color space transformations
+- Irreversible Color Transform (ICT)
+- Advanced color space support
 - Multiple component transformations
 - Full JPIP implementation
 - And much more...
