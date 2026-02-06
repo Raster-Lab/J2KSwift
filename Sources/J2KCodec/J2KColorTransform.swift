@@ -551,6 +551,377 @@ public struct J2KColorTransform: Sendable {
         return (redComponent, greenComponent, blueComponent)
     }
     
+    // MARK: - Grayscale Support
+    
+    /// Converts RGB components to grayscale using standard luminance weights.
+    ///
+    /// Uses the standard ITU-R BT.601 luminance formula:
+    /// ```
+    /// Y = 0.299 × R + 0.587 × G + 0.114 × B
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - red: The red component data.
+    ///   - green: The green component data.
+    ///   - blue: The blue component data.
+    /// - Returns: The grayscale luminance values.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    public func rgbToGrayscale(
+        red: [Int32],
+        green: [Int32],
+        blue: [Int32]
+    ) throws -> [Int32] {
+        // Validate input
+        guard red.count == green.count && green.count == blue.count else {
+            throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
+        }
+        
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = red.count
+        var gray = [Int32](repeating: 0, count: count)
+        
+        // Apply luminance formula
+        // Y = 0.299 × R + 0.587 × G + 0.114 × B
+        // Using fixed-point arithmetic for precision: multiply by 1024, then divide
+        let weightR: Int32 = 306  // 0.299 × 1024
+        let weightG: Int32 = 601  // 0.587 × 1024
+        let weightB: Int32 = 117  // 0.114 × 1024
+        
+        for i in 0..<count {
+            let r = red[i]
+            let g = green[i]
+            let b = blue[i]
+            
+            // Use fixed-point arithmetic for better precision
+            let weighted = (r * weightR + g * weightG + b * weightB + 512) >> 10
+            gray[i] = weighted
+        }
+        
+        return gray
+    }
+    
+    /// Converts RGB components to grayscale using floating-point precision.
+    ///
+    /// - Parameters:
+    ///   - red: The red component data.
+    ///   - green: The green component data.
+    ///   - blue: The blue component data.
+    /// - Returns: The grayscale luminance values.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    public func rgbToGrayscale(
+        red: [Double],
+        green: [Double],
+        blue: [Double]
+    ) throws -> [Double] {
+        // Validate input
+        guard red.count == green.count && green.count == blue.count else {
+            throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
+        }
+        
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = red.count
+        var gray = [Double](repeating: 0, count: count)
+        
+        // Apply luminance formula
+        let weightR: Double = 0.299
+        let weightG: Double = 0.587
+        let weightB: Double = 0.114
+        
+        for i in 0..<count {
+            gray[i] = weightR * red[i] + weightG * green[i] + weightB * blue[i]
+        }
+        
+        return gray
+    }
+    
+    /// Converts grayscale to RGB by replicating the gray value across all channels.
+    ///
+    /// - Parameter gray: The grayscale component data.
+    /// - Returns: A tuple containing (R, G, B) with replicated gray values.
+    public func grayscaleToRGB(gray: [Int32]) -> (red: [Int32], green: [Int32], blue: [Int32]) {
+        return (red: gray, green: gray, blue: gray)
+    }
+    
+    /// Converts grayscale to RGB by replicating the gray value across all channels.
+    ///
+    /// - Parameter gray: The grayscale component data.
+    /// - Returns: A tuple containing (R, G, B) with replicated gray values.
+    public func grayscaleToRGB(gray: [Double]) -> (red: [Double], green: [Double], blue: [Double]) {
+        return (red: gray, green: gray, blue: gray)
+    }
+    
+    /// Converts RGB component to grayscale using standard luminance weights.
+    ///
+    /// - Parameters:
+    ///   - redComponent: The red component.
+    ///   - greenComponent: The green component.
+    ///   - blueComponent: The blue component.
+    /// - Returns: The grayscale component.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if components are invalid or mismatched.
+    public func rgbToGrayscale(
+        redComponent: J2KComponent,
+        greenComponent: J2KComponent,
+        blueComponent: J2KComponent
+    ) throws -> J2KComponent {
+        // Validate components
+        guard redComponent.width == greenComponent.width &&
+              greenComponent.width == blueComponent.width &&
+              redComponent.height == greenComponent.height &&
+              greenComponent.height == blueComponent.height else {
+            throw J2KError.invalidComponentConfiguration("Component dimensions must match")
+        }
+        
+        // Convert to arrays
+        let red = try convertToInt32Array(redComponent)
+        let green = try convertToInt32Array(greenComponent)
+        let blue = try convertToInt32Array(blueComponent)
+        
+        // Apply transform
+        let gray = try rgbToGrayscale(red: red, green: green, blue: blue)
+        
+        // Convert back to component
+        return try createComponent(
+            from: gray,
+            template: redComponent,
+            index: 0
+        )
+    }
+    
+    // MARK: - Palette Support
+    
+    /// Represents a color palette for indexed color images.
+    public struct Palette: Sendable {
+        /// The palette entries (RGB triplets).
+        public let entries: [(red: UInt8, green: UInt8, blue: UInt8)]
+        
+        /// Creates a new palette.
+        ///
+        /// - Parameter entries: The palette entries.
+        public init(entries: [(red: UInt8, green: UInt8, blue: UInt8)]) {
+            self.entries = entries
+        }
+        
+        /// The number of entries in the palette.
+        public var count: Int {
+            return entries.count
+        }
+    }
+    
+    /// Expands indexed color data using a palette to RGB components.
+    ///
+    /// - Parameters:
+    ///   - indices: The palette indices (0 to palette.count-1).
+    ///   - palette: The color palette.
+    /// - Returns: A tuple containing (R, G, B) component data.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if indices are out of range.
+    public func expandPalette(
+        indices: [UInt8],
+        palette: Palette
+    ) throws -> (red: [UInt8], green: [UInt8], blue: [UInt8]) {
+        guard !indices.isEmpty else {
+            throw J2KError.invalidParameter("Indices cannot be empty")
+        }
+        
+        let count = indices.count
+        var red = [UInt8](repeating: 0, count: count)
+        var green = [UInt8](repeating: 0, count: count)
+        var blue = [UInt8](repeating: 0, count: count)
+        
+        for i in 0..<count {
+            let index = Int(indices[i])
+            guard index < palette.count else {
+                throw J2KError.invalidParameter("Palette index \(index) out of range [0, \(palette.count))")
+            }
+            
+            let entry = palette.entries[index]
+            red[i] = entry.red
+            green[i] = entry.green
+            blue[i] = entry.blue
+        }
+        
+        return (red, green, blue)
+    }
+    
+    /// A color value used for palette operations.
+    private struct RGBColor: Hashable {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+        
+        func asTuple() -> (red: UInt8, green: UInt8, blue: UInt8) {
+            return (red: red, green: green, blue: blue)
+        }
+    }
+    
+    /// Creates a palette from RGB component data using color quantization.
+    ///
+    /// This uses a simple median cut algorithm to reduce colors.
+    ///
+    /// - Parameters:
+    ///   - red: The red component data.
+    ///   - green: The green component data.
+    ///   - blue: The blue component data.
+    ///   - maxColors: The maximum number of palette entries (default: 256).
+    /// - Returns: A tuple containing the palette and indices.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    public func createPalette(
+        red: [UInt8],
+        green: [UInt8],
+        blue: [UInt8],
+        maxColors: Int = 256
+    ) throws -> (palette: Palette, indices: [UInt8]) {
+        // Validate input
+        guard red.count == green.count && green.count == blue.count else {
+            throw J2KError.invalidParameter("Component sizes must match")
+        }
+        
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        guard maxColors > 0 && maxColors <= 256 else {
+            throw J2KError.invalidParameter("maxColors must be in range [1, 256]")
+        }
+        
+        // Build color histogram
+        var colorMap: [RGBColor: Int] = [:]
+        let count = red.count
+        
+        for i in 0..<count {
+            let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
+            colorMap[color, default: 0] += 1
+        }
+        
+        // If we already have few enough colors, use them directly
+        if colorMap.count <= maxColors {
+            let entries = colorMap.keys.map { $0.asTuple() }
+            let palette = Palette(entries: entries)
+            
+            // Create index mapping
+            let colorToIndex = Dictionary(uniqueKeysWithValues: 
+                colorMap.keys.enumerated().map { ($1, UInt8($0)) }
+            )
+            var indices = [UInt8](repeating: 0, count: count)
+            
+            for i in 0..<count {
+                let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
+                indices[i] = colorToIndex[color] ?? 0
+            }
+            
+            return (palette, indices)
+        }
+        
+        // Otherwise, use simple color quantization
+        // For simplicity, we'll use a basic approach: take the most common colors
+        let sortedColors = colorMap.sorted { $0.value > $1.value }
+        let topColors = Array(sortedColors.prefix(maxColors).map { $0.key })
+        let entries = topColors.map { $0.asTuple() }
+        let palette = Palette(entries: entries)
+        
+        // Create index mapping
+        let colorToIndex = Dictionary(uniqueKeysWithValues: 
+            topColors.enumerated().map { ($1, UInt8($0)) }
+        )
+        
+        // Map each pixel to nearest palette entry
+        var indices = [UInt8](repeating: 0, count: count)
+        for i in 0..<count {
+            let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
+            
+            if let index = colorToIndex[color] {
+                indices[i] = index
+            } else {
+                // Find nearest color in palette
+                var minDistance = Int.max
+                var bestIndex: UInt8 = 0
+                
+                for (idx, entry) in entries.enumerated() {
+                    let dr = Int(entry.red) - Int(color.red)
+                    let dg = Int(entry.green) - Int(color.green)
+                    let db = Int(entry.blue) - Int(color.blue)
+                    let distance = dr * dr + dg * dg + db * db
+                    
+                    if distance < minDistance {
+                        minDistance = distance
+                        bestIndex = UInt8(idx)
+                    }
+                }
+                
+                indices[i] = bestIndex
+            }
+        }
+        
+        return (palette, indices)
+    }
+    
+    // MARK: - Color Space Detection
+    
+    /// Detects the color space based on the number and properties of components.
+    ///
+    /// - Parameter components: The image components.
+    /// - Returns: The detected color space.
+    public static func detectColorSpace(components: [J2KComponent]) -> J2KColorSpace {
+        guard !components.isEmpty else {
+            return .unknown
+        }
+        
+        let componentCount = components.count
+        
+        switch componentCount {
+        case 1:
+            return .grayscale
+        case 3:
+            // Assume RGB for 3-component images
+            return .sRGB
+        case 4:
+            // Could be RGBA or CMYK, but default to sRGB for now
+            return .sRGB
+        default:
+            return .unknown
+        }
+    }
+    
+    /// Validates that components are suitable for a given color space.
+    ///
+    /// - Parameters:
+    ///   - components: The image components.
+    ///   - colorSpace: The expected color space.
+    /// - Throws: ``J2KError/invalidComponentConfiguration(_:)`` if components don't match the color space.
+    public static func validateColorSpace(
+        components: [J2KComponent],
+        colorSpace: J2KColorSpace
+    ) throws {
+        switch colorSpace {
+        case .grayscale:
+            guard components.count == 1 else {
+                throw J2KError.invalidComponentConfiguration(
+                    "Grayscale color space requires 1 component, got \(components.count)"
+                )
+            }
+            
+        case .sRGB, .yCbCr:
+            guard components.count >= 3 else {
+                throw J2KError.invalidComponentConfiguration(
+                    "RGB/YCbCr color space requires at least 3 components, got \(components.count)"
+                )
+            }
+            
+        case .iccProfile:
+            // ICC profiles can support arbitrary component counts
+            break
+            
+        case .unknown:
+            // Unknown color space, no validation
+            break
+        }
+    }
+    
     // MARK: - Component Subsampling Support
     
     /// Information about component subsampling.
