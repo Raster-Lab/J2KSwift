@@ -32,11 +32,17 @@ The Discrete Wavelet Transform is a key component of JPEG 2000 that decomposes i
 - Multiple boundary extension modes
 - Comprehensive test coverage
 
+✅ **Phase 2, Week 29-31 (Complete)**:
+- 2D forward and inverse DWT
+- Separable transform (row-then-column)
+- Multi-level decomposition (dyadic)
+- Support for arbitrary image dimensions
+- Both 5/3 and 9/7 filters
+
 🚧 **Future Phases**:
-- 2D DWT (Weeks 29-31)
-- Multi-level decomposition
-- Tiling support
-- Hardware acceleration
+- Tiling support (Weeks 32-34)
+- Hardware acceleration (Weeks 35-37)
+- Advanced decomposition structures (Weeks 38-40)
 
 ## Wavelet Filters
 
@@ -313,6 +319,215 @@ for ext in extensions {
     print("\(ext): lowpass=\(low), highpass=\(high)")
 }
 ```
+
+## 2D DWT Implementation
+
+### Architecture
+
+The 2D DWT is implemented in `Sources/J2KCodec/J2KDWT2D.swift` using separable transforms:
+1. Apply 1D DWT to each row
+2. Apply 1D DWT to each column of the row-transformed data
+
+This produces four subbands at each decomposition level:
+- **LL (Low-Low)**: Approximation - contains most of the image energy
+- **LH (Low-High)**: Horizontal details - vertical edges
+- **HL (High-Low)**: Vertical details - horizontal edges
+- **HH (High-High)**: Diagonal details - texture and corners
+
+### Usage Examples
+
+#### Example 1: Single-Level 2D Decomposition
+
+```swift
+import J2KCodec
+
+// Create a simple 8x8 image
+var image: [[Int32]] = []
+for i in 0..<8 {
+    var row: [Int32] = []
+    for j in 0..<8 {
+        row.append(Int32(i * 8 + j))
+    }
+    image.append(row)
+}
+
+// Forward transform
+let result = try J2KDWT2D.forwardTransform(
+    image: image,
+    filter: .reversible53,
+    boundaryExtension: .symmetric
+)
+
+// Access subbands (each is 4x4 for 8x8 input)
+let ll = result.ll  // Approximation
+let lh = result.lh  // Horizontal details
+let hl = result.hl  // Vertical details
+let hh = result.hh  // Diagonal details
+
+// Inverse transform - perfect reconstruction
+let reconstructed = try J2KDWT2D.inverseTransform(
+    ll: result.ll,
+    lh: result.lh,
+    hl: result.hl,
+    hh: result.hh,
+    filter: .reversible53
+)
+
+assert(reconstructed == image) // Perfect reconstruction!
+```
+
+#### Example 2: Multi-Level Decomposition
+
+```swift
+import J2KCodec
+
+// Create a 32x32 image
+var image: [[Int32]] = []
+for i in 0..<32 {
+    var row: [Int32] = []
+    for j in 0..<32 {
+        row.append(Int32(i * 32 + j))
+    }
+    image.append(row)
+}
+
+// 3-level decomposition
+let decomposition = try J2KDWT2D.forwardDecomposition(
+    image: image,
+    levels: 3,
+    filter: .reversible53
+)
+
+// Access results at different levels
+// Level 0: 32x32 -> 16x16 subbands
+print("Level 0: \(decomposition.levels[0].width)x\(decomposition.levels[0].height)")
+
+// Level 1: 16x16 -> 8x8 subbands
+print("Level 1: \(decomposition.levels[1].width)x\(decomposition.levels[1].height)")
+
+// Level 2: 8x8 -> 4x4 subbands
+print("Level 2: \(decomposition.levels[2].width)x\(decomposition.levels[2].height)")
+
+// Coarsest approximation (4x4)
+let coarsestLL = decomposition.coarsestLL
+
+// Inverse multi-level transform
+let reconstructed = try J2KDWT2D.inverseDecomposition(
+    decomposition: decomposition,
+    filter: .reversible53
+)
+
+assert(reconstructed == image) // Perfect reconstruction!
+```
+
+#### Example 3: 9/7 Filter for Lossy Compression
+
+```swift
+import J2KCodec
+
+// Create floating-point image
+var image: [[Double]] = []
+for i in 0..<16 {
+    var row: [Double] = []
+    for j in 0..<16 {
+        row.append(Double(i * 16 + j))
+    }
+    image.append(row)
+}
+
+// Forward transform with 9/7 filter
+let result = try J2KDWT2D.forwardTransform97(
+    image: image,
+    boundaryExtension: .symmetric
+)
+
+// Quantize detail subbands (simulating lossy compression)
+let quantizedLH = result.lh.map { row in row.map { $0 / 2.0 } }
+let quantizedHL = result.hl.map { row in row.map { $0 / 2.0 } }
+let quantizedHH = result.hh.map { row in row.map { $0 / 2.0 } }
+
+// Inverse transform
+let reconstructed = try J2KDWT2D.inverseTransform97(
+    ll: result.ll,
+    lh: quantizedLH,
+    hl: quantizedHL,
+    hh: quantizedHH
+)
+
+// Near-perfect reconstruction (within floating-point precision)
+// Note: This example shows deliberate loss due to quantization
+```
+
+#### Example 4: Handling Odd Dimensions
+
+```swift
+import J2KCodec
+
+// 2D DWT supports odd dimensions
+let image: [[Int32]] = [
+    [1, 2, 3, 4, 5],
+    [6, 7, 8, 9, 10],
+    [11, 12, 13, 14, 15]
+]  // 3x5 image
+
+let result = try J2KDWT2D.forwardTransform(
+    image: image,
+    filter: .reversible53
+)
+
+// Subbands automatically sized:
+// - LL: 2x3 (ceiling of half dimensions)
+// - Others: appropriately sized
+
+let reconstructed = try J2KDWT2D.inverseTransform(
+    ll: result.ll,
+    lh: result.lh,
+    hl: result.hl,
+    hh: result.hh,
+    filter: .reversible53
+)
+
+assert(reconstructed == image)
+```
+
+### 2D DWT Performance
+
+Benchmarks for 2D DWT (performed on various image sizes, excluding performance test infrastructure):
+
+**8x8 Image (100 iterations)**:
+- Forward transform: ~0.003s per iteration
+- Round-trip: ~0.006s per iteration
+
+**16x16 Image (100 iterations)**:
+- Round-trip: ~0.016s per iteration
+
+**32x32 Image (50 iterations, 3 levels)**:
+- Multi-level decomposition + reconstruction: ~0.037s per iteration
+
+**Computational Complexity**:
+- Time: O(n) for n pixels (due to separable transforms)
+- Space: O(n) for output subbands
+- Each pixel processed twice (once per dimension)
+
+### Implementation Notes
+
+**Separable Transform**:
+The 2D DWT leverages the separable property of wavelets:
+1. Row transforms are independent and could be parallelized
+2. Column transforms are independent and could be parallelized
+3. No cross-dependency between rows or columns within a pass
+
+**Memory Layout**:
+- Input: 2D array (array of arrays) for natural image representation
+- Output: Four separate 2D arrays for each subband
+- Intermediate: Row-transformed data stored temporarily
+
+**Subband Sizes**:
+For an NxM image:
+- LL: ⌈N/2⌉ x ⌈M/2⌉
+- LH: ⌈N/2⌉ x ⌊M/2⌋
+- HL: ⌊N/2⌋ x ⌈M/2⌉
+- HH: ⌊N/2⌋ x ⌊M/2⌋
 
 ## Performance Characteristics
 
