@@ -888,17 +888,17 @@ let results = try tiler.processImageTiled(
 Tile-by-tile processing significantly reduces peak memory usage:
 
 **Without tiling** (4096x4096 image):
-- Input image: 16,384 × 16,384 pixels = 268 MB (Int32)
-- DWT output: ~268 MB (4 subbands)
-- Peak memory: ~536 MB
+- Input image: 4,096 × 4,096 pixels = 16,777,216 pixels = 64 MB (Int32 at 4 bytes/pixel)
+- DWT output: ~64 MB (4 subbands)
+- Peak memory: ~128 MB
 
 **With tiling** (512×512 tiles):
-- Input tile: 512 × 512 pixels = 1 MB
+- Input tile: 512 × 512 pixels = 262,144 pixels = 1 MB
 - DWT output: ~1 MB
 - Peak memory per tile: ~2 MB
 - **Total peak memory: ~2 MB** (process one tile at a time)
 
-This represents a **268x reduction** in peak memory usage!
+This represents a **64x reduction** in peak memory usage!
 
 ### Performance Characteristics
 

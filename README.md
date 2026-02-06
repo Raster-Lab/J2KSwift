@@ -197,7 +197,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Support for non-aligned tile dimensions (partial tiles)
   - ✅ Perfect reconstruction with tiling
   - ✅ 23 comprehensive tests, 100% pass rate
-  - ✅ Up to 268x memory reduction for large images
+  - ✅ Up to 64x memory reduction for large images
   - ✅ Full documentation (updated [WAVELET_TRANSFORM.md](WAVELET_TRANSFORM.md))
 
 ### Planned Features
