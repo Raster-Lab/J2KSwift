@@ -2021,4 +2021,546 @@ final class J2KBoxTests: XCTestCase {
         
         XCTAssertEqual(decoded.xmlString, xmlString)
     }
+    
+    // MARK: - Fragment Table Tests (JPX)
+    
+    func testFragmentListBox() throws {
+        // Test basic fragment list
+        let fragments = [
+            J2KFragment(offset: 1000, length: 5000),
+            J2KFragment(offset: 8000, length: 3000),
+            J2KFragment(offset: 12000, length: 2000)
+        ]
+        
+        let box = J2KFragmentListBox(fragments: fragments)
+        
+        // Write and read back
+        let data = try box.write()
+        
+        var decoded = J2KFragmentListBox(fragments: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.fragments.count, 3)
+        XCTAssertEqual(decoded.fragments[0].offset, 1000)
+        XCTAssertEqual(decoded.fragments[0].length, 5000)
+        XCTAssertEqual(decoded.fragments[1].offset, 8000)
+        XCTAssertEqual(decoded.fragments[1].length, 3000)
+        XCTAssertEqual(decoded.fragments[2].offset, 12000)
+        XCTAssertEqual(decoded.fragments[2].length, 2000)
+    }
+    
+    func testFragmentListBoxLargeOffsets() throws {
+        // Test with offsets that require 8-byte encoding
+        let largeOffset: UInt64 = 5_000_000_000 // > UInt32.max
+        let fragments = [
+            J2KFragment(offset: largeOffset, length: 10000),
+            J2KFragment(offset: largeOffset + 20000, length: 5000)
+        ]
+        
+        let box = J2KFragmentListBox(fragments: fragments)
+        let data = try box.write()
+        
+        var decoded = J2KFragmentListBox(fragments: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.fragments.count, 2)
+        XCTAssertEqual(decoded.fragments[0].offset, largeOffset)
+        XCTAssertEqual(decoded.fragments[0].length, 10000)
+    }
+    
+    func testFragmentListBoxEmpty() throws {
+        // Test with no fragments
+        let box = J2KFragmentListBox(fragments: [])
+        let data = try box.write()
+        
+        var decoded = J2KFragmentListBox(fragments: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.fragments.count, 0)
+    }
+    
+    func testFragmentListBoxSingleFragment() throws {
+        // Test with single fragment
+        let box = J2KFragmentListBox(fragments: [
+            J2KFragment(offset: 100, length: 500)
+        ])
+        let data = try box.write()
+        
+        var decoded = J2KFragmentListBox(fragments: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.fragments.count, 1)
+        XCTAssertEqual(decoded.fragments[0].offset, 100)
+        XCTAssertEqual(decoded.fragments[0].length, 500)
+    }
+    
+    func testFragmentTableBox() throws {
+        // Test fragment table box containing a fragment list
+        let fragments = [
+            J2KFragment(offset: 1000, length: 5000),
+            J2KFragment(offset: 8000, length: 3000)
+        ]
+        let fragmentList = J2KFragmentListBox(fragments: fragments)
+        let box = J2KFragmentTableBox(fragmentList: fragmentList)
+        
+        // Write and read back
+        let data = try box.write()
+        
+        var decoded = J2KFragmentTableBox(fragmentList: J2KFragmentListBox(fragments: []))
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.fragmentList.fragments.count, 2)
+        XCTAssertEqual(decoded.fragmentList.fragments[0].offset, 1000)
+        XCTAssertEqual(decoded.fragmentList.fragments[1].length, 3000)
+    }
+    
+    func testFragmentTableBoxWithBoxWriter() throws {
+        // Test with full box serialization including headers
+        let fragments = [
+            J2KFragment(offset: 500, length: 1000),
+            J2KFragment(offset: 2000, length: 800)
+        ]
+        let fragmentList = J2KFragmentListBox(fragments: fragments)
+        let box = J2KFragmentTableBox(fragmentList: fragmentList)
+        
+        var writer = J2KBoxWriter()
+        try writer.writeBox(box)
+        let data = writer.data
+        
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .ftbl)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = J2KFragmentTableBox(fragmentList: J2KFragmentListBox(fragments: []))
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.fragmentList.fragments.count, 2)
+    }
+    
+    // MARK: - Composition Box Tests (JPX)
+    
+    func testCompositionBoxSingleLayer() throws {
+        // Test single layer composition
+        let instruction = J2KCompositionInstruction(
+            width: 1024,
+            height: 768,
+            codestreamIndex: 0
+        )
+        let box = J2KCompositionBox(
+            width: 1024,
+            height: 768,
+            instructions: [instruction]
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.width, 1024)
+        XCTAssertEqual(decoded.height, 768)
+        XCTAssertEqual(decoded.loopCount, 1)
+        XCTAssertEqual(decoded.instructions.count, 1)
+        XCTAssertEqual(decoded.instructions[0].width, 1024)
+        XCTAssertEqual(decoded.instructions[0].height, 768)
+        XCTAssertEqual(decoded.instructions[0].codestreamIndex, 0)
+    }
+    
+    func testCompositionBoxMultipleLayers() throws {
+        // Test multi-layer composition
+        let instructions = [
+            J2KCompositionInstruction(
+                width: 800,
+                height: 600,
+                horizontalOffset: 0,
+                verticalOffset: 0,
+                codestreamIndex: 0,
+                compositingMode: .replace
+            ),
+            J2KCompositionInstruction(
+                width: 400,
+                height: 300,
+                horizontalOffset: 200,
+                verticalOffset: 150,
+                codestreamIndex: 1,
+                compositingMode: .alphaBlend
+            )
+        ]
+        
+        let box = J2KCompositionBox(
+            width: 800,
+            height: 600,
+            instructions: instructions
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.instructions.count, 2)
+        XCTAssertEqual(decoded.instructions[0].compositingMode, .replace)
+        XCTAssertEqual(decoded.instructions[1].compositingMode, .alphaBlend)
+        XCTAssertEqual(decoded.instructions[1].horizontalOffset, 200)
+        XCTAssertEqual(decoded.instructions[1].verticalOffset, 150)
+    }
+    
+    func testCompositionBoxAnimation() throws {
+        // Test animation with multiple frames
+        let frames = (0..<5).map { i in
+            J2KCompositionInstruction(
+                width: 640,
+                height: 480,
+                codestreamIndex: UInt16(i)
+            )
+        }
+        
+        let box = J2KCompositionBox(
+            width: 640,
+            height: 480,
+            instructions: frames,
+            loopCount: 0  // Infinite loop
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.loopCount, 0)
+        XCTAssertEqual(decoded.instructions.count, 5)
+        for i in 0..<5 {
+            XCTAssertEqual(decoded.instructions[i].codestreamIndex, UInt16(i))
+        }
+    }
+    
+    func testCompositionBoxCompositingModes() throws {
+        // Test all compositing modes
+        let modes: [J2KCompositionInstruction.CompositingMode] = [
+            .replace, .alphaBlend, .preMulAlphaBlend
+        ]
+        
+        let instructions = modes.enumerated().map { (index, mode) in
+            J2KCompositionInstruction(
+                width: 100,
+                height: 100,
+                codestreamIndex: UInt16(index),
+                compositingMode: mode
+            )
+        }
+        
+        let box = J2KCompositionBox(
+            width: 100,
+            height: 100,
+            instructions: instructions
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.instructions.count, 3)
+        XCTAssertEqual(decoded.instructions[0].compositingMode, .replace)
+        XCTAssertEqual(decoded.instructions[1].compositingMode, .alphaBlend)
+        XCTAssertEqual(decoded.instructions[2].compositingMode, .preMulAlphaBlend)
+    }
+    
+    func testCompositionBoxWithBoxWriter() throws {
+        // Test with full box serialization
+        let instruction = J2KCompositionInstruction(
+            width: 1920,
+            height: 1080,
+            codestreamIndex: 0
+        )
+        let box = J2KCompositionBox(
+            width: 1920,
+            height: 1080,
+            instructions: [instruction]
+        )
+        
+        var writer = J2KBoxWriter()
+        try writer.writeBox(box)
+        let data = writer.data
+        
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .comp)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.width, 1920)
+        XCTAssertEqual(decoded.height, 1080)
+    }
+    
+    // MARK: - Page Box Tests (JPM)
+    
+    func testLayoutBox() throws {
+        // Test layout box
+        let box = J2KLayoutBox(
+            objectID: 1,
+            x: 100,
+            y: 200,
+            width: 800,
+            height: 600
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KLayoutBox(objectID: 0, x: 0, y: 0, width: 0, height: 0)
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.objectID, 1)
+        XCTAssertEqual(decoded.x, 100)
+        XCTAssertEqual(decoded.y, 200)
+        XCTAssertEqual(decoded.width, 800)
+        XCTAssertEqual(decoded.height, 600)
+    }
+    
+    func testPageBoxSimple() throws {
+        // Test simple page without layouts
+        let box = J2KPageBox(
+            pageNumber: 0,
+            width: 2480,
+            height: 3508
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KPageBox(pageNumber: 0, width: 0, height: 0)
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.pageNumber, 0)
+        XCTAssertEqual(decoded.width, 2480)
+        XCTAssertEqual(decoded.height, 3508)
+        XCTAssertEqual(decoded.layouts.count, 0)
+    }
+    
+    func testPageBoxWithLayouts() throws {
+        // Test page with layout objects
+        let layouts = [
+            J2KLayoutBox(objectID: 0, x: 0, y: 0, width: 2480, height: 1754),
+            J2KLayoutBox(objectID: 1, x: 0, y: 1754, width: 2480, height: 1754)
+        ]
+        
+        let box = J2KPageBox(
+            pageNumber: 0,
+            width: 2480,
+            height: 3508,
+            layouts: layouts
+        )
+        
+        let data = try box.write()
+        
+        var decoded = J2KPageBox(pageNumber: 0, width: 0, height: 0)
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.pageNumber, 0)
+        XCTAssertEqual(decoded.layouts.count, 2)
+        XCTAssertEqual(decoded.layouts[0].objectID, 0)
+        XCTAssertEqual(decoded.layouts[1].objectID, 1)
+    }
+    
+    func testPageBoxMultiplePages() throws {
+        // Test multiple page numbers
+        for pageNum in [0, 1, 5, 100] {
+            let box = J2KPageBox(
+                pageNumber: UInt16(pageNum),
+                width: 2480,
+                height: 3508
+            )
+            
+            let data = try box.write()
+            
+            var decoded = J2KPageBox(pageNumber: 0, width: 0, height: 0)
+            try decoded.read(from: data)
+            
+            XCTAssertEqual(decoded.pageNumber, UInt16(pageNum))
+        }
+    }
+    
+    func testPageCollectionBox() throws {
+        // Test page collection with multiple pages
+        let pages = [
+            J2KPageBox(pageNumber: 0, width: 2480, height: 3508),
+            J2KPageBox(pageNumber: 1, width: 2480, height: 3508),
+            J2KPageBox(pageNumber: 2, width: 1754, height: 2480)  // Landscape
+        ]
+        
+        let box = J2KPageCollectionBox(pages: pages)
+        
+        let data = try box.write()
+        
+        var decoded = J2KPageCollectionBox(pages: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.pages.count, 3)
+        XCTAssertEqual(decoded.pages[0].pageNumber, 0)
+        XCTAssertEqual(decoded.pages[1].pageNumber, 1)
+        XCTAssertEqual(decoded.pages[2].pageNumber, 2)
+        XCTAssertEqual(decoded.pages[2].width, 1754)  // Landscape orientation
+    }
+    
+    func testPageCollectionBoxEmpty() throws {
+        // Test empty page collection
+        let box = J2KPageCollectionBox(pages: [])
+        
+        let data = try box.write()
+        
+        var decoded = J2KPageCollectionBox(pages: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.pages.count, 0)
+    }
+    
+    func testPageCollectionBoxWithBoxWriter() throws {
+        // Test with full box serialization
+        let pages = [
+            J2KPageBox(pageNumber: 0, width: 2480, height: 3508),
+            J2KPageBox(pageNumber: 1, width: 2480, height: 3508)
+        ]
+        let box = J2KPageCollectionBox(pages: pages)
+        
+        var writer = J2KBoxWriter()
+        try writer.writeBox(box)
+        let data = writer.data
+        
+        var reader = J2KBoxReader(data: data)
+        let boxInfo = try reader.readNextBox()
+        
+        XCTAssertNotNil(boxInfo)
+        XCTAssertEqual(boxInfo?.type, .pcol)
+        
+        let content = reader.extractContent(from: boxInfo!)
+        var decoded = J2KPageCollectionBox(pages: [])
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.pages.count, 2)
+    }
+    
+    // MARK: - Integration Tests for JPX/JPM
+    
+    func testFragmentedCodestreamStructure() throws {
+        // Test a complete JPX file structure with fragments
+        var writer = J2KBoxWriter()
+        
+        // Signature box
+        try writer.writeBox(J2KSignatureBox())
+        
+        // File type box with JPX brand
+        try writer.writeBox(J2KFileTypeBox(
+            brand: .jpx,
+            minorVersion: 0,
+            compatibleBrands: [.jpx, .jp2]
+        ))
+        
+        // Fragment table
+        let fragments = [
+            J2KFragment(offset: 1000, length: 5000),
+            J2KFragment(offset: 7000, length: 3000)
+        ]
+        let fragmentList = J2KFragmentListBox(fragments: fragments)
+        let fragmentTable = J2KFragmentTableBox(fragmentList: fragmentList)
+        try writer.writeBox(fragmentTable)
+        
+        let data = writer.data
+        
+        // Verify structure
+        var reader = J2KBoxReader(data: data)
+        
+        let sig = try reader.readNextBox()
+        XCTAssertEqual(sig?.type, .jp)
+        
+        let ftyp = try reader.readNextBox()
+        XCTAssertEqual(ftyp?.type, .ftyp)
+        
+        let ftbl = try reader.readNextBox()
+        XCTAssertEqual(ftbl?.type, .ftbl)
+    }
+    
+    func testAnimatedJPXStructure() throws {
+        // Test a JPX animation structure
+        var writer = J2KBoxWriter()
+        
+        // Signature and file type
+        try writer.writeBox(J2KSignatureBox())
+        try writer.writeBox(J2KFileTypeBox(brand: .jpx))
+        
+        // Composition box for 10-frame animation
+        let frames = (0..<10).map { i in
+            J2KCompositionInstruction(
+                width: 640,
+                height: 480,
+                codestreamIndex: UInt16(i)
+            )
+        }
+        let composition = J2KCompositionBox(
+            width: 640,
+            height: 480,
+            instructions: frames,
+            loopCount: 0  // Loop forever
+        )
+        try writer.writeBox(composition)
+        
+        let data = writer.data
+        
+        // Verify
+        var reader = J2KBoxReader(data: data)
+        _ = try reader.readNextBox()  // Skip signature
+        _ = try reader.readNextBox()  // Skip ftyp
+        
+        let comp = try reader.readNextBox()
+        XCTAssertEqual(comp?.type, .comp)
+        
+        let content = reader.extractContent(from: comp!)
+        var decoded = J2KCompositionBox(width: 0, height: 0, instructions: [])
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.instructions.count, 10)
+        XCTAssertEqual(decoded.loopCount, 0)
+    }
+    
+    func testMultiPageJPMStructure() throws {
+        // Test a JPM multi-page document structure
+        var writer = J2KBoxWriter()
+        
+        // Signature and file type
+        try writer.writeBox(J2KSignatureBox())
+        try writer.writeBox(J2KFileTypeBox(brand: .jpm))
+        
+        // Page collection with 3 pages
+        let pages = [
+            J2KPageBox(pageNumber: 0, width: 2480, height: 3508),  // A4 portrait
+            J2KPageBox(pageNumber: 1, width: 2480, height: 3508),
+            J2KPageBox(pageNumber: 2, width: 1754, height: 2480)   // A4 landscape
+        ]
+        let pageCollection = J2KPageCollectionBox(pages: pages)
+        try writer.writeBox(pageCollection)
+        
+        let data = writer.data
+        
+        // Verify
+        var reader = J2KBoxReader(data: data)
+        _ = try reader.readNextBox()  // Skip signature
+        _ = try reader.readNextBox()  // Skip ftyp
+        
+        let pcol = try reader.readNextBox()
+        XCTAssertEqual(pcol?.type, .pcol)
+        
+        let content = reader.extractContent(from: pcol!)
+        var decoded = J2KPageCollectionBox(pages: [])
+        try decoded.read(from: content)
+        
+        XCTAssertEqual(decoded.pages.count, 3)
+        XCTAssertEqual(decoded.pages[0].width, 2480)
+        XCTAssertEqual(decoded.pages[2].width, 1754)  // Landscape
+    }
 }
+
