@@ -30,6 +30,15 @@ public struct JPIPRequest: Sendable {
     /// Maximum length of response data in bytes.
     public var len: Int?
     
+    /// Component indices to request (e.g., [0, 1] for red and green channels).
+    public var comps: [Int]?
+    
+    /// Resolution levels to request (lower values = lower resolution).
+    public var reslevels: Int?
+    
+    /// Whether to request metadata only.
+    public var metadata: Bool?
+    
     /// Creates a new JPIP request.
     ///
     /// - Parameter target: The target image identifier.
@@ -71,6 +80,18 @@ public struct JPIPRequest: Sendable {
         
         if let len = len {
             items["len"] = "\(len)"
+        }
+        
+        if let comps = comps, !comps.isEmpty {
+            items["comps"] = comps.map { "\($0)" }.joined(separator: ",")
+        }
+        
+        if let reslevels = reslevels {
+            items["reslevels"] = "\(reslevels)"
+        }
+        
+        if let metadata = metadata, metadata {
+            items["meta"] = "yes"
         }
         
         return items
@@ -129,6 +150,67 @@ extension JPIPRequest {
         var request = JPIPRequest(target: target)
         request.fsiz = (width, height)
         request.layers = layers
+        return request
+    }
+    
+    /// Creates a request for a specific resolution level.
+    ///
+    /// - Parameters:
+    ///   - target: The target image identifier.
+    ///   - level: The resolution level (0 = full resolution, higher values = lower resolution).
+    ///   - layers: Optional number of quality layers.
+    /// - Returns: A configured JPIP request.
+    public static func resolutionLevelRequest(
+        target: String,
+        level: Int,
+        layers: Int? = nil
+    ) -> JPIPRequest {
+        var request = JPIPRequest(target: target)
+        request.reslevels = level
+        request.layers = layers
+        return request
+    }
+    
+    /// Creates a request for specific image components.
+    ///
+    /// - Parameters:
+    ///   - target: The target image identifier.
+    ///   - components: Array of component indices to request (e.g., [0, 1] for R and G channels).
+    ///   - layers: Optional number of quality layers.
+    /// - Returns: A configured JPIP request.
+    public static func componentRequest(
+        target: String,
+        components: [Int],
+        layers: Int? = nil
+    ) -> JPIPRequest {
+        var request = JPIPRequest(target: target)
+        request.comps = components
+        request.layers = layers
+        return request
+    }
+    
+    /// Creates a request for progressive quality with increasing layers.
+    ///
+    /// - Parameters:
+    ///   - target: The target image identifier.
+    ///   - upToLayers: The maximum number of quality layers to request.
+    /// - Returns: A configured JPIP request.
+    public static func progressiveQualityRequest(
+        target: String,
+        upToLayers: Int
+    ) -> JPIPRequest {
+        var request = JPIPRequest(target: target)
+        request.layers = upToLayers
+        return request
+    }
+    
+    /// Creates a request for metadata only (no image data).
+    ///
+    /// - Parameter target: The target image identifier.
+    /// - Returns: A configured JPIP request.
+    public static func metadataRequest(target: String) -> JPIPRequest {
+        var request = JPIPRequest(target: target)
+        request.metadata = true
         return request
     }
 }

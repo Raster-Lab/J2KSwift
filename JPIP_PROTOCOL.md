@@ -20,6 +20,9 @@ Represents a JPIP request with parameters for:
 - `cid`: Channel ID for stateful sessions
 - `cnew`: Request new channel
 - `len`: Maximum response length
+- `comps`: Component indices (Week 72-74) ✅
+- `reslevels`: Resolution level (Week 72-74) ✅
+- `metadata`: Metadata-only flag (Week 72-74) ✅
 
 #### JPIPResponse
 Represents a JPIP response containing:
@@ -76,19 +79,91 @@ let region = try await client.requestRegion(
 )
 ```
 
+### Progressive Quality Request (Week 72-74) ✅
+
+```swift
+let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
+
+// Request progressive quality layers (e.g., start with low quality, increase progressively)
+let image = try await client.requestProgressiveQuality(
+    imageID: "image.jp2",
+    upToLayers: 5  // Request up to 5 quality layers
+)
+```
+
+### Resolution Level Request (Week 72-74) ✅
+
+```swift
+let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
+
+// Request a lower resolution level for preview (0 = full resolution, higher = lower)
+let thumbnail = try await client.requestResolutionLevel(
+    imageID: "high-res-image.jp2",
+    level: 3,      // Lower resolution level
+    layers: 2      // With 2 quality layers
+)
+```
+
+### Component Selection Request (Week 72-74) ✅
+
+```swift
+let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
+
+// Request only specific components (e.g., Red and Green channels)
+let rgImage = try await client.requestComponents(
+    imageID: "rgb-image.jp2",
+    components: [0, 1],  // Components 0 (R) and 1 (G)
+    layers: 3
+)
+```
+
+### Metadata Request (Week 72-74) ✅
+
+```swift
+let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
+
+// Request only metadata without image data
+let metadata = try await client.requestMetadata(imageID: "image.jp2")
+print("Image metadata: \(metadata)")
+```
+
 ### Custom Request
 
 ```swift
-// Create a custom request
+// Create a custom request with all parameters
 var request = JPIPRequest(target: "image.jp2")
-request.fsiz = (width: 1024, height: 768)  // Desired resolution
-request.layers = 3                          // 3 quality layers
-request.roff = (x: 0, y: 0)                // Top-left corner
-request.rsiz = (width: 512, height: 384)   // Half-size region
+request.fsiz = (width: 1024, height: 768)    // Desired resolution
+request.layers = 3                            // 3 quality layers
+request.roff = (x: 0, y: 0)                  // Top-left corner
+request.rsiz = (width: 512, height: 384)     // Half-size region
+request.reslevels = 2                         // Resolution level (Week 72-74)
+request.comps = [0, 1, 2]                    // RGB components (Week 72-74)
+request.metadata = false                      // Request image data (Week 72-74)
 
 // Build query items
 let queryItems = request.buildQueryItems()
 // Returns: ["target": "image.jp2", "fsiz": "1024,768", "layers": "3", ...]
+```
+
+### Advanced Request Examples (Week 72-74) ✅
+
+```swift
+// Request low-resolution preview with only 2 color channels
+var request = JPIPRequest.resolutionLevelRequest(target: "image.jp2", level: 2)
+request.comps = [0, 1]  // Red and Green only
+request.layers = 2       // Low quality for fast preview
+
+// Request specific region at a specific resolution level
+var request = JPIPRequest.regionRequest(
+    target: "image.jp2",
+    x: 100, y: 100,
+    width: 400, height: 300
+)
+request.reslevels = 1   // One level down from full resolution
+request.layers = 4       // Medium quality
+
+// Metadata-only request for image properties
+let metaRequest = JPIPRequest.metadataRequest(target: "image.jp2")
 ```
 
 ## Protocol Details
@@ -148,11 +223,13 @@ JPIP organizes JPEG 2000 data into bins:
 
 ### Future Work
 
-**Phase 6, Week 72-74: Data Streaming**
-- Progressive quality requests
-- Resolution level requests
-- Component selection
-- Metadata requests
+**Phase 6, Week 72-74: Data Streaming** ✅ COMPLETED
+- ✅ Progressive quality requests
+- ✅ Resolution level requests
+- ✅ Component selection
+- ✅ Metadata requests
+- ✅ Enhanced request builders
+- ✅ Comprehensive tests (41 tests, 100% pass rate)
 
 **Phase 6, Week 75-77: Cache Management**
 - Advanced cache model
