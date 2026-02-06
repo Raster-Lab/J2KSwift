@@ -143,12 +143,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement quantization step size calculation
 - [x] Add dynamic range adjustment
 
-### Week 44-45: Region of Interest (ROI)
-- [ ] Implement MaxShift ROI method
-- [ ] Add arbitrary ROI shape support
-- [ ] Implement ROI mask generation
-- [ ] Add implicit ROI coding
-- [ ] Support multiple ROI regions
+### Week 44-45: Region of Interest (ROI) ✅
+- [x] Implement MaxShift ROI method
+- [x] Add arbitrary ROI shape support (rectangle, ellipse, polygon)
+- [x] Implement ROI mask generation
+- [x] Add implicit ROI coding
+- [x] Support multiple ROI regions
 
 ### Week 46-48: Rate Control
 - [ ] Implement target bitrate calculation
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 3 - Quantization (Week 41-43 Complete ✅)
-**Next Milestone**: Phase 3, Week 44-45 - Region of Interest (ROI)
+**Current Phase**: Phase 3 - Quantization (Week 44-45 Complete ✅)
+**Next Milestone**: Phase 3, Week 46-48 - Rate Control
