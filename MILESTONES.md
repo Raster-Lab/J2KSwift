@@ -106,12 +106,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement dyadic decomposition
 - [x] Support arbitrary decomposition levels
 
-### Week 32-34: Tiling Support
-- [ ] Implement tile-by-tile DWT
-- [ ] Add tile boundary handling
-- [ ] Support overlapping tiles
-- [ ] Implement tile-component transforms
-- [ ] Optimize memory usage for tiled images
+### Week 32-34: Tiling Support ✅
+- [x] Implement tile-by-tile DWT
+- [x] Add tile boundary handling
+- [x] Support overlapping tiles
+- [x] Implement tile-component transforms
+- [x] Optimize memory usage for tiled images
 
 ### Week 35-37: Hardware Acceleration
 - [ ] Integrate with Accelerate framework (Apple platforms)
@@ -359,5 +359,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 2 - Wavelet Transform (Week 29-31 Complete)
-**Next Milestone**: Phase 2, Week 32-34 - Tiling Support
+**Current Phase**: Phase 2 - Wavelet Transform (Week 32-34 Complete)
+**Next Milestone**: Phase 2, Week 35-37 - Hardware Acceleration
