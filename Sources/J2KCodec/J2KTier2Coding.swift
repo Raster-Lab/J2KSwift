@@ -498,11 +498,17 @@ public struct LayerFormation: Sendable {
         codeBlocks: [J2KCodeBlock],
         totalPixels: Int
     ) throws -> [QualityLayer] {
-        var layers = [QualityLayer]()
+        // Use rate-distortion optimization if enabled
+        if useRDOptimization {
+            let rateControl = J2KRateControl(targetRates: targetRates)
+            return try rateControl.optimizeLayers(
+                codeBlocks: codeBlocks,
+                totalPixels: totalPixels
+            )
+        }
         
-        // Simple layer formation: distribute passes across layers
-        // This is a placeholder implementation - real JPEG 2000 uses
-        // sophisticated rate-distortion optimization
+        // Otherwise use simple proportional allocation
+        var layers = [QualityLayer]()
         
         for (index, targetRate) in targetRates.enumerated() {
             var contributions = [Int: Int]()
@@ -514,7 +520,6 @@ public struct LayerFormation: Sendable {
             // Distribute coding passes to code-blocks
             for codeBlock in codeBlocks {
                 // Simple strategy: include passes proportionally
-                // In reality, this should use R-D slopes
                 let maxPasses = min(codeBlock.passeCount, 3 * (index + 1))
                 
                 if maxPasses > 0 && currentBytes < targetBytes {

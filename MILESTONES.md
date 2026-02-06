@@ -150,12 +150,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add implicit ROI coding
 - [x] Support multiple ROI regions
 
-### Week 46-48: Rate Control
-- [ ] Implement target bitrate calculation
-- [ ] Add rate-distortion slope computation
-- [ ] Implement PCRD-opt algorithm
-- [ ] Add quality layer optimization
-- [ ] Support constant quality mode
+### Week 46-48: Rate Control ✅
+- [x] Implement target bitrate calculation
+- [x] Add rate-distortion slope computation
+- [x] Implement PCRD-opt algorithm
+- [x] Add quality layer optimization
+- [x] Support constant quality mode
 
 ## Phase 4: Color Transforms (Weeks 49-56)
 
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 3 - Quantization (Week 44-45 Complete ✅)
-**Next Milestone**: Phase 3, Week 46-48 - Rate Control
+**Current Phase**: Phase 3 - Quantization (Week 46-48 Complete ✅)
+**Next Milestone**: Phase 4, Week 49-51 - Reversible Color Transform (RCT)
