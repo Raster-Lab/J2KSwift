@@ -1,0 +1,431 @@
+// J2KColorTransform.swift
+// J2KSwift
+//
+// Created by J2KSwift on 2026-02-06.
+//
+
+import Foundation
+import J2KCore
+
+/// Color transform modes supported by JPEG 2000.
+///
+/// JPEG 2000 supports two types of color transforms:
+/// - **Reversible Color Transform (RCT)**: Integer-to-integer transform for lossless compression
+/// - **Irreversible Color Transform (ICT)**: Floating-point transform for lossy compression
+public enum J2KColorTransformMode: String, Sendable, CaseIterable {
+    /// Reversible Color Transform (RCT) - integer-to-integer, lossless
+    case reversible = "RCT"
+    
+    /// Irreversible Color Transform (ICT) - floating-point, lossy
+    case irreversible = "ICT"
+    
+    /// No color transform applied
+    case none = "None"
+}
+
+/// Configuration for color transform operations.
+public struct J2KColorTransformConfiguration: Sendable {
+    /// The color transform mode to use.
+    public let mode: J2KColorTransformMode
+    
+    /// Whether to validate reversibility (for RCT).
+    public let validateReversibility: Bool
+    
+    /// Creates a new color transform configuration.
+    ///
+    /// - Parameters:
+    ///   - mode: The color transform mode (default: .reversible).
+    ///   - validateReversibility: Whether to validate reversibility for RCT (default: true in debug, false in release).
+    public init(
+        mode: J2KColorTransformMode = .reversible,
+        validateReversibility: Bool = {
+            #if DEBUG
+            return true
+            #else
+            return false
+            #endif
+        }()
+    ) {
+        self.mode = mode
+        self.validateReversibility = validateReversibility
+    }
+    
+    /// Lossless configuration using RCT.
+    public static let lossless = J2KColorTransformConfiguration(mode: .reversible)
+    
+    /// Lossy configuration using ICT.
+    public static let lossy = J2KColorTransformConfiguration(mode: .irreversible)
+    
+    /// No transform configuration.
+    public static let none = J2KColorTransformConfiguration(mode: .none)
+}
+
+/// Performs color space transformations for JPEG 2000 encoding and decoding.
+///
+/// The `J2KColorTransform` class provides implementations of the Reversible Color Transform (RCT)
+/// and Irreversible Color Transform (ICT) as defined in ISO/IEC 15444-1.
+///
+/// ## Reversible Color Transform (RCT)
+///
+/// The RCT uses integer arithmetic to ensure perfect reversibility for lossless compression:
+///
+/// Forward transform (RGB → YCbCr):
+/// ```
+/// Y  = ⌊(R + 2G + B) / 4⌋
+/// Cb = B - G
+/// Cr = R - G
+/// ```
+///
+/// Inverse transform (YCbCr → RGB):
+/// ```
+/// G = Y - ⌊(Cb + Cr) / 4⌋
+/// R = Cr + G
+/// B = Cb + G
+/// ```
+///
+/// ## Usage Example
+///
+/// ```swift
+/// let transform = J2KColorTransform()
+///
+/// // Forward transform (RGB → YCbCr)
+/// let ycbcrComponents = try transform.forwardRCT(
+///     red: redComponent,
+///     green: greenComponent,
+///     blue: blueComponent
+/// )
+///
+/// // Inverse transform (YCbCr → RGB)
+/// let rgbComponents = try transform.inverseRCT(
+///     y: ycbcrComponents.0,
+///     cb: ycbcrComponents.1,
+///     cr: ycbcrComponents.2
+/// )
+/// ```
+public struct J2KColorTransform: Sendable {
+    /// Configuration for the color transform.
+    public let configuration: J2KColorTransformConfiguration
+    
+    /// Creates a new color transform with the specified configuration.
+    ///
+    /// - Parameter configuration: The color transform configuration (default: lossless).
+    public init(configuration: J2KColorTransformConfiguration = .lossless) {
+        self.configuration = configuration
+    }
+    
+    // MARK: - Reversible Color Transform (RCT)
+    
+    /// Applies the forward Reversible Color Transform (RGB → YCbCr).
+    ///
+    /// Transforms RGB components to YCbCr using integer arithmetic for perfect reversibility.
+    ///
+    /// - Parameters:
+    ///   - red: The red component data (signed integers).
+    ///   - green: The green component data (signed integers).
+    ///   - blue: The blue component data (signed integers).
+    /// - Returns: A tuple containing (Y, Cb, Cr) component data.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    ///
+    /// - Note: Input values should be signed integers. For unsigned input, subtract half the range
+    ///         (e.g., subtract 128 for 8-bit data) before calling this method.
+    public func forwardRCT(
+        red: [Int32],
+        green: [Int32],
+        blue: [Int32]
+    ) throws -> (y: [Int32], cb: [Int32], cr: [Int32]) {
+        // Validate input
+        guard red.count == green.count && green.count == blue.count else {
+            throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
+        }
+        
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = red.count
+        var y = [Int32](repeating: 0, count: count)
+        var cb = [Int32](repeating: 0, count: count)
+        var cr = [Int32](repeating: 0, count: count)
+        
+        // Apply RCT transform
+        for i in 0..<count {
+            let r = red[i]
+            let g = green[i]
+            let b = blue[i]
+            
+            // Y = ⌊(R + 2G + B) / 4⌋
+            y[i] = (r &+ (g &<< 1) &+ b) >> 2
+            
+            // Cb = B - G
+            cb[i] = b &- g
+            
+            // Cr = R - G
+            cr[i] = r &- g
+        }
+        
+        return (y, cb, cr)
+    }
+    
+    /// Applies the inverse Reversible Color Transform (YCbCr → RGB).
+    ///
+    /// Transforms YCbCr components back to RGB using integer arithmetic for perfect reconstruction.
+    ///
+    /// - Parameters:
+    ///   - y: The Y (luminance) component data.
+    ///   - cb: The Cb (blue-difference) component data.
+    ///   - cr: The Cr (red-difference) component data.
+    /// - Returns: A tuple containing (R, G, B) component data.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match or data is invalid.
+    ///
+    /// - Note: Output values are signed integers. For unsigned output, add half the range
+    ///         (e.g., add 128 for 8-bit data) after calling this method.
+    public func inverseRCT(
+        y: [Int32],
+        cb: [Int32],
+        cr: [Int32]
+    ) throws -> (red: [Int32], green: [Int32], blue: [Int32]) {
+        // Validate input
+        guard y.count == cb.count && cb.count == cr.count else {
+            throw J2KError.invalidParameter("Component sizes must match: Y=\(y.count), Cb=\(cb.count), Cr=\(cr.count)")
+        }
+        
+        guard !y.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+        
+        let count = y.count
+        var red = [Int32](repeating: 0, count: count)
+        var green = [Int32](repeating: 0, count: count)
+        var blue = [Int32](repeating: 0, count: count)
+        
+        // Apply inverse RCT transform
+        for i in 0..<count {
+            let yVal = y[i]
+            let cbVal = cb[i]
+            let crVal = cr[i]
+            
+            // G = Y - ⌊(Cb + Cr) / 4⌋
+            green[i] = yVal &- ((cbVal &+ crVal) >> 2)
+            
+            // R = Cr + G
+            red[i] = crVal &+ green[i]
+            
+            // B = Cb + G
+            blue[i] = cbVal &+ green[i]
+        }
+        
+        return (red, green, blue)
+    }
+    
+    /// Applies the forward RCT to multi-component image data.
+    ///
+    /// This is a convenience method that works with J2KComponent objects.
+    ///
+    /// - Parameters:
+    ///   - redComponent: The red component.
+    ///   - greenComponent: The green component.
+    ///   - blueComponent: The blue component.
+    /// - Returns: A tuple containing (Y, Cb, Cr) components.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if components are invalid or mismatched.
+    public func forwardRCT(
+        redComponent: J2KComponent,
+        greenComponent: J2KComponent,
+        blueComponent: J2KComponent
+    ) throws -> (y: J2KComponent, cb: J2KComponent, cr: J2KComponent) {
+        // Validate components
+        guard redComponent.width == greenComponent.width &&
+              greenComponent.width == blueComponent.width &&
+              redComponent.height == greenComponent.height &&
+              greenComponent.height == blueComponent.height else {
+            throw J2KError.invalidComponentConfiguration("Component dimensions must match")
+        }
+        
+        // Convert to signed Int32 arrays
+        let red = try convertToInt32Array(redComponent)
+        let green = try convertToInt32Array(greenComponent)
+        let blue = try convertToInt32Array(blueComponent)
+        
+        // Apply transform
+        let (y, cb, cr) = try forwardRCT(red: red, green: green, blue: blue)
+        
+        // Convert back to components
+        let yComponent = try createComponent(
+            from: y,
+            template: redComponent,
+            index: 0
+        )
+        let cbComponent = try createComponent(
+            from: cb,
+            template: greenComponent,
+            index: 1
+        )
+        let crComponent = try createComponent(
+            from: cr,
+            template: blueComponent,
+            index: 2
+        )
+        
+        return (yComponent, cbComponent, crComponent)
+    }
+    
+    /// Applies the inverse RCT to multi-component image data.
+    ///
+    /// This is a convenience method that works with J2KComponent objects.
+    ///
+    /// - Parameters:
+    ///   - yComponent: The Y (luminance) component.
+    ///   - cbComponent: The Cb (blue-difference) component.
+    ///   - crComponent: The Cr (red-difference) component.
+    /// - Returns: A tuple containing (R, G, B) components.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if components are invalid or mismatched.
+    public func inverseRCT(
+        yComponent: J2KComponent,
+        cbComponent: J2KComponent,
+        crComponent: J2KComponent
+    ) throws -> (red: J2KComponent, green: J2KComponent, blue: J2KComponent) {
+        // Validate components
+        guard yComponent.width == cbComponent.width &&
+              cbComponent.width == crComponent.width &&
+              yComponent.height == cbComponent.height &&
+              cbComponent.height == crComponent.height else {
+            throw J2KError.invalidComponentConfiguration("Component dimensions must match")
+        }
+        
+        // Convert to signed Int32 arrays
+        let y = try convertToInt32Array(yComponent)
+        let cb = try convertToInt32Array(cbComponent)
+        let cr = try convertToInt32Array(crComponent)
+        
+        // Apply transform
+        let (red, green, blue) = try inverseRCT(y: y, cb: cb, cr: cr)
+        
+        // Convert back to components
+        let redComponent = try createComponent(
+            from: red,
+            template: yComponent,
+            index: 0
+        )
+        let greenComponent = try createComponent(
+            from: green,
+            template: cbComponent,
+            index: 1
+        )
+        let blueComponent = try createComponent(
+            from: blue,
+            template: crComponent,
+            index: 2
+        )
+        
+        return (redComponent, greenComponent, blueComponent)
+    }
+    
+    // MARK: - Component Subsampling Support
+    
+    /// Information about component subsampling.
+    public struct SubsamplingInfo: Sendable, Equatable {
+        /// Horizontal subsampling factor (e.g., 2 for 4:2:0).
+        public let horizontalFactor: Int
+        
+        /// Vertical subsampling factor (e.g., 2 for 4:2:0).
+        public let verticalFactor: Int
+        
+        /// Creates a new subsampling info.
+        public init(horizontalFactor: Int, verticalFactor: Int) {
+            self.horizontalFactor = horizontalFactor
+            self.verticalFactor = verticalFactor
+        }
+        
+        /// No subsampling (4:4:4).
+        public static let none = SubsamplingInfo(horizontalFactor: 1, verticalFactor: 1)
+        
+        /// 4:2:2 subsampling (horizontal only).
+        public static let yuv422 = SubsamplingInfo(horizontalFactor: 2, verticalFactor: 1)
+        
+        /// 4:2:0 subsampling (both horizontal and vertical).
+        public static let yuv420 = SubsamplingInfo(horizontalFactor: 2, verticalFactor: 2)
+    }
+    
+    /// Validates that all components have matching subsampling.
+    ///
+    /// - Parameters:
+    ///   - components: The components to validate.
+    /// - Throws: ``J2KError/invalidComponentConfiguration(_:)`` if subsampling doesn't match.
+    public func validateSubsampling(_ components: [J2KComponent]) throws {
+        guard components.count >= 3 else {
+            throw J2KError.invalidComponentConfiguration("Need at least 3 components for color transform")
+        }
+        
+        let refSubsamplingX = components[0].subsamplingX
+        let refSubsamplingY = components[0].subsamplingY
+        
+        for (index, component) in components.enumerated() {
+            if component.subsamplingX != refSubsamplingX ||
+               component.subsamplingY != refSubsamplingY {
+                throw J2KError.invalidComponentConfiguration(
+                    "Component \(index) subsampling (\(component.subsamplingX)x\(component.subsamplingY)) " +
+                    "doesn't match reference (\(refSubsamplingX)x\(refSubsamplingY))"
+                )
+            }
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Converts a J2KComponent to an Int32 array.
+    private func convertToInt32Array(_ component: J2KComponent) throws -> [Int32] {
+        let pixelCount = component.width * component.height
+        var result = [Int32](repeating: 0, count: pixelCount)
+        
+        // For now, assume data is stored as Int32 in native byte order
+        // In a real implementation, this would handle various bit depths and formats
+        guard component.data.count >= pixelCount * MemoryLayout<Int32>.size else {
+            throw J2KError.invalidData("Component data size insufficient")
+        }
+        
+        component.data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<pixelCount {
+                result[i] = int32Ptr[i]
+            }
+        }
+        
+        return result
+    }
+    
+    /// Creates a J2KComponent from an Int32 array.
+    private func createComponent(
+        from data: [Int32],
+        template: J2KComponent,
+        index: Int
+    ) throws -> J2KComponent {
+        var componentData = Data(count: data.count * MemoryLayout<Int32>.size)
+        
+        componentData.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<data.count {
+                int32Ptr[i] = data[i]
+            }
+        }
+        
+        return J2KComponent(
+            index: index,
+            bitDepth: template.bitDepth,
+            signed: template.signed,
+            width: template.width,
+            height: template.height,
+            subsamplingX: template.subsamplingX,
+            subsamplingY: template.subsamplingY,
+            data: componentData
+        )
+    }
+}
+
+// MARK: - Equatable Conformance
+
+extension J2KColorTransformConfiguration: Equatable {
+    public static func == (lhs: J2KColorTransformConfiguration, rhs: J2KColorTransformConfiguration) -> Bool {
+        return lhs.mode == rhs.mode && lhs.validateReversibility == rhs.validateReversibility
+    }
+}
