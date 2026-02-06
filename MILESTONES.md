@@ -193,12 +193,30 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add JP2 header box (jp2h)
 - [x] Implement image header box (ihdr)
 
-### Week 60-62: Essential Boxes
-- [ ] Implement color specification box (colr)
-- [ ] Add bits per component box (bpcc)
-- [ ] Implement palette box (pclr)
-- [ ] Add component mapping box (cmap)
-- [ ] Implement channel definition box (cdef)
+### Week 60-62: Essential Boxes ✅
+- [x] Implement bits per component box (bpcc)
+  - Variable bit depths per component
+  - Signed/unsigned support
+  - Complete encoding/decoding
+- [x] Implement color specification box (colr)
+  - Enumerated color spaces (sRGB, Greyscale, YCbCr, CMYK, e-sRGB, ROMM-RGB)
+  - ICC profile support (restricted and unrestricted)
+  - Vendor color space support
+  - Multiple color specification precedence handling
+- [x] Implement palette box (pclr)
+  - Up to 1024 palette entries
+  - Up to 255 components per entry
+  - Variable bit depths per component
+  - Big-endian multi-byte value encoding
+- [x] Implement component mapping box (cmap)
+  - Direct component mapping
+  - Palette-based component mapping
+- [x] Implement channel definition box (cdef)
+  - Color/opacity/premultiplied opacity channel types
+  - Channel association support
+  - Complete RGBA and indexed color support
+- [x] 50 comprehensive tests (100% pass rate)
+- [x] Documentation with examples
 
 ### Week 63-65: Optional Boxes
 - [ ] Implement resolution box (res)

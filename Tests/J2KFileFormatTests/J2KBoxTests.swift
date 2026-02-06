@@ -526,4 +526,920 @@ final class J2KBoxTests: XCTestCase {
         
         XCTAssertTrue(reader.isAtEnd)
     }
+    
+    // MARK: - Bits Per Component Box Tests
+    
+    func testBitsPerComponentBoxCreation() {
+        let box = J2KBitsPerComponentBox(bitDepths: [
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(8)
+        ])
+        
+        XCTAssertEqual(box.boxType, .bpcc)
+        XCTAssertEqual(box.bitDepths.count, 3)
+        XCTAssertEqual(box.bitDepths[0], .unsigned(8))
+    }
+    
+    func testBitsPerComponentBoxWriteUnsigned() throws {
+        let box = J2KBitsPerComponentBox(bitDepths: [
+            .unsigned(8),
+            .unsigned(16),
+            .unsigned(12)
+        ])
+        
+        let data = try box.write()
+        
+        // 8-bit unsigned = 7 (8-1)
+        // 16-bit unsigned = 15 (16-1)
+        // 12-bit unsigned = 11 (12-1)
+        XCTAssertEqual(data.count, 3)
+        XCTAssertEqual(data[0], 7)
+        XCTAssertEqual(data[1], 15)
+        XCTAssertEqual(data[2], 11)
+    }
+    
+    func testBitsPerComponentBoxWriteSigned() throws {
+        let box = J2KBitsPerComponentBox(bitDepths: [
+            .signed(8),
+            .signed(16)
+        ])
+        
+        let data = try box.write()
+        
+        // 8-bit signed = 0x87 (7 | 0x80)
+        // 16-bit signed = 0x8F (15 | 0x80)
+        XCTAssertEqual(data.count, 2)
+        XCTAssertEqual(data[0], 0x87)
+        XCTAssertEqual(data[1], 0x8F)
+    }
+    
+    func testBitsPerComponentBoxWriteMixed() throws {
+        let box = J2KBitsPerComponentBox(bitDepths: [
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(8),
+            .signed(16)
+        ])
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 4)
+        XCTAssertEqual(data[0], 7)   // 8-bit unsigned
+        XCTAssertEqual(data[1], 7)   // 8-bit unsigned
+        XCTAssertEqual(data[2], 7)   // 8-bit unsigned
+        XCTAssertEqual(data[3], 0x8F) // 16-bit signed
+    }
+    
+    func testBitsPerComponentBoxReadUnsigned() throws {
+        let data = Data([7, 15, 11]) // 8-bit, 16-bit, 12-bit unsigned
+        
+        var box = J2KBitsPerComponentBox(bitDepths: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.bitDepths.count, 3)
+        XCTAssertEqual(box.bitDepths[0], .unsigned(8))
+        XCTAssertEqual(box.bitDepths[1], .unsigned(16))
+        XCTAssertEqual(box.bitDepths[2], .unsigned(12))
+    }
+    
+    func testBitsPerComponentBoxReadSigned() throws {
+        let data = Data([0x87, 0x8F]) // 8-bit, 16-bit signed
+        
+        var box = J2KBitsPerComponentBox(bitDepths: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.bitDepths.count, 2)
+        XCTAssertEqual(box.bitDepths[0], .signed(8))
+        XCTAssertEqual(box.bitDepths[1], .signed(16))
+    }
+    
+    func testBitsPerComponentBoxRoundTrip() throws {
+        let original = J2KBitsPerComponentBox(bitDepths: [
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(16)
+        ])
+        
+        let data = try original.write()
+        var decoded = J2KBitsPerComponentBox(bitDepths: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.bitDepths, original.bitDepths)
+    }
+    
+    func testBitsPerComponentBoxInvalidEmpty() {
+        let box = J2KBitsPerComponentBox(bitDepths: [])
+        
+        XCTAssertThrowsError(try box.write()) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    func testBitsPerComponentBoxInvalidBitDepth() {
+        let box = J2KBitsPerComponentBox(bitDepths: [.unsigned(39)])
+        
+        XCTAssertThrowsError(try box.write()) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    func testBitsPerComponentBoxEdgeCases() throws {
+        // Test minimum (1-bit)
+        let box1 = J2KBitsPerComponentBox(bitDepths: [.unsigned(1)])
+        let data1 = try box1.write()
+        XCTAssertEqual(data1[0], 0)
+        
+        // Test maximum (38-bit)
+        let box2 = J2KBitsPerComponentBox(bitDepths: [.unsigned(38)])
+        let data2 = try box2.write()
+        XCTAssertEqual(data2[0], 37)
+    }
+    
+    // MARK: - Color Specification Box Tests
+    
+    func testColorSpecificationBoxCreationEnumerated() {
+        let box = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 0
+        )
+        
+        XCTAssertEqual(box.boxType, .colr)
+    }
+    
+    func testColorSpecificationBoxWriteSRGB() throws {
+        let box = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 0
+        )
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 7)
+        XCTAssertEqual(data[0], 1) // METH = 1 (enumerated)
+        XCTAssertEqual(data[1], 0) // PREC = 0
+        XCTAssertEqual(data[2], 0) // APPROX = 0
+        
+        // EnumCS = 16 (sRGB)
+        let enumCS = UInt32(data[3]) << 24 | UInt32(data[4]) << 16 |
+                     UInt32(data[5]) << 8 | UInt32(data[6])
+        XCTAssertEqual(enumCS, 16)
+    }
+    
+    func testColorSpecificationBoxWriteGreyscale() throws {
+        let box = J2KColorSpecificationBox(
+            method: .enumerated(.greyscale),
+            precedence: 0,
+            approximation: 0
+        )
+        
+        let data = try box.write()
+        
+        let enumCS = UInt32(data[3]) << 24 | UInt32(data[4]) << 16 |
+                     UInt32(data[5]) << 8 | UInt32(data[6])
+        XCTAssertEqual(enumCS, 17)
+    }
+    
+    func testColorSpecificationBoxWriteYCbCr() throws {
+        let box = J2KColorSpecificationBox(
+            method: .enumerated(.yCbCr),
+            precedence: 1,
+            approximation: 1
+        )
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data[1], 1) // PREC = 1
+        XCTAssertEqual(data[2], 1) // APPROX = 1
+        
+        let enumCS = UInt32(data[3]) << 24 | UInt32(data[4]) << 16 |
+                     UInt32(data[5]) << 8 | UInt32(data[6])
+        XCTAssertEqual(enumCS, 18)
+    }
+    
+    func testColorSpecificationBoxWriteRestrictedICC() throws {
+        let iccProfile = Data([0x01, 0x02, 0x03, 0x04])
+        let box = J2KColorSpecificationBox(
+            method: .restrictedICC(iccProfile),
+            precedence: 0,
+            approximation: 0
+        )
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 7)
+        XCTAssertEqual(data[0], 2) // METH = 2 (restricted ICC)
+        XCTAssertEqual(data[1], 0)
+        XCTAssertEqual(data[2], 0)
+        XCTAssertEqual(data[3..<7], iccProfile)
+    }
+    
+    func testColorSpecificationBoxReadSRGB() throws {
+        var data = Data()
+        data.append(1) // METH
+        data.append(0) // PREC
+        data.append(0) // APPROX
+        data.append(contentsOf: [0, 0, 0, 16]) // EnumCS = 16
+        
+        var box = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 0
+        )
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.precedence, 0)
+        XCTAssertEqual(box.approximation, 0)
+        
+        if case .enumerated(let cs) = box.method {
+            XCTAssertEqual(cs, .sRGB)
+        } else {
+            XCTFail("Expected enumerated color space")
+        }
+    }
+    
+    func testColorSpecificationBoxReadGreyscale() throws {
+        var data = Data()
+        data.append(1) // METH
+        data.append(0) // PREC
+        data.append(0) // APPROX
+        data.append(contentsOf: [0, 0, 0, 17]) // EnumCS = 17
+        
+        var box = J2KColorSpecificationBox(
+            method: .enumerated(.greyscale),
+            precedence: 0,
+            approximation: 0
+        )
+        try box.read(from: data)
+        
+        if case .enumerated(let cs) = box.method {
+            XCTAssertEqual(cs, .greyscale)
+        } else {
+            XCTFail("Expected enumerated color space")
+        }
+    }
+    
+    func testColorSpecificationBoxReadRestrictedICC() throws {
+        let iccProfile = Data([0x01, 0x02, 0x03, 0x04])
+        var data = Data()
+        data.append(2) // METH = 2
+        data.append(0) // PREC
+        data.append(0) // APPROX
+        data.append(contentsOf: iccProfile)
+        
+        var box = J2KColorSpecificationBox(
+            method: .restrictedICC(Data()),
+            precedence: 0,
+            approximation: 0
+        )
+        try box.read(from: data)
+        
+        if case .restrictedICC(let profile) = box.method {
+            XCTAssertEqual(profile, iccProfile)
+        } else {
+            XCTFail("Expected restricted ICC profile")
+        }
+    }
+    
+    func testColorSpecificationBoxRoundTrip() throws {
+        let original = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 5,
+            approximation: 1
+        )
+        
+        let data = try original.write()
+        var decoded = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 0
+        )
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.precedence, original.precedence)
+        XCTAssertEqual(decoded.approximation, original.approximation)
+        XCTAssertEqual(decoded.method, original.method)
+    }
+    
+    func testColorSpecificationBoxInvalidApproximation() {
+        let box = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 2
+        )
+        
+        XCTAssertThrowsError(try box.write())
+    }
+    
+    func testColorSpecificationBoxAllEnumeratedTypes() throws {
+        let colorSpaces: [J2KColorSpecificationBox.EnumeratedColorSpace] = [
+            .sRGB, .greyscale, .yCbCr, .cmyk, .esRGB, .rommRGB
+        ]
+        
+        for cs in colorSpaces {
+            let box = J2KColorSpecificationBox(
+                method: .enumerated(cs),
+                precedence: 0,
+                approximation: 0
+            )
+            
+            let data = try box.write()
+            var decoded = J2KColorSpecificationBox(
+                method: .enumerated(.sRGB),
+                precedence: 0,
+                approximation: 0
+            )
+            try decoded.read(from: data)
+            
+            if case .enumerated(let decodedCS) = decoded.method {
+                XCTAssertEqual(decodedCS, cs)
+            } else {
+                XCTFail("Expected enumerated color space")
+            }
+        }
+    }
+    
+    // MARK: - Palette Box Tests
+    
+    func testPaletteBoxCreation() {
+        let entries: [[UInt32]] = [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255]
+        ]
+        
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(8), .unsigned(8), .unsigned(8)]
+        )
+        
+        XCTAssertEqual(box.boxType, .pclr)
+        XCTAssertEqual(box.numEntries, 3)
+        XCTAssertEqual(box.numComponents, 3)
+    }
+    
+    func testPaletteBoxWriteSimple() throws {
+        let entries: [[UInt32]] = [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255]
+        ]
+        
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(8), .unsigned(8), .unsigned(8)]
+        )
+        
+        let data = try box.write()
+        
+        // NE (2 bytes) = 3
+        XCTAssertEqual(data[0], 0)
+        XCTAssertEqual(data[1], 3)
+        
+        // NPC (1 byte) = 3
+        XCTAssertEqual(data[2], 3)
+        
+        // B[0], B[1], B[2] = 7 (8-bit unsigned)
+        XCTAssertEqual(data[3], 7)
+        XCTAssertEqual(data[4], 7)
+        XCTAssertEqual(data[5], 7)
+        
+        // Palette data (3 entries × 3 components × 1 byte = 9 bytes)
+        XCTAssertEqual(data.count, 6 + 9)
+        
+        // First entry: [255, 0, 0]
+        XCTAssertEqual(data[6], 255)
+        XCTAssertEqual(data[7], 0)
+        XCTAssertEqual(data[8], 0)
+        
+        // Second entry: [0, 255, 0]
+        XCTAssertEqual(data[9], 0)
+        XCTAssertEqual(data[10], 255)
+        XCTAssertEqual(data[11], 0)
+        
+        // Third entry: [0, 0, 255]
+        XCTAssertEqual(data[12], 0)
+        XCTAssertEqual(data[13], 0)
+        XCTAssertEqual(data[14], 255)
+    }
+    
+    func testPaletteBoxWrite16Bit() throws {
+        let entries: [[UInt32]] = [
+            [65535, 0],
+            [0, 65535]
+        ]
+        
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(16), .unsigned(16)]
+        )
+        
+        let data = try box.write()
+        
+        // NE = 2
+        XCTAssertEqual(UInt16(data[0]) << 8 | UInt16(data[1]), 2)
+        
+        // NPC = 2
+        XCTAssertEqual(data[2], 2)
+        
+        // B[0], B[1] = 15 (16-bit unsigned)
+        XCTAssertEqual(data[3], 15)
+        XCTAssertEqual(data[4], 15)
+        
+        // Palette data (2 entries × 2 components × 2 bytes = 8 bytes)
+        XCTAssertEqual(data.count, 5 + 8)
+        
+        // First entry: [65535, 0] in big-endian 16-bit
+        XCTAssertEqual(data[5], 0xFF)
+        XCTAssertEqual(data[6], 0xFF)
+        XCTAssertEqual(data[7], 0x00)
+        XCTAssertEqual(data[8], 0x00)
+    }
+    
+    func testPaletteBoxReadSimple() throws {
+        var data = Data()
+        
+        // NE = 2
+        data.append(contentsOf: [0, 2])
+        
+        // NPC = 3
+        data.append(3)
+        
+        // B[0-2] = 7 (8-bit)
+        data.append(contentsOf: [7, 7, 7])
+        
+        // Entries
+        data.append(contentsOf: [255, 0, 0])  // Red
+        data.append(contentsOf: [0, 255, 0])  // Green
+        
+        var box = J2KPaletteBox(entries: [], componentBitDepths: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.numEntries, 2)
+        XCTAssertEqual(box.numComponents, 3)
+        XCTAssertEqual(box.entries[0], [255, 0, 0])
+        XCTAssertEqual(box.entries[1], [0, 255, 0])
+    }
+    
+    func testPaletteBoxRoundTrip() throws {
+        let entries: [[UInt32]] = [
+            [255, 128, 0],
+            [128, 255, 64],
+            [0, 64, 255]
+        ]
+        
+        let original = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(8), .unsigned(8), .unsigned(8)]
+        )
+        
+        let data = try original.write()
+        var decoded = J2KPaletteBox(entries: [], componentBitDepths: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.entries, original.entries)
+        XCTAssertEqual(decoded.componentBitDepths, original.componentBitDepths)
+    }
+    
+    func testPaletteBoxInvalidTooManyEntries() {
+        let entries = Array(repeating: [UInt32(0)], count: 1025)
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(8)]
+        )
+        
+        XCTAssertThrowsError(try box.write())
+    }
+    
+    func testPaletteBoxInvalidValueRange() {
+        let entries: [[UInt32]] = [[256]] // Exceeds 8-bit max
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [.unsigned(8)]
+        )
+        
+        XCTAssertThrowsError(try box.write())
+    }
+    
+    func testPaletteBoxMixedBitDepths() throws {
+        let entries: [[UInt32]] = [
+            [255, 1023, 15], // 8-bit, 10-bit, 4-bit
+            [128, 512, 8]
+        ]
+        
+        let box = J2KPaletteBox(
+            entries: entries,
+            componentBitDepths: [
+                .unsigned(8),
+                .unsigned(10),
+                .unsigned(4)
+            ]
+        )
+        
+        let data = try box.write()
+        var decoded = J2KPaletteBox(entries: [], componentBitDepths: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.entries, box.entries)
+    }
+    
+    // MARK: - Component Mapping Box Tests
+    
+    func testComponentMappingBoxCreation() {
+        let box = J2KComponentMappingBox(mappings: [
+            .direct(component: 0),
+            .direct(component: 1),
+            .direct(component: 2)
+        ])
+        
+        XCTAssertEqual(box.boxType, .cmap)
+        XCTAssertEqual(box.mappings.count, 3)
+    }
+    
+    func testComponentMappingBoxWriteDirect() throws {
+        let box = J2KComponentMappingBox(mappings: [
+            .direct(component: 0),
+            .direct(component: 1),
+            .direct(component: 2)
+        ])
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 12) // 3 mappings × 4 bytes
+        
+        // First mapping: CMP=0, MTYP=0, PCOL=0
+        XCTAssertEqual(data[0], 0)
+        XCTAssertEqual(data[1], 0)
+        XCTAssertEqual(data[2], 0)
+        XCTAssertEqual(data[3], 0)
+        
+        // Second mapping: CMP=1, MTYP=0, PCOL=0
+        XCTAssertEqual(data[4], 0)
+        XCTAssertEqual(data[5], 1)
+        XCTAssertEqual(data[6], 0)
+        XCTAssertEqual(data[7], 0)
+        
+        // Third mapping: CMP=2, MTYP=0, PCOL=0
+        XCTAssertEqual(data[8], 0)
+        XCTAssertEqual(data[9], 2)
+        XCTAssertEqual(data[10], 0)
+        XCTAssertEqual(data[11], 0)
+    }
+    
+    func testComponentMappingBoxWritePalette() throws {
+        let box = J2KComponentMappingBox(mappings: [
+            .palette(component: 0, paletteColumn: 0),
+            .palette(component: 0, paletteColumn: 1),
+            .palette(component: 0, paletteColumn: 2)
+        ])
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 12)
+        
+        // First mapping: CMP=0, MTYP=1, PCOL=0
+        XCTAssertEqual(data[0], 0)
+        XCTAssertEqual(data[1], 0)
+        XCTAssertEqual(data[2], 1) // MTYP = 1
+        XCTAssertEqual(data[3], 0)
+        
+        // Second mapping: CMP=0, MTYP=1, PCOL=1
+        XCTAssertEqual(data[4], 0)
+        XCTAssertEqual(data[5], 0)
+        XCTAssertEqual(data[6], 1)
+        XCTAssertEqual(data[7], 1)
+        
+        // Third mapping: CMP=0, MTYP=1, PCOL=2
+        XCTAssertEqual(data[8], 0)
+        XCTAssertEqual(data[9], 0)
+        XCTAssertEqual(data[10], 1)
+        XCTAssertEqual(data[11], 2)
+    }
+    
+    func testComponentMappingBoxReadDirect() throws {
+        var data = Data()
+        
+        // Three direct mappings
+        data.append(contentsOf: [0, 0, 0, 0]) // CMP=0, MTYP=0, PCOL=0
+        data.append(contentsOf: [0, 1, 0, 0]) // CMP=1, MTYP=0, PCOL=0
+        data.append(contentsOf: [0, 2, 0, 0]) // CMP=2, MTYP=0, PCOL=0
+        
+        var box = J2KComponentMappingBox(mappings: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.mappings.count, 3)
+        XCTAssertEqual(box.mappings[0], .direct(component: 0))
+        XCTAssertEqual(box.mappings[1], .direct(component: 1))
+        XCTAssertEqual(box.mappings[2], .direct(component: 2))
+    }
+    
+    func testComponentMappingBoxReadPalette() throws {
+        var data = Data()
+        
+        // Three palette mappings
+        data.append(contentsOf: [0, 0, 1, 0]) // CMP=0, MTYP=1, PCOL=0
+        data.append(contentsOf: [0, 0, 1, 1]) // CMP=0, MTYP=1, PCOL=1
+        data.append(contentsOf: [0, 0, 1, 2]) // CMP=0, MTYP=1, PCOL=2
+        
+        var box = J2KComponentMappingBox(mappings: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.mappings.count, 3)
+        XCTAssertEqual(box.mappings[0], .palette(component: 0, paletteColumn: 0))
+        XCTAssertEqual(box.mappings[1], .palette(component: 0, paletteColumn: 1))
+        XCTAssertEqual(box.mappings[2], .palette(component: 0, paletteColumn: 2))
+    }
+    
+    func testComponentMappingBoxRoundTrip() throws {
+        let original = J2KComponentMappingBox(mappings: [
+            .direct(component: 0),
+            .direct(component: 1),
+            .palette(component: 0, paletteColumn: 5)
+        ])
+        
+        let data = try original.write()
+        var decoded = J2KComponentMappingBox(mappings: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.mappings, original.mappings)
+    }
+    
+    func testComponentMappingBoxInvalidEmpty() {
+        let box = J2KComponentMappingBox(mappings: [])
+        
+        XCTAssertThrowsError(try box.write())
+    }
+    
+    func testComponentMappingBoxInvalidMappingType() throws {
+        var data = Data()
+        data.append(contentsOf: [0, 0, 2, 0]) // MTYP=2 is invalid
+        
+        var box = J2KComponentMappingBox(mappings: [])
+        
+        XCTAssertThrowsError(try box.read(from: data))
+    }
+    
+    // MARK: - Channel Definition Box Tests
+    
+    func testChannelDefinitionBoxCreation() {
+        let box = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3)
+        ])
+        
+        XCTAssertEqual(box.boxType, .cdef)
+        XCTAssertEqual(box.channels.count, 3)
+    }
+    
+    func testChannelDefinitionBoxWriteRGB() throws {
+        let box = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3)
+        ])
+        
+        let data = try box.write()
+        
+        // N = 3
+        XCTAssertEqual(data.count, 2 + 3 * 6)
+        XCTAssertEqual(UInt16(data[0]) << 8 | UInt16(data[1]), 3)
+        
+        // First channel: Cn=0, Typ=0, Asoc=1
+        XCTAssertEqual(UInt16(data[2]) << 8 | UInt16(data[3]), 0)  // Cn
+        XCTAssertEqual(UInt16(data[4]) << 8 | UInt16(data[5]), 0)  // Typ
+        XCTAssertEqual(UInt16(data[6]) << 8 | UInt16(data[7]), 1)  // Asoc
+    }
+    
+    func testChannelDefinitionBoxWriteRGBA() throws {
+        let box = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3),
+            .opacity(index: 3, association: 0)
+        ])
+        
+        let data = try box.write()
+        
+        XCTAssertEqual(data.count, 2 + 4 * 6)
+        
+        // Fourth channel: Cn=3, Typ=1 (opacity), Asoc=0
+        let offset = 2 + 3 * 6
+        XCTAssertEqual(UInt16(data[offset]) << 8 | UInt16(data[offset + 1]), 3)    // Cn
+        XCTAssertEqual(UInt16(data[offset + 2]) << 8 | UInt16(data[offset + 3]), 1)  // Typ
+        XCTAssertEqual(UInt16(data[offset + 4]) << 8 | UInt16(data[offset + 5]), 0)  // Asoc
+    }
+    
+    func testChannelDefinitionBoxWritePremultiplied() throws {
+        let box = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .premultipliedOpacity(index: 1, association: 0)
+        ])
+        
+        let data = try box.write()
+        
+        // Second channel: Typ=2 (premultiplied opacity)
+        let offset = 2 + 6
+        XCTAssertEqual(UInt16(data[offset + 2]) << 8 | UInt16(data[offset + 3]), 2)
+    }
+    
+    func testChannelDefinitionBoxReadRGB() throws {
+        var data = Data()
+        
+        // N = 3
+        data.append(contentsOf: [0, 3])
+        
+        // Three color channels
+        data.append(contentsOf: [0, 0, 0, 0, 0, 1]) // Cn=0, Typ=0, Asoc=1
+        data.append(contentsOf: [0, 1, 0, 0, 0, 2]) // Cn=1, Typ=0, Asoc=2
+        data.append(contentsOf: [0, 2, 0, 0, 0, 3]) // Cn=2, Typ=0, Asoc=3
+        
+        var box = J2KChannelDefinitionBox(channels: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.channels.count, 3)
+        XCTAssertEqual(box.channels[0].index, 0)
+        XCTAssertEqual(box.channels[0].type, .color)
+        XCTAssertEqual(box.channels[0].association, 1)
+    }
+    
+    func testChannelDefinitionBoxReadRGBA() throws {
+        var data = Data()
+        
+        // N = 4
+        data.append(contentsOf: [0, 4])
+        
+        // RGB + Alpha
+        data.append(contentsOf: [0, 0, 0, 0, 0, 1]) // R
+        data.append(contentsOf: [0, 1, 0, 0, 0, 2]) // G
+        data.append(contentsOf: [0, 2, 0, 0, 0, 3]) // B
+        data.append(contentsOf: [0, 3, 0, 1, 0, 0]) // Alpha (Typ=1)
+        
+        var box = J2KChannelDefinitionBox(channels: [])
+        try box.read(from: data)
+        
+        XCTAssertEqual(box.channels.count, 4)
+        XCTAssertEqual(box.channels[3].type, .opacity)
+    }
+    
+    func testChannelDefinitionBoxRoundTrip() throws {
+        let original = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3),
+            .opacity(index: 3, association: 0)
+        ])
+        
+        let data = try original.write()
+        var decoded = J2KChannelDefinitionBox(channels: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.channels.count, original.channels.count)
+        for i in 0..<decoded.channels.count {
+            XCTAssertEqual(decoded.channels[i].index, original.channels[i].index)
+            XCTAssertEqual(decoded.channels[i].type, original.channels[i].type)
+            XCTAssertEqual(decoded.channels[i].association, original.channels[i].association)
+        }
+    }
+    
+    func testChannelDefinitionBoxUnspecified() throws {
+        let box = J2KChannelDefinitionBox(channels: [
+            .unspecified(index: 0, association: 65535)
+        ])
+        
+        let data = try box.write()
+        var decoded = J2KChannelDefinitionBox(channels: [])
+        try decoded.read(from: data)
+        
+        XCTAssertEqual(decoded.channels[0].type, .unspecified)
+        XCTAssertEqual(decoded.channels[0].association, 65535)
+    }
+    
+    func testChannelDefinitionBoxInvalidEmpty() {
+        let box = J2KChannelDefinitionBox(channels: [])
+        
+        XCTAssertThrowsError(try box.write())
+    }
+    
+    func testChannelDefinitionBoxInvalidType() throws {
+        var data = Data()
+        data.append(contentsOf: [0, 1])
+        data.append(contentsOf: [0, 0, 0, 5, 0, 0]) // Typ=5 is invalid
+        
+        var box = J2KChannelDefinitionBox(channels: [])
+        
+        XCTAssertThrowsError(try box.read(from: data))
+    }
+    
+    // MARK: - Integration Tests
+    
+    func testCompleteJP2HeaderWithAllBoxes() throws {
+        var writer = J2KBoxWriter()
+        
+        // 1. Signature box
+        try writer.writeBox(J2KSignatureBox())
+        
+        // 2. File type box
+        try writer.writeBox(J2KFileTypeBox(brand: .jp2, minorVersion: 0, compatibleBrands: [.jp2]))
+        
+        // 3. JP2 header with all boxes
+        let ihdr = J2KImageHeaderBox(
+            width: 512,
+            height: 512,
+            numComponents: 4,
+            bitsPerComponent: 8,
+            colorSpaceUnknown: 0
+        )
+        
+        let bpcc = J2KBitsPerComponentBox(bitDepths: [
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(8),
+            .unsigned(8)
+        ])
+        
+        let colr = J2KColorSpecificationBox(
+            method: .enumerated(.sRGB),
+            precedence: 0,
+            approximation: 0
+        )
+        
+        let cdef = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3),
+            .opacity(index: 3, association: 0)
+        ])
+        
+        let jp2h = J2KHeaderBox(boxes: [ihdr, bpcc, colr, cdef])
+        try writer.writeBox(jp2h)
+        
+        let data = writer.data
+        
+        // Verify structure
+        var reader = J2KBoxReader(data: data)
+        
+        let sigInfo = try reader.readNextBox()
+        XCTAssertEqual(sigInfo?.type, .jp)
+        
+        let ftypInfo = try reader.readNextBox()
+        XCTAssertEqual(ftypInfo?.type, .ftyp)
+        
+        let jp2hInfo = try reader.readNextBox()
+        XCTAssertEqual(jp2hInfo?.type, .jp2h)
+        
+        XCTAssertTrue(reader.isAtEnd)
+    }
+    
+    func testIndexedColorWithPaletteAndMapping() throws {
+        // Create indexed color image setup
+        let palette = J2KPaletteBox(
+            entries: [
+                [255, 0, 0],
+                [0, 255, 0],
+                [0, 0, 255],
+                [255, 255, 0]
+            ],
+            componentBitDepths: [.unsigned(8), .unsigned(8), .unsigned(8)]
+        )
+        
+        let cmap = J2KComponentMappingBox(mappings: [
+            .palette(component: 0, paletteColumn: 0),
+            .palette(component: 0, paletteColumn: 1),
+            .palette(component: 0, paletteColumn: 2)
+        ])
+        
+        let cdef = J2KChannelDefinitionBox(channels: [
+            .color(index: 0, association: 1),
+            .color(index: 1, association: 2),
+            .color(index: 2, association: 3)
+        ])
+        
+        // Write and read back
+        let paletteData = try palette.write()
+        let cmapData = try cmap.write()
+        let cdefData = try cdef.write()
+        
+        var decodedPalette = J2KPaletteBox(entries: [], componentBitDepths: [])
+        try decodedPalette.read(from: paletteData)
+        
+        var decodedCmap = J2KComponentMappingBox(mappings: [])
+        try decodedCmap.read(from: cmapData)
+        
+        var decodedCdef = J2KChannelDefinitionBox(channels: [])
+        try decodedCdef.read(from: cdefData)
+        
+        XCTAssertEqual(decodedPalette.numEntries, 4)
+        XCTAssertEqual(decodedCmap.mappings.count, 3)
+        XCTAssertEqual(decodedCdef.channels.count, 3)
+    }
 }

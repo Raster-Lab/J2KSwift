@@ -142,7 +142,7 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 4 Complete - Color Transforms ✅
+### Current Status: Phase 5 (Week 60-62) Complete - Essential JP2 Boxes ✅
 
 > **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
@@ -300,6 +300,32 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Image Header Box ('ihdr') - Image dimensions and properties
   - ✅ 29 comprehensive tests, 100% pass rate
   - ✅ Full documentation ([JP2_FILE_FORMAT.md](JP2_FILE_FORMAT.md))
+- ✅ **Essential JP2 Boxes (Phase 5, Week 60-62)**:
+  - ✅ Bits Per Component Box ('bpcc') - Variable bit depths per component
+    - Signed/unsigned support
+    - 1-38 bit depth range
+    - Per-component bit depth specification
+  - ✅ Color Specification Box ('colr') - Color space information
+    - Enumerated color spaces (sRGB, Greyscale, YCbCr, CMYK, e-sRGB, ROMM-RGB)
+    - ICC profile support (restricted and unrestricted)
+    - Vendor color space support
+    - Multiple color specification precedence handling
+  - ✅ Palette Box ('pclr') - Indexed color support
+    - Up to 1024 palette entries
+    - Up to 255 components per entry
+    - Variable bit depths per component
+    - Big-endian multi-byte value encoding
+  - ✅ Component Mapping Box ('cmap') - Component channel mapping
+    - Direct component mapping
+    - Palette-based component mapping
+    - Support for indexed color images
+  - ✅ Channel Definition Box ('cdef') - Channel type definitions
+    - Color/opacity/premultiplied opacity channel types
+    - Channel association support
+    - Complete RGBA and indexed color support
+  - ✅ 50 new comprehensive tests, 100% pass rate
+  - ✅ Complete indexed color workflow
+  - ✅ Full documentation with examples
 
 ### Planned Features
 
@@ -309,9 +335,9 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 - ✅ Phase 2: Wavelet Transform (Complete)
 - ✅ Phase 3: Quantization (Complete)
 - ✅ Phase 4: Color Transforms (Complete)
-- 🚧 Phase 5: File Format (In Progress - Week 57-59 Complete)
+- 🚧 Phase 5: File Format (In Progress)
   - ✅ Week 57-59: Basic Box Structure
-  - ⏳ Week 60-62: Essential Boxes (colr, bpcc, pclr, cmap, cdef)
+  - ✅ Week 60-62: Essential Boxes (bpcc, colr, pclr, cmap, cdef)
   - ⏳ Week 63-65: Optional Boxes (res, resc, resd, uuid, xml)
   - ⏳ Week 66-68: Advanced Features (JPX, JPM, fragment tables)
 - ⏳ Phase 6: JPIP Protocol (Weeks 69-80)

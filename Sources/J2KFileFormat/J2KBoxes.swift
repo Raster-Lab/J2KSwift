@@ -463,3 +463,956 @@ public struct J2KImageHeaderBox: J2KBox {
         }
     }
 }
+
+// MARK: - Bits Per Component Box
+
+/// The bits per component box.
+///
+/// This box specifies the bit depth of each component when components have
+/// different bit depths. If all components have the same bit depth, this box
+/// is optional (the image header box suffices).
+///
+/// ## Box Structure
+///
+/// - Type: 'bpcc' (0x62706363)
+/// - Length: Variable (8 + N bytes, where N = number of components)
+/// - Content: Array of bytes, one per component
+///
+/// Each byte encodes:
+/// - Bits 0-6: Bit depth minus 1 (0-127 represents 1-128 bits)
+/// - Bit 7: Signed flag (0=unsigned, 1=signed)
+///
+/// ## Examples
+///
+/// ```swift
+/// // 8-bit unsigned RGB
+/// let box = J2KBitsPerComponentBox(bitDepths: [
+///     .unsigned(8),
+///     .unsigned(8),
+///     .unsigned(8)
+/// ])
+///
+/// // 16-bit signed grayscale
+/// let box = J2KBitsPerComponentBox(bitDepths: [
+///     .signed(16)
+/// ])
+///
+/// // Mixed: 8-bit unsigned RGB + 16-bit unsigned alpha
+/// let box = J2KBitsPerComponentBox(bitDepths: [
+///     .unsigned(8),
+///     .unsigned(8),
+///     .unsigned(8),
+///     .unsigned(16)
+/// ])
+/// ```
+public struct J2KBitsPerComponentBox: J2KBox {
+    /// Bit depth specification for a component.
+    public enum BitDepth: Equatable, Sendable {
+        /// Unsigned component with specified bit depth (1-128).
+        case unsigned(UInt8)
+        
+        /// Signed component with specified bit depth (1-128).
+        case signed(UInt8)
+        
+        /// Encodes the bit depth as a byte value.
+        ///
+        /// - Returns: Encoded byte value: (bits - 1) | (signed ? 0x80 : 0)
+        public var encodedValue: UInt8 {
+            switch self {
+            case .unsigned(let bits):
+                return bits - 1
+            case .signed(let bits):
+                return (bits - 1) | 0x80
+            }
+        }
+        
+        /// Decodes a byte value into a bit depth.
+        ///
+        /// - Parameter value: The encoded byte value.
+        /// - Returns: The decoded bit depth.
+        public static func decode(_ value: UInt8) -> BitDepth {
+            let isSigned = (value & 0x80) != 0
+            let bits = (value & 0x7F) + 1
+            return isSigned ? .signed(bits) : .unsigned(bits)
+        }
+        
+        /// Returns the actual bit depth value.
+        public var bits: UInt8 {
+            switch self {
+            case .unsigned(let bits), .signed(let bits):
+                return bits
+            }
+        }
+        
+        /// Returns whether the component is signed.
+        public var isSigned: Bool {
+            switch self {
+            case .unsigned: return false
+            case .signed: return true
+            }
+        }
+    }
+    
+    public var boxType: J2KBoxType {
+        .bpcc
+    }
+    
+    /// The bit depth for each component.
+    public var bitDepths: [BitDepth]
+    
+    /// Creates a new bits per component box.
+    ///
+    /// - Parameter bitDepths: The bit depth for each component.
+    public init(bitDepths: [BitDepth]) {
+        self.bitDepths = bitDepths
+    }
+    
+    public func write() throws -> Data {
+        guard !bitDepths.isEmpty else {
+            throw J2KError.invalidParameter("Bits per component box must have at least one component")
+        }
+        
+        guard bitDepths.count <= 16384 else {
+            throw J2KError.invalidParameter("Too many components: \(bitDepths.count), maximum is 16384")
+        }
+        
+        // Validate bit depths
+        for (index, depth) in bitDepths.enumerated() {
+            let bits = depth.bits
+            guard bits >= 1 && bits <= 38 else {
+                throw J2KError.invalidParameter(
+                    "Invalid bit depth at component \(index): \(bits), must be 1-38"
+                )
+            }
+        }
+        
+        var data = Data(capacity: bitDepths.count)
+        for depth in bitDepths {
+            data.append(depth.encodedValue)
+        }
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard !data.isEmpty else {
+            throw J2KError.fileFormatError("Bits per component box is empty")
+        }
+        
+        bitDepths = []
+        for (index, byte) in data.enumerated() {
+            let depth = BitDepth.decode(byte)
+            let bits = depth.bits
+            guard bits >= 1 && bits <= 38 else {
+                throw J2KError.fileFormatError(
+                    "Invalid bit depth at component \(index): \(bits), must be 1-38"
+                )
+            }
+            bitDepths.append(depth)
+        }
+    }
+}
+
+// MARK: - Color Specification Box
+
+/// The color specification box.
+///
+/// This box specifies the color space of the image. At least one color
+/// specification box must be present in the JP2 header box.
+///
+/// ## Box Structure
+///
+/// - Type: 'colr' (0x636F6C72)
+/// - Length: Variable
+/// - Content:
+///   - METH (1 byte): Specification method
+///   - PREC (1 byte): Precedence
+///   - APPROX (1 byte): Approximation
+///   - EnumCS or ICC Profile data
+///
+/// ## Examples
+///
+/// ```swift
+/// // sRGB color space
+/// let box = J2KColorSpecificationBox(
+///     method: .enumerated(.sRGB),
+///     precedence: 0,
+///     approximation: 0
+/// )
+///
+/// // Grayscale
+/// let box = J2KColorSpecificationBox(
+///     method: .enumerated(.greyscale),
+///     precedence: 0,
+///     approximation: 0
+/// )
+///
+/// // ICC profile
+/// let iccData = Data(...)
+/// let box = J2KColorSpecificationBox(
+///     method: .restrictedICC(iccData),
+///     precedence: 0,
+///     approximation: 0
+/// )
+/// ```
+public struct J2KColorSpecificationBox: J2KBox {
+    /// Color specification method.
+    public enum Method: Equatable, Sendable {
+        /// Enumerated color space (method 1).
+        case enumerated(EnumeratedColorSpace)
+        
+        /// Restricted ICC profile (method 2).
+        case restrictedICC(Data)
+        
+        /// Any ICC profile (method 3).
+        case anyICC(Data)
+        
+        /// Vendor-specific color space (method 4).
+        case vendor(Data)
+        
+        /// Returns the method code.
+        public var methodCode: UInt8 {
+            switch self {
+            case .enumerated: return 1
+            case .restrictedICC: return 2
+            case .anyICC: return 3
+            case .vendor: return 4
+            }
+        }
+    }
+    
+    /// Enumerated color space identifiers.
+    public enum EnumeratedColorSpace: UInt32, Equatable, Sendable {
+        /// sRGB color space (ITU-R BT.709).
+        case sRGB = 16
+        
+        /// Greyscale (sGrey).
+        case greyscale = 17
+        
+        /// YCbCr color space.
+        case yCbCr = 18
+        
+        /// CMYK color space.
+        case cmyk = 12
+        
+        /// e-sRGB color space.
+        case esRGB = 20
+        
+        /// ROMM-RGB (ProPhoto RGB) color space.
+        case rommRGB = 21
+    }
+    
+    public var boxType: J2KBoxType {
+        .colr
+    }
+    
+    /// The color specification method.
+    public var method: Method
+    
+    /// The precedence of this color specification (0-255).
+    ///
+    /// When multiple color specification boxes exist, the one with the
+    /// lowest precedence value takes priority. Value 0 has highest priority.
+    public var precedence: UInt8
+    
+    /// The approximation level (0=accurate, 1=approximate).
+    public var approximation: UInt8
+    
+    /// Creates a new color specification box.
+    ///
+    /// - Parameters:
+    ///   - method: The color specification method.
+    ///   - precedence: The precedence (default: 0).
+    ///   - approximation: The approximation level (default: 0).
+    public init(method: Method, precedence: UInt8 = 0, approximation: UInt8 = 0) {
+        self.method = method
+        self.precedence = precedence
+        self.approximation = approximation
+    }
+    
+    public func write() throws -> Data {
+        guard approximation <= 1 else {
+            throw J2KError.invalidParameter("Invalid approximation value: \(approximation), must be 0 or 1")
+        }
+        
+        var data = Data(capacity: 7)
+        
+        // METH (1 byte)
+        data.append(method.methodCode)
+        
+        // PREC (1 byte)
+        data.append(precedence)
+        
+        // APPROX (1 byte)
+        data.append(approximation)
+        
+        // Method-specific data
+        switch method {
+        case .enumerated(let colorSpace):
+            // EnumCS (4 bytes)
+            let value = colorSpace.rawValue
+            data.append(UInt8((value >> 24) & 0xFF))
+            data.append(UInt8((value >> 16) & 0xFF))
+            data.append(UInt8((value >> 8) & 0xFF))
+            data.append(UInt8(value & 0xFF))
+            
+        case .restrictedICC(let profile), .anyICC(let profile), .vendor(let profile):
+            guard !profile.isEmpty else {
+                throw J2KError.invalidParameter("ICC profile data cannot be empty")
+            }
+            data.append(profile)
+        }
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 3 else {
+            throw J2KError.fileFormatError("Color specification box too small: \(data.count) bytes, expected at least 3")
+        }
+        
+        // METH (1 byte)
+        let methodCode = data[0]
+        
+        // PREC (1 byte)
+        precedence = data[1]
+        
+        // APPROX (1 byte)
+        approximation = data[2]
+        guard approximation <= 1 else {
+            throw J2KError.fileFormatError("Invalid approximation value: \(approximation)")
+        }
+        
+        // Method-specific data
+        switch methodCode {
+        case 1:
+            // Enumerated color space
+            guard data.count == 7 else {
+                throw J2KError.fileFormatError(
+                    "Invalid enumerated color space box length: \(data.count), expected 7"
+                )
+            }
+            
+            let enumValue = UInt32(data[3]) << 24 |
+                           UInt32(data[4]) << 16 |
+                           UInt32(data[5]) << 8 |
+                           UInt32(data[6])
+            
+            guard let colorSpace = EnumeratedColorSpace(rawValue: enumValue) else {
+                throw J2KError.fileFormatError("Unknown enumerated color space: \(enumValue)")
+            }
+            
+            method = .enumerated(colorSpace)
+            
+        case 2:
+            // Restricted ICC profile
+            guard data.count > 3 else {
+                throw J2KError.fileFormatError("Restricted ICC profile data is empty")
+            }
+            let profile = data.subdata(in: 3..<data.count)
+            method = .restrictedICC(profile)
+            
+        case 3:
+            // Any ICC profile
+            guard data.count > 3 else {
+                throw J2KError.fileFormatError("ICC profile data is empty")
+            }
+            let profile = data.subdata(in: 3..<data.count)
+            method = .anyICC(profile)
+            
+        case 4:
+            // Vendor color space
+            guard data.count > 3 else {
+                throw J2KError.fileFormatError("Vendor color space data is empty")
+            }
+            let profile = data.subdata(in: 3..<data.count)
+            method = .vendor(profile)
+            
+        default:
+            throw J2KError.fileFormatError("Invalid color specification method: \(methodCode)")
+        }
+    }
+}
+
+// MARK: - Palette Box
+
+/// The palette box.
+///
+/// This box defines a palette for indexed color images. It specifies the
+/// number of entries, number of palette components, and bit depth of each
+/// palette component.
+///
+/// ## Box Structure
+///
+/// - Type: 'pclr' (0x70636C72)
+/// - Length: Variable
+/// - Content:
+///   - NE (2 bytes): Number of entries (1-1024)
+///   - NPC (1 byte): Number of palette components (1-255)
+///   - B[i] (1 byte each): Bit depth for each component
+///   - C[i][j]: Palette data (NE × NPC values)
+///
+/// ## Example
+///
+/// ```swift
+/// // 256-entry RGB palette with 8-bit components
+/// let entries: [[UInt32]] = [
+///     [255, 0, 0],      // Red
+///     [0, 255, 0],      // Green
+///     [0, 0, 255],      // Blue
+///     // ... 253 more entries
+/// ]
+/// let box = J2KPaletteBox(
+///     entries: entries,
+///     componentBitDepths: [.unsigned(8), .unsigned(8), .unsigned(8)]
+/// )
+/// ```
+public struct J2KPaletteBox: J2KBox {
+    public var boxType: J2KBoxType {
+        .pclr
+    }
+    
+    /// Palette entries, where each entry is an array of component values.
+    ///
+    /// The outer array has NE elements (number of entries).
+    /// Each inner array has NPC elements (number of components per entry).
+    public var entries: [[UInt32]]
+    
+    /// Bit depth specification for each palette component.
+    public var componentBitDepths: [J2KBitsPerComponentBox.BitDepth]
+    
+    /// Number of palette entries.
+    public var numEntries: Int {
+        entries.count
+    }
+    
+    /// Number of components per palette entry.
+    public var numComponents: Int {
+        componentBitDepths.count
+    }
+    
+    /// Creates a new palette box.
+    ///
+    /// - Parameters:
+    ///   - entries: The palette entries (1-1024 entries).
+    ///   - componentBitDepths: The bit depth for each component (1-255 components).
+    /// - Throws: ``J2KError`` if validation fails.
+    public init(entries: [[UInt32]], componentBitDepths: [J2KBitsPerComponentBox.BitDepth]) {
+        self.entries = entries
+        self.componentBitDepths = componentBitDepths
+    }
+    
+    public func write() throws -> Data {
+        // Validate number of entries
+        guard numEntries >= 1 && numEntries <= 1024 else {
+            throw J2KError.invalidParameter(
+                "Invalid number of palette entries: \(numEntries), must be 1-1024"
+            )
+        }
+        
+        // Validate number of components
+        guard numComponents >= 1 && numComponents <= 255 else {
+            throw J2KError.invalidParameter(
+                "Invalid number of palette components: \(numComponents), must be 1-255"
+            )
+        }
+        
+        // Validate component bit depths
+        for (i, depth) in componentBitDepths.enumerated() {
+            let bits = depth.bits
+            guard bits >= 1 && bits <= 38 else {
+                throw J2KError.invalidParameter(
+                    "Invalid bit depth for component \(i): \(bits), must be 1-38"
+                )
+            }
+        }
+        
+        // Validate all entries have correct number of components
+        for (i, entry) in entries.enumerated() {
+            guard entry.count == numComponents else {
+                throw J2KError.invalidParameter(
+                    "Entry \(i) has \(entry.count) components, expected \(numComponents)"
+                )
+            }
+        }
+        
+        var data = Data()
+        
+        // NE (2 bytes)
+        data.append(UInt8((numEntries >> 8) & 0xFF))
+        data.append(UInt8(numEntries & 0xFF))
+        
+        // NPC (1 byte)
+        data.append(UInt8(numComponents))
+        
+        // B[i] - bit depths
+        for depth in componentBitDepths {
+            data.append(depth.encodedValue)
+        }
+        
+        // C[i][j] - palette data
+        for entry in entries {
+            for (componentIndex, value) in entry.enumerated() {
+                let bits = componentBitDepths[componentIndex].bits
+                let numBytes = (Int(bits) + 7) / 8
+                
+                // Validate value fits in specified bit depth
+                let maxValue = (UInt32(1) << bits) - 1
+                guard value <= maxValue else {
+                    throw J2KError.invalidParameter(
+                        "Palette value \(value) exceeds maximum for \(bits)-bit component: \(maxValue)"
+                    )
+                }
+                
+                // Write value as big-endian
+                for byteIndex in (0..<numBytes).reversed() {
+                    let byte = UInt8((value >> (byteIndex * 8)) & 0xFF)
+                    data.append(byte)
+                }
+            }
+        }
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 3 else {
+            throw J2KError.fileFormatError("Palette box too small: \(data.count) bytes, expected at least 3")
+        }
+        
+        // NE (2 bytes)
+        let ne = Int(data[0]) << 8 | Int(data[1])
+        guard ne >= 1 && ne <= 1024 else {
+            throw J2KError.fileFormatError("Invalid number of palette entries: \(ne), must be 1-1024")
+        }
+        
+        // NPC (1 byte)
+        let npc = Int(data[2])
+        guard npc >= 1 && npc <= 255 else {
+            throw J2KError.fileFormatError("Invalid number of palette components: \(npc), must be 1-255")
+        }
+        
+        // B[i] - bit depths
+        guard data.count >= 3 + npc else {
+            throw J2KError.fileFormatError("Palette box too small for bit depth array")
+        }
+        
+        componentBitDepths = []
+        var totalBytesPerEntry = 0
+        
+        for i in 0..<npc {
+            let byte = data[3 + i]
+            let depth = J2KBitsPerComponentBox.BitDepth.decode(byte)
+            let bits = depth.bits
+            
+            guard bits >= 1 && bits <= 38 else {
+                throw J2KError.fileFormatError(
+                    "Invalid bit depth for component \(i): \(bits), must be 1-38"
+                )
+            }
+            
+            componentBitDepths.append(depth)
+            totalBytesPerEntry += (Int(bits) + 7) / 8
+        }
+        
+        // C[i][j] - palette data
+        let headerSize = 3 + npc
+        let expectedDataSize = headerSize + ne * totalBytesPerEntry
+        
+        guard data.count == expectedDataSize else {
+            throw J2KError.fileFormatError(
+                "Invalid palette data size: \(data.count) bytes, expected \(expectedDataSize)"
+            )
+        }
+        
+        entries = []
+        var offset = headerSize
+        
+        for _ in 0..<ne {
+            var entry: [UInt32] = []
+            
+            for depth in componentBitDepths {
+                let bits = depth.bits
+                let numBytes = (Int(bits) + 7) / 8
+                
+                var value: UInt32 = 0
+                for byteIndex in 0..<numBytes {
+                    value = (value << 8) | UInt32(data[offset + byteIndex])
+                }
+                
+                entry.append(value)
+                offset += numBytes
+            }
+            
+            entries.append(entry)
+        }
+    }
+}
+
+// MARK: - Component Mapping Box
+
+/// The component mapping box.
+///
+/// This box specifies the mapping between components in the codestream and
+/// channels in the image. It is required when using a palette or when the
+/// component ordering needs to be specified.
+///
+/// ## Box Structure
+///
+/// - Type: 'cmap' (0x636D6170)
+/// - Length: Variable (8 + N × 4 bytes, where N = number of components)
+/// - Content: Array of 4-byte mapping entries
+///
+/// Each mapping entry contains:
+/// - CMP (2 bytes): Component index in codestream (0-65535)
+/// - MTYP (1 byte): Mapping type (0=direct, 1=palette)
+/// - PCOL (1 byte): Palette column (0-255, only valid when MTYP=1)
+///
+/// ## Examples
+///
+/// ```swift
+/// // Direct mapping (RGB components map directly)
+/// let box = J2KComponentMappingBox(mappings: [
+///     .direct(component: 0),
+///     .direct(component: 1),
+///     .direct(component: 2)
+/// ])
+///
+/// // Palette mapping (indexed color)
+/// let box = J2KComponentMappingBox(mappings: [
+///     .palette(component: 0, paletteColumn: 0),
+///     .palette(component: 0, paletteColumn: 1),
+///     .palette(component: 0, paletteColumn: 2)
+/// ])
+/// ```
+public struct J2KComponentMappingBox: J2KBox {
+    /// Component mapping entry.
+    public enum Mapping: Equatable, Sendable {
+        /// Direct mapping to a codestream component.
+        case direct(component: UInt16)
+        
+        /// Palette mapping to a component and palette column.
+        case palette(component: UInt16, paletteColumn: UInt8)
+        
+        /// Returns the component index.
+        public var component: UInt16 {
+            switch self {
+            case .direct(let comp), .palette(let comp, _):
+                return comp
+            }
+        }
+        
+        /// Returns the mapping type (0=direct, 1=palette).
+        public var mappingType: UInt8 {
+            switch self {
+            case .direct: return 0
+            case .palette: return 1
+            }
+        }
+        
+        /// Returns the palette column (0 for direct mapping).
+        public var paletteColumn: UInt8 {
+            switch self {
+            case .direct: return 0
+            case .palette(_, let col): return col
+            }
+        }
+    }
+    
+    public var boxType: J2KBoxType {
+        .cmap
+    }
+    
+    /// The component mappings.
+    public var mappings: [Mapping]
+    
+    /// Creates a new component mapping box.
+    ///
+    /// - Parameter mappings: The component mappings.
+    public init(mappings: [Mapping]) {
+        self.mappings = mappings
+    }
+    
+    public func write() throws -> Data {
+        guard !mappings.isEmpty else {
+            throw J2KError.invalidParameter("Component mapping box must have at least one mapping")
+        }
+        
+        var data = Data(capacity: mappings.count * 4)
+        
+        for mapping in mappings {
+            let comp = mapping.component
+            let mtyp = mapping.mappingType
+            let pcol = mapping.paletteColumn
+            
+            // CMP (2 bytes)
+            data.append(UInt8((comp >> 8) & 0xFF))
+            data.append(UInt8(comp & 0xFF))
+            
+            // MTYP (1 byte)
+            data.append(mtyp)
+            
+            // PCOL (1 byte)
+            data.append(pcol)
+        }
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 4 else {
+            throw J2KError.fileFormatError("Component mapping box too small: \(data.count) bytes, expected at least 4")
+        }
+        
+        guard data.count % 4 == 0 else {
+            throw J2KError.fileFormatError("Invalid component mapping box size: \(data.count), must be multiple of 4")
+        }
+        
+        let numMappings = data.count / 4
+        mappings = []
+        
+        for i in 0..<numMappings {
+            let offset = i * 4
+            
+            // CMP (2 bytes)
+            let comp = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+            
+            // MTYP (1 byte)
+            let mtyp = data[offset + 2]
+            
+            // PCOL (1 byte)
+            let pcol = data[offset + 3]
+            
+            let mapping: Mapping
+            switch mtyp {
+            case 0:
+                mapping = .direct(component: comp)
+            case 1:
+                mapping = .palette(component: comp, paletteColumn: pcol)
+            default:
+                throw J2KError.fileFormatError("Invalid mapping type at index \(i): \(mtyp), must be 0 or 1")
+            }
+            
+            mappings.append(mapping)
+        }
+    }
+}
+
+// MARK: - Channel Definition Box
+
+/// The channel definition box.
+///
+/// This box specifies the type and association of each channel in the image.
+/// It is optional but recommended for images with specific channel types
+/// (e.g., color with alpha, premultiplied alpha).
+///
+/// ## Box Structure
+///
+/// - Type: 'cdef' (0x63646566)
+/// - Length: Variable (8 + 2 + N × 6 bytes, where N = number of channels)
+/// - Content:
+///   - N (2 bytes): Number of channel descriptions
+///   - For each channel:
+///     - Cn (2 bytes): Channel index (0-65535)
+///     - Typ (2 bytes): Channel type
+///     - Asoc (2 bytes): Associated channel
+///
+/// ## Channel Types
+///
+/// - 0: Color channel
+/// - 1: Opacity (alpha) channel
+/// - 2: Premultiplied opacity channel
+/// - 65535: Unspecified channel type
+///
+/// ## Association Values
+///
+/// - 0: Associated with whole image
+/// - 1-65534: Associated with specific color channel
+/// - 65535: Unassociated
+///
+/// ## Examples
+///
+/// ```swift
+/// // RGB with alpha
+/// let box = J2KChannelDefinitionBox(channels: [
+///     .color(index: 0, association: 1),   // Red
+///     .color(index: 1, association: 2),   // Green
+///     .color(index: 2, association: 3),   // Blue
+///     .opacity(index: 3, association: 0)  // Alpha (whole image)
+/// ])
+///
+/// // Grayscale with alpha
+/// let box = J2KChannelDefinitionBox(channels: [
+///     .color(index: 0, association: 1),   // Luminance
+///     .opacity(index: 1, association: 0)  // Alpha
+/// ])
+/// ```
+public struct J2KChannelDefinitionBox: J2KBox {
+    /// Channel definition.
+    public struct Channel: Equatable, Sendable {
+        /// The channel index in the codestream (0-65535).
+        public let index: UInt16
+        
+        /// The channel type.
+        public let type: ChannelType
+        
+        /// The associated channel or image (0-65535).
+        ///
+        /// - 0: Associated with whole image
+        /// - 1-65534: Associated with specific color channel
+        /// - 65535: Unassociated
+        public let association: UInt16
+        
+        /// Creates a new channel definition.
+        ///
+        /// - Parameters:
+        ///   - index: The channel index.
+        ///   - type: The channel type.
+        ///   - association: The association.
+        public init(index: UInt16, type: ChannelType, association: UInt16) {
+            self.index = index
+            self.type = type
+            self.association = association
+        }
+        
+        /// Creates a color channel definition.
+        ///
+        /// - Parameters:
+        ///   - index: The channel index.
+        ///   - association: The associated color channel (default: 0 for whole image).
+        /// - Returns: A color channel definition.
+        public static func color(index: UInt16, association: UInt16 = 0) -> Channel {
+            Channel(index: index, type: .color, association: association)
+        }
+        
+        /// Creates an opacity (alpha) channel definition.
+        ///
+        /// - Parameters:
+        ///   - index: The channel index.
+        ///   - association: The associated image/channel (default: 0 for whole image).
+        /// - Returns: An opacity channel definition.
+        public static func opacity(index: UInt16, association: UInt16 = 0) -> Channel {
+            Channel(index: index, type: .opacity, association: association)
+        }
+        
+        /// Creates a premultiplied opacity channel definition.
+        ///
+        /// - Parameters:
+        ///   - index: The channel index.
+        ///   - association: The associated image/channel (default: 0 for whole image).
+        /// - Returns: A premultiplied opacity channel definition.
+        public static func premultipliedOpacity(index: UInt16, association: UInt16 = 0) -> Channel {
+            Channel(index: index, type: .premultipliedOpacity, association: association)
+        }
+        
+        /// Creates an unspecified channel definition.
+        ///
+        /// - Parameters:
+        ///   - index: The channel index.
+        ///   - association: The association (default: 65535 for unassociated).
+        /// - Returns: An unspecified channel definition.
+        public static func unspecified(index: UInt16, association: UInt16 = 65535) -> Channel {
+            Channel(index: index, type: .unspecified, association: association)
+        }
+    }
+    
+    /// Channel type identifiers.
+    public enum ChannelType: UInt16, Equatable, Sendable {
+        /// Color channel.
+        case color = 0
+        
+        /// Opacity (alpha) channel.
+        case opacity = 1
+        
+        /// Premultiplied opacity channel.
+        case premultipliedOpacity = 2
+        
+        /// Unspecified channel type.
+        case unspecified = 65535
+    }
+    
+    public var boxType: J2KBoxType {
+        .cdef
+    }
+    
+    /// The channel definitions.
+    public var channels: [Channel]
+    
+    /// Creates a new channel definition box.
+    ///
+    /// - Parameter channels: The channel definitions.
+    public init(channels: [Channel]) {
+        self.channels = channels
+    }
+    
+    public func write() throws -> Data {
+        guard !channels.isEmpty else {
+            throw J2KError.invalidParameter("Channel definition box must have at least one channel")
+        }
+        
+        guard channels.count <= 65535 else {
+            throw J2KError.invalidParameter("Too many channels: \(channels.count), maximum is 65535")
+        }
+        
+        var data = Data(capacity: 2 + channels.count * 6)
+        
+        // N (2 bytes)
+        let n = UInt16(channels.count)
+        data.append(UInt8((n >> 8) & 0xFF))
+        data.append(UInt8(n & 0xFF))
+        
+        // Channel definitions
+        for channel in channels {
+            // Cn (2 bytes)
+            data.append(UInt8((channel.index >> 8) & 0xFF))
+            data.append(UInt8(channel.index & 0xFF))
+            
+            // Typ (2 bytes)
+            let typ = channel.type.rawValue
+            data.append(UInt8((typ >> 8) & 0xFF))
+            data.append(UInt8(typ & 0xFF))
+            
+            // Asoc (2 bytes)
+            data.append(UInt8((channel.association >> 8) & 0xFF))
+            data.append(UInt8(channel.association & 0xFF))
+        }
+        
+        return data
+    }
+    
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 2 else {
+            throw J2KError.fileFormatError("Channel definition box too small: \(data.count) bytes, expected at least 2")
+        }
+        
+        // N (2 bytes)
+        let n = Int(data[0]) << 8 | Int(data[1])
+        
+        let expectedSize = 2 + n * 6
+        guard data.count == expectedSize else {
+            throw J2KError.fileFormatError(
+                "Invalid channel definition box size: \(data.count) bytes, expected \(expectedSize)"
+            )
+        }
+        
+        channels = []
+        
+        for i in 0..<n {
+            let offset = 2 + i * 6
+            
+            // Cn (2 bytes)
+            let index = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+            
+            // Typ (2 bytes)
+            let typValue = UInt16(data[offset + 2]) << 8 | UInt16(data[offset + 3])
+            guard let type = ChannelType(rawValue: typValue) else {
+                throw J2KError.fileFormatError("Invalid channel type at index \(i): \(typValue)")
+            }
+            
+            // Asoc (2 bytes)
+            let association = UInt16(data[offset + 4]) << 8 | UInt16(data[offset + 5])
+            
+            channels.append(Channel(index: index, type: type, association: association))
+        }
+    }
+}
