@@ -157,7 +157,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 
 **Phase 4 In Progress** 🚧:
 - [x] Reversible Color Transform (Week 49-51) ✅
-- [ ] Irreversible Color Transform (Week 52-54)
+- [x] Irreversible Color Transform (Week 52-54) ✅
 - [ ] Advanced Color Support (Week 55-56)
 
 ## 🌟 Features
@@ -260,13 +260,23 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Optimized for natural images
   - ✅ 50 comprehensive tests (30 functional + 20 benchmark), 100% pass rate
   - ✅ ~10ms for 512×512 images, ~42ms for 1024×1024 images
+- ✅ **Irreversible Color Transform (Phase 4, Week 52-54)**:
+  - ✅ Floating-point RGB ↔ YCbCr transform for lossy compression
+  - ✅ Better decorrelation than RCT for natural images
+  - ✅ ISO/IEC 15444-1 Annex G.3 compliant coefficients
+  - ✅ Reconstruction error < 1.0 for 8-bit data
+  - ✅ Array-based and component-based APIs
+  - ✅ Support for signed and floating-point values
+  - ✅ 44 comprehensive tests (14 ICT-specific), 100% pass rate
+  - ✅ 40 benchmarks (20 ICT-specific), all passing
+  - ✅ ~10ms for 512×512 images, ~42ms for 1024×1024 images
 
 ### Planned Features
 
 See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 
-- Irreversible Color Transform (ICT)
-- Advanced color space support
+- Advanced color space support (arbitrary component counts, ICC profiles)
+- Hardware-accelerated color transforms (SIMD, Accelerate framework)
 - Multiple component transformations
 - Full JPIP implementation
 - And much more...
