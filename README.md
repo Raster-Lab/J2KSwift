@@ -104,8 +104,6 @@ do {
 
 #### Network Streaming with JPIP
 
-> **Note**: JPIP is planned for Phase 6 and is not yet implemented. The example below shows the planned API.
-
 ```swift
 import JPIP
 
@@ -113,7 +111,18 @@ let client = JPIPClient(serverURL: URL(string: "http://example.com/jpip")!)
 
 Task {
     do {
-        let image = try await client.requestImage(imageID: "sample")
+        // Create a session for an image
+        let session = try await client.createSession(target: "sample.jp2")
+        
+        // Request the full image
+        let image = try await client.requestImage(imageID: "sample.jp2")
+        
+        // Or request a specific region
+        let region = try await client.requestRegion(
+            imageID: "sample.jp2",
+            region: (x: 100, y: 100, width: 512, height: 512)
+        )
+        
         print("Received image: \(image.width)x\(image.height)")
     } catch {
         print("Request failed: \(error)")
@@ -142,7 +151,7 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 5 Complete - JP2/JPX/JPM File Format ✅
+### Current Status: Phase 6 In Progress - JPIP Protocol (Week 69-71) 🚧
 
 > **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
@@ -169,6 +178,18 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Reversible Color Transform (Week 49-51) ✅
 - [x] Irreversible Color Transform (Week 52-54) ✅
 - [x] Advanced Color Support (Week 55-56) ✅
+
+**Phase 5 Complete** ✅:
+- [x] Basic Box Structure (Week 57-59) ✅
+- [x] Essential Boxes (Week 60-62) ✅
+- [x] Optional Boxes (Week 63-65) ✅
+- [x] Advanced Features: JPX/JPM (Week 66-68) ✅
+
+**Phase 6 In Progress** 🚧:
+- [x] JPIP Client Basics (Week 69-71) ✅
+- [ ] Data Streaming (Week 72-74)
+- [ ] Cache Management (Week 75-77)
+- [ ] JPIP Server (Week 78-80)
 
 ## 🌟 Features
 
@@ -370,6 +391,21 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ 49 new comprehensive tests (127 total), 100% pass rate
   - ✅ Complete JPX/JPM support for advanced use cases
   - ✅ Full documentation with examples
+- ✅ **JPIP Client Basics (Phase 6, Week 69-71)**:
+  - ✅ JPIP request types (target, fsiz, rsiz, roff, layers, cid)
+  - ✅ Request URL builder for HTTP transport
+  - ✅ URLSession-based HTTP client with async/await
+  - ✅ JPIP response parsing (JPIP-cnew header, channel ID extraction)
+  - ✅ Session management (JPIPSession actor)
+  - ✅ Channel ID (cid) tracking for stateful communication
+  - ✅ Cache model for tracking received data bins
+  - ✅ Persistent connection support via URLSession
+  - ✅ Region of interest requests
+  - ✅ Resolution-based requests
+  - ✅ Quality layer selection
+  - ✅ 27 comprehensive tests, 100% pass rate
+  - ✅ Full documentation ([JPIP_PROTOCOL.md](JPIP_PROTOCOL.md))
+  - ✅ ISO/IEC 15444-9 compliant
 
 ### Planned Features
 
@@ -384,7 +420,11 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
   - ✅ Week 60-62: Essential Boxes (bpcc, colr, pclr, cmap, cdef)
   - ✅ Week 63-65: Optional Boxes (res, resc, resd, uuid, xml)
   - ✅ Week 66-68: Advanced Features (JPX, JPM, fragment tables, composition)
-- ⏳ Phase 6: JPIP Protocol (Weeks 69-80)
+- 🚧 Phase 6: JPIP Protocol (Weeks 69-80)
+  - ✅ Week 69-71: JPIP Client Basics
+  - ⏳ Week 72-74: Data Streaming
+  - ⏳ Week 75-77: Cache Management
+  - ⏳ Week 78-80: JPIP Server
 - ⏳ Phase 7: Optimization & Features (Weeks 81-92)
 - ⏳ Phase 8: Production Ready (Weeks 93-100)
 
