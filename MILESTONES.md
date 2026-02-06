@@ -71,7 +71,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement packet header encoding/decoding
 - [x] Add progression order support (LRCP, RLCP, RPCL, PCRL, CPRL)
 - [x] Create layer formation algorithm
-- [ ] Implement rate-distortion optimization (basic placeholder added)
+- [x] Implement rate-distortion optimization (PCRD-opt algorithm)
 - [x] Add quality layer generation
 
 ### Week 20-22: Performance Optimization

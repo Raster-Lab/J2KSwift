@@ -39,7 +39,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Prerequisites
 
-- Xcode 15.0 or later (for Apple platform development)
+- Xcode 16.0 or later (for Apple platform development)
 - Swift 6.2 or later
 - Git
 - SwiftLint (optional but recommended)
