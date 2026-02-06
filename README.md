@@ -134,15 +134,21 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 1 Complete - Entropy Coding ✅
+### Current Status: Phase 2 Started - Wavelet Transform 🚧
 
+**Phase 1 Complete** ✅:
 - [x] Tier-1 Coding Primitives (Weeks 11-13)
 - [x] Code-Block Coding (Weeks 14-16)
 - [x] Tier-2 Coding (Weeks 17-19)
 - [x] Performance Optimization (Weeks 20-22)
 - [x] Testing & Validation (Weeks 23-25)
 
-**Phase 1 is complete!** Moving to Phase 2: Wavelet Transform implementation.
+**Phase 2 In Progress** 🚧:
+- [x] 1D DWT Foundation (Week 26-28) ✅
+- [ ] 2D DWT Implementation (Week 29-31)
+- [ ] Tiling Support (Week 32-34)
+- [ ] Hardware Acceleration (Week 35-37)
+- [ ] Advanced Features (Week 38-40)
 
 ## 🌟 Features
 
@@ -166,14 +172,21 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Performance optimization (18,833 ops/sec encoding)
   - ✅ Comprehensive test coverage (360+ tests including test vectors and fuzzing)
   - ✅ Full documentation ([ENTROPY_CODING.md](ENTROPY_CODING.md))
+- ✅ **1D Wavelet Transform (Phase 2, Week 26-28)**:
+  - ✅ 5/3 reversible filter (integer-to-integer, lossless)
+  - ✅ 9/7 irreversible filter (floating-point, lossy)
+  - ✅ Three boundary extension modes (symmetric, periodic, zero-padding)
+  - ✅ Lifting scheme implementation for efficiency
+  - ✅ Perfect reconstruction for 5/3, <1e-6 error for 9/7
+  - ✅ Comprehensive test coverage (33 tests, all passing)
+  - ✅ Full documentation ([WAVELET_TRANSFORM.md](WAVELET_TRANSFORM.md))
 
 ### Planned Features
 
 See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 
-- Wavelet transforms (DWT)
-- Entropy coding (EBCOT)
-- Quantization
+- 2D wavelet transforms and multi-level decomposition
+- Quantization and rate control
 - Color space transformations
 - Region of interest (ROI) coding
 - Multiple component transformations
