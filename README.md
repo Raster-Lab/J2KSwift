@@ -142,7 +142,7 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 5 (Week 60-62) Complete - Essential JP2 Boxes ✅
+### Current Status: Phase 5 (Week 63-65) Complete - Optional JP2 Boxes ✅
 
 > **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
@@ -326,6 +326,27 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ 50 new comprehensive tests, 100% pass rate
   - ✅ Complete indexed color workflow
   - ✅ Full documentation with examples
+- ✅ **Optional JP2 Boxes (Phase 5, Week 63-65)**:
+  - ✅ Resolution Box ('res ') - Container for resolution metadata
+    - Flexible structure (one or both sub-boxes)
+  - ✅ Capture Resolution Box ('resc') - Original capture resolution
+    - Numerator/denominator/exponent format for flexible precision
+    - Support for pixels per metre and inch units
+    - Wide range scaling with exponents
+  - ✅ Display Resolution Box ('resd') - Recommended display resolution
+    - Same structure as capture resolution
+    - Independent scaling support
+  - ✅ UUID Box ('uuid') - Vendor-specific extensions
+    - 16-byte UUID identifier
+    - Application-specific data payload
+    - Support for proprietary metadata and extensions
+  - ✅ XML Box ('xml ') - Structured metadata
+    - UTF-8 encoded XML content
+    - XMP metadata support
+    - Flexible metadata embedding
+  - ✅ 48 new comprehensive tests, 100% pass rate
+  - ✅ Full resolution metadata support
+  - ✅ Extensibility mechanisms implemented
 
 ### Planned Features
 
@@ -338,7 +359,7 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 - 🚧 Phase 5: File Format (In Progress)
   - ✅ Week 57-59: Basic Box Structure
   - ✅ Week 60-62: Essential Boxes (bpcc, colr, pclr, cmap, cdef)
-  - ⏳ Week 63-65: Optional Boxes (res, resc, resd, uuid, xml)
+  - ✅ Week 63-65: Optional Boxes (res, resc, resd, uuid, xml)
   - ⏳ Week 66-68: Advanced Features (JPX, JPM, fragment tables)
 - ⏳ Phase 6: JPIP Protocol (Weeks 69-80)
 - ⏳ Phase 7: Optimization & Features (Weeks 81-92)

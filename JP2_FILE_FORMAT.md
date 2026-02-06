@@ -571,6 +571,106 @@ let colr = J2KColorSpecificationBox(
 let jp2h = J2KHeaderBox(boxes: [ihdr, palette, cmap, cdef, colr])
 ```
 
+### Resolution Metadata Example
+
+Setting capture and display resolutions:
+
+```swift
+// 300 DPI capture resolution
+let captureRes = J2KCaptureResolutionBox(
+    horizontalResolution: (300, 1, 0),  // 300/1 × 10^0 = 300
+    verticalResolution: (300, 1, 0),
+    unit: .inch
+)
+
+// 72 DPI display resolution
+let displayRes = J2KDisplayResolutionBox(
+    horizontalResolution: (72, 1, 0),
+    verticalResolution: (72, 1, 0),
+    unit: .inch
+)
+
+// Resolution container box
+let resBox = J2KResolutionBox(
+    captureResolution: captureRes,
+    displayResolution: displayRes
+)
+
+// Add to JP2 header
+let jp2h = J2KHeaderBox(boxes: [ihdr, colr, resBox])
+```
+
+### UUID Extension Example
+
+Adding vendor-specific metadata:
+
+```swift
+import Foundation
+
+// Create a UUID for your application
+let vendorUUID = UUID(uuidString: "550e8400-e29b-41d4-a716-446655440000")!
+
+// JSON metadata
+let metadata = """
+{
+    "creator": "MyApp v1.0",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "custom_field": "value"
+}
+""".data(using: .utf8)!
+
+let uuidBox = J2KUUIDBox(uuid: vendorUUID, data: metadata)
+
+// Add to file (outside JP2 header)
+var writer = J2KBoxWriter()
+try writer.writeBox(signatureBox)
+try writer.writeBox(fileTypeBox)
+try writer.writeBox(headerBox)
+try writer.writeBox(uuidBox)  // Custom extension
+// ... codestream box
+```
+
+### XML Metadata Example
+
+Embedding XMP metadata:
+
+```swift
+let xmpMetadata = """
+<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+        <rdf:Description rdf:about="">
+            <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <rdf:Alt>
+                    <rdf:li xml:lang="x-default">Sample Image</rdf:li>
+                </rdf:Alt>
+            </dc:title>
+            <dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <rdf:Seq>
+                    <rdf:li>John Doe</rdf:li>
+                </rdf:Seq>
+            </dc:creator>
+            <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <rdf:Alt>
+                    <rdf:li xml:lang="x-default">A sample JPEG 2000 image</rdf:li>
+                </rdf:Alt>
+            </dc:description>
+        </rdf:Description>
+    </rdf:RDF>
+</x:xmpmeta>
+"""
+
+let xmlBox = try J2KXMLBox(xmlString: xmpMetadata)
+
+// Add to file
+var writer = J2KBoxWriter()
+try writer.writeBox(signatureBox)
+try writer.writeBox(fileTypeBox)
+try writer.writeBox(headerBox)
+try writer.writeBox(xmlBox)  // XMP metadata
+// ... codestream box
+```
+
 ## Implementation Status
 
 ### Completed (Phase 5, Week 57-59) ✅
@@ -615,14 +715,49 @@ let jp2h = J2KHeaderBox(boxes: [ihdr, palette, cmap, cdef, colr])
 - **78 Tests** (100% pass rate)
 - **Full ISO/IEC 15444-1 Compliance** for essential boxes
 
+### Week 63-65: Optional Boxes ✅
+
+- [x] Resolution Box ('res ') - Container for resolution boxes
+  - Superbox containing capture and/or display resolution
+  - Flexible structure (one or both sub-boxes)
+- [x] Capture Resolution Box ('resc')
+  - Original capture resolution
+  - Numerator/denominator/exponent format
+  - Support for pixels per metre and inch
+- [x] Display Resolution Box ('resd')
+  - Recommended display resolution
+  - Same structure as capture resolution
+  - Independent scaling support
+- [x] UUID Box ('uuid')
+  - 16-byte UUID identifier
+  - Application-specific data payload
+  - Vendor extensions support
+- [x] XML Box ('xml ')
+  - UTF-8 encoded XML metadata
+  - XMP metadata support
+  - Structured metadata embedding
+- [x] 48 new comprehensive tests (100% pass rate)
+- [x] Full resolution metadata support
+- [x] Extensibility mechanisms implemented
+
+### Total Implementation (Week 57-65)
+
+- **13 Box Types Implemented**
+- **126 Tests** (100% pass rate)
+- **Full ISO/IEC 15444-1 Compliance** for essential and optional metadata boxes
+
 ### Future
 
-- [ ] Resolution Box ('res ')
-- [ ] Capture Resolution Box ('resc')
-- [ ] Display Resolution Box ('resd')
-- [ ] UUID Boxes ('uuid')
-- [ ] XML Boxes ('xml ')
 - [ ] Contiguous Codestream Box ('jp2c') integration
+- [ ] UUID Info Box ('uinf')
+- [ ] UUID List Box ('ulst')
+- [ ] Reader Requirements Box ('rreq')
+- [ ] Association Box ('asoc')
+- [ ] Label Box ('lbl ')
+- [ ] Cross-reference Box ('cref')
+- [ ] Fragment Table Box ('ftbl') for JPX
+- [ ] Fragment List Box ('flst') for JPX
+- [ ] Composition Box ('comp') for JPX
 
 ## Standards Reference
 

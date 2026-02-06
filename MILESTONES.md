@@ -218,12 +218,24 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] 50 comprehensive tests (100% pass rate)
 - [x] Documentation with examples
 
-### Week 63-65: Optional Boxes
-- [ ] Implement resolution box (res)
-- [ ] Add capture resolution box (resc)
-- [ ] Implement display resolution box (resd)
-- [ ] Add UUID boxes for extensions
-- [ ] Implement XML boxes for metadata
+### Week 63-65: Optional Boxes ✅
+- [x] Implement resolution box (res)
+  - Container for resolution metadata
+  - Supports one or both sub-boxes
+- [x] Add capture resolution box (resc)
+  - Numerator/denominator/exponent format
+  - Pixels per metre and inch units
+- [x] Implement display resolution box (resd)
+  - Recommended display resolution
+  - Same structure as capture resolution
+- [x] Add UUID boxes for extensions
+  - 16-byte UUID identifier
+  - Application-specific data support
+- [x] Implement XML boxes for metadata
+  - UTF-8 encoded XML
+  - XMP metadata support
+- [x] 48 comprehensive tests (100% pass rate)
+- [x] Documentation with examples
 
 ### Week 66-68: Advanced Features
 - [ ] Implement JPX extended format support
@@ -383,4 +395,4 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 
 **Last Updated**: 2026-02-06
 **Current Phase**: Phase 5 - File Format (In Progress)
-**Next Milestone**: Phase 5, Week 60-62 - Essential Boxes
+**Next Milestone**: Phase 5, Week 66-68 - Advanced Features
