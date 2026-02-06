@@ -92,21 +92,19 @@ public struct J2KDWT2DTiled: Sendable {
     
     /// Extracts a specific tile from an image.
     ///
-    /// Creates a J2KTile structure containing the pixel data for the specified
+    /// Creates a J2KTile structure containing metadata for the specified
     /// tile region. Each tile is extracted independently and can be processed
     /// without loading the entire image into memory.
     ///
     /// - Parameters:
     ///   - image: The source image with tile configuration.
     ///   - tileIndex: The linear tile index (0-based).
-    ///   - componentData: Optional component data arrays. If not provided, uses image component data.
-    /// - Returns: A tile containing the extracted region data.
+    /// - Returns: A tile containing the extracted region metadata.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if tile index is invalid.
     /// - Throws: ``J2KError/invalidTileConfiguration(_:)`` if image is not tiled.
     public func extractTile(
         from image: J2KImage,
-        tileIndex: Int,
-        componentData: [[[Int32]]]? = nil
+        tileIndex: Int
     ) throws -> J2KTile {
         // Validate tile index
         guard tileIndex >= 0 && tileIndex < image.tileCount else {

@@ -109,7 +109,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 ### Week 32-34: Tiling Support ✅
 - [x] Implement tile-by-tile DWT
 - [x] Add tile boundary handling
-- [x] Support overlapping tiles
+- [x] Support non-aligned tile dimensions (partial tiles at edges)
 - [x] Implement tile-component transforms
 - [x] Optimize memory usage for tiled images
 
