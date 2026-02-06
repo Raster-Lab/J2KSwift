@@ -564,4 +564,89 @@ final class J2KAccelerateTests: XCTestCase {
         throw XCTSkip("Accelerate framework not available")
         #endif
     }
+    
+    // MARK: - Cache Optimization Tests
+    
+    func testCacheOptimizedTransform() throws {
+        #if canImport(Accelerate)
+        let dwt = J2KDWTAccelerated()
+        let width = 64
+        let height = 64
+        var data = [Double](repeating: 0, count: width * height)
+        
+        // Create test pattern
+        for y in 0..<height {
+            for x in 0..<width {
+                data[y * width + x] = Double(x * y % 256)
+            }
+        }
+        
+        let result = try dwt.forwardTransform2DCacheOptimized(
+            data: data,
+            width: width,
+            height: height,
+            levels: 3
+        )
+        
+        XCTAssertEqual(result.count, 3, "Should have 3 levels")
+        XCTAssertTrue(result[0].ll.count > 0, "LL subband should not be empty")
+        #else
+        // Skip on unsupported platforms
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
+    
+    func testCacheOptimizedVsStandardConsistency() throws {
+        #if canImport(Accelerate)
+        let dwt = J2KDWTAccelerated()
+        let width = 32
+        let height = 32
+        var data = [Double](repeating: 0, count: width * height)
+        
+        // Create test pattern
+        for i in 0..<data.count {
+            data[i] = Double(i % 128)
+        }
+        
+        // Standard transform
+        let standardResult = try dwt.forwardTransform2D(
+            data: data,
+            width: width,
+            height: height,
+            levels: 2
+        )
+        
+        // Cache-optimized transform
+        let optimizedResult = try dwt.forwardTransform2DCacheOptimized(
+            data: data,
+            width: width,
+            height: height,
+            levels: 2
+        )
+        
+        // Results should be identical (within floating point precision)
+        XCTAssertEqual(standardResult.count, optimizedResult.count, "Level counts should match")
+        
+        for level in 0..<standardResult.count {
+            let stdLevel = standardResult[level]
+            let optLevel = optimizedResult[level]
+            
+            XCTAssertEqual(stdLevel.ll.count, optLevel.ll.count, "LL sizes should match at level \(level)")
+            
+            // Check that values are close
+            for i in 0..<stdLevel.ll.count {
+                XCTAssertEqual(stdLevel.ll[i], optLevel.ll[i], accuracy: 1e-10,
+                             "LL values should match at level \(level), index \(i)")
+            }
+            
+            for i in 0..<stdLevel.lh.count {
+                XCTAssertEqual(stdLevel.lh[i], optLevel.lh[i], accuracy: 1e-10,
+                             "LH values should match at level \(level), index \(i)")
+            }
+        }
+        #else
+        // Skip on unsupported platforms
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
 }

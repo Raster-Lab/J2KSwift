@@ -802,6 +802,145 @@ public struct J2KDWTAccelerated: Sendable {
         #endif
     }
     
+    /// Performs cache-optimized 2D forward DWT using matrix transpose.
+    ///
+    /// This method uses hardware-accelerated matrix transpose to convert column operations
+    /// into row operations, providing better cache locality and improved performance.
+    /// Especially beneficial for large images where column access patterns cause cache misses.
+    ///
+    /// - Parameters:
+    ///   - data: Image data in row-major order (height × width elements).
+    ///   - width: Image width in pixels.
+    ///   - height: Image height in pixels.
+    ///   - levels: Number of decomposition levels (default: 1).
+    ///   - boundaryExtension: Boundary extension mode (default: symmetric).
+    /// - Returns: Array of decomposition levels, one per level.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if dimensions are invalid.
+    /// - Throws: ``J2KError.unsupportedFeature(_:)`` if acceleration is not available.
+    ///
+    /// Example:
+    /// ```swift
+    /// let dwt = J2KDWTAccelerated()
+    /// let data = [Double](repeating: 0, count: 512 * 512)
+    /// let decompositions = try dwt.forwardTransform2DCacheOptimized(
+    ///     data: data,
+    ///     width: 512,
+    ///     height: 512,
+    ///     levels: 3
+    /// )
+    /// ```
+    public func forwardTransform2DCacheOptimized(
+        data: [Double],
+        width: Int,
+        height: Int,
+        levels: Int = 1,
+        boundaryExtension: BoundaryExtension = .symmetric
+    ) throws -> [DecompositionLevel] {
+        #if canImport(Accelerate)
+        guard width >= 2 && height >= 2 else {
+            throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
+        }
+        
+        guard levels >= 1 else {
+            throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
+        }
+        
+        guard data.count == width * height else {
+            throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
+        }
+        
+        var currentData = data
+        var currentWidth = width
+        var currentHeight = height
+        var results: [DecompositionLevel] = []
+        
+        for level in 0..<levels {
+            guard currentWidth >= 2 && currentHeight >= 2 else {
+                throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
+            }
+            
+            // Transform rows (already contiguous - good cache locality)
+            var rowTransformed = [Double](repeating: 0, count: currentData.count)
+            for row in 0..<currentHeight {
+                let rowStart = row * currentWidth
+                let rowEnd = rowStart + currentWidth
+                let rowData = Array(currentData[rowStart..<rowEnd])
+                
+                let (low, high) = try forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
+                
+                // Store transformed row: [LL...LL|LH...LH]
+                let outputRowStart = row * currentWidth
+                for i in 0..<low.count {
+                    rowTransformed[outputRowStart + i] = low[i]
+                }
+                for i in 0..<high.count {
+                    rowTransformed[outputRowStart + low.count + i] = high[i]
+                }
+            }
+            
+            // Transpose matrix to make columns contiguous
+            let transposed = transposeMatrix(rowTransformed, rows: currentHeight, cols: currentWidth)
+            
+            // Transform "rows" in transposed matrix (which are columns in original)
+            var colTransformed = [Double](repeating: 0, count: transposed.count)
+            for col in 0..<currentWidth {
+                let colStart = col * currentHeight
+                let colEnd = colStart + currentHeight
+                let colData = Array(transposed[colStart..<colEnd])
+                
+                let (low, high) = try forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
+                
+                // Store transformed "row" in transposed space
+                let outputColStart = col * currentHeight
+                for i in 0..<low.count {
+                    colTransformed[outputColStart + i] = low[i]
+                }
+                for i in 0..<high.count {
+                    colTransformed[outputColStart + low.count + i] = high[i]
+                }
+            }
+            
+            // Transpose back to original orientation
+            let finalTransformed = transposeMatrix(colTransformed, rows: currentWidth, cols: currentHeight)
+            
+            // Calculate subband dimensions
+            let llWidth = (currentWidth + 1) / 2
+            let llHeight = (currentHeight + 1) / 2
+            let lhWidth = currentWidth / 2
+            let lhHeight = llHeight
+            let hlWidth = llWidth
+            let hlHeight = currentHeight / 2
+            let hhWidth = lhWidth
+            let hhHeight = hlHeight
+            
+            // Extract subbands
+            let ll = extractSubband(from: finalTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(from: finalTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(from: finalTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(from: finalTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            
+            results.append(DecompositionLevel(
+                ll: ll,
+                lh: lh,
+                hl: hl,
+                hh: hh,
+                llWidth: llWidth,
+                llHeight: llHeight,
+                level: level
+            ))
+            
+            // For next level, use only the LL subband
+            currentData = ll
+            currentWidth = llWidth
+            currentHeight = llHeight
+        }
+        
+        return results
+        #else
+        throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
+        #endif
+    }
+    
     /// Performs 2D inverse DWT on decomposed image data using hardware acceleration.
     ///
     /// Reconstructs image data from wavelet decomposition using the accelerated inverse
@@ -928,6 +1067,39 @@ public struct J2KDWTAccelerated: Sendable {
     }
     
     #if canImport(Accelerate)
+    /// Transposes a 2D matrix using hardware acceleration for cache-friendly access.
+    ///
+    /// This method uses vDSP's matrix transpose operation which is cache-optimized,
+    /// providing significant performance improvements over naive element-by-element copying.
+    ///
+    /// - Parameters:
+    ///   - data: Input matrix in row-major order.
+    ///   - rows: Number of rows in the input matrix.
+    ///   - cols: Number of columns in the input matrix.
+    /// - Returns: Transposed matrix in row-major order (original columns become rows).
+    private func transposeMatrix(
+        _ data: [Double],
+        rows: Int,
+        cols: Int
+    ) -> [Double] {
+        var result = [Double](repeating: 0, count: data.count)
+        
+        data.withUnsafeBufferPointer { srcPtr in
+            result.withUnsafeMutableBufferPointer { dstPtr in
+                // vDSP_mtrans performs optimized matrix transpose
+                // C = A^T where A is rows×cols, C is cols×rows
+                vDSP_mtransD(
+                    srcPtr.baseAddress!, 1,  // Source matrix
+                    dstPtr.baseAddress!, 1,  // Destination matrix
+                    vDSP_Length(cols),       // Columns in source (rows in dest)
+                    vDSP_Length(rows)        // Rows in source (cols in dest)
+                )
+            }
+        }
+        
+        return result
+    }
+    
     /// Extracts a subband from the transformed data.
     private func extractSubband(
         from data: [Double],
