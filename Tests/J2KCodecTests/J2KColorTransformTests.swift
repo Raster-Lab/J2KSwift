@@ -1000,4 +1000,442 @@ final class J2KColorTransformTests: XCTestCase {
             data: data
         )
     }
+    
+    // MARK: - Grayscale Tests
+    
+    func testRGBToGrayscaleInt32() throws {
+        let transform = J2KColorTransform()
+        
+        // Test with known values (using ITU-R BT.601 weights)
+        let red: [Int32] = [255, 128, 0]
+        let green: [Int32] = [0, 128, 255]
+        let blue: [Int32] = [0, 128, 255]
+        
+        let gray = try transform.rgbToGrayscale(red: red, green: green, blue: blue)
+        
+        XCTAssertEqual(gray.count, 3)
+        
+        // Y = 0.299 × R + 0.587 × G + 0.114 × B
+        // Using fixed-point arithmetic: (R*306 + G*601 + B*117 + 512) >> 10
+        let calc0 = (255 * 306 + 0 * 601 + 0 * 117 + 512) >> 10
+        let expectedGray0 = Int32(calc0)  // ~76
+        let calc1 = (128 * 306 + 128 * 601 + 128 * 117 + 512) >> 10
+        let expectedGray1 = Int32(calc1)  // ~128
+        let calc2 = (0 * 306 + 255 * 601 + 255 * 117 + 512) >> 10
+        let expectedGray2 = Int32(calc2)  // ~179
+        
+        XCTAssertEqual(gray[0], expectedGray0)
+        XCTAssertEqual(gray[1], expectedGray1)
+        XCTAssertEqual(gray[2], expectedGray2)
+    }
+    
+    func testRGBToGrayscaleDouble() throws {
+        let transform = J2KColorTransform()
+        
+        // Test with known values
+        let red: [Double] = [255.0, 128.0, 0.0]
+        let green: [Double] = [0.0, 128.0, 255.0]
+        let blue: [Double] = [0.0, 128.0, 255.0]
+        
+        let gray = try transform.rgbToGrayscale(red: red, green: green, blue: blue)
+        
+        XCTAssertEqual(gray.count, 3)
+        
+        // Y = 0.299 × R + 0.587 × G + 0.114 × B
+        let expectedGray0 = 0.299 * 255.0  // ~76.245
+        let expectedGray1 = 0.299 * 128.0 + 0.587 * 128.0 + 0.114 * 128.0  // 128.0
+        let expectedGray2 = 0.587 * 255.0 + 0.114 * 255.0  // ~178.755
+        
+        XCTAssertEqual(gray[0], expectedGray0, accuracy: 0.1)
+        XCTAssertEqual(gray[1], expectedGray1, accuracy: 0.1)
+        XCTAssertEqual(gray[2], expectedGray2, accuracy: 0.1)
+    }
+    
+    func testGrayscaleToRGBInt32() throws {
+        let transform = J2KColorTransform()
+        
+        let gray: [Int32] = [0, 128, 255]
+        let (red, green, blue) = transform.grayscaleToRGB(gray: gray)
+        
+        // Grayscale to RGB should replicate the value
+        XCTAssertEqual(red, gray)
+        XCTAssertEqual(green, gray)
+        XCTAssertEqual(blue, gray)
+    }
+    
+    func testGrayscaleToRGBDouble() throws {
+        let transform = J2KColorTransform()
+        
+        let gray: [Double] = [0.0, 128.0, 255.0]
+        let (red, green, blue) = transform.grayscaleToRGB(gray: gray)
+        
+        // Grayscale to RGB should replicate the value
+        XCTAssertEqual(red, gray)
+        XCTAssertEqual(green, gray)
+        XCTAssertEqual(blue, gray)
+    }
+    
+    func testRGBToGrayscaleComponent() throws {
+        let transform = J2KColorTransform()
+        
+        // Create test components with uniform fill values (simpler test)
+        let redComp = createTestComponent(index: 0, width: 2, height: 2, fillValue: 255)
+        let greenComp = createTestComponent(index: 1, width: 2, height: 2, fillValue: 0)
+        let blueComp = createTestComponent(index: 2, width: 2, height: 2, fillValue: 0)
+        
+        let grayComp = try transform.rgbToGrayscale(
+            redComponent: redComp,
+            greenComponent: greenComp,
+            blueComponent: blueComp
+        )
+        
+        XCTAssertEqual(grayComp.width, 2)
+        XCTAssertEqual(grayComp.height, 2)
+        XCTAssertEqual(grayComp.index, 0)
+    }
+    
+    func testRGBToGrayscaleEmptyInput() throws {
+        let transform = J2KColorTransform()
+        
+        let red: [Int32] = []
+        let green: [Int32] = []
+        let blue: [Int32] = []
+        
+        XCTAssertThrowsError(try transform.rgbToGrayscale(red: red, green: green, blue: blue)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    func testRGBToGrayscaleMismatchedSizes() throws {
+        let transform = J2KColorTransform()
+        
+        let red: [Int32] = [100, 150]
+        let green: [Int32] = [80, 120]
+        let blue: [Int32] = [60]  // Mismatched size
+        
+        XCTAssertThrowsError(try transform.rgbToGrayscale(red: red, green: green, blue: blue)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    // MARK: - Palette Tests
+    
+    func testPaletteCreation() throws {
+        let entries: [(red: UInt8, green: UInt8, blue: UInt8)] = [
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255)
+        ]
+        let palette = J2KColorTransform.Palette(entries: entries)
+        
+        XCTAssertEqual(palette.count, 3)
+        XCTAssertEqual(palette.entries[0].red, 255)
+        XCTAssertEqual(palette.entries[1].green, 255)
+        XCTAssertEqual(palette.entries[2].blue, 255)
+    }
+    
+    func testExpandPalette() throws {
+        let transform = J2KColorTransform()
+        
+        let palette = J2KColorTransform.Palette(entries: [
+            (255, 0, 0),    // Red
+            (0, 255, 0),    // Green
+            (0, 0, 255),    // Blue
+            (255, 255, 255) // White
+        ])
+        
+        let indices: [UInt8] = [0, 1, 2, 3, 0, 1, 2, 3]
+        let (red, green, blue) = try transform.expandPalette(indices: indices, palette: palette)
+        
+        XCTAssertEqual(red.count, 8)
+        XCTAssertEqual(green.count, 8)
+        XCTAssertEqual(blue.count, 8)
+        
+        // Check first 4 pixels
+        XCTAssertEqual(red[0], 255)
+        XCTAssertEqual(green[0], 0)
+        XCTAssertEqual(blue[0], 0)
+        
+        XCTAssertEqual(red[1], 0)
+        XCTAssertEqual(green[1], 255)
+        XCTAssertEqual(blue[1], 0)
+        
+        XCTAssertEqual(red[2], 0)
+        XCTAssertEqual(green[2], 0)
+        XCTAssertEqual(blue[2], 255)
+        
+        XCTAssertEqual(red[3], 255)
+        XCTAssertEqual(green[3], 255)
+        XCTAssertEqual(blue[3], 255)
+    }
+    
+    func testExpandPaletteInvalidIndex() throws {
+        let transform = J2KColorTransform()
+        
+        let palette = J2KColorTransform.Palette(entries: [
+            (255, 0, 0),
+            (0, 255, 0)
+        ])
+        
+        let indices: [UInt8] = [0, 1, 5]  // Index 5 is out of range
+        
+        XCTAssertThrowsError(try transform.expandPalette(indices: indices, palette: palette)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    func testCreatePaletteFewColors() throws {
+        let transform = J2KColorTransform()
+        
+        // Image with 3 distinct colors
+        let red: [UInt8] = [255, 0, 128, 255, 0]
+        let green: [UInt8] = [0, 255, 128, 0, 255]
+        let blue: [UInt8] = [0, 0, 128, 0, 0]
+        
+        let (palette, indices) = try transform.createPalette(
+            red: red,
+            green: green,
+            blue: blue,
+            maxColors: 10
+        )
+        
+        XCTAssertEqual(palette.count, 3)
+        XCTAssertEqual(indices.count, 5)
+        
+        // Verify indices point to valid palette entries
+        for index in indices {
+            XCTAssertLessThan(index, UInt8(palette.count))
+        }
+        
+        // Verify reconstruction
+        let (reconstructedRed, reconstructedGreen, reconstructedBlue) = try transform.expandPalette(
+            indices: indices,
+            palette: palette
+        )
+        
+        XCTAssertEqual(reconstructedRed, red)
+        XCTAssertEqual(reconstructedGreen, green)
+        XCTAssertEqual(reconstructedBlue, blue)
+    }
+    
+    func testCreatePaletteManyColors() throws {
+        let transform = J2KColorTransform()
+        
+        // Generate image with many colors (more than maxColors)
+        var red: [UInt8] = []
+        var green: [UInt8] = []
+        var blue: [UInt8] = []
+        
+        for i in 0..<300 {
+            red.append(UInt8(i % 256))
+            green.append(UInt8((i * 2) % 256))
+            blue.append(UInt8((i * 3) % 256))
+        }
+        
+        let (palette, indices) = try transform.createPalette(
+            red: red,
+            green: green,
+            blue: blue,
+            maxColors: 16
+        )
+        
+        XCTAssertEqual(palette.count, 16)
+        XCTAssertEqual(indices.count, 300)
+        
+        // Verify indices point to valid palette entries
+        for index in indices {
+            XCTAssertLessThan(index, UInt8(palette.count))
+        }
+    }
+    
+    func testCreatePaletteEmptyInput() throws {
+        let transform = J2KColorTransform()
+        
+        let red: [UInt8] = []
+        let green: [UInt8] = []
+        let blue: [UInt8] = []
+        
+        XCTAssertThrowsError(try transform.createPalette(red: red, green: green, blue: blue)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    func testCreatePaletteInvalidMaxColors() throws {
+        let transform = J2KColorTransform()
+        
+        let red: [UInt8] = [255, 0, 128]
+        let green: [UInt8] = [0, 255, 128]
+        let blue: [UInt8] = [0, 0, 128]
+        
+        // maxColors out of range
+        XCTAssertThrowsError(try transform.createPalette(red: red, green: green, blue: blue, maxColors: 0)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+        
+        XCTAssertThrowsError(try transform.createPalette(red: red, green: green, blue: blue, maxColors: 257)) { error in
+            guard case J2KError.invalidParameter = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+        }
+    }
+    
+    // MARK: - Color Space Detection Tests
+    
+    func testDetectGrayscaleColorSpace() throws {
+        let component = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 256,
+            height: 256
+        )
+        
+        let colorSpace = J2KColorTransform.detectColorSpace(components: [component])
+        
+        XCTAssertEqual(colorSpace, .grayscale)
+    }
+    
+    func testDetectRGBColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 2, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        let colorSpace = J2KColorTransform.detectColorSpace(components: components)
+        
+        XCTAssertEqual(colorSpace, .sRGB)
+    }
+    
+    func testDetectRGBAColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 2, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 3, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        let colorSpace = J2KColorTransform.detectColorSpace(components: components)
+        
+        // 4-component images default to sRGB (could be RGBA)
+        XCTAssertEqual(colorSpace, .sRGB)
+    }
+    
+    func testDetectUnknownColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        let colorSpace = J2KColorTransform.detectColorSpace(components: components)
+        
+        XCTAssertEqual(colorSpace, .unknown)
+    }
+    
+    func testDetectEmptyComponentsReturnsUnknown() throws {
+        let colorSpace = J2KColorTransform.detectColorSpace(components: [])
+        
+        XCTAssertEqual(colorSpace, .unknown)
+    }
+    
+    // MARK: - Color Space Validation Tests
+    
+    func testValidateGrayscaleColorSpace() throws {
+        let component = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 256,
+            height: 256
+        )
+        
+        // Should not throw
+        try J2KColorTransform.validateColorSpace(components: [component], colorSpace: .grayscale)
+    }
+    
+    func testValidateGrayscaleWithMultipleComponentsFails() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        XCTAssertThrowsError(try J2KColorTransform.validateColorSpace(components: components, colorSpace: .grayscale)) { error in
+            guard case J2KError.invalidComponentConfiguration = error else {
+                XCTFail("Expected invalidComponentConfiguration error")
+                return
+            }
+        }
+    }
+    
+    func testValidateRGBColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 2, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        // Should not throw
+        try J2KColorTransform.validateColorSpace(components: components, colorSpace: .sRGB)
+    }
+    
+    func testValidateRGBWithTwoComponentsFails() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        XCTAssertThrowsError(try J2KColorTransform.validateColorSpace(components: components, colorSpace: .sRGB)) { error in
+            guard case J2KError.invalidComponentConfiguration = error else {
+                XCTFail("Expected invalidComponentConfiguration error")
+                return
+            }
+        }
+    }
+    
+    func testValidateYCbCrColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 2, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        // Should not throw
+        try J2KColorTransform.validateColorSpace(components: components, colorSpace: .yCbCr)
+    }
+    
+    func testValidateICCProfileColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        // ICC profiles can have arbitrary component counts, so should not throw
+        let iccData = Data([0x00, 0x01, 0x02, 0x03])
+        try J2KColorTransform.validateColorSpace(components: components, colorSpace: .iccProfile(iccData))
+    }
+    
+    func testValidateUnknownColorSpace() throws {
+        let components = [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: 256, height: 256),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
+        ]
+        
+        // Unknown color space should not throw
+        try J2KColorTransform.validateColorSpace(components: components, colorSpace: .unknown)
+    }
 }

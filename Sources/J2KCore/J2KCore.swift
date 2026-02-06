@@ -441,7 +441,7 @@ public enum J2KSubband: String, Sendable, Hashable {
 }
 
 /// Represents the color space of a JPEG 2000 image.
-public enum J2KColorSpace: Sendable {
+public enum J2KColorSpace: Sendable, Equatable {
     /// sRGB color space.
     case sRGB
     
@@ -456,6 +456,21 @@ public enum J2KColorSpace: Sendable {
     
     /// Unknown or unspecified color space.
     case unknown
+    
+    /// Equatable conformance for J2KColorSpace.
+    public static func == (lhs: J2KColorSpace, rhs: J2KColorSpace) -> Bool {
+        switch (lhs, rhs) {
+        case (.sRGB, .sRGB),
+             (.grayscale, .grayscale),
+             (.yCbCr, .yCbCr),
+             (.unknown, .unknown):
+            return true
+        case let (.iccProfile(lhsData), .iccProfile(rhsData)):
+            return lhsData == rhsData
+        default:
+            return false
+        }
+    }
 }
 
 /// Errors that can occur during JPEG 2000 operations.
