@@ -186,12 +186,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 **Goal**: Implement complete JP2 file format with all box types.
 
-### Week 57-59: Basic Box Structure
-- [ ] Implement box reader/writer framework
-- [ ] Add signature box (JP)
-- [ ] Implement file type box (ftyp)
-- [ ] Add JP2 header box (jp2h)
-- [ ] Implement image header box (ihdr)
+### Week 57-59: Basic Box Structure ✅
+- [x] Implement box reader/writer framework
+- [x] Add signature box (JP)
+- [x] Implement file type box (ftyp)
+- [x] Add JP2 header box (jp2h)
+- [x] Implement image header box (ihdr)
 
 ### Week 60-62: Essential Boxes
 - [ ] Implement color specification box (colr)
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 4 - Color Transforms (Complete ✅)
-**Next Milestone**: Phase 5, Week 57-59 - File Format Basic Box Structure
+**Current Phase**: Phase 5 - File Format (In Progress)
+**Next Milestone**: Phase 5, Week 60-62 - Essential Boxes
