@@ -311,11 +311,12 @@ public final class J2KPipelineProfiler: @unchecked Sendable {
 
     private func currentMemoryUsage() -> Int {
         #if os(Linux)
-        if let contents = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8) {
-            let parts = contents.split(separator: " ")
-            if parts.count > 1, let residentPages = Int(parts[1]) {
-                return residentPages * 4096
-            }
+        guard let contents = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8) else {
+            return 0
+        }
+        let parts = contents.split(separator: " ")
+        if parts.count > 1, let residentPages = Int(parts[1]) {
+            return residentPages * 4096
         }
         return 0
         #else

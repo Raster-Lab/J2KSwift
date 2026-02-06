@@ -100,8 +100,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
         blocks.append(block)
 
         guard let ptr = block.allocate(byteCount: byteCount, alignment: alignment) else {
-            // Should never happen since we sized the block appropriately
-            fatalError("Arena allocation failed for \(byteCount) bytes")
+            fatalError("Arena allocation failed: requested \(byteCount) bytes with alignment \(alignment) in block of size \(newBlockSize)")
         }
         totalAllocated += byteCount
         return ptr

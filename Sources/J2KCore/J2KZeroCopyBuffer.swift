@@ -183,7 +183,8 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     ///
     /// - Returns: A Data copy of the buffer contents.
     public func toData() -> Data {
-        Data(bytes: buffer.baseAddress!, count: capacity)
+        guard let base = buffer.baseAddress else { return Data() }
+        return Data(bytes: base, count: capacity)
     }
 }
 
