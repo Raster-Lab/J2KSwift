@@ -152,7 +152,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 
 **Phase 3 In Progress** 🚧:
 - [x] Basic Quantization (Week 41-43) ✅
-- [ ] Region of Interest (Week 44-45)
+- [x] Region of Interest (Week 44-45) ✅
 - [ ] Rate Control (Week 46-48)
 
 ## 🌟 Features
@@ -227,12 +227,20 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Step size encoding/decoding for file format
   - ✅ 44 comprehensive tests, 100% pass rate
   - ✅ Full documentation ([QUANTIZATION.md](QUANTIZATION.md))
+- ✅ **Region of Interest (Phase 3, Week 44-45)**:
+  - ✅ MaxShift ROI method for selective quality encoding
+  - ✅ Multiple ROI shape types (rectangle, ellipse, polygon)
+  - ✅ ROI mask generation with priority support
+  - ✅ Wavelet domain ROI mapping
+  - ✅ Multiple overlapping ROI regions
+  - ✅ Implicit ROI coding support
+  - ✅ ROI statistics and coverage analysis
+  - ✅ 47 comprehensive tests, 100% pass rate
 
 ### Planned Features
 
 See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 
-- Region of Interest (ROI) coding
 - Rate control and PCRD-opt
 - Color space transformations
 - Multiple component transformations
