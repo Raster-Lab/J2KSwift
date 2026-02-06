@@ -136,12 +136,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 **Goal**: Implement quantization and dequantization with multiple modes.
 
-### Week 41-43: Basic Quantization
-- [ ] Implement scalar quantization
-- [ ] Add deadzone quantization
-- [ ] Support expounded/no quantization modes
-- [ ] Implement quantization step size calculation
-- [ ] Add dynamic range adjustment
+### Week 41-43: Basic Quantization ✅
+- [x] Implement scalar quantization
+- [x] Add deadzone quantization
+- [x] Support expounded/no quantization modes
+- [x] Implement quantization step size calculation
+- [x] Add dynamic range adjustment
 
 ### Week 44-45: Region of Interest (ROI)
 - [ ] Implement MaxShift ROI method
@@ -364,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 2 - Wavelet Transform (Week 38-40 Complete ✅)
-**Next Milestone**: Phase 3, Week 41-43 - Basic Quantization
+**Current Phase**: Phase 3 - Quantization (Week 41-43 Complete ✅)
+**Next Milestone**: Phase 3, Week 44-45 - Region of Interest (ROI)

@@ -134,7 +134,7 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 2 In Progress - Wavelet Transform 🚧
+### Current Status: Phase 3 In Progress - Quantization 🚧
 
 **Phase 1 Complete** ✅:
 - [x] Tier-1 Coding Primitives (Weeks 11-13)
@@ -143,12 +143,17 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Performance Optimization (Weeks 20-22)
 - [x] Testing & Validation (Weeks 23-25)
 
-**Phase 2 In Progress** 🚧:
-- [x] 1D DWT Foundation (Week 26-28) ✅
-- [x] 2D DWT Implementation (Week 29-31) ✅
-- [x] Tiling Support (Week 32-34) ✅
-- [x] Hardware Acceleration (Week 35-37) 🚧 *In Progress*
-- [ ] Advanced Features (Week 38-40)
+**Phase 2 Complete** ✅:
+- [x] 1D DWT Foundation (Week 26-28)
+- [x] 2D DWT Implementation (Week 29-31)
+- [x] Tiling Support (Week 32-34)
+- [x] Hardware Acceleration (Week 35-37)
+- [x] Advanced Features (Week 38-40)
+
+**Phase 3 In Progress** 🚧:
+- [x] Basic Quantization (Week 41-43) ✅
+- [ ] Region of Interest (Week 44-45)
+- [ ] Rate Control (Week 46-48)
 
 ## 🌟 Features
 
@@ -199,7 +204,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ 23 comprehensive tests, 100% pass rate
   - ✅ Up to 64x memory reduction for large images
   - ✅ Full documentation (updated [WAVELET_TRANSFORM.md](WAVELET_TRANSFORM.md))
-- ✅ **Hardware Acceleration (Phase 2, Week 35-37 - In Progress)** 🚧:
+- ✅ **Hardware Acceleration (Phase 2, Week 35-37)**:
   - ✅ Accelerate framework integration (Apple platforms)
   - ✅ Hardware-accelerated 1D DWT using vDSP
   - ✅ Hardware-accelerated 2D DWT (separable transforms)
@@ -208,22 +213,30 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ Cross-platform support with graceful fallback
   - ✅ Perfect reconstruction maintained (< 1e-6 error)
   - ✅ 22 comprehensive tests, 100% pass rate
-  - ⏳ SIMD-optimized lifting steps (in progress)
-  - ⏳ Parallel tile processing using Swift Concurrency (planned)
+  - ✅ SIMD-optimized lifting steps
+  - ✅ Parallel tile processing using Swift Concurrency
   - ✅ Full documentation ([HARDWARE_ACCELERATION.md](HARDWARE_ACCELERATION.md))
+- ✅ **Basic Quantization (Phase 3, Week 41-43)**:
+  - ✅ Scalar (uniform) quantization
+  - ✅ Deadzone quantization with configurable width
+  - ✅ Expounded mode with explicit step sizes
+  - ✅ No quantization mode for lossless compression
+  - ✅ Automatic step size calculation per subband
+  - ✅ Dynamic range adjustment for different bit depths
+  - ✅ Quality-based parameter generation
+  - ✅ Step size encoding/decoding for file format
+  - ✅ 44 comprehensive tests, 100% pass rate
+  - ✅ Full documentation ([QUANTIZATION.md](QUANTIZATION.md))
 
 ### Planned Features
 
 See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 
-- Advanced DWT features (custom filters, arbitrary decomposition)
-- Quantization and rate control
+- Region of Interest (ROI) coding
+- Rate control and PCRD-opt
 - Color space transformations
-- Region of interest (ROI) coding
 - Multiple component transformations
-- Tiling support
 - Full JPIP implementation
-- Hardware acceleration
 - And much more...
 
 ## 🧪 Testing
