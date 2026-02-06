@@ -114,11 +114,16 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Optimize memory usage for tiled images
 
 ### Week 35-37: Hardware Acceleration
-- [ ] Integrate with Accelerate framework (Apple platforms)
-- [ ] Implement SIMD-optimized filters
-- [ ] Add parallel DWT processing
-- [ ] Optimize cache usage
-- [ ] Benchmark performance improvements
+- [x] Integrate with Accelerate framework (Apple platforms)
+- [x] Implement 1D DWT acceleration using vDSP
+- [x] Implement 2D DWT acceleration (separable transforms)
+- [x] Add multi-level decomposition acceleration
+- [x] Cross-platform support with graceful fallback
+- [x] Comprehensive test coverage (22 tests, 100% pass rate)
+- [ ] Implement SIMD-optimized lifting steps (additional optimization)
+- [ ] Add parallel DWT processing using Swift Concurrency
+- [ ] Optimize cache usage (advanced techniques)
+- [ ] Benchmark performance improvements (comprehensive suite)
 
 ### Week 38-40: Advanced Features
 - [ ] Implement arbitrary decomposition structures
@@ -359,5 +364,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-06
-**Current Phase**: Phase 2 - Wavelet Transform (Week 32-34 Complete)
-**Next Milestone**: Phase 2, Week 35-37 - Hardware Acceleration
+**Current Phase**: Phase 2 - Wavelet Transform (Week 35-37 In Progress)
+**Next Milestone**: Complete Phase 2, Week 35-37 - Hardware Acceleration (SIMD optimizations and parallel processing)
