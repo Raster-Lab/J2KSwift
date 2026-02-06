@@ -142,7 +142,7 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 5 (Week 63-65) Complete - Optional JP2 Boxes ✅
+### Current Status: Phase 5 Complete - JP2/JPX/JPM File Format ✅
 
 > **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
@@ -347,6 +347,29 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ 48 new comprehensive tests, 100% pass rate
   - ✅ Full resolution metadata support
   - ✅ Extensibility mechanisms implemented
+- ✅ **JPX/JPM Advanced Features (Phase 5, Week 66-68)**:
+  - ✅ Fragment Table Box ('ftbl') - Fragmented codestream support
+    - Non-contiguous codestream fragments
+    - Progressive streaming enablement
+  - ✅ Fragment List Box ('flst') - Fragment offset and length tracking
+    - Support for 4-byte and 8-byte offsets (files up to petabytes)
+    - Efficient fragment reconstruction
+  - ✅ Composition Box ('comp') - Multi-layer image composition
+    - Layer positioning and blending
+    - Animation support with loop control
+    - Three compositing modes (replace, alpha blend, pre-multiplied alpha)
+  - ✅ Page Collection Box ('pcol') - Multi-page document support (JPM)
+    - Container for multiple pages
+    - Document imaging applications
+  - ✅ Page Box ('page') - Individual page structure
+    - Page dimensions and layout
+    - Support for mixed page sizes
+  - ✅ Layout Box ('lobj') - Object positioning on pages
+    - Precise placement control
+    - Multi-layer compound documents
+  - ✅ 49 new comprehensive tests (127 total), 100% pass rate
+  - ✅ Complete JPX/JPM support for advanced use cases
+  - ✅ Full documentation with examples
 
 ### Planned Features
 
@@ -356,11 +379,11 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
 - ✅ Phase 2: Wavelet Transform (Complete)
 - ✅ Phase 3: Quantization (Complete)
 - ✅ Phase 4: Color Transforms (Complete)
-- 🚧 Phase 5: File Format (In Progress)
+- ✅ Phase 5: File Format (Complete)
   - ✅ Week 57-59: Basic Box Structure
   - ✅ Week 60-62: Essential Boxes (bpcc, colr, pclr, cmap, cdef)
   - ✅ Week 63-65: Optional Boxes (res, resc, resd, uuid, xml)
-  - ⏳ Week 66-68: Advanced Features (JPX, JPM, fragment tables)
+  - ✅ Week 66-68: Advanced Features (JPX, JPM, fragment tables, composition)
 - ⏳ Phase 6: JPIP Protocol (Weeks 69-80)
 - ⏳ Phase 7: Optimization & Features (Weeks 81-92)
 - ⏳ Phase 8: Production Ready (Weeks 93-100)
@@ -442,6 +465,6 @@ J2KSwift is inspired by and references:
 
 ---
 
-**Status**: 🚧 Active Development - Phase 4 Complete, Phase 5+ In Progress
+**Status**: 🚀 Active Development - Phase 5 Complete, Phase 6+ In Progress
 
 This project is in active development. The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. The top-level encode/decode pipeline, file format support, and JPIP are still in progress. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
