@@ -606,40 +606,320 @@ The implementation includes comprehensive test coverage:
 - ✅ ICT reconstruction error < 1.0 for 8-bit data
 - ✅ Performance within expected ranges
 
+## Grayscale Support
+
+JPEG 2000 supports grayscale images through single-component encoding. The `J2KColorTransform` provides utilities for converting between RGB and grayscale representations.
+
+### RGB to Grayscale Conversion
+
+Converts RGB color images to grayscale using the standard ITU-R BT.601 luminance formula:
+
+```
+Y = 0.299 × R + 0.587 × G + 0.114 × B
+```
+
+This formula weights the green channel more heavily because the human eye is most sensitive to green light.
+
+#### Integer Implementation (Int32)
+
+```swift
+let transform = J2KColorTransform()
+
+let red: [Int32] = [255, 128, 0]
+let green: [Int32] = [0, 128, 255]
+let blue: [Int32] = [0, 128, 255]
+
+let gray = try transform.rgbToGrayscale(red: red, green: green, blue: blue)
+// gray ≈ [76, 128, 179]
+```
+
+The integer implementation uses fixed-point arithmetic for precision:
+- Weights: R=306/1024, G=601/1024, B=117/1024
+- Result: `(R×306 + G×601 + B×117 + 512) >> 10`
+
+#### Floating-Point Implementation (Double)
+
+```swift
+let transform = J2KColorTransform()
+
+let red: [Double] = [255.0, 128.0, 0.0]
+let green: [Double] = [0.0, 128.0, 255.0]
+let blue: [Double] = [0.0, 128.0, 255.0]
+
+let gray = try transform.rgbToGrayscale(red: red, green: green, blue: blue)
+// gray ≈ [76.245, 128.0, 178.755]
+```
+
+#### Component-Based API
+
+```swift
+let transform = J2KColorTransform()
+
+// Create RGB components
+let redComp = J2KComponent(index: 0, bitDepth: 8, signed: true, width: 512, height: 512, data: redData)
+let greenComp = J2KComponent(index: 1, bitDepth: 8, signed: true, width: 512, height: 512, data: greenData)
+let blueComp = J2KComponent(index: 2, bitDepth: 8, signed: true, width: 512, height: 512, data: blueData)
+
+// Convert to grayscale
+let grayComp = try transform.rgbToGrayscale(
+    redComponent: redComp,
+    greenComponent: greenComp,
+    blueComponent: blueComp
+)
+```
+
+### Grayscale to RGB Conversion
+
+Converts grayscale to RGB by replicating the gray value across all three channels:
+
+```swift
+let transform = J2KColorTransform()
+
+let gray: [Int32] = [0, 128, 255]
+let (red, green, blue) = transform.grayscaleToRGB(gray: gray)
+
+// All three channels contain the same values
+// red = [0, 128, 255]
+// green = [0, 128, 255]
+// blue = [0, 128, 255]
+```
+
+## Palette Support
+
+JPEG 2000 can encode indexed color images using palettes. The `J2KColorTransform` provides utilities for working with palette-based images.
+
+### Palette Structure
+
+```swift
+public struct Palette: Sendable {
+    public let entries: [(red: UInt8, green: UInt8, blue: UInt8)]
+    public var count: Int
+}
+```
+
+### Creating a Palette
+
+```swift
+let transform = J2KColorTransform()
+
+// Define palette entries
+let palette = J2KColorTransform.Palette(entries: [
+    (255, 0, 0),    // Red
+    (0, 255, 0),    // Green
+    (0, 0, 255),    // Blue
+    (255, 255, 255) // White
+])
+```
+
+### Expanding Palette Indices to RGB
+
+```swift
+let transform = J2KColorTransform()
+
+// Define palette
+let palette = J2KColorTransform.Palette(entries: [
+    (255, 0, 0),   // Index 0: Red
+    (0, 255, 0),   // Index 1: Green
+    (0, 0, 255),   // Index 2: Blue
+    (255, 255, 255) // Index 3: White
+])
+
+// Palette indices for each pixel
+let indices: [UInt8] = [0, 1, 2, 3, 0, 1, 2, 3]
+
+// Expand to RGB
+let (red, green, blue) = try transform.expandPalette(indices: indices, palette: palette)
+
+// Result:
+// red   = [255, 0,   0,   255, 255, 0,   0,   255]
+// green = [0,   255, 0,   255, 0,   255, 0,   255]
+// blue  = [0,   0,   255, 255, 0,   0,   255, 255]
+```
+
+### Creating a Palette from RGB Data
+
+The `createPalette` method uses color quantization to reduce an RGB image to a palette:
+
+```swift
+let transform = J2KColorTransform()
+
+// RGB image data
+let red: [UInt8] = [/* ... */]
+let green: [UInt8] = [/* ... */]
+let blue: [UInt8] = [/* ... */]
+
+// Create palette with up to 256 colors
+let (palette, indices) = try transform.createPalette(
+    red: red,
+    green: green,
+    blue: blue,
+    maxColors: 256
+)
+
+print("Palette has \(palette.count) colors")
+print("Indices has \(indices.count) values")
+
+// Reconstruct RGB from palette
+let (reconRed, reconGreen, reconBlue) = try transform.expandPalette(
+    indices: indices,
+    palette: palette
+)
+```
+
+The algorithm:
+1. Counts unique colors in the image
+2. If colors ≤ maxColors, uses them directly (lossless)
+3. Otherwise, selects the most common colors
+4. Maps remaining colors to nearest palette entry
+
+## Color Space Detection and Validation
+
+The `J2KColorTransform` provides utilities for detecting and validating color spaces based on image components.
+
+### Color Space Detection
+
+Automatically detects the color space based on the number of components:
+
+```swift
+// Grayscale (1 component)
+let grayComponents = [J2KComponent(index: 0, bitDepth: 8, signed: false, width: 512, height: 512)]
+let colorSpace = J2KColorTransform.detectColorSpace(components: grayComponents)
+// colorSpace == .grayscale
+
+// RGB (3 components)
+let rgbComponents = [
+    J2KComponent(index: 0, bitDepth: 8, signed: false, width: 512, height: 512),
+    J2KComponent(index: 1, bitDepth: 8, signed: false, width: 512, height: 512),
+    J2KComponent(index: 2, bitDepth: 8, signed: false, width: 512, height: 512)
+]
+let colorSpace = J2KColorTransform.detectColorSpace(components: rgbComponents)
+// colorSpace == .sRGB
+
+// RGBA or other (4+ components)
+let rgbaComponents = [/* 4 components */]
+let colorSpace = J2KColorTransform.detectColorSpace(components: rgbaComponents)
+// colorSpace == .sRGB (assumes RGB with alpha)
+
+// Unknown (2 components or unusual count)
+let unknownComponents = [/* 2 components */]
+let colorSpace = J2KColorTransform.detectColorSpace(components: unknownComponents)
+// colorSpace == .unknown
+```
+
+### Color Space Validation
+
+Validates that components match the expected color space:
+
+```swift
+let components = [/* ... */]
+
+// Validate grayscale
+try J2KColorTransform.validateColorSpace(components: components, colorSpace: .grayscale)
+// Throws if components.count != 1
+
+// Validate RGB/YCbCr
+try J2KColorTransform.validateColorSpace(components: components, colorSpace: .sRGB)
+// Throws if components.count < 3
+
+// ICC profiles accept any component count
+try J2KColorTransform.validateColorSpace(components: components, colorSpace: .iccProfile(data))
+// Never throws
+
+// Unknown color space accepts any component count
+try J2KColorTransform.validateColorSpace(components: components, colorSpace: .unknown)
+// Never throws
+```
+
+### J2KColorSpace Enum
+
+The `J2KColorSpace` enum supports various color spaces:
+
+```swift
+public enum J2KColorSpace: Sendable, Equatable {
+    case sRGB                  // Standard RGB
+    case grayscale             // Single component
+    case yCbCr                 // YCbCr color space
+    case iccProfile(Data)      // Custom ICC profile
+    case unknown               // Unknown/unspecified
+}
+```
+
+The enum is `Equatable`, allowing direct comparison:
+
+```swift
+let space1: J2KColorSpace = .sRGB
+let space2: J2KColorSpace = .sRGB
+let space3: J2KColorSpace = .grayscale
+
+if space1 == space2 {
+    print("Color spaces match")
+}
+
+// ICC profiles compare by data content
+let iccData1 = Data([0x00, 0x01, 0x02])
+let iccData2 = Data([0x00, 0x01, 0x02])
+let profile1: J2KColorSpace = .iccProfile(iccData1)
+let profile2: J2KColorSpace = .iccProfile(iccData2)
+// profile1 == profile2  // true
+```
+
 ## Future Work
 
-### Phase 4, Week 55-56: Advanced Color Support
+### Phase 4, Week 55-56: Advanced Color Support ✅
 
-Planned enhancements:
+Completed features:
 
-1. **Extended Color Spaces**
-   - Arbitrary component count (>3)
-   - Custom color space transforms
-   - ICC profile support
-   - Non-RGB color spaces (CMYK, Lab, etc.)
+1. **Grayscale Support** ✅
+   - RGB to grayscale conversion (integer and floating-point)
+   - Grayscale to RGB conversion
+   - Component-based API
+   - ITU-R BT.601 luminance formula
 
-2. **Hardware Acceleration**
-   - SIMD vectorization for both RCT and ICT
+2. **Palette Support** ✅
+   - Palette data structure
+   - Palette expansion (indices to RGB)
+   - Palette creation with color quantization
+   - Support for up to 256 colors
+   - Nearest color matching
+
+3. **Color Space Utilities** ✅
+   - Automatic color space detection
+   - Color space validation
+   - J2KColorSpace made Equatable
+   - Support for grayscale, RGB, YCbCr, ICC profiles
+
+### Remaining Enhancements
+
+1. **Hardware Acceleration**
+   - SIMD vectorization for grayscale conversion
+   - SIMD vectorization for palette operations
    - Accelerate framework integration (Apple platforms)
    - 2-4× speedup potential
    - Parallel tile processing
 
-3. **Advanced Features**
+2. **Advanced Features**
    - Adaptive transform selection (RCT vs ICT)
-   - Perceptual weighting
+   - Perceptual weighting for grayscale conversion
    - Region-specific transforms
    - Quality-dependent transform parameters
+   - Advanced color quantization algorithms (median cut, octree)
+
+3. **Extended Color Spaces**
+   - Custom color space transforms
+   - Full ICC profile integration
+   - CMYK color space support
+   - Lab color space support
+   - Multi-component transformations (>3 components)
 
 ## References
 
 1. ISO/IEC 15444-1:2019 - Information technology — JPEG 2000 image coding system: Core coding system
 2. Taubman, D. S., & Marcellin, M. W. (2002). JPEG2000 Image Compression Fundamentals, Standards and Practice. Springer.
 3. Swift Evolution - Concurrency: <a href="https://github.com/apple/swift-evolution/blob/main/proposals/0306-actors.md">SE-0306</a>
+4. ITU-R Recommendation BT.601 - Studio encoding parameters of digital television for standard 4:3 and wide screen 16:9 aspect ratios
 
 ---
 
 **Last Updated**: 2026-02-06  
-**Status**: Phase 4, Week 52-54 Complete ✅  
-**Next**: Phase 4, Week 55-56 - Advanced Color Support  
-**Status**: Phase 4, Week 49-51 Complete (RCT) ✅  
-**Next**: Phase 4, Week 52-54 (ICT) 🚧
+**Status**: Phase 4, Week 55-56 Complete ✅  
+**Next**: Phase 5 - File Format (Weeks 57-68)
