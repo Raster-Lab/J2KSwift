@@ -36,7 +36,10 @@ Manages a JPIP session with:
 - Session ID tracking
 - Channel ID management
 - Target image association
-- Cache model for received data bins
+- Cache model for received data bins with LRU eviction
+- Precinct-based cache for fine-grained data management
+- Cache statistics tracking (hits, misses, size)
+- Selective cache invalidation
 - Session lifecycle (active/closed)
 
 #### JPIPTransport
@@ -125,6 +128,72 @@ let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
 // Request only metadata without image data
 let metadata = try await client.requestMetadata(imageID: "image.jp2")
 print("Image metadata: \(metadata)")
+```
+
+### Cache Management (Week 75-77) ✅
+
+```swift
+let client = JPIPClient(serverURL: URL(string: "http://jpip.example.com")!)
+let session = try await client.createSession(target: "image.jp2")
+
+// Get cache statistics
+let stats = await session.getCacheStatistics()
+print("Cache hits: \(stats.hits), misses: \(stats.misses)")
+print("Hit rate: \(stats.hitRate * 100)%")
+print("Cache size: \(stats.totalSize) bytes, entries: \(stats.entryCount)")
+
+// Check if data is already cached
+let isCached = await session.hasDataBin(binClass: .mainHeader, binID: 1)
+if isCached {
+    // Retrieve from cache
+    let dataBin = await session.getDataBin(binClass: .mainHeader, binID: 1)
+}
+
+// Invalidate specific bin class
+await session.invalidateCache(binClass: .precinct)
+
+// Invalidate old cache entries
+let cutoffDate = Date().addingTimeInterval(-3600) // 1 hour ago
+await session.invalidateCache(olderThan: cutoffDate)
+
+// Work with precinct cache
+let precinctID = JPIPPrecinctID(
+    tile: 0,
+    component: 0,
+    resolution: 2,
+    precinctX: 1,
+    precinctY: 1
+)
+
+// Add precinct data
+let precinctData = JPIPPrecinctData(
+    precinctID: precinctID,
+    data: Data([1, 2, 3, 4, 5]),
+    isComplete: true,
+    receivedLayers: [0, 1, 2]
+)
+await session.addPrecinct(precinctData)
+
+// Check precinct cache
+let hasPrecinct = await session.hasPrecinct(precinctID)
+
+// Get precinct statistics
+let precinctStats = await session.getPrecinctStatistics()
+print("Total precincts: \(precinctStats.totalPrecincts)")
+print("Complete: \(precinctStats.completePrecincts)")
+print("Completion rate: \(precinctStats.completionRate * 100)%")
+
+// Merge partial precinct data
+let merged = await session.mergePrecinct(
+    precinctID,
+    data: Data([6, 7, 8]),
+    layers: [3, 4],
+    isComplete: true
+)
+
+// Invalidate precincts by tile or resolution
+await session.invalidatePrecincts(tile: 0)
+await session.invalidatePrecincts(resolution: 1)
 ```
 
 ### Custom Request
@@ -231,11 +300,15 @@ JPIP organizes JPEG 2000 data into bins:
 - ✅ Enhanced request builders
 - ✅ Comprehensive tests (41 tests, 100% pass rate)
 
-**Phase 6, Week 75-77: Cache Management**
-- Advanced cache model
-- Cache invalidation
-- Precinct-based caching
-- Cache hit rate optimization
+**Phase 6, Week 75-77: Cache Management** ✅ COMPLETED
+- ✅ Enhanced cache model with statistics tracking
+- ✅ LRU eviction policy implementation
+- ✅ Cache size and entry limits
+- ✅ Cache invalidation by bin class and age
+- ✅ Precinct-based caching with fine-grained tracking
+- ✅ Partial precinct data support and merging
+- ✅ Cache hit rate optimization
+- ✅ Comprehensive tests (71 tests total, 100% pass rate)
 
 **Phase 6, Week 78-80: JPIP Server**
 - Server implementation
@@ -253,21 +326,34 @@ This implementation follows:
 
 - Uses Swift 6 actor model for thread-safe concurrent access
 - URLSession provides efficient HTTP connection pooling
-- Cache model minimizes redundant data transfers
+- **LRU cache eviction** minimizes memory usage while maximizing hit rates
+- **Precinct-based caching** enables fine-grained data management
+- Cache statistics track performance metrics for optimization
+- **Automatic cache size management** prevents unbounded memory growth
 - Stateful sessions reduce overhead for multiple requests
+- Cache invalidation strategies optimize memory usage
 
 ## Testing
 
-Run JPIP tests:
+Run all JPIP tests:
 ```bash
 swift test --filter JPIPTests
 ```
 
-All 27 tests verify:
-- Request building and parameter encoding
+Run cache-specific tests:
+```bash
+swift test --filter JPIPCacheTests
+```
+
+All 71 tests verify:
+- Request building and parameter encoding (41 tests)
 - Response parsing and channel ID extraction
 - Session lifecycle management
-- Data bin tracking
+- Data bin tracking and caching (30 new cache tests)
+- Cache eviction policies (LRU)
+- Precinct-based caching
+- Cache statistics and hit rate tracking
+- Cache invalidation strategies
 - Transport layer functionality
 - Client API usage
 
