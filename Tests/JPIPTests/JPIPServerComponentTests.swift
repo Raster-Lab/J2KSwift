@@ -20,8 +20,10 @@ final class JPIPServerComponentTests: XCTestCase {
         XCTAssertEqual(session.sessionID, "session-1")
         XCTAssertEqual(session.channelID, "cid-1")
         XCTAssertEqual(session.target, "test.jp2")
-        XCTAssertEqual(await session.totalBytesSent, 0)
-        XCTAssertEqual(await session.totalRequests, 0)
+        let totalBytesSent = await session.totalBytesSent
+        let totalRequests = await session.totalRequests
+        XCTAssertEqual(totalBytesSent, 0)
+        XCTAssertEqual(totalRequests, 0)
     }
     
     func testServerSessionActivity() async throws {
@@ -51,13 +53,17 @@ final class JPIPServerComponentTests: XCTestCase {
         
         await session.recordRequest(bytesSent: 1024)
         
-        XCTAssertEqual(await session.totalRequests, 1)
-        XCTAssertEqual(await session.totalBytesSent, 1024)
+        let totalRequests1 = await session.totalRequests
+        let totalBytesSent1 = await session.totalBytesSent
+        XCTAssertEqual(totalRequests1, 1)
+        XCTAssertEqual(totalBytesSent1, 1024)
         
         await session.recordRequest(bytesSent: 2048)
         
-        XCTAssertEqual(await session.totalRequests, 2)
-        XCTAssertEqual(await session.totalBytesSent, 3072)
+        let totalRequests2 = await session.totalRequests
+        let totalBytesSent2 = await session.totalBytesSent
+        XCTAssertEqual(totalRequests2, 2)
+        XCTAssertEqual(totalBytesSent2, 3072)
     }
     
     func testServerSessionDataBinTracking() async throws {
@@ -74,11 +80,13 @@ final class JPIPServerComponentTests: XCTestCase {
             isComplete: true
         )
         
-        XCTAssertFalse(await session.hasDataBin(binClass: .precinct, binID: 123))
+        let hasBefore = await session.hasDataBin(binClass: .precinct, binID: 123)
+        XCTAssertFalse(hasBefore)
         
         await session.recordSentDataBin(dataBin)
         
-        XCTAssertTrue(await session.hasDataBin(binClass: .precinct, binID: 123))
+        let hasAfter = await session.hasDataBin(binClass: .precinct, binID: 123)
+        XCTAssertTrue(hasAfter)
     }
     
     func testServerSessionMetadata() async throws {
@@ -90,7 +98,7 @@ final class JPIPServerComponentTests: XCTestCase {
         
         await session.setMetadata("resolution", value: "1024x768")
         
-        let value = await session.getMetadata("resolution") as? String
+        let value = await session.getMetadata("resolution")
         XCTAssertEqual(value, "1024x768")
     }
     
@@ -148,11 +156,11 @@ final class JPIPServerComponentTests: XCTestCase {
         
         let info = await session.getInfo()
         
-        XCTAssertEqual(info["sessionID"] as? String, "session-1")
-        XCTAssertEqual(info["channelID"] as? String, "cid-1")
-        XCTAssertEqual(info["target"] as? String, "test.jp2")
-        XCTAssertEqual(info["totalRequests"] as? Int, 1)
-        XCTAssertEqual(info["totalBytesSent"] as? Int, 512)
+        XCTAssertEqual(info.sessionID, "session-1")
+        XCTAssertEqual(info.channelID, "cid-1")
+        XCTAssertEqual(info.target, "test.jp2")
+        XCTAssertEqual(info.totalRequests, 1)
+        XCTAssertEqual(info.totalBytesSent, 512)
     }
     
     // MARK: - Request Queue Tests
@@ -345,7 +353,11 @@ final class JPIPServerComponentTests: XCTestCase {
     }
     
     func testBandwidthThrottleRecordSent() async throws {
-        let throttle = JPIPBandwidthThrottle()
+        // Use per-client limit so that clients are tracked
+        let throttle = JPIPBandwidthThrottle(
+            globalLimit: nil,
+            perClientLimit: 1_000_000 // High limit so it doesn't throttle
+        )
         
         await throttle.recordSent(clientID: "client-1", bytes: 1024)
         await throttle.recordSent(clientID: "client-1", bytes: 2048)
@@ -371,7 +383,11 @@ final class JPIPServerComponentTests: XCTestCase {
     }
     
     func testBandwidthThrottleRemoveClient() async throws {
-        let throttle = JPIPBandwidthThrottle()
+        // Use per-client limit so that clients are tracked
+        let throttle = JPIPBandwidthThrottle(
+            globalLimit: nil,
+            perClientLimit: 1_000_000 // High limit so it doesn't throttle
+        )
         
         await throttle.recordSent(clientID: "client-1", bytes: 1024)
         await throttle.recordSent(clientID: "client-2", bytes: 1024)
@@ -400,7 +416,11 @@ final class JPIPServerComponentTests: XCTestCase {
     }
     
     func testBandwidthThrottleClearClients() async throws {
-        let throttle = JPIPBandwidthThrottle()
+        // Use per-client limit so that clients are tracked
+        let throttle = JPIPBandwidthThrottle(
+            globalLimit: nil,
+            perClientLimit: 1_000_000 // High limit so it doesn't throttle
+        )
         
         await throttle.recordSent(clientID: "client-1", bytes: 1024)
         await throttle.recordSent(clientID: "client-2", bytes: 1024)

@@ -56,6 +56,37 @@ High-level client actor providing:
 - Region of interest requests
 - Automatic session handling
 
+#### JPIPServer (Week 78-80) ✅
+Server-side JPIP implementation:
+- Image registration and serving
+- Request queue with priority-based scheduling
+- Bandwidth throttling using token bucket algorithm
+- Multi-client support with concurrent session handling
+- Session management and timeout detection
+- Server statistics tracking
+
+#### JPIPServerSession (Week 78-80) ✅
+Server-side session management:
+- Session ID and channel ID tracking
+- Client cache model tracking
+- Request and bandwidth statistics
+- Session timeout detection
+- Metadata storage
+
+#### JPIPRequestQueue (Week 78-80) ✅
+Priority-based request queue:
+- Priority-based request ordering
+- Queue size limits
+- Target-specific operations
+- Queue statistics
+
+#### JPIPBandwidthThrottle (Week 78-80) ✅
+Bandwidth management:
+- Token bucket algorithm for rate limiting
+- Global and per-client bandwidth limits
+- Burst capacity support
+- Bandwidth statistics tracking
+
 ## Usage Examples
 
 ### Basic Image Request
@@ -233,6 +264,89 @@ request.layers = 4       // Medium quality
 
 // Metadata-only request for image properties
 let metaRequest = JPIPRequest.metadataRequest(target: "image.jp2")
+```
+
+## Server Usage Examples (Week 78-80) ✅
+
+### Basic Server Setup
+
+```swift
+import JPIP
+
+// Create a JPIP server
+let server = JPIPServer(port: 8080)
+
+// Register images for serving
+try await server.registerImage(name: "sample.jp2", at: imageURL)
+try await server.registerImage(name: "photo.jp2", at: photoURL)
+
+// Start the server
+try await server.start()
+
+// Server is now accepting requests...
+
+// Stop when done
+try await server.stop()
+```
+
+### Server with Configuration
+
+```swift
+let config = JPIPServer.Configuration(
+    maxClients: 100,
+    maxQueueSize: 1000,
+    globalBandwidthLimit: 10_000_000,    // 10 MB/s global
+    perClientBandwidthLimit: 1_000_000,  // 1 MB/s per client
+    sessionTimeout: 300                   // 5 minutes
+)
+
+let server = JPIPServer(port: 8080, configuration: config)
+```
+
+### Handling Requests
+
+```swift
+// The server automatically handles incoming JPIP requests
+// Requests are prioritized:
+// - Session creation (highest priority)
+// - Metadata requests (high priority)
+// - Small region requests (medium-high priority)
+// - Regular requests (normal priority)
+
+// Check server statistics
+let stats = await server.getStatistics()
+print("Total requests: \(stats.totalRequests)")
+print("Active clients: \(stats.activeClients)")
+print("Total bytes sent: \(stats.totalBytesSent)")
+print("Queued requests: \(stats.queuedRequests)")
+```
+
+### Managing Sessions
+
+```swift
+// List registered images
+let images = await server.listRegisteredImages()
+print("Serving images: \(images)")
+
+// Close a specific session
+await server.closeSession("session-id-123")
+
+// Get active session count
+let sessionCount = await server.getActiveSessionCount()
+print("Active sessions: \(sessionCount)")
+```
+
+### Image Management
+
+```swift
+// Register a new image
+try await server.registerImage(name: "new-image.jp2", at: newImageURL)
+
+// Unregister an image
+await server.unregisterImage(name: "old-image.jp2")
+
+// List all registered images
+let allImages = await server.listRegisteredImages()
 ```
 
 ## Protocol Details

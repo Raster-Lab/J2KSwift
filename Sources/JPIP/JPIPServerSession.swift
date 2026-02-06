@@ -29,7 +29,7 @@ public actor JPIPServerSession {
     private var clientCache: JPIPCacheModel
     
     /// Session metadata.
-    private var metadata: [String: Any]
+    private var metadata: [String: String]
     
     /// Total bytes sent in this session.
     public private(set) var totalBytesSent: Int
@@ -98,7 +98,7 @@ public actor JPIPServerSession {
     /// - Parameters:
     ///   - key: Metadata key.
     ///   - value: Metadata value.
-    public func setMetadata(_ key: String, value: Any) {
+    public func setMetadata(_ key: String, value: String) {
         metadata[key] = value
     }
     
@@ -106,7 +106,7 @@ public actor JPIPServerSession {
     ///
     /// - Parameter key: Metadata key.
     /// - Returns: Metadata value if found.
-    public func getMetadata(_ key: String) -> Any? {
+    public func getMetadata(_ key: String) -> String? {
         return metadata[key]
     }
     
@@ -128,17 +128,30 @@ public actor JPIPServerSession {
     /// Gets session information for debugging.
     ///
     /// - Returns: Dictionary with session information.
-    public func getInfo() -> [String: Any] {
-        return [
-            "sessionID": sessionID,
-            "channelID": channelID,
-            "target": target,
-            "isActive": isActive,
-            "lastActivity": lastActivity,
-            "totalBytesSent": totalBytesSent,
-            "totalRequests": totalRequests,
-            "cacheSize": clientCache.statistics.totalSize,
-            "cacheEntries": clientCache.statistics.entryCount
-        ]
+    public func getInfo() -> SessionInfo {
+        return SessionInfo(
+            sessionID: sessionID,
+            channelID: channelID,
+            target: target,
+            isActive: isActive,
+            lastActivity: lastActivity,
+            totalBytesSent: totalBytesSent,
+            totalRequests: totalRequests,
+            cacheSize: clientCache.statistics.totalSize,
+            cacheEntries: clientCache.statistics.entryCount
+        )
+    }
+    
+    /// Session information struct.
+    public struct SessionInfo: Sendable {
+        public let sessionID: String
+        public let channelID: String
+        public let target: String
+        public let isActive: Bool
+        public let lastActivity: Date
+        public let totalBytesSent: Int
+        public let totalRequests: Int
+        public let cacheSize: Int
+        public let cacheEntries: Int
     }
 }

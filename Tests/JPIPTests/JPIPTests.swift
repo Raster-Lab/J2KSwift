@@ -27,8 +27,7 @@ final class JPIPTests: XCTestCase {
     func testServerInstantiation() async throws {
         let server = JPIPServer(port: 9090)
         XCTAssertNotNil(server)
-        let actualPort = await server.port
-        XCTAssertEqual(actualPort, 9090)
+        XCTAssertEqual(server.port, 9090)
     }
     
     // MARK: - JPIPRequest Tests
