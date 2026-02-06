@@ -619,6 +619,189 @@ public struct J2KDWTAccelerated: Sendable {
         #endif
     }
     
+    /// Performs parallel 2D forward DWT on image data using hardware acceleration and Swift Concurrency.
+    ///
+    /// This method processes rows and columns in parallel using Swift's TaskGroup for improved
+    /// performance on multi-core systems. Provides significant speedup over sequential processing,
+    /// especially for large images.
+    ///
+    /// - Parameters:
+    ///   - data: Image data in row-major order (height × width elements).
+    ///   - width: Image width in pixels.
+    ///   - height: Image height in pixels.
+    ///   - levels: Number of decomposition levels (default: 1).
+    ///   - boundaryExtension: Boundary extension mode (default: symmetric).
+    ///   - maxConcurrentTasks: Maximum number of concurrent tasks (default: 8).
+    /// - Returns: Array of decomposition levels, one per level.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if dimensions are invalid.
+    /// - Throws: ``J2KError.unsupportedFeature(_:)`` if acceleration is not available.
+    ///
+    /// Example:
+    /// ```swift
+    /// let dwt = J2KDWTAccelerated()
+    /// let data = [Double](repeating: 0, count: 1024 * 1024)
+    /// let decompositions = try await dwt.forwardTransform2DParallel(
+    ///     data: data,
+    ///     width: 1024,
+    ///     height: 1024,
+    ///     levels: 5
+    /// )
+    /// ```
+    public func forwardTransform2DParallel(
+        data: [Double],
+        width: Int,
+        height: Int,
+        levels: Int = 1,
+        boundaryExtension: BoundaryExtension = .symmetric,
+        maxConcurrentTasks: Int = 8
+    ) async throws -> [DecompositionLevel] {
+        #if canImport(Accelerate)
+        guard width >= 2 && height >= 2 else {
+            throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
+        }
+        
+        guard levels >= 1 else {
+            throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
+        }
+        
+        guard data.count == width * height else {
+            throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
+        }
+        
+        var currentData = data
+        var currentWidth = width
+        var currentHeight = height
+        var results: [DecompositionLevel] = []
+        
+        for level in 0..<levels {
+            guard currentWidth >= 2 && currentHeight >= 2 else {
+                throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
+            }
+            
+            // Transform rows in parallel
+            var rowTransformed = [Double](repeating: 0, count: currentData.count)
+            
+            try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
+                // Limit concurrent tasks to avoid overwhelming the system
+                var activeTasks = 0
+                
+                for row in 0..<currentHeight {
+                    // Wait if we've reached the limit
+                    if activeTasks >= maxConcurrentTasks {
+                        let (rowIdx, low, high) = try await group.next()!
+                        let outputRowStart = rowIdx * currentWidth
+                        for i in 0..<low.count {
+                            rowTransformed[outputRowStart + i] = low[i]
+                        }
+                        for i in 0..<high.count {
+                            rowTransformed[outputRowStart + low.count + i] = high[i]
+                        }
+                        activeTasks -= 1
+                    }
+                    
+                    let rowStart = row * currentWidth
+                    let rowEnd = rowStart + currentWidth
+                    let rowData = Array(currentData[rowStart..<rowEnd])
+                    
+                    group.addTask {
+                        let (low, high) = try self.forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
+                        return (row, low, high)
+                    }
+                    activeTasks += 1
+                }
+                
+                // Collect remaining results
+                while let (rowIdx, low, high) = try await group.next() {
+                    let outputRowStart = rowIdx * currentWidth
+                    for i in 0..<low.count {
+                        rowTransformed[outputRowStart + i] = low[i]
+                    }
+                    for i in 0..<high.count {
+                        rowTransformed[outputRowStart + low.count + i] = high[i]
+                    }
+                }
+            }
+            
+            // Transform columns in parallel
+            var colTransformed = [Double](repeating: 0, count: currentData.count)
+            
+            try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
+                var activeTasks = 0
+                
+                for col in 0..<currentWidth {
+                    // Wait if we've reached the limit
+                    if activeTasks >= maxConcurrentTasks {
+                        let (colIdx, low, high) = try await group.next()!
+                        for i in 0..<low.count {
+                            colTransformed[i * currentWidth + colIdx] = low[i]
+                        }
+                        for i in 0..<high.count {
+                            colTransformed[(low.count + i) * currentWidth + colIdx] = high[i]
+                        }
+                        activeTasks -= 1
+                    }
+                    
+                    var colData = [Double](repeating: 0, count: currentHeight)
+                    for row in 0..<currentHeight {
+                        colData[row] = rowTransformed[row * currentWidth + col]
+                    }
+                    
+                    group.addTask {
+                        let (low, high) = try self.forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
+                        return (col, low, high)
+                    }
+                    activeTasks += 1
+                }
+                
+                // Collect remaining results
+                while let (colIdx, low, high) = try await group.next() {
+                    for i in 0..<low.count {
+                        colTransformed[i * currentWidth + colIdx] = low[i]
+                    }
+                    for i in 0..<high.count {
+                        colTransformed[(low.count + i) * currentWidth + colIdx] = high[i]
+                    }
+                }
+            }
+            
+            // Calculate subband dimensions
+            let llWidth = (currentWidth + 1) / 2
+            let llHeight = (currentHeight + 1) / 2
+            let lhWidth = currentWidth / 2
+            let lhHeight = llHeight
+            let hlWidth = llWidth
+            let hlHeight = currentHeight / 2
+            let hhWidth = lhWidth
+            let hhHeight = hlHeight
+            
+            // Extract subbands
+            let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            
+            results.append(DecompositionLevel(
+                ll: ll,
+                lh: lh,
+                hl: hl,
+                hh: hh,
+                llWidth: llWidth,
+                llHeight: llHeight,
+                level: level
+            ))
+            
+            // For next level, use only the LL subband
+            currentData = ll
+            currentWidth = llWidth
+            currentHeight = llHeight
+        }
+        
+        return results
+        #else
+        throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
+        #endif
+    }
+    
     /// Performs 2D inverse DWT on decomposed image data using hardware acceleration.
     ///
     /// Reconstructs image data from wavelet decomposition using the accelerated inverse

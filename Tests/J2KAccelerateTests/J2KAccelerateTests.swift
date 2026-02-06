@@ -442,4 +442,126 @@ final class J2KAccelerateTests: XCTestCase {
         // Skip on unsupported platforms
         #endif
     }
+    
+    // MARK: - Parallel Processing Tests
+    
+    func testForwardTransform2DParallel() async throws {
+        #if canImport(Accelerate)
+        let dwt = J2KDWTAccelerated()
+        let width = 64
+        let height = 64
+        var data = [Double](repeating: 0, count: width * height)
+        
+        // Create test pattern
+        for y in 0..<height {
+            for x in 0..<width {
+                data[y * width + x] = Double(x + y)
+            }
+        }
+        
+        let decompositions = try await dwt.forwardTransform2DParallel(
+            data: data,
+            width: width,
+            height: height,
+            levels: 2
+        )
+        
+        XCTAssertEqual(decompositions.count, 2, "Should have 2 levels")
+        XCTAssertTrue(decompositions[0].ll.count > 0, "LL subband should not be empty")
+        #else
+        // Skip on unsupported platforms
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
+    
+    func testParallelVsSequentialConsistency() async throws {
+        #if canImport(Accelerate)
+        let dwt = J2KDWTAccelerated()
+        let width = 32
+        let height = 32
+        var data = [Double](repeating: 0, count: width * height)
+        
+        // Create test pattern
+        for i in 0..<data.count {
+            data[i] = Double(i % 256)
+        }
+        
+        // Sequential transform
+        let sequentialResult = try dwt.forwardTransform2D(
+            data: data,
+            width: width,
+            height: height,
+            levels: 3
+        )
+        
+        // Parallel transform
+        let parallelResult = try await dwt.forwardTransform2DParallel(
+            data: data,
+            width: width,
+            height: height,
+            levels: 3
+        )
+        
+        // Results should be identical
+        XCTAssertEqual(sequentialResult.count, parallelResult.count, "Level counts should match")
+        
+        for level in 0..<sequentialResult.count {
+            let seqLevel = sequentialResult[level]
+            let parLevel = parallelResult[level]
+            
+            XCTAssertEqual(seqLevel.ll.count, parLevel.ll.count, "LL sizes should match at level \(level)")
+            XCTAssertEqual(seqLevel.lh.count, parLevel.lh.count, "LH sizes should match at level \(level)")
+            XCTAssertEqual(seqLevel.hl.count, parLevel.hl.count, "HL sizes should match at level \(level)")
+            XCTAssertEqual(seqLevel.hh.count, parLevel.hh.count, "HH sizes should match at level \(level)")
+            
+            // Check that values are close (within floating point precision)
+            for i in 0..<seqLevel.ll.count {
+                XCTAssertEqual(seqLevel.ll[i], parLevel.ll[i], accuracy: 1e-10, 
+                             "LL values should match at level \(level), index \(i)")
+            }
+        }
+        #else
+        // Skip on unsupported platforms
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
+    
+    func testParallelWithDifferentConcurrencyLimits() async throws {
+        #if canImport(Accelerate)
+        let dwt = J2KDWTAccelerated()
+        let width = 32
+        let height = 32
+        var data = [Double](repeating: 0, count: width * height)
+        
+        for i in 0..<data.count {
+            data[i] = Double(i % 100)
+        }
+        
+        // Test with different concurrency limits
+        let result1 = try await dwt.forwardTransform2DParallel(
+            data: data,
+            width: width,
+            height: height,
+            maxConcurrentTasks: 2
+        )
+        
+        let result2 = try await dwt.forwardTransform2DParallel(
+            data: data,
+            width: width,
+            height: height,
+            maxConcurrentTasks: 16
+        )
+        
+        // Results should be identical regardless of concurrency limit
+        XCTAssertEqual(result1.count, result2.count)
+        XCTAssertEqual(result1[0].ll.count, result2[0].ll.count)
+        
+        for i in 0..<result1[0].ll.count {
+            XCTAssertEqual(result1[0].ll[i], result2[0].ll[i], accuracy: 1e-10)
+        }
+        #else
+        // Skip on unsupported platforms
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
 }
