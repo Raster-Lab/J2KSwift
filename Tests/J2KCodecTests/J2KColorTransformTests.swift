@@ -263,6 +263,424 @@ final class J2KColorTransformTests: XCTestCase {
         }
     }
     
+    // MARK: - Irreversible Color Transform (ICT) Tests
+    
+    func testForwardICTBasic() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with simple values (level-shifted to signed)
+        let red: [Double] = [100, 150, 200]
+        let green: [Double] = [80, 120, 180]
+        let blue: [Double] = [60, 100, 160]
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        
+        // Verify results
+        XCTAssertEqual(y.count, 3)
+        XCTAssertEqual(cb.count, 3)
+        XCTAssertEqual(cr.count, 3)
+        
+        // Check that ICT produces reasonable values
+        // Y should be weighted average of RGB
+        for i in 0..<3 {
+            let expectedY = 0.299 * red[i] + 0.587 * green[i] + 0.114 * blue[i]
+            XCTAssertEqual(y[i], expectedY, accuracy: 0.001)
+        }
+        
+        // Cb should be blue-difference component
+        for i in 0..<3 {
+            let expectedCb = -0.168736 * red[i] - 0.331264 * green[i] + 0.5 * blue[i]
+            XCTAssertEqual(cb[i], expectedCb, accuracy: 0.001)
+        }
+        
+        // Cr should be red-difference component
+        for i in 0..<3 {
+            let expectedCr = 0.5 * red[i] - 0.418688 * green[i] - 0.081312 * blue[i]
+            XCTAssertEqual(cr[i], expectedCr, accuracy: 0.001)
+        }
+    }
+    
+    func testInverseICTBasic() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with YCbCr values
+        let y: [Double] = [100.0, 150.0, 200.0]
+        let cb: [Double] = [-10.0, 0.0, 10.0]
+        let cr: [Double] = [5.0, -5.0, 15.0]
+        
+        let (red, green, blue) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Verify results
+        XCTAssertEqual(red.count, 3)
+        XCTAssertEqual(green.count, 3)
+        XCTAssertEqual(blue.count, 3)
+        
+        // Check inverse transform formulas
+        for i in 0..<3 {
+            let expectedR = y[i] + 1.402 * cr[i]
+            XCTAssertEqual(red[i], expectedR, accuracy: 0.001)
+            
+            let expectedG = y[i] - 0.344136 * cb[i] - 0.714136 * cr[i]
+            XCTAssertEqual(green[i], expectedG, accuracy: 0.001)
+            
+            let expectedB = y[i] + 1.772 * cb[i]
+            XCTAssertEqual(blue[i], expectedB, accuracy: 0.001)
+        }
+    }
+    
+    func testICTRoundTrip() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test round-trip transformation
+        let red: [Double] = [100, 150, 200, 50, 128, 255, 0]
+        let green: [Double] = [80, 120, 180, 100, 128, 0, 255]
+        let blue: [Double] = [60, 100, 160, 150, 128, 100, 200]
+        
+        // Forward transform
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        
+        // Inverse transform
+        let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Verify approximate reconstruction (ICT is not perfectly reversible)
+        for i in 0..<red.count {
+            XCTAssertEqual(r2[i], red[i], accuracy: 0.5, "Red mismatch at index \(i)")
+            XCTAssertEqual(g2[i], green[i], accuracy: 0.5, "Green mismatch at index \(i)")
+            XCTAssertEqual(b2[i], blue[i], accuracy: 0.5, "Blue mismatch at index \(i)")
+        }
+    }
+    
+    func testICTWithZeroValues() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red: [Double] = [0, 0, 0]
+        let green: [Double] = [0, 0, 0]
+        let blue: [Double] = [0, 0, 0]
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        
+        // All components should be zero
+        XCTAssertEqual(y[0], 0, accuracy: 0.001)
+        XCTAssertEqual(cb[0], 0, accuracy: 0.001)
+        XCTAssertEqual(cr[0], 0, accuracy: 0.001)
+    }
+    
+    func testICTWithNegativeValues() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with negative values (signed representation)
+        let red: [Double] = [-100, -50, -128]
+        let green: [Double] = [-80, -60, -100]
+        let blue: [Double] = [-60, -70, -80]
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Verify approximate reconstruction
+        for i in 0..<red.count {
+            XCTAssertEqual(r2[i], red[i], accuracy: 0.5)
+            XCTAssertEqual(g2[i], green[i], accuracy: 0.5)
+            XCTAssertEqual(b2[i], blue[i], accuracy: 0.5)
+        }
+    }
+    
+    func testICTWithLargeValues() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with large values (16-bit range)
+        let red: [Double] = [1000, 2000, 4095]
+        let green: [Double] = [800, 1500, 3000]
+        let blue: [Double] = [600, 1000, 2000]
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Verify approximate reconstruction
+        for i in 0..<red.count {
+            XCTAssertEqual(r2[i], red[i], accuracy: 1.0)
+            XCTAssertEqual(g2[i], green[i], accuracy: 1.0)
+            XCTAssertEqual(b2[i], blue[i], accuracy: 1.0)
+        }
+    }
+    
+    func testICTPrimaryColors() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with primary colors (assuming 8-bit range shifted to signed)
+        let testCases: [(r: Double, g: Double, b: Double, name: String)] = [
+            (127, -128, -128, "Red"),      // Red (255, 0, 0) shifted
+            (-128, 127, -128, "Green"),    // Green (0, 255, 0) shifted
+            (-128, -128, 127, "Blue"),     // Blue (0, 0, 255) shifted
+            (127, 127, -128, "Yellow"),    // Yellow (255, 255, 0) shifted
+            (127, -128, 127, "Magenta"),   // Magenta (255, 0, 255) shifted
+            (-128, 127, 127, "Cyan"),      // Cyan (0, 255, 255) shifted
+        ]
+        
+        for testCase in testCases {
+            let red: [Double] = [testCase.r]
+            let green: [Double] = [testCase.g]
+            let blue: [Double] = [testCase.b]
+            
+            let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+            let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+            
+            XCTAssertEqual(r2[0], testCase.r, accuracy: 1.0, "\(testCase.name) - Red")
+            XCTAssertEqual(g2[0], testCase.g, accuracy: 1.0, "\(testCase.name) - Green")
+            XCTAssertEqual(b2[0], testCase.b, accuracy: 1.0, "\(testCase.name) - Blue")
+        }
+    }
+    
+    func testICTEmptyComponentsThrowsError() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red: [Double] = []
+        let green: [Double] = []
+        let blue: [Double] = []
+        
+        XCTAssertThrowsError(try transform.forwardICT(red: red, green: green, blue: blue)) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("empty"))
+        }
+    }
+    
+    func testICTMismatchedSizesThrowsError() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red: [Double] = [100, 150, 200]
+        let green: [Double] = [80, 120]  // Different size
+        let blue: [Double] = [60, 100, 160]
+        
+        XCTAssertThrowsError(try transform.forwardICT(red: red, green: green, blue: blue)) { error in
+            guard case J2KError.invalidParameter(let message) = error else {
+                XCTFail("Expected invalidParameter error")
+                return
+            }
+            XCTAssertTrue(message.contains("must match"))
+        }
+    }
+    
+    func testICTSinglePixel() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let red: [Double] = [100]
+        let green: [Double] = [80]
+        let blue: [Double] = [60]
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        XCTAssertEqual(r2[0], red[0], accuracy: 0.5)
+        XCTAssertEqual(g2[0], green[0], accuracy: 0.5)
+        XCTAssertEqual(b2[0], blue[0], accuracy: 0.5)
+    }
+    
+    func testICTLargeImage() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Test with a large image (256x256 = 65,536 pixels)
+        let pixelCount = 256 * 256
+        var red = [Double](repeating: 0, count: pixelCount)
+        var green = [Double](repeating: 0, count: pixelCount)
+        var blue = [Double](repeating: 0, count: pixelCount)
+        
+        // Fill with pseudo-random data
+        for i in 0..<pixelCount {
+            red[i] = Double((i * 17) % 256) - 128
+            green[i] = Double((i * 31) % 256) - 128
+            blue[i] = Double((i * 47) % 256) - 128
+        }
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        let (r2, g2, b2) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+        
+        // Spot check a few pixels
+        for i in stride(from: 0, to: pixelCount, by: 1000) {
+            XCTAssertEqual(r2[i], red[i], accuracy: 1.0, "Red mismatch at pixel \(i)")
+            XCTAssertEqual(g2[i], green[i], accuracy: 1.0, "Green mismatch at pixel \(i)")
+            XCTAssertEqual(b2[i], blue[i], accuracy: 1.0, "Blue mismatch at pixel \(i)")
+        }
+    }
+    
+    func testICTComponentAPI() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Create test components
+        let width = 4
+        let height = 4
+        let pixelCount = width * height
+        
+        var redData = Data(count: pixelCount * MemoryLayout<Int32>.size)
+        var greenData = Data(count: pixelCount * MemoryLayout<Int32>.size)
+        var blueData = Data(count: pixelCount * MemoryLayout<Int32>.size)
+        
+        // Fill with test data
+        redData.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<pixelCount {
+                int32Ptr[i] = Int32((i * 10) % 256)
+            }
+        }
+        
+        greenData.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<pixelCount {
+                int32Ptr[i] = Int32((i * 15) % 256)
+            }
+        }
+        
+        blueData.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
+            for i in 0..<pixelCount {
+                int32Ptr[i] = Int32((i * 20) % 256)
+            }
+        }
+        
+        let redComponent = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: true,
+            width: width,
+            height: height,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: redData
+        )
+        
+        let greenComponent = J2KComponent(
+            index: 1,
+            bitDepth: 8,
+            signed: true,
+            width: width,
+            height: height,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: greenData
+        )
+        
+        let blueComponent = J2KComponent(
+            index: 2,
+            bitDepth: 8,
+            signed: true,
+            width: width,
+            height: height,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: blueData
+        )
+        
+        // Forward transform
+        let (yComp, cbComp, crComp) = try transform.forwardICT(
+            redComponent: redComponent,
+            greenComponent: greenComponent,
+            blueComponent: blueComponent
+        )
+        
+        XCTAssertEqual(yComp.width, width)
+        XCTAssertEqual(yComp.height, height)
+        XCTAssertEqual(cbComp.width, width)
+        XCTAssertEqual(crComp.width, width)
+        
+        // Inverse transform
+        let (r2Comp, g2Comp, b2Comp) = try transform.inverseICT(
+            yComponent: yComp,
+            cbComponent: cbComp,
+            crComponent: crComp
+        )
+        
+        // Verify dimensions
+        XCTAssertEqual(r2Comp.width, width)
+        XCTAssertEqual(g2Comp.width, width)
+        XCTAssertEqual(b2Comp.width, width)
+        
+        // Verify approximate reconstruction (ICT introduces rounding errors)
+        r2Comp.data.withUnsafeBytes { r2Buffer in
+            redData.withUnsafeBytes { rBuffer in
+                guard let r2Base = r2Buffer.baseAddress,
+                      let rBase = rBuffer.baseAddress else { return }
+                let r2Ptr = r2Base.assumingMemoryBound(to: Int32.self)
+                let rPtr = rBase.assumingMemoryBound(to: Int32.self)
+                
+                for i in 0..<pixelCount {
+                    let diff = abs(r2Ptr[i] - rPtr[i])
+                    XCTAssertLessThanOrEqual(diff, 2, "Red difference too large at pixel \(i)")
+                }
+            }
+        }
+    }
+    
+    func testICTComponentDimensionMismatch() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        let redComp = J2KComponent(
+            index: 0, bitDepth: 8, signed: true, width: 4, height: 4,
+            subsamplingX: 1, subsamplingY: 1,
+            data: Data(count: 16 * MemoryLayout<Int32>.size)
+        )
+        
+        let greenComp = J2KComponent(
+            index: 1, bitDepth: 8, signed: true, width: 8, height: 8,  // Different size
+            subsamplingX: 1, subsamplingY: 1,
+            data: Data(count: 64 * MemoryLayout<Int32>.size)
+        )
+        
+        let blueComp = J2KComponent(
+            index: 2, bitDepth: 8, signed: true, width: 4, height: 4,
+            subsamplingX: 1, subsamplingY: 1,
+            data: Data(count: 16 * MemoryLayout<Int32>.size)
+        )
+        
+        XCTAssertThrowsError(try transform.forwardICT(
+            redComponent: redComp,
+            greenComponent: greenComp,
+            blueComponent: blueComp
+        )) { error in
+            guard case J2KError.invalidComponentConfiguration = error else {
+                XCTFail("Expected invalidComponentConfiguration error")
+                return
+            }
+        }
+    }
+    
+    func testICTDecorrelation() throws {
+        let transform = J2KColorTransform(configuration: .lossy)
+        
+        // Create correlated RGB data (natural image characteristics)
+        let pixelCount = 100
+        var red = [Double](repeating: 0, count: pixelCount)
+        var green = [Double](repeating: 0, count: pixelCount)
+        var blue = [Double](repeating: 0, count: pixelCount)
+        
+        // Simulate correlated data (similar values)
+        for i in 0..<pixelCount {
+            let base = Double(i % 128)
+            red[i] = base + 10
+            green[i] = base + 5
+            blue[i] = base - 5
+        }
+        
+        let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+        
+        // Y should contain most of the energy (similar to input)
+        // Cb and Cr should be smaller (decorrelation)
+        let avgY = y.reduce(0, +) / Double(pixelCount)
+        let avgCb = cb.reduce(0, +) / Double(pixelCount)
+        let avgCr = cr.reduce(0, +) / Double(pixelCount)
+        
+        // Y should be close to the average of RGB
+        let avgRGB = (red.reduce(0, +) + green.reduce(0, +) + blue.reduce(0, +)) / (3 * Double(pixelCount))
+        XCTAssertEqual(avgY, avgRGB, accuracy: 10.0)
+        
+        // Cb and Cr should be closer to zero (decorrelation)
+        XCTAssertLessThan(abs(avgCb), abs(avgY))
+        XCTAssertLessThan(abs(avgCr), abs(avgY))
+    }
+    
     // MARK: - Component-Based Tests
     
     func testForwardRCTWithComponents() throws {
