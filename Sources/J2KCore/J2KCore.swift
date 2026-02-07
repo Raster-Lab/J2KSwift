@@ -112,19 +112,25 @@ public struct J2KImage: Sendable {
     ///   - bitDepth: The bit depth per component (default: 8).
     ///   - signed: Whether the components are signed (default: false).
     public init(width: Int, height: Int, components: Int, bitDepth: Int = 8, signed: Bool = false) {
-        let imageComponents = (0..<components).map { index in
+        // Validate and clamp inputs
+        let validWidth = max(1, width) // At least 1 pixel wide
+        let validHeight = max(1, height) // At least 1 pixel high
+        let validComponents = max(1, components) // At least 1 component
+        let validBitDepth = max(1, min(38, bitDepth)) // Between 1 and 38 bits
+        
+        let imageComponents = (0..<validComponents).map { index in
             J2KComponent(
                 index: index,
-                bitDepth: bitDepth,
+                bitDepth: validBitDepth,
                 signed: signed,
-                width: width,
-                height: height
+                width: validWidth,
+                height: validHeight
             )
         }
         
         self.init(
-            width: width,
-            height: height,
+            width: validWidth,
+            height: validHeight,
             components: imageComponents
         )
     }
