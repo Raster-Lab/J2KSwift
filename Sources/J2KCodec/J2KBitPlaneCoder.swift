@@ -488,8 +488,11 @@ public struct BitPlaneCoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // Skip if already coded
-                    if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
+                    // Skip if already coded or significant
+                    let skipDueToCodedThisPass = states[idx].contains(.codedThisPass)
+                    let skipDueToSignificant = states[idx].contains(.significant)
+                    
+                    if skipDueToCodedThisPass || skipDueToSignificant {
                         continue
                     }
                     
@@ -516,13 +519,14 @@ public struct BitPlaneCoder: Sendable {
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
                         
-                        // Update state
+                        // Update state - mark significant FIRST
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
                     
+                    // Always mark as processed after handling significance
                     states[idx].insert(.codedThisPass)
                 }
             }
@@ -893,8 +897,11 @@ public struct BitPlaneDecoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // Skip if already coded
-                    if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
+                    // Skip if already coded or significant
+                    let skipDueToCodedThisPass = states[idx].contains(.codedThisPass)
+                    let skipDueToSignificant = states[idx].contains(.significant)
+                    
+                    if skipDueToCodedThisPass || skipDueToSignificant {
                         continue
                     }
                     
@@ -921,13 +928,14 @@ public struct BitPlaneDecoder: Sendable {
                         magnitudes[idx] = magnitudes[idx] | bitMask
                         signs[idx] = signBit
                         
-                        // Update state
+                        // Update state - mark significant FIRST
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
                     
+                    // Always mark as processed after handling significance
                     states[idx].insert(.codedThisPass)
                 }
             }
