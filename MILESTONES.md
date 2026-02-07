@@ -317,12 +317,12 @@ This document outlines the phased development approach for J2KSwift, organized i
   - Region-based decoding support
 - [x] 62 comprehensive tests (100% pass rate)
 
-### Week 87-89: Advanced Decoding Features
-- [ ] Implement partial decoding
-- [ ] Add region-of-interest decoding
-- [ ] Implement resolution-progressive decoding
-- [ ] Add quality-progressive decoding
-- [ ] Support for incremental decoding
+### Week 87-89: Advanced Decoding Features ✅
+- [x] Implement partial decoding
+- [x] Add region-of-interest decoding
+- [x] Implement resolution-progressive decoding
+- [x] Add quality-progressive decoding
+- [x] Support for incremental decoding
 
 ### Week 90-92: Extended Formats
 - [ ] Support for 16-bit images
@@ -417,5 +417,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-07
-**Current Phase**: Phase 7 - Optimization & Features (Week 81-86 Complete ✅)
-**Next Milestone**: Phase 7, Week 87-89 - Advanced Decoding Features
+**Current Phase**: Phase 7 - Optimization & Features (Week 81-89 Complete ✅)
+**Next Milestone**: Phase 7, Week 90-92 - Extended Formats
