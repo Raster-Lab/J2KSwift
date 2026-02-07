@@ -63,8 +63,11 @@ The most likely culprit is the RLC skip logic:
 5. **Compare with reference implementation**: Check against JPEG2000 standard or known working implementation
 
 ## Code Locations
-- Encoder cleanup pass: `BitPlaneCoder.encodeCleanupPass()` (line ~450)
-- Decoder cleanup pass: `BitPlaneDecoder.decodeCleanupPass()` (line ~865)
-- RLC eligibility (encoder): `BitPlaneCoder.isEligibleForRunLengthCoding()` (line ~558)
-- RLC eligibility (decoder): `BitPlaneDecoder.canUseRunLengthDecoding()` (line ~937)
-- anyBecomeSignificant: `BitPlaneCoder.anyBecomeSignificant()` (line ~562)
+All functions are located in `Sources/J2KCodec/J2KBitPlaneCoder.swift`:
+- `BitPlaneCoder.encodeCleanupPass()` - Main encoding cleanup pass for each bit-plane
+- `BitPlaneDecoder.decodeCleanupPass()` - Main decoding cleanup pass for each bit-plane  
+- `BitPlaneCoder.isEligibleForRunLengthCoding()` - Encoder's RLC eligibility check
+- `BitPlaneDecoder.canUseRunLengthDecoding()` - Decoder's RLC eligibility check (must match encoder)
+- `BitPlaneCoder.anyBecomeSignificant()` - Checks if any coefficient becomes significant in current bit-plane
+
+The two RLC eligibility functions are critical to fix since they must return identical results for proper encoder/decoder synchronization.
