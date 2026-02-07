@@ -93,10 +93,6 @@ final class J2KSecurityTests: XCTestCase {
         // Note: J2KImage init doesn't throw, so we just test it doesn't crash
         _ = J2KImage(width: 1, height: 100, components: 3, bitDepth: 8)
         _ = J2KImage(width: 100, height: 1, components: 3, bitDepth: 8)
-        
-        // Very large dimensions should be rejected or handled safely
-        // We don't actually create these to avoid memory issues
-        XCTAssertTrue(true)
     }
     
     // MARK: - Malformed Data Tests
@@ -159,11 +155,8 @@ final class J2KSecurityTests: XCTestCase {
     func testRepeatedAllocationAttempts() throws {
         // Test that repeated allocation attempts don't exhaust memory
         for _ in 0..<1000 {
-            // Try to create and immediately release small images
             _ = J2KImage(width: 10, height: 10, components: 3, bitDepth: 8)
         }
-        // If we got here without crashing or hanging, test passed
-        XCTAssertTrue(true)
     }
     
     // MARK: - Fuzzing Tests (Basic)
@@ -181,8 +174,6 @@ final class J2KSecurityTests: XCTestCase {
             let reader = J2KFileReader()
             _ = try? reader.detectFormat(data: randomData)
         }
-        
-        XCTAssertTrue(true)
     }
     
     func testBoundaryValues() throws {
@@ -191,12 +182,9 @@ final class J2KSecurityTests: XCTestCase {
         
         for width in boundaryValues {
             for height in boundaryValues {
-                // These should either succeed or fail gracefully
                 _ = J2KImage(width: width, height: height, components: 3, bitDepth: 8)
             }
         }
-        
-        XCTAssertTrue(true)
     }
     
     // MARK: - Thread Safety Tests

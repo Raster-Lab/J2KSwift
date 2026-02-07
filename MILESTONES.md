@@ -367,7 +367,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [ ] Cross-platform validation (requires additional platforms)
 
 ### Week 98-99: Polish & Refinement
-- [ ] Address remaining bugs (29 bit-plane decoder tests)
+- [ ] Address remaining bugs (29 failing bit-plane decoder tests)
 - [ ] Optimize remaining hot spots
 - [ ] Refine API ergonomics
 - [ ] Add missing features

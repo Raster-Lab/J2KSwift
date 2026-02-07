@@ -80,8 +80,6 @@ final class J2KStressTests: XCTestCase {
         for _ in 0..<1000 {
             _ = J2KImage(width: 64, height: 64, components: 3, bitDepth: 8)
         }
-        
-        XCTAssertTrue(true)
     }
     
     func testLargeBufferOperations() throws {
@@ -258,8 +256,6 @@ final class J2KStressTests: XCTestCase {
                 _ = J2KImage(width: tileSize, height: tileSize, components: 3, bitDepth: 8)
             }
         }
-        
-        XCTAssertTrue(true)
     }
     
     func testVariableTileSizes() throws {
@@ -292,7 +288,5 @@ final class J2KStressTests: XCTestCase {
         for _ in 0..<10 {
             _ = J2KImage(width: 2048, height: 2048, components: 3, bitDepth: 8)
         }
-        
-        XCTAssertTrue(true)
     }
 }
