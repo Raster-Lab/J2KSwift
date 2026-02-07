@@ -151,6 +151,70 @@ public struct J2KImage: Sendable {
     public var tileCount: Int {
         return tilesX * tilesY
     }
+    
+    // MARK: - Convenience Properties
+    
+    /// Returns true if the image uses tiling.
+    public var isTiled: Bool {
+        return tileWidth > 0 && tileHeight > 0
+    }
+    
+    /// Returns the total number of pixels in the image.
+    public var pixelCount: Int {
+        return width * height
+    }
+    
+    /// Returns the number of components in the image.
+    public var componentCount: Int {
+        return components.count
+    }
+    
+    /// Returns true if the image is grayscale (single component).
+    public var isGrayscale: Bool {
+        return components.count == 1
+    }
+    
+    /// Returns true if the image has an alpha channel.
+    ///
+    /// An alpha channel is assumed to be present if there are 2 components (grayscale + alpha)
+    /// or 4 components (RGB + alpha).
+    public var hasAlpha: Bool {
+        return components.count == 2 || components.count == 4
+    }
+    
+    /// Returns the aspect ratio of the image (width / height).
+    public var aspectRatio: Double {
+        guard height > 0 else { return 0 }
+        return Double(width) / Double(height)
+    }
+    
+    // MARK: - Validation Methods
+    
+    /// Validates that the image has valid dimensions and components.
+    ///
+    /// - Throws: ``J2KError/invalidDimensions(_:)`` if dimensions are invalid.
+    /// - Throws: ``J2KError/invalidComponentConfiguration(_:)`` if components are invalid.
+    public func validate() throws {
+        guard width > 0 && height > 0 else {
+            throw J2KError.invalidDimensions("Image dimensions must be positive: \(width)x\(height)")
+        }
+        
+        guard !components.isEmpty else {
+            throw J2KError.invalidComponentConfiguration("Image must have at least one component")
+        }
+        
+        for component in components {
+            guard component.bitDepth >= 1 && component.bitDepth <= 38 else {
+                throw J2KError.invalidBitDepth("Component \(component.index) has invalid bit depth: \(component.bitDepth)")
+            }
+        }
+        
+        if isTiled {
+            guard tileWidth > 0 && tileHeight > 0 else {
+                throw J2KError.invalidTileConfiguration("Tile dimensions must be positive if tiling is enabled")
+            }
+        }
+    }
 }
 
 /// Represents a single component (color channel) of a JPEG 2000 image.
@@ -211,6 +275,28 @@ public struct J2KComponent: Sendable {
         self.subsamplingX = subsamplingX
         self.subsamplingY = subsamplingY
         self.data = data
+    }
+    
+    // MARK: - Convenience Properties
+    
+    /// Returns the total number of pixels in the component.
+    public var pixelCount: Int {
+        return width * height
+    }
+    
+    /// Returns true if the component is subsampled.
+    public var isSubsampled: Bool {
+        return subsamplingX > 1 || subsamplingY > 1
+    }
+    
+    /// Returns the maximum value for this component's bit depth.
+    public var maxValue: Int {
+        return (1 << bitDepth) - 1
+    }
+    
+    /// Returns the minimum value for this component (0 for unsigned, negative for signed).
+    public var minValue: Int {
+        return signed ? -(1 << (bitDepth - 1)) : 0
     }
 }
 
@@ -541,6 +627,49 @@ public enum J2KError: Error, Sendable {
     case ioError(String)
 }
 
+// MARK: - J2KError Extensions
+
+extension J2KError: LocalizedError {
+    /// A localized description of the error.
+    public var errorDescription: String? {
+        switch self {
+        case .invalidParameter(let message):
+            return "Invalid parameter: \(message)"
+        case .notImplemented(let message):
+            return "Not implemented: \(message)"
+        case .internalError(let message):
+            return "Internal error: \(message)"
+        case .invalidDimensions(let message):
+            return "Invalid dimensions: \(message)"
+        case .invalidBitDepth(let message):
+            return "Invalid bit depth: \(message)"
+        case .invalidTileConfiguration(let message):
+            return "Invalid tile configuration: \(message)"
+        case .invalidComponentConfiguration(let message):
+            return "Invalid component configuration: \(message)"
+        case .invalidData(let message):
+            return "Invalid data: \(message)"
+        case .fileFormatError(let message):
+            return "File format error: \(message)"
+        case .unsupportedFeature(let message):
+            return "Unsupported feature: \(message)"
+        case .decodingError(let message):
+            return "Decoding error: \(message)"
+        case .encodingError(let message):
+            return "Encoding error: \(message)"
+        case .ioError(let message):
+            return "I/O error: \(message)"
+        }
+    }
+}
+
+extension J2KError: CustomStringConvertible {
+    /// A textual representation of the error.
+    public var description: String {
+        return errorDescription ?? "Unknown J2K error"
+    }
+}
+
 /// Configuration options for JPEG 2000 operations.
 public struct J2KConfiguration: Sendable {
     /// The quality factor for encoding (0.0 to 1.0).
@@ -557,6 +686,59 @@ public struct J2KConfiguration: Sendable {
     public init(quality: Double = 0.9, lossless: Bool = false) {
         self.quality = quality
         self.lossless = lossless
+    }
+    
+    // MARK: - Convenience Factory Methods
+    
+    /// Creates a configuration for lossless compression.
+    ///
+    /// Use this preset when you need perfect reconstruction of the original image
+    /// without any quality loss. Results in larger file sizes but maintains all
+    /// original image data.
+    ///
+    /// - Returns: A configuration for lossless compression.
+    public static var lossless: J2KConfiguration {
+        return J2KConfiguration(quality: 1.0, lossless: true)
+    }
+    
+    /// Creates a configuration for high-quality lossy compression.
+    ///
+    /// Use this preset when you want excellent visual quality with moderate compression.
+    /// Suitable for archival purposes and professional photography.
+    ///
+    /// - Returns: A configuration for high-quality compression (quality: 0.95).
+    public static var highQuality: J2KConfiguration {
+        return J2KConfiguration(quality: 0.95, lossless: false)
+    }
+    
+    /// Creates a configuration for balanced compression.
+    ///
+    /// Use this preset for a good balance between file size and visual quality.
+    /// This is the recommended default for most use cases.
+    ///
+    /// - Returns: A configuration for balanced compression (quality: 0.85).
+    public static var balanced: J2KConfiguration {
+        return J2KConfiguration(quality: 0.85, lossless: false)
+    }
+    
+    /// Creates a configuration for fast compression with smaller file sizes.
+    ///
+    /// Use this preset when file size is more important than visual quality,
+    /// such as for web delivery or bandwidth-constrained scenarios.
+    ///
+    /// - Returns: A configuration for fast compression (quality: 0.70).
+    public static var fast: J2KConfiguration {
+        return J2KConfiguration(quality: 0.70, lossless: false)
+    }
+    
+    /// Creates a configuration for maximum compression.
+    ///
+    /// Use this preset when you need the smallest possible file size and can
+    /// tolerate visible compression artifacts.
+    ///
+    /// - Returns: A configuration for maximum compression (quality: 0.50).
+    public static var maxCompression: J2KConfiguration {
+        return J2KConfiguration(quality: 0.50, lossless: false)
     }
 }
 
