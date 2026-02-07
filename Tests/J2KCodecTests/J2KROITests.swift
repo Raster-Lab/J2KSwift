@@ -265,7 +265,7 @@ final class J2KROITests: XCTestCase {
     
     func testIsROICoefficient() throws {
         let shift = 5
-        let threshold = Int32(1 << shift)  // 32
+        _ = Int32(1 << shift)  // 32
         
         // Above threshold - ROI
         XCTAssertTrue(J2KROIMaxShift.isROICoefficient(coefficient: 32, shift: shift))
@@ -314,7 +314,7 @@ final class J2KROITests: XCTestCase {
     }
     
     func testWaveletMapperAllSubbands() throws {
-        var spatialMask = Array(repeating: Array(repeating: true, count: 8), count: 8)
+        let spatialMask = Array(repeating: Array(repeating: true, count: 8), count: 8)
         
         let subbandMasks = J2KROIWaveletMapper.mapToAllSubbands(
             spatialMask: spatialMask,

@@ -488,7 +488,7 @@ public struct BitPlaneCoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // Skip if already coded
+                    // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
                         continue
                     }
@@ -516,13 +516,14 @@ public struct BitPlaneCoder: Sendable {
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
                         
-                        // Update state
+                        // Update state - mark significant first
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
                     
+                    // Mark as processed after all significance handling
                     states[idx].insert(.codedThisPass)
                 }
             }
@@ -893,7 +894,7 @@ public struct BitPlaneDecoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // Skip if already coded
+                    // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
                         continue
                     }
@@ -921,13 +922,14 @@ public struct BitPlaneDecoder: Sendable {
                         magnitudes[idx] = magnitudes[idx] | bitMask
                         signs[idx] = signBit
                         
-                        // Update state
+                        // Update state - mark significant first
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
                     
+                    // Mark as processed after all significance handling
                     states[idx].insert(.codedThisPass)
                 }
             }
