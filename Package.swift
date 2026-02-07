@@ -69,7 +69,7 @@ let package = Package(
             ]),
         .testTarget(
             name: "J2KCoreTests",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KCore", "J2KFileFormat"]),
         .testTarget(
             name: "J2KCodecTests",
             dependencies: ["J2KCodec"]),
