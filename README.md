@@ -193,9 +193,9 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 7 In Progress ✅ - Optimization & Features
+### Current Status: Phase 7 Complete ✅ - Optimization & Features
 
-> **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. Advanced encoding and decoding features including presets, progressive modes, and ROI decoding are now available. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
+> **Note**: Individual codec components (entropy coding, wavelet transforms, quantization, color transforms) are fully implemented and tested. Advanced encoding and decoding features including presets, progressive modes, ROI decoding, and extended format support (16-bit, HDR, alpha channels) are now available. The top-level `J2KEncoder.encode()` and `J2KDecoder.decode()` integration pipeline is not yet complete — these are planned for a future phase that ties all components together.
 
 **Completed Phases:**
 - ✅ Phase 0: Foundation (Weeks 1-10)
@@ -204,7 +204,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Phase 3: Quantization (Weeks 41-48)
 - ✅ Phase 4: Color Transforms (Weeks 49-56)
 - ✅ Phase 5: File Format (Weeks 57-68)
-- ✅ Phase 6: JPIP Protocol (Weeks 69-80) ✅
+- ✅ Phase 6: JPIP Protocol (Weeks 69-80)
   - ✅ Week 69-71: JPIP Client Basics
   - ✅ Week 72-74: Data Streaming (Progressive quality, Resolution levels, Component selection, Metadata requests)
   - ✅ Week 75-77: Cache Management (LRU eviction, Precinct caching, Statistics tracking)
@@ -246,11 +246,11 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Cache Management (Week 75-77) ✅
 - [x] JPIP Server (Week 78-80) ✅
 
-**Phase 7 In Progress** 🚀:
-- [x] Performance Tuning (Week 81-83) ✅
-- [x] Advanced Encoding Features (Week 84-86) ✅
-- [x] Advanced Decoding Features (Week 87-89) ✅
-- [ ] Extended Formats (Week 90-92)
+**Phase 7 Complete** ✅:
+- [x] Performance Tuning (Week 81-83)
+- [x] Advanced Encoding Features (Week 84-86)
+- [x] Advanced Decoding Features (Week 87-89)
+- [x] Extended Formats (Week 90-92)
 
 ## 🌟 Features
 
@@ -531,6 +531,21 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
     - Stream completion tracking
   - ✅ 51 comprehensive tests (100% pass rate)
   - ✅ Full documentation ([ADVANCED_DECODING.md](ADVANCED_DECODING.md))
+- ✅ **Extended Formats (Phase 7, Week 90-92)**:
+  - ✅ 16-bit image support (grayscale, RGB, RGBA)
+  - ✅ HDR (High Dynamic Range) image support
+    - HDR color space (.hdr, .hdrLinear)
+    - Compatible with Rec. 2020, Rec. 2100 (PQ/HLG), SMPTE ST 2084
+    - HDR10 (10-bit), HDR12 (12-bit), HDR16 (16-bit)
+  - ✅ Extended precision modes (10-bit, 12-bit, 14-bit)
+  - ✅ Full alpha channel support
+    - RGBA (8-bit and 16-bit)
+    - Grayscale with alpha
+    - Mixed bit depth alpha channels
+  - ✅ Variable bit depths (1-38 bits per component)
+  - ✅ Signed and unsigned value support
+  - ✅ 28 comprehensive tests (100% pass rate)
+  - ✅ Full documentation ([EXTENDED_FORMATS.md](EXTENDED_FORMATS.md))
 
 ### Planned Features
 
@@ -550,11 +565,11 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
   - ✅ Week 72-74: Data Streaming
   - ✅ Week 75-77: Cache Management
   - ✅ Week 78-80: JPIP Server
-- ⏳ Phase 7: Optimization & Features (Weeks 81-92)
+- ✅ Phase 7: Optimization & Features (Complete)
   - ✅ Week 81-83: Performance Tuning
   - ✅ Week 84-86: Advanced Encoding Features
   - ✅ Week 87-89: Advanced Decoding Features
-  - ⏳ Week 90-92: Extended Formats
+  - ✅ Week 90-92: Extended Formats
 - ⏳ Phase 8: Production Ready (Weeks 93-100)
 
 ## 🧪 Testing
@@ -634,6 +649,6 @@ J2KSwift is inspired by and references:
 
 ---
 
-**Status**: 🚀 Active Development - Phase 7 In Progress (Week 87-89 Complete ✅)
+**Status**: 🚀 Active Development - Phase 7 Complete ✅ (Week 90-92)
 
-This project is in active development. The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. Advanced encoding and decoding features including presets, progressive encoding/decoding, and ROI support are now available. The top-level encode/decode pipeline and file format support continue in development. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
+This project is in active development. All Phase 7 features are now complete including extended format support (16-bit, HDR, extended precision, alpha channels). The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. Advanced encoding and decoding features including presets, progressive encoding/decoding, ROI support, and extended formats are now available. The top-level encode/decode pipeline and file format support continue in development. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.

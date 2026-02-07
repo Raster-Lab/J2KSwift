@@ -324,12 +324,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add quality-progressive decoding
 - [x] Support for incremental decoding
 
-### Week 90-92: Extended Formats
-- [ ] Support for 16-bit images
-- [ ] Add HDR image support
-- [ ] Implement extended precision mode
-- [ ] Support for alpha channels
-- [ ] Test with various bit depths
+### Week 90-92: Extended Formats ✅
+- [x] Support for 16-bit images
+- [x] Add HDR image support
+- [x] Implement extended precision mode
+- [x] Support for alpha channels
+- [x] Test with various bit depths
 
 ## Phase 8: Production Ready (Weeks 93-100)
 
@@ -417,5 +417,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 ---
 
 **Last Updated**: 2026-02-07
-**Current Phase**: Phase 7 - Optimization & Features (Week 81-89 Complete ✅)
-**Next Milestone**: Phase 7, Week 90-92 - Extended Formats
+**Current Phase**: Phase 7 - Optimization & Features (Week 81-92 Complete ✅)
+**Next Milestone**: Phase 8, Week 93-95 - Documentation
