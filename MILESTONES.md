@@ -287,12 +287,35 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Implement zero-copy where possible
 - [x] Benchmark against reference implementations
 
-### Week 84-86: Advanced Encoding Features
-- [ ] Implement visual frequency weighting
-- [ ] Add perceptual quality metrics
-- [ ] Implement variable bitrate encoding
-- [ ] Add encoding presets (fast, balanced, quality)
-- [ ] Support for progressive encoding
+### Week 84-86: Advanced Encoding Features ✅
+- [x] Implement visual frequency weighting
+  - CSF-based perceptual modeling (Mannos-Sakrison)
+  - Per-subband weight calculation
+  - Viewing distance and display parameters
+  - Integration with quantization step sizes
+- [x] Add perceptual quality metrics
+  - PSNR (Peak Signal-to-Noise Ratio)
+  - SSIM (Structural Similarity Index)
+  - MS-SSIM (Multi-Scale SSIM)
+  - Per-component quality analysis
+- [x] Implement variable bitrate encoding
+  - Constant BitRate (CBR) mode
+  - Variable BitRate (VBR) with quality constraints
+  - Constant quality mode
+  - Lossless mode
+- [x] Add encoding presets (fast, balanced, quality)
+  - Fast: 3 levels, 64×64 blocks, single-threaded (2-3× faster)
+  - Balanced: 5 levels, 32×32 blocks, multi-threaded (optimal)
+  - Quality: 6 levels, 10 layers, best quality (1.5-2× slower)
+  - Comprehensive configuration validation
+- [x] Support for progressive encoding
+  - SNR (quality) progressive mode
+  - Spatial (resolution) progressive mode
+  - Layer-progressive for streaming
+  - Combined progressive modes
+  - Progressive decoding options with early stopping
+  - Region-based decoding support
+- [x] 62 comprehensive tests (100% pass rate)
 
 ### Week 87-89: Advanced Decoding Features
 - [ ] Implement partial decoding
@@ -393,6 +416,6 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 
 ---
 
-**Last Updated**: 2026-02-06
-**Current Phase**: Phase 7 - Optimization & Features (Week 81-83 Complete ✅)
-**Next Milestone**: Phase 7, Week 84-86 - Advanced Encoding Features
+**Last Updated**: 2026-02-07
+**Current Phase**: Phase 7 - Optimization & Features (Week 81-86 Complete ✅)
+**Next Milestone**: Phase 7, Week 87-89 - Advanced Decoding Features

@@ -246,6 +246,12 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - [x] Cache Management (Week 75-77) ✅
 - [x] JPIP Server (Week 78-80) ✅
 
+**Phase 7 In Progress** 🚀:
+- [x] Performance Tuning (Week 81-83) ✅
+- [x] Advanced Encoding Features (Week 84-86) ✅
+- [ ] Advanced Decoding Features (Week 87-89)
+- [ ] Extended Formats (Week 90-92)
+
 ## 🌟 Features
 
 ### Current Features
@@ -472,6 +478,32 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
   - ✅ 124 comprehensive tests (100% pass rate)
   - ✅ 9 client-server integration tests
   - ✅ Full documentation
+- ✅ **Performance Tuning (Phase 7, Week 81-83)**:
+  - ✅ Comprehensive benchmarking framework
+  - ✅ MQ-coder optimization (3% speedup)
+  - ✅ Parallelization analysis and documentation
+  - ✅ Reference benchmark suite vs OpenJPEG
+  - ✅ 70-72% of OpenJPEG performance for entropy coding
+  - ✅ Full documentation ([PERFORMANCE.md](PERFORMANCE.md), [REFERENCE_BENCHMARKS.md](REFERENCE_BENCHMARKS.md))
+- ✅ **Advanced Encoding Features (Phase 7, Week 84-86)**:
+  - ✅ Encoding presets (fast, balanced, quality)
+    - Fast: 2-3× faster, single-threaded, 3 layers
+    - Balanced: Optimal quality/speed, multi-threaded, 5 layers
+    - Quality: Best quality, 1.5-2× slower, 10 layers
+  - ✅ Progressive encoding support
+    - SNR (quality) progressive mode
+    - Spatial (resolution) progressive mode
+    - Layer-progressive for streaming
+    - Combined progressive modes
+  - ✅ Variable bitrate control
+    - Constant BitRate (CBR) mode
+    - Variable BitRate (VBR) mode
+    - Constant quality mode
+    - Lossless mode
+  - ✅ Visual frequency weighting (CSF-based perceptual optimization)
+  - ✅ Perceptual quality metrics (PSNR, SSIM, MS-SSIM)
+  - ✅ 62 comprehensive tests (100% pass rate)
+  - ✅ Full documentation ([ADVANCED_ENCODING.md](ADVANCED_ENCODING.md))
 
 ### Planned Features
 
@@ -492,6 +524,10 @@ See [MILESTONES.md](MILESTONES.md) for the complete feature roadmap including:
   - ✅ Week 75-77: Cache Management
   - ✅ Week 78-80: JPIP Server
 - ⏳ Phase 7: Optimization & Features (Weeks 81-92)
+  - ✅ Week 81-83: Performance Tuning
+  - ✅ Week 84-86: Advanced Encoding Features
+  - ⏳ Week 87-89: Advanced Decoding Features
+  - ⏳ Week 90-92: Extended Formats
 - ⏳ Phase 8: Production Ready (Weeks 93-100)
 
 ## 🧪 Testing
@@ -571,6 +607,6 @@ J2KSwift is inspired by and references:
 
 ---
 
-**Status**: 🚀 Active Development - Phase 5 Complete, Phase 6+ In Progress
+**Status**: 🚀 Active Development - Phase 7 In Progress (Week 84-86 Complete ✅)
 
-This project is in active development. The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. The top-level encode/decode pipeline, file format support, and JPIP are still in progress. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
+This project is in active development. The core codec components (entropy coding, wavelet transforms, quantization, color transforms) are implemented and tested. Advanced encoding features including presets, progressive encoding, and variable bitrate control are now available. The top-level encode/decode pipeline and file format support continue in development. APIs are subject to change. See [MILESTONES.md](MILESTONES.md) for current progress and planned features.
