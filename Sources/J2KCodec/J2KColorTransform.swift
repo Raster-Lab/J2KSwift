@@ -905,10 +905,10 @@ public struct J2KColorTransform: Sendable {
                 )
             }
             
-        case .sRGB, .yCbCr:
+        case .sRGB, .yCbCr, .hdr, .hdrLinear:
             guard components.count >= 3 else {
                 throw J2KError.invalidComponentConfiguration(
-                    "RGB/YCbCr color space requires at least 3 components, got \(components.count)"
+                    "RGB/YCbCr/HDR color space requires at least 3 components, got \(components.count)"
                 )
             }
             

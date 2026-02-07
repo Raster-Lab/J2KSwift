@@ -442,7 +442,7 @@ public enum J2KSubband: String, Sendable, Hashable {
 
 /// Represents the color space of a JPEG 2000 image.
 public enum J2KColorSpace: Sendable, Equatable {
-    /// sRGB color space.
+    /// sRGB color space (standard dynamic range).
     case sRGB
     
     /// Grayscale (single component).
@@ -450,6 +450,24 @@ public enum J2KColorSpace: Sendable, Equatable {
     
     /// YCbCr color space.
     case yCbCr
+    
+    /// HDR color space with extended dynamic range (e.g., Rec. 2020, Rec. 2100).
+    ///
+    /// HDR images typically use higher bit depths (10, 12, or 16 bits) and represent
+    /// luminance values that exceed the standard 0-1 range of SDR content.
+    ///
+    /// Common HDR standards:
+    /// - Rec. 2020: Wide color gamut for UHDTV
+    /// - Rec. 2100 (HLG/PQ): HDR transfer functions
+    /// - SMPTE ST 2084 (PQ): Perceptual quantization
+    /// - ARIB STD-B67 (HLG): Hybrid log-gamma
+    case hdr
+    
+    /// HDR color space with linear light encoding.
+    ///
+    /// Linear HDR represents light intensity directly without gamma correction,
+    /// suitable for physically-based rendering and compositing operations.
+    case hdrLinear
     
     /// ICC profile-based color space.
     case iccProfile(Data)
@@ -463,6 +481,8 @@ public enum J2KColorSpace: Sendable, Equatable {
         case (.sRGB, .sRGB),
              (.grayscale, .grayscale),
              (.yCbCr, .yCbCr),
+             (.hdr, .hdr),
+             (.hdrLinear, .hdrLinear),
              (.unknown, .unknown):
             return true
         case let (.iccProfile(lhsData), .iccProfile(rhsData)):
