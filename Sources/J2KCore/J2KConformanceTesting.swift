@@ -14,7 +14,6 @@
 /// - ``J2KReferenceCodestream``
 
 import Foundation
-import J2KCore
 
 // MARK: - Error Metrics
 
