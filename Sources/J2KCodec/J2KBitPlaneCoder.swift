@@ -934,13 +934,19 @@ public struct BitPlaneDecoder: Sendable {
         }
     }
     
-    /// Checks if run-length decoding can be used for a column in a stripe.
+     /// Checks if run-length decoding can be used for a column in a stripe.
+    ///
+    /// This is the decoder equivalent of `isEligibleForRunLengthCoding` in the encoder.
+    /// It checks eligibility based on coefficient and neighbor states.
+    ///
+    /// NOTE: This function must be kept in sync with BitPlaneCoder.isEligibleForRunLengthCoding
     private func canUseRunLengthDecoding(
         x: Int,
         stripeStart: Int,
         stripeEnd: Int,
         states: [CoefficientState]
     ) -> Bool {
+        // This must match isEligibleForRunLengthCoding in the encoder
         for y in stripeStart..<stripeEnd {
             let idx = y * width + x
             
