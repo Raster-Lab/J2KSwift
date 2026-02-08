@@ -277,31 +277,45 @@ public struct ContextModeler: Sendable {
     }
     
     /// Context formation for HH subband.
+    ///
+    /// Per ISO/IEC 15444-1, Table D.1, orient=3 (HH):
+    /// The context depends on diagonal count (d) as primary key
+    /// and h+v sum as secondary key.
     private func significanceContextHH(h: Int, v: Int, d: Int) -> EBCOTContext {
         let hv = h + v
         
         if d >= 3 {
+            // d >= 3 → context 8
             return .sigPropHH_v
         } else if d == 2 {
             if hv >= 1 {
-                return .sigPropHH_v
-            } else {
+                // d=2, hv>=1 → context 7
                 return .sigPropHH_h
+            } else {
+                // d=2, hv=0 → context 6
+                return .sigPropHL_v
             }
         } else if d == 1 {
             if hv >= 2 {
-                return .sigPropHH_v
+                // d=1, hv>=2 → context 5
+                return .sigPropHL_h
             } else if hv == 1 {
-                return .sigPropHH_h
-            } else {
+                // d=1, hv=1 → context 4
                 return .sigPropLL_LH_1d
+            } else {
+                // d=1, hv=0 → context 3
+                return .sigPropLL_LH_2
             }
         } else {
+            // d == 0
             if hv >= 2 {
-                return .sigPropHH_v
+                // d=0, hv>=2 → context 2
+                return .sigPropLL_LH_1v
             } else if hv == 1 {
-                return .sigPropHH_h
+                // d=0, hv=1 → context 1
+                return .sigPropLL_LH_1h
             } else {
+                // d=0, hv=0 → context 0
                 return .sigPropLL_LH_0
             }
         }
