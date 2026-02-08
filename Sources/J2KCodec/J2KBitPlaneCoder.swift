@@ -195,11 +195,6 @@ public struct BitPlaneCoder: Sendable {
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
             
-            // DEBUG: Log bit-plane number
-            if width == 4 && height == 4 {
-                print("\n[ENC] === Bit-plane \(bitPlane) ===")
-            }
-            
             // Determine if bypass mode should be used for this bit-plane
             let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
             
@@ -348,11 +343,6 @@ public struct BitPlaneCoder: Sendable {
                 // Check if this coefficient becomes significant at this bit-plane
                 let isSignificant = (magnitudes[idx] & bitMask) != 0
                 
-                // DEBUG: Log sig prop processing for all positions in 4x4 block
-                if width == 4 && height == 4 && (x == 2 || x == 3 || idx == 5 || idx == 10) {
-                    print("[ENC-SP] Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
-                }
-                
                 // Encode significance bit
                 encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
                 
@@ -410,11 +400,6 @@ public struct BitPlaneCoder: Sendable {
                 
                 // Get the bit value
                 let bitValue = (magnitudes[idx] & bitMask) != 0
-                
-                // DEBUG: Log magnitude refinement
-                if width == 4 && height == 4 && (idx == 0 || idx == 5 || idx == 10) {
-                    print("[ENC-MR] Pos[\(idx)] (\(x),\(y)): bit=\(bitValue ? 1 : 0)")
-                }
                 
                 if useBypass {
                     // Use bypass (raw) mode - no context
@@ -488,11 +473,6 @@ public struct BitPlaneCoder: Sendable {
                         bitMask: bitMask
                     )
                     
-                    // DEBUG: Log RLC decision
-                    if width == 4 && height == 4 {
-                        print("[ENC] Col \(x), Stripe \(stripeY)-\(stripeEnd), RLC: true, HasSig: \(hasSignificant)")
-                    }
-                    
                     // Encode run-length flag: true if at least one becomes significant
                     encoder.encode(symbol: hasSignificant, context: &contexts[.runLength])
                     
@@ -505,24 +485,11 @@ public struct BitPlaneCoder: Sendable {
                         continue
                     }
                 } else {
-                    // DEBUG: Log non-RLC case
-                    if width == 4 && height == 4 {
-                        print("[ENC] Col \(x), Stripe \(stripeY)-\(stripeEnd), RLC: false")
-                    }
                 }
                 
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
-                    
-                    // DEBUG: Log skip reasons for columns 1 and 2
-                    if width == 4 && height == 4 && (x == 1 || x == 2) {
-                        let isCoded = states[idx].contains(.codedThisPass)
-                        let isSig = states[idx].contains(.significant)
-                        if isCoded || isSig {
-                            print("[ENC]   Pos[\(idx)] SKIP: coded=\(isCoded), sig=\(isSig)")
-                        }
-                    }
                     
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
@@ -542,20 +509,8 @@ public struct BitPlaneCoder: Sendable {
                     // Check if significant
                     let isSignificant = (magnitudes[idx] & bitMask) != 0
                     
-                    // DEBUG: Log BEFORE encoding
-                    if width == 4 && height == 4 {
-                        let ctxStateBefore = contexts[sigContext]
-                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): BEFORE encode, isSig=\(isSignificant), ctx=\(sigContext), state=\(ctxStateBefore.stateIndex), mps=\(ctxStateBefore.mps)")
-                    }
-                    
                     // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
-                    
-                    // DEBUG: Log AFTER encoding
-                    if width == 4 && height == 4 {
-                        let ctxStateAfter = contexts[sigContext]
-                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): AFTER encode, state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
-                    }
                     
                     if isSignificant {
                         // Encode sign
@@ -713,11 +668,6 @@ public struct BitPlaneDecoder: Sendable {
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
             
-            // DEBUG: Log bit-plane number
-            if width == 4 && height == 4 {
-                print("\n[DEC] === Bit-plane \(bitPlane) ===")
-            }
-            
             // Determine if bypass mode should be used for this bit-plane
             let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
             
@@ -816,11 +766,6 @@ public struct BitPlaneDecoder: Sendable {
                 // Decode significance bit
                 let isSignificant = decoder.decode(context: &contexts[sigContext])
                 
-                // DEBUG: Log sig prop processing for all positions in 4x4 block
-                if width == 4 && height == 4 && (x == 2 || x == 3 || idx == 5 || idx == 10) {
-                    print("[DEC-SP] Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
-                }
-                
                 if isSignificant {
                     // Decode sign
                     let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
@@ -895,11 +840,6 @@ public struct BitPlaneDecoder: Sendable {
                     bitValue = decoder.decode(context: &contexts[magContext])
                 }
                 
-                // DEBUG: Log magnitude refinement
-                if width == 4 && height == 4 && (idx == 0 || idx == 5 || idx == 10) {
-                    print("[DEC-MR] Pos[\(idx)] (\(x),\(y)): bit=\(bitValue ? 1 : 0)")
-                }
-                
                 // Update magnitude
                 if bitValue {
                     magnitudes[idx] = magnitudes[idx] | bitMask
@@ -945,11 +885,6 @@ public struct BitPlaneDecoder: Sendable {
                     // Decode run-length flag: true if at least one becomes significant
                     let hasSignificant = decoder.decode(context: &contexts[.runLength])
                     
-                    // DEBUG: Log RLC decision
-                    if width == 4 && height == 4 {
-                        print("[DEC] Col \(x), Stripe \(stripeY)-\(stripeEnd), RLC: true, HasSig: \(hasSignificant)")
-                    }
-                    
                     if !hasSignificant {
                         // All coefficients remain zero, mark as coded and skip
                         for y in stripeY..<stripeEnd {
@@ -959,24 +894,11 @@ public struct BitPlaneDecoder: Sendable {
                         continue
                     }
                 } else {
-                    // DEBUG: Log non-RLC case
-                    if width == 4 && height == 4 {
-                        print("[DEC] Col \(x), Stripe \(stripeY)-\(stripeEnd), RLC: false")
-                    }
                 }
                 
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
-                    
-                    // DEBUG: Log skip reasons for columns 1 and 2
-                    if width == 4 && height == 4 && (x == 1 || x == 2) {
-                        let isCoded = states[idx].contains(.codedThisPass)
-                        let isSig = states[idx].contains(.significant)
-                        if isCoded || isSig {
-                            print("[DEC]   Pos[\(idx)] SKIP: coded=\(isCoded), sig=\(isSig)")
-                        }
-                    }
                     
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
@@ -993,20 +915,8 @@ public struct BitPlaneDecoder: Sendable {
                     // Get significance context
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
                     
-                    // DEBUG: Log BEFORE decoding
-                    if width == 4 && height == 4 {
-                        let ctxStateBefore = contexts[sigContext]
-                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): BEFORE decode, ctx=\(sigContext), state=\(ctxStateBefore.stateIndex), mps=\(ctxStateBefore.mps)")
-                    }
-                    
                     // Decode significance
                     let isSignificant = decoder.decode(context: &contexts[sigContext])
-                    
-                    // DEBUG: Log AFTER decoding
-                    if width == 4 && height == 4 {
-                        let ctxStateAfter = contexts[sigContext]
-                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): AFTER decode, isSig=\(isSignificant), state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
-                    }
                     
                     if isSignificant {
                         // Decode sign

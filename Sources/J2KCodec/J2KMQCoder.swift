@@ -242,31 +242,25 @@ public struct MQEncoder: Sendable {
     }
     
     /// Emits a byte to the output.
+    ///
+    /// Implements the BYTEOUT procedure from ISO/IEC 15444-1 Annex C.
+    /// Handles carry propagation and 0xFF byte stuffing.
     private mutating func emitByte() {
         if buffer >= 0 {
-            if c > 0x07FFFFFF {
-                buffer += 1
-                if buffer == 0xFF {
-                    output.append(0xFF)
-                    buffer = Int((c >> 20) & 0x7F)
-                    c &= 0x000FFFFF
-                    ct = 7
-                } else if buffer > 0xFF {
-                    // Carry overflow - this should not happen in normal operation
-                    // Handle by emitting 0xFF and adjusting
-                    output.append(0xFF)
-                    buffer = Int((c >> 20) & 0x7F)
-                    c &= 0x000FFFFF
-                    ct = 7
-                } else {
-                    output.append(UInt8(buffer & 0xFF))
-                    buffer = Int((c >> 19) & 0xFF)
-                    c &= 0x0007FFFF
-                    ct = 8
-                }
+            if buffer == 0xFF {
+                // After 0xFF, use only 7 bits to avoid marker conflicts
+                output.append(0xFF)
+                buffer = Int((c >> 20) & 0x7F)
+                c &= 0x000FFFFF
+                ct = 7
             } else {
+                // Add carry bit to buffer
+                buffer += Int(c >> 27)
+                c &= 0x07FFFFFF
+                // Emit the buffer byte
                 output.append(UInt8(buffer & 0xFF))
                 if buffer == 0xFF {
+                    // After carry made buffer 0xFF, use 7-bit mode
                     buffer = Int((c >> 20) & 0x7F)
                     c &= 0x000FFFFF
                     ct = 7
@@ -304,23 +298,23 @@ public struct MQEncoder: Sendable {
     }
     
     /// Default termination - standard JPEG 2000 termination sequence.
+    ///
+    /// Implements the FLUSH procedure from ISO/IEC 15444-1 Annex C.2.9.
+    /// Uses SETBITS to properly position C within the current interval
+    /// before flushing bytes.
     private mutating func finishDefault() -> Data {
-        // Flush: Add the interval to ensure all bits are encoded
-        c += a
-        c <<= ct
-        emitByte()
-        c <<= ct
-        emitByte()
-        
-        // CRITICAL: The standard termination may not emit enough bits
-        // for the decoder to correctly decode all symbols. We need to
-        // ensure the buffer is fully flushed. Testing shows that emitting
-        // one additional byte after the standard two-byte sequence fixes
-        // the synchronization issue.
-        if ct > 0 {
-            c <<= ct
-            emitByte()
+        // SETBITS procedure (ISO/IEC 15444-1 C.2.9, Figure C.11):
+        let tempC = c + a
+        c = c | 0x0000FFFF
+        if c >= tempC {
+            c -= 0x8000
         }
+        
+        // BYTEOUT twice to flush the C register
+        c <<= ct
+        emitByte()
+        c <<= ct
+        emitByte()
         
         // Emit the final buffer byte
         if buffer >= 0 {
