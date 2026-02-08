@@ -411,6 +411,11 @@ public struct BitPlaneCoder: Sendable {
                 // Get the bit value
                 let bitValue = (magnitudes[idx] & bitMask) != 0
                 
+                // DEBUG: Log magnitude refinement
+                if width == 4 && height == 4 && (idx == 0 || idx == 5 || idx == 10) {
+                    print("[ENC-MR] Pos[\(idx)] (\(x),\(y)): bit=\(bitValue ? 1 : 0)")
+                }
+                
                 if useBypass {
                     // Use bypass (raw) mode - no context
                     encoder.encodeBypass(symbol: bitValue)
@@ -509,6 +514,15 @@ public struct BitPlaneCoder: Sendable {
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
+                    
+                    // DEBUG: Log skip reasons for column 1
+                    if width == 4 && height == 4 && x == 1 {
+                        let isCoded = states[idx].contains(.codedThisPass)
+                        let isSig = states[idx].contains(.significant)
+                        if isCoded || isSig {
+                            print("[ENC]   Pos[\(idx)] SKIP: coded=\(isCoded), sig=\(isSig)")
+                        }
+                    }
                     
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
@@ -874,6 +888,11 @@ public struct BitPlaneDecoder: Sendable {
                     bitValue = decoder.decode(context: &contexts[magContext])
                 }
                 
+                // DEBUG: Log magnitude refinement
+                if width == 4 && height == 4 && (idx == 0 || idx == 5 || idx == 10) {
+                    print("[DEC-MR] Pos[\(idx)] (\(x),\(y)): bit=\(bitValue ? 1 : 0)")
+                }
+                
                 // Update magnitude
                 if bitValue {
                     magnitudes[idx] = magnitudes[idx] | bitMask
@@ -942,6 +961,15 @@ public struct BitPlaneDecoder: Sendable {
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
+                    
+                    // DEBUG: Log skip reasons for column 1
+                    if width == 4 && height == 4 && x == 1 {
+                        let isCoded = states[idx].contains(.codedThisPass)
+                        let isSig = states[idx].contains(.significant)
+                        if isCoded || isSig {
+                            print("[DEC]   Pos[\(idx)] SKIP: coded=\(isCoded), sig=\(isSig)")
+                        }
+                    }
                     
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
