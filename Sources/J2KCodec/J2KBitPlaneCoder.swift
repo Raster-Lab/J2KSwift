@@ -348,8 +348,8 @@ public struct BitPlaneCoder: Sendable {
                 // Check if this coefficient becomes significant at this bit-plane
                 let isSignificant = (magnitudes[idx] & bitMask) != 0
                 
-                // DEBUG: Log sig prop processing
-                if width == 4 && height == 4 && (idx == 5 || idx == 10) {
+                // DEBUG: Log sig prop processing for all positions in 4x4 block
+                if width == 4 && height == 4 && (x == 2 || x == 3 || idx == 5 || idx == 10) {
                     print("[ENC-SP] Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
                 }
                 
@@ -515,8 +515,8 @@ public struct BitPlaneCoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // DEBUG: Log skip reasons for column 1
-                    if width == 4 && height == 4 && x == 1 {
+                    // DEBUG: Log skip reasons for columns 1 and 2
+                    if width == 4 && height == 4 && (x == 1 || x == 2) {
                         let isCoded = states[idx].contains(.codedThisPass)
                         let isSig = states[idx].contains(.significant)
                         if isCoded || isSig {
@@ -809,8 +809,8 @@ public struct BitPlaneDecoder: Sendable {
                 // Decode significance bit
                 let isSignificant = decoder.decode(context: &contexts[sigContext])
                 
-                // DEBUG: Log sig prop processing
-                if width == 4 && height == 4 && (idx == 5 || idx == 10) {
+                // DEBUG: Log sig prop processing for all positions in 4x4 block
+                if width == 4 && height == 4 && (x == 2 || x == 3 || idx == 5 || idx == 10) {
                     print("[DEC-SP] Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
                 }
                 
@@ -962,8 +962,8 @@ public struct BitPlaneDecoder: Sendable {
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
-                    // DEBUG: Log skip reasons for column 1
-                    if width == 4 && height == 4 && x == 1 {
+                    // DEBUG: Log skip reasons for columns 1 and 2
+                    if width == 4 && height == 4 && (x == 1 || x == 2) {
                         let isCoded = states[idx].contains(.codedThisPass)
                         let isSig = states[idx].contains(.significant)
                         if isCoded || isSig {
