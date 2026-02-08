@@ -221,6 +221,11 @@ public struct BitPlaneCoder: Sendable {
             
             // Pass 2: Magnitude Refinement Pass
             if passCount < maxPassLimit {
+                // Prepare for bypass mode if enabled
+                if useBypass {
+                    encoder.prepareForBypass()
+                }
+                
                 encodeMagnitudeRefinementPass(
                     magnitudes: magnitudes,
                     states: &states,
@@ -686,6 +691,11 @@ public struct BitPlaneDecoder: Sendable {
             
             // Pass 2: Magnitude Refinement Pass
             if passesDecoded < passCount {
+                // Prepare for bypass mode if enabled
+                if useBypass {
+                    decoder.prepareForBypass()
+                }
+                
                 decodeMagnitudeRefinementPass(
                     magnitudes: &magnitudes,
                     states: &states,
