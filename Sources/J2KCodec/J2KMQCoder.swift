@@ -305,14 +305,25 @@ public struct MQEncoder: Sendable {
     
     /// Default termination - standard JPEG 2000 termination sequence.
     private mutating func finishDefault() -> Data {
-        // Flush
+        // Flush: Add the interval to ensure all bits are encoded
         c += a
         c <<= ct
         emitByte()
         c <<= ct
         emitByte()
         
-        if buffer >= 0 && buffer <= 0xFF && buffer != 0xFF {
+        // CRITICAL: The standard termination may not emit enough bits
+        // for the decoder to correctly decode all symbols. We need to
+        // ensure the buffer is fully flushed. Testing shows that emitting
+        // one additional byte after the standard two-byte sequence fixes
+        // the synchronization issue.
+        if ct > 0 {
+            c <<= ct
+            emitByte()
+        }
+        
+        // Emit the final buffer byte
+        if buffer >= 0 {
             output.append(UInt8(buffer & 0xFF))
         }
         
