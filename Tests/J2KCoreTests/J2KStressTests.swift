@@ -178,12 +178,15 @@ final class J2KStressTests: XCTestCase {
         var coefficients = [Int32](repeating: 0, count: size)
         
         for i in 0..<size {
-            coefficients[i] = i % 2 == 0 ? Int32(i) : -Int32(i)
+            // Make sure even indices get positive values (add 1 to avoid zero at index 0)
+            // and odd indices get negative values
+            coefficients[i] = i % 2 == 0 ? Int32(i + 1) : -Int32(i + 1)
         }
         
-        // Verify pattern
-        XCTAssertGreaterThan(coefficients[0], 0)
-        XCTAssertLessThan(coefficients[1], 0)
+        // Verify pattern: index 0 -> 1 (positive), index 1 -> -2 (negative), index 2 -> 3 (positive)
+        XCTAssertGreaterThan(coefficients[0], 0, "First coefficient should be positive")
+        XCTAssertLessThan(coefficients[1], 0, "Second coefficient should be negative")
+        XCTAssertGreaterThan(coefficients[2], 0, "Third coefficient should be positive")
     }
     
     // MARK: - Performance Baseline Tests
