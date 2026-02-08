@@ -122,3 +122,4 @@ fastlane/test_output
 *.orig
 .env
 .env.local
+/test_*.swift
