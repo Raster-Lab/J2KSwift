@@ -382,6 +382,35 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Set up distribution (Package.swift configured, VERSION file created)
 - [x] Announce release (templates and checklist in RELEASE_CHECKLIST.md)
 
+## Future Milestones (v1.2+)
+
+### HTJ2K Codec — ISO/IEC 15444-15 (High Throughput JPEG 2000)
+
+**Goal**: Implement HTJ2K (Part 15) encoding and decoding as an update to the JPEG 2000 standard.
+
+- [ ] Implement HTJ2K block coder (FBCOT — Fast Block Coder with Optimized Truncation)
+- [ ] Add HT cleanup pass with MEL, VLC, and MagSgn coding
+- [ ] Implement HT SigProp and MagRef passes
+- [ ] Support mixed legacy JPEG 2000 and HTJ2K code-blocks within the same codestream
+- [ ] Add HTJ2K-specific marker segments and extensions
+- [ ] Integrate HTJ2K encoder into the encoding pipeline
+- [ ] Integrate HTJ2K decoder into the decoding pipeline
+- [ ] Validate against ISO/IEC 15444-15 conformance test data
+- [ ] Benchmark HTJ2K throughput against legacy JPEG 2000
+
+### Lossless Transcoding — JPEG 2000 ↔ HTJ2K
+
+**Goal**: Enable lossless transcoding between legacy JPEG 2000 (Part 1) and HTJ2K (Part 15) without re-encoding wavelet coefficients.
+
+- [ ] Implement codestream parser for legacy JPEG 2000 Tier-1 decoding to intermediate coefficients
+- [ ] Implement codestream parser for HTJ2K Tier-1 decoding to intermediate coefficients
+- [ ] Implement legacy JPEG 2000 → HTJ2K lossless transcoder (re-encode Tier-1 only)
+- [ ] Implement HTJ2K → legacy JPEG 2000 lossless transcoder (re-encode Tier-1 only)
+- [ ] Preserve all metadata, quality layers, and progression orders during transcoding
+- [ ] Add transcoding API (`J2KTranscoder`) with progress reporting
+- [ ] Validate bit-exact round-trip: JPEG 2000 → HTJ2K → JPEG 2000
+- [ ] Benchmark transcoding speed (target: significantly faster than full re-encode)
+
 ## Success Metrics
 
 ### Performance Targets
@@ -431,11 +460,12 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 ## Conclusion
 
-This 100-week roadmap provides a clear path to implementing a production-ready JPEG 2000 framework in Swift 6. The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust and performant final product.
+This 100-week roadmap provides a clear path to implementing a production-ready JPEG 2000 framework in Swift 6. The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust and performant final product. Future milestones extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding between legacy JPEG 2000 and HTJ2K.
 
 ---
 
-**Last Updated**: 2026-02-07  
+**Last Updated**: 2026-02-08  
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
 **Status**: Version 1.0.0 Ready for Release  
-**Next Steps**: Tag v1.0.0, publish GitHub release, begin v1.1 planning
+**Next Steps**: Tag v1.0.0, publish GitHub release, begin v1.1 planning  
+**Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.2+

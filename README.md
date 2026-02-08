@@ -26,7 +26,7 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
 - **Cross-Platform**: macOS 13+, iOS 16+, tvOS 16+, watchOS 9+, visionOS 1+
-- **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) implementation
+- **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) and ISO/IEC 15444-15 (HTJ2K) implementation
 - **Performance**: Hardware acceleration ready (vDSP integration in v1.1)
 - **Network Streaming**: JPIP protocol support for efficient streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
@@ -160,7 +160,7 @@ let encoded = try mqCoder.encode(quantized)
 - 🧪 **Integration Tests**: Complete encode→decode workflows
 
 ### Future Releases
-- **v1.2**: Advanced encoding features, extended format support
+- **v1.2**: HTJ2K codec (ISO/IEC 15444-15, High Throughput JPEG 2000), lossless transcoding between legacy JPEG 2000 and HTJ2K, advanced encoding features, extended format support
 - **v2.0**: JPEG 2000 Part 2 extensions, Motion JPEG 2000, JPSEC
 
 ## 📚 Documentation
@@ -393,6 +393,8 @@ This project represents a 100-week development effort following a comprehensive 
 | JPIP Protocol | ✅ Infrastructure | 100% | Awaiting codec integration |
 | High-Level API | ⏳ Planned | N/A | Coming in v1.1 |
 | Hardware Accel | ⏳ Planned | N/A | Coming in v1.1 |
+| HTJ2K Codec | ⏳ Planned | N/A | Coming in v1.2 (Part 15) |
+| Lossless Transcoding | ⏳ Planned | N/A | Coming in v1.2 (JPEG 2000 ↔ HTJ2K) |
 
 ---
 
