@@ -542,13 +542,20 @@ public struct BitPlaneCoder: Sendable {
                     // Check if significant
                     let isSignificant = (magnitudes[idx] & bitMask) != 0
                     
-                    // DEBUG: Log individual coefficient processing
+                    // DEBUG: Log BEFORE encoding
                     if width == 4 && height == 4 {
-                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
+                        let ctxStateBefore = contexts[sigContext]
+                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): BEFORE encode, isSig=\(isSignificant), ctx=\(sigContext), state=\(ctxStateBefore.stateIndex), mps=\(ctxStateBefore.mps)")
                     }
                     
                     // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
+                    
+                    // DEBUG: Log AFTER encoding
+                    if width == 4 && height == 4 {
+                        let ctxStateAfter = contexts[sigContext]
+                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): AFTER encode, state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
+                    }
                     
                     if isSignificant {
                         // Encode sign
@@ -986,12 +993,19 @@ public struct BitPlaneDecoder: Sendable {
                     // Get significance context
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
                     
+                    // DEBUG: Log BEFORE decoding
+                    if width == 4 && height == 4 {
+                        let ctxStateBefore = contexts[sigContext]
+                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): BEFORE decode, ctx=\(sigContext), state=\(ctxStateBefore.stateIndex), mps=\(ctxStateBefore.mps)")
+                    }
+                    
                     // Decode significance
                     let isSignificant = decoder.decode(context: &contexts[sigContext])
                     
-                    // DEBUG: Log individual coefficient processing
+                    // DEBUG: Log AFTER decoding
                     if width == 4 && height == 4 {
-                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
+                        let ctxStateAfter = contexts[sigContext]
+                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): AFTER decode, isSig=\(isSignificant), state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
                     }
                     
                     if isSignificant {
