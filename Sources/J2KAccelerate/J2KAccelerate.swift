@@ -1193,8 +1193,12 @@ public struct J2KColorTransform: Sendable {
     /// - Parameter rgb: The RGB color data.
     /// - Returns: The YCbCr color data.
     /// - Throws: ``J2KError`` if the conversion fails.
+    ///
+    /// - Note: This accelerated color transform is not yet implemented in v1.0.
+    ///   Use the standard color transform implementation in J2KCodec module.
+    ///   Accelerated implementation planned for v1.1 Phase 4. See ROADMAP_v1.1.md.
     public func rgbToYCbCr(_ rgb: [Double]) throws -> [Double] {
-        fatalError("Not implemented")
+        fatalError("J2KColorTransform.rgbToYCbCr() is not implemented in v1.0. This is a hardware-accelerated API planned for v1.1. Use J2KCodec color transform implementations instead. See ROADMAP_v1.1.md for implementation timeline.")
     }
     
     /// Converts YCbCr data to RGB color space.
@@ -1202,7 +1206,11 @@ public struct J2KColorTransform: Sendable {
     /// - Parameter ycbcr: The YCbCr color data.
     /// - Returns: The RGB color data.
     /// - Throws: ``J2KError`` if the conversion fails.
+    ///
+    /// - Note: This accelerated color transform is not yet implemented in v1.0.
+    ///   Use the standard color transform implementation in J2KCodec module.
+    ///   Accelerated implementation planned for v1.1 Phase 4. See ROADMAP_v1.1.md.
     public func ycbcrToRGB(_ ycbcr: [Double]) throws -> [Double] {
-        fatalError("Not implemented")
+        fatalError("J2KColorTransform.ycbcrToRGB() is not implemented in v1.0. This is a hardware-accelerated API planned for v1.1. Use J2KCodec color transform implementations instead. See ROADMAP_v1.1.md for implementation timeline.")
     }
 }
