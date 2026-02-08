@@ -220,7 +220,7 @@ public struct MQEncoder: Sendable {
     public mutating func encodeBypass(symbol: Bool) {
         c <<= 1
         if symbol {
-            c += a
+            c += 0x8000  // Bypass mode always uses full interval
         }
         ct -= 1
         if ct == 0 {
@@ -533,8 +533,8 @@ public struct MQDecoder: Sendable {
         ct -= 1
         c <<= 1
         
-        if (c >> 16) >= a {
-            c -= a << 16
+        if (c >> 16) >= 0x8000 {  // Bypass mode always uses full interval
+            c -= 0x8000 << 16
             return true
         }
         return false
