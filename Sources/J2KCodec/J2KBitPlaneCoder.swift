@@ -544,11 +544,18 @@ public struct BitPlaneCoder: Sendable {
                     
                     // DEBUG: Log individual coefficient processing
                     if width == 4 && height == 4 {
-                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
+                        let ctxStateBefore = contexts[sigContext]
+                        print("[ENC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext), state=\(ctxStateBefore.stateIndex), mps=\(ctxStateBefore.mps)")
                     }
                     
                     // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
+                    
+                    // DEBUG: Log state after encoding
+                    if width == 4 && height == 4 {
+                        let ctxStateAfter = contexts[sigContext]
+                        print("[ENC]   -> After encode: state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
+                    }
                     
                     if isSignificant {
                         // Encode sign
@@ -989,9 +996,16 @@ public struct BitPlaneDecoder: Sendable {
                     // Decode significance
                     let isSignificant = decoder.decode(context: &contexts[sigContext])
                     
+                    // DEBUG: Log state before decoding (shows state AFTER the decode operation updated it)
+                    if width == 4 && height == 4 {
+                        let ctxStateAfter = contexts[sigContext]
+                        print("[DEC]   -> After decode: state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
+                    }
+                    
                     // DEBUG: Log individual coefficient processing
                     if width == 4 && height == 4 {
-                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext)")
+                        let ctxStateAfter = contexts[sigContext]
+                        print("[DEC]   Pos[\(idx)] (\(x),\(y)): isSig=\(isSignificant), ctx=\(sigContext), state=\(ctxStateAfter.stateIndex), mps=\(ctxStateAfter.mps)")
                     }
                     
                     if isSignificant {
