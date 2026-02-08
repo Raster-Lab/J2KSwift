@@ -33,8 +33,12 @@ public struct J2KEncoder: Sendable {
     /// - Parameter image: The image to encode.
     /// - Returns: The encoded image data.
     /// - Throws: ``J2KError`` if encoding fails.
+    ///
+    /// - Note: This high-level API is not yet implemented in v1.0. Use component-level
+    ///   APIs (wavelet transform, quantization, entropy coding) directly for now.
+    ///   Full implementation planned for v1.1. See ROADMAP_v1.1.md for details.
     public func encode(_ image: J2KImage) throws -> Data {
-        fatalError("Not implemented")
+        fatalError("J2KEncoder.encode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md for implementation timeline.")
     }
 }
 
@@ -48,7 +52,11 @@ public struct J2KDecoder: Sendable {
     /// - Parameter data: The JPEG 2000 data to decode.
     /// - Returns: The decoded image.
     /// - Throws: ``J2KError`` if decoding fails.
+    ///
+    /// - Note: This high-level API is not yet implemented in v1.0. Use component-level
+    ///   APIs (entropy decoding, dequantization, inverse wavelet transform) directly for now.
+    ///   Full implementation planned for v1.1. See ROADMAP_v1.1.md for details.
     public func decode(_ data: Data) throws -> J2KImage {
-        fatalError("Not implemented")
+        fatalError("J2KDecoder.decode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md for implementation timeline.")
     }
 }
