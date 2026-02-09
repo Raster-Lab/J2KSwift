@@ -503,7 +503,7 @@ public struct J2KCodeBlock: Sendable {
     ///   - height: The height.
     ///   - subband: The subband.
     ///   - data: The encoded data.
-    ///   - passeCount: The number of coding passes (default: 0).
+    ///   - passeCount: The number of coding passes (default: 0). (Note: historical spelling preserved for API compatibility.)
     ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
     ///   - passSegmentLengths: Byte lengths per pass segment (default: empty).
     public init(

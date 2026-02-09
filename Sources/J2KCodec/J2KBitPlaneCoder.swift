@@ -676,9 +676,15 @@ public struct BitPlaneDecoder: Sendable {
         // For per-pass segments, split data into individual segments
         var passSegments: [Data] = []
         if usePerPassSegments {
+            let totalSegmentLength = passSegmentLengths.reduce(0, +)
+            guard totalSegmentLength <= data.count else {
+                throw J2KError.invalidParameter(
+                    "Pass segment lengths total (\(totalSegmentLength)) exceeds data size (\(data.count))"
+                )
+            }
             var offset = 0
             for length in passSegmentLengths {
-                let end = min(offset + length, data.count)
+                let end = offset + length
                 passSegments.append(Data(data[offset..<end]))
                 offset = end
             }
