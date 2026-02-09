@@ -1192,25 +1192,43 @@ public struct J2KColorTransform: Sendable {
     ///
     /// - Parameter rgb: The RGB color data.
     /// - Returns: The YCbCr color data.
-    /// - Throws: ``J2KError`` if the conversion fails.
+    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
     ///
     /// - Note: This accelerated color transform is not yet implemented in v1.0.
-    ///   Use the standard color transform implementation in J2KCodec module.
+    ///   Use the standard color transform implementation in J2KCodec module instead:
+    ///   ```swift
+    ///   // Use J2KCodec color transforms (available in v1.0)
+    ///   import J2KCodec
+    ///   let result = J2KColorTransform.forwardRCT(rgb: rgbData)
+    ///   // or
+    ///   let result = J2KColorTransform.forwardICT(rgb: rgbData)
+    ///   ```
     ///   Accelerated implementation planned for v1.1 Phase 4. See ROADMAP_v1.1.md.
     public func rgbToYCbCr(_ rgb: [Double]) throws -> [Double] {
-        fatalError("J2KColorTransform.rgbToYCbCr() is not implemented in v1.0. This is a hardware-accelerated API planned for v1.1. Use J2KCodec color transform implementations instead. See ROADMAP_v1.1.md for implementation timeline.")
+        throw J2KError.notImplemented(
+            "J2KColorTransform.rgbToYCbCr() is not implemented in v1.0. Use J2KCodec color transform implementations (forwardRCT/forwardICT) instead. Accelerated implementation planned for v1.1."
+        )
     }
     
     /// Converts YCbCr data to RGB color space.
     ///
     /// - Parameter ycbcr: The YCbCr color data.
     /// - Returns: The RGB color data.
-    /// - Throws: ``J2KError`` if the conversion fails.
+    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
     ///
     /// - Note: This accelerated color transform is not yet implemented in v1.0.
-    ///   Use the standard color transform implementation in J2KCodec module.
+    ///   Use the standard color transform implementation in J2KCodec module instead:
+    ///   ```swift
+    ///   // Use J2KCodec color transforms (available in v1.0)
+    ///   import J2KCodec
+    ///   let result = J2KColorTransform.inverseRCT(ycbcr: ycbcrData)
+    ///   // or
+    ///   let result = J2KColorTransform.inverseICT(ycbcr: ycbcrData)
+    ///   ```
     ///   Accelerated implementation planned for v1.1 Phase 4. See ROADMAP_v1.1.md.
     public func ycbcrToRGB(_ ycbcr: [Double]) throws -> [Double] {
-        fatalError("J2KColorTransform.ycbcrToRGB() is not implemented in v1.0. This is a hardware-accelerated API planned for v1.1. Use J2KCodec color transform implementations instead. See ROADMAP_v1.1.md for implementation timeline.")
+        throw J2KError.notImplemented(
+            "J2KColorTransform.ycbcrToRGB() is not implemented in v1.0. Use J2KCodec color transform implementations (inverseRCT/inverseICT) instead. Accelerated implementation planned for v1.1."
+        )
     }
 }

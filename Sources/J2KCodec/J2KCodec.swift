@@ -32,13 +32,24 @@ public struct J2KEncoder: Sendable {
     ///
     /// - Parameter image: The image to encode.
     /// - Returns: The encoded image data.
-    /// - Throws: ``J2KError`` if encoding fails.
+    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
     ///
     /// - Note: This high-level API is not yet implemented in v1.0. Use component-level
     ///   APIs (wavelet transform, quantization, entropy coding) directly for now.
     ///   Full implementation planned for v1.1. See ROADMAP_v1.1.md for details.
+    ///
+    /// Example of component-level usage:
+    /// ```swift
+    /// // Component-level encoding (v1.0 approach)
+    /// let dwt = J2KDWT2D()
+    /// let quantizer = J2KQuantizer()
+    /// let bitPlaneCoder = BitPlaneCoder(...)
+    /// // ... assemble manually
+    /// ```
     public func encode(_ image: J2KImage) throws -> Data {
-        fatalError("J2KEncoder.encode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md for implementation timeline.")
+        throw J2KError.notImplemented(
+            "J2KEncoder.encode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md and GETTING_STARTED.md for examples."
+        )
     }
 }
 
@@ -51,12 +62,23 @@ public struct J2KDecoder: Sendable {
     ///
     /// - Parameter data: The JPEG 2000 data to decode.
     /// - Returns: The decoded image.
-    /// - Throws: ``J2KError`` if decoding fails.
+    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
     ///
     /// - Note: This high-level API is not yet implemented in v1.0. Use component-level
     ///   APIs (entropy decoding, dequantization, inverse wavelet transform) directly for now.
     ///   Full implementation planned for v1.1. See ROADMAP_v1.1.md for details.
+    ///
+    /// Example of component-level usage:
+    /// ```swift
+    /// // Component-level decoding (v1.0 approach)
+    /// let bitPlaneDecoder = BitPlaneDecoder(...)
+    /// let quantizer = J2KQuantizer()
+    /// let idwt = J2KDWT2D()
+    /// // ... assemble manually
+    /// ```
     public func decode(_ data: Data) throws -> J2KImage {
-        fatalError("J2KDecoder.decode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md for implementation timeline.")
+        throw J2KError.notImplemented(
+            "J2KDecoder.decode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md and GETTING_STARTED.md for examples."
+        )
     }
 }
