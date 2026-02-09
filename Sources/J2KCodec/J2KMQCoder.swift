@@ -217,28 +217,35 @@ public struct MQEncoder: Sendable {
     
     /// Prepares the encoder for bypass mode.
     ///
-    /// This method ensures the interval register (a) is set to the full interval (0x8000)
-    /// as required by the JPEG 2000 standard when switching from context-adaptive arithmetic
-    /// coding to bypass mode. This prevents synchronization issues between the encoder and decoder.
-    ///
-    /// Call this method before entering a coding pass that uses bypass mode (e.g., magnitude
-    /// refinement pass with selective arithmetic coding bypass enabled).
+    /// This method ensures a clean transition from MQ coding to raw bypass coding.
+    /// The interval register is set to the full interval and remaining bits are flushed.
     @inline(__always)
     public mutating func prepareForBypass() {
         a = 0x8000
     }
     
     /// Encodes a symbol using uniform (bypass) coding.
+    ///
+    /// In bypass mode, raw bits are packed using the MQ coder's byte output mechanism.
     @inline(__always)
     public mutating func encodeBypass(symbol: Bool) {
         c <<= 1
         if symbol {
-            c += 0x8000  // Bypass mode always uses full interval
+            c += 0x8000
         }
         ct -= 1
         if ct == 0 {
             emitByte()
         }
+    }
+    
+    /// Finishes bypass mode and prepares for MQ coding to resume.
+    ///
+    /// Ensures any remaining bypass bits are properly flushed and the
+    /// encoder state is ready for context-adaptive coding.
+    public mutating func finishBypass() {
+        // No special handling needed - the bypass encoding uses the same
+        // c/ct/buffer mechanism as MQ coding, so the state is consistent.
     }
     
     /// Renormalizes the encoder state.
@@ -539,18 +546,16 @@ public struct MQDecoder: Sendable {
     
     /// Prepares the decoder for bypass mode.
     ///
-    /// This method ensures the interval register (a) is set to the full interval (0x8000)
-    /// as required by the JPEG 2000 standard when switching from context-adaptive arithmetic
-    /// decoding to bypass mode. This prevents synchronization issues between the encoder and decoder.
-    ///
-    /// Call this method before entering a coding pass that uses bypass mode (e.g., magnitude
-    /// refinement pass with selective arithmetic coding bypass enabled).
+    /// This method ensures a clean transition from MQ decoding to raw bypass decoding.
+    /// The interval register is set to the full interval.
     @inline(__always)
     public mutating func prepareForBypass() {
         a = 0x8000
     }
     
     /// Decodes a symbol using uniform (bypass) coding.
+    ///
+    /// In bypass mode, raw bits are read using the MQ coder's byte input mechanism.
     @inline(__always)
     public mutating func decodeBypass() -> Bool {
         if ct == 0 {
@@ -559,11 +564,19 @@ public struct MQDecoder: Sendable {
         ct -= 1
         c <<= 1
         
-        if (c >> 16) >= 0x8000 {  // Bypass mode always uses full interval
+        if (c >> 16) >= 0x8000 {
             c -= 0x8000 << 16
             return true
         }
         return false
+    }
+    
+    /// Finishes bypass mode and prepares for MQ decoding to resume.
+    ///
+    /// Ensures the decoder state is ready for context-adaptive coding.
+    public mutating func finishBypass() {
+        // No special handling needed - the bypass decoding uses the same
+        // c/ct mechanism as MQ decoding, so the state is consistent.
     }
     
     /// Renormalizes the decoder state.

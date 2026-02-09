@@ -195,7 +195,7 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         
         // Encode
         let encoder = BitPlaneCoder(width: width, height: height, subband: subband)
-        let (data, passCount, zeroBitPlanes) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )

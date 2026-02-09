@@ -482,6 +482,17 @@ public struct J2KCodeBlock: Sendable {
     /// The number of missing most significant bit-planes.
     public var zeroBitPlanes: Int
     
+    /// The byte lengths of each coding pass segment.
+    ///
+    /// When predictable termination is used, the encoder resets after each
+    /// coding pass, producing separate data segments. This array stores
+    /// the byte length of each segment so the decoder can reset at the
+    /// correct boundaries.
+    ///
+    /// When empty, the data is treated as a single contiguous segment
+    /// (default/non-predictable termination mode).
+    public var passSegmentLengths: [Int]
+    
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -494,6 +505,7 @@ public struct J2KCodeBlock: Sendable {
     ///   - data: The encoded data.
     ///   - passeCount: The number of coding passes (default: 0).
     ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
+    ///   - passSegmentLengths: Byte lengths per pass segment (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -503,7 +515,8 @@ public struct J2KCodeBlock: Sendable {
         subband: J2KSubband,
         data: Data = Data(),
         passeCount: Int = 0,
-        zeroBitPlanes: Int = 0
+        zeroBitPlanes: Int = 0,
+        passSegmentLengths: [Int] = []
     ) {
         self.index = index
         self.x = x
@@ -514,6 +527,7 @@ public struct J2KCodeBlock: Sendable {
         self.data = data
         self.passeCount = passeCount
         self.zeroBitPlanes = zeroBitPlanes
+        self.passSegmentLengths = passSegmentLengths
     }
 }
 
