@@ -488,8 +488,11 @@ public struct J2KFileWriter: Sendable {
     ///   - image: The image to write.
     ///   - url: The destination URL.
     ///   - configuration: The encoding configuration.
-    /// - Throws: ``J2KError`` if encoding or writing fails.
+    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
+    ///
+    /// - Note: File writing requires the high-level encoder, planned for v1.1 Phase 2-3.
+    ///   See ROADMAP_v1.1.md for details.
     public func write(_ image: J2KImage, to url: URL, configuration: J2KConfiguration = J2KConfiguration()) throws {
-        throw J2KError.notImplemented("File writing is not yet implemented")
+        throw J2KError.notImplemented("File writing is not yet implemented. High-level encoder required, planned for v1.1.")
     }
 }

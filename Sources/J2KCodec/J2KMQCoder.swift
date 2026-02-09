@@ -399,7 +399,7 @@ public struct MQEncoder: Sendable {
     ///   True near-optimal termination requires analysis of the decoder state
     ///   to determine the minimum number of bytes needed.
     ///
-    /// - TODO: Implement true near-optimal termination by analyzing the interval (A)
+    /// - TODO (v1.1 Phase 4): Implement true near-optimal termination by analyzing the interval (A)
     ///   and code register (C) to determine if fewer termination bytes are sufficient.
     ///   This could save 1-2 bytes per code-block termination.
     private mutating func finishNearOptimal() -> Data {
@@ -407,7 +407,7 @@ public struct MQEncoder: Sendable {
         // A true near-optimal termination would analyze the interval (A)
         // and code register (C) to determine if fewer bytes are sufficient.
         //
-        // TODO: Implement proper near-optimal termination algorithm per JPEG 2000 standard
+        // TODO (v1.1 Phase 4): Implement proper near-optimal termination algorithm per JPEG 2000 standard
         // The default termination always produces a valid output,
         // while near-optimal would potentially save 1-2 bytes in some cases.
         return finishDefault()

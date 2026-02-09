@@ -102,7 +102,7 @@ public actor JPIPClient {
         _ = try await transport.send(request)
         
         // For now, return a placeholder image
-        // TODO: Parse response data and construct J2KImage
+        // TODO (v1.1 Phase 5): Parse response data and construct J2KImage
         throw J2KError.notImplemented("Image parsing from JPIP response not yet implemented")
     }
     
@@ -134,7 +134,7 @@ public actor JPIPClient {
         _ = try await transport.send(request)
         
         // For now, return a placeholder
-        // TODO: Parse response data and construct J2KImage
+        // TODO (v1.1 Phase 5): Parse response data and construct J2KImage
         throw J2KError.notImplemented("Region parsing from JPIP response not yet implemented")
     }
     
@@ -167,7 +167,7 @@ public actor JPIPClient {
         // Send request
         _ = try await transport.send(request)
         
-        // TODO: Parse response data and construct J2KImage with progressive quality
+        // TODO (v1.1 Phase 5): Parse response data and construct J2KImage with progressive quality
         throw J2KError.notImplemented("Progressive quality parsing from JPIP response not yet implemented")
     }
     
@@ -193,7 +193,7 @@ public actor JPIPClient {
         // Send request
         _ = try await transport.send(request)
         
-        // TODO: Parse response data and construct J2KImage at specified resolution
+        // TODO (v1.1 Phase 5): Parse response data and construct J2KImage at specified resolution
         throw J2KError.notImplemented("Resolution level parsing from JPIP response not yet implemented")
     }
     
@@ -219,7 +219,7 @@ public actor JPIPClient {
         // Send request
         _ = try await transport.send(request)
         
-        // TODO: Parse response data and construct J2KImage with specified components
+        // TODO (v1.1 Phase 5): Parse response data and construct J2KImage with specified components
         throw J2KError.notImplemented("Component selection parsing from JPIP response not yet implemented")
     }
     
@@ -242,7 +242,7 @@ public actor JPIPClient {
         // Send request
         let response = try await transport.send(request)
         
-        // TODO: Parse metadata from response
+        // TODO (v1.1 Phase 5): Parse metadata from response
         // For now, return basic info from headers
         var metadata: [String: Any] = [:]
         metadata["channelID"] = response.channelID ?? "none"
@@ -262,10 +262,3 @@ public actor JPIPClient {
 }
 
 // Server is now implemented in JPIPServer.swift
-
-extension J2KError {
-    /// Creates a not implemented error.
-    static func notImplemented(_ message: String) -> J2KError {
-        return .internalError("Not implemented: \(message)")
-    }
-}
