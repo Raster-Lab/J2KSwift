@@ -239,15 +239,6 @@ public struct MQEncoder: Sendable {
         }
     }
     
-    /// Finishes bypass mode and prepares for MQ coding to resume.
-    ///
-    /// Ensures any remaining bypass bits are properly flushed and the
-    /// encoder state is ready for context-adaptive coding.
-    public mutating func finishBypass() {
-        // No special handling needed - the bypass encoding uses the same
-        // c/ct/buffer mechanism as MQ coding, so the state is consistent.
-    }
-    
     /// Renormalizes the encoder state.
     @inline(__always)
     private mutating func renormalize() {
@@ -569,14 +560,6 @@ public struct MQDecoder: Sendable {
             return true
         }
         return false
-    }
-    
-    /// Finishes bypass mode and prepares for MQ decoding to resume.
-    ///
-    /// Ensures the decoder state is ready for context-adaptive coding.
-    public mutating func finishBypass() {
-        // No special handling needed - the bypass decoding uses the same
-        // c/ct mechanism as MQ decoding, so the state is consistent.
     }
     
     /// Renormalizes the decoder state.
