@@ -370,6 +370,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Address critical security bugs (input validation crashes)
 - [x] Fix compiler warnings
 - [x] Investigate bit-plane decoder bug (32 tests still failing - complex issue deferred)
+- [x] Fix bit-plane decoder cleanup pass: use immediate state updates per JPEG 2000 standard (fixes 3 of 6 remaining tests)
 - [x] Optimize remaining hot spots (reviewed and confirmed hot paths already optimized)
 - [x] Refine API ergonomics (added configuration presets and convenience methods)
 - [x] Add missing features (added utility extensions for Data and Array types)

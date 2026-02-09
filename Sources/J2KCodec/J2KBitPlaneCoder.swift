@@ -159,13 +159,14 @@ public struct BitPlaneCoder: Sendable {
     ///   - coefficients: The wavelet coefficients to encode.
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - maxPasses: Maximum number of coding passes to generate (optional).
-    /// - Returns: A tuple containing the encoded data and the number of coding passes.
+    /// - Returns: A tuple containing the encoded data, the number of coding passes,
+    ///   the number of zero bit-planes, and per-pass segment lengths (empty if not predictable termination).
     /// - Throws: ``J2KError`` if encoding fails.
     public func encode(
         coefficients: [Int32],
         bitDepth: Int,
         maxPasses: Int? = nil
-    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int) {
+    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int]) {
         guard coefficients.count == width * height else {
             throw J2KError.invalidParameter("Coefficient count mismatch")
         }
@@ -275,10 +276,12 @@ public struct BitPlaneCoder: Sendable {
         
         // Finish encoding
         let encodedData: Data
+        var segmentLengths: [Int] = []
         if options.resetOnEachPass {
             // Concatenate all pass data segments
             var combinedData = Data()
             for segment in passDataSegments {
+                segmentLengths.append(segment.count)
                 combinedData.append(segment)
             }
             encodedData = combinedData
@@ -287,7 +290,7 @@ public struct BitPlaneCoder: Sendable {
             encodedData = encoder.finish(mode: options.terminationMode)
         }
         
-        return (encodedData, passCount, zeroBitPlanes)
+        return (encodedData, passCount, zeroBitPlanes, segmentLengths)
     }
     
     /// Separates coefficients into magnitudes and signs.
@@ -493,19 +496,8 @@ public struct BitPlaneCoder: Sendable {
                 }
                 
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
-                // IMPORTANT: Process all coefficients in a stripe column together to maintain
-                // state consistency between encoder and decoder. Neighbor calculations must
-                // use the SAME state snapshot for all coefficients in the column.
-                
-                // First pass: Calculate all neighbors and encode/decode decisions
-                // without modifying states (to keep neighbors consistent)
-                struct CoefficientDecision {
-                    let idx: Int
-                    let isSignificant: Bool
-                    let signBit: Bool
-                }
-                
-                var decisions: [CoefficientDecision] = []
+                // Per ISO/IEC 15444-1, states are updated immediately as each coefficient
+                // is processed, so subsequent coefficients see updated neighbor states.
                 
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
@@ -515,7 +507,8 @@ public struct BitPlaneCoder: Sendable {
                         continue
                     }
                     
-                    // Get neighbors (using current state snapshot)
+                    // Get neighbors (using current state which includes any updates
+                    // from previously processed coefficients in this stripe column)
                     let neighbors = neighborCalculator.calculate(
                         x: x, y: y,
                         states: states,
@@ -538,23 +531,14 @@ public struct BitPlaneCoder: Sendable {
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
                         
-                        // Store decision for later state update
-                        decisions.append(CoefficientDecision(idx: idx, isSignificant: true, signBit: signBit))
-                    } else {
-                        // Store decision for later state update
-                        decisions.append(CoefficientDecision(idx: idx, isSignificant: false, signBit: false))
-                    }
-                }
-                
-                // Second pass: Update all states after all encoding decisions are made
-                for decision in decisions {
-                    if decision.isSignificant {
-                        states[decision.idx].insert(.significant)
-                        if decision.signBit {
-                            states[decision.idx].insert(.signBit)
+                        // Update state immediately
+                        states[idx].insert(.significant)
+                        if signBit {
+                            states[idx].insert(.signBit)
                         }
                     }
-                    states[decision.idx].insert(.codedThisPass)
+                    
+                    states[idx].insert(.codedThisPass)
                 }
             }
         }
@@ -670,13 +654,15 @@ public struct BitPlaneDecoder: Sendable {
     ///   - passCount: The number of coding passes to decode.
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - zeroBitPlanes: The number of zero bit-planes.
+    ///   - passSegmentLengths: Per-pass segment byte lengths for predictable termination (empty for default).
     /// - Returns: The decoded wavelet coefficients.
     /// - Throws: ``J2KError`` if decoding fails.
     public func decode(
         data: Data,
         passCount: Int,
         bitDepth: Int,
-        zeroBitPlanes: Int
+        zeroBitPlanes: Int,
+        passSegmentLengths: [Int] = []
     ) throws -> [Int32] {
         // Initialize coefficient arrays
         var magnitudes = [UInt32](repeating: 0, count: width * height)
@@ -684,9 +670,37 @@ public struct BitPlaneDecoder: Sendable {
         var states = [CoefficientState](repeating: [], count: width * height)
         var firstRefineFlags = [Bool](repeating: false, count: width * height)
         
+        // Determine if we need per-pass segment decoding
+        let usePerPassSegments = !passSegmentLengths.isEmpty
+        
+        // For per-pass segments, split data into individual segments
+        var passSegments: [Data] = []
+        if usePerPassSegments {
+            let totalSegmentLength = passSegmentLengths.reduce(0, +)
+            guard totalSegmentLength <= data.count else {
+                throw J2KError.invalidParameter(
+                    "Pass segment lengths total (\(totalSegmentLength)) exceeds data size (\(data.count))"
+                )
+            }
+            var offset = 0
+            for length in passSegmentLengths {
+                let end = offset + length
+                passSegments.append(Data(data[offset..<end]))
+                offset = end
+            }
+        }
+        
         // Initialize MQ decoder and contexts
-        var decoder = MQDecoder(data: data)
+        var decoder: MQDecoder
         var contextStates = ContextStateArray()
+        var passSegmentIndex = 0
+        
+        if usePerPassSegments && !passSegments.isEmpty {
+            decoder = MQDecoder(data: passSegments[0])
+            passSegmentIndex = 1
+        } else {
+            decoder = MQDecoder(data: data)
+        }
         
         let activeBitPlanes = bitDepth - zeroBitPlanes
         var passesDecoded = 0
@@ -709,6 +723,13 @@ public struct BitPlaneDecoder: Sendable {
                     contexts: &contextStates
                 )
                 passesDecoded += 1
+                
+                // For predictable termination, reset decoder for next pass
+                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
+                    contextStates.reset()
+                    passSegmentIndex += 1
+                }
             }
             
             // Pass 2: Magnitude Refinement Pass
@@ -728,6 +749,13 @@ public struct BitPlaneDecoder: Sendable {
                     useBypass: useBypass
                 )
                 passesDecoded += 1
+                
+                // For predictable termination, reset decoder for next pass
+                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
+                    contextStates.reset()
+                    passSegmentIndex += 1
+                }
             }
             
             // Pass 3: Cleanup Pass
@@ -741,6 +769,13 @@ public struct BitPlaneDecoder: Sendable {
                     contexts: &contextStates
                 )
                 passesDecoded += 1
+                
+                // For predictable termination, reset decoder for next pass
+                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
+                    contextStates.reset()
+                    passSegmentIndex += 1
+                }
             }
             
             // Clear coded-this-pass flags for next bit-plane
@@ -929,19 +964,8 @@ public struct BitPlaneDecoder: Sendable {
                 }
                 
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
-                // IMPORTANT: Process all coefficients in a stripe column together to maintain
-                // state consistency between encoder and decoder. Neighbor calculations must
-                // use the SAME state snapshot for all coefficients in the column.
-                
-                // First pass: Calculate all neighbors and encode/decode decisions
-                // without modifying states (to keep neighbors consistent)
-                struct CoefficientDecision {
-                    let idx: Int
-                    let isSignificant: Bool
-                    let signBit: Bool
-                }
-                
-                var decisions: [CoefficientDecision] = []
+                // Per ISO/IEC 15444-1, states are updated immediately as each coefficient
+                // is processed, so subsequent coefficients see updated neighbor states.
                 
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
@@ -951,7 +975,8 @@ public struct BitPlaneDecoder: Sendable {
                         continue
                     }
                     
-                    // Get neighbors (using current state snapshot)
+                    // Get neighbors (using current state which includes any updates
+                    // from previously processed coefficients in this stripe column)
                     let neighbors = neighborCalculator.calculate(
                         x: x, y: y,
                         states: states,
@@ -974,23 +999,14 @@ public struct BitPlaneDecoder: Sendable {
                         magnitudes[idx] = magnitudes[idx] | bitMask
                         signs[idx] = signBit
                         
-                        // Store decision for later state update
-                        decisions.append(CoefficientDecision(idx: idx, isSignificant: true, signBit: signBit))
-                    } else {
-                        // Store decision for later state update
-                        decisions.append(CoefficientDecision(idx: idx, isSignificant: false, signBit: false))
-                    }
-                }
-                
-                // Second pass: Update all states after all decoding decisions are made
-                for decision in decisions {
-                    if decision.isSignificant {
-                        states[decision.idx].insert(.significant)
-                        if decision.signBit {
-                            states[decision.idx].insert(.signBit)
+                        // Update state immediately
+                        states[idx].insert(.significant)
+                        if signBit {
+                            states[idx].insert(.signBit)
                         }
                     }
-                    states[decision.idx].insert(.codedThisPass)
+                    
+                    states[idx].insert(.codedThisPass)
                 }
             }
         }
@@ -1097,7 +1113,7 @@ public struct CodeBlockEncoder: Sendable {
         options: CodingOptions
     ) throws -> J2KCodeBlock {
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (data, passCount, zeroBitPlanes) = try coder.encode(
+        let (data, passCount, zeroBitPlanes, passSegmentLengths) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -1111,7 +1127,8 @@ public struct CodeBlockEncoder: Sendable {
             subband: subband,
             data: data,
             passeCount: passCount,
-            zeroBitPlanes: zeroBitPlanes
+            zeroBitPlanes: zeroBitPlanes,
+            passSegmentLengths: passSegmentLengths
         )
     }
 }
@@ -1164,7 +1181,8 @@ public struct CodeBlockDecoder: Sendable {
             data: codeBlock.data,
             passCount: codeBlock.passeCount,
             bitDepth: bitDepth,
-            zeroBitPlanes: codeBlock.zeroBitPlanes
+            zeroBitPlanes: codeBlock.zeroBitPlanes,
+            passSegmentLengths: codeBlock.passSegmentLengths
         )
     }
 }

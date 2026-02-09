@@ -22,17 +22,33 @@ By the end of v1.1 development:
 ## Phase 1: Fix Critical Issues (Weeks 1-2)
 
 ### Priority 1: Bit-Plane Decoder Bug (Week 1)
-**Status**: 32 tests failing in cleanup pass
+**Status**: Cleanup pass bug fixed; 5 tests remaining (bypass mode and predictable termination)
 
-**Tasks**:
-- [ ] Set up comprehensive bitstream logging
-- [ ] Create minimal reproducible test case
-- [ ] Implement bit-count tracking at each step
-- [ ] Compare encoder vs decoder bit consumption
-- [ ] Identify exact point of divergence
-- [ ] Fix synchronization bug
-- [ ] Verify all 32 tests pass
-- [ ] Add regression tests
+**Completed**:
+- [x] Identify exact point of divergence (deferred vs immediate state updates in cleanup pass)
+- [x] Fix synchronization bug: use immediate state updates per ISO/IEC 15444-1
+- [x] Add passSegmentLengths to J2KCodeBlock for predictable termination support
+- [x] Update decoder to handle per-pass segment decoding
+
+**Fixed Tests** (3 of 6):
+- testBitPlaneDecoderRoundTripDifferentSubbands (HH subband context fix)
+- testCodeBlockRoundTripAllSubbands (all subbands, various sizes)
+- testCodeBlockRoundTripLargeBlock (64x64, default options)
+
+**Remaining** (5 tests - deeper issues):
+- testMinimalBlock32x32 (bypass mode, dense data)
+- testMinimalBlock64x64 (bypass mode, dense data)
+- testCodeBlockBypassLargeBlock (bypass mode, 64x64)
+- test64x64WithoutBypass (predictable termination, 64x64)
+- testProgressiveBlockSizes (bypass mode, progressive sizes)
+
+**Root Causes of Remaining Failures**:
+- Bypass mode: MQ coder's byte I/O state (c/ct/buffer) is shared between
+  MQ and bypass coding. For large blocks with dense data, the bypass
+  transition causes desynchronization between encoder and decoder.
+- Predictable termination: `finishPredictable()` produces a termination
+  sequence that the standard MQ decoder cannot properly re-initialize from
+  at 64x64 scale.
 
 **Estimated Effort**: 3-5 days  
 **Dependencies**: None  
