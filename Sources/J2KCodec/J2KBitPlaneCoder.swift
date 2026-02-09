@@ -907,6 +907,20 @@ public struct BitPlaneDecoder: Sendable {
                 }
                 
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
+                // IMPORTANT: Process all coefficients in a stripe column together to maintain
+                // state consistency between encoder and decoder. Neighbor calculations must
+                // use the SAME state snapshot for all coefficients in the column.
+                
+                // First pass: Calculate all neighbors and encode/decode decisions
+                // without modifying states (to keep neighbors consistent)
+                struct CoefficientDecision {
+                    let idx: Int
+                    let isSignificant: Bool
+                    let signBit: Bool
+                }
+                
+                var decisions: [CoefficientDecision] = []
+                
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
                     
@@ -915,7 +929,7 @@ public struct BitPlaneDecoder: Sendable {
                         continue
                     }
                     
-                    // Get neighbors
+                    // Get neighbors (using current state snapshot)
                     let neighbors = neighborCalculator.calculate(
                         x: x, y: y,
                         states: states,
@@ -934,19 +948,27 @@ public struct BitPlaneDecoder: Sendable {
                         let codedSign = decoder.decode(context: &contexts[signContext])
                         let signBit = codedSign != xorBit
                         
-                        // Update coefficient
+                        // Update coefficient magnitude
                         magnitudes[idx] = magnitudes[idx] | bitMask
                         signs[idx] = signBit
                         
-                        // Update state - mark significant first
-                        states[idx].insert(.significant)
-                        if signBit {
-                            states[idx].insert(.signBit)
+                        // Store decision for later state update
+                        decisions.append(CoefficientDecision(idx: idx, isSignificant: true, signBit: signBit))
+                    } else {
+                        // Store decision for later state update
+                        decisions.append(CoefficientDecision(idx: idx, isSignificant: false, signBit: false))
+                    }
+                }
+                
+                // Second pass: Update all states after all decoding decisions are made
+                for decision in decisions {
+                    if decision.isSignificant {
+                        states[decision.idx].insert(.significant)
+                        if decision.signBit {
+                            states[decision.idx].insert(.signBit)
                         }
                     }
-                    
-                    // Mark as processed after all significance handling
-                    states[idx].insert(.codedThisPass)
+                    states[decision.idx].insert(.codedThisPass)
                 }
             }
         }
