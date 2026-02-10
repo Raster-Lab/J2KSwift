@@ -84,6 +84,20 @@ public enum J2KMarker: UInt16, Sendable {
     /// Comment (COM).
     case com = 0xFF64
     
+    // MARK: - HTJ2K (Part 15) Marker Segments
+    
+    /// Extended capabilities (CAP) — ISO/IEC 15444-15.
+    ///
+    /// Signals HTJ2K (High-Throughput JPEG 2000) support and other
+    /// extended capabilities in the codestream.
+    case cap = 0xFF50
+    
+    /// Corresponding profile (CPF) — ISO/IEC 15444-15.
+    ///
+    /// Specifies the profile to which the codestream conforms, including
+    /// HTJ2K-specific profiles.
+    case cpf = 0xFF59
+    
     // MARK: - Marker Categories
     
     /// Returns `true` if this marker has a marker segment (length + data).
@@ -109,7 +123,8 @@ public enum J2KMarker: UInt16, Sendable {
     /// Returns `true` if this marker can appear in the main header.
     public var canAppearInMainHeader: Bool {
         switch self {
-        case .siz, .cod, .coc, .qcd, .qcc, .rgn, .poc, .tlm, .plm, .ppm, .crg, .com:
+        case .siz, .cod, .coc, .qcd, .qcc, .rgn, .poc, .tlm, .plm, .ppm, .crg, .com,
+             .cap, .cpf:
             return true
         default:
             return false
@@ -149,6 +164,8 @@ public enum J2KMarker: UInt16, Sendable {
         case .eph: return "EPH (End of packet header)"
         case .crg: return "CRG (Component registration)"
         case .com: return "COM (Comment)"
+        case .cap: return "CAP (Extended capabilities)"
+        case .cpf: return "CPF (Corresponding profile)"
         }
     }
 }
