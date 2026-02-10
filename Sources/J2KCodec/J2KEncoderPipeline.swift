@@ -375,6 +375,7 @@ struct EncoderPipeline: Sendable {
                         }
 
                         // Determine bit depth from max coefficient magnitude
+                        // Add 1 for sign bit and 1 for headroom to avoid overflow
                         let maxMag = blockCoeffs.reduce(0) { max($0, abs($1)) }
                         let bitDepth = maxMag > 0 ? Int(log2(Double(maxMag))) + 2 : 1
 
@@ -569,10 +570,14 @@ struct EncoderPipeline: Sendable {
     private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
         var segment = J2KBitWriter()
 
+        // Sqcd byte layout: guard bits (bits 5-7) | quantization style (bits 0-4)
+        // Guard bits = 2 (standard value)
+        let guardBits: UInt8 = 2
+
         if config.lossless {
-            // No quantization style (reversible)
-            // Sqcd: no quantization (bits 0-4 = 0), guard bits = 2 (bits 5-7)
-            segment.writeUInt8(0x40) // 2 guard bits, no quantization
+            // No quantization (style = 0) for reversible transforms
+            let sqcd = (guardBits << 5) | 0x00
+            segment.writeUInt8(sqcd)
 
             // SPqcd: Exponent values for each subband
             // LL subband at coarsest level
@@ -588,9 +593,9 @@ struct EncoderPipeline: Sendable {
                 segment.writeUInt8(exp << 3)
             }
         } else {
-            // Scalar expounded quantization
-            // Sqcd: scalar expounded (bits 0-4 = 2), guard bits = 2 (bits 5-7)
-            segment.writeUInt8(0x42) // 2 guard bits, scalar expounded
+            // Scalar expounded quantization (style = 2) for lossy transforms
+            let sqcd = (guardBits << 5) | 0x02
+            segment.writeUInt8(sqcd)
 
             // SPqcd: Step size values for each subband (2 bytes each)
             let stepSizes = J2KStepSizeCalculator.calculateAllStepSizes(

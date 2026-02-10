@@ -249,6 +249,9 @@ final class J2KEncoderPipelineTests: XCTestCase {
     func testEncoderDefaultInit() throws {
         let encoder = J2KEncoder()
         XCTAssertEqual(encoder.configuration.quality, 0.9)
+        XCTAssertEqual(encoder.encodingConfiguration.lossless, false)
+        XCTAssertEqual(encoder.encodingConfiguration.decompositionLevels, 5)
+        XCTAssertEqual(encoder.encodingConfiguration.qualityLayers, 5)
     }
 
     /// Tests creating an encoder with encoding configuration.

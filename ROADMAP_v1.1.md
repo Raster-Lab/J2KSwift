@@ -74,49 +74,21 @@ By the end of v1.1 development:
 **Goal**: Design and implement the encoding pipeline structure
 
 **Tasks**:
-- [ ] Design encoder pipeline architecture
+- [x] Design encoder pipeline architecture
   - Input: `J2KImage`
-  - Output: `Data` (JP2 file format)
-  - Pipeline stages: preprocessing → transform → quantization → entropy coding → file format
-- [ ] Implement encoder state machine
-- [ ] Add progress reporting callbacks
-- [ ] Design error handling strategy
-- [ ] Create encoding context type
-- [ ] Add cancellation support (async/await)
-
-**Code Structure**:
-```swift
-// Sources/J2KCodec/J2KEncoder.swift
-
-public actor J2KEncoder {
-    public struct ProgressUpdate {
-        let stage: EncodingStage
-        let progress: Double // 0.0 to 1.0
-    }
-    
-    public enum EncodingStage {
-        case preprocessing
-        case colorTransform
-        case waveletTransform
-        case quantization
-        case entropyCoding
-        case fileFormat
-    }
-    
-    public func encode(
-        _ image: J2KImage,
-        progress: ((ProgressUpdate) -> Void)? = nil
-    ) async throws -> Data {
-        // Implementation
-    }
-}
-```
+  - Output: `Data` (JPEG 2000 codestream)
+  - Pipeline stages: preprocessing → color transform → wavelet transform → quantization → entropy coding → rate control → codestream generation
+- [x] Implement encoder pipeline (`EncoderPipeline` struct)
+- [x] Add progress reporting callbacks (`EncoderProgressUpdate`, `EncodingStage`)
+- [x] Design error handling strategy (propagate `J2KError` from each stage)
+- [x] Add `J2KEncoder(encodingConfiguration:)` initializer for detailed configuration
+- [ ] Add cancellation support (async/await) — deferred to Week 4
 
 **Testing**:
-- [ ] Unit tests for pipeline stages
-- [ ] Mock component tests
-- [ ] Progress callback tests
-- [ ] Cancellation tests
+- [x] Unit tests for pipeline stages (14 tests)
+- [x] Progress callback tests
+- [x] Edge case tests (1×1, odd dimensions, all-zero data)
+- [ ] Cancellation tests — deferred
 
 ### Week 4: Encoder Component Integration
 
