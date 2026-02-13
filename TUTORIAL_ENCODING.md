@@ -18,7 +18,7 @@ A comprehensive guide to encoding images with J2KSwift.
 
 This tutorial covers everything you need to know about encoding images with J2KSwift, from basic operations to advanced techniques.
 
-> **Note**: The top-level `J2KEncoder.encode()` integration pipeline is planned for a future phase. This tutorial shows the planned API and currently available components.
+> **Note**: The high-level `J2KEncoder.encode()` API is fully functional as of v1.0. This tutorial demonstrates the complete encoding capabilities.
 
 ## Basic Encoding
 

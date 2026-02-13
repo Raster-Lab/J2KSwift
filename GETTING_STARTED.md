@@ -115,9 +115,9 @@ let hdrLinear = J2KColorSpace.hdrLinear  // Linear HDR
 
 ## Your First Encoding
 
-> **Note**: The top-level `J2KEncoder.encode()` pipeline integration is planned for a future phase. Individual codec components (wavelet transform, quantization, entropy coding, color transform) are available for direct use now.
+### Basic Encoding
 
-### Planned API (Future)
+The high-level encoding API is fully functional as of v1.0:
 
 ```swift
 import J2KCore
@@ -129,14 +129,29 @@ let height = 512
 let image = J2KImage(width: width, height: height, components: 3, bitDepth: 8)
 
 // Fill with sample data (red gradient)
-for y in 0..<height {
-    for x in 0..<width {
-        let value = Int32((Double(x) / Double(width)) * 255.0)
-        image.components[0].buffer.setValue(value, at: y * width + x)  // Red
-        image.components[1].buffer.setValue(0, at: y * width + x)       // Green
-        image.components[2].buffer.setValue(0, at: y * width + x)       // Blue
+var redData = Data(count: width * height)
+redData.withUnsafeMutableBytes { ptr in
+    guard let bytes = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+    for y in 0..<height {
+        for x in 0..<width {
+            let value = UInt8((Double(x) / Double(width)) * 255.0)
+            bytes[y * width + x] = value
+        }
     }
 }
+
+// Set component data
+image.components[0] = J2KComponent(
+    index: 0, width: width, height: height, bitDepth: 8, signed: false, data: redData
+)
+image.components[1] = J2KComponent(
+    index: 1, width: width, height: height, bitDepth: 8, signed: false, 
+    data: Data(count: width * height)
+)
+image.components[2] = J2KComponent(
+    index: 2, width: width, height: height, bitDepth: 8, signed: false, 
+    data: Data(count: width * height)
+)
 
 // Create encoder with configuration
 let config = J2KConfiguration(quality: 0.9)
@@ -147,16 +162,67 @@ do {
     let encodedData = try encoder.encode(image)
     print("Encoded \(encodedData.count) bytes")
     
-    // Save to file
-    try encodedData.write(to: URL(fileURLWithPath: "output.jp2"))
+    // The encoded data is a JPEG 2000 codestream
+    // To save as a JP2 file, use J2KFileFormat (see "Working with Files" below)
 } catch {
     print("Encoding failed: \(error)")
 }
 ```
 
-### Current Available Components
+### Encoding with Progress Reporting
 
-While the integrated pipeline is under development, you can use individual components:
+The encoder supports progress callbacks during encoding:
+
+```swift
+let encodedData = try encoder.encode(image) { update in
+    print("\(update.stage): \(Int(update.overallProgress * 100))%")
+}
+```
+
+### Encoding Presets
+
+J2KSwift provides convenient presets for different use cases:
+
+```swift
+import J2KCodec
+
+// Fast encoding (lower quality, faster)
+let fastEncoder = J2KEncoder(
+    encodingConfiguration: J2KEncodingPreset.fast.configuration(quality: 0.8)
+)
+
+// Balanced (good quality/speed tradeoff)
+let balancedEncoder = J2KEncoder(
+    encodingConfiguration: J2KEncodingPreset.balanced.configuration(quality: 0.9)
+)
+
+// Quality encoding (best quality, slower)
+let qualityEncoder = J2KEncoder(
+    encodingConfiguration: J2KEncodingPreset.quality.configuration(quality: 0.95)
+)
+
+// Lossless encoding
+let losslessEncoder = J2KEncoder(
+    encodingConfiguration: J2KEncodingPreset.lossless.configuration()
+)
+```
+
+### Advanced Encoding Configuration
+
+For fine-grained control, create a custom `J2KEncodingConfiguration`:
+
+```swift
+var config = J2KEncodingConfiguration(quality: 0.9, lossless: false)
+config.decompositionLevels = 5
+config.codeBlockSize = J2KSize(width: 64, height: 64)
+config.progressionOrder = .lrcp  // Layer-Resolution-Component-Position
+
+let encoder = J2KEncoder(encodingConfiguration: config)
+```
+
+### Using Individual Components
+
+For advanced use cases, you can also use individual encoding components directly:
 
 ```swift
 import J2KCodec
@@ -186,9 +252,10 @@ let encoded = try coder.encode(codeBlock: quantized)
 
 ## Your First Decoding
 
-> **Note**: The top-level `J2KDecoder.decode()` pipeline is not yet implemented. The example below shows the planned API.
+> **Note**: The high-level `J2KDecoder.decode()` pipeline is not yet implemented in v1.0. 
+> This is planned for v1.1 (see ROADMAP_v1.1.md). The example below shows the planned API.
 
-### Planned API (Future)
+### Planned API (v1.1)
 
 ```swift
 import J2KCore
@@ -208,41 +275,42 @@ do {
     print("Components: \(image.components.count)")
     
     // Access pixel data
-    let firstPixel = image.components[0].buffer.getValue(at: 0)
+    let component0 = image.components[0]
+    let firstPixel = component0.data.first ?? 0
     print("First pixel value: \(firstPixel)")
 } catch {
     print("Decoding failed: \(error)")
 }
 ```
 
-### Current Available Components
+### Current Status (v1.0)
 
-Individual decoding components are available:
+Individual decoding components are available for direct use:
 
 ```swift
 import J2KCodec
 
-// Entropy decoding
-let decoder = J2KBitPlaneCoder()
-let codeBlock = try decoder.decode(bitstream: encodedData)
+// Entropy decoding (bit-plane decoding)
+let bitPlaneDecoder = BitPlaneDecoder()
+let coefficients = try bitPlaneDecoder.decode(codeBlock: encodedBlock)
 
 // Dequantization
-let quantizer = J2KQuantization()
-let dequantized = quantizer.dequantize(
-    codeBlock: codeBlock,
-    stepSize: 0.01
+let quantizer = J2KQuantizer(parameters: .fromQuality(0.9))
+let dequantized = try quantizer.dequantize(
+    coefficients: coefficients,
+    subband: .ll,
+    decompositionLevel: 0,
+    totalLevels: 5
 )
 
 // Inverse wavelet transform
-let dwt = J2KDWT2D()
-let reconstructed = try dwt.inverseTransform(
-    subbands: dequantized,
-    width: width,
-    height: height,
-    levels: 3,
-    filter: .filter97
+let transformed = try J2KDWT2D.inverseDecomposition(
+    decomposition: waveletData,
+    filter: .irreversible97
 )
 ```
+
+> Full decoder pipeline integration is the focus of v1.1 development (see ROADMAP_v1.1.md, Phase 3).
 
 ## Working with Files
 
@@ -274,10 +342,12 @@ do {
 
 ### Reading JP2 Files
 
+> **Note**: `J2KFileReader.read()` is not yet implemented in v1.0. Planned for v1.1.
+
 ```swift
 import J2KFileFormat
 
-// Create a file reader
+// Planned API (v1.1)
 let reader = J2KFileReader()
 
 do {
@@ -291,12 +361,16 @@ do {
 }
 ```
 
+Currently, you can read the raw codestream data and use individual components to decode it.
+
 ### Writing JP2 Files
+
+> **Note**: `J2KFileWriter.write()` is not yet implemented in v1.0. Planned for v1.1.
 
 ```swift
 import J2KFileFormat
 
-// Create a file writer for JP2 format
+// Planned API (v1.1)
 let writer = J2KFileWriter(format: .jp2)
 
 do {
@@ -307,6 +381,8 @@ do {
     print("Writing failed: \(error)")
 }
 ```
+
+Currently, you can encode to a codestream using `J2KEncoder` and save the raw data.
 
 ## Next Steps
 
