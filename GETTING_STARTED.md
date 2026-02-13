@@ -131,8 +131,9 @@ let image = J2KImage(width: width, height: height, components: 3, bitDepth: 8)
 // Fill with sample data (red gradient)
 var redData = Data(count: width * height)
 redData.withUnsafeMutableBytes { ptr in
-    // For a freshly allocated Data object, baseAddress should always be valid
-    let bytes = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+    guard let bytes = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+        return  // Should not happen for freshly allocated Data
+    }
     for y in 0..<height {
         for x in 0..<width {
             let value = UInt8((Double(x) / Double(width)) * 255.0)

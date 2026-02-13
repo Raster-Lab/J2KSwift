@@ -96,8 +96,9 @@ let index = y * image.width + x
 
 // Access pixel data directly from component data
 redComponent.data.withUnsafeBytes { buffer in
-    // For a valid component, baseAddress should always be available
-    let bytes = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
+    guard let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+        return  // Component data may be empty
+    }
     let red = bytes[index]
     print("Red value at (\(x), \(y)): \(red)")
 }
