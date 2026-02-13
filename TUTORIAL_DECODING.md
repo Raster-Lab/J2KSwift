@@ -18,11 +18,11 @@ A comprehensive guide to decoding JPEG 2000 images with J2KSwift.
 
 J2KSwift provides powerful decoding capabilities including partial decoding, ROI decoding, and progressive decoding for efficient image access.
 
-> **Note**: The top-level `J2KDecoder.decode()` integration pipeline is planned for a future phase. This tutorial shows the planned API and currently available decoding components.
+> **Note**: The high-level `J2KDecoder.decode()` API is not yet implemented in v1.0. This is planned for v1.1 (see ROADMAP_v1.1.md, Phase 3). This tutorial shows the planned API and currently available decoding components.
 
 ## Basic Decoding
 
-### Simple Decoding
+### Simple Decoding (Planned API - v1.1)
 
 ```swift
 import J2KCore
@@ -40,7 +40,7 @@ print("Components: \(image.components.count)")
 print("Color space: \(image.colorSpace)")
 ```
 
-### Decoding from File
+### Decoding from File (Planned API - v1.1)
 
 ```swift
 import J2KFileFormat
@@ -50,7 +50,38 @@ let reader = J2KFileReader()
 let image = try reader.read(from: URL(fileURLWithPath: "image.jp2"))
 ```
 
-### Accessing Pixel Data
+### Current Decoding Approach (v1.0)
+
+Currently, you can use individual decoding components:
+
+```swift
+import J2KCodec
+
+// 1. Entropy decoding
+let bitPlaneDecoder = BitPlaneDecoder()
+let coefficients = try bitPlaneDecoder.decode(codeBlock: encodedBlock)
+
+// 2. Dequantization
+let quantizer = J2KQuantizer(parameters: .fromQuality(0.9))
+let dequantized = try quantizer.dequantize(
+    coefficients: coefficients,
+    subband: .ll,
+    decompositionLevel: 0,
+    totalLevels: 5
+)
+
+// 3. Inverse wavelet transform
+let transformed = try J2KDWT2D.inverseDecomposition(
+    decomposition: waveletData,
+    filter: .irreversible97
+)
+
+// 4. Inverse color transform
+let colorTransform = J2KColorTransform()
+let rgb = try colorTransform.yCbCrToRGB(transformed)
+```
+
+### Accessing Pixel Data (Planned API - v1.1)
 
 ```swift
 // Access pixel values from components
@@ -63,11 +94,13 @@ let x = 100
 let y = 100
 let index = y * image.width + x
 
-let red = redComponent.buffer.getValue(at: index)
-let green = greenComponent.buffer.getValue(at: index)
-let blue = blueComponent.buffer.getValue(at: index)
-
-print("Pixel at (\(x), \(y)): R=\(red), G=\(green), B=\(blue)")
+// Access pixel data directly from component data
+redComponent.data.withUnsafeBytes { buffer in
+    if let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) {
+        let red = bytes[index]
+        print("Red value at (\(x), \(y)): \(red)")
+    }
+}
 ```
 
 ## Partial Decoding
