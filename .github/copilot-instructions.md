@@ -207,7 +207,14 @@ Refer to [MILESTONES.md](/MILESTONES.md) for the 100-week development roadmap. W
 2. Implement features in order of dependencies
 3. Update milestone checklist when completing tasks
 4. Add tests for each completed feature
-5. Update documentation
+5. Run CLI tools to verify every completed feature before marking it done:
+   ```bash
+   swift build                          # Full project build
+   swift test                           # Run all tests
+   swift test --filter <ModuleTests>    # Run module-specific tests
+   swiftlint                            # Lint check
+   ```
+6. Update documentation
 
 Current phase focus: **Phase 0 - Foundation (Weeks 1-10)**
 
@@ -259,15 +266,25 @@ func testEncodingPerformance() throws {
 1. Check milestone for phase alignment
 2. Create feature branch
 3. Implement with tests
-4. Update documentation
-5. Run SwiftLint
+4. Run CLI tools to verify the feature:
+   ```bash
+   swift build            # Ensure the project compiles without errors
+   swift test             # Run all tests and confirm they pass
+   swiftlint              # Check for code style violations
+   ```
+5. Update documentation
 6. Submit PR with checklist
 
 ### Fixing a Bug
 
 1. Write failing test that reproduces bug
 2. Fix the bug
-3. Verify test passes
+3. Run CLI tools to verify the fix:
+   ```bash
+   swift build            # Ensure the fix compiles cleanly
+   swift test             # Confirm the new test passes and no regressions
+   swiftlint              # Check for code style violations
+   ```
 4. Add regression test if needed
 5. Update CHANGELOG
 
@@ -275,9 +292,41 @@ func testEncodingPerformance() throws {
 
 1. Ensure tests exist and pass
 2. Make changes incrementally
-3. Run tests after each change
+3. After each change, run CLI tools to verify:
+   ```bash
+   swift build            # Ensure the project still compiles
+   swift test             # Run tests to catch regressions
+   swiftlint              # Verify code style compliance
+   ```
 4. Keep commits atomic
 5. Document breaking changes
+
+### Feature Completion Verification
+
+Every completed feature **must** be verified using CLI tools before it is considered done. Run the following commands in order:
+
+```bash
+# Step 1: Build the entire project
+swift build
+
+# Step 2: Run all tests to ensure nothing is broken
+swift test
+
+# Step 3: Run module-specific tests for the feature being completed
+swift test --filter J2KCoreTests        # Core module tests
+swift test --filter J2KCodecTests       # Codec module tests
+swift test --filter J2KAccelerateTests  # Accelerate module tests
+swift test --filter J2KFileFormatTests  # File format module tests
+swift test --filter JPIPTests           # JPIP module tests
+
+# Step 4: Lint the code for style compliance
+swiftlint
+
+# Step 5: (Optional) Generate and review documentation
+swift package generate-documentation
+```
+
+A feature is only complete when all of the above steps succeed without errors.
 
 ## Code Review Checklist
 
@@ -286,7 +335,9 @@ When generating code, ensure:
 - [ ] Swift 6 strict concurrency compliance
 - [ ] All public APIs documented
 - [ ] Tests added/updated
-- [ ] SwiftLint passes
+- [ ] `swift build` succeeds without errors or warnings
+- [ ] `swift test` passes all tests
+- [ ] SwiftLint passes (`swiftlint`)
 - [ ] No force unwraps in production code
 - [ ] Error handling is appropriate
 - [ ] Types are `Sendable` where needed
