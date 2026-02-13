@@ -130,14 +130,23 @@ let image = J2KImage(width: width, height: height, components: 3, bitDepth: 8)
 
 // Fill with sample data (red gradient)
 var redData = Data(count: width * height)
-redData.withUnsafeMutableBytes { ptr in
-    guard let bytes = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+let success = redData.withUnsafeMutableBytes { ptr -> Bool in
+    guard let bytes = ptr.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+        print("Error: Unable to access pixel buffer")
+        return false
+    }
     for y in 0..<height {
         for x in 0..<width {
             let value = UInt8((Double(x) / Double(width)) * 255.0)
             bytes[y * width + x] = value
         }
     }
+    return true
+}
+
+if !success {
+    // Handle error appropriately
+    print("Failed to initialize image data")
 }
 
 // Set component data

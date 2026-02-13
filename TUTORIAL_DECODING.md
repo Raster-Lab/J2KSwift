@@ -99,6 +99,8 @@ redComponent.data.withUnsafeBytes { buffer in
     if let bytes = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) {
         let red = bytes[index]
         print("Red value at (\(x), \(y)): \(red)")
+    } else {
+        print("Error: Unable to access pixel buffer")
     }
 }
 ```
