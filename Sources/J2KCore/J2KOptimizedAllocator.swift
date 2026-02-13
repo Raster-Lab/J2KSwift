@@ -94,13 +94,17 @@ public final class J2KArenaAllocator: @unchecked Sendable {
             return ptr
         }
 
-        // Need a new block
+        // Need a new block - size it to accommodate this allocation
+        // We use max() to ensure the block is at least as large as the configured blockSize,
+        // but will create a larger block if needed for this specific allocation
         let newBlockSize = max(blockSize, byteCount + alignment)
         let block = Block(capacity: newBlockSize)
         blocks.append(block)
 
+        // This allocation should always succeed since we just sized the block appropriately.
+        // If it fails, it indicates a logic error in the Block.allocate() method.
         guard let ptr = block.allocate(byteCount: byteCount, alignment: alignment) else {
-            fatalError("Arena allocation failed: requested \(byteCount) bytes with alignment \(alignment) in block of size \(newBlockSize)")
+            fatalError("Internal error: Arena allocation failed despite sizing block appropriately. Requested \(byteCount) bytes with alignment \(alignment) in block of size \(newBlockSize). This indicates a bug in Block.allocate().")
         }
         totalAllocated += byteCount
         return ptr
