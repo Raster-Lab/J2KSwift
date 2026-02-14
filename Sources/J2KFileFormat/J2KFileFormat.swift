@@ -19,6 +19,7 @@
 
 import Foundation
 import J2KCore
+import J2KCodec
 
 /// Supported JPEG 2000 file formats.
 public enum J2KFormat: String, Sendable {
@@ -484,15 +485,173 @@ public struct J2KFileWriter: Sendable {
     
     /// Writes an image to a JPEG 2000 file.
     ///
-    /// - Parameters:
-    ///   - image: The image to write.
-    ///   - url: The destination URL.
-    ///   - configuration: The encoding configuration.
-    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
+    /// This method encodes the image using the specified configuration and writes it
+    /// to the specified file format. Supports JP2 (with metadata) and J2K (codestream only) formats.
     ///
-    /// - Note: File writing requires the high-level encoder, planned for v1.1 Phase 2-3.
-    ///   See ROADMAP_v1.1.md for details.
+    /// - Parameters:
+    ///   - image: The image to write. Must have valid dimensions and at least one component.
+    ///   - url: The destination URL where the file will be written.
+    ///   - configuration: The encoding configuration (quality, compression settings, etc.).
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if the image is invalid.
+    /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
+    /// - Throws: ``J2KError/ioError(_:)`` if file writing fails.
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// let writer = J2KFileWriter(format: .jp2)
+    /// let image = J2KImage(width: 512, height: 512, components: 3, bitDepth: 8)
+    /// // ... fill image data ...
+    /// try writer.write(image, to: fileURL, configuration: .init(quality: 0.95))
+    /// ```
     public func write(_ image: J2KImage, to url: URL, configuration: J2KConfiguration = J2KConfiguration()) throws {
-        throw J2KError.notImplemented("File writing is not yet implemented. High-level encoder required, planned for v1.1.")
+        // Validate the image
+        guard image.width > 0, image.height > 0 else {
+            throw J2KError.invalidParameter("Image must have positive dimensions (got \(image.width)x\(image.height))")
+        }
+        
+        guard !image.components.isEmpty else {
+            throw J2KError.invalidParameter("Image must have at least one component")
+        }
+        
+        // Encode the image to a codestream
+        let encoder = J2KEncoder(configuration: configuration)
+        let codestreamData = try encoder.encode(image)
+        
+        // Generate the file data based on format
+        let fileData: Data
+        switch format {
+        case .j2k:
+            // J2K format is just the codestream
+            fileData = codestreamData
+            
+        case .jp2:
+            // JP2 format requires box structure
+            fileData = try buildJP2File(image: image, codestream: codestreamData)
+            
+        case .jpx:
+            // JPX format uses extended boxes
+            fileData = try buildJPXFile(image: image, codestream: codestreamData)
+            
+        case .jpm:
+            // JPM format supports multi-page
+            fileData = try buildJPMFile(image: image, codestream: codestreamData)
+        }
+        
+        // Write to file
+        do {
+            try fileData.write(to: url, options: .atomic)
+        } catch {
+            throw J2KError.ioError("Failed to write file to \(url.path): \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    /// Builds a JP2 file with proper box structure.
+    private func buildJP2File(image: J2KImage, codestream: Data) throws -> Data {
+        var writer = J2KBoxWriter()
+        
+        // 1. Signature box (jP\x20\x20\x0D\x0A\x87\x0A)
+        let signatureBox = J2KSignatureBox()
+        try writer.writeBox(signatureBox)
+        
+        // 2. File Type box
+        let fileTypeBox = J2KFileTypeBox(
+            brand: .jp2,
+            minorVersion: 0
+        )
+        try writer.writeBox(fileTypeBox)
+        
+        // 3. JP2 Header box (jp2h) - contains image metadata
+        try writeJP2HeaderBox(image: image, writer: &writer)
+        
+        // 4. Contiguous Codestream box (jp2c)
+        try writer.writeRawBox(type: .jp2c, content: codestream)
+        
+        return writer.data
+    }
+    
+    /// Writes the JP2 header box containing image metadata.
+    private func writeJP2HeaderBox(image: J2KImage, writer: inout J2KBoxWriter) throws {
+        var headerWriter = J2KBoxWriter()
+        
+        // Image Header box (ihdr)
+        let ihdrBox = J2KImageHeaderBox(
+            width: UInt32(image.width),
+            height: UInt32(image.height),
+            numComponents: UInt16(image.components.count),
+            bitsPerComponent: UInt8(image.components[0].bitDepth),
+            compressionType: J2KImageHeaderBox.compressionType,
+            colorSpaceUnknown: 0, // Color space is known
+            intellectualProperty: 0 // No intellectual property info
+        )
+        try headerWriter.writeBox(ihdrBox)
+        
+        // Bits Per Component box (bpcc) - optional, for variable bit depths
+        let allSameBitDepth = image.components.allSatisfy { $0.bitDepth == image.components[0].bitDepth }
+        if !allSameBitDepth {
+            var bitDepths: [J2KBitsPerComponentBox.BitDepth] = []
+            for component in image.components {
+                let depth = component.signed ?
+                    J2KBitsPerComponentBox.BitDepth.signed(UInt8(component.bitDepth)) :
+                    J2KBitsPerComponentBox.BitDepth.unsigned(UInt8(component.bitDepth))
+                bitDepths.append(depth)
+            }
+            let bpccBox = J2KBitsPerComponentBox(bitDepths: bitDepths)
+            try headerWriter.writeBox(bpccBox)
+        }
+        
+        // Color Specification box (colr)
+        let colrBox = try buildColorSpecificationBox(image: image)
+        try headerWriter.writeBox(colrBox)
+        
+        // Write the jp2h box containing all header boxes
+        try writer.writeRawBox(type: .jp2h, content: headerWriter.data)
+    }
+    
+    /// Builds a color specification box based on image components.
+    ///
+    /// - Note: This implementation makes basic assumptions about color space:
+    ///   - 1 component: Greyscale
+    ///   - 3 components: sRGB
+    ///   - 4+ components: sRGB (assumes RGBA; CMYK and other color spaces not yet supported)
+    /// Future versions should implement proper color space detection based on component metadata.
+    private func buildColorSpecificationBox(image: J2KImage) throws -> J2KColorSpecificationBox {
+        // Determine color space based on number of components
+        let colorSpace: J2KColorSpecificationBox.EnumeratedColorSpace
+        switch image.components.count {
+        case 1:
+            colorSpace = .greyscale
+        case 3:
+            colorSpace = .sRGB
+        case 4:
+            // Assume RGBA (sRGB with alpha)
+            // Note: CMYK and other 4-component color spaces are not yet supported
+            colorSpace = .sRGB
+        default:
+            // Default fallback for unusual component counts
+            colorSpace = .sRGB
+        }
+        
+        return J2KColorSpecificationBox(
+            method: .enumerated(colorSpace),
+            precedence: 0,
+            approximation: 0
+        )
+    }
+    
+    /// Builds a JPX file (extended format).
+    private func buildJPXFile(image: J2KImage, codestream: Data) throws -> Data {
+        // JPX is an extended format, for now use JP2 structure
+        // Full JPX support would include reader requirements box, etc.
+        return try buildJP2File(image: image, codestream: codestream)
+    }
+    
+    /// Builds a JPM file (multi-page format).
+    private func buildJPMFile(image: J2KImage, codestream: Data) throws -> Data {
+        // JPM is for multi-page documents, for now use JP2 structure
+        // Full JPM support would include page boxes, layout, etc.
+        return try buildJP2File(image: image, codestream: codestream)
     }
 }
