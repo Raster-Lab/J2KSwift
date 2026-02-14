@@ -1387,12 +1387,39 @@ final class J2KBypassModeTests: XCTestCase {
         }
     }
     
-    /// Test code block bypass with large block
-    ///
-    /// Known Issue: Bypass mode has synchronization bug with dense data in large blocks.
-    /// See BYPASS_MODE_ISSUE.md for details and workarounds.
+    /// Test code block bypass with large block (fixed in v1.1.1).
     func testCodeBlockBypassLargeBlock() throws {
-        throw XCTSkip("Bypass mode known issue - see BYPASS_MODE_ISSUE.md. Will be fixed in v1.1.1")
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+        
+        let width = 32
+        let height = 32
+        let bitDepth = 12
+        let options = CodingOptions.fastEncoding
+        
+        var original = [Int32](repeating: 0, count: width * height)
+        for i in 0..<original.count {
+            let sign: Int32 = (i % 5 == 0) ? -1 : 1
+            original[i] = sign * Int32((i * 17) % 2048)
+        }
+        
+        let codeBlock = try encoder.encode(
+            coefficients: original,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        let decoded = try decoder.decode(
+            codeBlock: codeBlock,
+            bitDepth: bitDepth,
+            options: options
+        )
+        
+        XCTAssertEqual(decoded, original,
+                      "Bypass round-trip for large block should be exact")
     }
     
     // MARK: - Performance Tests

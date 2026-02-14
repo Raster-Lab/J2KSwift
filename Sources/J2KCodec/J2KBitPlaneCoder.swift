@@ -186,7 +186,11 @@ public struct BitPlaneCoder: Sendable {
         var encoder = MQEncoder()
         var contextStates = ContextStateArray()
         
-        // For predictable termination, we collect pass data separately
+        // When bypass mode is enabled, per-pass segments are required for bypass
+        // bit-planes to separate MQ-coded and raw-coded data per JPEG 2000 standard.
+        let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
+        
+        // For per-pass termination, we collect pass data separately
         var passDataSegments: [Data] = []
         
         var passCount = 0
@@ -211,8 +215,8 @@ public struct BitPlaneCoder: Sendable {
                 )
                 passCount += 1
                 
-                // For predictable mode, finish and reset after each pass
-                if options.resetOnEachPass {
+                // For per-pass mode, finish and reset after each pass
+                if usePerPassSegments {
                     let passData = encoder.finish(mode: options.terminationMode)
                     passDataSegments.append(passData)
                     encoder.reset()
@@ -222,28 +226,38 @@ public struct BitPlaneCoder: Sendable {
             
             // Pass 2: Magnitude Refinement Pass
             if passCount < maxPassLimit {
-                // Prepare for bypass mode if enabled
                 if useBypass {
-                    encoder.prepareForBypass()
-                }
-                
-                encodeMagnitudeRefinementPass(
-                    magnitudes: magnitudes,
-                    states: &states,
-                    firstRefineFlags: &firstRefineFlags,
-                    bitMask: bitMask,
-                    encoder: &encoder,
-                    contexts: &contextStates,
-                    useBypass: useBypass
-                )
-                passCount += 1
-                
-                // For predictable mode, finish and reset after each pass
-                if options.resetOnEachPass {
-                    let passData = encoder.finish(mode: options.terminationMode)
+                    // Use separate raw bypass encoder for bypass mode
+                    var bypassEncoder = RawBypassEncoder()
+                    encodeMagnitudeRefinementPassBypass(
+                        magnitudes: magnitudes,
+                        states: &states,
+                        firstRefineFlags: &firstRefineFlags,
+                        bitMask: bitMask,
+                        bypassEncoder: &bypassEncoder
+                    )
+                    passCount += 1
+                    let passData = bypassEncoder.finish()
                     passDataSegments.append(passData)
-                    encoder.reset()
-                    contextStates.reset()
+                } else {
+                    encodeMagnitudeRefinementPass(
+                        magnitudes: magnitudes,
+                        states: &states,
+                        firstRefineFlags: &firstRefineFlags,
+                        bitMask: bitMask,
+                        encoder: &encoder,
+                        contexts: &contextStates,
+                        useBypass: false
+                    )
+                    passCount += 1
+                    
+                    // For per-pass mode, finish and reset after each pass
+                    if usePerPassSegments {
+                        let passData = encoder.finish(mode: options.terminationMode)
+                        passDataSegments.append(passData)
+                        encoder.reset()
+                        contextStates.reset()
+                    }
                 }
             }
             
@@ -259,8 +273,8 @@ public struct BitPlaneCoder: Sendable {
                 )
                 passCount += 1
                 
-                // For predictable mode, finish and reset after each pass
-                if options.resetOnEachPass {
+                // For per-pass mode, finish and reset after each pass
+                if usePerPassSegments {
                     let passData = encoder.finish(mode: options.terminationMode)
                     passDataSegments.append(passData)
                     encoder.reset()
@@ -277,7 +291,7 @@ public struct BitPlaneCoder: Sendable {
         // Finish encoding
         let encodedData: Data
         var segmentLengths: [Int] = []
-        if options.resetOnEachPass {
+        if usePerPassSegments {
             // Concatenate all pass data segments
             var combinedData = Data()
             for segment in passDataSegments {
@@ -432,6 +446,43 @@ public struct BitPlaneCoder: Sendable {
                 }
                 
                 // Update refinement flag
+                if !firstRefineFlags[idx] {
+                    firstRefineFlags[idx] = true
+                }
+                
+                states[idx].insert(.codedThisPass)
+            }
+        }
+    }
+    
+    /// Encodes the magnitude refinement pass using raw bypass coding.
+    ///
+    /// This method uses a separate `RawBypassEncoder` to write raw bits directly
+    /// without context-adaptive arithmetic coding, providing faster encoding.
+    ///
+    /// - Parameters:
+    ///   - magnitudes: The coefficient magnitudes.
+    ///   - states: The coefficient states.
+    ///   - firstRefineFlags: Flags indicating first refinement for each coefficient.
+    ///   - bitMask: The bit mask for this bit-plane.
+    ///   - bypassEncoder: The raw bypass encoder.
+    private func encodeMagnitudeRefinementPassBypass(
+        magnitudes: [UInt32],
+        states: inout [CoefficientState],
+        firstRefineFlags: inout [Bool],
+        bitMask: UInt32,
+        bypassEncoder: inout RawBypassEncoder
+    ) {
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = y * width + x
+                
+                guard states[idx].contains(.significant) else { continue }
+                guard !states[idx].contains(.codedThisPass) else { continue }
+                
+                let bitValue = (magnitudes[idx] & bitMask) != 0
+                bypassEncoder.encode(symbol: bitValue)
+                
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
@@ -691,14 +742,11 @@ public struct BitPlaneDecoder: Sendable {
         }
         
         // Initialize MQ decoder and contexts
-        var decoder: MQDecoder
+        var decoder = MQDecoder(data: Data())  // Will be replaced before first use
         var contextStates = ContextStateArray()
         var passSegmentIndex = 0
         
-        if usePerPassSegments && !passSegments.isEmpty {
-            decoder = MQDecoder(data: passSegments[0])
-            passSegmentIndex = 1
-        } else {
+        if !usePerPassSegments {
             decoder = MQDecoder(data: data)
         }
         
@@ -714,6 +762,13 @@ public struct BitPlaneDecoder: Sendable {
             
             // Pass 1: Significance Propagation Pass
             if passesDecoded < passCount {
+                // Load segment for this pass if using per-pass segments
+                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
+                    contextStates.reset()
+                    passSegmentIndex += 1
+                }
+                
                 decodeSignificancePropagationPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -723,43 +778,51 @@ public struct BitPlaneDecoder: Sendable {
                     contexts: &contextStates
                 )
                 passesDecoded += 1
-                
-                // For predictable termination, reset decoder for next pass
-                if usePerPassSegments && passSegmentIndex < passSegments.count {
-                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
-                    contextStates.reset()
-                    passSegmentIndex += 1
-                }
             }
             
             // Pass 2: Magnitude Refinement Pass
             if passesDecoded < passCount {
-                // Prepare for bypass mode if enabled
-                if useBypass {
-                    decoder.prepareForBypass()
+                if useBypass && usePerPassSegments && passSegmentIndex < passSegments.count {
+                    // Use separate raw bypass decoder for bypass mode
+                    var bypassDecoder = RawBypassDecoder(data: passSegments[passSegmentIndex])
+                    passSegmentIndex += 1
+                    decodeMagnitudeRefinementPassBypass(
+                        magnitudes: &magnitudes,
+                        states: &states,
+                        firstRefineFlags: &firstRefineFlags,
+                        bitMask: bitMask,
+                        bypassDecoder: &bypassDecoder
+                    )
+                } else {
+                    // Load segment for this pass if using per-pass segments
+                    if usePerPassSegments && passSegmentIndex < passSegments.count {
+                        decoder = MQDecoder(data: passSegments[passSegmentIndex])
+                        contextStates.reset()
+                        passSegmentIndex += 1
+                    }
+                    
+                    decodeMagnitudeRefinementPass(
+                        magnitudes: &magnitudes,
+                        states: &states,
+                        firstRefineFlags: &firstRefineFlags,
+                        bitMask: bitMask,
+                        decoder: &decoder,
+                        contexts: &contextStates,
+                        useBypass: false
+                    )
                 }
-                
-                decodeMagnitudeRefinementPass(
-                    magnitudes: &magnitudes,
-                    states: &states,
-                    firstRefineFlags: &firstRefineFlags,
-                    bitMask: bitMask,
-                    decoder: &decoder,
-                    contexts: &contextStates,
-                    useBypass: useBypass
-                )
                 passesDecoded += 1
-                
-                // For predictable termination, reset decoder for next pass
+            }
+            
+            // Pass 3: Cleanup Pass
+            if passesDecoded < passCount {
+                // Load segment for this pass if using per-pass segments
                 if usePerPassSegments && passSegmentIndex < passSegments.count {
                     decoder = MQDecoder(data: passSegments[passSegmentIndex])
                     contextStates.reset()
                     passSegmentIndex += 1
                 }
-            }
-            
-            // Pass 3: Cleanup Pass
-            if passesDecoded < passCount {
+                
                 decodeCleanupPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -769,13 +832,6 @@ public struct BitPlaneDecoder: Sendable {
                     contexts: &contextStates
                 )
                 passesDecoded += 1
-                
-                // For predictable termination, reset decoder for next pass
-                if usePerPassSegments && passSegmentIndex < passSegments.count {
-                    decoder = MQDecoder(data: passSegments[passSegmentIndex])
-                    contextStates.reset()
-                    passSegmentIndex += 1
-                }
             }
             
             // Clear coded-this-pass flags for next bit-plane
@@ -913,6 +969,46 @@ public struct BitPlaneDecoder: Sendable {
                 }
                 
                 // Update refinement flag
+                if !firstRefineFlags[idx] {
+                    firstRefineFlags[idx] = true
+                }
+                
+                states[idx].insert(.codedThisPass)
+            }
+        }
+    }
+    
+    /// Decodes the magnitude refinement pass using raw bypass coding.
+    ///
+    /// This method uses a separate `RawBypassDecoder` to read raw bits directly
+    /// without context-adaptive arithmetic decoding.
+    ///
+    /// - Parameters:
+    ///   - magnitudes: The coefficient magnitudes being reconstructed.
+    ///   - states: The coefficient states.
+    ///   - firstRefineFlags: Flags indicating first refinement for each coefficient.
+    ///   - bitMask: The bit mask for this bit-plane.
+    ///   - bypassDecoder: The raw bypass decoder.
+    private func decodeMagnitudeRefinementPassBypass(
+        magnitudes: inout [UInt32],
+        states: inout [CoefficientState],
+        firstRefineFlags: inout [Bool],
+        bitMask: UInt32,
+        bypassDecoder: inout RawBypassDecoder
+    ) {
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = y * width + x
+                
+                guard states[idx].contains(.significant) else { continue }
+                guard !states[idx].contains(.codedThisPass) else { continue }
+                
+                let bitValue = bypassDecoder.decode()
+                
+                if bitValue {
+                    magnitudes[idx] = magnitudes[idx] | bitMask
+                }
+                
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
