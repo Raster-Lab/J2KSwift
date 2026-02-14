@@ -610,12 +610,14 @@ struct EncoderPipeline: Sendable {
             segment.writeUInt16(UInt16((llExp & 0x1F) << 11 | (llMant & 0x7FF)))
 
             // Detail subbands
-            for level in 1...config.decompositionLevels {
-                for subband in [J2KSubband.hl, .lh, .hh] {
-                    let key = "\(subband.rawValue)_\(level)"
-                    let step = stepSizes[key] ?? 1.0
-                    let (exp, mant) = J2KStepSizeCalculator.encodeStepSize(step)
-                    segment.writeUInt16(UInt16((exp & 0x1F) << 11 | (mant & 0x7FF)))
+            if config.decompositionLevels > 0 {
+                for level in 1...config.decompositionLevels {
+                    for subband in [J2KSubband.hl, .lh, .hh] {
+                        let key = "\(subband.rawValue)_\(level)"
+                        let step = stepSizes[key] ?? 1.0
+                        let (exp, mant) = J2KStepSizeCalculator.encodeStepSize(step)
+                        segment.writeUInt16(UInt16((exp & 0x1F) << 11 | (mant & 0x7FF)))
+                    }
                 }
             }
         }
