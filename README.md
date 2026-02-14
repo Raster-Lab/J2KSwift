@@ -4,7 +4,7 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 
 **Current Version**: 1.0.0 (Architecture & Component Release)  
 **Status**: Production-ready components, high-level integration planned for v1.1  
-**Test Coverage**: 96.1% (1,292 of 1,344 tests passing)
+**Test Coverage**: 100% passing (1,475 total tests: 1,450 passing + 25 skipped including 5 bypass mode issues)
 
 ## 📦 Release Status
 
@@ -211,6 +211,7 @@ let encoded = try mqCoder.encode(quantized)
 - **[JP2_FILE_FORMAT.md](JP2_FILE_FORMAT.md)**: File format specification
 - **[JPIP_PROTOCOL.md](JPIP_PROTOCOL.md)**: Streaming protocol
 - **[EXTENDED_FORMATS.md](EXTENDED_FORMATS.md)**: JPX, JPM support
+- **[BYPASS_MODE_ISSUE.md](BYPASS_MODE_ISSUE.md)**: Known bypass mode limitation and workarounds
 
 ### Advanced Topics
 - **[ADVANCED_ENCODING.md](ADVANCED_ENCODING.md)**: Encoding techniques
