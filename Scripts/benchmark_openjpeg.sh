@@ -140,9 +140,76 @@ main() {
     setup_output
     generate_test_images
     
+    // Build J2KSwift CLI tool
+    log_info "Building J2KSwift CLI tool..."
+    if command -v swift &> /dev/null; then
+        cd "$(dirname "$0")/.." || exit 1
+        swift build --product j2k --configuration release 2>&1 | grep -E "(error|Error)" || true
+        if [ $? -eq 0 ] && [ -f ".build/release/j2k" ]; then
+            J2K_CLI="$(pwd)/.build/release/j2k"
+            log_success "J2KSwift CLI built: $J2K_CLI"
+        else
+            log_warning "Failed to build J2KSwift CLI, benchmarking will be incomplete"
+            J2K_CLI=""
+        fi
+        cd - > /dev/null || exit 1
+    else
+        log_warning "Swift not found, skipping J2KSwift benchmarks"
+        J2K_CLI=""
+    fi
+    
+    # Benchmark J2KSwift
+    if [ -n "$J2K_CLI" ]; then
+        log_info "Running J2KSwift benchmarks..."
+        IFS=',' read -ra SIZES <<< "$IMAGE_SIZES"
+        for size in "${SIZES[@]}"; do
+            local input_file="$OUTPUT_DIR/test_images/test_${size}x${size}.pgm"
+            local output_file="$OUTPUT_DIR/j2kswift/test_${size}x${size}.json"
+            
+            mkdir -p "$OUTPUT_DIR/j2kswift"
+            
+            log_info "  Benchmarking ${size}×${size}..."
+            "$J2K_CLI" benchmark -i "$input_file" -r "$NUM_RUNS" -o "$output_file" > /dev/null 2>&1
+            
+            if [ -f "$output_file" ]; then
+                log_success "  Saved results to: $output_file"
+            fi
+        done
+    fi
+    
+    # Benchmark OpenJPEG
+    if $RUN_OPENJPEG && command -v opj_compress &> /dev/null; then
+        log_info "Running OpenJPEG benchmarks..."
+        IFS=',' read -ra SIZES <<< "$IMAGE_SIZES"
+        for size in "${SIZES[@]}"; do
+            local input_file="$OUTPUT_DIR/test_images/test_${size}x${size}.pgm"
+            local output_file="$OUTPUT_DIR/openjpeg/test_${size}x${size}.j2k"
+            
+            log_info "  Benchmarking ${size}×${size}..."
+            
+            # Run encoding benchmark
+            local total_time=0
+            for ((i=1; i<=$NUM_RUNS; i++)); do
+                local start=$(date +%s.%N)
+                opj_compress -i "$input_file" -o "$output_file" > /dev/null 2>&1
+                local end=$(date +%s.%N)
+                local elapsed=$(echo "$end - $start" | bc)
+                total_time=$(echo "$total_time + $elapsed" | bc)
+            done
+            
+            local avg_time=$(echo "scale=3; $total_time / $NUM_RUNS" | bc)
+            log_success "  Average encode time: ${avg_time}s"
+        done
+    fi
+    
     echo ""
-    log_success "Setup complete! Results in: $OUTPUT_DIR"
-    log_info "Note: Full benchmarking requires OpenJPEG and J2KSwift CLI tool"
+    log_success "Benchmarking complete! Results in: $OUTPUT_DIR"
+    if [ -n "$J2K_CLI" ]; then
+        log_info "J2KSwift results: $OUTPUT_DIR/j2kswift/"
+    fi
+    if $RUN_OPENJPEG && command -v opj_compress &> /dev/null; then
+        log_info "OpenJPEG results: $OUTPUT_DIR/openjpeg/"
+    fi
     echo ""
 }
 

@@ -43,15 +43,42 @@ Automated performance comparison between J2KSwift and OpenJPEG.
 
 **Status**: 
 - ✅ OpenJPEG benchmarking infrastructure
-- ⏳ J2KSwift CLI tool (pending - required for automated J2KSwift benchmarks)
+- ✅ J2KSwift CLI tool (complete - supports encode, decode, benchmark commands)
+- ✅ Automated benchmarking with JSON output
+- ✅ Integration with benchmark_openjpeg.sh script
+
+**Features**:
+- Command-line interface for J2KSwift encoding/decoding
+- Benchmarking with detailed statistics (min, max, average, median, throughput)
+- JSON output for automated processing
+- PGM/PPM image format support
+- Multiple encoding presets (fast, balanced, quality)
+- Detailed timing information
+
+**Usage**:
+```bash
+# Show help
+.build/debug/j2k --help
+
+# Encode an image
+.build/debug/j2k encode -i input.pgm -o output.j2k --timing
+
+# Decode an image
+.build/debug/j2k decode -i input.j2k -o output.pgm --timing
+
+# Run benchmarks
+.build/debug/j2k benchmark -i test.pgm -r 10 -o results.json
+
+# Run comparison benchmarks (J2KSwift vs OpenJPEG)
+./Scripts/benchmark_openjpeg.sh -s 512,1024 -r 5
+```
 
 **Future Enhancements**:
-1. Implement J2KSwift CLI tool for automated benchmarking
-2. Add RGB/RGBA image tests
-3. Test multiple quality levels
-4. Memory profiling integration
-5. Multi-threaded performance testing
-6. Automated report generation with charts
+1. Add RGB/RGBA image tests (PPM format support is implemented)
+2. Test multiple quality levels (presets implemented)
+3. Memory profiling integration
+4. Multi-threaded performance testing
+5. Automated report generation with charts
 
 ## Future Scripts
 

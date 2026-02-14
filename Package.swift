@@ -29,6 +29,9 @@ let package = Package(
         .library(
             name: "JPIP",
             targets: ["JPIP"]),
+        .executable(
+            name: "j2k",
+            targets: ["J2KCLI"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -82,5 +85,17 @@ let package = Package(
         .testTarget(
             name: "JPIPTests",
             dependencies: ["JPIP"]),
+        .testTarget(
+            name: "J2KCLITests",
+            dependencies: ["J2KCore"]),
+        .executableTarget(
+            name: "J2KCLI",
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
+            path: "Sources/J2KCLI",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency"),
+                .enableExperimentalFeature("StrictConcurrency"),
+                .unsafeFlags(["-parse-as-library"])
+            ]),
     ]
 )
