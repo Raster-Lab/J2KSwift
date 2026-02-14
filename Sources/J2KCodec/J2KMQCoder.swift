@@ -724,7 +724,7 @@ public struct RawBypassDecoder: Sendable {
                 c = UInt32(data[position])
                 position += 1
                 // After 0xFF, use only 7 bits
-                if prevByte == 0xFF && position > 1 {
+                if prevByte == 0xFF {
                     ct = 7
                 } else {
                     ct = 8
