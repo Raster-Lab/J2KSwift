@@ -1,37 +1,50 @@
 import XCTest
 @testable import J2KFileFormat
 @testable import J2KCore
+import Foundation
 
-/// Tests that file format placeholder APIs throw `notImplemented` errors.
+/// Tests that file format APIs are now implemented.
 ///
-/// File writing is planned for full implementation in v1.1 Phase 2-3.
+/// File writing was implemented as part of v1.1 Phase 2-3 completion.
 final class J2KFileFormatPlaceholderAPITests: XCTestCase {
     
-    /// Tests that `J2KFileWriter.write()` throws `notImplemented`.
+    /// Tests that `J2KFileWriter.write()` successfully writes a JP2 file.
     func testFileWriterWriteThrowsNotImplemented() throws {
         let writer = J2KFileWriter()
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
-        let url = URL(fileURLWithPath: "/tmp/test_output.jp2")
         
-        XCTAssertThrowsError(try writer.write(image, to: url)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected J2KError.notImplemented, got \(error)")
-                return
-            }
-        }
+        // Create a temporary URL for testing
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".jp2")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        
+        // Should succeed without throwing
+        XCTAssertNoThrow(try writer.write(image, to: tempURL))
+        
+        // Verify file was created
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path))
     }
     
-    /// Tests that `J2KFileWriter.write()` with custom format throws `notImplemented`.
+    /// Tests that `J2KFileWriter.write()` with J2K format successfully writes a codestream.
     func testFileWriterWriteJ2KFormatThrowsNotImplemented() throws {
         let writer = J2KFileWriter(format: .j2k)
         let image = J2KImage(width: 16, height: 16, components: 3, bitDepth: 8)
-        let url = URL(fileURLWithPath: "/tmp/test_output.j2k")
         
-        XCTAssertThrowsError(try writer.write(image, to: url)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected J2KError.notImplemented, got \(error)")
-                return
-            }
-        }
+        // Create a temporary URL for testing
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".j2k")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        
+        // Should succeed without throwing
+        XCTAssertNoThrow(try writer.write(image, to: tempURL))
+        
+        // Verify file was created
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path))
+        
+        // Verify it's a valid J2K codestream (starts with FF 4F)
+        let data = try Data(contentsOf: tempURL)
+        XCTAssertGreaterThan(data.count, 2)
+        XCTAssertEqual(data[0], 0xFF)
+        XCTAssertEqual(data[1], 0x4F)
     }
 }
