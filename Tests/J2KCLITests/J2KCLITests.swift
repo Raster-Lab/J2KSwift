@@ -16,6 +16,8 @@ final class J2KCLITests: XCTestCase {
         let currentDir = fileManager.currentDirectoryPath
         
         // Common build locations to check
+        // Note: Some CI environments change directory structure, so we check both
+        // the current directory and a potential subdirectory with the package name
         let possiblePaths = [
             "\(currentDir)/.build/debug/j2k",
             "\(currentDir)/.build/release/j2k",
