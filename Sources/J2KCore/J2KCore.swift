@@ -758,7 +758,16 @@ public struct J2KConfiguration: Sendable {
 
 /// Returns the version of the J2KSwift framework.
 ///
-/// - Returns: A string representing the current version.
+/// This function returns the semantic version string for the current release of J2KSwift.
+/// The version follows semantic versioning (semver) format: MAJOR.MINOR.PATCH.
+///
+/// Example:
+/// ```swift
+/// let version = getVersion()
+/// print("J2KSwift version: \(version)")
+/// ```
+///
+/// - Returns: A string representing the current version in semver format.
 public func getVersion() -> String {
-    return "0.1.0-dev"
+    return "1.1.0"
 }

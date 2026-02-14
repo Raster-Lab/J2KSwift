@@ -63,6 +63,25 @@ public struct MQState: Sendable, Equatable {
 }
 
 /// The MQ-coder probability estimation state table (47 states).
+///
+/// This table defines the finite state machine (FSM) for adaptive binary arithmetic coding
+/// in JPEG 2000. Each state represents a probability estimate for the Less Probable Symbol (LPS)
+/// and specifies transitions to other states based on whether an MPS or LPS is coded.
+///
+/// The table is defined by the JPEG 2000 standard (ISO/IEC 15444-1, Annex D.3.5) and must
+/// be used exactly as specified for standards compliance.
+///
+/// Each `MQState` entry contains:
+/// - `qe`: Probability estimate for the LPS (Q_e value)
+/// - `nextMPS`: Next state index if an MPS is coded
+/// - `nextLPS`: Next state index if an LPS is coded  
+/// - `switchMPS`: Whether to invert the MPS sense after an LPS
+///
+/// Usage:
+/// ```swift
+/// let state = mqStateTable[contextIndex]
+/// let probability = state.qe
+/// ```
 public let mqStateTable: [MQState] = [
     MQState(qe: 0x5601, nextMPS: 1, nextLPS: 1, switchMPS: true),
     MQState(qe: 0x3401, nextMPS: 2, nextLPS: 6, switchMPS: false),
