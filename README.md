@@ -3,7 +3,7 @@
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
 **Current Version**: 1.1.0 (Production Ready - Fully Functional Codec)  
-**Status**: Complete encoder and decoder pipelines with 96.1% test pass rate  
+**Status**: Complete encoder and decoder pipelines with 98.3% test pass rate  
 **Release Date**: February 14, 2026
 
 ## 📦 Release Status
@@ -17,7 +17,7 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 - ✅ **Advanced Decoding** (ROI, progressive quality/resolution, partial decoding)
 - ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
 - ✅ **JPIP Streaming** (client/server infrastructure)
-- ✅ **96.1% Test Pass Rate** (1,292 of 1,344 tests passing)
+- ✅ **98.3% Test Pass Rate** (1,473 of 1,498 tests passing)
 
 **Notable Achievement**: Full encode/decode round-trip working with comprehensive test coverage!
 
@@ -35,7 +35,7 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 - **Network Streaming**: JPIP protocol support for efficient image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
 - **Well Documented**: 27+ comprehensive guides, tutorials, and API documentation
-- **High Quality**: 96.1% test pass rate with comprehensive test coverage
+- **High Quality**: 98.3% test pass rate with comprehensive test coverage
 
 ## 🚀 Quick Start
 
@@ -271,7 +271,7 @@ let encoded = try mqCoder.encode(quantized)
 - **Decoding**: Full `J2KDecoder.decode()` pipeline
 - **File I/O**: `J2KFileReader.read()` and `J2KFileWriter.write()`
 - **Round-Trip**: Complete encode→decode workflows
-- **Test Coverage**: 1496 tests, 100% passing (28 skipped)
+- **Test Coverage**: 1,498 tests, 98.3% passing (25 skipped)
 
 ### Coming in v1.1 (8-12 weeks)
 - ⚡ **Hardware Acceleration**: vDSP integration (2-4x speedup)
