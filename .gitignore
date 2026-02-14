@@ -118,6 +118,11 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# Benchmarking results
+benchmark_results/
+*.benchmark
+*.profiling
+
 # Other
 *.orig
 .env
