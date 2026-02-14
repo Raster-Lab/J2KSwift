@@ -120,12 +120,17 @@ extension J2KCLI {
             print("Benchmarking decoding (\(runs) runs)...")
             let decoder = J2KDecoder()
             
+            guard let dataToUse = encodedData else {
+                // This should never happen due to the logic above, but handle it safely
+                throw J2KError.internalError("No encoded data available for decoding")
+            }
+            
             var decodeTimes: [Double] = []
             var totalDecodeTime: Double = 0
             
             for run in 1...runs {
                 let start = Date()
-                _ = try decoder.decode(encodedData!)
+                _ = try decoder.decode(dataToUse)
                 let elapsed = Date().timeIntervalSince(start)
                 decodeTimes.append(elapsed)
                 totalDecodeTime += elapsed

@@ -140,12 +140,12 @@ main() {
     setup_output
     generate_test_images
     
-    # Build J2KSwift CLI tool
+    // Build J2KSwift CLI tool
     log_info "Building J2KSwift CLI tool..."
     if command -v swift &> /dev/null; then
         cd "$(dirname "$0")/.." || exit 1
-        swift build --product j2k --configuration release > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
+        swift build --product j2k --configuration release 2>&1 | grep -E "(error|Error)" || true
+        if [ $? -eq 0 ] && [ -f ".build/release/j2k" ]; then
             J2K_CLI="$(pwd)/.build/release/j2k"
             log_success "J2KSwift CLI built: $J2K_CLI"
         else

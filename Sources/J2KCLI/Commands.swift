@@ -120,7 +120,6 @@ extension J2KCLI {
         let compressionRatio = Double(inputBytes) / Double(encodedData.count)
         
         if jsonOutput {
-            let inputBytes = image.width * image.height * image.componentCount
             let result: [String: Any] = [
                 "input": inputPath,
                 "output": outputPath,

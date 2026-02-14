@@ -195,15 +195,21 @@ extension J2KCLI {
         let header = "P5\n\(image.width) \(image.height)\n\(maxValue)\n"
         data.append(header.data(using: .ascii)!)
         
-        // Write pixel data
+        // Write pixel data efficiently
         let bytesPerPixel = component.bitDepth <= 8 ? 1 : 2
-        for sample in component.data {
-            let value = max(0, min(Int(sample), maxValue))
+        component.data.withUnsafeBytes { buffer in
             if bytesPerPixel == 1 {
-                data.append(UInt8(value))
+                // 8-bit: copy directly
+                data.append(contentsOf: buffer)
             } else {
-                data.append(UInt8(value >> 8))
-                data.append(UInt8(value & 0xFF))
+                // 16-bit: need to copy
+                for i in 0..<(image.width * image.height) {
+                    let offset = i * 2
+                    if offset + 1 < buffer.count {
+                        data.append(buffer[offset])
+                        data.append(buffer[offset + 1])
+                    }
+                }
             }
         }
         

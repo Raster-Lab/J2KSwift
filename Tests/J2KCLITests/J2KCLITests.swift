@@ -6,6 +6,12 @@ import Foundation
 final class J2KCLITests: XCTestCase {
     /// Path to the built CLI executable
     var cliPath: String {
+        // Try to get the path from environment variable first (more robust)
+        if let envPath = ProcessInfo.processInfo.environment["J2K_CLI_PATH"] {
+            return envPath
+        }
+        
+        // Fall back to relative path (assumes standard build directory)
         let buildDir = URL(fileURLWithPath: #file)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
