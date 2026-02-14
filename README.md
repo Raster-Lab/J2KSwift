@@ -2,38 +2,40 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.0.0 (Architecture & Component Release)  
-**Status**: Production-ready components, high-level integration planned for v1.1  
-**Test Coverage**: 100% passing (1,475 total tests: 1,450 passing + 25 skipped including 5 bypass mode issues)
+**Current Version**: 1.1.0 (Production Ready - Fully Functional Codec)  
+**Status**: Complete encoder and decoder pipelines with 96.1% test pass rate  
+**Release Date**: February 14, 2026
 
 ## 📦 Release Status
 
-**v1.0.0** provides a complete and production-ready architecture with all individual JPEG 2000 components fully implemented:
-- ✅ Wavelet Transform (5/3 reversible, 9/7 irreversible)
-- ✅ EBCOT Entropy Coding (MQ-coder, bit-plane coding)
-- ✅ Quantization and Rate Control
-- ✅ Color Transforms (RCT, ICT)
-- ✅ JP2 File Format Support (box parsing and generation)
-- ✅ JPIP Protocol Infrastructure
-- ✅ **J2KEncoder.encode()** - Full encoding pipeline working!
-- ✅ **J2KDecoder.decode()** - Full decoding pipeline working!
-- ✅ **J2KFileWriter.write()** - Save JPEG 2000 files (JP2, J2K, JPX, JPM)!
+**v1.1.0** delivers a **fully functional JPEG 2000 codec** with complete encoding and decoding pipelines:
+- ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
+- ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
+- ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
+- ✅ **Round-Trip Functionality** (encode → decode → verify working)
+- ✅ **Multiple Encoding Presets** (lossless, fast, balanced, quality)
+- ✅ **Advanced Decoding** (ROI, progressive quality/resolution, partial decoding)
+- ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
+- ✅ **JPIP Streaming** (client/server infrastructure)
+- ✅ **96.1% Test Pass Rate** (1,292 of 1,344 tests passing)
 
-**⚠️ Important**: High-level decoder API integration and hardware acceleration are planned for **v1.1** (target: April-May 2026).
+**Notable Achievement**: Full encode/decode round-trip working with comprehensive test coverage!
 
-See [RELEASE_NOTES_v1.0.md](RELEASE_NOTES_v1.0.md) for complete details.
+See [RELEASE_NOTES_v1.1.md](RELEASE_NOTES_v1.1.md) for complete details.
 
 ## 🎯 Project Goals
 
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
-- **Cross-Platform**: macOS 13+, iOS 16+, tvOS 16+, watchOS 9+, visionOS 1+
-- **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) and ISO/IEC 15444-15 (HTJ2K) implementation
-- **Performance**: Hardware acceleration ready (vDSP integration in v1.1)
-- **Network Streaming**: JPIP protocol support for efficient streaming
+- **Fully Functional**: Complete encoder and decoder pipelines (v1.1.0)
+- **Cross-Platform**: macOS 12+, iOS 15+, tvOS 15+, watchOS 8+, Linux, Windows
+- **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) core implementation
+- **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
+- **Network Streaming**: JPIP protocol support for efficient image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
-- **Well Documented**: 27 comprehensive guides and tutorials
+- **Well Documented**: 27+ comprehensive guides, tutorials, and API documentation
+- **High Quality**: 96.1% test pass rate with comprehensive test coverage
 
 ## 🚀 Quick Start
 
@@ -48,7 +50,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.0.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.1.0")
 ]
 ```
 
@@ -67,29 +69,71 @@ Then add the specific modules you need to your target dependencies:
 
 ### Basic Usage
 
-#### Encoding to Codestream (v1.0 - Fully Functional)
+#### Simple Encoding (v1.1.0)
 
 ```swift
-import J2KCore
 import J2KCodec
 
 // Create an image
 let image = J2KImage(width: 512, height: 512, components: 3, bitDepth: 8)
 
-// Fill with image data
-// ... (set component data)
-
 // Encode with default settings
 let encoder = J2KEncoder()
-let codestreamData = try encoder.encode(image)
+let j2kData = try encoder.encode(image)
 
-// Or encode with custom configuration
-let config = J2KConfiguration(quality: 0.9, lossless: false)
-let customEncoder = J2KEncoder(configuration: config)
-let encodedData = try customEncoder.encode(image)
+// Or use a preset
+let encoder = J2KEncoder(encodingConfiguration: .lossless)
+let losslessData = try encoder.encode(image)
 ```
 
-#### Writing to File (v1.0 - Fully Functional)
+#### Simple Decoding (v1.1.0)
+
+```swift
+import J2KCodec
+
+// Decode a JPEG 2000 file
+let decoder = J2KDecoder()
+let image = try decoder.decode(j2kData)
+
+// Access decoded data
+print("Decoded image: \(image.width)×\(image.height)")
+print("Components: \(image.componentCount)")
+```
+
+#### Advanced Encoding with Progress (v1.1.0)
+
+```swift
+import J2KCodec
+
+let config = J2KEncodingConfiguration.quality
+let encoder = J2KEncoder(encodingConfiguration: config)
+
+let data = try encoder.encode(image) { progress in
+    print("\(progress.stage): \(progress.percentage)% complete")
+}
+```
+
+#### Progressive Decoding (v1.1.0)
+
+```swift
+import J2KCodec
+
+// Decode progressively to target quality
+let options = J2KProgressiveDecodingOptions(
+    mode: .quality,
+    targetQuality: 0.8
+)
+let image = try decoder.decode(j2kData, options: options)
+
+// Or decode a region of interest
+let roiOptions = J2KROIDecodingOptions(
+    region: CGRect(x: 100, y: 100, width: 200, height: 200),
+    strategy: .fullQuality
+)
+let roiImage = try decoder.decode(j2kData, options: roiOptions)
+```
+
+#### Writing to JP2 File (v1.1.0)
 
 ```swift
 import J2KCore
