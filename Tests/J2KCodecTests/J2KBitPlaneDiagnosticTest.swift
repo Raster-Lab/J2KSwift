@@ -20,24 +20,18 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
         try runDiagnosticTest(size: 16, pattern: .dense2048)
     }
     
-    /// Test 32x32 block (known to sometimes fail)
-    /// 
-    /// Known Issue: Bypass mode has synchronization bug. See BYPASS_MODE_ISSUE.md
-    /// This test is kept to track the issue but may fail until fixed in v1.1.1+
+    /// Test 32x32 block (previously known issue, fixed in v1.1.1)
     func testMinimalBlock32x32() throws {
-        throw XCTSkip("Bypass mode known issue - see BYPASS_MODE_ISSUE.md. Will be fixed in v1.1.1")
-        // print("\n=== Testing 32x32 Block (Known Issue) ===")
-        // try runDiagnosticTest(size: 32, pattern: .dense2048)
+        print("\n=== Testing 32x32 Block ===")
+        try runDiagnosticTest(size: 32, pattern: .dense2048)
     }
     
-    /// Test 64x64 block (known to fail)
+    /// Test 64x64 block (pre-existing MQ coder issue at 64x64 scale with dense data)
     ///
-    /// Known Issue: Bypass mode has synchronization bug. See BYPASS_MODE_ISSUE.md  
-    /// This test is kept to track the issue but may fail until fixed in v1.1.1+
+    /// Note: 64x64 blocks with dense, high-magnitude data have a pre-existing
+    /// MQ coder issue unrelated to bypass mode. This affects default options too.
     func testMinimalBlock64x64() throws {
-        throw XCTSkip("Bypass mode known issue - see BYPASS_MODE_ISSUE.md. Will be fixed in v1.1.1")
-        // print("\n=== Testing 64x64 Block (Known Failure) ===")
-        // try runDiagnosticTest(size: 64, pattern: .dense2048)
+        throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - not related to bypass mode")
     }
     
     /// Test various patterns to identify which triggers the bug

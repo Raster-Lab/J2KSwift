@@ -614,3 +614,127 @@ public struct MQDecoder: Sendable {
         return position
     }
 }
+
+// MARK: - Raw Bypass Encoder
+
+/// Encodes raw bits for JPEG 2000 bypass mode.
+///
+/// This encoder is used for magnitude refinement passes that bypass the MQ
+/// arithmetic coder. It packs bits MSB-first into bytes, with 0xFF byte
+/// stuffing to avoid JPEG 2000 marker conflicts.
+///
+/// This is separate from the MQ coder to avoid bit-positioning issues
+/// that arise from mixing MQ state with raw bit packing.
+public struct RawBypassEncoder: Sendable {
+    /// Byte accumulator for collecting bits.
+    private var c: UInt32 = 0
+    /// Number of remaining bits in the current byte.
+    private var ct: Int = 0
+    /// Output buffer.
+    private var output: [UInt8] = []
+    
+    /// Creates a new raw bypass encoder.
+    public init() {}
+    
+    /// Encodes a single raw bit.
+    ///
+    /// Bits are packed MSB-first. After writing a 0xFF byte, only 7 bits
+    /// are used in the next byte to avoid JPEG 2000 marker conflicts.
+    @inline(__always)
+    public mutating func encode(symbol: Bool) {
+        if ct == 0 {
+            ct = 8
+        }
+        ct -= 1
+        if symbol {
+            c = c + (1 << ct)
+        }
+        if ct == 0 {
+            output.append(UInt8(c & 0xFF))
+            // After 0xFF, use only 7 bits
+            if UInt8(c & 0xFF) == 0xFF {
+                ct = 7
+            } else {
+                ct = 8
+            }
+            c = 0
+        }
+    }
+    
+    /// Flushes any remaining partial byte and returns the encoded data.
+    ///
+    /// Remaining bits are filled with an alternating 0,1 pattern per the
+    /// JPEG 2000 standard.
+    public mutating func finish() -> Data {
+        // Flush partial byte if any
+        if ct > 0 && ct < 8 {
+            // Fill remaining bits with alternating pattern
+            var bitValue: UInt32 = 0
+            var remaining = ct
+            while remaining > 0 {
+                remaining -= 1
+                c += bitValue << remaining
+                bitValue = 1 - bitValue
+            }
+            output.append(UInt8(c & 0xFF))
+        }
+        return Data(output)
+    }
+    
+    /// Resets the encoder.
+    public mutating func reset() {
+        c = 0
+        ct = 0
+        output.removeAll(keepingCapacity: true)
+    }
+}
+
+// MARK: - Raw Bypass Decoder
+
+/// Decodes raw bits for JPEG 2000 bypass mode.
+///
+/// This decoder reads raw bits packed MSB-first from bytes, with 0xFF byte
+/// stuffing handling. It is separate from the MQ decoder to avoid
+/// bit-positioning issues.
+public struct RawBypassDecoder: Sendable {
+    /// Current byte value.
+    private var c: UInt32 = 0
+    /// Number of remaining bits in the current byte.
+    private var ct: Int = 0
+    /// Input data.
+    private let data: Data
+    /// Current read position in data.
+    private var position: Int = 0
+    
+    /// Creates a new raw bypass decoder.
+    public init(data: Data) {
+        self.data = data
+    }
+    
+    /// Decodes a single raw bit.
+    ///
+    /// Bits are read MSB-first. After a 0xFF byte, only 7 bits are read
+    /// from the next byte to avoid JPEG 2000 marker conflicts.
+    @inline(__always)
+    public mutating func decode() -> Bool {
+        if ct == 0 {
+            // Read next byte
+            if position < data.count {
+                let prevByte = c
+                c = UInt32(data[position])
+                position += 1
+                // After 0xFF, use only 7 bits
+                if prevByte == 0xFF && position > 1 {
+                    ct = 7
+                } else {
+                    ct = 8
+                }
+            } else {
+                c = 0xFF
+                ct = 8
+            }
+        }
+        ct -= 1
+        return ((c >> ct) & 0x01) != 0
+    }
+}
