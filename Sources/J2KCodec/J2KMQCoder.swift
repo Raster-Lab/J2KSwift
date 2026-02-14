@@ -218,37 +218,24 @@ public struct MQEncoder: Sendable {
     /// Prepares the encoder for bypass mode.
     ///
     /// This method ensures a clean transition from MQ coding to raw bypass coding.
-    /// Implementation matches OpenJPEG's opj_mqc_bypass_init_enc.
+    /// The interval register is set to the full interval and remaining bits are flushed.
     @inline(__always)
     public mutating func prepareForBypass() {
-        // Reset C register for bypass mode
-        c = 0
-        // Set ct to 8 to start fresh byte
-        // (OpenJPEG uses a special BYPASS_CT_INIT value, but 8 works the same)
-        ct = 8
-        // Set interval to full range
         a = 0x8000
     }
     
     /// Encodes a symbol using uniform (bypass) coding.
     ///
-    /// In bypass mode, raw bits are packed directly without arithmetic coding.
-    /// Implementation matches OpenJPEG's opj_mqc_bypass_enc.
+    /// In bypass mode, raw bits are packed using the MQ coder's byte output mechanism.
     @inline(__always)
     public mutating func encodeBypass(symbol: Bool) {
-        ct -= 1
+        c <<= 1
         if symbol {
-            c += UInt32(1) << ct
+            c += 0x8000
         }
+        ct -= 1
         if ct == 0 {
-            // Emit the byte directly (bypass mode doesn't use emitByte())
-            output.append(UInt8(c & 0xFF))
-            ct = 8
-            // Handle 0xFF stuffing - next byte must have MSB = 0
-            if c == 0xFF {
-                ct = 7
-            }
-            c = 0  // Reset for next byte
+            emitByte()
         }
     }
     
@@ -551,51 +538,28 @@ public struct MQDecoder: Sendable {
     /// Prepares the decoder for bypass mode.
     ///
     /// This method ensures a clean transition from MQ decoding to raw bypass decoding.
-    /// Implementation matches the requirements for OpenJPEG-style raw decoding.
+    /// The interval register is set to the full interval.
     @inline(__always)
     public mutating func prepareForBypass() {
-        // Reset for bypass mode - decoder should be at byte boundary
-        c = 0
-        ct = 0  // Will trigger byte read on first decodeBypass()
-        // Set interval to full range
         a = 0x8000
     }
     
     /// Decodes a symbol using uniform (bypass) coding.
     ///
-    /// In bypass mode, raw bits are read directly without arithmetic decoding.
-    /// Implementation matches OpenJPEG's opj_mqc_raw_decode.
+    /// In bypass mode, raw bits are read using the MQ coder's byte input mechanism.
     @inline(__always)
     public mutating func decodeBypass() -> Bool {
-        // If no bits left, read next byte
         if ct == 0 {
-            // Read next byte
-            buffer = readByte()
-            c = UInt32(buffer)
-            
-            // Handle 0xFF stuffing
-            if buffer == 0xFF {
-                nextBuffer = readByte()
-                if nextBuffer > 0x8F {
-                    // Marker detected - use 0xFF and 8 bits
-                    ct = 8
-                    position -= 1  // Don't consume the marker byte
-                } else {
-                    // Normal byte after 0xFF - use 7 bits
-                    c = UInt32(nextBuffer)
-                    buffer = nextBuffer
-                    ct = 7
-                }
-            } else {
-                // Normal byte - use 8 bits
-                ct = 8
-            }
+            fillC()
         }
-        
-        // Decrement ct first, then extract bit
         ct -= 1
-        let bit = (c >> ct) & 0x01
-        return bit != 0
+        c <<= 1
+        
+        if (c >> 16) >= 0x8000 {
+            c -= 0x8000 << 16
+            return true
+        }
+        return false
     }
     
     /// Renormalizes the decoder state.
