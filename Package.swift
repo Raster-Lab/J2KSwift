@@ -85,6 +85,9 @@ let package = Package(
         .testTarget(
             name: "JPIPTests",
             dependencies: ["JPIP"]),
+        .testTarget(
+            name: "J2KCLITests",
+            dependencies: ["J2KCore"]),
         .executableTarget(
             name: "J2KCLI",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
