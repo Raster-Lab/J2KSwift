@@ -6,18 +6,32 @@ import Foundation
 final class J2KCLITests: XCTestCase {
     /// Path to the built CLI executable
     var cliPath: String {
-        // Try to get the path from environment variable first (more robust)
+        // Try to get the path from environment variable first (most robust)
         if let envPath = ProcessInfo.processInfo.environment["J2K_CLI_PATH"] {
             return envPath
         }
         
-        // Fall back to relative path (assumes standard build directory)
-        let buildDir = URL(fileURLWithPath: #file)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent(".build/debug/j2k")
-        return buildDir.path
+        // Try to find the executable using FileManager by searching from current directory
+        let fileManager = FileManager.default
+        let currentDir = fileManager.currentDirectoryPath
+        
+        // Common build locations to check
+        let possiblePaths = [
+            "\(currentDir)/.build/debug/j2k",
+            "\(currentDir)/.build/release/j2k",
+            "\(currentDir)/J2KSwift/.build/debug/j2k",
+            "\(currentDir)/J2KSwift/.build/release/j2k",
+        ]
+        
+        // Return the first path that exists
+        for path in possiblePaths {
+            if fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+        
+        // Fall back to standard debug path (will fail if not found, but gives clear error)
+        return "\(currentDir)/.build/debug/j2k"
     }
     
     func testCLIHelp() throws {
