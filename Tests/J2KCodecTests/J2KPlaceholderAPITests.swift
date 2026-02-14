@@ -68,34 +68,30 @@ final class J2KPlaceholderAPITests: XCTestCase {
 
     // MARK: - J2KDecoder Placeholder Tests
 
-    /// Tests that `J2KDecoder.decode()` throws `notImplemented` instead of crashing.
-    func testDecoderDecodeThrowsNotImplemented() throws {
+    /// Tests that `J2KDecoder.decode()` throws appropriate error for invalid data.
+    func testDecoderDecodeThrowsOnInvalidData() throws {
         let decoder = J2KDecoder()
         let data = Data()
 
         XCTAssertThrowsError(try decoder.decode(data)) { error in
-            guard case J2KError.notImplemented(let message) = error else {
-                XCTFail("Expected J2KError.notImplemented, got \(error)")
+            guard case J2KError.invalidData(_) = error else {
+                XCTFail("Expected J2KError.invalidData, got \(error)")
                 return
             }
-            XCTAssertTrue(message.contains("v1.1"), "Error message should mention v1.1 target version")
         }
     }
 
-    /// Tests that `J2KDecoder.decode()` error message includes migration guidance.
-    func testDecoderDecodeErrorMessageIncludesGuidance() throws {
+    /// Tests that `J2KDecoder.decode()` throws error for malformed codestream.
+    func testDecoderDecodeThrowsOnMalformedCodestream() throws {
         let decoder = J2KDecoder()
+        // Invalid marker (not SOC)
         let data = Data([0xFF, 0xD9])
 
-        do {
-            _ = try decoder.decode(data)
-            XCTFail("Expected notImplemented error")
-        } catch let error as J2KError {
-            guard case .notImplemented(let message) = error else {
-                XCTFail("Expected notImplemented case")
+        XCTAssertThrowsError(try decoder.decode(data)) { error in
+            guard case J2KError.decodingError(_) = error else {
+                XCTFail("Expected J2KError.decodingError, got \(error)")
                 return
             }
-            XCTAssertTrue(message.contains("component-level"), "Error should suggest component-level APIs")
         }
     }
 }
