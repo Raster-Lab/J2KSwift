@@ -611,6 +611,12 @@ public struct J2KFileWriter: Sendable {
     }
     
     /// Builds a color specification box based on image components.
+    ///
+    /// - Note: This implementation makes basic assumptions about color space:
+    ///   - 1 component: Greyscale
+    ///   - 3 components: sRGB
+    ///   - 4+ components: sRGB (assumes RGBA; CMYK and other color spaces not yet supported)
+    /// Future versions should implement proper color space detection based on component metadata.
     private func buildColorSpecificationBox(image: J2KImage) throws -> J2KColorSpecificationBox {
         // Determine color space based on number of components
         let colorSpace: J2KColorSpecificationBox.EnumeratedColorSpace
@@ -620,9 +626,12 @@ public struct J2KFileWriter: Sendable {
         case 3:
             colorSpace = .sRGB
         case 4:
-            colorSpace = .sRGB // Assume RGBA (sRGB + alpha)
+            // Assume RGBA (sRGB with alpha)
+            // Note: CMYK and other 4-component color spaces are not yet supported
+            colorSpace = .sRGB
         default:
-            colorSpace = .sRGB // Default fallback
+            // Default fallback for unusual component counts
+            colorSpace = .sRGB
         }
         
         return J2KColorSpecificationBox(

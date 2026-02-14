@@ -3,13 +3,14 @@ import XCTest
 @testable import J2KCore
 import Foundation
 
-/// Tests that file format APIs are now implemented.
+/// Tests for J2KFileWriter functionality.
 ///
 /// File writing was implemented as part of v1.1 Phase 2-3 completion.
+/// These tests verify that the file writer API works correctly.
 final class J2KFileFormatPlaceholderAPITests: XCTestCase {
     
     /// Tests that `J2KFileWriter.write()` successfully writes a JP2 file.
-    func testFileWriterWriteThrowsNotImplemented() throws {
+    func testFileWriterWriteJP2Format() throws {
         let writer = J2KFileWriter()
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
         
@@ -26,7 +27,7 @@ final class J2KFileFormatPlaceholderAPITests: XCTestCase {
     }
     
     /// Tests that `J2KFileWriter.write()` with J2K format successfully writes a codestream.
-    func testFileWriterWriteJ2KFormatThrowsNotImplemented() throws {
+    func testFileWriterWriteJ2KFormat() throws {
         let writer = J2KFileWriter(format: .j2k)
         let image = J2KImage(width: 16, height: 16, components: 3, bitDepth: 8)
         
