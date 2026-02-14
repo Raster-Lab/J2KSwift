@@ -111,31 +111,62 @@ public struct J2KEncoder: Sendable {
 }
 
 /// Decodes JPEG 2000 images.
+///
+/// `J2KDecoder` provides a high-level API for decoding JPEG 2000 codestreams to images.
+/// It connects all decoding components — codestream parsing, entropy decoding, dequantization,
+/// inverse wavelet transform, and inverse color transform — into a complete decoding pipeline.
+///
+/// ## Basic Usage
+///
+/// ```swift
+/// let decoder = J2KDecoder()
+/// let codestreamData = // ... load from file
+/// let image = try decoder.decode(codestreamData)
+/// ```
+///
+/// ## Progress Reporting
+///
+/// ```swift
+/// let image = try decoder.decode(data) { update in
+///     print("\(update.stage): \(Int(update.overallProgress * 100))%")
+/// }
+/// ```
 public struct J2KDecoder: Sendable {
     /// Creates a new decoder.
     public init() {}
     
     /// Decodes JPEG 2000 data into an image.
     ///
-    /// - Parameter data: The JPEG 2000 data to decode.
+    /// This method processes the codestream through the complete JPEG 2000 decoding pipeline:
+    /// 1. Codestream parsing and marker validation
+    /// 2. Tile data extraction from packets
+    /// 3. EBCOT entropy decoding
+    /// 4. Dequantization
+    /// 5. Inverse wavelet transform
+    /// 6. Inverse color transform (YCbCr → RGB)
+    /// 7. Image reconstruction
+    ///
+    /// - Parameter data: The JPEG 2000 codestream data to decode.
     /// - Returns: The decoded image.
-    /// - Throws: ``J2KError/notImplemented(_:)`` - This API is not yet implemented in v1.0.
-    ///
-    /// - Note: This high-level API is not yet implemented in v1.0. Use component-level
-    ///   APIs (entropy decoding, dequantization, inverse wavelet transform) directly for now.
-    ///   Full implementation planned for v1.1. See ROADMAP_v1.1.md for details.
-    ///
-    /// Example of component-level usage:
-    /// ```swift
-    /// // Component-level decoding (v1.0 approach)
-    /// let bitPlaneDecoder = BitPlaneDecoder(...)
-    /// let quantizer = J2KQuantizer()
-    /// let idwt = J2KDWT2D()
-    /// // ... assemble manually
-    /// ```
+    /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if the codestream is malformed.
     public func decode(_ data: Data) throws -> J2KImage {
-        throw J2KError.notImplemented(
-            "J2KDecoder.decode() is not implemented in v1.0. This is a high-level integration API planned for v1.1. Use component-level APIs directly for now. See ROADMAP_v1.1.md and GETTING_STARTED.md for examples."
-        )
+        let pipeline = DecoderPipeline()
+        return try pipeline.decode(data)
+    }
+    
+    /// Decodes JPEG 2000 data into an image with progress reporting.
+    ///
+    /// - Parameters:
+    ///   - data: The JPEG 2000 codestream data to decode.
+    ///   - progress: A callback invoked with progress updates during decoding.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decode(
+        _ data: Data,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) throws -> J2KImage {
+        let pipeline = DecoderPipeline()
+        return try pipeline.decode(data, progress: progress)
     }
 }
