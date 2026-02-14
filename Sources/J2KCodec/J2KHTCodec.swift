@@ -37,35 +37,35 @@ import J2KCore
 ///
 /// Controls the behavior of the HTJ2K codec, including the coding mode,
 /// quality settings, and mixed-mode support.
-public struct HTJ2KConfiguration: Sendable {
+struct HTJ2KConfiguration: Sendable {
     /// The block coding mode to use for encoding.
     ///
     /// Determines whether to use HT (fast) or legacy (compatible) block coding.
-    public let codingMode: HTCodingMode
+    let codingMode: HTCodingMode
 
     /// Whether to allow mixed legacy and HT code-blocks in the codestream.
     ///
     /// When `true`, the encoder may use different coding modes for different
     /// code-blocks based on content characteristics.
-    public let allowMixedMode: Bool
+    let allowMixedMode: Bool
 
     /// The target quality (0.0 to 1.0) for lossy encoding.
-    public let quality: Double
+    let quality: Double
 
     /// Whether to use lossless encoding.
-    public let lossless: Bool
+    let lossless: Bool
 
     /// Maximum number of quality layers.
-    public let qualityLayers: Int
+    let qualityLayers: Int
 
     /// The number of decomposition levels for wavelet transform.
-    public let decompositionLevels: Int
+    let decompositionLevels: Int
 
     /// Code-block width (must be a power of 2, typically 32 or 64).
-    public let codeBlockWidth: Int
+    let codeBlockWidth: Int
 
     /// Code-block height (must be a power of 2, typically 32 or 64).
-    public let codeBlockHeight: Int
+    let codeBlockHeight: Int
 
     /// Creates a new HTJ2K configuration.
     ///
@@ -78,7 +78,7 @@ public struct HTJ2KConfiguration: Sendable {
     ///   - decompositionLevels: Wavelet decomposition levels (default: `5`).
     ///   - codeBlockWidth: Code-block width (default: `64`).
     ///   - codeBlockHeight: Code-block height (default: `64`).
-    public init(
+    init(
         codingMode: HTCodingMode = .ht,
         allowMixedMode: Bool = false,
         quality: Double = 0.9,
@@ -145,14 +145,14 @@ public struct HTJ2KConfiguration: Sendable {
 ///                                               width: 64, height: 64,
 ///                                               subband: .hh)
 /// ```
-public struct HTJ2KEncoder: Sendable {
+struct HTJ2KEncoder: Sendable {
     /// The HTJ2K configuration.
-    public let configuration: HTJ2KConfiguration
+    let configuration: HTJ2KConfiguration
 
     /// Creates a new HTJ2K encoder.
     ///
     /// - Parameter configuration: The encoding configuration.
-    public init(configuration: HTJ2KConfiguration = .default) {
+    init(configuration: HTJ2KConfiguration = .default) {
         self.configuration = configuration
     }
 
@@ -165,7 +165,7 @@ public struct HTJ2KEncoder: Sendable {
     ///   - subband: The wavelet subband.
     /// - Returns: An ``HTEncodedResult`` with the coded data and metadata.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    public func encodeCodeBlocks(
+    func encodeCodeBlocks(
         coefficients: [Int],
         width: Int,
         height: Int,
@@ -202,7 +202,7 @@ public struct HTJ2KEncoder: Sendable {
     /// header before the COD marker segment.
     ///
     /// - Returns: The CAP marker segment data.
-    public func generateCAPMarkerData() -> Data {
+    func generateCAPMarkerData() -> Data {
         var data = Data()
 
         // Pcap (4 bytes): Part 15 capability bit
@@ -360,9 +360,9 @@ public struct HTJ2KEncoder: Sendable {
 ///                                                 width: 64, height: 64,
 ///                                                 subband: .hh)
 /// ```
-public struct HTJ2KDecoder: Sendable {
+struct HTJ2KDecoder: Sendable {
     /// Creates a new HTJ2K decoder.
-    public init() {}
+    init() {}
 
     /// Decodes wavelet coefficients from an HTJ2K-encoded result.
     ///
@@ -376,7 +376,7 @@ public struct HTJ2KDecoder: Sendable {
     ///   - subband: The wavelet subband.
     /// - Returns: The decoded wavelet coefficients in raster order.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decodeCodeBlocks(
+    func decodeCodeBlocks(
         from result: HTEncodedResult,
         width: Int,
         height: Int,
@@ -405,7 +405,7 @@ public struct HTJ2KDecoder: Sendable {
     /// - Parameter data: The CAP marker segment data.
     /// - Returns: A tuple indicating HT support and mixed-mode support.
     /// - Throws: ``J2KError/decodingError(_:)`` if the marker data is invalid.
-    public func parseCAPMarker(data: Data) throws -> (htSupported: Bool, mixedMode: Bool) {
+    func parseCAPMarker(data: Data) throws -> (htSupported: Bool, mixedMode: Bool) {
         guard data.count >= 4 else {
             throw J2KError.decodingError("CAP marker data too short")
         }
@@ -492,24 +492,24 @@ public struct HTJ2KDecoder: Sendable {
 ///
 /// Contains the cleanup pass data along with any refinement passes (SigProp
 /// and MagRef), plus metadata about the coding mode and pass structure.
-public struct HTEncodedResult: Sendable {
+struct HTEncodedResult: Sendable {
     /// The coding mode used (HT or legacy).
-    public let codingMode: HTCodingMode
+    let codingMode: HTCodingMode
 
     /// The cleanup pass encoded block.
-    public let cleanupPass: HTEncodedBlock
+    let cleanupPass: HTEncodedBlock
 
     /// Significance propagation pass data for each refinement bit-plane.
-    public let sigPropPasses: [Data]
+    let sigPropPasses: [Data]
 
     /// Magnitude refinement pass data for each refinement bit-plane.
-    public let magRefPasses: [Data]
+    let magRefPasses: [Data]
 
     /// The number of zero bit-planes above the most significant bit-plane.
-    public let zeroBitPlanes: Int
+    let zeroBitPlanes: Int
 
     /// The total number of coding passes.
-    public let totalPasses: Int
+    let totalPasses: Int
 
     /// Creates a new encoded result.
     ///
@@ -520,7 +520,7 @@ public struct HTEncodedResult: Sendable {
     ///   - magRefPasses: Magnitude refinement passes.
     ///   - zeroBitPlanes: Number of zero bit-planes.
     ///   - totalPasses: Total number of coding passes.
-    public init(
+    init(
         codingMode: HTCodingMode,
         cleanupPass: HTEncodedBlock,
         sigPropPasses: [Data],
@@ -543,15 +543,15 @@ public struct HTEncodedResult: Sendable {
 ///
 /// Checks structural requirements, marker segment validity, and capability
 /// signaling for HTJ2K conformance.
-public struct HTJ2KConformanceValidator: Sendable {
+struct HTJ2KConformanceValidator: Sendable {
     /// Creates a new conformance validator.
-    public init() {}
+    init() {}
 
     /// Validates that the codestream properly signals HTJ2K capabilities.
     ///
     /// - Parameter data: The JPEG 2000 codestream data.
     /// - Returns: A ``ConformanceResult`` with validation details.
-    public func validate(codestream data: Data) -> ConformanceResult {
+    func validate(codestream data: Data) -> ConformanceResult {
         var issues: [String] = []
         var hasCAP = false
         var hasCOD = false
@@ -616,7 +616,7 @@ public struct HTJ2KConformanceValidator: Sendable {
     ///
     /// - Parameter result: The encoded result to validate.
     /// - Returns: A ``ConformanceResult`` with validation details.
-    public func validate(encodedResult result: HTEncodedResult) -> ConformanceResult {
+    func validate(encodedResult result: HTEncodedResult) -> ConformanceResult {
         var issues: [String] = []
 
         if result.codingMode == .ht {
@@ -640,19 +640,19 @@ public struct HTJ2KConformanceValidator: Sendable {
 }
 
 /// The result of an HTJ2K conformance validation check.
-public struct ConformanceResult: Sendable {
+struct ConformanceResult: Sendable {
     /// Whether the validation passed.
-    public let isValid: Bool
+    let isValid: Bool
 
     /// Descriptions of any conformance issues found.
-    public let issues: [String]
+    let issues: [String]
 
     /// Creates a new conformance result.
     ///
     /// - Parameters:
     ///   - isValid: Whether the validation passed.
     ///   - issues: Conformance issue descriptions.
-    public init(isValid: Bool, issues: [String]) {
+    init(isValid: Bool, issues: [String]) {
         self.isValid = isValid
         self.issues = issues
     }
@@ -664,9 +664,9 @@ public struct ConformanceResult: Sendable {
 ///
 /// Measures encoding and decoding performance for both HT and legacy modes,
 /// providing a direct comparison of throughput characteristics.
-public struct HTJ2KBenchmark: Sendable {
+struct HTJ2KBenchmark: Sendable {
     /// Creates a new benchmark instance.
-    public init() {}
+    init() {}
 
     /// Runs a throughput comparison between HT and legacy encoding.
     ///
@@ -678,7 +678,7 @@ public struct HTJ2KBenchmark: Sendable {
     ///   - iterations: Number of iterations for timing (default: 10).
     /// - Returns: A ``BenchmarkResult`` with timing comparisons.
     /// - Throws: ``J2KError`` if encoding fails.
-    public func compareEncoding(
+    func compareEncoding(
         coefficients: [Int],
         width: Int,
         height: Int,
@@ -730,21 +730,21 @@ public struct HTJ2KBenchmark: Sendable {
 }
 
 /// The result of an HTJ2K vs legacy throughput benchmark.
-public struct BenchmarkResult: Sendable {
+struct BenchmarkResult: Sendable {
     /// Average HT encoding time in seconds.
-    public let htEncodingTime: Double
+    let htEncodingTime: Double
 
     /// Average legacy encoding time in seconds.
-    public let legacyEncodingTime: Double
+    let legacyEncodingTime: Double
 
     /// Number of benchmark iterations.
-    public let iterations: Int
+    let iterations: Int
 
     /// The code-block size (width × height) in samples.
-    public let blockSize: Int
+    let blockSize: Int
 
     /// The speedup ratio of HT over legacy (> 1.0 means HT is faster).
-    public var speedup: Double {
+    var speedup: Double {
         guard htEncodingTime > 0 else { return 0 }
         return legacyEncodingTime / htEncodingTime
     }
@@ -756,7 +756,7 @@ public struct BenchmarkResult: Sendable {
     ///   - legacyEncodingTime: Average legacy encoding time.
     ///   - iterations: Number of iterations.
     ///   - blockSize: Code-block size in samples.
-    public init(
+    init(
         htEncodingTime: Double,
         legacyEncodingTime: Double,
         iterations: Int,

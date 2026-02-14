@@ -20,7 +20,7 @@ import Foundation
 /// // Use ptr...
 /// // All memory freed when arena is deallocated
 /// ```
-public final class J2KArenaAllocator: @unchecked Sendable {
+final class J2KArenaAllocator: @unchecked Sendable {
     /// A single block of allocated memory.
     private final class Block {
         let memory: UnsafeMutableRawPointer
@@ -74,7 +74,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
     /// Creates a new arena allocator.
     ///
     /// - Parameter blockSize: The size of each memory block (default: 1MB).
-    public init(blockSize: Int = 1024 * 1024) {
+    init(blockSize: Int = 1024 * 1024) {
         self.blockSize = blockSize
     }
 
@@ -84,7 +84,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
     ///   - byteCount: Number of bytes to allocate.
     ///   - alignment: Required alignment (default: 8).
     /// - Returns: Pointer to the allocated memory.
-    public func allocate(byteCount: Int, alignment: Int = MemoryLayout<UInt64>.alignment) -> UnsafeMutableRawPointer {
+    func allocate(byteCount: Int, alignment: Int = MemoryLayout<UInt64>.alignment) -> UnsafeMutableRawPointer {
         lock.lock()
         defer { lock.unlock() }
 
@@ -113,7 +113,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
     /// Resets the arena, making all previously allocated memory available for reuse.
     ///
     /// After reset, all pointers previously returned by `allocate` are invalid.
-    public func reset() {
+    func reset() {
         lock.lock()
         defer { lock.unlock() }
         // Keep the first block for reuse, drop the rest
@@ -125,7 +125,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
     }
 
     /// Returns statistics about the arena.
-    public var statistics: (blockCount: Int, totalCapacity: Int, totalAllocated: Int) {
+    var statistics: (blockCount: Int, totalCapacity: Int, totalAllocated: Int) {
         lock.lock()
         defer { lock.unlock() }
         let totalCapacity = blocks.reduce(0) { $0 + $1.capacity }
@@ -146,15 +146,15 @@ public final class J2KArenaAllocator: @unchecked Sendable {
 ///     // Use buffer for DWT computation
 /// }
 /// ```
-public final class J2KScratchBuffers: @unchecked Sendable {
+final class J2KScratchBuffers: @unchecked Sendable {
     /// The width of tiles this scratch set supports.
-    public let tileWidth: Int
+    let tileWidth: Int
 
     /// The height of tiles this scratch set supports.
-    public let tileHeight: Int
+    let tileHeight: Int
 
     /// Number of components.
-    public let componentCount: Int
+    let componentCount: Int
 
     /// Pre-allocated DWT row buffer.
     private let dwtBuffer: UnsafeMutableBufferPointer<Float>
@@ -174,7 +174,7 @@ public final class J2KScratchBuffers: @unchecked Sendable {
     ///   - tileWidth: Width of tiles (default: 256).
     ///   - tileHeight: Height of tiles (default: 256).
     ///   - componentCount: Number of image components (default: 3).
-    public init(tileWidth: Int = 256, tileHeight: Int = 256, componentCount: Int = 3) {
+    init(tileWidth: Int = 256, tileHeight: Int = 256, componentCount: Int = 3) {
         self.tileWidth = tileWidth
         self.tileHeight = tileHeight
         self.componentCount = componentCount
@@ -206,7 +206,7 @@ public final class J2KScratchBuffers: @unchecked Sendable {
     /// - Parameter body: Closure that receives the mutable buffer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withDWTBuffer<Result>(
+    func withDWTBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<Float>) throws -> Result
     ) rethrows -> Result {
         lock.lock()
@@ -219,7 +219,7 @@ public final class J2KScratchBuffers: @unchecked Sendable {
     /// - Parameter body: Closure that receives the mutable buffer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withQuantizationBuffer<Result>(
+    func withQuantizationBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<Int32>) throws -> Result
     ) rethrows -> Result {
         lock.lock()
@@ -232,7 +232,7 @@ public final class J2KScratchBuffers: @unchecked Sendable {
     /// - Parameter body: Closure that receives the mutable buffer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withTempBuffer<Result>(
+    func withTempBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<UInt8>) throws -> Result
     ) rethrows -> Result {
         lock.lock()
@@ -241,7 +241,7 @@ public final class J2KScratchBuffers: @unchecked Sendable {
     }
 
     /// Returns the total memory allocated by these scratch buffers.
-    public var totalMemory: Int {
+    var totalMemory: Int {
         dwtBuffer.count * MemoryLayout<Float>.stride
             + quantBuffer.count * MemoryLayout<Int32>.stride
             + tempBuffer.count * MemoryLayout<UInt8>.stride

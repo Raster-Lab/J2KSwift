@@ -25,7 +25,7 @@ import J2KCore
 /// The JPEG 2000 standard defines 19 context labels (0-18) that are used
 /// for different coding scenarios. These contexts allow the arithmetic
 /// coder to maintain separate probability estimates for different situations.
-public enum EBCOTContext: UInt8, Sendable, CaseIterable {
+enum EBCOTContext: UInt8, Sendable, CaseIterable {
     // MARK: - Significance Propagation Contexts (0-8)
     
     /// Zero contribution context for LL/LH subbands.
@@ -114,10 +114,10 @@ public enum EBCOTContext: UInt8, Sendable, CaseIterable {
 // MARK: - Coefficient State
 
 /// Flags representing the state of a coefficient during bit-plane coding.
-public struct CoefficientState: OptionSet, Sendable {
-    public let rawValue: UInt8
+struct CoefficientState: OptionSet, Sendable {
+    let rawValue: UInt8
     
-    public init(rawValue: UInt8) {
+    init(rawValue: UInt8) {
         self.rawValue = rawValue
     }
     
@@ -140,24 +140,24 @@ public struct CoefficientState: OptionSet, Sendable {
 // MARK: - Neighbor Contribution
 
 /// Contribution from neighboring coefficients for context formation.
-public struct NeighborContribution: Sendable {
+struct NeighborContribution: Sendable {
     /// Number of significant horizontal neighbors (0-2).
-    public var horizontal: Int
+    var horizontal: Int
     
     /// Number of significant vertical neighbors (0-2).
-    public var vertical: Int
+    var vertical: Int
     
     /// Number of significant diagonal neighbors (0-4).
-    public var diagonal: Int
+    var diagonal: Int
     
     /// Sign of horizontal neighbors: -1 (all negative), 0 (mixed/none), +1 (all positive).
-    public var horizontalSign: Int
+    var horizontalSign: Int
     
     /// Sign of vertical neighbors: -1 (all negative), 0 (mixed/none), +1 (all positive).
-    public var verticalSign: Int
+    var verticalSign: Int
     
     /// Creates a neighbor contribution with zero values.
-    public init() {
+    init() {
         self.horizontal = 0
         self.vertical = 0
         self.diagonal = 0
@@ -166,7 +166,7 @@ public struct NeighborContribution: Sendable {
     }
     
     /// Creates a neighbor contribution with the specified values.
-    public init(horizontal: Int, vertical: Int, diagonal: Int,
+    init(horizontal: Int, vertical: Int, diagonal: Int,
                 horizontalSign: Int = 0, verticalSign: Int = 0) {
         self.horizontal = horizontal
         self.vertical = vertical
@@ -176,12 +176,12 @@ public struct NeighborContribution: Sendable {
     }
     
     /// Total number of significant neighbors.
-    public var total: Int {
+    var total: Int {
         return horizontal + vertical + diagonal
     }
     
     /// Whether any neighbors are significant.
-    public var hasAny: Bool {
+    var hasAny: Bool {
         return total > 0
     }
 }
@@ -193,14 +193,14 @@ public struct NeighborContribution: Sendable {
 /// The context modeler examines the significance state of neighboring coefficients
 /// and computes the appropriate context label for coding each coefficient.
 /// Different subbands (LL, HL, LH, HH) use different context formation rules.
-public struct ContextModeler: Sendable {
+struct ContextModeler: Sendable {
     /// The subband type for context formation.
-    public let subband: J2KSubband
+    let subband: J2KSubband
     
     /// Creates a context modeler for the specified subband.
     ///
     /// - Parameter subband: The wavelet subband type.
-    public init(subband: J2KSubband) {
+    init(subband: J2KSubband) {
         self.subband = subband
     }
     
@@ -211,7 +211,7 @@ public struct ContextModeler: Sendable {
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: The context label for significance coding.
-    public func significanceContext(neighbors: NeighborContribution) -> EBCOTContext {
+    func significanceContext(neighbors: NeighborContribution) -> EBCOTContext {
         let h = neighbors.horizontal
         let v = neighbors.vertical
         let d = neighbors.diagonal
@@ -329,7 +329,7 @@ public struct ContextModeler: Sendable {
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: A tuple containing the context label and the sign prediction (XOR bit).
-    public func signContext(neighbors: NeighborContribution) -> (context: EBCOTContext, xorBit: Bool) {
+    func signContext(neighbors: NeighborContribution) -> (context: EBCOTContext, xorBit: Bool) {
         let hSign = neighbors.horizontalSign
         let vSign = neighbors.verticalSign
         
@@ -386,7 +386,7 @@ public struct ContextModeler: Sendable {
     ///   - firstRefinement: True if this is the first magnitude refinement for this coefficient.
     ///   - neighborsWereSignificant: True if neighbors were significant when this coefficient became significant.
     /// - Returns: The context label for magnitude refinement.
-    public func magnitudeRefinementContext(
+    func magnitudeRefinementContext(
         firstRefinement: Bool,
         neighborsWereSignificant: Bool
     ) -> EBCOTContext {
@@ -406,19 +406,19 @@ public struct ContextModeler: Sendable {
 ///
 /// This helper computes the significance and sign contributions from the 8
 /// neighbors of a coefficient, handling boundary conditions.
-public struct NeighborCalculator: Sendable {
+struct NeighborCalculator: Sendable {
     /// The width of the code-block.
-    public let width: Int
+    let width: Int
     
     /// The height of the code-block.
-    public let height: Int
+    let height: Int
     
     /// Creates a neighbor calculator for the specified code-block dimensions.
     ///
     /// - Parameters:
     ///   - width: The width of the code-block.
     ///   - height: The height of the code-block.
-    public init(width: Int, height: Int) {
+    init(width: Int, height: Int) {
         self.width = width
         self.height = height
     }
@@ -437,7 +437,7 @@ public struct NeighborCalculator: Sendable {
     ///   - states: The state array for all coefficients.
     ///   - signs: Optional sign array for sign contribution calculation.
     /// - Returns: The neighbor contribution.
-    public func calculate(
+    func calculate(
         x: Int,
         y: Int,
         states: [CoefficientState],
@@ -561,25 +561,25 @@ public struct NeighborCalculator: Sendable {
 ///
 /// This type holds the MQ contexts for all 19 EBCOT context labels,
 /// initialized with appropriate probability estimates.
-public struct ContextStateArray: Sendable {
+struct ContextStateArray: Sendable {
     /// The MQ contexts for each EBCOT context label.
-    public var contexts: [MQContext]
+    var contexts: [MQContext]
     
     /// Creates a new context state array with default initialization.
-    public init() {
+    init() {
         contexts = EBCOTContext.allCases.map { ebcotCtx in
             MQContext(stateIndex: ebcotCtx.initialState, mps: false)
         }
     }
     
     /// Accesses the MQ context for the specified EBCOT context label.
-    public subscript(context: EBCOTContext) -> MQContext {
+    subscript(context: EBCOTContext) -> MQContext {
         get { contexts[Int(context.rawValue)] }
         set { contexts[Int(context.rawValue)] = newValue }
     }
     
     /// Resets all contexts to their initial states.
-    public mutating func reset() {
+    mutating func reset() {
         for (index, ebcotCtx) in EBCOTContext.allCases.enumerated() {
             contexts[index] = MQContext(stateIndex: ebcotCtx.initialState, mps: false)
         }

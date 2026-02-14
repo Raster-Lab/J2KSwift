@@ -22,7 +22,7 @@ import J2KCore
 // MARK: - Coding Pass Type
 
 /// The type of coding pass in EBCOT bit-plane coding.
-public enum CodingPassType: Sendable {
+enum CodingPassType: Sendable {
     /// Significance propagation pass.
     case significancePropagation
     
@@ -38,32 +38,32 @@ public enum CodingPassType: Sendable {
 /// Configuration options for bit-plane coding.
 ///
 /// These options control the encoding behavior, including bypass mode and termination.
-public struct CodingOptions: Sendable {
+struct CodingOptions: Sendable {
     /// Enable selective arithmetic coding bypass mode.
     ///
     /// When enabled, magnitude refinement passes after a certain bit-plane
     /// use raw (bypass) mode instead of context-adaptive arithmetic coding.
-    public let bypassEnabled: Bool
+    let bypassEnabled: Bool
     
     /// The bit-plane index at which to start using bypass mode.
     ///
     /// Only applies when `bypassEnabled` is true. Bypass mode is used for
     /// magnitude refinement passes in bit-planes less than this threshold.
     /// A value of 0 disables bypass mode effectively.
-    public let bypassThreshold: Int
+    let bypassThreshold: Int
     
     /// The termination mode for arithmetic coding.
     ///
     /// Controls how the MQ-coder terminates its encoded output. Different
     /// modes offer trade-offs between compression efficiency and error resilience.
-    public let terminationMode: TerminationMode
+    let terminationMode: TerminationMode
     
     /// Whether to reset the encoder after each coding pass (predictable termination).
     ///
     /// When enabled, the encoder state is reset after each coding pass,
     /// allowing independent decoding of each pass. This is automatically
     /// enabled when `terminationMode` is `.predictable`.
-    public var resetOnEachPass: Bool {
+    var resetOnEachPass: Bool {
         return terminationMode == .predictable
     }
     
@@ -73,7 +73,7 @@ public struct CodingOptions: Sendable {
     ///   - bypassEnabled: Enable bypass mode (default: false).
     ///   - bypassThreshold: Bit-plane threshold for bypass (default: 0).
     ///   - terminationMode: The termination mode (default: `.default`).
-    public init(
+    init(
         bypassEnabled: Bool = false,
         bypassThreshold: Int = 0,
         terminationMode: TerminationMode = .default
@@ -118,15 +118,15 @@ public struct CodingOptions: Sendable {
 /// let coefficients: [Int32] = ... // Wavelet coefficients
 /// let encoded = try coder.encode(coefficients: coefficients, bitDepth: 12)
 /// ```
-public struct BitPlaneCoder: Sendable {
+struct BitPlaneCoder: Sendable {
     /// The width of the code-block.
-    public let width: Int
+    let width: Int
     
     /// The height of the code-block.
-    public let height: Int
+    let height: Int
     
     /// The subband type for context formation.
-    public let subband: J2KSubband
+    let subband: J2KSubband
     
     /// The context modeler for this subband.
     private let contextModeler: ContextModeler
@@ -144,7 +144,7 @@ public struct BitPlaneCoder: Sendable {
     ///   - height: The height of the code-block in samples.
     ///   - subband: The wavelet subband type.
     ///   - options: Coding options (default: `.default`).
-    public init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
+    init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
         self.width = width
         self.height = height
         self.subband = subband
@@ -162,7 +162,7 @@ public struct BitPlaneCoder: Sendable {
     /// - Returns: A tuple containing the encoded data, the number of coding passes,
     ///   the number of zero bit-planes, and per-pass segment lengths (empty if not predictable termination).
     /// - Throws: ``J2KError`` if encoding fails.
-    public func encode(
+    func encode(
         coefficients: [Int32],
         bitDepth: Int,
         maxPasses: Int? = nil
@@ -663,15 +663,15 @@ public struct BitPlaneCoder: Sendable {
 ///
 /// The bit-plane decoder reverses the encoding process, reconstructing
 /// wavelet coefficients from the compressed bitstream.
-public struct BitPlaneDecoder: Sendable {
+struct BitPlaneDecoder: Sendable {
     /// The width of the code-block.
-    public let width: Int
+    let width: Int
     
     /// The height of the code-block.
-    public let height: Int
+    let height: Int
     
     /// The subband type for context formation.
-    public let subband: J2KSubband
+    let subband: J2KSubband
     
     /// The context modeler for this subband.
     private let contextModeler: ContextModeler
@@ -689,7 +689,7 @@ public struct BitPlaneDecoder: Sendable {
     ///   - height: The height of the code-block in samples.
     ///   - subband: The wavelet subband type.
     ///   - options: Coding options (default: `.default`).
-    public init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
+    init(width: Int, height: Int, subband: J2KSubband, options: CodingOptions = .default) {
         self.width = width
         self.height = height
         self.subband = subband
@@ -708,7 +708,7 @@ public struct BitPlaneDecoder: Sendable {
     ///   - passSegmentLengths: Per-pass segment byte lengths for predictable termination (empty for default).
     /// - Returns: The decoded wavelet coefficients.
     /// - Throws: ``J2KError`` if decoding fails.
-    public func decode(
+    func decode(
         data: Data,
         passCount: Int,
         bitDepth: Int,
@@ -1146,7 +1146,7 @@ public struct BitPlaneDecoder: Sendable {
 ///
 /// This is a high-level wrapper around the bit-plane coder that handles
 /// the complete encoding of a JPEG 2000 code-block.
-public struct CodeBlockEncoder: Sendable {
+struct CodeBlockEncoder: Sendable {
     /// The maximum code-block width.
     public static let maxWidth = 64
     
@@ -1160,7 +1160,7 @@ public struct CodeBlockEncoder: Sendable {
     public static let defaultHeight = 64
     
     /// Creates a new code-block encoder.
-    public init() {}
+    init() {}
     
     /// Encodes a code-block with default options.
     ///
@@ -1172,7 +1172,7 @@ public struct CodeBlockEncoder: Sendable {
     ///   - bitDepth: The bit depth of the coefficients.
     /// - Returns: The encoded code-block data with metadata.
     /// - Throws: ``J2KError`` if encoding fails.
-    public func encode(
+    func encode(
         coefficients: [Int32],
         width: Int,
         height: Int,
@@ -1200,7 +1200,7 @@ public struct CodeBlockEncoder: Sendable {
     ///   - options: Coding options (bypass mode, termination, etc.).
     /// - Returns: The encoded code-block data with metadata.
     /// - Throws: ``J2KError`` if encoding fails.
-    public func encode(
+    func encode(
         coefficients: [Int32],
         width: Int,
         height: Int,
@@ -1235,9 +1235,9 @@ public struct CodeBlockEncoder: Sendable {
 ///
 /// This is a high-level wrapper around the bit-plane decoder that handles
 /// the complete decoding of a JPEG 2000 code-block.
-public struct CodeBlockDecoder: Sendable {
+struct CodeBlockDecoder: Sendable {
     /// Creates a new code-block decoder.
-    public init() {}
+    init() {}
     
     /// Decodes a code-block with default options.
     ///
@@ -1246,7 +1246,7 @@ public struct CodeBlockDecoder: Sendable {
     ///   - bitDepth: The bit depth of the coefficients.
     /// - Returns: The decoded wavelet coefficients.
     /// - Throws: ``J2KError`` if decoding fails.
-    public func decode(
+    func decode(
         codeBlock: J2KCodeBlock,
         bitDepth: Int
     ) throws -> [Int32] {
@@ -1261,7 +1261,7 @@ public struct CodeBlockDecoder: Sendable {
     ///   - options: Coding options that were used during encoding.
     /// - Returns: The decoded wavelet coefficients.
     /// - Throws: ``J2KError`` if decoding fails.
-    public func decode(
+    func decode(
         codeBlock: J2KCodeBlock,
         bitDepth: Int,
         options: CodingOptions
