@@ -29,7 +29,7 @@ import J2KCore
 ///
 /// ISO/IEC 15444-15 allows mixed codestreams where some code-blocks use legacy
 /// JPEG 2000 coding and others use the HT block coder within the same tile.
-public enum HTCodingMode: Sendable, Equatable {
+enum HTCodingMode: Sendable, Equatable {
     /// Legacy JPEG 2000 Part 1 EBCOT block coding.
     case legacy
 
@@ -44,7 +44,7 @@ public enum HTCodingMode: Sendable, Equatable {
 /// The HT block coder uses a different set of passes compared to legacy EBCOT.
 /// The cleanup pass is the primary coding pass, while SigProp and MagRef
 /// provide refinement for progressive quality.
-public enum HTCodingPassType: Sendable, Equatable {
+enum HTCodingPassType: Sendable, Equatable {
     /// HT cleanup pass — the primary pass encoding significance, sign, and magnitude.
     ///
     /// Uses MEL, VLC, and MagSgn coding primitives.
@@ -71,7 +71,7 @@ public enum HTCodingPassType: Sendable, Equatable {
 ///
 /// The MEL encoder produces a byte stream that grows from the beginning of the
 /// coded data buffer, while the VLC stream grows from the end.
-public struct HTMELCoder: Sendable {
+struct HTMELCoder: Sendable {
     /// Current run count.
     private var run: Int = 0
 
@@ -227,7 +227,7 @@ public struct HTMELCoder: Sendable {
 /// and sign information for pairs of samples (quad-pairs) in the HT cleanup pass.
 /// The VLC stream is written from the end of the coded data buffer, growing toward
 /// the beginning, while MEL data grows from the beginning.
-public struct HTVLCCoder: Sendable {
+struct HTVLCCoder: Sendable {
     /// Output buffer for VLC-encoded data.
     private var buffer: [UInt8] = []
 
@@ -340,7 +340,7 @@ public struct HTVLCCoder: Sendable {
 ///
 /// The magnitude is encoded as `|coefficient| - 1` using the number of bits
 /// determined by the most significant bit position.
-public struct HTMagSgnCoder: Sendable {
+struct HTMagSgnCoder: Sendable {
     /// Output buffer for magnitude/sign data.
     private var buffer: [UInt8] = []
 
@@ -441,7 +441,7 @@ public struct HTMagSgnCoder: Sendable {
 /// let encoder = HTBlockEncoder(width: 32, height: 32, subband: .hh)
 /// let result = try encoder.encode(coefficients: coeffs, bitPlane: 7)
 /// ```
-public struct HTBlockEncoder: Sendable {
+struct HTBlockEncoder: Sendable {
     /// The width of the code-block.
     public let width: Int
 
@@ -716,7 +716,7 @@ public struct HTBlockEncoder: Sendable {
 /// let decoder = HTBlockDecoder(width: 32, height: 32, subband: .hh)
 /// let coefficients = try decoder.decodeCleanup(from: encodedBlock)
 /// ```
-public struct HTBlockDecoder: Sendable {
+struct HTBlockDecoder: Sendable {
     /// The width of the code-block.
     public let width: Int
 
@@ -935,7 +935,7 @@ public struct HTBlockDecoder: Sendable {
 ///
 /// Contains the coded data and metadata from an HT block encoding operation,
 /// including the lengths of the individual coding primitive streams.
-public struct HTEncodedBlock: Sendable {
+struct HTEncodedBlock: Sendable {
     /// The combined coded data (MEL + MagSgn + reversed VLC).
     public let codedData: Data
 

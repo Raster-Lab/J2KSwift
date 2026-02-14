@@ -22,7 +22,7 @@ import J2KCore
 // MARK: - Coding Pass Type
 
 /// The type of coding pass in EBCOT bit-plane coding.
-public enum CodingPassType: Sendable {
+enum CodingPassType: Sendable {
     /// Significance propagation pass.
     case significancePropagation
     
@@ -38,7 +38,7 @@ public enum CodingPassType: Sendable {
 /// Configuration options for bit-plane coding.
 ///
 /// These options control the encoding behavior, including bypass mode and termination.
-public struct CodingOptions: Sendable {
+struct CodingOptions: Sendable {
     /// Enable selective arithmetic coding bypass mode.
     ///
     /// When enabled, magnitude refinement passes after a certain bit-plane
@@ -118,7 +118,7 @@ public struct CodingOptions: Sendable {
 /// let coefficients: [Int32] = ... // Wavelet coefficients
 /// let encoded = try coder.encode(coefficients: coefficients, bitDepth: 12)
 /// ```
-public struct BitPlaneCoder: Sendable {
+struct BitPlaneCoder: Sendable {
     /// The width of the code-block.
     public let width: Int
     
@@ -663,7 +663,7 @@ public struct BitPlaneCoder: Sendable {
 ///
 /// The bit-plane decoder reverses the encoding process, reconstructing
 /// wavelet coefficients from the compressed bitstream.
-public struct BitPlaneDecoder: Sendable {
+struct BitPlaneDecoder: Sendable {
     /// The width of the code-block.
     public let width: Int
     
@@ -1146,7 +1146,7 @@ public struct BitPlaneDecoder: Sendable {
 ///
 /// This is a high-level wrapper around the bit-plane coder that handles
 /// the complete encoding of a JPEG 2000 code-block.
-public struct CodeBlockEncoder: Sendable {
+struct CodeBlockEncoder: Sendable {
     /// The maximum code-block width.
     public static let maxWidth = 64
     
@@ -1235,7 +1235,7 @@ public struct CodeBlockEncoder: Sendable {
 ///
 /// This is a high-level wrapper around the bit-plane decoder that handles
 /// the complete decoding of a JPEG 2000 code-block.
-public struct CodeBlockDecoder: Sendable {
+struct CodeBlockDecoder: Sendable {
     /// Creates a new code-block decoder.
     public init() {}
     

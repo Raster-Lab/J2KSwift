@@ -37,7 +37,7 @@ import J2KCore
 ///
 /// Controls the behavior of the HTJ2K codec, including the coding mode,
 /// quality settings, and mixed-mode support.
-public struct HTJ2KConfiguration: Sendable {
+struct HTJ2KConfiguration: Sendable {
     /// The block coding mode to use for encoding.
     ///
     /// Determines whether to use HT (fast) or legacy (compatible) block coding.
@@ -145,7 +145,7 @@ public struct HTJ2KConfiguration: Sendable {
 ///                                               width: 64, height: 64,
 ///                                               subband: .hh)
 /// ```
-public struct HTJ2KEncoder: Sendable {
+struct HTJ2KEncoder: Sendable {
     /// The HTJ2K configuration.
     public let configuration: HTJ2KConfiguration
 
@@ -360,7 +360,7 @@ public struct HTJ2KEncoder: Sendable {
 ///                                                 width: 64, height: 64,
 ///                                                 subband: .hh)
 /// ```
-public struct HTJ2KDecoder: Sendable {
+struct HTJ2KDecoder: Sendable {
     /// Creates a new HTJ2K decoder.
     public init() {}
 
@@ -492,7 +492,7 @@ public struct HTJ2KDecoder: Sendable {
 ///
 /// Contains the cleanup pass data along with any refinement passes (SigProp
 /// and MagRef), plus metadata about the coding mode and pass structure.
-public struct HTEncodedResult: Sendable {
+struct HTEncodedResult: Sendable {
     /// The coding mode used (HT or legacy).
     public let codingMode: HTCodingMode
 
@@ -543,7 +543,7 @@ public struct HTEncodedResult: Sendable {
 ///
 /// Checks structural requirements, marker segment validity, and capability
 /// signaling for HTJ2K conformance.
-public struct HTJ2KConformanceValidator: Sendable {
+struct HTJ2KConformanceValidator: Sendable {
     /// Creates a new conformance validator.
     public init() {}
 
@@ -640,7 +640,7 @@ public struct HTJ2KConformanceValidator: Sendable {
 }
 
 /// The result of an HTJ2K conformance validation check.
-public struct ConformanceResult: Sendable {
+struct ConformanceResult: Sendable {
     /// Whether the validation passed.
     public let isValid: Bool
 
@@ -664,7 +664,7 @@ public struct ConformanceResult: Sendable {
 ///
 /// Measures encoding and decoding performance for both HT and legacy modes,
 /// providing a direct comparison of throughput characteristics.
-public struct HTJ2KBenchmark: Sendable {
+struct HTJ2KBenchmark: Sendable {
     /// Creates a new benchmark instance.
     public init() {}
 
@@ -730,7 +730,7 @@ public struct HTJ2KBenchmark: Sendable {
 }
 
 /// The result of an HTJ2K vs legacy throughput benchmark.
-public struct BenchmarkResult: Sendable {
+struct BenchmarkResult: Sendable {
     /// Average HT encoding time in seconds.
     public let htEncodingTime: Double
 

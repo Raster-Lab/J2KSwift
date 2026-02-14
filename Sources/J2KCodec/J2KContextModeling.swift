@@ -25,7 +25,7 @@ import J2KCore
 /// The JPEG 2000 standard defines 19 context labels (0-18) that are used
 /// for different coding scenarios. These contexts allow the arithmetic
 /// coder to maintain separate probability estimates for different situations.
-public enum EBCOTContext: UInt8, Sendable, CaseIterable {
+enum EBCOTContext: UInt8, Sendable, CaseIterable {
     // MARK: - Significance Propagation Contexts (0-8)
     
     /// Zero contribution context for LL/LH subbands.
@@ -114,7 +114,7 @@ public enum EBCOTContext: UInt8, Sendable, CaseIterable {
 // MARK: - Coefficient State
 
 /// Flags representing the state of a coefficient during bit-plane coding.
-public struct CoefficientState: OptionSet, Sendable {
+struct CoefficientState: OptionSet, Sendable {
     public let rawValue: UInt8
     
     public init(rawValue: UInt8) {
@@ -140,7 +140,7 @@ public struct CoefficientState: OptionSet, Sendable {
 // MARK: - Neighbor Contribution
 
 /// Contribution from neighboring coefficients for context formation.
-public struct NeighborContribution: Sendable {
+struct NeighborContribution: Sendable {
     /// Number of significant horizontal neighbors (0-2).
     public var horizontal: Int
     
@@ -193,7 +193,7 @@ public struct NeighborContribution: Sendable {
 /// The context modeler examines the significance state of neighboring coefficients
 /// and computes the appropriate context label for coding each coefficient.
 /// Different subbands (LL, HL, LH, HH) use different context formation rules.
-public struct ContextModeler: Sendable {
+struct ContextModeler: Sendable {
     /// The subband type for context formation.
     public let subband: J2KSubband
     
@@ -406,7 +406,7 @@ public struct ContextModeler: Sendable {
 ///
 /// This helper computes the significance and sign contributions from the 8
 /// neighbors of a coefficient, handling boundary conditions.
-public struct NeighborCalculator: Sendable {
+struct NeighborCalculator: Sendable {
     /// The width of the code-block.
     public let width: Int
     
@@ -561,7 +561,7 @@ public struct NeighborCalculator: Sendable {
 ///
 /// This type holds the MQ contexts for all 19 EBCOT context labels,
 /// initialized with appropriate probability estimates.
-public struct ContextStateArray: Sendable {
+struct ContextStateArray: Sendable {
     /// The MQ contexts for each EBCOT context label.
     public var contexts: [MQContext]
     

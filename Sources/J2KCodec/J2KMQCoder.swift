@@ -16,7 +16,7 @@ import J2KCore
 /// The JPEG 2000 standard defines different termination modes that control
 /// how the arithmetic coder terminates its output. Different modes offer
 /// trade-offs between compression efficiency and decoder complexity.
-public enum TerminationMode: Sendable, Equatable, Hashable {
+enum TerminationMode: Sendable, Equatable, Hashable {
     /// Default termination mode.
     ///
     /// Uses the standard JPEG 2000 termination sequence. This mode is most
@@ -48,7 +48,7 @@ public enum TerminationMode: Sendable, Equatable, Hashable {
 // MARK: - MQ State Table
 
 /// Represents a single entry in the MQ-coder probability estimation table.
-public struct MQState: Sendable, Equatable {
+struct MQState: Sendable, Equatable {
     /// The probability estimate for the less probable symbol (Qe value).
     public let qe: UInt32
     
@@ -82,7 +82,7 @@ public struct MQState: Sendable, Equatable {
 /// let state = mqStateTable[contextIndex]
 /// let probability = state.qe
 /// ```
-public let mqStateTable: [MQState] = [
+let mqStateTable: [MQState] = [
     MQState(qe: 0x5601, nextMPS: 1, nextLPS: 1, switchMPS: true),
     MQState(qe: 0x3401, nextMPS: 2, nextLPS: 6, switchMPS: false),
     MQState(qe: 0x1801, nextMPS: 3, nextLPS: 9, switchMPS: false),
@@ -135,7 +135,7 @@ public let mqStateTable: [MQState] = [
 // MARK: - MQ Context
 
 /// Represents a context used by the MQ-coder.
-public struct MQContext: Sendable {
+struct MQContext: Sendable {
     /// The current index into the state table.
     public var stateIndex: Int
     
@@ -168,7 +168,7 @@ public struct MQContext: Sendable {
 // MARK: - MQ Encoder
 
 /// Encodes binary symbols using the MQ arithmetic coding algorithm.
-public struct MQEncoder: Sendable {
+struct MQEncoder: Sendable {
     // MARK: - Constants
     
     /// Initial counter value for the MQ-coder (number of bits before first byte output).
@@ -448,7 +448,7 @@ public struct MQEncoder: Sendable {
 // MARK: - MQ Decoder
 
 /// Decodes binary symbols using the MQ arithmetic coding algorithm.
-public struct MQDecoder: Sendable {
+struct MQDecoder: Sendable {
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
     private var ct: Int = 0
@@ -625,7 +625,7 @@ public struct MQDecoder: Sendable {
 ///
 /// This is separate from the MQ coder to avoid bit-positioning issues
 /// that arise from mixing MQ state with raw bit packing.
-public struct RawBypassEncoder: Sendable {
+struct RawBypassEncoder: Sendable {
     /// Byte accumulator for collecting bits.
     private var c: UInt32 = 0
     /// Number of remaining bits in the current byte.
@@ -696,7 +696,7 @@ public struct RawBypassEncoder: Sendable {
 /// This decoder reads raw bits packed MSB-first from bytes, with 0xFF byte
 /// stuffing handling. It is separate from the MQ decoder to avoid
 /// bit-positioning issues.
-public struct RawBypassDecoder: Sendable {
+struct RawBypassDecoder: Sendable {
     /// Current byte value.
     private var c: UInt32 = 0
     /// Number of remaining bits in the current byte.

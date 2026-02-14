@@ -20,7 +20,7 @@ import Foundation
 /// // Use ptr...
 /// // All memory freed when arena is deallocated
 /// ```
-public final class J2KArenaAllocator: @unchecked Sendable {
+final class J2KArenaAllocator: @unchecked Sendable {
     /// A single block of allocated memory.
     private final class Block {
         let memory: UnsafeMutableRawPointer
@@ -146,7 +146,7 @@ public final class J2KArenaAllocator: @unchecked Sendable {
 ///     // Use buffer for DWT computation
 /// }
 /// ```
-public final class J2KScratchBuffers: @unchecked Sendable {
+final class J2KScratchBuffers: @unchecked Sendable {
     /// The width of tiles this scratch set supports.
     public let tileWidth: Int
 
