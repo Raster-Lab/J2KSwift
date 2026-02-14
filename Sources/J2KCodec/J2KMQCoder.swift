@@ -50,16 +50,16 @@ enum TerminationMode: Sendable, Equatable, Hashable {
 /// Represents a single entry in the MQ-coder probability estimation table.
 struct MQState: Sendable, Equatable {
     /// The probability estimate for the less probable symbol (Qe value).
-    public let qe: UInt32
+    let qe: UInt32
     
     /// The next state index after encoding/decoding the most probable symbol (MPS).
-    public let nextMPS: Int
+    let nextMPS: Int
     
     /// The next state index after encoding/decoding the least probable symbol (LPS).
-    public let nextLPS: Int
+    let nextLPS: Int
     
     /// Whether to switch the MPS sense after an LPS event.
-    public let switchMPS: Bool
+    let switchMPS: Bool
 }
 
 /// The MQ-coder probability estimation state table (47 states).
@@ -137,30 +137,30 @@ let mqStateTable: [MQState] = [
 /// Represents a context used by the MQ-coder.
 struct MQContext: Sendable {
     /// The current index into the state table.
-    public var stateIndex: Int
+    var stateIndex: Int
     
     /// The current most probable symbol (0 or 1).
-    public var mps: Bool
+    var mps: Bool
     
     /// Creates a new context with the specified initial state.
-    public init(stateIndex: Int = 0, mps: Bool = false) {
+    init(stateIndex: Int = 0, mps: Bool = false) {
         self.stateIndex = stateIndex
         self.mps = mps
     }
     
     /// Creates a new context (UInt8 compatibility).
-    public init(stateIndex: UInt8, mps: Bool = false) {
+    init(stateIndex: UInt8, mps: Bool = false) {
         self.stateIndex = Int(stateIndex)
         self.mps = mps
     }
     
     /// Returns the current state from the state table.
-    public var state: MQState {
+    var state: MQState {
         return mqStateTable[stateIndex]
     }
     
     /// Returns the current Qe value.
-    public var qe: UInt32 {
+    var qe: UInt32 {
         return state.qe
     }
 }
@@ -188,7 +188,7 @@ struct MQEncoder: Sendable {
     private var output: [UInt8] = []
     
     /// Creates a new MQ encoder.
-    public init() {
+    init() {
         output.reserveCapacity(1024)
     }
     
@@ -198,13 +198,13 @@ struct MQEncoder: Sendable {
     /// to avoid memory reallocations during encoding.
     ///
     /// - Parameter estimatedSize: Estimated output size in bytes.
-    public init(estimatedSize: Int) {
+    init(estimatedSize: Int) {
         output.reserveCapacity(max(estimatedSize, 256))
     }
     
     /// Encodes a binary symbol using the specified context.
     @inline(__always)
-    public mutating func encode(symbol: Bool, context: inout MQContext) {
+    mutating func encode(symbol: Bool, context: inout MQContext) {
         let state = context.state
         let qe = state.qe
         
@@ -239,7 +239,7 @@ struct MQEncoder: Sendable {
     /// This method ensures a clean transition from MQ coding to raw bypass coding.
     /// The interval register is set to the full interval and remaining bits are flushed.
     @inline(__always)
-    public mutating func prepareForBypass() {
+    mutating func prepareForBypass() {
         a = 0x8000
     }
     
@@ -247,7 +247,7 @@ struct MQEncoder: Sendable {
     ///
     /// In bypass mode, raw bits are packed using the MQ coder's byte output mechanism.
     @inline(__always)
-    public mutating func encodeBypass(symbol: Bool) {
+    mutating func encodeBypass(symbol: Bool) {
         c <<= 1
         if symbol {
             c += 0x8000
@@ -308,7 +308,7 @@ struct MQEncoder: Sendable {
     }
     
     /// Finishes encoding and returns the compressed data.
-    public mutating func finish() -> Data {
+    mutating func finish() -> Data {
         return finish(mode: .default)
     }
     
@@ -316,7 +316,7 @@ struct MQEncoder: Sendable {
     ///
     /// - Parameter mode: The termination mode to use.
     /// - Returns: The encoded data.
-    public mutating func finish(mode: TerminationMode) -> Data {
+    mutating func finish(mode: TerminationMode) -> Data {
         switch mode {
         case .default:
             return finishDefault()
@@ -431,7 +431,7 @@ struct MQEncoder: Sendable {
     }
     
     /// Resets the encoder to its initial state.
-    public mutating func reset() {
+    mutating func reset() {
         c = 0
         a = 0x8000
         ct = Self.initialCounterBits
@@ -440,7 +440,7 @@ struct MQEncoder: Sendable {
     }
     
     /// Returns the current size of the encoded data.
-    public var encodedSize: Int {
+    var encodedSize: Int {
         return output.count + (buffer >= 0 ? 1 : 0)
     }
 }
@@ -458,7 +458,7 @@ struct MQDecoder: Sendable {
     private var nextBuffer: UInt8 = 0
     
     /// Creates a new MQ decoder with the specified compressed data.
-    public init(data: Data) {
+    init(data: Data) {
         self.data = data
         initializeDecoder()
     }
@@ -506,7 +506,7 @@ struct MQDecoder: Sendable {
     
     /// Decodes a binary symbol using the specified context.
     @inline(__always)
-    public mutating func decode(context: inout MQContext) -> Bool {
+    mutating func decode(context: inout MQContext) -> Bool {
         let state = context.state
         let qe = state.qe
         
@@ -559,7 +559,7 @@ struct MQDecoder: Sendable {
     /// This method ensures a clean transition from MQ decoding to raw bypass decoding.
     /// The interval register is set to the full interval.
     @inline(__always)
-    public mutating func prepareForBypass() {
+    mutating func prepareForBypass() {
         a = 0x8000
     }
     
@@ -567,7 +567,7 @@ struct MQDecoder: Sendable {
     ///
     /// In bypass mode, raw bits are read using the MQ coder's byte input mechanism.
     @inline(__always)
-    public mutating func decodeBypass() -> Bool {
+    mutating func decodeBypass() -> Bool {
         if ct == 0 {
             fillC()
         }
@@ -595,7 +595,7 @@ struct MQDecoder: Sendable {
     }
     
     /// Resets the decoder.
-    public mutating func reset() {
+    mutating func reset() {
         position = 0
         c = 0
         a = 0x8000
@@ -605,12 +605,12 @@ struct MQDecoder: Sendable {
     }
     
     /// Returns true if at end of data.
-    public var isAtEnd: Bool {
+    var isAtEnd: Bool {
         return position >= data.count && ct == 0
     }
     
     /// Returns the current position.
-    public var currentPosition: Int {
+    var currentPosition: Int {
         return position
     }
 }
@@ -634,14 +634,14 @@ struct RawBypassEncoder: Sendable {
     private var output: [UInt8] = []
     
     /// Creates a new raw bypass encoder.
-    public init() {}
+    init() {}
     
     /// Encodes a single raw bit.
     ///
     /// Bits are packed MSB-first. After writing a 0xFF byte, only 7 bits
     /// are used in the next byte to avoid JPEG 2000 marker conflicts.
     @inline(__always)
-    public mutating func encode(symbol: Bool) {
+    mutating func encode(symbol: Bool) {
         if ct == 0 {
             ct = 8
         }
@@ -665,7 +665,7 @@ struct RawBypassEncoder: Sendable {
     ///
     /// Remaining bits are filled with an alternating 0,1 pattern per the
     /// JPEG 2000 standard.
-    public mutating func finish() -> Data {
+    mutating func finish() -> Data {
         // Flush partial byte if any
         if ct > 0 && ct < 8 {
             // Fill remaining bits with alternating pattern
@@ -682,7 +682,7 @@ struct RawBypassEncoder: Sendable {
     }
     
     /// Resets the encoder.
-    public mutating func reset() {
+    mutating func reset() {
         c = 0
         ct = 0
         output.removeAll(keepingCapacity: true)
@@ -707,7 +707,7 @@ struct RawBypassDecoder: Sendable {
     private var position: Int = 0
     
     /// Creates a new raw bypass decoder.
-    public init(data: Data) {
+    init(data: Data) {
         self.data = data
     }
     
@@ -716,7 +716,7 @@ struct RawBypassDecoder: Sendable {
     /// Bits are read MSB-first. After a 0xFF byte, only 7 bits are read
     /// from the next byte to avoid JPEG 2000 marker conflicts.
     @inline(__always)
-    public mutating func decode() -> Bool {
+    mutating func decode() -> Bool {
         if ct == 0 {
             // Read next byte
             if position < data.count {

@@ -98,12 +98,12 @@ struct HTMELCoder: Sendable {
     ]
 
     /// Creates a new MEL coder.
-    public init() {}
+    init() {}
 
     /// Encodes a single context decision (0 = insignificant, 1 = significant).
     ///
     /// - Parameter bit: The context decision bit.
-    public mutating func encode(bit: Int) {
+    mutating func encode(bit: Int) {
         if bit == 0 {
             run += 1
             let limit = 1 << Self.thresholdTable[stateIndex]
@@ -131,7 +131,7 @@ struct HTMELCoder: Sendable {
     /// Flushes any remaining data in the MEL coder.
     ///
     /// - Returns: The MEL-encoded byte stream.
-    public mutating func flush() -> Data {
+    mutating func flush() -> Data {
         // Emit remaining run if any
         if run > 0 {
             // Pad with 0-bits since the run didn't complete
@@ -163,7 +163,7 @@ struct HTMELCoder: Sendable {
     /// - Parameter reader: The bit reader positioned at MEL data.
     /// - Returns: The decoded context decision (0 or 1).
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public mutating func decode(from reader: inout J2KBitReader) throws -> Int {
+    mutating func decode(from reader: inout J2KBitReader) throws -> Int {
         if run > 0 {
             run -= 1
             return 0
@@ -249,12 +249,12 @@ struct HTVLCCoder: Sendable {
     ]
 
     /// Creates a new VLC coder.
-    public init() {}
+    init() {}
 
     /// Encodes a significance pattern for a pair of samples.
     ///
     /// - Parameter pattern: A 2-bit significance pattern (0-3).
-    public mutating func encodeSignificance(pattern: Int) {
+    mutating func encodeSignificance(pattern: Int) {
         let clampedPattern = pattern & 0x03
         let entry = Self.vlcTable[clampedPattern]
         emitBits(Int(entry.code), count: entry.length)
@@ -263,14 +263,14 @@ struct HTVLCCoder: Sendable {
     /// Encodes a sign bit (0 = positive, 1 = negative).
     ///
     /// - Parameter sign: The sign bit.
-    public mutating func encodeSign(_ sign: Int) {
+    mutating func encodeSign(_ sign: Int) {
         emitBits(sign & 1, count: 1)
     }
 
     /// Flushes the VLC coder and returns the encoded data.
     ///
     /// - Returns: The VLC-encoded byte stream.
-    public mutating func flush() -> Data {
+    mutating func flush() -> Data {
         // Pad to byte boundary
         while bitCount % 8 != 0 {
             emitBits(0, count: 1)
@@ -302,7 +302,7 @@ struct HTVLCCoder: Sendable {
     /// - Parameter reader: The bit reader positioned at VLC data.
     /// - Returns: A 2-bit significance pattern.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decodeSignificance(from reader: inout J2KBitReader) throws -> Int {
+    func decodeSignificance(from reader: inout J2KBitReader) throws -> Int {
         guard reader.bytesRemaining > 0 || reader.position > 0 else {
             return 0
         }
@@ -351,7 +351,7 @@ struct HTMagSgnCoder: Sendable {
     private var bitCount: Int = 0
 
     /// Creates a new MagSgn coder.
-    public init() {}
+    init() {}
 
     /// Encodes the magnitude and sign of a significant coefficient.
     ///
@@ -359,7 +359,7 @@ struct HTMagSgnCoder: Sendable {
     ///   - magnitude: The absolute value of the coefficient (must be > 0).
     ///   - sign: The sign bit (0 = positive, 1 = negative).
     ///   - bitPlane: The current bit-plane being encoded.
-    public mutating func encode(magnitude: Int, sign: Int, bitPlane: Int) {
+    mutating func encode(magnitude: Int, sign: Int, bitPlane: Int) {
         guard magnitude > 0 else { return }
 
         // Encode sign bit
@@ -376,7 +376,7 @@ struct HTMagSgnCoder: Sendable {
     /// Flushes the MagSgn coder and returns the encoded data.
     ///
     /// - Returns: The MagSgn-encoded byte stream.
-    public mutating func flush() -> Data {
+    mutating func flush() -> Data {
         // Pad to byte boundary
         while bitCount % 8 != 0 {
             emitBit(0)
@@ -407,7 +407,7 @@ struct HTMagSgnCoder: Sendable {
     ///   - bitPlane: The current bit-plane being decoded.
     /// - Returns: The decoded signed coefficient value.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decode(from reader: inout J2KBitReader, bitPlane: Int) throws -> Int {
+    func decode(from reader: inout J2KBitReader, bitPlane: Int) throws -> Int {
         // Read sign bit
         let sign = try reader.readBit() ? 1 : 0
 
@@ -443,13 +443,13 @@ struct HTMagSgnCoder: Sendable {
 /// ```
 struct HTBlockEncoder: Sendable {
     /// The width of the code-block.
-    public let width: Int
+    let width: Int
 
     /// The height of the code-block.
-    public let height: Int
+    let height: Int
 
     /// The subband this code-block belongs to.
-    public let subband: J2KSubband
+    let subband: J2KSubband
 
     /// Creates a new HT block encoder.
     ///
@@ -457,7 +457,7 @@ struct HTBlockEncoder: Sendable {
     ///   - width: The code-block width in samples.
     ///   - height: The code-block height in samples.
     ///   - subband: The wavelet subband.
-    public init(width: Int, height: Int, subband: J2KSubband) {
+    init(width: Int, height: Int, subband: J2KSubband) {
         self.width = width
         self.height = height
         self.subband = subband
@@ -474,7 +474,7 @@ struct HTBlockEncoder: Sendable {
     ///   - bitPlane: The most significant bit-plane to encode.
     /// - Returns: An ``HTEncodedBlock`` containing the coded data and metadata.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    public func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
+    func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
         guard coefficients.count == width * height else {
             throw J2KError.encodingError(
                 "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
@@ -564,7 +564,7 @@ struct HTBlockEncoder: Sendable {
     ///   - bitPlane: The bit-plane for this refinement pass.
     /// - Returns: The encoded data for the SigProp pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    public func encodeSigProp(
+    func encodeSigProp(
         coefficients: [Int],
         significanceState: [Bool],
         bitPlane: Int
@@ -638,7 +638,7 @@ struct HTBlockEncoder: Sendable {
     ///   - bitPlane: The bit-plane for this refinement pass.
     /// - Returns: The encoded data for the MagRef pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    public func encodeMagRef(
+    func encodeMagRef(
         coefficients: [Int],
         significanceState: [Bool],
         bitPlane: Int
@@ -718,13 +718,13 @@ struct HTBlockEncoder: Sendable {
 /// ```
 struct HTBlockDecoder: Sendable {
     /// The width of the code-block.
-    public let width: Int
+    let width: Int
 
     /// The height of the code-block.
-    public let height: Int
+    let height: Int
 
     /// The subband this code-block belongs to.
-    public let subband: J2KSubband
+    let subband: J2KSubband
 
     /// Creates a new HT block decoder.
     ///
@@ -732,7 +732,7 @@ struct HTBlockDecoder: Sendable {
     ///   - width: The code-block width in samples.
     ///   - height: The code-block height in samples.
     ///   - subband: The wavelet subband.
-    public init(width: Int, height: Int, subband: J2KSubband) {
+    init(width: Int, height: Int, subband: J2KSubband) {
         self.width = width
         self.height = height
         self.subband = subband
@@ -743,7 +743,7 @@ struct HTBlockDecoder: Sendable {
     /// - Parameter block: The encoded block data.
     /// - Returns: The decoded wavelet coefficients in raster order.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decodeCleanup(from block: HTEncodedBlock) throws -> [Int] {
+    func decodeCleanup(from block: HTEncodedBlock) throws -> [Int] {
         guard block.passType == .htCleanup else {
             throw J2KError.decodingError("Expected HT cleanup pass, got \(block.passType)")
         }
@@ -827,7 +827,7 @@ struct HTBlockDecoder: Sendable {
     ///   - bitPlane: The bit-plane for this refinement pass.
     /// - Returns: A tuple of updated coefficients and significance state.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decodeSigProp(
+    func decodeSigProp(
         coefficients: [Int],
         sigPropData: Data,
         significanceState: [Bool],
@@ -875,7 +875,7 @@ struct HTBlockDecoder: Sendable {
     ///   - bitPlane: The bit-plane for refinement.
     /// - Returns: The updated coefficients.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    public func decodeMagRef(
+    func decodeMagRef(
         coefficients: [Int],
         magRefData: Data,
         significanceState: [Bool],
@@ -937,28 +937,28 @@ struct HTBlockDecoder: Sendable {
 /// including the lengths of the individual coding primitive streams.
 struct HTEncodedBlock: Sendable {
     /// The combined coded data (MEL + MagSgn + reversed VLC).
-    public let codedData: Data
+    let codedData: Data
 
     /// The type of coding pass that produced this data.
-    public let passType: HTCodingPassType
+    let passType: HTCodingPassType
 
     /// The length of the MEL stream in bytes.
-    public let melLength: Int
+    let melLength: Int
 
     /// The length of the VLC stream in bytes.
-    public let vlcLength: Int
+    let vlcLength: Int
 
     /// The length of the MagSgn stream in bytes.
-    public let magsgnLength: Int
+    let magsgnLength: Int
 
     /// The bit-plane at which encoding was performed.
-    public let bitPlane: Int
+    let bitPlane: Int
 
     /// The code-block width.
-    public let width: Int
+    let width: Int
 
     /// The code-block height.
-    public let height: Int
+    let height: Int
 
     /// Creates a new HT encoded block.
     ///
@@ -971,7 +971,7 @@ struct HTEncodedBlock: Sendable {
     ///   - bitPlane: The encoded bit-plane.
     ///   - width: The code-block width.
     ///   - height: The code-block height.
-    public init(
+    init(
         codedData: Data,
         passType: HTCodingPassType,
         melLength: Int,
