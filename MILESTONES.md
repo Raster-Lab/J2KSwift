@@ -510,11 +510,38 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
   - ✅ Test skipped on Linux with documentation for v1.2.0 fix
   - ⏭️ macOS validation via CI (workflow configured, not yet run)
 
+### v1.2.0 (February 2026) 🚧 IN DEVELOPMENT
+- [x] Critical bug fixes
+  - [x] MQDecoder position underflow fixed (Issue #121)
+    - Fix prevents crashes with "Illegal instruction" error
+    - `fillC()` method now properly tracks position before decrementing
+    - All codec integration tests pass
+  - [x] Linux lossless decoding fixed
+    - Packet header parsing corrected with separate `dataIndex` tracking
+    - `testLosslessRoundTrip()` now passes on Linux
+    - Cross-platform validation confirms fix
+- [x] Documentation updates
+  - [x] RELEASE_NOTES_v1.2.0.md created
+  - [x] RELEASE_CHECKLIST_v1.2.0.md created
+  - [x] KNOWN_LIMITATIONS.md updated to v1.2.0-dev
+- [ ] Performance improvements
+  - [ ] Profiling and optimization (target: ≥80% of OpenJPEG speed)
+  - [ ] Memory usage optimization
+  - [ ] Thread pool refinements
+- [ ] Enhanced testing
+  - [x] All 1,528 tests passing (24 skipped)
+  - [ ] Performance regression tests
+  - [ ] Cross-platform validation (macOS CI)
+- [ ] Release preparation
+  - [ ] Final code review
+  - [ ] Update version strings
+  - [ ] Release announcement
+
 ---
 
 **Last Updated**: 2026-02-15  
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
 **Current Version**: 1.2.0-dev (In Development)  
 **Previous Release**: 1.1.1 (Released February 15, 2026)  
-**Next Milestone**: v1.2.0 (Minor Release - Critical bug fix + enhancements)  
+**Next Milestone**: v1.2.0 (Minor Release - Critical bug fixes completed, performance work ongoing)  
 **Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.2+
