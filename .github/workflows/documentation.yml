@@ -1,0 +1,90 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-documentation:
+    name: Build Documentation
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+      
+      - name: Generate Documentation
+        run: |
+          # Install DocC if needed (usually comes with Xcode on macOS)
+          # Generate documentation for each target
+          swift package \
+            --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target J2KCore \
+            --output-path ./docs/J2KCore \
+            --hosting-base-path J2KSwift/J2KCore || true
+          
+          swift package \
+            --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target J2KCodec \
+            --output-path ./docs/J2KCodec \
+            --hosting-base-path J2KSwift/J2KCodec || true
+          
+          swift package \
+            --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target J2KAccelerate \
+            --output-path ./docs/J2KAccelerate \
+            --hosting-base-path J2KSwift/J2KAccelerate || true
+          
+          swift package \
+            --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target J2KFileFormat \
+            --output-path ./docs/J2KFileFormat \
+            --hosting-base-path J2KSwift/J2KFileFormat || true
+          
+          swift package \
+            --allow-writing-to-directory ./docs \
+            generate-documentation \
+            --target JPIP \
+            --output-path ./docs/JPIP \
+            --hosting-base-path J2KSwift/JPIP || true
+          
+          # Create index page
+          echo "<html><head><meta charset='utf-8'><title>J2KSwift Documentation</title></head><body><h1>J2KSwift Documentation</h1><ul><li><a href='J2KCore/documentation/j2kcore/'>J2KCore</a></li><li><a href='J2KCodec/documentation/j2kcodec/'>J2KCodec</a></li><li><a href='J2KAccelerate/documentation/j2kaccelerate/'>J2KAccelerate</a></li><li><a href='J2KFileFormat/documentation/j2kfileformat/'>J2KFileFormat</a></li><li><a href='JPIP/documentation/jpip/'>JPIP</a></li></ul></body></html>" > ./docs/index.html
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+  
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build-documentation
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
