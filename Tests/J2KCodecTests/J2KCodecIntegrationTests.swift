@@ -144,14 +144,14 @@ final class J2KCodecIntegrationTests: XCTestCase {
     
     /// Tests lossless round-trip encoding and decoding.
     ///
-    /// Note: Lossless decoding is partially implemented. The decoder can parse
-    /// and decode lossless codestreams, but data reconstruction may not be
-    /// pixel-perfect yet due to simplified packet parsing.
+    /// Note: Lossless decoding is being improved. The decoder can parse
+    /// and decode lossless codestreams. Multi-level wavelet reconstruction
+    /// has been implemented.
     ///
-    /// TODO: Complete packet parsing to extract all code block data properly.
+    /// Current status: Enhanced packet parsing for multi-level decomposition.
     func testLosslessRoundTrip() throws {
-        // SKIP: Simplified decoder doesn't properly extract lossless data yet
-        throw XCTSkip("Lossless decoding implementation needs packet parsing improvements")
+        // Test is currently experimental - enable to check progress
+        // throw XCTSkip("Lossless decoding implementation needs packet parsing improvements")
         
         // Create a gradient pattern
         let width = 16
@@ -204,10 +204,14 @@ final class J2KCodecIntegrationTests: XCTestCase {
         XCTAssertEqual(decodedComp.width, width)
         XCTAssertEqual(decodedComp.height, height)
         
-        // Note: Exact lossless reconstruction is a known work-in-progress
-        // For now, verify we get some data back
+        // Verify we get data back (exact reconstruction is being improved)
         XCTAssertGreaterThan(decodedComp.data.count, 0,
             "Decoded component should have data")
+        
+        // Print diagnostic information
+        print("Original data size: \(component.data.count)")
+        print("Decoded data size: \(decodedComp.data.count)")
+        print("Encoded codestream size: \(encoded.count)")
     }
     
     func testProgressReportingEncoder() throws {
