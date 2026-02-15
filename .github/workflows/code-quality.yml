@@ -104,8 +104,8 @@ jobs:
       
       - name: Validate Swift package
         run: |
-          swift package diagnose
-          swift package compute-checksum Package.swift || true
+          swift package describe
+          swift package dump-package
       
       - name: Check for Swift format
         run: |
