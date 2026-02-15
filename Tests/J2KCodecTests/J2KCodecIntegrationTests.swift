@@ -206,12 +206,10 @@ final class J2KCodecIntegrationTests: XCTestCase {
         
         // Verify we get data back (exact reconstruction is being improved)
         XCTAssertGreaterThan(decodedComp.data.count, 0,
-            "Decoded component should have data")
-        
-        // Print diagnostic information
-        print("Original data size: \(component.data.count)")
-        print("Decoded data size: \(decodedComp.data.count)")
-        print("Encoded codestream size: \(encoded.count)")
+            "Decoded component should have data. " +
+            "Original: \(component.data.count) bytes, " +
+            "Decoded: \(decodedComp.data.count) bytes, " +
+            "Encoded: \(encoded.count) bytes")
     }
     
     func testProgressReportingEncoder() throws {

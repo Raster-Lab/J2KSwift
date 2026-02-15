@@ -799,9 +799,10 @@ struct DecoderPipeline: Sendable {
             
             if hasAllSubbands {
                 // Full multi-level IDWT reconstruction
-                var decompositionLevels: [J2KDWT2D.DecompositionResult] = []
+                // Start with coarsest LL subband and reconstruct level by level
+                var currentLL = to2D(llSubband.coefficients, width: width, height: height)
                 
-                // Build decomposition structure from finest to coarsest
+                // Reconstruct from coarsest to finest level
                 for level in (1...levels).reversed() {
                     guard let lhInfo = compSubbands.first(where: { $0.level == level && $0.subband == .lh }),
                           let hlInfo = compSubbands.first(where: { $0.level == level && $0.subband == .hl }),
@@ -813,30 +814,19 @@ struct DecoderPipeline: Sendable {
                     let hl2D = to2D(hlInfo.coefficients, width: hlInfo.width, height: hlInfo.height)
                     let hh2D = to2D(hhInfo.coefficients, width: hhInfo.width, height: hhInfo.height)
                     
-                    // For the first (coarsest) level, use LL subband
-                    let ll2D = level == levels 
-                        ? to2D(llSubband.coefficients, width: width, height: height)
-                        : [[Int32]]() // Will be filled by previous level's reconstruction
-                    
-                    decompositionLevels.append(J2KDWT2D.DecompositionResult(
-                        ll: ll2D,
+                    // Apply single-level inverse transform
+                    // currentLL is the LL from previous iteration (or coarsest level initially)
+                    currentLL = try J2KDWT2D.inverseTransform(
+                        ll: currentLL,
                         lh: lh2D,
                         hl: hl2D,
-                        hh: hh2D
-                    ))
+                        hh: hh2D,
+                        filter: filter
+                    )
                 }
                 
-                // Create multi-level decomposition structure
-                let multiLevel = J2KDWT2D.MultiLevelDecomposition(levels: decompositionLevels)
-                
-                // Apply inverse decomposition
-                let reconstructed = try J2KDWT2D.inverseDecomposition(
-                    decomposition: multiLevel,
-                    filter: filter
-                )
-                
-                // Flatten to 1D array
-                let flattened = reconstructed.flatMap { $0 }
+                // Flatten final reconstructed image to 1D array
+                let flattened = currentLL.flatMap { $0 }
                 componentData.append(flattened)
             } else {
                 // Simplified path: Only LL subband available (current decoder limitation)
