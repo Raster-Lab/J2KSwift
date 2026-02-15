@@ -763,7 +763,11 @@ struct BitPlaneDecoder: Sendable {
             // Pass 1: Significance Propagation Pass
             if passesDecoded < passCount {
                 // Load segment for this pass if using per-pass segments
-                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                if usePerPassSegments {
+                    guard passSegmentIndex < passSegments.count else {
+                        // Not enough pass segments - cannot decode further
+                        break
+                    }
                     decoder = MQDecoder(data: passSegments[passSegmentIndex])
                     contextStates.reset()
                     passSegmentIndex += 1
@@ -782,7 +786,11 @@ struct BitPlaneDecoder: Sendable {
             
             // Pass 2: Magnitude Refinement Pass
             if passesDecoded < passCount {
-                if useBypass && usePerPassSegments && passSegmentIndex < passSegments.count {
+                if useBypass {
+                    guard usePerPassSegments, passSegmentIndex < passSegments.count else {
+                        // Not enough pass segments for bypass mode - cannot decode further
+                        break
+                    }
                     // Use separate raw bypass decoder for bypass mode
                     var bypassDecoder = RawBypassDecoder(data: passSegments[passSegmentIndex])
                     passSegmentIndex += 1
@@ -795,7 +803,11 @@ struct BitPlaneDecoder: Sendable {
                     )
                 } else {
                     // Load segment for this pass if using per-pass segments
-                    if usePerPassSegments && passSegmentIndex < passSegments.count {
+                    if usePerPassSegments {
+                        guard passSegmentIndex < passSegments.count else {
+                            // Not enough pass segments - cannot decode further
+                            break
+                        }
                         decoder = MQDecoder(data: passSegments[passSegmentIndex])
                         contextStates.reset()
                         passSegmentIndex += 1
@@ -817,7 +829,11 @@ struct BitPlaneDecoder: Sendable {
             // Pass 3: Cleanup Pass
             if passesDecoded < passCount {
                 // Load segment for this pass if using per-pass segments
-                if usePerPassSegments && passSegmentIndex < passSegments.count {
+                if usePerPassSegments {
+                    guard passSegmentIndex < passSegments.count else {
+                        // Not enough pass segments - cannot decode further
+                        break
+                    }
                     decoder = MQDecoder(data: passSegments[passSegmentIndex])
                     contextStates.reset()
                     passSegmentIndex += 1
