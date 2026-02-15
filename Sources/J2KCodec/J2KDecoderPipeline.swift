@@ -815,14 +815,26 @@ struct DecoderPipeline: Sendable {
                     let hh2D = to2D(hhInfo.coefficients, width: hhInfo.width, height: hhInfo.height)
                     
                     // Apply single-level inverse transform
-                    // currentLL is the LL from previous iteration (or coarsest level initially)
-                    currentLL = try J2KDWT2D.inverseTransform(
-                        ll: currentLL,
-                        lh: lh2D,
-                        hl: hl2D,
-                        hh: hh2D,
-                        filter: filter
-                    )
+                    // Use optimized path for lossless (reversible 5/3 filter)
+                    if case .reversible53 = filter {
+                        let optimizer = J2KDWT2DOptimizer()
+                        currentLL = try optimizer.inverseTransform2DOptimized(
+                            ll: currentLL,
+                            lh: lh2D,
+                            hl: hl2D,
+                            hh: hh2D,
+                            boundaryExtension: .symmetric
+                        )
+                    } else {
+                        // Use standard transform for lossy modes
+                        currentLL = try J2KDWT2D.inverseTransform(
+                            ll: currentLL,
+                            lh: lh2D,
+                            hl: hl2D,
+                            hh: hh2D,
+                            filter: filter
+                        )
+                    }
                 }
                 
                 // Flatten final reconstructed image to 1D array
