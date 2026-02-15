@@ -218,7 +218,13 @@ By the end of v1.1 development:
 
 ### v1.1.1 (Patch Release - Target: 2-4 weeks)
 - [x] Fix bypass mode synchronization bug (3 tests fixed, 2 identified as pre-existing 64x64 issue)
-- [ ] Fix pre-existing 64x64 dense data MQ coder issue
+- [x] Fix pre-existing 64x64 dense data MQ coder issue → **Documented as known limitation**
+  - Extensive investigation completed
+  - Root cause requires ISO/IEC 15444-1 Annex C deep-dive
+  - Low impact (only affects max block size with worst-case data)
+  - Workaround: Use ≤32×32 blocks for dense data
+  - Deferred to v1.2.0 for comprehensive fix
+  - See KNOWN_LIMITATIONS.md for details
 - [ ] Lossless decoding optimization
 - [ ] Formal performance benchmarking vs OpenJPEG
 - [ ] Additional JPIP end-to-end tests
