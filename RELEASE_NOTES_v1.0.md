@@ -57,7 +57,7 @@ This is an **Architecture & Component Release**, meaning:
   - Three coding passes: significance propagation, magnitude refinement, cleanup
   - Selective arithmetic coding bypass mode
   - Optimized for performance (18,800+ ops/sec encoding)
-  - **Note**: 32 test failures in cleanup pass with 3+ non-zero coefficients (documented in CLEANUP_PASS_FIX.md)
+  - **Note**: 32 test failures in cleanup pass with 3+ non-zero coefficients
   
 - **Quantization**: Scalar and deadzone quantization
   - Uniform quantization with configurable step sizes
@@ -215,7 +215,7 @@ let transformed = try dwt.forwardTransform(image.data, width: image.width, heigh
 32 tests fail in the bit-plane decoder's cleanup pass when processing code-blocks with 3+ non-zero coefficients. This is a synchronization bug between encoder and decoder.
 
 **Impact**: Affects specific encoding scenarios with dense data
-**Status**: Documented in CLEANUP_PASS_FIX.md, targeted for v1.0.1 patch
+**Status**: Targeted for v1.0.1 patch
 **Workaround**: Use encoding parameters that minimize cleanup pass usage
 
 ### 3. Hardware Acceleration Not Active

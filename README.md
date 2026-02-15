@@ -407,7 +407,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 ### Test Statistics (v1.0.0)
 - **Total Tests**: 1,344
 - **Passing**: 1,292 (96.1%)
-- **Failing**: 32 (bit-plane decoder cleanup pass - documented in CLEANUP_PASS_FIX.md)
+- **Failing**: 32 (bit-plane decoder cleanup pass)
 - **Skipped**: 20 (platform-specific)
 
 ### Test Coverage by Module
