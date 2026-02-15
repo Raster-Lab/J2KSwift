@@ -5,6 +5,10 @@ import Foundation
 /// This harness provides utilities for measuring performance of various
 /// J2KSwift operations, tracking results, and comparing against baselines.
 ///
+/// > Important: This is an **internal testing utility** of the J2KSwift library.
+/// > It is exposed as `public` only for use in test targets and benchmarking tools.
+/// > Direct use in production code is not recommended.
+///
 /// ## Usage Example
 ///
 /// ```swift

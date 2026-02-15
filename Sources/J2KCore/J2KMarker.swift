@@ -11,6 +11,10 @@ import Foundation
 ///
 /// Markers are two-byte sequences starting with 0xFF that delimit various
 /// parts of the JPEG 2000 codestream.
+///
+/// > Important: This is an **internal implementation detail** of the J2KSwift library.
+/// > It is exposed as `public` only for cross-module use within the package.
+/// > Direct use of this type is not recommended. Use ``J2KDecoder`` or ``J2KFileReader`` instead.
 public enum J2KMarker: UInt16, Sendable {
     // MARK: - Delimiting Markers
     

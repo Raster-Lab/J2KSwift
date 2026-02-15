@@ -12,6 +12,11 @@ import Foundation
 /// `J2KBitReader` provides efficient bit-level reading operations for parsing
 /// JPEG 2000 codestreams. It supports both bit-aligned and byte-aligned reads.
 ///
+/// > Important: This is an **internal implementation detail** of the J2KSwift library.
+/// > It is exposed as `public` only for cross-module use within the package.
+/// > Direct use of this type is not recommended and its API may change in future versions.
+/// > Use ``J2KDecoder`` or ``J2KFileReader`` instead for decoding JPEG 2000 data.
+///
 /// Example:
 /// ```swift
 /// let data = Data([0xFF, 0x4F, 0x00, 0x01])
