@@ -28,6 +28,5 @@ and is a separate MQ coder issue to be addressed in a future release.
 ## References
 
 - [BYPASS_MODE.md](BYPASS_MODE.md) - Feature documentation
-- [BYPASS_MODE_BUG_2026-02-08.md](BYPASS_MODE_BUG_2026-02-08.md) - Initial investigation
 - OpenJPEG source: `src/lib/openjp2/mqc.c` and `mqc_inl.h`
 - ISO/IEC 15444-1 Annex C - MQ-coder specification
