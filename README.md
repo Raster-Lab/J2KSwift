@@ -8,13 +8,13 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.1.0 (Production Ready - Fully Functional Codec)  
-**Status**: Complete encoder and decoder pipelines with 98.3% test pass rate  
-**Release Date**: February 14, 2026
+**Current Version**: 1.1.1 (Production Ready - Fully Functional Codec)  
+**Status**: Complete encoder and decoder pipelines with 98.4% test pass rate  
+**Release Date**: February 15, 2026
 
 ## 📦 Release Status
 
-**v1.1.0** delivers a **fully functional JPEG 2000 codec** with complete encoding and decoding pipelines:
+**v1.1.1** is the latest release with bug fixes, performance optimizations, and cross-platform validation:
 - ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
 - ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
 - ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
@@ -23,18 +23,19 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 - ✅ **Advanced Decoding** (ROI, progressive quality/resolution, partial decoding)
 - ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
 - ✅ **JPIP Streaming** (client/server infrastructure)
-- ✅ **98.3% Test Pass Rate** (1,473 of 1,498 tests passing)
+- ✅ **Cross-Platform Validated** (Linux Ubuntu x86_64, macOS)
+- ✅ **98.4% Test Pass Rate** (1,503 of 1,528 tests passing)
 
 **Notable Achievement**: Full encode/decode round-trip working with comprehensive test coverage!
 
-See [RELEASE_NOTES_v1.1.md](RELEASE_NOTES_v1.1.md) for complete details.
+See [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) for complete details.
 
 ## 🎯 Project Goals
 
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
-- **Fully Functional**: Complete encoder and decoder pipelines (v1.1.0)
+- **Fully Functional**: Complete encoder and decoder pipelines (v1.1.1)
 - **Cross-Platform**: macOS 12+, iOS 15+, tvOS 15+, watchOS 8+, Linux, Windows
 - **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) core implementation
 - **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
@@ -56,7 +57,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.1.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.1.1")
 ]
 ```
 

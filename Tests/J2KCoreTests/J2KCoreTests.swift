@@ -45,7 +45,7 @@ final class J2KCoreTests: XCTestCase {
     func testGetVersion() throws {
         let version = getVersion()
         XCTAssertFalse(version.isEmpty)
-        XCTAssertTrue(version.contains("1.1.0"))
+        XCTAssertTrue(version.contains("1.1.1"))
     }
     
     // MARK: - J2KComponent Tests

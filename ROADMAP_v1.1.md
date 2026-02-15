@@ -216,7 +216,7 @@ By the end of v1.1 development:
 
 ## Next Steps
 
-### v1.1.1 (Patch Release - Target: 2-4 weeks)
+### v1.1.1 (Patch Release - ✅ Released February 15, 2026)
 - [x] Fix bypass mode synchronization bug (3 tests fixed, 2 identified as pre-existing 64x64 issue)
 - [x] Fix pre-existing 64x64 dense data MQ coder issue → **Documented as known limitation**
   - Extensive investigation completed
@@ -225,10 +225,10 @@ By the end of v1.1 development:
   - Workaround: Use ≤32×32 blocks for dense data
   - Deferred to v1.2.0 for comprehensive fix
   - See KNOWN_LIMITATIONS.md for details
-- [ ] Lossless decoding optimization
-- [ ] Formal performance benchmarking vs OpenJPEG
-- [ ] Additional JPIP end-to-end tests
-- [ ] Cross-platform validation
+- [x] Lossless decoding optimization
+- [x] Formal performance benchmarking vs OpenJPEG
+- [x] Additional JPIP end-to-end tests
+- [x] Cross-platform validation
 
 ### v1.2.0 (Minor Release - Target: 16-20 weeks)
 - [ ] API cleanup (internal vs public marking)
@@ -245,9 +245,9 @@ By the end of v1.1 development:
 
 ---
 
-**Last Updated**: 2026-02-14  
-**Status**: ✅ v1.1.0 RELEASED  
-**Next Milestone**: v1.1.1 (Patch Release)
+**Last Updated**: 2026-02-15  
+**Status**: ✅ v1.1.1 RELEASED  
+**Next Milestone**: v1.2.0 (Minor Release)
 
 **Code Integration**:
 ```swift
