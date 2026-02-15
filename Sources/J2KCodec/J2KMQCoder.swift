@@ -486,12 +486,16 @@ struct MQDecoder: Sendable {
     /// Fills the C register with more data.
     private mutating func fillC() {
         if buffer == 0xFF {
+            let prevPosition = position
             nextBuffer = readByte()
             if nextBuffer > 0x8F {
                 // Marker - don't advance, stuff zeros
+                // Only decrement if we actually advanced (read from data, not EOF)
+                if position > prevPosition {
+                    position -= 1
+                }
                 c += 0xFF00
                 ct = 8
-                position -= 1
             } else {
                 c += UInt32(nextBuffer) << 9
                 buffer = nextBuffer

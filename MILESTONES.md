@@ -514,6 +514,7 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 
 **Last Updated**: 2026-02-15  
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
-**Current Version**: 1.1.1 (Released)  
-**Next Milestone**: v1.2.0 (Minor Release)  
+**Current Version**: 1.2.0-dev (In Development)  
+**Previous Release**: 1.1.1 (Released February 15, 2026)  
+**Next Milestone**: v1.2.0 (Minor Release - Critical bug fix + enhancements)  
 **Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.2+
