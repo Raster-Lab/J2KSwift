@@ -563,6 +563,50 @@ public struct J2KQuantizer: Sendable {
         }
     }
     
+    /// Quantizes a single Int32 coefficient (optimized version).
+    ///
+    /// This overload avoids type conversion overhead by working directly with Int32 values.
+    ///
+    /// - Parameters:
+    ///   - coefficient: The wavelet coefficient to quantize.
+    ///   - stepSize: The quantization step size.
+    /// - Returns: The quantized index.
+    @inline(__always)
+    public func quantizeCoefficient(_ coefficient: Int32, stepSize: Double) -> Int32 {
+        switch parameters.mode {
+        case .noQuantization:
+            // No quantization - return as-is
+            return coefficient
+            
+        case .scalar:
+            // Scalar quantization: q = sign(c) × floor(|c| / Δ)
+            let sign: Int32 = coefficient >= 0 ? 1 : -1
+            let magnitude = abs(coefficient)
+            let quantizedMag = Int32(Double(magnitude) / stepSize)
+            return sign * quantizedMag
+            
+        case .deadzone:
+            // Deadzone quantization with enlarged zero bin
+            let sign: Int32 = coefficient >= 0 ? 1 : -1
+            let magnitude = abs(coefficient)
+            let threshold = Int32(stepSize * parameters.deadzoneWidth * 0.5)
+            
+            if magnitude <= threshold {
+                return 0
+            }
+            
+            let quantizedMag = Int32((Double(magnitude) - Double(threshold)) / stepSize) + 1
+            return sign * quantizedMag
+            
+        case .expounded:
+            // Same as scalar for individual coefficient
+            let sign: Int32 = coefficient >= 0 ? 1 : -1
+            let magnitude = abs(coefficient)
+            let quantizedMag = Int32(Double(magnitude) / stepSize)
+            return sign * quantizedMag
+        }
+    }
+    
     /// Quantizes an array of coefficients.
     ///
     /// - Parameters:
@@ -589,6 +633,41 @@ public struct J2KQuantizer: Sendable {
             throw J2KError.invalidParameter("Step size must be positive")
         }
         
+        return coefficients.map { coefficient in
+            quantizeCoefficient(coefficient, stepSize: stepSize)
+        }
+    }
+    
+    /// Quantizes an array of Int32 coefficients.
+    ///
+    /// This overload handles integer input from the DWT directly, avoiding
+    /// unnecessary type conversions for better performance.
+    ///
+    /// - Parameters:
+    ///   - coefficients: Array of integer wavelet coefficients.
+    ///   - subband: The subband type.
+    ///   - decompositionLevel: The decomposition level (0 = finest).
+    ///   - totalLevels: Total number of decomposition levels.
+    /// - Returns: Array of quantized indices.
+    /// - Throws: `J2KError` if quantization fails.
+    public func quantize(
+        coefficients: [Int32],
+        subband: J2KSubband,
+        decompositionLevel: Int,
+        totalLevels: Int
+    ) throws -> [Int32] {
+        // Get step size for this subband
+        let stepSize = getStepSize(
+            for: subband,
+            decompositionLevel: decompositionLevel,
+            totalLevels: totalLevels
+        )
+        
+        guard stepSize > 0 else {
+            throw J2KError.invalidParameter("Step size must be positive")
+        }
+        
+        // Directly quantize Int32 values using specialized Int32 method
         return coefficients.map { coefficient in
             quantizeCoefficient(coefficient, stepSize: stepSize)
         }

@@ -1,0 +1,23 @@
+{
+  "runs" : 3,
+  "image" : {
+    "pixels" : 262144,
+    "path" : "profile_results_optimized\/test_images\/test_512x512.pgm",
+    "width" : 512,
+    "components" : 1,
+    "height" : 512
+  },
+  "encode" : {
+    "average_ms" : 70.36693890889485,
+    "max_ms" : 73.52256774902344,
+    "runs" : [
+      68.11583042144775,
+      69.46241855621338,
+      73.52256774902344
+    ],
+    "throughput_mpps" : 3.7253858710466545,
+    "min_ms" : 68.11583042144775,
+    "median_ms" : 69.46241855621338,
+    "compressed_size" : 22784
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "runs" : 3,
+  "image" : {
+    "width" : 2048,
+    "height" : 2048,
+    "pixels" : 4194304,
+    "path" : "profile_results_large\/test_images\/test_2048x2048.pgm",
+    "components" : 1
+  },
+  "encode" : {
+    "max_ms" : 1157.0783853530884,
+    "compressed_size" : 342103,
+    "median_ms" : 1119.6434497833252,
+    "average_ms" : 1126.1274814605713,
+    "runs" : [
+      1101.6606092453003,
+      1119.6434497833252,
+      1157.0783853530884
+    ],
+    "throughput_mpps" : 3.724537469381395,
+    "min_ms" : 1101.6606092453003
+  }
+}

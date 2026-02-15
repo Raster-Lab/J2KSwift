@@ -224,12 +224,13 @@ struct EncoderPipeline: Sendable {
         var allSubbands: [[SubbandInfo]] = []
 
         for (compIdx, compData) in components.enumerated() {
-            // Convert 1D array to 2D for DWT
-            var image2D = [[Int32]](repeating: [Int32](repeating: 0, count: width), count: height)
+            // Convert 1D array to 2D for DWT (optimized version)
+            var image2D: [[Int32]] = []
+            image2D.reserveCapacity(height)
             for row in 0..<height {
-                for col in 0..<width {
-                    image2D[row][col] = compData[row * width + col]
-                }
+                let rowStart = row * width
+                let rowEnd = rowStart + width
+                image2D.append(Array(compData[rowStart..<rowEnd]))
             }
 
             // If no decomposition, treat entire image as LL subband
@@ -316,9 +317,9 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
-                let doubleCoeffs = info.coefficients.map { Double($0) }
+                // Use Int32-optimized quantize method to avoid unnecessary conversions
                 let quantized = try quantizer.quantize(
-                    coefficients: doubleCoeffs,
+                    coefficients: info.coefficients,
                     subband: info.subband,
                     decompositionLevel: info.level,
                     totalLevels: config.decompositionLevels
@@ -363,15 +364,14 @@ struct EncoderPipeline: Sendable {
                         let blockW = min(cbWidth, info.width - bx * cbWidth)
                         let blockH = min(cbHeight, info.height - by * cbHeight)
 
-                        // Extract code block coefficients
-                        var blockCoeffs = [Int32](repeating: 0, count: blockW * blockH)
+                        // Extract code block coefficients (optimized with array slicing)
+                        var blockCoeffs: [Int32] = []
+                        blockCoeffs.reserveCapacity(blockW * blockH)
                         for row in 0..<blockH {
                             let srcRow = by * cbHeight + row
-                            let srcOffset = srcRow * info.width + bx * cbWidth
-                            for col in 0..<blockW {
-                                blockCoeffs[row * blockW + col] =
-                                    info.coefficients[srcOffset + col]
-                            }
+                            let srcStart = srcRow * info.width + bx * cbWidth
+                            let srcEnd = srcStart + blockW
+                            blockCoeffs.append(contentsOf: info.coefficients[srcStart..<srcEnd])
                         }
 
                         // Determine bit depth from max coefficient magnitude
