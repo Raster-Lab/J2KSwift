@@ -211,5 +211,5 @@ J2KSwift v2.0 will include HTJ2K (ISO/IEC 15444-15) support, which uses a comple
 ---
 
 **Last Updated:** 2026-02-15  
-**Version:** 1.1.1  
-**Status:** Released
+**Version:** 1.2.0-dev  
+**Status:** In Development
