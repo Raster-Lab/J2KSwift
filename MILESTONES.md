@@ -484,7 +484,14 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
   - Performance: 1.85x speedup (1D), 1.40x speedup (2D), 1.41x speedup (multi-level)
   - 14 comprehensive tests (100% pass rate)
   - Detailed benchmarks across multiple image sizes
-- [ ] Performance benchmarking vs OpenJPEG (pending)
+- [x] Performance benchmarking vs OpenJPEG
+  - Created comprehensive benchmark tool (Scripts/compare_performance.py)
+  - Benchmarked J2KSwift v1.1.0 vs OpenJPEG v2.5.0
+  - Results: J2KSwift encoding is 32.6% of OpenJPEG speed (target: ≥80%)
+  - Identified decoder issues preventing decode benchmarks for images >256×256
+  - Generated detailed reports (Markdown and CSV formats)
+  - Documented findings in REFERENCE_BENCHMARKS.md
+  - **Status**: Does not meet 80% performance target; requires optimization work for v1.2.0
 - [ ] Additional JPIP end-to-end tests (pending)
 - [ ] Cross-platform validation (pending)
 
