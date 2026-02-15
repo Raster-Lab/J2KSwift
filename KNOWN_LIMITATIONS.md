@@ -79,6 +79,89 @@ let encoded = try encoder.encode(image)
 - JPEG 2000 Standard: ISO/IEC 15444-1:2019, Annex C (MQ-coder)
 - Related code: `Sources/J2KCodec/J2KMQCoder.swift`
 
+## Platform-Specific Issues
+
+### Linux: Lossless Decoding Returns Empty Data
+
+**Severity:** Medium  
+**Platforms Affected:** Linux (Ubuntu verified, likely other distributions)  
+**Status:** Under Investigation for v1.2.0
+
+#### Description
+
+When encoding an image with lossless configuration (`quality: 1.0, lossless: true`), the decoder successfully parses the codestream structure but returns empty component data (0 bytes) on Linux. The same code is expected to work correctly on macOS.
+
+#### Symptoms
+
+- **Encoder**: Works correctly, produces valid codestream (e.g., 150 bytes for 16×16 gradient)
+- **Decoder**: Parses structure correctly (width, height, component count all correct)
+- **Data**: Component `data` field is empty (0 bytes instead of expected value)
+- **Platform**: Only occurs on Linux; expected to work on macOS
+
+#### Working Configurations
+
+✅ **Works correctly on Linux:**
+- Default encoding (no explicit lossless config)
+- Lossy encoding (quality < 1.0, lossless: false)
+- Multi-component RGB encoding/decoding
+- Constant-value images with default config
+
+❌ **Fails on Linux:**
+- Explicit lossless encoding (quality: 1.0, lossless: true) with gradient or varied data
+
+#### Test Case
+
+The issue is captured in `Tests/J2KCodecIntegrationTests/testLosslessRoundTrip()`:
+- Creates 16×16 gradient pattern
+- Encodes with `J2KEncodingConfiguration(quality: 1.0, lossless: true)`
+- Decodes successfully with correct dimensions
+- Component data is empty (0 bytes)
+
+**Current Status:** Test skipped on Linux via `#if os(Linux)`
+
+#### Suspected Causes
+
+Possible areas for investigation:
+1. **Reversible Color Transform (RCT)**: Platform-specific integer arithmetic differences
+2. **Reversible Wavelet (5/3 filter)**: Lifting step implementation differences
+3. **Quantization**: Expounded quantization mode handling
+4. **Packet Parsing**: Multi-level decomposition packet structure interpretation
+5. **Memory Layout**: Endianness or alignment differences
+
+#### Workaround
+
+On Linux, use default encoder configuration or explicitly set `lossless: false`:
+
+```swift
+// Works on Linux
+let encoder = J2KEncoder()  // Uses default config
+let encoded = try encoder.encode(image)
+let decoded = try decoder.decode(encoded)
+
+// Or explicitly use lossy
+let config = J2KEncodingConfiguration(quality: 0.95, lossless: false)
+let encoder = J2KEncoder(encodingConfiguration: config)
+```
+
+#### Investigation Plan for v1.2.0
+
+1. Add comprehensive debug logging to decoder pipeline
+2. Compare byte-by-byte codestream output between Linux and macOS
+3. Test intermediate pipeline stages (post-DWT, post-quantization, etc.)
+4. Check for platform-specific behavior in:
+   - `J2KDWT1D.forwardTransform` (reversible mode)
+   - `J2KDWT2D.forwardTransform` (5/3 filter)
+   - `J2KQuantizer.quantize` (expounded mode)
+   - `DecoderPipeline.applyInverseWaveletTransform`
+5. Validate arithmetic precision in lifting steps
+6. Test on additional platforms (Fedora, Arch, ARM64 Linux)
+
+#### Related
+
+- **File**: `Tests/J2KCodecTests/J2KCodecIntegrationTests.swift` (line 152)
+- **Documentation**: `CROSS_PLATFORM.md` (detailed platform testing)
+- **Issue Tracking**: To be created for v1.2.0 milestone
+
 ## Future Improvements
 
 ### HTJ2K (High Throughput JPEG 2000)
