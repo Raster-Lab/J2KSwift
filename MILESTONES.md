@@ -471,7 +471,7 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 - Hardware acceleration active
 - 98.3% test pass rate (1,471 of 1,496 tests)
 
-### v1.1.1 (In Progress - February 2026)
+### v1.1.1 (February 15, 2026) ✅ RELEASED
 - [x] Investigation of 64×64 MQ coder issue → Documented as known limitation
   - Comprehensive investigation completed
   - Issue affects only maximum block size with worst-case dense data
@@ -514,6 +514,6 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 
 **Last Updated**: 2026-02-15  
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
-**Current Version**: 1.1.0 (Released)  
-**Next Milestone**: v1.1.1 (Patch Release - In Progress)  
+**Current Version**: 1.1.1 (Released)  
+**Next Milestone**: v1.2.0 (Minor Release)  
 **Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.2+
