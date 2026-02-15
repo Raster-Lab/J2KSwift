@@ -1,0 +1,23 @@
+{
+  "encode" : {
+    "runs" : [
+      17.22252368927002,
+      17.397165298461914,
+      18.752336502075195
+    ],
+    "max_ms" : 18.752336502075195,
+    "throughput_mpps" : 3.6837275369574973,
+    "average_ms" : 17.790675163269043,
+    "min_ms" : 17.22252368927002,
+    "compressed_size" : 6173,
+    "median_ms" : 17.397165298461914
+  },
+  "runs" : 3,
+  "image" : {
+    "height" : 256,
+    "width" : 256,
+    "pixels" : 65536,
+    "path" : "profile_results\/test_images\/test_256x256.pgm",
+    "components" : 1
+  }
+}

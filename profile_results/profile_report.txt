@@ -1,0 +1,42 @@
+================================================================================
+J2KSwift Encoder Performance Profile Report
+================================================================================
+
+## Encoding Performance Summary
+
+| Image Size  | Avg Time (ms) | Throughput (MP/s) | Compressed (KB) | Ratio |
+|-------------|---------------|-------------------|-----------------|-------|
+| 256×256     |         17.79 |              3.68 |             6.0 | 10.62 |
+| 512×512     |         70.62 |              3.71 |            22.2 | 11.51 |
+
+## Performance Analysis
+
+### Scalability Analysis
+- Pixel count increase: 4.00x
+- Time increase: 3.97x
+- Scaling factor: 0.99 (1.0 = perfect linear scaling)
+
+✅ **Linear scaling** - Good performance characteristics
+
+### Key Metrics
+
+- **Average Throughput**: 3.70 MP/s
+- **Average Compression Ratio**: 11.06:1
+
+### Performance vs. OpenJPEG Target
+- **Target Throughput**: ~4.0 MP/s (80% of OpenJPEG)
+- **Current Performance**: 92.4% of target
+
+✅ **Target met!** Performance is within acceptable range.
+
+## Optimization Recommendations
+
+### General Optimizations
+- Use `@inline(__always)` for hot path functions
+- Pre-allocate buffers to avoid repeated allocations
+- Consider SIMD operations for data-parallel operations
+- Profile with Instruments to identify specific hot spots
+
+================================================================================
+Report generated: 2026-02-15 20:17:57
+================================================================================
