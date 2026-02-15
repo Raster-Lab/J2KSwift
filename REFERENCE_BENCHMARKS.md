@@ -376,3 +376,124 @@ As the full encoding/decoding pipeline is completed (Weeks 84-92), end-to-end pe
 **Last Updated**: 2026-02-06  
 **J2KSwift Version**: Development (Week 81-83)  
 **Benchmark Framework**: J2KReferenceBenchmark v1.0
+
+## v1.1.1 Full Pipeline Benchmarks (2026-02-15)
+
+### Overview
+
+Comprehensive end-to-end performance benchmarking comparing J2KSwift v1.1.0 against OpenJPEG v2.5.0.
+
+**Test Environment**:
+- **Platform**: Linux x86_64 (GitHub Actions runner)
+- **J2KSwift**: v1.1.0, Swift 6.2, Release build
+- **OpenJPEG**: v2.5.0
+- **Test Images**: Randomly generated grayscale (PGM format)
+- **Image Sizes**: 256×256, 512×512, 1024×1024, 2048×2048
+- **Runs**: 5 per test
+
+### Encoding Performance Results
+
+| Image Size | J2KSwift (ms) | OpenJPEG (ms) | Relative Perf | Throughput J2K (MP/s) | Throughput OPJ (MP/s) |
+|------------|---------------|---------------|---------------|----------------------|----------------------|
+| 256×256    | 38.6          | 15.8          | **40.8%**     | 1.70                 | 4.16                 |
+| 512×512    | 151.9         | 52.9          | **34.8%**     | 1.73                 | 4.95                 |
+| 1024×1024  | 607.2         | 199.8         | **32.9%**     | 1.73                 | 5.25                 |
+| 2048×2048  | 2427.9        | 784.1         | **32.3%**     | 1.73                 | 5.35                 |
+
+**Average**: **32.6%** of OpenJPEG speed (3.07× slower)
+
+### Decoding Performance Results
+
+⚠️ **Critical Issue**: J2KSwift decoder fails on images larger than 256×256
+
+- **Error**: "Missing LL subband for component 0"
+- **Root Cause**: Issues with wavelet transform coefficient organization
+- **Impact**: Decoder not usable for production
+- **Status**: Blocker for v1.2.0
+
+Small image (256×256) decoding works but is not representative of typical use.
+
+### File Size Comparison
+
+| Image Size | J2KSwift (KB) | OpenJPEG (KB) | Size Ratio |
+|------------|---------------|---------------|------------|
+| 256×256    | 91.9          | 69.8          | **131.7%** |
+| 512×512    | 366.9         | 278.4         | **131.8%** |
+| 1024×1024  | 1467.1        | 1113.0        | **131.8%** |
+| 2048×2048  | 5867.2        | 4451.3        | **131.8%** |
+
+J2KSwift produces files consistently **~32% larger** than OpenJPEG.
+
+### Analysis
+
+#### Performance Gap
+
+**Encoding is 3× slower than OpenJPEG**:
+
+1. **Implementation Maturity**: OpenJPEG has 15+ years of optimization
+2. **Language Overhead**: Swift vs highly-optimized C code
+3. **Missing Optimizations**: Limited SIMD, no platform-specific code paths
+4. **Compression Efficiency**: Larger files suggest suboptimal rate control
+
+#### Critical Issues
+
+1. **Decoder Broken**: Cannot decode images >256×256
+2. **Large File Sizes**: 32% larger files indicate inefficient encoding
+3. **No Performance Target Met**: Only 32.6% of OpenJPEG speed (target: ≥80%)
+
+### Benchmark Results Summary
+
+| Metric | Target | Result | Status |
+|--------|--------|--------|--------|
+| **Encoding Speed** | ≥80% of OpenJPEG | **32.6%** | ❌ FAIL |
+| **Decoding Speed** | ≥80% of OpenJPEG | **N/A (broken)** | ❌ FAIL |
+| **File Size** | ≤OpenJPEG | **+32%** | ❌ FAIL |
+| **Decoder Functionality** | Working | **Broken** | ❌ FAIL |
+
+### Recommendations
+
+#### Immediate (v1.1.1)
+1. ✅ Document benchmark results
+2. ❌ Fix decoder "Missing LL subband" error (HIGH PRIORITY)
+3. ❌ Investigate file size issue
+
+#### Medium-term (v1.2.0)
+1. Profile encoding pipeline to identify bottlenecks
+2. Optimize wavelet transform
+3. Optimize MQ-coder
+4. Fix rate control / quantization issues
+5. Target: Reach 50-60% of OpenJPEG speed
+
+#### Long-term (v2.0+)
+1. Major performance overhaul
+2. Consider hybrid Swift/C for hot paths
+3. Implement HTJ2K for better throughput
+4. Target: ≥80% of OpenJPEG speed
+
+### Benchmarking Tools
+
+New comprehensive benchmark tool added:
+
+```bash
+# Run full comparison
+python3 Scripts/compare_performance.py -s 256,512,1024,2048 -r 5 -o ./results
+```
+
+**Output**:
+- Markdown report: `reports/performance_comparison.md`
+- CSV data: `reports/performance_data.csv`
+- Test images: `test_images/`
+- J2KSwift results: `j2kswift/`
+- OpenJPEG results: `openjpeg/`
+
+**See**: 
+- `Scripts/compare_performance.py` for implementation
+- `Documentation/Benchmarks/` for detailed reports
+- `Scripts/README.md` for usage guide
+
+---
+
+**Last Updated**: 2026-02-15  
+**J2KSwift Version**: v1.1.0  
+**Benchmark Tool**: compare_performance.py v1.0  
+**Status**: Encoding functional but slow; Decoder broken for images >256×256
