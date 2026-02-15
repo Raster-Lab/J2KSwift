@@ -21,15 +21,15 @@ import Foundation
 ///     // Read first 1024 bytes without copying
 /// }
 /// ```
-public struct J2KBufferSlice: Sendable {
+internal struct J2KBufferSlice: Sendable {
     /// The underlying shared storage.
     private let storage: J2KSharedBuffer
 
     /// The byte offset into the storage.
-    public let offset: Int
+    internal let offset: Int
 
     /// The number of bytes in this slice.
-    public let count: Int
+    internal let count: Int
 
     /// Creates a new buffer slice.
     ///
@@ -48,7 +48,7 @@ public struct J2KBufferSlice: Sendable {
     /// - Parameter body: A closure that receives the buffer pointer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withUnsafeBytes<Result>(
+    internal func withUnsafeBytes<Result>(
         _ body: (UnsafeRawBufferPointer) throws -> Result
     ) rethrows -> Result {
         try storage.withUnsafeBytes { fullPtr in
@@ -66,7 +66,7 @@ public struct J2KBufferSlice: Sendable {
     ///   - subOffset: The offset within this slice.
     ///   - subCount: The number of bytes in the sub-slice.
     /// - Returns: A new slice, or nil if the range is out of bounds.
-    public func subSlice(offset subOffset: Int, count subCount: Int) -> J2KBufferSlice? {
+    internal func subSlice(offset subOffset: Int, count subCount: Int) -> J2KBufferSlice? {
         guard subOffset >= 0, subCount >= 0, subOffset + subCount <= count else {
             return nil
         }
@@ -78,7 +78,7 @@ public struct J2KBufferSlice: Sendable {
     /// Use this only when a copy is actually needed.
     ///
     /// - Returns: A Data copy of the slice contents.
-    public func toData() -> Data {
+    internal func toData() -> Data {
         withUnsafeBytes { ptr in
             Data(ptr)
         }
@@ -102,12 +102,12 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     private let buffer: UnsafeMutableRawBufferPointer
 
     /// The total capacity of the buffer.
-    public let capacity: Int
+    internal let capacity: Int
 
     /// Creates a shared buffer by copying the given data.
     ///
     /// - Parameter data: The data to store.
-    public init(data: Data) {
+    internal init(data: Data) {
         self.capacity = data.count
         self.buffer = UnsafeMutableRawBufferPointer.allocate(
             byteCount: max(data.count, 1),
@@ -123,7 +123,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     /// - Parameters:
     ///   - bytes: Pointer to the bytes.
     ///   - count: Number of bytes.
-    public init(copying bytes: UnsafeRawBufferPointer, count: Int) {
+    internal init(copying bytes: UnsafeRawBufferPointer, count: Int) {
         self.capacity = count
         self.buffer = UnsafeMutableRawBufferPointer.allocate(
             byteCount: max(count, 1),
@@ -135,7 +135,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     /// Creates an empty shared buffer with the given capacity.
     ///
     /// - Parameter capacity: The buffer capacity in bytes.
-    public init(capacity: Int) {
+    internal init(capacity: Int) {
         self.capacity = capacity
         self.buffer = UnsafeMutableRawBufferPointer.allocate(
             byteCount: max(capacity, 1),
@@ -153,7 +153,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     /// - Parameter body: A closure that receives the buffer pointer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withUnsafeBytes<Result>(
+    internal func withUnsafeBytes<Result>(
         _ body: (UnsafeRawBufferPointer) throws -> Result
     ) rethrows -> Result {
         try body(UnsafeRawBufferPointer(buffer))
@@ -165,7 +165,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     ///   - offset: The byte offset.
     ///   - count: The number of bytes.
     /// - Returns: A slice, or nil if the range is out of bounds.
-    public func slice(offset: Int, count: Int) -> J2KBufferSlice? {
+    internal func slice(offset: Int, count: Int) -> J2KBufferSlice? {
         guard offset >= 0, count >= 0, offset + count <= capacity else {
             return nil
         }
@@ -175,14 +175,14 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     /// Creates a zero-copy slice covering the entire buffer.
     ///
     /// - Returns: A slice covering all bytes.
-    public func fullSlice() -> J2KBufferSlice {
+    internal func fullSlice() -> J2KBufferSlice {
         J2KBufferSlice(storage: self, offset: 0, count: capacity)
     }
 
     /// Converts the entire buffer to Data.
     ///
     /// - Returns: A Data copy of the buffer contents.
-    public func toData() -> Data {
+    internal func toData() -> Data {
         guard let base = buffer.baseAddress else { return Data() }
         return Data(bytes: base, count: capacity)
     }
@@ -200,12 +200,12 @@ public final class J2KSharedBuffer: @unchecked Sendable {
 /// let header = buffer.slice(offset: 0, count: 12)
 /// let payload = buffer.slice(offset: 12, count: buffer.count - 12)
 /// ```
-public struct J2KZeroCopyBuffer: Sendable {
+internal struct J2KZeroCopyBuffer: Sendable {
     /// The shared storage backing this buffer.
     private let storage: J2KSharedBuffer
 
     /// The total number of bytes in the buffer.
-    public var count: Int {
+    internal var count: Int {
         storage.capacity
     }
 
@@ -215,21 +215,21 @@ public struct J2KZeroCopyBuffer: Sendable {
     /// All subsequent slicing operations are zero-copy.
     ///
     /// - Parameter data: The data to wrap.
-    public init(data: Data) {
+    internal init(data: Data) {
         self.storage = J2KSharedBuffer(data: data)
     }
 
     /// Creates a zero-copy buffer with an empty allocation.
     ///
     /// - Parameter capacity: The capacity in bytes.
-    public init(capacity: Int) {
+    internal init(capacity: Int) {
         self.storage = J2KSharedBuffer(capacity: capacity)
     }
 
     /// Creates a zero-copy buffer from a shared buffer.
     ///
     /// - Parameter sharedBuffer: The shared buffer to wrap.
-    public init(sharedBuffer: J2KSharedBuffer) {
+    internal init(sharedBuffer: J2KSharedBuffer) {
         self.storage = sharedBuffer
     }
 
@@ -239,14 +239,14 @@ public struct J2KZeroCopyBuffer: Sendable {
     ///   - offset: The byte offset.
     ///   - count: The number of bytes.
     /// - Returns: A slice, or nil if the range is out of bounds.
-    public func slice(offset: Int, count: Int) -> J2KBufferSlice? {
+    internal func slice(offset: Int, count: Int) -> J2KBufferSlice? {
         storage.slice(offset: offset, count: count)
     }
 
     /// Creates a zero-copy slice covering the entire buffer.
     ///
     /// - Returns: A slice covering all bytes.
-    public func fullSlice() -> J2KBufferSlice {
+    internal func fullSlice() -> J2KBufferSlice {
         storage.fullSlice()
     }
 
@@ -255,7 +255,7 @@ public struct J2KZeroCopyBuffer: Sendable {
     /// - Parameter body: A closure that receives the buffer pointer.
     /// - Returns: The result of the closure.
     /// - Throws: Rethrows any error from the closure.
-    public func withUnsafeBytes<Result>(
+    internal func withUnsafeBytes<Result>(
         _ body: (UnsafeRawBufferPointer) throws -> Result
     ) rethrows -> Result {
         try storage.withUnsafeBytes(body)
@@ -264,7 +264,7 @@ public struct J2KZeroCopyBuffer: Sendable {
     /// Converts to Data (copies).
     ///
     /// - Returns: A Data copy of the buffer contents.
-    public func toData() -> Data {
+    internal func toData() -> Data {
         storage.toData()
     }
 }

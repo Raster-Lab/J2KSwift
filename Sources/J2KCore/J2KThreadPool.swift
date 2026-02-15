@@ -9,14 +9,14 @@
 import Foundation
 
 /// Configuration for the thread pool.
-public struct J2KThreadPoolConfiguration: Sendable {
+internal struct J2KThreadPoolConfiguration: Sendable {
     /// Maximum number of concurrent workers.
-    public let maxConcurrency: Int
+    internal let maxConcurrency: Int
 
     /// Creates a new thread pool configuration.
     ///
     /// - Parameter maxConcurrency: Maximum concurrent workers (default: system processor count).
-    public init(maxConcurrency: Int = ProcessInfo.processInfo.processorCount) {
+    internal init(maxConcurrency: Int = ProcessInfo.processInfo.processorCount) {
         self.maxConcurrency = max(1, maxConcurrency)
     }
 }
@@ -35,9 +35,9 @@ public struct J2KThreadPoolConfiguration: Sendable {
 ///     try processTile(tile)
 /// }
 /// ```
-public actor J2KThreadPool {
+internal actor J2KThreadPool {
     /// The pool configuration.
-    public let configuration: J2KThreadPoolConfiguration
+    internal let configuration: J2KThreadPoolConfiguration
 
     /// Number of tasks submitted.
     private var submittedCount: Int = 0
@@ -48,7 +48,7 @@ public actor J2KThreadPool {
     /// Creates a new thread pool.
     ///
     /// - Parameter configuration: The pool configuration (default: default configuration).
-    public init(configuration: J2KThreadPoolConfiguration = J2KThreadPoolConfiguration()) {
+    internal init(configuration: J2KThreadPoolConfiguration = J2KThreadPoolConfiguration()) {
         self.configuration = configuration
     }
 
@@ -62,7 +62,7 @@ public actor J2KThreadPool {
     ///   - transform: The transformation to apply to each item.
     /// - Returns: The transformed results in input order.
     /// - Throws: The first error encountered during processing.
-    public func parallelMap<Input: Sendable, Output: Sendable>(
+    internal func parallelMap<Input: Sendable, Output: Sendable>(
         _ items: [Input],
         transform: @Sendable @escaping (Input) throws -> Output
     ) async throws -> [Output] {
@@ -129,7 +129,7 @@ public actor J2KThreadPool {
     ///   - items: The items to process.
     ///   - operation: The operation to apply to each item.
     /// - Throws: The first error encountered during processing.
-    public func parallelForEach<Input: Sendable>(
+    internal func parallelForEach<Input: Sendable>(
         _ items: [Input],
         operation: @Sendable @escaping (Input) throws -> Void
     ) async throws {
@@ -140,12 +140,12 @@ public actor J2KThreadPool {
     }
 
     /// Returns statistics about the thread pool.
-    public var statistics: (submitted: Int, completed: Int, maxConcurrency: Int) {
+    internal var statistics: (submitted: Int, completed: Int, maxConcurrency: Int) {
         (submitted: submittedCount, completed: completedCount, maxConcurrency: configuration.maxConcurrency)
     }
 
     /// Resets the pool statistics.
-    public func resetStatistics() {
+    internal func resetStatistics() {
         submittedCount = 0
         completedCount = 0
     }

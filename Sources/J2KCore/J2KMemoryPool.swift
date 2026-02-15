@@ -22,9 +22,9 @@ import Foundation
 /// // Use buffer...
 /// pool.release(buffer)
 /// ```
-public actor J2KMemoryPool {
+internal actor J2KMemoryPool {
     /// Configuration for the memory pool.
-    public struct Configuration: Sendable {
+    internal struct Configuration: Sendable {
         /// Maximum number of buffers to keep in the pool.
         public let maxBuffers: Int
         
@@ -55,7 +55,7 @@ public actor J2KMemoryPool {
     /// Creates a new memory pool with the specified configuration.
     ///
     /// - Parameter configuration: The pool configuration (default: default configuration).
-    public init(configuration: Configuration = Configuration()) {
+    internal init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
     
@@ -66,7 +66,7 @@ public actor J2KMemoryPool {
     ///
     /// - Parameter capacity: The minimum required capacity in bytes.
     /// - Returns: A buffer with at least the requested capacity.
-    public func acquire(capacity: Int) -> J2KBuffer {
+    internal func acquire(capacity: Int) -> J2KBuffer {
         // Round capacity to next power of 2 for better reuse
         let roundedCapacity = nextPowerOfTwo(capacity)
         
@@ -88,7 +88,7 @@ public actor J2KMemoryPool {
     /// discarded if the pool is full.
     ///
     /// - Parameter buffer: The buffer to release.
-    public func release(_ buffer: J2KBuffer) {
+    internal func release(_ buffer: J2KBuffer) {
         let capacity = buffer.capacity
         
         // Check if we can add to the pool
@@ -115,7 +115,7 @@ public actor J2KMemoryPool {
     }
     
     /// Clears all buffers from the pool.
-    public func clear() {
+    internal func clear() {
         pool.removeAll()
         totalSize = 0
     }
@@ -123,7 +123,7 @@ public actor J2KMemoryPool {
     /// Returns statistics about the pool.
     ///
     /// - Returns: A dictionary with pool statistics.
-    public func statistics() -> [String: Int] {
+    internal func statistics() -> [String: Int] {
         let bufferCount = pool.values.reduce(0) { $0 + $1.count }
         return [
             "bufferCount": bufferCount,
