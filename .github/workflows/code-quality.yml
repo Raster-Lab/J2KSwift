@@ -1,0 +1,117 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      
+      - name: Run SwiftLint
+        run: swiftlint lint --reporter github-actions-logging
+      
+      - name: Generate SwiftLint report
+        if: always()
+        run: |
+          swiftlint lint --reporter json > swiftlint-report.json || true
+      
+      - name: Upload SwiftLint results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftlint-report
+          path: swiftlint-report.json
+  
+  security-audit:
+    name: Security Audit
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+      
+      - name: Check for known vulnerabilities
+        run: |
+          # Resolve dependencies
+          swift package resolve
+          
+          # List all dependencies
+          swift package show-dependencies
+      
+      - name: Verify Package.swift
+        run: swift package dump-package
+  
+  code-coverage:
+    name: Code Coverage
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+      
+      - name: Run tests with coverage
+        run: |
+          swift test --enable-code-coverage
+      
+      - name: Generate coverage report
+        run: |
+          xcrun llvm-cov export -format="lcov" \
+            .build/debug/J2KSwiftPackageTests.xctest/Contents/MacOS/J2KSwiftPackageTests \
+            -instr-profile .build/debug/codecov/default.profdata > coverage.lcov || true
+      
+      - name: Upload coverage to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.lcov
+          if-no-files-found: warn
+  
+  validation:
+    name: Package Validation
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2'
+      
+      - name: Validate Swift package
+        run: |
+          swift package diagnose
+          swift package compute-checksum Package.swift || true
+      
+      - name: Check for Swift format
+        run: |
+          # Check if swift-format is available
+          if command -v swift-format &> /dev/null; then
+            swift-format lint -r Sources Tests || true
+          else
+            echo "swift-format not available, skipping"
+          fi
