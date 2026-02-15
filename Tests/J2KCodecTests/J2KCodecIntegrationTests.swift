@@ -486,7 +486,6 @@ final class J2KCodecIntegrationTests: XCTestCase {
         
         // Test different decomposition levels
         for levels in [0, 1, 2, 3] {
-            print("Testing decomposition level: \(levels)")
             let config = J2KEncodingConfiguration(
                 quality: 0.95,
                 lossless: false,
@@ -494,11 +493,9 @@ final class J2KCodecIntegrationTests: XCTestCase {
             )
             let encoder = J2KEncoder(encodingConfiguration: config)
             let encoded = try encoder.encode(image)
-            print("  Encoded successfully, size: \(encoded.count) bytes")
             
             let decoder = J2KDecoder()
             let decoded = try decoder.decode(encoded)
-            print("  Decoded successfully")
             
             XCTAssertEqual(decoded.width, width)
             XCTAssertEqual(decoded.height, height)
