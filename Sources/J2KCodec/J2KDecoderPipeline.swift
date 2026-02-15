@@ -525,11 +525,17 @@ struct DecoderPipeline: Sendable {
                     let passes = header.codingPasses
                     let lengths = header.dataLengths
                     
+                    // Track which entry in lengths/passes we're reading
+                    var dataIndex = 0
+                    
                     for (idx, included) in inclusions.enumerated() {
-                        guard included, idx < lengths.count else { continue }
+                        guard included else { continue }
                         
-                        let dataLength = lengths[idx]
-                        let passCount = idx < passes.count ? passes[idx] : 0
+                        guard dataIndex < lengths.count else { break }
+                        
+                        let dataLength = lengths[dataIndex]
+                        let passCount = dataIndex < passes.count ? passes[dataIndex] : 0
+                        dataIndex += 1  // Move to next data entry
                         
                         // Extract data
                         guard dataOffset + dataLength <= tileData.count else {
@@ -591,11 +597,18 @@ struct DecoderPipeline: Sendable {
             let passes = header.codingPasses
             let lengths = header.dataLengths
             
+            // Track which entry in lengths/passes we're reading
+            // The lengths/passes arrays contain data only for included blocks
+            var dataIndex = 0
+            
             for (idx, included) in inclusions.enumerated() {
-                guard included, idx < lengths.count else { continue }
+                guard included else { continue }
                 
-                let dataLength = lengths[idx]
-                let passCount = idx < passes.count ? passes[idx] : 0
+                guard dataIndex < lengths.count else { break }
+                
+                let dataLength = lengths[dataIndex]
+                let passCount = dataIndex < passes.count ? passes[dataIndex] : 0
+                dataIndex += 1  // Move to next data entry
                 
                 guard dataOffset + dataLength <= tileData.count else {
                     throw J2KError.decodingError("Insufficient data for code block \(idx)")
