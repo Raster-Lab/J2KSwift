@@ -477,7 +477,13 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
   - Issue affects only maximum block size with worst-case dense data
   - Workaround documented in KNOWN_LIMITATIONS.md
   - Deferred comprehensive fix to v1.2.0
-- [ ] Lossless decoding optimization (pending)
+- [x] Lossless decoding optimization
+  - Implemented buffer pool for memory reuse (J2KBufferPool)
+  - Created optimized 1D/2D DWT for reversible 5/3 filter
+  - Integrated into decoder pipeline with automatic detection
+  - Performance: 1.85x speedup (1D), 1.40x speedup (2D), 1.41x speedup (multi-level)
+  - 14 comprehensive tests (100% pass rate)
+  - Detailed benchmarks across multiple image sizes
 - [ ] Performance benchmarking vs OpenJPEG (pending)
 - [ ] Additional JPIP end-to-end tests (pending)
 - [ ] Cross-platform validation (pending)
