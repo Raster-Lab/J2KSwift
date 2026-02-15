@@ -81,86 +81,55 @@ let encoded = try encoder.encode(image)
 
 ## Platform-Specific Issues
 
-### Linux: Lossless Decoding Returns Empty Data
+### Linux: Lossless Decoding Returns Empty Data ✅ FIXED
 
 **Severity:** Medium  
 **Platforms Affected:** Linux (Ubuntu verified, likely other distributions)  
-**Status:** Under Investigation for v1.2.0
+**Status:** ✅ **FIXED** in v1.2.0
 
 #### Description
 
-When encoding an image with lossless configuration (`quality: 1.0, lossless: true`), the decoder successfully parses the codestream structure but returns empty component data (0 bytes) on Linux. The same code is expected to work correctly on macOS.
+When encoding an image with lossless configuration (`quality: 1.0, lossless: true`), the decoder was successfully parsing the codestream structure but returning empty component data (0 bytes) on Linux.
 
-#### Symptoms
+#### Root Cause
 
-- **Encoder**: Works correctly, produces valid codestream (e.g., 150 bytes for 16×16 gradient)
-- **Decoder**: Parses structure correctly (width, height, component count all correct)
-- **Data**: Component `data` field is empty (0 bytes instead of expected value)
-- **Platform**: Only occurs on Linux; expected to work on macOS
+The issue was in the packet header parsing logic in `J2KDecoderPipeline.extractTileData()`. The `lengths` and `passes` arrays contain data **only for included code blocks**, not for all code blocks. The original code was using the code block index directly to access these arrays, causing an index out of bounds condition that resulted in no blocks being extracted.
 
-#### Working Configurations
-
-✅ **Works correctly on Linux:**
-- Default encoding (no explicit lossless config)
-- Lossy encoding (quality < 1.0, lossless: false)
-- Multi-component RGB encoding/decoding
-- Constant-value images with default config
-
-❌ **Fails on Linux:**
-- Explicit lossless encoding (quality: 1.0, lossless: true) with gradient or varied data
-
-#### Test Case
-
-The issue is captured in `Tests/J2KCodecIntegrationTests/testLosslessRoundTrip()`:
-- Creates 16×16 gradient pattern
-- Encodes with `J2KEncodingConfiguration(quality: 1.0, lossless: true)`
-- Decodes successfully with correct dimensions
-- Component data is empty (0 bytes)
-
-**Current Status:** Test skipped on Linux via `#if os(Linux)`
-
-#### Suspected Causes
-
-Possible areas for investigation:
-1. **Reversible Color Transform (RCT)**: Platform-specific integer arithmetic differences
-2. **Reversible Wavelet (5/3 filter)**: Lifting step implementation differences
-3. **Quantization**: Expounded quantization mode handling
-4. **Packet Parsing**: Multi-level decomposition packet structure interpretation
-5. **Memory Layout**: Endianness or alignment differences
-
-#### Workaround
-
-On Linux, use default encoder configuration or explicitly set `lossless: false`:
-
+**Buggy code:**
 ```swift
-// Works on Linux
-let encoder = J2KEncoder()  // Uses default config
-let encoded = try encoder.encode(image)
-let decoded = try decoder.decode(encoded)
-
-// Or explicitly use lossy
-let config = J2KEncodingConfiguration(quality: 0.95, lossless: false)
-let encoder = J2KEncoder(encodingConfiguration: config)
+for (idx, included) in inclusions.enumerated() {
+    guard included, idx < lengths.count else { continue }
+    let dataLength = lengths[idx]  // ❌ Wrong: idx is code block index, not data index
+    ...
+}
 ```
 
-#### Investigation Plan for v1.2.0
+**Fixed code:**
+```swift
+var dataIndex = 0  // Track position in lengths/passes arrays
+for (idx, included) in inclusions.enumerated() {
+    guard included else { continue }
+    guard dataIndex < lengths.count else { break }
+    let dataLength = lengths[dataIndex]  // ✅ Correct: use separate data index
+    dataIndex += 1
+    ...
+}
+```
 
-1. Add comprehensive debug logging to decoder pipeline
-2. Compare byte-by-byte codestream output between Linux and macOS
-3. Test intermediate pipeline stages (post-DWT, post-quantization, etc.)
-4. Check for platform-specific behavior in:
-   - `J2KDWT1D.forwardTransform` (reversible mode)
-   - `J2KDWT2D.forwardTransform` (5/3 filter)
-   - `J2KQuantizer.quantize` (expounded mode)
-   - `DecoderPipeline.applyInverseWaveletTransform`
-5. Validate arithmetic precision in lifting steps
-6. Test on additional platforms (Fedora, Arch, ARM64 Linux)
+#### Fix
 
-#### Related
+The packet parsing code was updated to use a separate index (`dataIndex`) to track position in the `lengths` and `passes` arrays, which are compressed to contain only data for included blocks.
 
-- **File**: `Tests/J2KCodecTests/J2KCodecIntegrationTests.swift` (line 152)
-- **Documentation**: `CROSS_PLATFORM.md` (detailed platform testing)
-- **Issue Tracking**: To be created for v1.2.0 milestone
+**Files Changed:**
+- `Sources/J2KCodec/J2KDecoderPipeline.swift` (lines 550-591 and 633-670)
+
+**Tests:**
+- `Tests/J2KCodecTests/J2KCodecIntegrationTests.swift` - `testLosslessRoundTrip()` now passes on Linux
+- `Tests/J2KCodecTests/LinuxLosslessDebugTest.swift` - Added debug test (can be removed)
+
+#### Status
+
+✅ **RESOLVED** - Lossless decoding now works correctly on Linux.
 
 ## Future Improvements
 

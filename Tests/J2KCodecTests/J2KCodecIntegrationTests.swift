@@ -150,14 +150,10 @@ final class J2KCodecIntegrationTests: XCTestCase {
     ///
     /// Current status: Enhanced packet parsing for multi-level decomposition.
     ///
-    /// Known Issue: This test currently fails on Linux (Ubuntu) - the decoder
-    /// returns empty component data (0 bytes) when decoding lossless-encoded images.
-    /// The issue appears to be platform-specific and requires further investigation.
+    /// Fixed: The Linux lossless decoding issue has been resolved. The problem was
+    /// in the packet header parsing - the lengths/passes arrays are indexed by
+    /// included code blocks, not by all code blocks.
     func testLosslessRoundTrip() throws {
-        #if os(Linux)
-        throw XCTSkip("Lossless decoding currently fails on Linux - platform-specific issue under investigation")
-        #endif
-        
         // Test is currently experimental - enable to check progress
         // throw XCTSkip("Lossless decoding implementation needs packet parsing improvements")
         
