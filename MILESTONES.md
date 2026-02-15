@@ -492,7 +492,15 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
   - Generated detailed reports (Markdown and CSV formats)
   - Documented findings in REFERENCE_BENCHMARKS.md
   - **Status**: Does not meet 80% performance target; requires optimization work for v1.2.0
-- [ ] Additional JPIP end-to-end tests (pending)
+- [x] Additional JPIP end-to-end tests
+  - Created JPIPEndToEndTests.swift with 14 comprehensive tests
+  - Added multi-session concurrent tests (session isolation, concurrent requests)
+  - Added error handling tests (invalid targets, malformed requests, network errors)
+  - Added resilience tests (intermittent failures, server restart)
+  - Added cache coherency tests (cache state, consistency across sessions)
+  - Added request-response cycle tests (progressive quality, resolution levels)
+  - Added data integrity tests (cross-request integrity, large payloads)
+  - 100% pass rate (14/14 tests), total JPIP tests: 138 (100% pass rate)
 - [ ] Cross-platform validation (pending)
 
 ---

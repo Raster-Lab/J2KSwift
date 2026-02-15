@@ -278,6 +278,7 @@ final class JPIPEndToEndTests: XCTestCase {
         
         try await server.registerImage(name: "test.jp2", at: tempURL)
         try await server.start()
+        
         let transport = MockJPIPTransport(server: server)
         
         // Create session
@@ -607,6 +608,7 @@ final class JPIPEndToEndTests: XCTestCase {
         try await server.start()
         
         let transport = MockJPIPTransport(server: server)
+        
         // Create session
         var sessionRequest = JPIPRequest(target: "test.jp2")
         sessionRequest.cnew = .http
