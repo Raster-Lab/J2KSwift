@@ -125,7 +125,6 @@ The packet parsing code was updated to use a separate index (`dataIndex`) to tra
 
 **Tests:**
 - `Tests/J2KCodecTests/J2KCodecIntegrationTests.swift` - `testLosslessRoundTrip()` now passes on Linux
-- `Tests/J2KCodecTests/LinuxLosslessDebugTest.swift` - Added debug test (can be removed)
 
 #### Status
 

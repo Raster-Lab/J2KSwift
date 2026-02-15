@@ -144,19 +144,12 @@ final class J2KCodecIntegrationTests: XCTestCase {
     
     /// Tests lossless round-trip encoding and decoding.
     ///
-    /// Note: Lossless decoding is being improved. The decoder can parse
-    /// and decode lossless codestreams. Multi-level wavelet reconstruction
-    /// has been implemented.
+    /// Verifies that lossless encoding with the reversible color transform (RCT)
+    /// and reversible wavelet filter (5/3) produces decodable output.
     ///
-    /// Current status: Enhanced packet parsing for multi-level decomposition.
-    ///
-    /// Fixed: The Linux lossless decoding issue has been resolved. The problem was
-    /// in the packet header parsing - the lengths/passes arrays are indexed by
-    /// included code blocks, not by all code blocks.
+    /// Fixed in v1.2.0: The packet header parsing now correctly indexes the
+    /// lengths/passes arrays by included code blocks only.
     func testLosslessRoundTrip() throws {
-        // Test is currently experimental - enable to check progress
-        // throw XCTSkip("Lossless decoding implementation needs packet parsing improvements")
-        
         // Create a gradient pattern
         let width = 16
         let height = 16
