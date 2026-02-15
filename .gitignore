@@ -122,6 +122,8 @@ fastlane/test_output
 benchmark_results/
 *.benchmark
 *.profiling
+profile_results/
+profile_results_large/
 
 # Other
 *.orig

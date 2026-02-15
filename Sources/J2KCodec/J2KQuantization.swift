@@ -594,6 +594,41 @@ public struct J2KQuantizer: Sendable {
         }
     }
     
+    /// Quantizes an array of Int32 coefficients.
+    ///
+    /// This overload handles integer input from the DWT directly, avoiding
+    /// unnecessary type conversions for better performance.
+    ///
+    /// - Parameters:
+    ///   - coefficients: Array of integer wavelet coefficients.
+    ///   - subband: The subband type.
+    ///   - decompositionLevel: The decomposition level (0 = finest).
+    ///   - totalLevels: Total number of decomposition levels.
+    /// - Returns: Array of quantized indices.
+    /// - Throws: `J2KError` if quantization fails.
+    public func quantize(
+        coefficients: [Int32],
+        subband: J2KSubband,
+        decompositionLevel: Int,
+        totalLevels: Int
+    ) throws -> [Int32] {
+        // Get step size for this subband
+        let stepSize = getStepSize(
+            for: subband,
+            decompositionLevel: decompositionLevel,
+            totalLevels: totalLevels
+        )
+        
+        guard stepSize > 0 else {
+            throw J2KError.invalidParameter("Step size must be positive")
+        }
+        
+        // Directly quantize Int32 values without conversion
+        return coefficients.map { coefficient in
+            quantizeCoefficient(Double(coefficient), stepSize: stepSize)
+        }
+    }
+    
     /// Quantizes a 2D array of coefficients.
     ///
     /// - Parameters:

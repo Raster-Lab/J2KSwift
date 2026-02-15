@@ -1,0 +1,23 @@
+{
+  "image" : {
+    "pixels" : 1048576,
+    "height" : 1024,
+    "components" : 1,
+    "path" : "profile_results_optimized\/test_images\/test_1024x1024.pgm",
+    "width" : 1024
+  },
+  "encode" : {
+    "throughput_mpps" : 3.765394900906722,
+    "min_ms" : 270.0018882751465,
+    "max_ms" : 289.88146781921387,
+    "runs" : [
+      270.0018882751465,
+      275.54774284362793,
+      289.88146781921387
+    ],
+    "median_ms" : 275.54774284362793,
+    "average_ms" : 278.4770329793294,
+    "compressed_size" : 87305
+  },
+  "runs" : 3
+}

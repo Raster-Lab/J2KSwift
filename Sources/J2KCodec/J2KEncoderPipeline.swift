@@ -316,9 +316,9 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
-                let doubleCoeffs = info.coefficients.map { Double($0) }
+                // Use Int32-optimized quantize method to avoid unnecessary conversions
                 let quantized = try quantizer.quantize(
-                    coefficients: doubleCoeffs,
+                    coefficients: info.coefficients,
                     subband: info.subband,
                     decompositionLevel: info.level,
                     totalLevels: config.decompositionLevels
