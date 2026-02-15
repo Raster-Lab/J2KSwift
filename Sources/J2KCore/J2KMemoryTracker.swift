@@ -21,9 +21,9 @@ import Foundation
 /// try tracker.allocate(1024 * 1024) // 1MB allocation
 /// tracker.deallocate(1024 * 1024)
 /// ```
-public actor J2KMemoryTracker {
+internal actor J2KMemoryTracker {
     /// Configuration for the memory tracker.
-    public struct Configuration: Sendable {
+    internal struct Configuration: Sendable {
         /// Maximum memory usage in bytes (0 = unlimited).
         public let limit: Int
         
@@ -52,7 +52,7 @@ public actor J2KMemoryTracker {
     }
     
     /// Memory usage statistics.
-    public struct Statistics: Sendable {
+    internal struct Statistics: Sendable {
         /// Current memory usage in bytes.
         public let currentUsage: Int
         
@@ -82,14 +82,14 @@ public actor J2KMemoryTracker {
     /// Creates a new memory tracker with the specified configuration.
     ///
     /// - Parameter configuration: The tracker configuration (default: default configuration).
-    public init(configuration: Configuration = Configuration()) {
+    internal init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
     
     /// Convenience initializer with just a memory limit.
     ///
     /// - Parameter limit: The maximum memory limit in bytes.
-    public init(limit: Int) {
+    internal init(limit: Int) {
         self.configuration = Configuration(limit: limit)
     }
     
@@ -97,7 +97,7 @@ public actor J2KMemoryTracker {
     ///
     /// - Parameter size: The number of bytes to allocate.
     /// - Throws: `J2KError.internalError` if allocation would exceed the limit.
-    public func allocate(_ size: Int) throws {
+    internal func allocate(_ size: Int) throws {
         // Check if allocation would exceed limit
         if configuration.limit > 0 {
             let newUsage = currentUsage + size
@@ -130,7 +130,7 @@ public actor J2KMemoryTracker {
     /// Deallocates the specified amount of memory.
     ///
     /// - Parameter size: The number of bytes to deallocate.
-    public func deallocate(_ size: Int) {
+    internal func deallocate(_ size: Int) {
         currentUsage = max(0, currentUsage - size)
         
         if configuration.trackStatistics {
@@ -141,7 +141,7 @@ public actor J2KMemoryTracker {
     /// Returns current memory usage statistics.
     ///
     /// - Returns: Statistics about memory usage.
-    public func getStatistics() -> Statistics {
+    internal func getStatistics() -> Statistics {
         let pressure: Double
         if configuration.limit > 0 {
             pressure = Double(currentUsage) / Double(configuration.limit)
@@ -162,7 +162,7 @@ public actor J2KMemoryTracker {
     /// Resets the tracker statistics.
     ///
     /// This resets peak usage and counters, but maintains current usage.
-    public func resetStatistics() {
+    internal func resetStatistics() {
         peakUsage = currentUsage
         allocationCount = 0
         deallocationCount = 0
@@ -173,7 +173,7 @@ public actor J2KMemoryTracker {
     ///
     /// Warning: This should only be used when all tracked allocations
     /// have been properly deallocated.
-    public func reset() {
+    internal func reset() {
         currentUsage = 0
         peakUsage = 0
         allocationCount = 0
@@ -185,7 +185,7 @@ public actor J2KMemoryTracker {
     ///
     /// - Parameter size: The number of bytes to check.
     /// - Returns: `true` if the allocation would succeed, `false` otherwise.
-    public func canAllocate(_ size: Int) -> Bool {
+    internal func canAllocate(_ size: Int) -> Bool {
         if configuration.limit == 0 {
             return true
         }
@@ -195,7 +195,7 @@ public actor J2KMemoryTracker {
     /// Returns the amount of memory available for allocation.
     ///
     /// - Returns: Available memory in bytes, or `Int.max` if unlimited.
-    public func availableMemory() -> Int {
+    internal func availableMemory() -> Int {
         if configuration.limit == 0 {
             return Int.max
         }

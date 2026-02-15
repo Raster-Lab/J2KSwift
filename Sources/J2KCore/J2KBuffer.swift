@@ -13,6 +13,10 @@ import Foundation
 /// and support for efficient copy-on-write operations. It is designed to handle
 /// large image data efficiently while minimizing memory copies.
 ///
+/// > Important: This is an **internal implementation detail** of the J2KSwift library.
+/// > It is exposed as `public` only for cross-module use within the package.
+/// > Use ``J2KImageBuffer`` for user-facing image data storage instead.
+///
 /// Example:
 /// ```swift
 /// let buffer = J2KBuffer(capacity: 1024 * 1024) // 1MB buffer
