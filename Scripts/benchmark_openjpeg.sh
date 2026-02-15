@@ -140,7 +140,7 @@ main() {
     setup_output
     generate_test_images
     
-    // Build J2KSwift CLI tool
+    # Build J2KSwift CLI tool
     log_info "Building J2KSwift CLI tool..."
     if command -v swift &> /dev/null; then
         cd "$(dirname "$0")/.." || exit 1
