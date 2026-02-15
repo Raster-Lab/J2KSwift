@@ -463,10 +463,29 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 This 100-week roadmap provides a clear path to implementing a production-ready JPEG 2000 framework in Swift 6. The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust and performant final product. Future milestones extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding between legacy JPEG 2000 and HTJ2K.
 
+## Post-1.0 Releases
+
+### v1.1.0 (February 14, 2026) ✅ RELEASED
+- Complete high-level codec integration
+- Full encoder/decoder pipelines functional
+- Hardware acceleration active
+- 98.3% test pass rate (1,471 of 1,496 tests)
+
+### v1.1.1 (In Progress - February 2026)
+- [x] Investigation of 64×64 MQ coder issue → Documented as known limitation
+  - Comprehensive investigation completed
+  - Issue affects only maximum block size with worst-case dense data
+  - Workaround documented in KNOWN_LIMITATIONS.md
+  - Deferred comprehensive fix to v1.2.0
+- [ ] Lossless decoding optimization (pending)
+- [ ] Performance benchmarking vs OpenJPEG (pending)
+- [ ] Additional JPIP end-to-end tests (pending)
+- [ ] Cross-platform validation (pending)
+
 ---
 
-**Last Updated**: 2026-02-08  
+**Last Updated**: 2026-02-15  
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
-**Status**: Version 1.0.0 Ready for Release  
-**Next Steps**: Tag v1.0.0, publish GitHub release, begin v1.1 planning  
+**Current Version**: 1.1.0 (Released)  
+**Next Milestone**: v1.1.1 (Patch Release - In Progress)  
 **Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.2+

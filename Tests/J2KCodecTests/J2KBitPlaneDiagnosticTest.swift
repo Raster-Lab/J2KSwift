@@ -30,8 +30,17 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
     ///
     /// Note: 64x64 blocks with dense, high-magnitude data have a pre-existing
     /// MQ coder issue unrelated to bypass mode. This affects default options too.
+    ///
+    /// Investigation shows:
+    /// - 8x8, 16x16, 32x32 blocks work perfectly with same dense pattern
+    /// - 64x64 with simple patterns (sequential, constant) work fine
+    /// - 64x64 with dense varied data fails with 63.28% error rate
+    /// - Issue appears to be cumulative state divergence in MQ coder over 4096 symbols
+    /// - Requires deeper investigation of ISO/IEC 15444-1 Annex C procedures
+    ///
+    /// Workaround: Use code blocks ≤ 32x32 for dense data patterns
     func testMinimalBlock64x64() throws {
-        throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - not related to bypass mode")
+        throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - requires ISO standard deep-dive")
     }
     
     /// Test various patterns to identify which triggers the bug
