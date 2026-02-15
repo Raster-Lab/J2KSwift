@@ -7,6 +7,7 @@ Thank you for your interest in contributing to J2KSwift! This document provides 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Workflow](#development-workflow)
+- [CI/CD Process](CI_CD_GUIDE.md) - **See comprehensive CI/CD guide**
 - [Code Style](#code-style)
 - [Testing Requirements](#testing-requirements)
 - [Documentation Standards](#documentation-standards)

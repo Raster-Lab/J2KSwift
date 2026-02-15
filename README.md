@@ -456,6 +456,8 @@ See [PERFORMANCE.md](PERFORMANCE.md) and [REFERENCE_BENCHMARKS.md](REFERENCE_BEN
 
 We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+For information about our CI/CD workflows and automated testing, see [CI_CD_GUIDE.md](CI_CD_GUIDE.md).
+
 ### Areas Needing Help
 1. **High-level codec integration** (v1.1 priority)
 2. **Bit-plane decoder bug fix** (32 failing tests)
