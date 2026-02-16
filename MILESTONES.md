@@ -396,7 +396,7 @@ HTJ2K is an updated JPEG 2000 standard (Part 15) that provides significantly fas
 - [x] Implement HTJ2K marker segments
   - [x] Add CAP (capabilities) marker segment (already implemented)
   - [x] Add CPF (corresponding profile) marker segment (✅ completed Feb 16, 2026)
-  - [ ] Update COD/COC for HTJ2K parameters
+  - [x] Update COD/COC for HTJ2K parameters (✅ completed Feb 16, 2026)
   - [ ] Add HT set extensions
 - [ ] Add HTJ2K capability signaling in file format
   - [ ] Update JP2 file type box for HTJ2K compatibility

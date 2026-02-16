@@ -7,7 +7,7 @@
 ```
 Current Version: v1.2.0 (Released)
 Current Phase:   Phase 9 🚧 IN PROGRESS (Week 101-105)
-Test Status:     1,537 tests, 100% pass rate
+Test Status:     1,547 tests, 100% pass rate
 Next Milestone:  v1.3.0 with HTJ2K Foundation
 ```
 
@@ -24,10 +24,10 @@ v1.2.0: Current Release
 └─ Release Prep   [████████████████████] 100% ✅
 
 Phase 9: HTJ2K Codec (Weeks 101-120)
-├─ Foundation     [███░░░░░░░░░░░░░░░░░]  15% 🚧 IN PROGRESS
+├─ Foundation     [█████░░░░░░░░░░░░░░░]  25% 🚧 IN PROGRESS
 │   ├─ CAP marker ✅
 │   ├─ CPF marker ✅
-│   ├─ COD/COC    ⏭️
+│   ├─ COD/COC    ✅
 │   └─ HT sets    ⏭️
 ├─ FBCOT Impl.    [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
 ├─ HT Passes      [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
@@ -60,8 +60,8 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
 | Test Pass Rate | 100% | >95% | ✅ |
-| Total Tests | 1,537 | >1,500 | ✅ |
-| HTJ2K Tests | 77 | >50 | ✅ |
+| Total Tests | 1,547 | >1,500 | ✅ |
+| HTJ2K Tests | 87 | >50 | ✅ |
 | Code Coverage | ~90% | >90% | ✅ |
 | Build Status | ✅ Passing | Passing | ✅ |
 
@@ -77,7 +77,7 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 
 ### Immediate (Phase 9: Week 101-105)
 1. ✅ Implement CPF marker segment
-2. 📝 Update COD/COC markers for HTJ2K parameters
+2. ✅ Update COD/COC markers for HTJ2K parameters
 3. 📝 Add HT set extensions
 4. 📝 Update JP2 file format for HTJ2K capability signaling
 
