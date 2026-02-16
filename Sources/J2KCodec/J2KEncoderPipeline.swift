@@ -586,12 +586,12 @@ struct EncoderPipeline: Sendable {
         // Bit 2: EPH markers used (0 = no)
         // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
         //   00 = No HT sets
-        //   01 = HT set A
+        //   01 = HT set A (set bit 3, clear bit 4)
         //   10 = HT set B  
         //   11 = HT sets C and D
         // When HTJ2K mode is enabled, use default HT set A
         if config.useHTJ2K {
-            scod |= 0x08 // Set bits 3-4 to 01 (HT set A)
+            scod |= 0x08 // Set bit 3 (bits 3-4 = 01 for HT set A)
         }
         segment.writeUInt8(scod)
 

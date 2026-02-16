@@ -348,7 +348,8 @@ struct DecoderPipeline: Sendable {
         config.waveletFilter = (transformType == 1) ? .reversible53 : .irreversible97
         
         // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
-        if hasHTSets && config.useHTJ2K {
+        // If HT sets are signaled, the configuration byte must be read regardless of useHTJ2K flag
+        if hasHTSets {
             // Read HT set configuration byte
             _ = try reader.readUInt8()
             // We read and ignore for now - parameters are advisory
@@ -416,9 +417,9 @@ struct DecoderPipeline: Sendable {
         // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
         // Note: COC doesn't have its own Scod, so we check if HTJ2K mode is set
         if config.useHTJ2K {
-            // Try to read HT set configuration byte if present
-            let bytesRead = reader.position - startPos
-            if bytesRead < length - 2 {
+            // Check if there's enough data left to read HT set configuration byte
+            let currentBytesRead = reader.position - startPos
+            if currentBytesRead < length - 2 {
                 // Read HT set configuration byte
                 _ = try reader.readUInt8()
                 // We read and ignore for now - parameters are advisory
