@@ -8,13 +8,13 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.2.0-dev (In Development - Critical Bug Fixes)  
+**Current Version**: 1.2.0 (Released February 16, 2026)  
 **Status**: Complete encoder and decoder pipelines with 100% test pass rate (1,528 tests)  
 **Previous Release**: 1.1.1 (February 15, 2026)
 
 ## 📦 Release Status
 
-**v1.2.0-dev** includes critical bug fixes and improvements over v1.1.1:
+**v1.2.0** includes critical bug fixes and improvements over v1.1.1:
 - ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
 - ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
 - ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
@@ -38,7 +38,7 @@ See [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for v1.2.0 details, or [R
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
-- **Fully Functional**: Complete encoder and decoder pipelines (v1.2.0-dev)
+- **Fully Functional**: Complete encoder and decoder pipelines (v1.2.0)
 - **Cross-Platform**: macOS 12+, iOS 15+, tvOS 15+, watchOS 8+, Linux, Windows
 - **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) core implementation
 - **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)

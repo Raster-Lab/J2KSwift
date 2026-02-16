@@ -1,7 +1,7 @@
 # J2KSwift v1.2.0 Release Notes
 
-**Release Date:** TBD  
-**Status:** In Development
+**Release Date:** February 16, 2026  
+**Status:** Released
 
 ## Overview
 

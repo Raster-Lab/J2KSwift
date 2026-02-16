@@ -5,10 +5,10 @@
 ## Quick Status
 
 ```
-Current Version: v1.2.0-dev (Release Candidate)
+Current Version: v1.2.0 (Released)
 Current Phase:   Phase 8 ✅ COMPLETE (100/100 weeks)
 Test Status:     1,528 tests, 98.4% pass rate
-Next Milestone:  v1.2.0 Release → Phase 9: HTJ2K Codec
+Next Milestone:  v1.3.0 or Phase 9: HTJ2K Codec
 ```
 
 ## Roadmap Visualization
@@ -19,9 +19,9 @@ Phase 0-8: Foundation through Production Ready
 │
 v1.2.0: Current Release
 ├─ Bug Fixes      [████████████████████] 100% ✅
-├─ Performance    [██████████████████░░]  90% 🚧
-├─ Testing        [███████████████░░░░░]  75% 🚧
-└─ Release Prep   [███████░░░░░░░░░░░░░]  35% 📝
+├─ Performance    [███████████████████░]  95% ✅
+├─ Testing        [████████████████████] 100% ✅
+└─ Release Prep   [████████████████████] 100% ✅
 
 Phase 9: HTJ2K Codec (Weeks 101-120)
 ├─ Foundation     [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
@@ -45,7 +45,7 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 | v1.0.0 Release | ✅ Released | - | - |
 | v1.1.0 Release | ✅ Released | - | Feb 14, 2026 |
 | v1.1.1 Release | ✅ Released | - | Feb 15, 2026 |
-| **v1.2.0 Release** | **🚧 In Progress** | **1-2 weeks** | **Feb 2026** |
+| **v1.2.0 Release** | **✅ Released** | **-** | **Feb 16, 2026** |
 | Phase 9: HTJ2K Codec | ⏭️ Planned | 20 weeks | Jul 2026 |
 | Phase 10: Lossless Transcoding | ⏭️ Planned | 10 weeks | Oct 2026 |
 
@@ -71,11 +71,10 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 
 ## Next Actions
 
-### Immediate (v1.2.0)
-1. ✅ Fix critical bugs (MQDecoder, Linux decoding)
-2. 🚧 Complete performance optimization
-3. 📝 Final testing and validation
-4. 📝 Release preparation
+### Immediate (v1.3.0 or Phase 9)
+1. 📝 Begin HTJ2K codec planning
+2. 📝 Evaluate additional performance optimizations
+3. 📝 Plan next feature enhancements
 
 ### Short-term (Phase 9: HTJ2K)
 1. ⏭️ Implement HTJ2K marker segments
