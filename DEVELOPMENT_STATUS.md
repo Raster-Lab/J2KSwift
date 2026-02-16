@@ -24,11 +24,12 @@ v1.2.0: Current Release
 └─ Release Prep   [████████████████████] 100% ✅
 
 Phase 9: HTJ2K Codec (Weeks 101-120)
-├─ Foundation     [█████░░░░░░░░░░░░░░░]  25% 🚧 IN PROGRESS
+├─ Foundation     [██████████░░░░░░░░░░]  50% ✅ COMPLETE
 │   ├─ CAP marker ✅
 │   ├─ CPF marker ✅
 │   ├─ COD/COC    ✅
-│   └─ HT sets    ⏭️
+│   ├─ HT sets    ✅
+│   └─ JPH format ✅
 ├─ FBCOT Impl.    [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
 ├─ HT Passes      [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
 ├─ Integration    [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
@@ -78,8 +79,8 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 ### Immediate (Phase 9: Week 101-105)
 1. ✅ Implement CPF marker segment
 2. ✅ Update COD/COC markers for HTJ2K parameters
-3. 📝 Add HT set extensions
-4. 📝 Update JP2 file format for HTJ2K capability signaling
+3. ✅ Add HT set extensions
+4. ✅ Update JP2 file format for HTJ2K capability signaling
 
 ### Short-term (Phase 9: Weeks 106-110)
 1. ⏭️ Implement MEL (Magnitude Exchange Length) coder
@@ -95,6 +96,7 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 
 ## Documentation
 
+- **[HTJ2K.md](HTJ2K.md)**: HTJ2K implementation guide (NEW!)
 - **[NEXT_PHASE.md](NEXT_PHASE.md)**: Comprehensive next phase roadmap (332 lines)
 - **[MILESTONES.md](MILESTONES.md)**: Complete 100-week development history
 - **[RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md)**: Current release notes

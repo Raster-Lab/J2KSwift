@@ -397,17 +397,21 @@ HTJ2K is an updated JPEG 2000 standard (Part 15) that provides significantly fas
   - [x] Add CAP (capabilities) marker segment (already implemented)
   - [x] Add CPF (corresponding profile) marker segment (✅ completed Feb 16, 2026)
   - [x] Update COD/COC for HTJ2K parameters (✅ completed Feb 16, 2026)
-  - [ ] Add HT set extensions
-- [ ] Add HTJ2K capability signaling in file format
-  - [ ] Update JP2 file type box for HTJ2K compatibility
-  - [ ] Add reader requirements signaling
-  - [ ] Update brand specifications
+  - [x] Add HT set extensions (✅ completed Feb 16, 2026)
+    - [x] Scod bits 3-4 for HT set signaling
+    - [x] HT set configuration byte
+    - [x] Decoder parsing support
+- [x] Add HTJ2K capability signaling in file format (✅ completed Feb 16, 2026)
+  - [x] Update JP2 file type box for HTJ2K compatibility (JPH format already implemented)
+  - [x] Add reader requirements signaling
+  - [x] Update brand specifications ('jph' brand with compatible brands)
+  - [x] Comprehensive documentation (HTJ2K.md)
 - [x] Implement HTJ2K-specific configuration options (partial)
   - [x] Add HTJ2K mode selection (auto, legacy, HTJ2K)
   - [x] Configure HT block coding parameters (basic support exists)
   - [ ] Add HT-specific optimization flags
 - [x] Create HTJ2K test infrastructure (partial)
-  - [x] Set up HTJ2K test framework (67 existing tests)
+  - [x] Set up HTJ2K test framework (87 existing tests)
   - [x] Add marker segment tests (CAP: 7 tests, CPF: 10 tests)
   - [ ] Create test vector generator
   - [ ] Add conformance test harness
