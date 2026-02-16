@@ -557,13 +557,77 @@ struct EncoderPipeline: Sendable {
         let cbHeightExp = Int(log2(Double(config.codeBlockSize.height)))
         segment.writeUInt8(UInt8(cbHeightExp - 2))
 
-        // Code-block style (0 = no special modes)
-        segment.writeUInt8(0)
+        // Code-block style
+        // Bit 0: Selective arithmetic coding bypass
+        // Bit 1: Reset context probabilities
+        // Bit 2: Termination on each coding pass
+        // Bit 3: Vertically causal context
+        // Bit 4: Predictable termination
+        // Bit 5: Segmentation symbols
+        // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
+        var codeBlockStyle: UInt8 = 0
+        if config.useHTJ2K {
+            codeBlockStyle |= 0x40 // Set bit 6 for HTJ2K mode
+        }
+        segment.writeUInt8(codeBlockStyle)
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.lossless ? 1 : 0)
 
         writer.writeMarkerSegment(J2KMarker.cod.rawValue, segmentData: segment.data)
+    }
+
+    /// Writes the COC marker segment (Coding Style Component).
+    ///
+    /// The COC marker allows per-component coding parameters that override
+    /// the default COD parameters for a specific component. This is optional
+    /// and only written when component-specific parameters are needed.
+    ///
+    /// - Parameters:
+    ///   - writer: The bit writer to write to.
+    ///   - componentIndex: The component index (0-based).
+    ///   - componentCount: Total number of components.
+    private func writeCOCMarker(
+        _ writer: inout J2KBitWriter,
+        componentIndex: Int,
+        componentCount: Int
+    ) throws {
+        var segment = J2KBitWriter()
+        
+        // Ccoc — Component index
+        if componentCount < 257 {
+            // 1 byte for component index if < 257 components
+            segment.writeUInt8(UInt8(componentIndex))
+        } else {
+            // 2 bytes for component index if >= 257 components
+            segment.writeUInt16(UInt16(componentIndex))
+        }
+        
+        // Scoc — Coding style for this component
+        // Same structure as COD's SPcod
+        
+        // Number of decomposition levels
+        segment.writeUInt8(UInt8(config.decompositionLevels))
+        
+        // Code-block width exponent (offset by 2)
+        let cbWidthExp = Int(log2(Double(config.codeBlockSize.width)))
+        segment.writeUInt8(UInt8(cbWidthExp - 2))
+        
+        // Code-block height exponent (offset by 2)
+        let cbHeightExp = Int(log2(Double(config.codeBlockSize.height)))
+        segment.writeUInt8(UInt8(cbHeightExp - 2))
+        
+        // Code-block style (with HT bit if HTJ2K is enabled)
+        var codeBlockStyle: UInt8 = 0
+        if config.useHTJ2K {
+            codeBlockStyle |= 0x40 // Set bit 6 for HTJ2K mode
+        }
+        segment.writeUInt8(codeBlockStyle)
+        
+        // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
+        segment.writeUInt8(config.lossless ? 1 : 0)
+        
+        writer.writeMarkerSegment(J2KMarker.coc.rawValue, segmentData: segment.data)
     }
 
     /// Writes the QCD marker segment (Quantization Default).

@@ -206,6 +206,16 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - &gt;1: Use specified number of threads
     public var maxThreads: Int
     
+    /// Whether to use HTJ2K (High-Throughput JPEG 2000) block coding.
+    ///
+    /// When enabled, uses the FBCOT (Fast Block Coder with Optimized Truncation)
+    /// algorithm instead of traditional EBCOT, providing significantly faster
+    /// encoding and decoding throughput as specified in ISO/IEC 15444-15.
+    ///
+    /// - Note: HTJ2K mode requires CAP and CPF markers to be written in the codestream.
+    /// - Default: false (use legacy EBCOT block coding)
+    public var useHTJ2K: Bool
+    
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -219,6 +229,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - tileSize: Tile dimensions, (0,0) for no tiling (default: no tiling).
     ///   - bitrateMode: Bitrate control mode (default: .constantQuality).
     ///   - maxThreads: Maximum encoding threads, 0 for auto (default: 0).
+    ///   - useHTJ2K: Use HTJ2K block coding (default: false).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -229,7 +240,8 @@ public struct J2KEncodingConfiguration: Sendable {
         enableVisualWeighting: Bool = false,
         tileSize: (width: Int, height: Int) = (0, 0),
         bitrateMode: J2KBitrateMode = .constantQuality,
-        maxThreads: Int = 0
+        maxThreads: Int = 0,
+        useHTJ2K: Bool = false
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -247,6 +259,7 @@ public struct J2KEncodingConfiguration: Sendable {
         )
         self.bitrateMode = bitrateMode
         self.maxThreads = max(0, maxThreads)
+        self.useHTJ2K = useHTJ2K
     }
     
     /// Validates the configuration parameters.

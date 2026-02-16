@@ -68,6 +68,9 @@ struct DecoderConfiguration: Sendable {
     
     /// Wavelet filter type (from COD marker).
     var waveletFilter: J2KDWT1D.Filter = .reversible53
+    
+    /// Whether HTJ2K block coding is used (from COD marker bit 6).
+    var useHTJ2K: Bool = false
 }
 
 // MARK: - Codestream Metadata
@@ -333,7 +336,9 @@ struct DecoderPipeline: Sendable {
         config.codeBlockSize = (width: 1 << cbWidthExp, height: 1 << cbHeightExp)
         
         // Code-block style
-        _ = try reader.readUInt8()
+        // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
+        let codeBlockStyle = try reader.readUInt8()
+        config.useHTJ2K = (codeBlockStyle & 0x40) != 0
         
         // Wavelet transform type
         let transformType = try reader.readUInt8()
@@ -346,6 +351,65 @@ struct DecoderPipeline: Sendable {
         }
         
         return config
+    }
+    
+    /// Parses the COC marker segment (Coding Style Component).
+    ///
+    /// The COC marker provides per-component coding parameters that override
+    /// the default COD parameters for a specific component.
+    ///
+    /// - Parameters:
+    ///   - reader: The bit reader to read from.
+    ///   - componentCount: Total number of components in the image.
+    ///   - baseConfig: The base configuration from COD marker.
+    /// - Returns: A tuple of (component index, component-specific configuration).
+    private func parseCOCMarker(
+        _ reader: inout J2KBitReader,
+        componentCount: Int,
+        baseConfig: DecoderConfiguration
+    ) throws -> (componentIndex: Int, config: DecoderConfiguration) {
+        let length = Int(try reader.readUInt16())
+        let startPos = reader.position
+        
+        // Start with base configuration
+        var config = baseConfig
+        
+        // Ccoc — Component index
+        let componentIndex: Int
+        if componentCount < 257 {
+            // 1 byte for component index
+            componentIndex = Int(try reader.readUInt8())
+        } else {
+            // 2 bytes for component index
+            componentIndex = Int(try reader.readUInt16())
+        }
+        
+        // Scoc — Coding style for this component
+        
+        // Number of decomposition levels
+        config.decompositionLevels = Int(try reader.readUInt8())
+        
+        // Code-block dimensions
+        let cbWidthExp = Int(try reader.readUInt8()) + 2
+        let cbHeightExp = Int(try reader.readUInt8()) + 2
+        config.codeBlockSize = (width: 1 << cbWidthExp, height: 1 << cbHeightExp)
+        
+        // Code-block style
+        // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
+        let codeBlockStyle = try reader.readUInt8()
+        config.useHTJ2K = (codeBlockStyle & 0x40) != 0
+        
+        // Wavelet transform type
+        let transformType = try reader.readUInt8()
+        config.waveletFilter = (transformType == 1) ? .reversible53 : .irreversible97
+        
+        // Verify we read the expected amount
+        let bytesRead = reader.position - startPos
+        if bytesRead < length - 2 {
+            try reader.skip(length - 2 - bytesRead)
+        }
+        
+        return (componentIndex, config)
     }
     
     /// Parses the QCD marker segment.
