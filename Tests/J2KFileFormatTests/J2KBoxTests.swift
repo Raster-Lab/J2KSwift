@@ -316,6 +316,45 @@ final class J2KBoxTests: XCTestCase {
         XCTAssertEqual(data.count, 20)
     }
     
+    func testFileTypeBoxJPHBrand() throws {
+        // Test JPH (HTJ2K) brand support
+        let box = J2KFileTypeBox(
+            brand: .jph,
+            minorVersion: 0,
+            compatibleBrands: [.jph, .jp2]
+        )
+        let data = try box.write()
+        
+        // 4 (brand) + 4 (version) + 8 (2 compatible brands) = 16 bytes
+        XCTAssertEqual(data.count, 16)
+        
+        // Verify brand
+        XCTAssertEqual(String(bytes: data[0..<4], encoding: .ascii), "jph ")
+        
+        // Verify compatible brands
+        XCTAssertEqual(String(bytes: data[8..<12], encoding: .ascii), "jph ")
+        XCTAssertEqual(String(bytes: data[12..<16], encoding: .ascii), "jp2 ")
+    }
+    
+    func testFileTypeBoxJPHBrandRoundTrip() throws {
+        let original = J2KFileTypeBox(
+            brand: .jph,
+            minorVersion: 0,
+            compatibleBrands: [.jph, .jp2]
+        )
+        
+        let data = try original.write()
+        
+        var read = J2KFileTypeBox(brand: .jp2, minorVersion: 0)
+        try read.read(from: data)
+        
+        XCTAssertEqual(read.brand, .jph)
+        XCTAssertEqual(read.minorVersion, 0)
+        XCTAssertEqual(read.compatibleBrands.count, 2)
+        XCTAssertEqual(read.compatibleBrands[0], .jph)
+        XCTAssertEqual(read.compatibleBrands[1], .jp2)
+    }
+    
     // MARK: - Image Header Box Tests
     
     func testImageHeaderBoxWrite() throws {

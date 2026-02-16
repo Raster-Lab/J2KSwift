@@ -35,6 +35,9 @@ public enum J2KFormat: String, Sendable {
     /// JPM format (JPEG 2000 Part 6)
     case jpm
     
+    /// JPH format (HTJ2K - JPEG 2000 Part 15)
+    case jph
+    
     /// Returns the typical file extension for this format.
     public var fileExtension: String {
         switch self {
@@ -42,6 +45,7 @@ public enum J2KFormat: String, Sendable {
         case .j2k: return "j2k"
         case .jpx: return "jpx"
         case .jpm: return "jpm"
+        case .jph: return "jph"
         }
     }
     
@@ -52,6 +56,7 @@ public enum J2KFormat: String, Sendable {
         case .j2k: return "image/j2k"
         case .jpx: return "image/jpx"
         case .jpm: return "image/jpm"
+        case .jph: return "image/jph"
         }
     }
 }
@@ -67,6 +72,7 @@ public enum J2KFormat: String, Sendable {
 /// - **J2K**: Starts directly with the SOC marker (0xFF4F)
 /// - **JPX**: JP2 signature followed by 'ftyp' box with 'jpx ' brand
 /// - **JPM**: JP2 signature followed by 'ftyp' box with 'jpm ' brand
+/// - **JPH**: JP2 signature followed by 'ftyp' box with 'jph ' brand (HTJ2K)
 ///
 /// Example:
 /// ```swift
@@ -94,6 +100,9 @@ public struct J2KFormatDetector: Sendable {
     
     /// JPM brand in ftyp box.
     private static let jpmBrand: [UInt8] = [0x6A, 0x70, 0x6D, 0x20] // "jpm "
+    
+    /// JPH brand in ftyp box (HTJ2K - Part 15).
+    private static let jphBrand: [UInt8] = [0x6A, 0x70, 0x68, 0x20] // "jph "
     
     /// JPEG 2000 codestream SOC marker.
     private static let socMarker: [UInt8] = [0xFF, 0x4F]
@@ -132,6 +141,8 @@ public struct J2KFormatDetector: Sendable {
                 return .jpx
             } else if brand == Self.jpmBrand {
                 return .jpm
+            } else if brand == Self.jphBrand {
+                return .jph
             } else if brand == Self.jp2Brand {
                 return .jp2
             }
@@ -265,7 +276,7 @@ public struct J2KFileReader: Sendable {
         switch format {
         case .j2k:
             return try parseCodestream(data)
-        case .jp2, .jpx, .jpm:
+        case .jp2, .jpx, .jpm, .jph:
             return try parseBoxFormat(data, format: format)
         }
     }
@@ -529,6 +540,10 @@ public struct J2KFileWriter: Sendable {
             // JP2 format requires box structure
             fileData = try buildJP2File(image: image, codestream: codestreamData)
             
+        case .jph:
+            // JPH format (HTJ2K) uses JP2 structure with different brand
+            fileData = try buildJPHFile(image: image, codestream: codestreamData)
+            
         case .jpx:
             // JPX format uses extended boxes
             fileData = try buildJPXFile(image: image, codestream: codestreamData)
@@ -560,6 +575,34 @@ public struct J2KFileWriter: Sendable {
         let fileTypeBox = J2KFileTypeBox(
             brand: .jp2,
             minorVersion: 0
+        )
+        try writer.writeBox(fileTypeBox)
+        
+        // 3. JP2 Header box (jp2h) - contains image metadata
+        try writeJP2HeaderBox(image: image, writer: &writer)
+        
+        // 4. Contiguous Codestream box (jp2c)
+        try writer.writeRawBox(type: .jp2c, content: codestream)
+        
+        return writer.data
+    }
+    
+    /// Builds a JPH file (HTJ2K format) with proper box structure.
+    ///
+    /// JPH files use the same box structure as JP2, but with the 'jph ' brand
+    /// in the file type box to indicate HTJ2K (Part 15) support.
+    private func buildJPHFile(image: J2KImage, codestream: Data) throws -> Data {
+        var writer = J2KBoxWriter()
+        
+        // 1. Signature box (jP\x20\x20\x0D\x0A\x87\x0A)
+        let signatureBox = J2KSignatureBox()
+        try writer.writeBox(signatureBox)
+        
+        // 2. File Type box with 'jph ' brand for HTJ2K
+        let fileTypeBox = J2KFileTypeBox(
+            brand: .jph,
+            minorVersion: 0,
+            compatibleBrands: [.jph, .jp2]  // Compatible with both HTJ2K and JP2 readers
         )
         try writer.writeBox(fileTypeBox)
         

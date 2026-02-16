@@ -99,6 +99,9 @@ public struct J2KFileTypeBox: J2KBox {
         /// JPM (JPEG 2000 Part 6)
         case jpm
         
+        /// JPH (HTJ2K - JPEG 2000 Part 15)
+        case jph
+        
         /// Custom brand
         case custom(String)
         
@@ -108,6 +111,7 @@ public struct J2KFileTypeBox: J2KBox {
             case .jp2: return "jp2 "
             case .jpx: return "jpx "
             case .jpm: return "jpm "
+            case .jph: return "jph "
             case .custom(let str): return str
             }
         }
@@ -118,6 +122,7 @@ public struct J2KFileTypeBox: J2KBox {
             case "jp2 ": self = .jp2
             case "jpx ": self = .jpx
             case "jpm ": self = .jpm
+            case "jph ": self = .jph
             default: self = .custom(identifier)
             }
         }

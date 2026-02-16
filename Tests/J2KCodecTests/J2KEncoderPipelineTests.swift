@@ -268,6 +268,148 @@ final class J2KEncoderPipelineTests: XCTestCase {
         XCTAssertEqual(encoder.encodingConfiguration.qualityLayers, 3)
     }
 
+    // MARK: - HTJ2K Marker Tests
+
+    /// Tests that CAP and CPF markers are written when HTJ2K is enabled.
+    func testHTJ2KMarkersIncludedWhenEnabled() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 0.9,
+            lossless: false,
+            decompositionLevels: 2,
+            useHTJ2K: true
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        XCTAssertFalse(data.isEmpty, "Encoded data should not be empty")
+
+        // Parse the codestream to verify CAP and CPF markers are present
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+
+        let hasCAP = segments.contains { $0.marker == .cap }
+        let hasCPF = segments.contains { $0.marker == .cpf }
+
+        XCTAssertTrue(hasCAP, "CAP marker should be present when HTJ2K is enabled")
+        XCTAssertTrue(hasCPF, "CPF marker should be present when HTJ2K is enabled")
+    }
+
+    /// Tests that CAP and CPF markers are NOT written when HTJ2K is disabled.
+    func testHTJ2KMarkersNotIncludedWhenDisabled() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 0.9,
+            lossless: false,
+            decompositionLevels: 2,
+            useHTJ2K: false
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        XCTAssertFalse(data.isEmpty, "Encoded data should not be empty")
+
+        // Parse the codestream to verify CAP and CPF markers are NOT present
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+
+        let hasCAP = segments.contains { $0.marker == .cap }
+        let hasCPF = segments.contains { $0.marker == .cpf }
+
+        XCTAssertFalse(hasCAP, "CAP marker should not be present when HTJ2K is disabled")
+        XCTAssertFalse(hasCPF, "CPF marker should not be present when HTJ2K is disabled")
+    }
+
+    /// Tests that CAP marker appears before COD marker in the codestream.
+    func testHTJ2KMarkerOrder() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 0.9,
+            lossless: false,
+            decompositionLevels: 2,
+            useHTJ2K: true
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+
+        // Parse the codestream and check marker order
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+
+        // Find positions of relevant markers
+        let sizIndex = segments.firstIndex { $0.marker == .siz }
+        let capIndex = segments.firstIndex { $0.marker == .cap }
+        let cpfIndex = segments.firstIndex { $0.marker == .cpf }
+        let codIndex = segments.firstIndex { $0.marker == .cod }
+
+        XCTAssertNotNil(sizIndex, "SIZ marker should be present")
+        XCTAssertNotNil(capIndex, "CAP marker should be present")
+        XCTAssertNotNil(cpfIndex, "CPF marker should be present")
+        XCTAssertNotNil(codIndex, "COD marker should be present")
+
+        // Verify marker order: SIZ < CAP < CPF < COD
+        if let siz = sizIndex, let cap = capIndex, let cpf = cpfIndex, let cod = codIndex {
+            XCTAssertLessThan(siz, cap, "CAP marker should appear after SIZ")
+            XCTAssertLessThan(cap, cpf, "CPF marker should appear after CAP")
+            XCTAssertLessThan(cpf, cod, "COD marker should appear after CPF")
+        }
+    }
+
+    /// Tests HTJ2K with lossless configuration.
+    func testHTJ2KLosslessEncoding() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 1.0,
+            lossless: true,
+            decompositionLevels: 3,
+            useHTJ2K: true
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        XCTAssertFalse(data.isEmpty)
+
+        // Verify CPF marker indicates reversible profile (Pcpf = 0)
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+
+        let cpfSegment = segments.first { $0.marker == .cpf }
+        XCTAssertNotNil(cpfSegment, "CPF marker should be present")
+
+        if let cpfData = cpfSegment?.data, cpfData.count >= 2 {
+            let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+            XCTAssertEqual(pcpf, 0, "CPF should indicate reversible profile (0) for lossless")
+        }
+    }
+
+    /// Tests HTJ2K with lossy configuration.
+    func testHTJ2KLossyEncoding() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 0.8,
+            lossless: false,
+            decompositionLevels: 3,
+            useHTJ2K: true
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        XCTAssertFalse(data.isEmpty)
+
+        // Verify CPF marker indicates irreversible profile (Pcpf = 1)
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+
+        let cpfSegment = segments.first { $0.marker == .cpf }
+        XCTAssertNotNil(cpfSegment, "CPF marker should be present")
+
+        if let cpfData = cpfSegment?.data, cpfData.count >= 2 {
+            let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+            XCTAssertEqual(pcpf, 1, "CPF should indicate irreversible profile (1) for lossy")
+        }
+    }
+
     // MARK: - Helpers
 
     /// Asserts that the data represents a valid JPEG 2000 codestream.
