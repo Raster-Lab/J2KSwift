@@ -334,6 +334,8 @@ let encoded = try mqCoder.encode(quantized)
 - **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**: Common issues and solutions
 
 ### Project Management
+- **[DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md)**: Current development status with visual progress
+- **[NEXT_PHASE.md](NEXT_PHASE.md)**: Next phase development roadmap (HTJ2K codec & transcoding)
 - **[MILESTONES.md](MILESTONES.md)**: 100-week development roadmap (complete!)
 - **[ROADMAP_v1.1.md](ROADMAP_v1.1.md)**: Next version plans
 - **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)**: Release process
