@@ -561,7 +561,8 @@ struct EncoderPipeline: Sendable {
     /// - Pcpf (2 bytes): Profile capabilities
     ///   - 0: Part 15 reversible (5/3 wavelet, lossless)
     ///   - 1: Part 15 irreversible (9/7 wavelet, lossy)
-    ///   - 2: Part 15 broadcast (constrained for real-time)
+    ///
+    /// Note: Broadcast profile (value 2) is defined in the standard but not yet implemented.
     private func writeCPFMarker(_ writer: inout J2KBitWriter) throws {
         var segment = J2KBitWriter()
 
