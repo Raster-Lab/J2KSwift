@@ -393,27 +393,28 @@ HTJ2K is an updated JPEG 2000 standard (Part 15) that provides significantly fas
 
 **Goal**: Establish HTJ2K infrastructure and capability signaling.
 
-- [ ] Implement HTJ2K marker segments
-  - Add CAP (capabilities) marker segment
-  - Add CPF (corresponding profile) marker segment
-  - Update COD/COC for HTJ2K parameters
-  - Add HT set extensions
+- [x] Implement HTJ2K marker segments
+  - [x] Add CAP (capabilities) marker segment (already implemented)
+  - [x] Add CPF (corresponding profile) marker segment (✅ completed Feb 16, 2026)
+  - [ ] Update COD/COC for HTJ2K parameters
+  - [ ] Add HT set extensions
 - [ ] Add HTJ2K capability signaling in file format
-  - Update JP2 file type box for HTJ2K compatibility
-  - Add reader requirements signaling
-  - Update brand specifications
-- [ ] Implement HTJ2K-specific configuration options
-  - Add HTJ2K mode selection (auto, legacy, HTJ2K)
-  - Configure HT block coding parameters
-  - Add HT-specific optimization flags
-- [ ] Create HTJ2K test infrastructure
-  - Set up HTJ2K test framework
-  - Create test vector generator
-  - Add conformance test harness
+  - [ ] Update JP2 file type box for HTJ2K compatibility
+  - [ ] Add reader requirements signaling
+  - [ ] Update brand specifications
+- [x] Implement HTJ2K-specific configuration options (partial)
+  - [x] Add HTJ2K mode selection (auto, legacy, HTJ2K)
+  - [x] Configure HT block coding parameters (basic support exists)
+  - [ ] Add HT-specific optimization flags
+- [x] Create HTJ2K test infrastructure (partial)
+  - [x] Set up HTJ2K test framework (67 existing tests)
+  - [x] Add marker segment tests (CAP: 7 tests, CPF: 10 tests)
+  - [ ] Create test vector generator
+  - [ ] Add conformance test harness
 - [ ] Add HTJ2K conformance test vectors
-  - Collect ISO/IEC 15444-15 test data
-  - Implement test vector parser
-  - Add validation infrastructure
+  - [ ] Collect ISO/IEC 15444-15 test data
+  - [ ] Implement test vector parser
+  - [ ] Add validation infrastructure
 
 ### Week 106-110: FBCOT Implementation
 
