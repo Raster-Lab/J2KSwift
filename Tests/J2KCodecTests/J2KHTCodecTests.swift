@@ -475,6 +475,164 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertTrue(J2KMarker.cpf.canAppearInMainHeader)
     }
 
+    // MARK: - CPF Marker Tests
+
+    func testCPFMarkerGenerationHTJ2KLossless() throws {
+        let encoder = HTJ2KEncoder(configuration: .lossless)
+        let cpfData = encoder.generateCPFMarkerData()
+
+        XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes (Pcpf)")
+        
+        // Extract Pcpf
+        let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+        
+        // Bit 15 should be 1 for HTJ2K
+        XCTAssertTrue((pcpf & 0x8000) != 0, "Bit 15 should be set for HTJ2K profile")
+        
+        // Profile number should be 0 for lossless
+        let profile = Int(pcpf & 0x7FFF)
+        XCTAssertEqual(profile, 0, "Lossless HTJ2K should use profile 0")
+    }
+
+    func testCPFMarkerGenerationHTJ2KLossy() throws {
+        let config = HTJ2KConfiguration(codingMode: .ht, quality: 0.8, lossless: false)
+        let encoder = HTJ2KEncoder(configuration: config)
+        let cpfData = encoder.generateCPFMarkerData()
+
+        XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
+        
+        let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+        
+        // Bit 15 should be 1 for HTJ2K
+        XCTAssertTrue((pcpf & 0x8000) != 0, "Bit 15 should be set for HTJ2K profile")
+        
+        // Profile number should be 1 for lossy
+        let profile = Int(pcpf & 0x7FFF)
+        XCTAssertEqual(profile, 1, "Lossy HTJ2K should use profile 1")
+    }
+
+    func testCPFMarkerGenerationLegacyLossless() throws {
+        let config = HTJ2KConfiguration(codingMode: .legacy, lossless: true)
+        let encoder = HTJ2KEncoder(configuration: config)
+        let cpfData = encoder.generateCPFMarkerData()
+
+        XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
+        
+        let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+        
+        // Bit 15 should be 0 for legacy
+        XCTAssertTrue((pcpf & 0x8000) == 0, "Bit 15 should NOT be set for legacy profile")
+        
+        // Profile number should be 0 for lossless
+        let profile = Int(pcpf & 0x7FFF)
+        XCTAssertEqual(profile, 0, "Lossless legacy should use profile 0")
+    }
+
+    func testCPFMarkerGenerationLegacyLossy() throws {
+        let config = HTJ2KConfiguration(codingMode: .legacy, lossless: false)
+        let encoder = HTJ2KEncoder(configuration: config)
+        let cpfData = encoder.generateCPFMarkerData()
+
+        XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
+        
+        let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
+        
+        // Bit 15 should be 0 for legacy
+        XCTAssertTrue((pcpf & 0x8000) == 0, "Bit 15 should NOT be set for legacy profile")
+        
+        // Profile number should be 1 for lossy
+        let profile = Int(pcpf & 0x7FFF)
+        XCTAssertEqual(profile, 1, "Lossy legacy should use profile 1")
+    }
+
+    func testCPFMarkerParsingHTJ2KLossless() throws {
+        let decoder = HTJ2KDecoder()
+        
+        // Construct CPF data for HTJ2K lossless (profile 0)
+        // Bit 15 = 1 (HTJ2K), Profile = 0
+        let pcpf: UInt16 = 0x8000 | 0x0000
+        var cpfData = Data()
+        cpfData.append(UInt8((pcpf >> 8) & 0xFF))
+        cpfData.append(UInt8(pcpf & 0xFF))
+        
+        let result = try decoder.parseCPFMarker(data: cpfData)
+        
+        XCTAssertTrue(result.isHTJ2K, "Should detect HTJ2K profile")
+        XCTAssertEqual(result.profileNumber, 0, "Should extract profile 0")
+        XCTAssertTrue(result.lossless, "Profile 0 should indicate lossless")
+    }
+
+    func testCPFMarkerParsingHTJ2KLossy() throws {
+        let decoder = HTJ2KDecoder()
+        
+        // Construct CPF data for HTJ2K lossy (profile 1)
+        let pcpf: UInt16 = 0x8000 | 0x0001
+        var cpfData = Data()
+        cpfData.append(UInt8((pcpf >> 8) & 0xFF))
+        cpfData.append(UInt8(pcpf & 0xFF))
+        
+        let result = try decoder.parseCPFMarker(data: cpfData)
+        
+        XCTAssertTrue(result.isHTJ2K, "Should detect HTJ2K profile")
+        XCTAssertEqual(result.profileNumber, 1, "Should extract profile 1")
+        XCTAssertFalse(result.lossless, "Profile 1 should indicate lossy")
+    }
+
+    func testCPFMarkerParsingLegacy() throws {
+        let decoder = HTJ2KDecoder()
+        
+        // Construct CPF data for legacy Part 1 profile
+        let pcpf: UInt16 = 0x0001 // Bit 15 = 0, Profile = 1
+        var cpfData = Data()
+        cpfData.append(UInt8((pcpf >> 8) & 0xFF))
+        cpfData.append(UInt8(pcpf & 0xFF))
+        
+        let result = try decoder.parseCPFMarker(data: cpfData)
+        
+        XCTAssertFalse(result.isHTJ2K, "Should detect legacy profile")
+        XCTAssertEqual(result.profileNumber, 1, "Should extract profile 1")
+        XCTAssertFalse(result.lossless, "Profile 1 should indicate lossy")
+    }
+
+    func testCPFMarkerParsingTooShort() throws {
+        let decoder = HTJ2KDecoder()
+        let cpfData = Data([0xFF]) // Only 1 byte, need 2
+        
+        XCTAssertThrowsError(try decoder.parseCPFMarker(data: cpfData)) { error in
+            XCTAssertTrue(error is J2KError)
+            if case J2KError.decodingError(let message) = error {
+                XCTAssertTrue(message.contains("too short"))
+            }
+        }
+    }
+
+    func testCPFMarkerRoundTrip() throws {
+        // Test that encoding and then parsing produces the same values
+        let configs: [HTJ2KConfiguration] = [
+            .lossless,
+            .default,
+            .legacyCompatible,
+            HTJ2KConfiguration(codingMode: .ht, lossless: false)
+        ]
+        
+        let decoder = HTJ2KDecoder()
+        
+        for config in configs {
+            let encoder = HTJ2KEncoder(configuration: config)
+            let cpfData = encoder.generateCPFMarkerData()
+            let result = try decoder.parseCPFMarker(data: cpfData)
+            
+            // Verify HTJ2K detection
+            let expectedHTJ2K = (config.codingMode == .ht || config.allowMixedMode)
+            XCTAssertEqual(result.isHTJ2K, expectedHTJ2K,
+                          "HTJ2K detection mismatch for config: \(config.codingMode)")
+            
+            // Verify lossless detection
+            XCTAssertEqual(result.lossless, config.lossless,
+                          "Lossless detection mismatch for config")
+        }
+    }
+
     // MARK: - Conformance Validator Tests
 
     func testConformanceValidatorCreation() throws {

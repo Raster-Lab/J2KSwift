@@ -6,9 +6,9 @@
 
 ```
 Current Version: v1.2.0 (Released)
-Current Phase:   Phase 8 ✅ COMPLETE (100/100 weeks)
-Test Status:     1,528 tests, 98.4% pass rate
-Next Milestone:  v1.3.0 or Phase 9: HTJ2K Codec
+Current Phase:   Phase 9 🚧 IN PROGRESS (Week 101-105)
+Test Status:     1,537 tests, 100% pass rate
+Next Milestone:  v1.3.0 with HTJ2K Foundation
 ```
 
 ## Roadmap Visualization
@@ -24,7 +24,11 @@ v1.2.0: Current Release
 └─ Release Prep   [████████████████████] 100% ✅
 
 Phase 9: HTJ2K Codec (Weeks 101-120)
-├─ Foundation     [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
+├─ Foundation     [███░░░░░░░░░░░░░░░░░]  15% 🚧 IN PROGRESS
+│   ├─ CAP marker ✅
+│   ├─ CPF marker ✅
+│   ├─ COD/COC    ⏭️
+│   └─ HT sets    ⏭️
 ├─ FBCOT Impl.    [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
 ├─ HT Passes      [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
 ├─ Integration    [░░░░░░░░░░░░░░░░░░░░]   0% ⏭️
@@ -45,19 +49,19 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 | v1.0.0 Release | ✅ Released | - | - |
 | v1.1.0 Release | ✅ Released | - | Feb 14, 2026 |
 | v1.1.1 Release | ✅ Released | - | Feb 15, 2026 |
-| **v1.2.0 Release** | **✅ Released** | **-** | **Feb 16, 2026** |
-| Phase 9: HTJ2K Codec | ⏭️ Planned | 20 weeks | Jul 2026 |
+| v1.2.0 Release | ✅ Released | - | Feb 16, 2026 |
+| **Phase 9: HTJ2K Codec** | **🚧 In Progress** | **20 weeks** | **Jul 2026** |
 | Phase 10: Lossless Transcoding | ⏭️ Planned | 10 weeks | Oct 2026 |
 
 ## Key Metrics
 
-### Current State (v1.2.0-dev)
+### Current State (Phase 9 - Week 101)
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
-| Test Pass Rate | 98.4% | >95% | ✅ |
-| Total Tests | 1,528 | >1,500 | ✅ |
-| Encoding Performance | 3.82 MP/s | 4.0 MP/s | 🚧 94.8% |
+| Test Pass Rate | 100% | >95% | ✅ |
+| Total Tests | 1,537 | >1,500 | ✅ |
+| HTJ2K Tests | 77 | >50 | ✅ |
 | Code Coverage | ~90% | >90% | ✅ |
 | Build Status | ✅ Passing | Passing | ✅ |
 
@@ -71,16 +75,17 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 
 ## Next Actions
 
-### Immediate (v1.3.0 or Phase 9)
-1. 📝 Begin HTJ2K codec planning
-2. 📝 Evaluate additional performance optimizations
-3. 📝 Plan next feature enhancements
+### Immediate (Phase 9: Week 101-105)
+1. ✅ Implement CPF marker segment
+2. 📝 Update COD/COC markers for HTJ2K parameters
+3. 📝 Add HT set extensions
+4. 📝 Update JP2 file format for HTJ2K capability signaling
 
-### Short-term (Phase 9: HTJ2K)
-1. ⏭️ Implement HTJ2K marker segments
-2. ⏭️ Develop FBCOT (Fast Block Coder)
-3. ⏭️ Create HT coding passes
-4. ⏭️ Integration and optimization
+### Short-term (Phase 9: Weeks 106-110)
+1. ⏭️ Implement MEL (Magnitude Exchange Length) coder
+2. ⏭️ Develop VLC (Variable Length Coding) encoder/decoder
+3. ⏭️ Create MagSgn (Magnitude and Sign) coding
+4. ⏭️ Implement HT cleanup pass
 
 ### Medium-term (Phase 10: Transcoding)
 1. ⏭️ Codestream parsing infrastructure

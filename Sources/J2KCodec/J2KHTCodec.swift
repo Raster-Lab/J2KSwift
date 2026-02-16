@@ -231,6 +231,51 @@ struct HTJ2KEncoder: Sendable {
         return data
     }
 
+    /// Generates the CPF marker segment for HTJ2K codestreams.
+    ///
+    /// The CPF (Corresponding Profile) marker specifies the profile to which the
+    /// codestream conforms, including HTJ2K-specific profiles defined in ISO/IEC 15444-15.
+    ///
+    /// - Returns: The CPF marker segment data.
+    func generateCPFMarkerData() -> Data {
+        var data = Data()
+        
+        // Pcpf (2 bytes): Profile capability
+        // Bits 0-14: Profile number
+        // Bit 15: 0 = Part 1 profile, 1 = Part 15 (HTJ2K) profile
+        var pcpf: UInt16 = 0
+        
+        if configuration.codingMode == .ht || configuration.allowMixedMode {
+            // HTJ2K profile
+            pcpf |= 0x8000 // Bit 15 = 1 for Part 15 profile
+            
+            // Profile numbers for HTJ2K (ISO/IEC 15444-15):
+            // 0: HTJ2K reversible (lossless)
+            // 1: HTJ2K irreversible (lossy)
+            // 2: HTJ2K broadcast (specialized)
+            if configuration.lossless {
+                pcpf |= 0x0000 // Profile 0: HTJ2K reversible
+            } else {
+                pcpf |= 0x0001 // Profile 1: HTJ2K irreversible
+            }
+        } else {
+            // Legacy JPEG 2000 Part 1 profile
+            // 0: Profile 0 (basic)
+            // 1: Profile 1 (extended)
+            // 2: Profile 2 (broadcast)
+            if configuration.lossless {
+                pcpf |= 0x0000 // Profile 0: basic (works for lossless)
+            } else {
+                pcpf |= 0x0001 // Profile 1: extended (works for lossy)
+            }
+        }
+        
+        data.append(UInt8((pcpf >> 8) & 0xFF))
+        data.append(UInt8(pcpf & 0xFF))
+        
+        return data
+    }
+
     /// Encodes using the HT block coder (FBCOT).
     private func encodeHT(
         coefficients: [Int],
@@ -422,6 +467,40 @@ struct HTJ2KDecoder: Sendable {
         }
 
         return (htSupported, mixedMode)
+    }
+
+    /// Parses a CPF marker segment to determine the codestream profile.
+    ///
+    /// The CPF marker specifies which JPEG 2000 profile the codestream conforms to,
+    /// including HTJ2K-specific profiles from ISO/IEC 15444-15.
+    ///
+    /// - Parameter data: The CPF marker segment data.
+    /// - Returns: A tuple with profile information: (isHTJ2K: Bool, profileNumber: Int, lossless: Bool).
+    /// - Throws: ``J2KError/decodingError(_:)`` if the marker data is invalid.
+    func parseCPFMarker(data: Data) throws -> (isHTJ2K: Bool, profileNumber: Int, lossless: Bool) {
+        guard data.count >= 2 else {
+            throw J2KError.decodingError("CPF marker data too short")
+        }
+        
+        let pcpf = UInt16(data[0]) << 8 | UInt16(data[1])
+        
+        // Bit 15: 0 = Part 1 profile, 1 = Part 15 (HTJ2K) profile
+        let isHTJ2K = (pcpf & 0x8000) != 0
+        
+        // Bits 0-14: Profile number
+        let profileNumber = Int(pcpf & 0x7FFF)
+        
+        // Determine if lossless based on profile
+        // For HTJ2K: Profile 0 = reversible (lossless), Profile 1 = irreversible (lossy)
+        // For Part 1: Profile 0 = basic (can be either lossless or lossy)
+        //
+        // Note: For JPEG 2000 Part 1, the CPF marker alone cannot definitively determine
+        // losslessness since Profile 0 supports both modes. The actual lossless/lossy
+        // mode is determined by the COD marker's wavelet transform type (5/3 vs 9/7).
+        // This function provides a best-effort heuristic based on profile number.
+        let lossless = (profileNumber == 0)
+        
+        return (isHTJ2K, profileNumber, lossless)
     }
 
     /// Decodes HT-coded data.
