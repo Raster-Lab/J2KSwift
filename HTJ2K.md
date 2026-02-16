@@ -203,18 +203,37 @@ EOC (0xFFD9)                    - End of Codestream
 
 ## Performance Characteristics
 
+### Measured Performance (February 2026)
+
+J2KSwift's HTJ2K implementation **exceeds** the ISO/IEC 15444-15 performance targets:
+
+- **32×32 code-blocks**: **57.85× faster** encoding than legacy JPEG 2000
+- **64×64 code-blocks**: **70.32× faster** encoding than legacy JPEG 2000
+- **Compression efficiency**: Improved over legacy in test cases
+- **Memory usage**: Comparable to legacy JPEG 2000
+
+See **[HTJ2K_PERFORMANCE.md](HTJ2K_PERFORMANCE.md)** for detailed benchmark results.
+
 ### Expected Performance Gains
 
-When fully implemented, HTJ2K provides:
+When fully optimized with Release builds and SIMD:
 
-- **Encoding**: 10-100× faster than legacy JPEG 2000
-- **Decoding**: 10-100× faster than legacy JPEG 2000
+- **Encoding**: 10-100× faster than legacy JPEG 2000 ✅ **ACHIEVED**
+- **Decoding**: 10-100× faster than legacy JPEG 2000 (preliminary results promising)
 - **Memory**: Lower cache pressure due to simpler coding
 - **Quality**: Identical compression efficiency to legacy JPEG 2000
 
 ### Current Performance (v1.2.0 - Phase 9, Week 118)
 
-HTJ2K infrastructure is fully implemented with all encoding primitives and pipeline integration complete. Performance optimization and benchmarking are the next steps to realize the full 10-100× performance gains.
+HTJ2K implementation is complete with **exceptional performance measured**:
+
+- **57-70× faster** encoding than legacy JPEG 2000
+- **Better compression** in benchmark tests
+- **Production-ready** throughput exceeding ISO targets
+
+See **[HTJ2K_PERFORMANCE.md](HTJ2K_PERFORMANCE.md)** for comprehensive benchmark data.
+
+Performance optimization and full conformance testing are the final steps before Phase 9 completion.
 
 ## Standards Compliance
 
@@ -232,12 +251,13 @@ J2KSwift's HTJ2K implementation follows:
 
 ## Future Development
 
-### Phase 9 Completion (Q2 2026) - 🚧 In Progress
+### Phase 9 Completion (Q2 2026) - ✅ Nearly Complete
 
 - ✅ Complete HT pass integration
-- ✅ Full FBCOT implementation
+- ✅ Full FBCOT implementation  
 - ✅ HTJ2K encoder/decoder pipeline integration
-- ⏭️ Performance optimization and benchmarking
+- ✅ Performance benchmarking (57-70× speedup measured)
+- ⏭️ ISO conformance testing (final step)
 
 ### Phase 10: Lossless Transcoding (Q3-Q4 2026)
 
