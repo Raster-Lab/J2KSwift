@@ -12,6 +12,7 @@ final class J2KFormatDetectionTests: XCTestCase {
         XCTAssertEqual(J2KFormat.j2k.fileExtension, "j2k")
         XCTAssertEqual(J2KFormat.jpx.fileExtension, "jpx")
         XCTAssertEqual(J2KFormat.jpm.fileExtension, "jpm")
+        XCTAssertEqual(J2KFormat.jph.fileExtension, "jph")
     }
     
     func testFormatMimeTypes() throws {
@@ -19,6 +20,7 @@ final class J2KFormatDetectionTests: XCTestCase {
         XCTAssertEqual(J2KFormat.j2k.mimeType, "image/j2k")
         XCTAssertEqual(J2KFormat.jpx.mimeType, "image/jpx")
         XCTAssertEqual(J2KFormat.jpm.mimeType, "image/jpm")
+        XCTAssertEqual(J2KFormat.jph.mimeType, "image/jph")
     }
     
     // MARK: - J2KFormatDetector Tests
@@ -93,6 +95,27 @@ final class J2KFormatDetectionTests: XCTestCase {
         let detector = J2KFormatDetector()
         let format = try detector.detect(data: data)
         XCTAssertEqual(format, .jpm)
+    }
+    
+    func testDetectJPHFormat() throws {
+        // JPH file signature (HTJ2K)
+        var data = Data()
+        
+        // Signature box
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x0C]) // length = 12
+        data.append(contentsOf: [0x6A, 0x50, 0x20, 0x20]) // "jP  "
+        data.append(contentsOf: [0x0D, 0x0A, 0x87, 0x0A]) // signature content
+        
+        // File type box with JPH brand
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x14]) // length = 20
+        data.append(contentsOf: [0x66, 0x74, 0x79, 0x70]) // "ftyp"
+        data.append(contentsOf: [0x6A, 0x70, 0x68, 0x20]) // "jph " brand (HTJ2K)
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // minor version
+        data.append(contentsOf: [0x6A, 0x70, 0x68, 0x20]) // compatibility brand
+        
+        let detector = J2KFormatDetector()
+        let format = try detector.detect(data: data)
+        XCTAssertEqual(format, .jph)
     }
     
     func testDetectJP2WithoutFtyp() throws {
