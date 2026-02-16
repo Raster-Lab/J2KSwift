@@ -793,4 +793,386 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertTrue(config.allowMixedMode)
         XCTAssertEqual(config.codingMode, .ht)
     }
+
+    // MARK: - ISO/IEC 15444-15 Conformance Tests
+
+    /// Tests HTJ2K conformance validation detects missing CAP marker.
+    func testHTJ2KConformanceDetectsMissingCAP() throws {
+        // Create a minimal invalid codestream without CAP marker
+        var data = Data()
+        
+        // Add SOC marker
+        data.append(contentsOf: [0xFF, 0x4F])
+        
+        // Add COD marker (but no CAP marker for HTJ2K)
+        data.append(contentsOf: [0xFF, 0x52])
+        data.append(contentsOf: [0x00, 0x0C]) // Length
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00])
+        
+        let validator = HTJ2KConformanceValidator()
+        let result = validator.validate(codestream: data)
+        
+        XCTAssertFalse(result.isValid, "Should detect missing CAP marker")
+        XCTAssertTrue(result.issues.contains { $0.contains("CAP") }, "Should report missing CAP marker")
+    }
+
+    /// Tests HTJ2K block coder validation with various block sizes per ISO/IEC 15444-15.
+    func testHTJ2KConformanceBlockSizes() throws {
+        let encoder = HTJ2KEncoder()
+        
+        // Test various block sizes per ISO/IEC 15444-15
+        let testCases: [(width: Int, height: Int, description: String)] = [
+            (4, 4, "minimal 4×4"),
+            (8, 8, "standard 8×8"),
+            (16, 16, "medium 16×16"),
+            (32, 32, "large 32×32"),
+            (64, 64, "maximum 64×64")
+        ]
+        
+        for testCase in testCases {
+            let size = testCase.width * testCase.height
+            let coefficients = [Int](repeating: 10, count: size)
+            
+            let result = try encoder.encodeCodeBlocks(
+                coefficients: coefficients,
+                width: testCase.width,
+                height: testCase.height,
+                subband: .hh
+            )
+            
+            let validator = HTJ2KConformanceValidator()
+            let validation = validator.validate(encodedResult: result)
+            
+            XCTAssertTrue(validation.isValid, "HTJ2K block coder \(testCase.description) should be conformant. Issues: \(validation.issues)")
+        }
+    }
+
+    /// Tests HTJ2K conformance with sparse coefficient data.
+    func testHTJ2KConformanceSparseCoefficients() throws {
+        let encoder = HTJ2KEncoder()
+        let width = 32
+        let height = 32
+        let size = width * height
+        
+        // Create sparse data (mostly zeros with a few non-zero values)
+        var coefficients = [Int](repeating: 0, count: size)
+        coefficients[100] = 127
+        coefficients[200] = -100
+        coefficients[300] = 85
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .hh
+        )
+        
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K sparse coefficients should be conformant. Issues: \(validation.issues)")
+    }
+
+    /// Tests HTJ2K conformance with dense high-frequency coefficient data.
+    func testHTJ2KConformanceDenseCoefficients() throws {
+        let encoder = HTJ2KEncoder()
+        let width = 32
+        let height = 32
+        let size = width * height
+        
+        // Create dense high-frequency data
+        var coefficients = [Int](repeating: 0, count: size)
+        for i in 0..<size {
+            coefficients[i] = (i * 7 + 13) % 255 - 127
+        }
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .hh
+        )
+        
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K dense coefficients should be conformant. Issues: \(validation.issues)")
+    }
+
+    /// Tests HTJ2K conformance with all wavelet subbands.
+    func testHTJ2KConformanceAllSubbands() throws {
+        let encoder = HTJ2KEncoder()
+        let size = 256  // 16×16 block
+        let coefficients = [Int](repeating: 42, count: size)
+        
+        let subbands: [J2KSubband] = [.ll, .hl, .lh, .hh]
+        
+        for subband in subbands {
+            let result = try encoder.encodeCodeBlocks(
+                coefficients: coefficients,
+                width: 16,
+                height: 16,
+                subband: subband
+            )
+            
+            let validator = HTJ2KConformanceValidator()
+            let validation = validator.validate(encodedResult: result)
+            
+            XCTAssertTrue(validation.isValid, "HTJ2K \(subband) subband should be conformant. Issues: \(validation.issues)")
+        }
+    }
+
+    /// Tests HTJ2K conformance with extreme coefficient values.
+    func testHTJ2KConformanceExtremeValues() throws {
+        let encoder = HTJ2KEncoder()
+        let width = 16
+        let height = 16
+        let size = width * height
+        
+        // Test with maximum and minimum values
+        let testCases: [(coefficients: [Int], description: String)] = [
+            ([Int](repeating: 0, count: size), "all zeros"),
+            ([Int](repeating: 127, count: size), "max positive"),
+            ([Int](repeating: -128, count: size), "max negative"),
+            ([Int]((0..<size).map { $0 % 2 == 0 ? 100 : -100 }), "alternating")
+        ]
+        
+        for testCase in testCases {
+            let result = try encoder.encodeCodeBlocks(
+                coefficients: testCase.coefficients,
+                width: width,
+                height: height,
+                subband: .hh
+            )
+            
+            let validator = HTJ2KConformanceValidator()
+            let validation = validator.validate(encodedResult: result)
+            
+            XCTAssertTrue(validation.isValid, "HTJ2K \(testCase.description) should be conformant. Issues: \(validation.issues)")
+        }
+    }
+
+    /// Tests HTJ2K conformance with various bit-plane scenarios.
+    func testHTJ2KConformanceVariousBitPlanes() throws {
+        let encoder = HTJ2KEncoder()
+        let width = 16
+        let height = 16
+        let size = width * height
+        
+        // Test with different magnitude ranges to exercise different bit planes
+        let testCases: [(maxValue: Int, description: String)] = [
+            (1, "1-bit magnitude"),
+            (3, "2-bit magnitude"),
+            (15, "4-bit magnitude"),
+            (127, "7-bit magnitude")
+        ]
+        
+        for testCase in testCases {
+            var coefficients = [Int](repeating: 0, count: size)
+            for i in 0..<size {
+                coefficients[i] = (i % testCase.maxValue) * (i % 2 == 0 ? 1 : -1)
+            }
+            
+            let result = try encoder.encodeCodeBlocks(
+                coefficients: coefficients,
+                width: width,
+                height: height,
+                subband: .hh
+            )
+            
+            let validator = HTJ2KConformanceValidator()
+            let validation = validator.validate(encodedResult: result)
+            
+            XCTAssertTrue(validation.isValid, "HTJ2K \(testCase.description) should be conformant. Issues: \(validation.issues)")
+        }
+    }
+
+    /// Tests HTJ2K cleanup pass conforms to ISO/IEC 15444-15 requirements.
+    func testHTJ2KConformanceCleanupPass() throws {
+        let encoder = HTJ2KEncoder()
+        let coefficients = [Int](repeating: 50, count: 64)  // 8×8 block
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: 8,
+            height: 8,
+            subband: .hh
+        )
+        
+        // Verify cleanup pass structure
+        XCTAssertEqual(result.codingMode, .ht, "Should use HT coding mode")
+        XCTAssertEqual(result.cleanupPass.passType, .htCleanup, "Cleanup pass should have correct type")
+        XCTAssertFalse(result.cleanupPass.codedData.isEmpty, "Cleanup pass should have coded data")
+        XCTAssertGreaterThan(result.totalPasses, 0, "Should have at least one pass")
+        
+        // Validate conformance
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K cleanup pass should be conformant. Issues: \(validation.issues)")
+    }
+
+    /// Tests HTJ2K multiple coding passes maintain conformance.
+    func testHTJ2KConformanceMultiplePasses() throws {
+        let encoder = HTJ2KEncoder()
+        
+        // Use larger magnitudes to generate multiple passes
+        var coefficients = [Int](repeating: 0, count: 256)  // 16×16 block
+        for i in 0..<coefficients.count {
+            coefficients[i] = (i * 13) % 128 - 64
+        }
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: 16,
+            height: 16,
+            subband: .hh
+        )
+        
+        // Verify we have multiple passes
+        XCTAssertGreaterThan(result.totalPasses, 1, "Should generate multiple coding passes")
+        
+        // Validate conformance
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K multiple passes should be conformant. Issues: \(validation.issues)")
+    }
+
+    /// Tests HTJ2K MEL, VLC, and MagSgn coder output conformance.
+    func testHTJ2KConformanceCoderOutputs() throws {
+        let encoder = HTJ2KEncoder()
+        var coefficients = [Int](repeating: 0, count: 64)  // 8×8 block
+        
+        // Create varied data to exercise all three coders
+        for i in 0..<coefficients.count {
+            if i % 3 == 0 {
+                coefficients[i] = 50
+            } else if i % 3 == 1 {
+                coefficients[i] = -30
+            } else {
+                coefficients[i] = 0
+            }
+        }
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: 8,
+            height: 8,
+            subband: .hh
+        )
+        
+        // Verify cleanup pass contains MEL, VLC, and MagSgn data
+        let cleanup = result.cleanupPass
+        // Note: lengths might be 0 if not used, but total data should exist
+        XCTAssertFalse(cleanup.codedData.isEmpty, "Should have coded data")
+        
+        // Validate conformance
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K coder outputs should be conformant. Issues: \(validation.issues)")
+    }
+
+    /// Tests HTJ2K conformance with mixed coding modes is properly validated.
+    func testHTJ2KConformanceMixedMode() throws {
+        // Test that validator can handle both HT and legacy results
+        let htConfig = HTJ2KConfiguration(codingMode: .ht, allowMixedMode: true)
+        XCTAssertTrue(htConfig.allowMixedMode, "Mixed mode should be configurable")
+        
+        // Encode with HT mode
+        let encoder = HTJ2KEncoder(configuration: htConfig)
+        let coefficients = [Int](repeating: 25, count: 64)
+        
+        let result = try encoder.encodeCodeBlocks(
+            coefficients: coefficients,
+            width: 8,
+            height: 8,
+            subband: .hh
+        )
+        
+        // Validate HT result
+        let validator = HTJ2KConformanceValidator()
+        let validation = validator.validate(encodedResult: result)
+        
+        XCTAssertTrue(validation.isValid, "HTJ2K mixed mode should be conformant. Issues: \(validation.issues)")
+        XCTAssertEqual(result.codingMode, .ht, "Should use HT coding mode")
+    }
+
+    /// Tests comprehensive HTJ2K conformance validation report.
+    func testHTJ2KConformanceComprehensiveReport() throws {
+        let encoder = HTJ2KEncoder()
+        var passCount = 0
+        var failCount = 0
+        var issues: [String] = []
+        
+        // Test matrix: various sizes and coefficient patterns
+        let testMatrix: [(width: Int, height: Int, pattern: String)] = [
+            (4, 4, "uniform"), (8, 8, "sparse"), (16, 16, "dense"),
+            (32, 32, "alternating"), (64, 64, "gradient")
+        ]
+        
+        for test in testMatrix {
+            let size = test.width * test.height
+            var coefficients = [Int](repeating: 0, count: size)
+            
+            // Generate pattern
+            switch test.pattern {
+            case "uniform":
+                coefficients = [Int](repeating: 42, count: size)
+            case "sparse":
+                coefficients[size / 4] = 100
+            case "dense":
+                coefficients = (0..<size).map { ($0 * 7) % 128 - 64 }
+            case "alternating":
+                coefficients = (0..<size).map { $0 % 2 == 0 ? 50 : -50 }
+            case "gradient":
+                coefficients = (0..<size).map { ($0 * 256 / size) - 128 }
+            default:
+                break
+            }
+            
+            do {
+                let result = try encoder.encodeCodeBlocks(
+                    coefficients: coefficients,
+                    width: test.width,
+                    height: test.height,
+                    subband: .hh
+                )
+                
+                let validator = HTJ2KConformanceValidator()
+                let validation = validator.validate(encodedResult: result)
+                
+                if validation.isValid {
+                    passCount += 1
+                } else {
+                    failCount += 1
+                    issues.append("\(test.width)×\(test.height) \(test.pattern): \(validation.issues.joined(separator: ", "))")
+                }
+            } catch {
+                failCount += 1
+                issues.append("\(test.width)×\(test.height) \(test.pattern): encoding failed - \(error)")
+            }
+        }
+        
+        // Report results
+        let totalTests = testMatrix.count
+        let passRate = Double(passCount) / Double(totalTests) * 100.0
+        
+        print("\n=== HTJ2K ISO/IEC 15444-15 Conformance Report ===")
+        print("Total tests: \(totalTests)")
+        print("Passed: \(passCount) (\(String(format: "%.1f", passRate))%)")
+        print("Failed: \(failCount)")
+        if !issues.isEmpty {
+            print("\nIssues:")
+            for issue in issues {
+                print("  - \(issue)")
+            }
+        }
+        print("==================================================\n")
+        
+        // All tests should pass for full conformance
+        XCTAssertEqual(failCount, 0, "All HTJ2K conformance tests should pass")
+        XCTAssertEqual(passRate, 100.0, "Should achieve 100% conformance")
+    }
 }
