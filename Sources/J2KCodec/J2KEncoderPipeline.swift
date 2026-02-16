@@ -453,6 +453,14 @@ struct EncoderPipeline: Sendable {
         // SIZ — Image and Tile Size
         try writeSIZMarker(&writer, image: image)
 
+        // CAP — Extended Capabilities (HTJ2K Part 15)
+        // CPF — Corresponding Profile (HTJ2K Part 15)
+        // These markers must appear before COD when HTJ2K is enabled
+        if config.useHTJ2K {
+            try writeCAPMarker(&writer)
+            try writeCPFMarker(&writer)
+        }
+
         // COD — Coding Style Default
         try writeCODMarker(&writer)
 
@@ -515,6 +523,55 @@ struct EncoderPipeline: Sendable {
         }
 
         writer.writeMarkerSegment(J2KMarker.siz.rawValue, segmentData: segment.data)
+    }
+
+    /// Writes the CAP marker segment (Extended Capabilities) for HTJ2K.
+    ///
+    /// The CAP marker signals HTJ2K support and capabilities to the decoder.
+    /// Format per ISO/IEC 15444-15:
+    /// - Pcap (4 bytes): Part capabilities (bit 17 set for Part 15)
+    /// - Ccap (2 × N bytes): Capability pairs (HT support flags)
+    private func writeCAPMarker(_ writer: inout J2KBitWriter) throws {
+        var segment = J2KBitWriter()
+
+        // Pcap (4 bytes): Part capabilities
+        // Bit 17 (0x00020000) indicates Part 15 (HTJ2K) support
+        let pcap: UInt32 = 0x00020000
+        segment.writeUInt32(pcap)
+
+        // Ccap (2 bytes per capability pair)
+        // First capability: HT block coding support
+        // Bit 5 (0x0020) indicates HT block coding is supported
+        let ccap1: UInt16 = 0x0020
+
+        // Second capability: Mixed mode support
+        // Bit 6 (0x0040) indicates mixed legacy/HT mode is supported
+        let ccap2: UInt16 = 0x0040
+
+        segment.writeUInt16(ccap1)
+        segment.writeUInt16(ccap2)
+
+        writer.writeMarkerSegment(J2KMarker.cap.rawValue, segmentData: segment.data)
+    }
+
+    /// Writes the CPF marker segment (Corresponding Profile) for HTJ2K.
+    ///
+    /// The CPF marker specifies the HTJ2K profile used for encoding.
+    /// Format per ISO/IEC 15444-15:
+    /// - Pcpf (2 bytes): Profile capabilities
+    ///   - 0: Part 15 reversible (5/3 wavelet, lossless)
+    ///   - 1: Part 15 irreversible (9/7 wavelet, lossy)
+    ///   - 2: Part 15 broadcast (constrained for real-time)
+    private func writeCPFMarker(_ writer: inout J2KBitWriter) throws {
+        var segment = J2KBitWriter()
+
+        // Pcpf (2 bytes): Profile selection
+        // Select profile based on compression mode
+        let pcpf: UInt16 = config.lossless ? 0 : 1
+
+        segment.writeUInt16(pcpf)
+
+        writer.writeMarkerSegment(J2KMarker.cpf.rawValue, segmentData: segment.data)
     }
 
     /// Writes the COD marker segment (Coding Style Default).
