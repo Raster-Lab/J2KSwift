@@ -250,6 +250,12 @@ public struct TranscodingCoefficients: Sendable {
     /// The tile height (0 for single-tile images).
     public let tileHeight: Int
 
+    /// The code-block width used in the source codestream.
+    public let codeBlockWidth: Int
+
+    /// The code-block height used in the source codestream.
+    public let codeBlockHeight: Int
+
     /// Creates a new transcoding coefficients container.
     ///
     /// - Parameters:
@@ -267,6 +273,8 @@ public struct TranscodingCoefficients: Sendable {
     ///   - tiles: The tile coefficients.
     ///   - tileWidth: The tile width (0 for untiled).
     ///   - tileHeight: The tile height (0 for untiled).
+    ///   - codeBlockWidth: The code-block width (default: 32).
+    ///   - codeBlockHeight: The code-block height (default: 32).
     public init(
         width: Int,
         height: Int,
@@ -281,7 +289,9 @@ public struct TranscodingCoefficients: Sendable {
         sourceIsHTJ2K: Bool,
         tiles: [TranscodingTileCoefficients],
         tileWidth: Int = 0,
-        tileHeight: Int = 0
+        tileHeight: Int = 0,
+        codeBlockWidth: Int = 32,
+        codeBlockHeight: Int = 32
     ) {
         self.width = width
         self.height = height
@@ -298,6 +308,8 @@ public struct TranscodingCoefficients: Sendable {
         self.tiles = tiles
         self.tileWidth = tileWidth
         self.tileHeight = tileHeight
+        self.codeBlockWidth = codeBlockWidth
+        self.codeBlockHeight = codeBlockHeight
     }
 
     /// Internal initializer that accepts an HTCodingMode directly.
@@ -315,7 +327,9 @@ public struct TranscodingCoefficients: Sendable {
         sourceCodingMode: HTCodingMode,
         tiles: [TranscodingTileCoefficients],
         tileWidth: Int = 0,
-        tileHeight: Int = 0
+        tileHeight: Int = 0,
+        codeBlockWidth: Int = 32,
+        codeBlockHeight: Int = 32
     ) {
         self.width = width
         self.height = height
@@ -332,6 +346,8 @@ public struct TranscodingCoefficients: Sendable {
         self.tiles = tiles
         self.tileWidth = tileWidth
         self.tileHeight = tileHeight
+        self.codeBlockWidth = codeBlockWidth
+        self.codeBlockHeight = codeBlockHeight
     }
 
     /// The total number of code-blocks across all tiles and components.
@@ -595,7 +611,9 @@ public struct J2KTranscoder: Sendable {
             sourceCodingMode: parsed.codingMode,
             tiles: tileCoefficients,
             tileWidth: parsed.metadata.tileWidth,
-            tileHeight: parsed.metadata.tileHeight
+            tileHeight: parsed.metadata.tileHeight,
+            codeBlockWidth: parsed.metadata.codeBlockWidth,
+            codeBlockHeight: parsed.metadata.codeBlockHeight
         )
     }
 
@@ -909,10 +927,11 @@ public struct J2KTranscoder: Sendable {
                 // Extract tile data (from SOD to next SOT or EOC)
                 let tileDataEnd: Int
                 if psot > 0 {
-                    // SOT segment told us the total tile-part length
-                    // psot = SOT(12) + tile-between-markers + SOD(2) + tile-data
-                    let sotStart = offset - 2 - segLength // Start of SOT marker
-                    tileDataEnd = min(sotStart - 2 + psot, data.count) // -2 for SOT marker bytes
+                    // Psot includes the entire tile-part length from SOT marker start.
+                    // SOT marker (2 bytes) is at (offset - 2 - segLength - 2),
+                    // but we need the start of the SOT marker code (0xFF90).
+                    let sotMarkerStart = offset - 2 - segLength - 2
+                    tileDataEnd = min(sotMarkerStart + psot, data.count)
                 } else {
                     // Find next SOT or EOC
                     tileDataEnd = findNextTileOrEnd(data: data, from: offset)
@@ -1475,11 +1494,13 @@ public struct J2KTranscoder: Sendable {
         data.append(UInt8(coefficients.decompositionLevels))
 
         // Code-block width exponent minus 2 (1 byte)
-        let cbWidthExp = Int(log2(Double(32))) // Default 32
+        let cbWidth = max(4, coefficients.codeBlockWidth)
+        let cbWidthExp = Int(log2(Double(cbWidth)))
         data.append(UInt8(cbWidthExp - 2))
 
         // Code-block height exponent minus 2 (1 byte)
-        let cbHeightExp = Int(log2(Double(32))) // Default 32
+        let cbHeight = max(4, coefficients.codeBlockHeight)
+        let cbHeightExp = Int(log2(Double(cbHeight)))
         data.append(UInt8(cbHeightExp - 2))
 
         // Code-block style (1 byte)

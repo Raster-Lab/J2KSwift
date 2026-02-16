@@ -756,10 +756,10 @@ final class J2KTranscoderTests: XCTestCase {
         data.append(0x05) // 5 levels
 
         // SPcod - code-block width (1 byte) exponent - 2
-        data.append(0x03) // 2^5 = 32
+        data.append(0x03) // exponent 3 → 2^(3+2) = 32
 
         // SPcod - code-block height (1 byte) exponent - 2
-        data.append(0x03) // 2^5 = 32
+        data.append(0x03) // exponent 3 → 2^(3+2) = 32
 
         // SPcod - code-block style (1 byte)
         data.append(0x00)
