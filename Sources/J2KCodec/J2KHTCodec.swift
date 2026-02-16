@@ -491,8 +491,13 @@ struct HTJ2KDecoder: Sendable {
         let profileNumber = Int(pcpf & 0x7FFF)
         
         // Determine if lossless based on profile
-        // For HTJ2K: Profile 0 = reversible (lossless)
-        // For Part 1: Profile 0 = basic (can be lossless)
+        // For HTJ2K: Profile 0 = reversible (lossless), Profile 1 = irreversible (lossy)
+        // For Part 1: Profile 0 = basic (can be either lossless or lossy)
+        //
+        // Note: For JPEG 2000 Part 1, the CPF marker alone cannot definitively determine
+        // losslessness since Profile 0 supports both modes. The actual lossless/lossy
+        // mode is determined by the COD marker's wavelet transform type (5/3 vs 9/7).
+        // This function provides a best-effort heuristic based on profile number.
         let lossless = (profileNumber == 0)
         
         return (isHTJ2K, profileNumber, lossless)
