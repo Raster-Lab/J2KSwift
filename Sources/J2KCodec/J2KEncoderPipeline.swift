@@ -580,10 +580,19 @@ struct EncoderPipeline: Sendable {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
-        let scod: UInt8 = 0
+        var scod: UInt8 = 0
         // Bit 0: Precincts defined (0 = default, 1 = user-defined)
         // Bit 1: SOP markers used (0 = no)
         // Bit 2: EPH markers used (0 = no)
+        // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
+        //   00 = No HT sets
+        //   01 = HT set A (set bit 3, clear bit 4)
+        //   10 = HT set B  
+        //   11 = HT sets C and D
+        // When HTJ2K mode is enabled, use default HT set A
+        if config.useHTJ2K {
+            scod |= 0x08 // Set bit 3 (bits 3-4 = 01 for HT set A)
+        }
         segment.writeUInt8(scod)
 
         // SGcod — Progression order
@@ -631,6 +640,19 @@ struct EncoderPipeline: Sendable {
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.lossless ? 1 : 0)
+
+        // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
+        if config.useHTJ2K {
+            // For HT set A (default), write the HT set configuration byte
+            // Bits 0-3: Reserved (set to 0)
+            // Bit 4: Lossless flag (0 = lossy, 1 = lossless)
+            // Bits 5-7: Reserved (set to 0)
+            var htSetConfig: UInt8 = 0
+            if config.lossless {
+                htSetConfig |= 0x10 // Set bit 4 for lossless mode
+            }
+            segment.writeUInt8(htSetConfig)
+        }
 
         writer.writeMarkerSegment(J2KMarker.cod.rawValue, segmentData: segment.data)
     }
@@ -684,6 +706,19 @@ struct EncoderPipeline: Sendable {
         
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.lossless ? 1 : 0)
+        
+        // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
+        if config.useHTJ2K {
+            // For HT set A (default), write the HT set configuration byte
+            // Bits 0-3: Reserved (set to 0)
+            // Bit 4: Lossless flag (0 = lossy, 1 = lossless)
+            // Bits 5-7: Reserved (set to 0)
+            var htSetConfig: UInt8 = 0
+            if config.lossless {
+                htSetConfig |= 0x10 // Set bit 4 for lossless mode
+            }
+            segment.writeUInt8(htSetConfig)
+        }
         
         writer.writeMarkerSegment(J2KMarker.coc.rawValue, segmentData: segment.data)
     }

@@ -307,7 +307,10 @@ struct DecoderPipeline: Sendable {
         var config = DecoderConfiguration()
         
         // Scod — Coding style flags
-        _ = try reader.readUInt8()
+        let scod = try reader.readUInt8()
+        // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
+        let htSetBits = (scod >> 3) & 0x03
+        let hasHTSets = htSetBits != 0
         
         // Progression order
         let progOrder = try reader.readUInt8()
@@ -343,6 +346,14 @@ struct DecoderPipeline: Sendable {
         // Wavelet transform type
         let transformType = try reader.readUInt8()
         config.waveletFilter = (transformType == 1) ? .reversible53 : .irreversible97
+        
+        // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
+        // If HT sets are signaled, the configuration byte must be read regardless of useHTJ2K flag
+        if hasHTSets {
+            // Read HT set configuration byte
+            _ = try reader.readUInt8()
+            // We read and ignore for now - parameters are advisory
+        }
         
         // Verify we read the expected amount
         let bytesRead = reader.position - startPos
@@ -402,6 +413,18 @@ struct DecoderPipeline: Sendable {
         // Wavelet transform type
         let transformType = try reader.readUInt8()
         config.waveletFilter = (transformType == 1) ? .reversible53 : .irreversible97
+        
+        // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
+        // Note: COC doesn't have its own Scod, so we check if HTJ2K mode is set
+        if config.useHTJ2K {
+            // Check if there's enough data left to read HT set configuration byte
+            let currentBytesRead = reader.position - startPos
+            if currentBytesRead < length - 2 {
+                // Read HT set configuration byte
+                _ = try reader.readUInt8()
+                // We read and ignore for now - parameters are advisory
+            }
+        }
         
         // Verify we read the expected amount
         let bytesRead = reader.position - startPos
