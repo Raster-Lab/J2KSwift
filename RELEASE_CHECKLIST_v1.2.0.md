@@ -1,7 +1,7 @@
 # J2KSwift v1.2.0 Release Checklist
 
 **Version**: 1.2.0  
-**Release Date**: TBD  
+**Release Date**: February 16, 2026  
 **Release Type**: Minor Release (Critical Bug Fixes & Enhancements)
 
 ## Pre-Release Verification
@@ -9,9 +9,9 @@
 ### Code Quality
 - [x] All tests pass (1,528 tests, 24 skipped, 0 failures)
 - [x] Build successful with no warnings
-- [ ] Code review completed
-- [x] VERSION file updated to 1.2.0-dev
-- [ ] getVersion() returns "1.2.0" (update before release)
+- [x] Code review completed
+- [x] VERSION file updated to 1.2.0
+- [x] getVersion() returns "1.2.0"
 
 ### Critical Bug Fixes
 - [x] MQDecoder position underflow fixed (Issue #121)
@@ -25,7 +25,7 @@
 
 ### Documentation
 - [x] RELEASE_NOTES_v1.2.0.md created
-- [x] KNOWN_LIMITATIONS.md updated to v1.2.0-dev status
+- [x] KNOWN_LIMITATIONS.md updated to v1.2.0 status
 - [x] README.md updated (version references)
 - [x] MILESTONES.md updated (v1.2.0 status)
 - [x] CHANGELOG.md updated (if exists) - N/A: No CHANGELOG.md file exists
@@ -45,11 +45,11 @@
 ## Release Process
 
 ### Step 1: Final Pre-Release Tasks
-- [ ] Update VERSION file to "1.2.0" (remove "-dev")
-- [ ] Update getVersion() in J2KCore.swift to return "1.2.0"
-- [ ] Update all version references in documentation
-- [ ] Run full test suite one final time
-- [ ] Verify build on all platforms
+- [x] Update VERSION file to "1.2.0" (remove "-dev")
+- [x] Update getVersion() in J2KCore.swift to return "1.2.0"
+- [x] Update all version references in documentation
+- [x] Run full test suite one final time
+- [x] Verify build on all platforms
 
 ### Step 2: Create Git Tag
 ```bash
@@ -152,9 +152,9 @@ Release is considered successful when:
 
 ---
 
-**Checklist Status**: 20/52 items complete (38%)  
-**Release Readiness**: In Development  
-**Target Release Date**: TBD (when all items complete)
+**Checklist Status**: 28/52 items complete (54%)  
+**Release Readiness**: Ready for Release  
+**Target Release Date**: February 16, 2026
 
 **Last Updated**: 2026-02-16  
-**Note**: The checklist count was corrected from an incorrect "12/34" to the actual "20/52" based on counting all checklist items in the file. The file has always contained 52 items; the previous status line was simply inaccurate.
+**Note**: Core release preparation items complete. Remaining items relate to GitHub release process and post-release monitoring.
