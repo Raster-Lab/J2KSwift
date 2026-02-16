@@ -316,6 +316,7 @@ let encoded = try mqCoder.encode(quantized)
 - **[RATE_CONTROL.md](RATE_CONTROL.md)**: PCRD-opt algorithm
 - **[COLOR_TRANSFORM.md](COLOR_TRANSFORM.md)**: Color space conversions
 - **[JP2_FILE_FORMAT.md](JP2_FILE_FORMAT.md)**: File format specification
+- **[HTJ2K.md](HTJ2K.md)**: High-Throughput JPEG 2000 (ISO/IEC 15444-15)
 - **[JPIP_PROTOCOL.md](JPIP_PROTOCOL.md)**: Streaming protocol
 - **[EXTENDED_FORMATS.md](EXTENDED_FORMATS.md)**: JPX, JPM support
 - **[BYPASS_MODE_ISSUE.md](BYPASS_MODE_ISSUE.md)**: Known bypass mode limitation and workarounds
