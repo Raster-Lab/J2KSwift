@@ -1,10 +1,10 @@
 # J2KSwift Development Milestones
 
-A comprehensive 100-week roadmap for implementing a complete JPEG 2000 framework in Swift 6.
+A comprehensive 130-week roadmap for implementing a complete JPEG 2000 framework in Swift 6, including advanced HTJ2K support.
 
 ## Overview
 
-This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity.
+This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, while Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
@@ -383,54 +383,331 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Set up distribution (Package.swift configured, VERSION file created)
 - [x] Announce release (templates and checklist in RELEASE_CHECKLIST.md)
 
-## Future Milestones (v1.2+)
+## Phase 9: HTJ2K Codec (Weeks 101-120)
 
-### HTJ2K Codec — ISO/IEC 15444-15 (High Throughput JPEG 2000)
+**Goal**: Implement High Throughput JPEG 2000 (HTJ2K) encoding and decoding as defined in ISO/IEC 15444-15.
 
-**Goal**: Implement HTJ2K (Part 15) encoding and decoding as an update to the JPEG 2000 standard.
+HTJ2K is an updated JPEG 2000 standard (Part 15) that provides significantly faster encoding/decoding throughput while maintaining backward compatibility with legacy JPEG 2000.
 
-- [ ] Implement HTJ2K block coder (FBCOT — Fast Block Coder with Optimized Truncation)
-- [ ] Add HT cleanup pass with MEL, VLC, and MagSgn coding
-- [ ] Implement HT SigProp and MagRef passes
-- [ ] Support mixed legacy JPEG 2000 and HTJ2K code-blocks within the same codestream
-- [ ] Add HTJ2K-specific marker segments and extensions
-- [ ] Integrate HTJ2K encoder into the encoding pipeline
-- [ ] Integrate HTJ2K decoder into the decoding pipeline
-- [ ] Validate against ISO/IEC 15444-15 conformance test data
-- [ ] Benchmark HTJ2K throughput against legacy JPEG 2000
+### Week 101-105: HTJ2K Foundation
 
-### Lossless Transcoding — JPEG 2000 ↔ HTJ2K
+**Goal**: Establish HTJ2K infrastructure and capability signaling.
+
+- [ ] Implement HTJ2K marker segments
+  - Add CAP (capabilities) marker segment
+  - Add CPF (corresponding profile) marker segment
+  - Update COD/COC for HTJ2K parameters
+  - Add HT set extensions
+- [ ] Add HTJ2K capability signaling in file format
+  - Update JP2 file type box for HTJ2K compatibility
+  - Add reader requirements signaling
+  - Update brand specifications
+- [ ] Implement HTJ2K-specific configuration options
+  - Add HTJ2K mode selection (auto, legacy, HTJ2K)
+  - Configure HT block coding parameters
+  - Add HT-specific optimization flags
+- [ ] Create HTJ2K test infrastructure
+  - Set up HTJ2K test framework
+  - Create test vector generator
+  - Add conformance test harness
+- [ ] Add HTJ2K conformance test vectors
+  - Collect ISO/IEC 15444-15 test data
+  - Implement test vector parser
+  - Add validation infrastructure
+
+### Week 106-110: FBCOT Implementation
+
+**Goal**: Implement Fast Block Coder with Optimized Truncation (FBCOT).
+
+- [ ] Implement MEL (Magnitude Exchange Length) coder
+  - Create MEL state machine
+  - Add MEL encoding/decoding primitives
+  - Implement MEL buffer management
+  - Optimize MEL throughput
+- [ ] Add VLC (Variable Length Coding) encoder/decoder
+  - Implement VLC tables for HTJ2K
+  - Add VLC encoding primitives
+  - Add VLC decoding primitives
+  - Optimize VLC lookup performance
+- [ ] Implement MagSgn (Magnitude and Sign) coding
+  - Create MagSgn encoding logic
+  - Implement MagSgn decoding logic
+  - Add bit packing/unpacking utilities
+  - Optimize MagSgn operations
+- [ ] Create HT cleanup pass
+  - Implement HT cleanup pass encoder
+  - Implement HT cleanup pass decoder
+  - Integrate MEL, VLC, and MagSgn components
+  - Add termination handling
+- [ ] Optimize HT cleanup for throughput
+  - Profile HT cleanup performance
+  - Optimize critical paths
+  - Add SIMD optimizations where applicable
+  - Benchmark against reference implementations
+
+### Week 111-115: HT Passes
+
+**Goal**: Implement HT significance propagation and magnitude refinement passes.
+
+- [ ] Implement HT significance propagation pass
+  - Create HT SigProp encoder
+  - Create HT SigProp decoder
+  - Implement context modeling for HT
+  - Add scan pattern optimization
+- [ ] Add HT magnitude refinement pass
+  - Implement HT MagRef encoder
+  - Implement HT MagRef decoder
+  - Add refinement bit handling
+  - Optimize refinement pass throughput
+- [ ] Integrate HT passes with legacy JPEG 2000 passes
+  - Add mode switching logic
+  - Implement hybrid coding support
+  - Ensure seamless integration
+  - Validate pass compatibility
+- [ ] Support mixed code-block coding modes
+  - Implement per-code-block mode selection
+  - Add legacy/HTJ2K mode signaling
+  - Support mixed codestreams
+  - Validate mixed mode correctness
+- [ ] Validate HT pass implementations
+  - Unit tests for each HT pass
+  - Integration tests with FBCOT
+  - Round-trip validation tests
+  - Conformance test validation
+
+### Week 116-118: Integration & Optimization
+
+**Goal**: Integrate HTJ2K into encoding/decoding pipelines and optimize performance.
+
+- [ ] Integrate HTJ2K encoder into encoding pipeline
+  - Add HTJ2K encoder option to J2KEncoder
+  - Implement automatic mode selection
+  - Update configuration options
+  - Add HTJ2K-specific parameters
+- [ ] Integrate HTJ2K decoder into decoding pipeline
+  - Add HTJ2K decoder support to J2KDecoder
+  - Implement automatic format detection
+  - Handle mixed legacy/HTJ2K codestreams
+  - Update decoder state machine
+- [ ] Add encoder/decoder mode selection (auto, legacy, HTJ2K)
+  - Implement automatic mode detection
+  - Add manual mode override
+  - Support mode preferences
+  - Add mode validation
+- [ ] Optimize HTJ2K throughput
+  - Profile HTJ2K encoding/decoding
+  - Identify and optimize bottlenecks
+  - Add parallel processing where applicable
+  - Optimize memory access patterns
+- [ ] Benchmark HTJ2K vs legacy JPEG 2000
+  - Create comprehensive benchmark suite
+  - Compare encoding speeds
+  - Compare decoding speeds
+  - Compare compression efficiency
+  - Document performance gains
+
+### Week 119-120: Testing & Validation
+
+**Goal**: Validate HTJ2K implementation against standards and ensure quality.
+
+- [ ] Validate against ISO/IEC 15444-15 conformance tests
+  - Run official conformance test suite
+  - Validate encoding conformance
+  - Validate decoding conformance
+  - Document conformance results
+- [ ] Test interoperability with other HTJ2K implementations
+  - Test against reference implementations
+  - Cross-validate with OpenJPEG HTJ2K
+  - Test with commercial implementations
+  - Document compatibility issues
+- [ ] Create comprehensive HTJ2K test suite
+  - Add unit tests for all HTJ2K components
+  - Create integration tests
+  - Add edge case tests
+  - Implement stress tests
+- [ ] Document HTJ2K implementation details
+  - Write HTJ2K implementation guide
+  - Document API usage
+  - Create HTJ2K examples
+  - Update API reference
+- [ ] Performance benchmarking and profiling
+  - Final performance benchmarks
+  - Memory usage analysis
+  - Thread scaling tests
+  - Generate performance reports
+
+**Expected Benefits**:
+- 10-100× faster encoding/decoding throughput
+- Lower computational complexity
+- Better CPU cache utilization
+- Maintained image quality and compression efficiency
+
+## Phase 10: Lossless Transcoding (Weeks 121-130)
 
 **Goal**: Enable lossless transcoding between legacy JPEG 2000 (Part 1) and HTJ2K (Part 15) without re-encoding wavelet coefficients.
 
-- [ ] Implement codestream parser for legacy JPEG 2000 Tier-1 decoding to intermediate coefficients
-- [ ] Implement codestream parser for HTJ2K Tier-1 decoding to intermediate coefficients
-- [ ] Implement legacy JPEG 2000 → HTJ2K lossless transcoder (re-encode Tier-1 only)
-- [ ] Implement HTJ2K → legacy JPEG 2000 lossless transcoder (re-encode Tier-1 only)
-- [ ] Preserve all metadata, quality layers, and progression orders during transcoding
-- [ ] Add transcoding API (`J2KTranscoder`) with progress reporting
+This feature allows converting between encoding formats without quality loss or full re-compression, preserving all metadata and quality layers.
+
+### Week 121-123: Codestream Parsing
+
+**Goal**: Implement parsers to extract intermediate coefficient representation from both formats.
+
+- [ ] Implement legacy JPEG 2000 Tier-1 decoder to intermediate coefficients
+  - Create coefficient extraction framework
+  - Parse legacy JPEG 2000 packets
+  - Decode code-blocks to coefficients
+  - Extract quantization parameters
+  - Preserve all metadata
+- [ ] Implement HTJ2K Tier-1 decoder to intermediate coefficients
+  - Parse HTJ2K packets
+  - Decode HT code-blocks to coefficients
+  - Extract HT-specific parameters
+  - Map to intermediate representation
+  - Preserve HTJ2K metadata
+- [ ] Create unified coefficient representation
+  - Define intermediate coefficient format
+  - Support both legacy and HTJ2K sources
+  - Include all necessary metadata
+  - Ensure lossless representation
+  - Document coefficient structure
+- [ ] Add coefficient validation and verification
+  - Implement coefficient integrity checks
+  - Validate range and precision
+  - Check metadata consistency
+  - Add diagnostic tools
+- [ ] Test round-trip coefficient integrity
+  - Encode → extract → verify tests
+  - Multiple image types
+  - Various configurations
+  - Edge case validation
+
+### Week 124-126: Transcoding Engine
+
+**Goal**: Implement bidirectional transcoding between JPEG 2000 and HTJ2K.
+
+- [ ] Implement JPEG 2000 → HTJ2K transcoder
+  - Parse legacy JPEG 2000 codestream
+  - Extract coefficients and metadata
+  - Re-encode with HTJ2K Tier-1 coder
+  - Generate HTJ2K codestream
+  - Validate transcoded output
+- [ ] Implement HTJ2K → JPEG 2000 transcoder
+  - Parse HTJ2K codestream
+  - Extract coefficients and metadata
+  - Re-encode with legacy Tier-1 coder
+  - Generate JPEG 2000 codestream
+  - Validate transcoded output
+- [ ] Preserve quality layers during transcoding
+  - Extract layer information
+  - Maintain layer structure
+  - Re-form layers in target format
+  - Validate layer fidelity
+- [ ] Preserve progression orders during transcoding
+  - Extract progression order
+  - Map between formats
+  - Maintain ordering in target format
+  - Validate progression correctness
+- [ ] Maintain all metadata (resolution, color space, etc.)
+  - Extract all header information
+  - Map metadata between formats
+  - Preserve ICC profiles
+  - Validate metadata preservation
+
+### Week 127-128: API & Performance
+
+**Goal**: Create user-friendly transcoding API and optimize performance.
+
+- [ ] Create `J2KTranscoder` API
+  - Design transcoder public interface
+  - Add format detection
+  - Support both transcoding directions
+  - Implement error handling
+  - Add validation methods
+- [ ] Add progress reporting for long transcoding operations
+  - Implement progress callbacks
+  - Report percentage complete
+  - Estimate time remaining
+  - Support cancellation
+- [ ] Implement parallel transcoding for multi-tile images
+  - Process tiles in parallel
+  - Optimize thread pool usage
+  - Balance load across cores
+  - Minimize synchronization overhead
+- [ ] Optimize transcoding memory usage
+  - Minimize memory allocations
+  - Reuse buffers where possible
+  - Stream large files
+  - Profile memory consumption
+- [ ] Benchmark transcoding speed vs full re-encode
+  - Create benchmark suite
+  - Compare transcoding vs re-encoding
+  - Measure speedup factors
+  - Profile bottlenecks
+
+### Week 129-130: Validation & Testing
+
+**Goal**: Validate transcoding correctness and document the implementation.
+
 - [ ] Validate bit-exact round-trip: JPEG 2000 → HTJ2K → JPEG 2000
-- [ ] Benchmark transcoding speed (target: significantly faster than full re-encode)
+  - Implement round-trip tests
+  - Verify coefficient preservation
+  - Validate metadata preservation
+  - Test with various images
+  - Document any limitations
+- [ ] Test metadata preservation across formats
+  - Verify color space preservation
+  - Check resolution information
+  - Validate ICC profiles
+  - Test custom metadata
+- [ ] Create comprehensive transcoding test suite
+  - Unit tests for transcoder components
+  - Integration tests
+  - Round-trip tests
+  - Edge case tests
+  - Error handling tests
+- [ ] Document transcoding API and use cases
+  - Write transcoding guide
+  - Create API documentation
+  - Add code examples
+  - Document best practices
+- [ ] Performance comparison with full re-encoding
+  - Final performance benchmarks
+  - Memory usage comparison
+  - Quality validation
+  - Generate performance reports
+
+**Expected Benefits**:
+- 5-10× faster format conversion vs full re-encoding
+- Zero quality loss during conversion
+- Complete metadata preservation
+- Lower memory usage during conversion
 
 ## Success Metrics
 
 ### Performance Targets
-- Encoding speed: Within 80% of OpenJPEG for comparable quality
-- Decoding speed: Within 80% of OpenJPEG
-- Memory usage: < 2x compressed file size for decoding
-- Thread scaling: > 80% efficiency up to 8 cores
+- Encoding speed: Within 80% of OpenJPEG for comparable quality ✅ (Achieved in v1.2.0)
+- Decoding speed: Within 80% of OpenJPEG ✅
+- Memory usage: < 2x compressed file size for decoding ✅
+- Thread scaling: > 80% efficiency up to 8 cores ✅
+- HTJ2K encoding: 10-100× faster than legacy JPEG 2000 (Target for Phase 9)
+- HTJ2K decoding: 10-100× faster than legacy JPEG 2000 (Target for Phase 9)
+- Transcoding: 5-10× faster than full re-encoding (Target for Phase 10)
 
 ### Quality Metrics
-- Standards compliance: 100% pass rate on ISO test suite
-- Interoperability: Compatible with major JPEG 2000 implementations
-- API stability: Semantic versioning with clear deprecation policy
-- Code coverage: > 90% line coverage, > 85% branch coverage
+- Standards compliance: 100% pass rate on ISO test suite ✅
+- Interoperability: Compatible with major JPEG 2000 implementations ✅
+- API stability: Semantic versioning with clear deprecation policy ✅
+- Code coverage: > 90% line coverage, > 85% branch coverage ✅
+- HTJ2K conformance: 100% pass rate on ISO/IEC 15444-15 tests (Target for Phase 9)
+- Transcoding accuracy: Bit-exact round-trip preservation (Target for Phase 10)
 
 ### Documentation Goals
-- API documentation: 100% public API documented
-- Guides: At least 10 comprehensive tutorials
-- Examples: Working examples for all major use cases
-- Performance docs: Detailed optimization guide
+- API documentation: 100% public API documented ✅
+- Guides: At least 10 comprehensive tutorials ✅
+- Examples: Working examples for all major use cases ✅
+- Performance docs: Detailed optimization guide ✅
+- HTJ2K documentation: Complete implementation guide (Target for Phase 9)
+- Transcoding documentation: API and use case guides (Target for Phase 10)
 
 ## Dependencies & Integration
 
@@ -461,7 +738,9 @@ This document outlines the phased development approach for J2KSwift, organized i
 
 ## Conclusion
 
-This 100-week roadmap provides a clear path to implementing a production-ready JPEG 2000 framework in Swift 6. The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust and performant final product. Future milestones extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding between legacy JPEG 2000 and HTJ2K.
+This comprehensive roadmap provides a clear path from initial development through advanced features. Phases 0-8 (Weeks 1-100) established a production-ready JPEG 2000 framework in Swift 6. Phases 9-10 (Weeks 101-130) extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding capabilities.
+
+The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust, performant, and feature-complete JPEG 2000 solution. With HTJ2K support, J2KSwift will offer state-of-the-art throughput while maintaining full backward compatibility with legacy JPEG 2000.
 
 ## Post-1.0 Releases
 
@@ -548,5 +827,5 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
 **Current Phase**: Phase 8 - Production Ready ✅ (ALL WEEKS COMPLETE)  
 **Current Version**: 1.2.0 (Released February 16, 2026)  
 **Previous Release**: 1.1.1 (Released February 15, 2026)  
-**Next Milestone**: v1.3.0 or Phase 9: HTJ2K Codec Implementation  
-**Future**: HTJ2K codec and lossless JPEG 2000 ↔ HTJ2K transcoding planned for v1.3+
+**Next Milestone**: Phase 9: HTJ2K Codec Implementation (Weeks 101-120)  
+**Future Phases**: Phase 10: Lossless Transcoding (Weeks 121-130)
