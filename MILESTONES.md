@@ -1,10 +1,10 @@
 # J2KSwift Development Milestones
 
-A comprehensive 100-week roadmap for implementing a complete JPEG 2000 framework in Swift 6.
+A comprehensive 130-week roadmap for implementing a complete JPEG 2000 framework in Swift 6, including advanced HTJ2K support.
 
 ## Overview
 
-This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity.
+This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, while Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
