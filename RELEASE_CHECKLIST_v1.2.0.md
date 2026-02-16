@@ -26,8 +26,8 @@
 ### Documentation
 - [x] RELEASE_NOTES_v1.2.0.md created
 - [x] KNOWN_LIMITATIONS.md updated to v1.2.0-dev status
-- [ ] README.md updated (version references)
-- [ ] MILESTONES.md updated (v1.2.0 status)
+- [x] README.md updated (version references)
+- [x] MILESTONES.md updated (v1.2.0 status)
 - [ ] CHANGELOG.md updated (if exists)
 
 ### Testing
@@ -152,7 +152,7 @@ Release is considered successful when:
 
 ---
 
-**Checklist Status**: 12/34 items complete (35%)  
+**Checklist Status**: 15/34 items complete (44%)  
 **Release Readiness**: In Development  
 **Target Release Date**: TBD (when all items complete)
 

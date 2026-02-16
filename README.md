@@ -8,13 +8,13 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.1.1 (Production Ready - Fully Functional Codec)  
-**Status**: Complete encoder and decoder pipelines with 98.4% test pass rate  
-**Release Date**: February 15, 2026
+**Current Version**: 1.2.0-dev (In Development - Critical Bug Fixes)  
+**Status**: Complete encoder and decoder pipelines with 100% test pass rate (1,528 tests)  
+**Previous Release**: 1.1.1 (February 15, 2026)
 
 ## 📦 Release Status
 
-**v1.1.1** is the latest release with bug fixes, performance optimizations, and cross-platform validation:
+**v1.2.0-dev** includes critical bug fixes and improvements over v1.1.1:
 - ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
 - ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
 - ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
@@ -24,25 +24,28 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 - ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
 - ✅ **JPIP Streaming** (client/server infrastructure)
 - ✅ **Cross-Platform Validated** (Linux Ubuntu x86_64, macOS)
-- ✅ **98.4% Test Pass Rate** (1,503 of 1,528 tests passing)
+- ✅ **100% Test Pass Rate** (1,528 tests, 24 skipped, 0 failures)
 
-**Notable Achievement**: Full encode/decode round-trip working with comprehensive test coverage!
+**v1.2.0 Improvements**:
+- 🔧 **MQDecoder Position Underflow Fixed** (Issue #121) - prevents crashes with "Illegal instruction" error
+- 🔧 **Linux Lossless Decoding Fixed** - packet header parsing corrected for cross-platform compatibility
+- 📊 **Performance Baseline Established** - currently at 32.6% of OpenJPEG speed (optimization work ongoing)
 
-See [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) for complete details.
+See [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for v1.2.0 details, or [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) for the previous release.
 
 ## 🎯 Project Goals
 
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
-- **Fully Functional**: Complete encoder and decoder pipelines (v1.1.1)
+- **Fully Functional**: Complete encoder and decoder pipelines (v1.2.0-dev)
 - **Cross-Platform**: macOS 12+, iOS 15+, tvOS 15+, watchOS 8+, Linux, Windows
 - **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) core implementation
 - **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
 - **Network Streaming**: JPIP protocol support for efficient image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
 - **Well Documented**: 27+ comprehensive guides, tutorials, and API documentation
-- **High Quality**: 98.3% test pass rate with comprehensive test coverage
+- **High Quality**: 100% test pass rate (1,528 tests) with comprehensive test coverage
 
 ## 🚀 Quick Start
 
@@ -57,7 +60,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.1.1")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.2.0")
 ]
 ```
 
@@ -76,7 +79,7 @@ Then add the specific modules you need to your target dependencies:
 
 ### Basic Usage
 
-#### Simple Encoding (v1.1.0)
+#### Simple Encoding (v1.2.0)
 
 ```swift
 import J2KCodec
@@ -93,7 +96,7 @@ let encoder = J2KEncoder(encodingConfiguration: .lossless)
 let losslessData = try encoder.encode(image)
 ```
 
-#### Simple Decoding (v1.1.0)
+#### Simple Decoding (v1.2.0)
 
 ```swift
 import J2KCodec
@@ -107,7 +110,7 @@ print("Decoded image: \(image.width)×\(image.height)")
 print("Components: \(image.componentCount)")
 ```
 
-#### Advanced Encoding with Progress (v1.1.0)
+#### Advanced Encoding with Progress (v1.2.0)
 
 ```swift
 import J2KCodec
@@ -120,7 +123,7 @@ let data = try encoder.encode(image) { progress in
 }
 ```
 
-#### Progressive Decoding (v1.1.0)
+#### Progressive Decoding (v1.2.0)
 
 ```swift
 import J2KCodec
@@ -140,7 +143,7 @@ let roiOptions = J2KROIDecodingOptions(
 let roiImage = try decoder.decode(j2kData, options: roiOptions)
 ```
 
-#### Writing to JP2 File (v1.1.0)
+#### Writing to JP2 File (v1.2.0)
 
 ```swift
 import J2KCore
@@ -383,11 +386,11 @@ JPEG 2000 Interactive Protocol implementation for efficient network streaming.
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: Phase 8 Complete - Production Ready (v1.0.0 ✅)
+### Current Status: v1.2.0 Development - Critical Bug Fixes
 
-> **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional** in v1.0! All encoding pipeline stages (color transform, wavelet transform, quantization, entropy coding, rate control) are integrated and working.
+> **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional**! All encoding pipeline stages (color transform, wavelet transform, quantization, entropy coding, rate control) are integrated and working.
 > 
-> **Decoder Status**: The high-level `J2KDecoder.decode()` API is not yet implemented. Individual decoding components are available, and full decoder pipeline integration is planned for v1.1.
+> **Decoder Status**: The high-level `J2KDecoder.decode()` API is **fully functional**! Complete decoder pipeline with progressive decoding, ROI support, and cross-platform compatibility.
 
 
 **All 8 Phases Complete** (100 weeks):
@@ -401,7 +404,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Phase 7: Optimization & Features (Weeks 81-92)
 - ✅ Phase 8: Production Ready (Weeks 93-100)
 
-**Next**: Version 1.1 - High-level codec integration (see [ROADMAP_v1.1.md](ROADMAP_v1.1.md))
+**Next**: Version 1.3.0 - Performance optimizations and additional features (see [MILESTONES.md](MILESTONES.md))
 
 ## 🧪 Testing
 

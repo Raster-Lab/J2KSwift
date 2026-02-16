@@ -524,6 +524,8 @@ This 100-week roadmap provides a clear path to implementing a production-ready J
   - [x] RELEASE_NOTES_v1.2.0.md created
   - [x] RELEASE_CHECKLIST_v1.2.0.md created
   - [x] KNOWN_LIMITATIONS.md updated to v1.2.0-dev
+  - [x] README.md updated with v1.2.0-dev status and improvements
+  - [x] MILESTONES.md updated with v1.2.0 progress
 - [x] Performance improvements
   - [x] Profiling infrastructure (Scripts/profile_encoder.py)
   - [x] Encoder pipeline optimization (5.1% improvement)
