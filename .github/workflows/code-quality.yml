@@ -88,11 +88,14 @@ jobs:
           XCTEST_PATH=$(find "${BIN_PATH}" -name '*.xctest' -type d 2>/dev/null | head -1)
           if [ -n "${XCTEST_PATH}" ]; then
             EXEC_PATH="${XCTEST_PATH}/Contents/MacOS/$(basename "${XCTEST_PATH}" .xctest)"
+            echo "Found xctest bundle: ${XCTEST_PATH}"
           else
-            EXEC_PATH=$(find "${BIN_PATH}" -name '*PackageTests' -type f 2>/dev/null | head -1)
+            EXEC_PATH=$(find "${BIN_PATH}" -name 'J2KSwiftPackageTests' -type f 2>/dev/null | head -1)
+            echo "Using fallback binary: ${EXEC_PATH}"
           fi
           PROFDATA=$(find .build -name 'default.profdata' -type f 2>/dev/null | head -1)
           if [ -n "${EXEC_PATH}" ] && [ -n "${PROFDATA}" ]; then
+            echo "Generating coverage from: ${EXEC_PATH}"
             xcrun llvm-cov export -format="lcov" "${EXEC_PATH}" -instr-profile "${PROFDATA}" > coverage.lcov
           else
             echo "Could not find test binary or profdata for coverage report"
