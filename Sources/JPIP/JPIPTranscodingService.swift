@@ -27,7 +27,6 @@ import J2KCodec
 /// )
 /// ```
 public struct JPIPTranscodingService: Sendable {
-
     /// The underlying transcoder.
     private let transcoder: J2KTranscoder
 

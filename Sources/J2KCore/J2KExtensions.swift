@@ -22,7 +22,7 @@ extension Data {
             return UInt16(ptr[offset]) << 8 | UInt16(ptr[offset + 1])
         }
     }
-    
+
     /// Reads a big-endian UInt32 from the data at the specified offset.
     ///
     /// - Parameter offset: The byte offset to read from.
@@ -38,7 +38,7 @@ extension Data {
                    UInt32(ptr[offset + 3])
         }
     }
-    
+
     /// Appends a big-endian UInt16 to the data.
     ///
     /// - Parameter value: The value to append.
@@ -46,7 +46,7 @@ extension Data {
         self.append(UInt8(value >> 8))
         self.append(UInt8(value & 0xFF))
     }
-    
+
     /// Appends a big-endian UInt32 to the data.
     ///
     /// - Parameter value: The value to append.
@@ -69,7 +69,7 @@ extension Array where Element == Int {
         let sum = self.reduce(0, +)
         return Double(sum) / Double(count)
     }
-    
+
     /// Calculates the variance of the array elements.
     ///
     /// - Returns: The variance value.
@@ -79,7 +79,7 @@ extension Array where Element == Int {
         let squaredDiffs = self.map { Double($0) - m }.map { $0 * $0 }
         return squaredDiffs.reduce(0, +) / Double(count)
     }
-    
+
     /// Calculates the standard deviation of the array elements.
     ///
     /// - Returns: The standard deviation value.
@@ -96,7 +96,7 @@ extension Array where Element == Double {
         guard !isEmpty else { return 0 }
         return self.reduce(0, +) / Double(count)
     }
-    
+
     /// Calculates the variance of the array elements.
     ///
     /// - Returns: The variance value.
@@ -106,14 +106,14 @@ extension Array where Element == Double {
         let squaredDiffs = self.map { $0 - m }.map { $0 * $0 }
         return squaredDiffs.reduce(0, +) / Double(count)
     }
-    
+
     /// Calculates the standard deviation of the array elements.
     ///
     /// - Returns: The standard deviation value.
     public var standardDeviation: Double {
         return variance.squareRoot()
     }
-    
+
     /// Normalizes the array values to the range [0, 1].
     ///
     /// - Returns: A new array with normalized values.

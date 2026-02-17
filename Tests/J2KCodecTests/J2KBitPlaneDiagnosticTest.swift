@@ -7,25 +7,24 @@ import XCTest
 /// This test creates minimal reproducible cases with detailed logging to identify
 /// the exact point where encoder and decoder diverge.
 final class J2KBitPlaneDiagnosticTest: XCTestCase {
-    
     /// Test with the smallest possible block that might show the issue
     func testMinimalBlock8x8() throws {
         print("\n=== Testing 8x8 Minimal Block ===")
         try runDiagnosticTest(size: 8, pattern: .dense2048)
     }
-    
+
     /// Test 16x16 block
     func testMinimalBlock16x16() throws {
         print("\n=== Testing 16x16 Block ===")
         try runDiagnosticTest(size: 16, pattern: .dense2048)
     }
-    
+
     /// Test 32x32 block (previously known issue, fixed in v1.1.1)
     func testMinimalBlock32x32() throws {
         print("\n=== Testing 32x32 Block ===")
         try runDiagnosticTest(size: 32, pattern: .dense2048)
     }
-    
+
     /// Test 64x64 block (pre-existing MQ coder issue at 64x64 scale with dense data)
     ///
     /// Note: 64x64 blocks with dense, high-magnitude data have a pre-existing
@@ -42,11 +41,11 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
     func testMinimalBlock64x64() throws {
         throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - requires ISO standard deep-dive")
     }
-    
+
     /// Test various patterns to identify which triggers the bug
     func testVariousPatterns32x32() throws {
         print("\n=== Testing 32x32 with Various Patterns ===")
-        
+
         for pattern in CoefficientPattern.allCases {
             print("\nPattern: \(pattern)")
             do {
@@ -56,9 +55,9 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             }
         }
     }
-    
+
     // MARK: - Helper Types
-    
+
     enum CoefficientPattern: String, CaseIterable {
         case dense2048 = "Dense (i*17 % 2048)"
         case sparse1999 = "Sparse (i*13 % 2000)"
@@ -67,7 +66,7 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
         case powerOfTwo = "Power of 2 (1 << (i % 11))"
         case constant = "Constant (1024)"
         case zeros = "All zeros"
-        
+
         func generate(count: Int) -> [Int32] {
             switch self {
             case .dense2048:
@@ -97,9 +96,9 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             }
         }
     }
-    
+
     // MARK: - Core Test Logic
-    
+
     func runDiagnosticTest(
         size: Int,
         pattern: CoefficientPattern,
@@ -107,19 +106,19 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
     ) throws {
         let bitDepth = 12
         let options = CodingOptions.fastEncoding
-        
+
         let encoder = CodeBlockEncoder()
         let decoder = CodeBlockDecoder()
-        
+
         // Generate test pattern
         let original = pattern.generate(count: size * size)
-        
+
         print("Block size: \(size)x\(size)")
         print("Pattern: \(pattern.rawValue)")
         print("Coefficient count: \(original.count)")
         print("Non-zero coefficients: \(original.filter { $0 != 0 }.count)")
         print("Max magnitude: \(original.map { abs($0) }.max() ?? 0)")
-        
+
         // Encode
         let startEncode = Date()
         let codeBlock = try encoder.encode(
@@ -131,11 +130,11 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             options: options
         )
         let encodeTime = Date().timeIntervalSince(startEncode)
-        
+
         print("Encoded data size: \(codeBlock.data.count) bytes")
         print("Encode time: \(String(format: "%.3f", encodeTime * 1000))ms")
         print("Number of passes: \(codeBlock.passeCount)")
-        
+
         // Decode
         let startDecode = Date()
         let decoded = try decoder.decode(
@@ -144,26 +143,26 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             options: options
         )
         let decodeTime = Date().timeIntervalSince(startDecode)
-        
+
         print("Decode time: \(String(format: "%.3f", decodeTime * 1000))ms")
-        
+
         // Analyze differences
         let analysis = analyzeDifferences(original: original, decoded: decoded, size: size)
-        
+
         print("Mismatches: \(analysis.mismatchCount) out of \(original.count) (\(analysis.mismatchPercentage)%)")
-        
+
         if analysis.mismatchCount > 0 {
             print("First mismatch at [\(analysis.firstMismatch!.row),\(analysis.firstMismatch!.col)]:")
             print("  Expected: \(analysis.firstMismatch!.expected)")
             print("  Got:      \(analysis.firstMismatch!.decoded)")
             print("  Diff:     \(analysis.firstMismatch!.diff)")
-            
+
             // Show distribution of errors
             print("\nError distribution:")
             for (magnitude, count) in analysis.errorDistribution.sorted(by: { $0.key < $1.key }).prefix(10) {
                 print("  Magnitude \(magnitude): \(count) errors")
             }
-            
+
             // Show spatial distribution (first/last errors)
             if let last = analysis.lastMismatch {
                 print("\nLast mismatch at [\(last.row),\(last.col)]:")
@@ -171,23 +170,23 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
                 print("  Got:      \(last.decoded)")
             }
         }
-        
+
         // Assert if requested
         if assertOnFailure {
             XCTAssertEqual(analysis.mismatchCount, 0,
                           "Block \(size)x\(size) with pattern '\(pattern.rawValue)' should decode perfectly")
         }
     }
-    
+
     // MARK: - Analysis Helpers
-    
+
     struct DifferenceAnalysis {
         let mismatchCount: Int
         let mismatchPercentage: String
         let firstMismatch: Mismatch?
         let lastMismatch: Mismatch?
         let errorDistribution: [Int32: Int]  // magnitude -> count
-        
+
         struct Mismatch {
             let index: Int
             let row: Int
@@ -197,7 +196,7 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             let diff: Int32
         }
     }
-    
+
     func analyzeDifferences(
         original: [Int32],
         decoded: [Int32],
@@ -207,16 +206,16 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
         var firstMismatch: DifferenceAnalysis.Mismatch?
         var lastMismatch: DifferenceAnalysis.Mismatch?
         var errorDistribution: [Int32: Int] = [:]
-        
+
         for i in 0..<original.count {
             if decoded[i] != original[i] {
                 mismatchCount += 1
-                
+
                 let row = i / size
                 let col = i % size
                 let diff = decoded[i] - original[i]
                 let magnitude = abs(diff)
-                
+
                 let mismatch = DifferenceAnalysis.Mismatch(
                     index: i,
                     row: row,
@@ -225,20 +224,20 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
                     decoded: decoded[i],
                     diff: diff
                 )
-                
+
                 if firstMismatch == nil {
                     firstMismatch = mismatch
                 }
                 lastMismatch = mismatch
-                
+
                 errorDistribution[magnitude, default: 0] += 1
             }
         }
-        
+
         let percentage = original.count > 0
             ? String(format: "%.2f", Double(mismatchCount) * 100.0 / Double(original.count))
             : "0.00"
-        
+
         return DifferenceAnalysis(
             mismatchCount: mismatchCount,
             mismatchPercentage: percentage,

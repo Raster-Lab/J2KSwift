@@ -9,22 +9,22 @@ import J2KCore
 public actor JPIPSession {
     /// The unique session identifier.
     public let sessionID: String
-    
+
     /// The channel ID assigned by the server.
     public private(set) var channelID: String?
-    
+
     /// The target image being accessed.
     public private(set) var target: String?
-    
+
     /// Whether the session is active.
     public private(set) var isActive: Bool
-    
+
     /// Cache model tracking what data the client has.
     private var cacheModel: JPIPCacheModel
-    
+
     /// Precinct-based cache for fine-grained data management.
     private var precinctCache: JPIPPrecinctCache
-    
+
     /// Creates a new JPIP session.
     ///
     /// - Parameter sessionID: A unique session identifier.
@@ -34,26 +34,26 @@ public actor JPIPSession {
         self.cacheModel = JPIPCacheModel()
         self.precinctCache = JPIPPrecinctCache()
     }
-    
+
     /// Sets the channel ID for this session.
     ///
     /// - Parameter channelID: The channel ID from the server.
     internal func setChannelID(_ channelID: String) {
         self.channelID = channelID
     }
-    
+
     /// Sets the target image for this session.
     ///
     /// - Parameter target: The target image identifier.
     internal func setTarget(_ target: String) {
         self.target = target
     }
-    
+
     /// Activates the session.
     internal func activate() {
         self.isActive = true
     }
-    
+
     /// Closes the session.
     ///
     /// - Throws: ``J2KError`` if closing fails.
@@ -64,14 +64,14 @@ public actor JPIPSession {
         self.cacheModel.clear()
         self.precinctCache.clear()
     }
-    
+
     /// Records that a data bin has been received.
     ///
     /// - Parameter dataBin: The data bin that was received.
     internal func recordDataBin(_ dataBin: JPIPDataBin) {
         cacheModel.addDataBin(dataBin)
     }
-    
+
     /// Checks if a data bin is already in the cache.
     ///
     /// - Parameters:
@@ -81,7 +81,7 @@ public actor JPIPSession {
     public func hasDataBin(binClass: JPIPDataBinClass, binID: Int) -> Bool {
         return cacheModel.hasDataBin(binClass: binClass, binID: binID)
     }
-    
+
     /// Retrieves a cached data bin.
     ///
     /// - Parameters:
@@ -91,35 +91,35 @@ public actor JPIPSession {
     public func getDataBin(binClass: JPIPDataBinClass, binID: Int) -> JPIPDataBin? {
         return cacheModel.getDataBin(binClass: binClass, binID: binID)
     }
-    
+
     /// Gets the current cache statistics.
     ///
     /// - Returns: Cache statistics including hits, misses, and size.
     public func getCacheStatistics() -> JPIPCacheModel.Statistics {
         return cacheModel.statistics
     }
-    
+
     /// Invalidates cached entries by bin class.
     ///
     /// - Parameter binClass: The bin class to invalidate.
     public func invalidateCache(binClass: JPIPDataBinClass) {
         cacheModel.invalidate(binClass: binClass)
     }
-    
+
     /// Invalidates cached entries older than a given date.
     ///
     /// - Parameter date: Entries older than this date will be removed.
     public func invalidateCache(olderThan date: Date) {
         cacheModel.invalidate(olderThan: date)
     }
-    
+
     /// Adds a precinct to the cache.
     ///
     /// - Parameter precinctData: The precinct data to cache.
     public func addPrecinct(_ precinctData: JPIPPrecinctData) {
         precinctCache.addPrecinct(precinctData)
     }
-    
+
     /// Retrieves a cached precinct.
     ///
     /// - Parameter precinctID: The precinct identifier.
@@ -127,7 +127,7 @@ public actor JPIPSession {
     public func getPrecinct(_ precinctID: JPIPPrecinctID) -> JPIPPrecinctData? {
         return precinctCache.getPrecinct(precinctID)
     }
-    
+
     /// Checks if a precinct is in the cache.
     ///
     /// - Parameter precinctID: The precinct identifier.
@@ -135,14 +135,14 @@ public actor JPIPSession {
     public func hasPrecinct(_ precinctID: JPIPPrecinctID) -> Bool {
         return precinctCache.hasPrecinct(precinctID)
     }
-    
+
     /// Gets precinct cache statistics.
     ///
     /// - Returns: Precinct cache statistics.
     public func getPrecinctStatistics() -> JPIPPrecinctCache.Statistics {
         return precinctCache.statistics
     }
-    
+
     /// Merges partial precinct data with existing cached data.
     ///
     /// - Parameters:
@@ -159,14 +159,14 @@ public actor JPIPSession {
     ) -> JPIPPrecinctData {
         return precinctCache.mergePrecinct(precinctID, data: data, layers: layers, isComplete: isComplete)
     }
-    
+
     /// Invalidates precincts for a specific tile.
     ///
     /// - Parameter tile: The tile index to invalidate.
     public func invalidatePrecincts(tile: Int) {
         precinctCache.invalidate(tile: tile)
     }
-    
+
     /// Invalidates precincts for a specific resolution level.
     ///
     /// - Parameter resolution: The resolution level to invalidate.
@@ -187,16 +187,16 @@ public struct JPIPCacheModel: Sendable {
     struct CacheEntry: Sendable {
         /// The cached data bin.
         let dataBin: JPIPDataBin
-        
+
         /// Timestamp when the entry was added or last accessed.
         let timestamp: Date
-        
+
         /// Number of times this entry has been accessed.
         var accessCount: Int
-        
+
         /// Size of the data in bytes.
         let size: Int
-        
+
         /// Creates a new cache entry.
         init(dataBin: JPIPDataBin, timestamp: Date = Date(), accessCount: Int = 0) {
             self.dataBin = dataBin
@@ -205,43 +205,43 @@ public struct JPIPCacheModel: Sendable {
             self.size = dataBin.data.count
         }
     }
-    
+
     /// Cache statistics.
     public struct Statistics: Sendable {
         /// Total number of cache hits.
         public var hits: Int = 0
-        
+
         /// Total number of cache misses.
         public var misses: Int = 0
-        
+
         /// Total size of cached data in bytes.
         public var totalSize: Int = 0
-        
+
         /// Number of entries in cache.
         public var entryCount: Int = 0
-        
+
         /// Number of evictions performed.
         public var evictions: Int = 0
-        
+
         /// Cache hit rate (0.0 to 1.0).
         public var hitRate: Double {
             let total = hits + misses
             return total > 0 ? Double(hits) / Double(total) : 0.0
         }
     }
-    
+
     /// Maps bin class and ID to cached entries.
     private var cachedBins: [String: CacheEntry]
-    
+
     /// Cache statistics.
     public private(set) var statistics: Statistics
-    
+
     /// Maximum cache size in bytes (default: 100 MB).
     private let maxCacheSize: Int
-    
+
     /// Maximum number of cached entries (default: 10,000).
     private let maxEntries: Int
-    
+
     /// Creates a new cache model.
     ///
     /// - Parameters:
@@ -253,12 +253,12 @@ public struct JPIPCacheModel: Sendable {
         self.maxCacheSize = maxCacheSize
         self.maxEntries = maxEntries
     }
-    
+
     /// Creates a cache key for a data bin.
     private func cacheKey(binClass: JPIPDataBinClass, binID: Int) -> String {
         return "\(binClass.rawValue):\(binID)"
     }
-    
+
     /// Adds a data bin to the cache.
     ///
     /// If the cache is full, performs LRU eviction before adding.
@@ -267,7 +267,7 @@ public struct JPIPCacheModel: Sendable {
     mutating func addDataBin(_ dataBin: JPIPDataBin) {
         let key = cacheKey(binClass: dataBin.binClass, binID: dataBin.binID)
         let newSize = dataBin.data.count
-        
+
         // If entry exists, update it
         if var existingEntry = cachedBins[key] {
             statistics.totalSize -= existingEntry.size
@@ -280,20 +280,20 @@ public struct JPIPCacheModel: Sendable {
             statistics.totalSize += newSize
             return
         }
-        
+
         // Check if we need to evict entries
-        while (statistics.totalSize + newSize > maxCacheSize || 
+        while (statistics.totalSize + newSize > maxCacheSize ||
                statistics.entryCount >= maxEntries) && !cachedBins.isEmpty {
             evictLRU()
         }
-        
+
         // Add new entry
         let entry = CacheEntry(dataBin: dataBin)
         cachedBins[key] = entry
         statistics.totalSize += newSize
         statistics.entryCount += 1
     }
-    
+
     /// Retrieves a data bin from the cache.
     ///
     /// Updates access statistics on hit.
@@ -304,7 +304,7 @@ public struct JPIPCacheModel: Sendable {
     /// - Returns: The cached data bin, or nil if not found.
     mutating func getDataBin(binClass: JPIPDataBinClass, binID: Int) -> JPIPDataBin? {
         let key = cacheKey(binClass: binClass, binID: binID)
-        
+
         if var entry = cachedBins[key] {
             statistics.hits += 1
             entry.accessCount += 1
@@ -315,7 +315,7 @@ public struct JPIPCacheModel: Sendable {
             return nil
         }
     }
-    
+
     /// Checks if a data bin is in the cache.
     ///
     /// Does not update access statistics.
@@ -328,20 +328,20 @@ public struct JPIPCacheModel: Sendable {
         let key = cacheKey(binClass: binClass, binID: binID)
         return cachedBins[key] != nil
     }
-    
+
     /// Evicts the least recently used entry from the cache.
     private mutating func evictLRU() {
         guard let oldestKey = cachedBins.min(by: { $0.value.timestamp < $1.value.timestamp })?.key else {
             return
         }
-        
+
         if let entry = cachedBins.removeValue(forKey: oldestKey) {
             statistics.totalSize -= entry.size
             statistics.entryCount -= 1
             statistics.evictions += 1
         }
     }
-    
+
     /// Invalidates cache entries by bin class.
     ///
     /// - Parameter binClass: The bin class to invalidate.
@@ -349,7 +349,7 @@ public struct JPIPCacheModel: Sendable {
         let keysToRemove = cachedBins.keys.filter { key in
             key.hasPrefix("\(binClass.rawValue):")
         }
-        
+
         for key in keysToRemove {
             if let entry = cachedBins.removeValue(forKey: key) {
                 statistics.totalSize -= entry.size
@@ -357,13 +357,13 @@ public struct JPIPCacheModel: Sendable {
             }
         }
     }
-    
+
     /// Invalidates cache entries older than a given date.
     ///
     /// - Parameter date: Entries older than this date will be removed.
     mutating func invalidate(olderThan date: Date) {
         let keysToRemove = cachedBins.filter { $0.value.timestamp < date }.map { $0.key }
-        
+
         for key in keysToRemove {
             if let entry = cachedBins.removeValue(forKey: key) {
                 statistics.totalSize -= entry.size
@@ -371,7 +371,7 @@ public struct JPIPCacheModel: Sendable {
             }
         }
     }
-    
+
     /// Clears all cached bins.
     mutating func clear() {
         cachedBins.removeAll()

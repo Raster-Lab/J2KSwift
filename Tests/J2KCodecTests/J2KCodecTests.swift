@@ -11,7 +11,7 @@ final class J2KCodecTests: XCTestCase {
         XCTAssertNotNil(encoder)
         XCTAssertEqual(encoder.configuration.quality, 0.9, accuracy: 0.001)
     }
-    
+
     /// Tests that the encoder can be created with a custom configuration.
     func testEncoderWithCustomConfiguration() throws {
         let config = J2KConfiguration(quality: 0.7, lossless: false)
@@ -19,7 +19,7 @@ final class J2KCodecTests: XCTestCase {
         XCTAssertEqual(encoder.configuration.quality, 0.7, accuracy: 0.001)
         XCTAssertFalse(encoder.configuration.lossless)
     }
-    
+
     /// Tests that the decoder can be instantiated.
     func testDecoderInstantiation() throws {
         let decoder = J2KDecoder()

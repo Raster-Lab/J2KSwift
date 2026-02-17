@@ -38,34 +38,34 @@ import Foundation
 public struct J2KImage: Sendable {
     /// The width of the image in pixels.
     public let width: Int
-    
+
     /// The height of the image in pixels.
     public let height: Int
-    
+
     /// The image components (color channels).
     public let components: [J2KComponent]
-    
+
     /// The horizontal offset of the image reference grid origin.
     public let offsetX: Int
-    
+
     /// The vertical offset of the image reference grid origin.
     public let offsetY: Int
-    
+
     /// The width of a tile in pixels (0 means no tiling).
     public let tileWidth: Int
-    
+
     /// The height of a tile in pixels (0 means no tiling).
     public let tileHeight: Int
-    
+
     /// The horizontal offset of the first tile.
     public let tileOffsetX: Int
-    
+
     /// The vertical offset of the first tile.
     public let tileOffsetY: Int
-    
+
     /// The color space of the image.
     public let colorSpace: J2KColorSpace
-    
+
     /// Creates a new J2KImage with the specified parameters.
     ///
     /// - Parameters:
@@ -102,7 +102,7 @@ public struct J2KImage: Sendable {
         self.tileOffsetY = tileOffsetY
         self.colorSpace = colorSpace
     }
-    
+
     /// Convenience initializer for simple images without tiling.
     ///
     /// - Parameters:
@@ -117,7 +117,7 @@ public struct J2KImage: Sendable {
         let validHeight = max(1, height) // At least 1 pixel high
         let validComponents = max(1, components) // At least 1 component
         let validBitDepth = max(1, min(38, bitDepth)) // Between 1 and 38 bits
-        
+
         let imageComponents = (0..<validComponents).map { index in
             J2KComponent(
                 index: index,
@@ -127,53 +127,53 @@ public struct J2KImage: Sendable {
                 height: validHeight
             )
         }
-        
+
         self.init(
             width: validWidth,
             height: validHeight,
             components: imageComponents
         )
     }
-    
+
     /// Returns the number of tiles in the horizontal direction.
     public var tilesX: Int {
         guard tileWidth > 0 else { return 1 }
         return (width + tileWidth - 1) / tileWidth
     }
-    
+
     /// Returns the number of tiles in the vertical direction.
     public var tilesY: Int {
         guard tileHeight > 0 else { return 1 }
         return (height + tileHeight - 1) / tileHeight
     }
-    
+
     /// Returns the total number of tiles in the image.
     public var tileCount: Int {
         return tilesX * tilesY
     }
-    
+
     // MARK: - Convenience Properties
-    
+
     /// Returns true if the image uses tiling.
     public var isTiled: Bool {
         return tileWidth > 0 && tileHeight > 0
     }
-    
+
     /// Returns the total number of pixels in the image.
     public var pixelCount: Int {
         return width * height
     }
-    
+
     /// Returns the number of components in the image.
     public var componentCount: Int {
         return components.count
     }
-    
+
     /// Returns true if the image is grayscale (single component).
     public var isGrayscale: Bool {
         return components.count == 1
     }
-    
+
     /// Returns true if the image has an alpha channel.
     ///
     /// An alpha channel is assumed to be present if there are 2 components (grayscale + alpha)
@@ -181,15 +181,15 @@ public struct J2KImage: Sendable {
     public var hasAlpha: Bool {
         return components.count == 2 || components.count == 4
     }
-    
+
     /// Returns the aspect ratio of the image (width / height).
     public var aspectRatio: Double {
         guard height > 0 else { return 0 }
         return Double(width) / Double(height)
     }
-    
+
     // MARK: - Validation Methods
-    
+
     /// Validates that the image has valid dimensions and components.
     ///
     /// - Throws: ``J2KError/invalidDimensions(_:)`` if dimensions are invalid.
@@ -198,17 +198,17 @@ public struct J2KImage: Sendable {
         guard width > 0 && height > 0 else {
             throw J2KError.invalidDimensions("Image dimensions must be positive: \(width)x\(height)")
         }
-        
+
         guard !components.isEmpty else {
             throw J2KError.invalidComponentConfiguration("Image must have at least one component")
         }
-        
+
         for component in components {
             guard component.bitDepth >= 1 && component.bitDepth <= 38 else {
                 throw J2KError.invalidBitDepth("Component \(component.index) has invalid bit depth: \(component.bitDepth)")
             }
         }
-        
+
         if isTiled {
             guard tileWidth > 0 && tileHeight > 0 else {
                 throw J2KError.invalidTileConfiguration("Tile dimensions must be positive if tiling is enabled")
@@ -224,28 +224,28 @@ public struct J2KImage: Sendable {
 public struct J2KComponent: Sendable {
     /// The index of this component (0-based).
     public let index: Int
-    
+
     /// The bit depth of this component (1-38 bits).
     public let bitDepth: Int
-    
+
     /// Whether this component uses signed values.
     public let signed: Bool
-    
+
     /// The width of this component in pixels.
     public let width: Int
-    
+
     /// The height of this component in pixels.
     public let height: Int
-    
+
     /// The horizontal subsampling factor relative to the reference grid.
     public let subsamplingX: Int
-    
+
     /// The vertical subsampling factor relative to the reference grid.
     public let subsamplingY: Int
-    
+
     /// The pixel data for this component.
     public var data: Data
-    
+
     /// Creates a new component with the specified parameters.
     ///
     /// - Parameters:
@@ -276,24 +276,24 @@ public struct J2KComponent: Sendable {
         self.subsamplingY = subsamplingY
         self.data = data
     }
-    
+
     // MARK: - Convenience Properties
-    
+
     /// Returns the total number of pixels in the component.
     public var pixelCount: Int {
         return width * height
     }
-    
+
     /// Returns true if the component is subsampled.
     public var isSubsampled: Bool {
         return subsamplingX > 1 || subsamplingY > 1
     }
-    
+
     /// Returns the maximum value for this component's bit depth.
     public var maxValue: Int {
         return (1 << bitDepth) - 1
     }
-    
+
     /// Returns the minimum value for this component (0 for unsigned, negative for signed).
     public var minValue: Int {
         return signed ? -(1 << (bitDepth - 1)) : 0
@@ -307,28 +307,28 @@ public struct J2KComponent: Sendable {
 public struct J2KTile: Sendable {
     /// The index of this tile.
     public let index: Int
-    
+
     /// The x-coordinate of the tile in the tile grid.
     public let x: Int
-    
+
     /// The y-coordinate of the tile in the tile grid.
     public let y: Int
-    
+
     /// The width of this tile in pixels.
     public let width: Int
-    
+
     /// The height of this tile in pixels.
     public let height: Int
-    
+
     /// The x-offset of this tile in the reference grid.
     public let offsetX: Int
-    
+
     /// The y-offset of this tile in the reference grid.
     public let offsetY: Int
-    
+
     /// The tile-components (one per image component).
     public var components: [J2KTileComponent]
-    
+
     /// Creates a new tile with the specified parameters.
     ///
     /// - Parameters:
@@ -365,16 +365,16 @@ public struct J2KTile: Sendable {
 public struct J2KTileComponent: Sendable {
     /// The component index.
     public let componentIndex: Int
-    
+
     /// The width of this tile-component in pixels.
     public let width: Int
-    
+
     /// The height of this tile-component in pixels.
     public let height: Int
-    
+
     /// The precincts in this tile-component (organized by resolution level).
     public var precincts: [[J2KPrecinct]]
-    
+
     /// Creates a new tile-component.
     ///
     /// - Parameters:
@@ -402,25 +402,25 @@ public struct J2KTileComponent: Sendable {
 public struct J2KPrecinct: Sendable {
     /// The precinct index within its resolution level.
     public let index: Int
-    
+
     /// The x-coordinate of the precinct.
     public let x: Int
-    
+
     /// The y-coordinate of the precinct.
     public let y: Int
-    
+
     /// The width of this precinct in the subband coordinate system.
     public let width: Int
-    
+
     /// The height of this precinct in the subband coordinate system.
     public let height: Int
-    
+
     /// The resolution level this precinct belongs to.
     public let resolutionLevel: Int
-    
+
     /// The code-blocks in this precinct organized by subband (LL, HL, LH, HH).
     public var codeBlocks: [J2KSubband: [J2KCodeBlock]]
-    
+
     /// Creates a new precinct.
     ///
     /// - Parameters:
@@ -457,31 +457,31 @@ public struct J2KPrecinct: Sendable {
 public struct J2KCodeBlock: Sendable {
     /// The code-block index within its precinct and subband.
     public let index: Int
-    
+
     /// The x-coordinate of the code-block.
     public let x: Int
-    
+
     /// The y-coordinate of the code-block.
     public let y: Int
-    
+
     /// The width of this code-block in samples.
     public let width: Int
-    
+
     /// The height of this code-block in samples.
     public let height: Int
-    
+
     /// The subband this code-block belongs to.
     public let subband: J2KSubband
-    
+
     /// The encoded data for this code-block.
     public var data: Data
-    
+
     /// The number of coding passes applied to this code-block.
     public var passeCount: Int
-    
+
     /// The number of missing most significant bit-planes.
     public var zeroBitPlanes: Int
-    
+
     /// The byte lengths of each coding pass segment.
     ///
     /// When predictable termination is used, the encoder resets after each
@@ -492,7 +492,7 @@ public struct J2KCodeBlock: Sendable {
     /// When empty, the data is treated as a single contiguous segment
     /// (default/non-predictable termination mode).
     public var passSegmentLengths: [Int]
-    
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -535,13 +535,13 @@ public struct J2KCodeBlock: Sendable {
 public enum J2KSubband: String, Sendable, Hashable {
     /// Low-low subband (approximation).
     case ll = "LL"
-    
+
     /// High-low subband (horizontal detail).
     case hl = "HL"
-    
+
     /// Low-high subband (vertical detail).
     case lh = "LH"
-    
+
     /// High-high subband (diagonal detail).
     case hh = "HH"
 }
@@ -550,13 +550,13 @@ public enum J2KSubband: String, Sendable, Hashable {
 public enum J2KColorSpace: Sendable, Equatable {
     /// sRGB color space (standard dynamic range).
     case sRGB
-    
+
     /// Grayscale (single component).
     case grayscale
-    
+
     /// YCbCr color space.
     case yCbCr
-    
+
     /// HDR color space with extended dynamic range (e.g., Rec. 2020, Rec. 2100).
     ///
     /// HDR images typically use higher bit depths (10, 12, or 16 bits) and represent
@@ -568,19 +568,19 @@ public enum J2KColorSpace: Sendable, Equatable {
     /// - SMPTE ST 2084 (PQ): Perceptual quantization
     /// - ARIB STD-B67 (HLG): Hybrid log-gamma
     case hdr
-    
+
     /// HDR color space with linear light encoding.
     ///
     /// Linear HDR represents light intensity directly without gamma correction,
     /// suitable for physically-based rendering and compositing operations.
     case hdrLinear
-    
+
     /// ICC profile-based color space.
     case iccProfile(Data)
-    
+
     /// Unknown or unspecified color space.
     case unknown
-    
+
     /// Equatable conformance for J2KColorSpace.
     public static func == (lhs: J2KColorSpace, rhs: J2KColorSpace) -> Bool {
         switch (lhs, rhs) {
@@ -603,40 +603,40 @@ public enum J2KColorSpace: Sendable, Equatable {
 public enum J2KError: Error, Sendable {
     /// An invalid parameter was provided.
     case invalidParameter(String)
-    
+
     /// The operation is not yet implemented.
     case notImplemented(String)
-    
+
     /// An internal error occurred.
     case internalError(String)
-    
+
     /// Invalid image dimensions.
     case invalidDimensions(String)
-    
+
     /// Invalid bit depth.
     case invalidBitDepth(String)
-    
+
     /// Invalid tile configuration.
     case invalidTileConfiguration(String)
-    
+
     /// Invalid component configuration.
     case invalidComponentConfiguration(String)
-    
+
     /// Corrupted or invalid data.
     case invalidData(String)
-    
+
     /// File format error.
     case fileFormatError(String)
-    
+
     /// Unsupported feature.
     case unsupportedFeature(String)
-    
+
     /// Decoding error.
     case decodingError(String)
-    
+
     /// Encoding error.
     case encodingError(String)
-    
+
     /// I/O error.
     case ioError(String)
 }
@@ -688,10 +688,10 @@ extension J2KError: CustomStringConvertible {
 public struct J2KConfiguration: Sendable {
     /// The quality factor for encoding (0.0 to 1.0).
     public let quality: Double
-    
+
     /// Whether to use lossless compression.
     public let lossless: Bool
-    
+
     /// Creates a new configuration with the specified options.
     ///
     /// - Parameters:
@@ -701,9 +701,9 @@ public struct J2KConfiguration: Sendable {
         self.quality = quality
         self.lossless = lossless
     }
-    
+
     // MARK: - Convenience Factory Methods
-    
+
     /// Creates a configuration for lossless compression.
     ///
     /// Use this preset when you need perfect reconstruction of the original image
@@ -714,7 +714,7 @@ public struct J2KConfiguration: Sendable {
     public static var lossless: J2KConfiguration {
         return J2KConfiguration(quality: 1.0, lossless: true)
     }
-    
+
     /// Creates a configuration for high-quality lossy compression.
     ///
     /// Use this preset when you want excellent visual quality with moderate compression.
@@ -724,7 +724,7 @@ public struct J2KConfiguration: Sendable {
     public static var highQuality: J2KConfiguration {
         return J2KConfiguration(quality: 0.95, lossless: false)
     }
-    
+
     /// Creates a configuration for balanced compression.
     ///
     /// Use this preset for a good balance between file size and visual quality.
@@ -734,7 +734,7 @@ public struct J2KConfiguration: Sendable {
     public static var balanced: J2KConfiguration {
         return J2KConfiguration(quality: 0.85, lossless: false)
     }
-    
+
     /// Creates a configuration for fast compression with smaller file sizes.
     ///
     /// Use this preset when file size is more important than visual quality,
@@ -744,7 +744,7 @@ public struct J2KConfiguration: Sendable {
     public static var fast: J2KConfiguration {
         return J2KConfiguration(quality: 0.70, lossless: false)
     }
-    
+
     /// Creates a configuration for maximum compression.
     ///
     /// Use this preset when you need the smallest possible file size and can

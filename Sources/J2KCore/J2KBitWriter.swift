@@ -26,13 +26,13 @@ import Foundation
 public struct J2KBitWriter: Sendable {
     /// The buffer to write data to.
     private var buffer: [UInt8]
-    
+
     /// The current byte being built.
     private var currentByte: UInt8
-    
+
     /// The current bit position within the current byte (0-7, where 0 is MSB).
     private var bitPosition: Int
-    
+
     /// Creates a new bit writer with an optional initial capacity.
     ///
     /// - Parameter capacity: The initial capacity in bytes (default: 1024).
@@ -42,7 +42,7 @@ public struct J2KBitWriter: Sendable {
         self.currentByte = 0
         self.bitPosition = 0
     }
-    
+
     /// The data written so far.
     ///
     /// - Note: This includes any partial byte that has been started.
@@ -53,24 +53,24 @@ public struct J2KBitWriter: Sendable {
         }
         return result
     }
-    
+
     /// The number of complete bytes written.
     public var count: Int {
         buffer.count
     }
-    
+
     /// The total number of bits written.
     public var bitCount: Int {
         buffer.count * 8 + bitPosition
     }
-    
+
     /// Returns `true` if the writer is at a byte boundary.
     public var isByteAligned: Bool {
         bitPosition == 0
     }
-    
+
     // MARK: - Byte-Aligned Writing
-    
+
     /// Writes a single byte to the stream.
     ///
     /// - Parameter value: The byte to write.
@@ -85,7 +85,7 @@ public struct J2KBitWriter: Sendable {
             currentByte = value << shift
         }
     }
-    
+
     /// Writes a 16-bit big-endian unsigned integer to the stream.
     ///
     /// - Parameter value: The 16-bit value to write.
@@ -93,7 +93,7 @@ public struct J2KBitWriter: Sendable {
         writeUInt8(UInt8(value >> 8))
         writeUInt8(UInt8(value & 0xFF))
     }
-    
+
     /// Writes a 32-bit big-endian unsigned integer to the stream.
     ///
     /// - Parameter value: The 32-bit value to write.
@@ -103,7 +103,7 @@ public struct J2KBitWriter: Sendable {
         writeUInt8(UInt8((value >> 8) & 0xFF))
         writeUInt8(UInt8(value & 0xFF))
     }
-    
+
     /// Writes a 64-bit big-endian unsigned integer to the stream.
     ///
     /// - Parameter value: The 64-bit value to write.
@@ -112,7 +112,7 @@ public struct J2KBitWriter: Sendable {
             writeUInt8(UInt8((value >> (i * 8)) & 0xFF))
         }
     }
-    
+
     /// Writes a sequence of bytes to the stream.
     ///
     /// - Parameter data: The data to write.
@@ -121,7 +121,7 @@ public struct J2KBitWriter: Sendable {
             writeUInt8(byte)
         }
     }
-    
+
     /// Writes a sequence of bytes to the stream.
     ///
     /// - Parameter bytes: The bytes to write.
@@ -130,9 +130,9 @@ public struct J2KBitWriter: Sendable {
             writeUInt8(byte)
         }
     }
-    
+
     // MARK: - Bit-Level Writing
-    
+
     /// Writes a single bit to the stream.
     ///
     /// - Parameter bit: `true` to write 1, `false` to write 0.
@@ -140,7 +140,7 @@ public struct J2KBitWriter: Sendable {
         if bit {
             currentByte |= UInt8(1 << (7 - bitPosition))
         }
-        
+
         bitPosition += 1
         if bitPosition >= 8 {
             buffer.append(currentByte)
@@ -148,7 +148,7 @@ public struct J2KBitWriter: Sendable {
             bitPosition = 0
         }
     }
-    
+
     /// Writes the specified number of bits from a value.
     ///
     /// The bits are taken from the least significant bits of the value.
@@ -161,33 +161,33 @@ public struct J2KBitWriter: Sendable {
         guard count >= 1 && count <= 32 else {
             throw J2KError.invalidParameter("Bit count must be between 1 and 32, got \(count)")
         }
-        
+
         var bitsToWrite = count
-        
+
         while bitsToWrite > 0 {
             let bitsInCurrentByte = 8 - bitPosition
             let bitsThisIteration = min(bitsToWrite, bitsInCurrentByte)
-            
+
             // Extract the bits we want to write
             let bitsFromValue = UInt8((value >> (bitsToWrite - bitsThisIteration)) & ((1 << bitsThisIteration) - 1))
-            
+
             // Position the bits in the current byte
             let shift = bitsInCurrentByte - bitsThisIteration
             currentByte |= bitsFromValue << shift
-            
+
             bitPosition += bitsThisIteration
             if bitPosition >= 8 {
                 buffer.append(currentByte)
                 currentByte = 0
                 bitPosition = 0
             }
-            
+
             bitsToWrite -= bitsThisIteration
         }
     }
-    
+
     // MARK: - Alignment
-    
+
     /// Aligns the writer to the next byte boundary.
     ///
     /// If already at a byte boundary, this method does nothing.
@@ -199,7 +199,7 @@ public struct J2KBitWriter: Sendable {
             bitPosition = 0
         }
     }
-    
+
     /// Aligns the writer to the next byte boundary, filling with the specified bit.
     ///
     /// - Parameter bit: The bit value to use for padding.
@@ -208,9 +208,9 @@ public struct J2KBitWriter: Sendable {
             writeBit(bit)
         }
     }
-    
+
     // MARK: - JPEG 2000 Specific Operations
-    
+
     /// Writes a JPEG 2000 marker to the stream.
     ///
     /// - Parameter marker: The marker code (should have 0xFF prefix).
@@ -218,7 +218,7 @@ public struct J2KBitWriter: Sendable {
         alignToByte()
         writeUInt16(marker)
     }
-    
+
     /// Writes a marker segment with the specified length and data.
     ///
     /// - Parameters:
@@ -231,16 +231,16 @@ public struct J2KBitWriter: Sendable {
         writeUInt16(UInt16(segmentData.count + 2))
         writeBytes(segmentData)
     }
-    
+
     // MARK: - Buffer Management
-    
+
     /// Clears all written data.
     public mutating func clear() {
         buffer.removeAll(keepingCapacity: true)
         currentByte = 0
         bitPosition = 0
     }
-    
+
     /// Reserves capacity for the specified number of additional bytes.
     ///
     /// - Parameter additionalBytes: The number of additional bytes to reserve.

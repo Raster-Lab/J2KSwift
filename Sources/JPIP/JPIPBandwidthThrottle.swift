@@ -12,33 +12,33 @@ import J2KCore
 public actor JPIPBandwidthThrottle {
     /// Global bandwidth limit in bytes per second (nil = unlimited).
     private let globalLimit: Int?
-    
+
     /// Per-client bandwidth limit in bytes per second (nil = unlimited).
     private let perClientLimit: Int?
-    
+
     /// Global token bucket.
     private var globalBucket: TokenBucket?
-    
+
     /// Per-client token buckets.
     private var clientBuckets: [String: TokenBucket]
-    
+
     /// Bandwidth usage statistics.
     private var stats: Statistics
-    
+
     /// Token bucket for rate limiting.
     private struct TokenBucket {
         /// Maximum number of tokens (burst capacity).
         let capacity: Int
-        
+
         /// Current number of tokens.
         var tokens: Int
-        
+
         /// Tokens added per second.
         let refillRate: Int
-        
+
         /// Last refill timestamp.
         var lastRefill: Date
-        
+
         /// Creates a new token bucket.
         ///
         /// - Parameters:
@@ -50,49 +50,49 @@ public actor JPIPBandwidthThrottle {
             self.refillRate = refillRate
             self.lastRefill = Date()
         }
-        
+
         /// Refills tokens based on elapsed time.
         mutating func refill() {
             let now = Date()
             let elapsed = now.timeIntervalSince(lastRefill)
             let newTokens = Int(elapsed * Double(refillRate))
-            
+
             if newTokens > 0 {
                 tokens = min(capacity, tokens + newTokens)
                 lastRefill = now
             }
         }
-        
+
         /// Tries to consume tokens.
         ///
         /// - Parameter count: Number of tokens to consume.
         /// - Returns: True if tokens were consumed, false otherwise.
         mutating func tryConsume(_ count: Int) -> Bool {
             refill()
-            
+
             guard tokens >= count else {
                 return false
             }
-            
+
             tokens -= count
             return true
         }
     }
-    
+
     /// Bandwidth statistics.
     public struct Statistics: Sendable {
         /// Total bytes sent.
         public var totalBytesSent: Int
-        
+
         /// Total requests throttled (globally).
         public var globalThrottles: Int
-        
+
         /// Total requests throttled (per-client).
         public var clientThrottles: Int
-        
+
         /// Active clients being tracked.
         public var activeClients: Int
-        
+
         /// Creates empty statistics.
         public init() {
             self.totalBytesSent = 0
@@ -101,7 +101,7 @@ public actor JPIPBandwidthThrottle {
             self.activeClients = 0
         }
     }
-    
+
     /// Creates a new bandwidth throttle.
     ///
     /// - Parameters:
@@ -110,7 +110,7 @@ public actor JPIPBandwidthThrottle {
     public init(globalLimit: Int? = nil, perClientLimit: Int? = nil) {
         self.globalLimit = globalLimit
         self.perClientLimit = perClientLimit
-        
+
         // Create global bucket if limit is set
         if let limit = globalLimit {
             // Allow burst of 2x the per-second rate
@@ -118,11 +118,11 @@ public actor JPIPBandwidthThrottle {
         } else {
             self.globalBucket = nil
         }
-        
+
         self.clientBuckets = [:]
         self.stats = Statistics()
     }
-    
+
     /// Checks if data can be sent to a client.
     ///
     /// - Parameters:
@@ -139,26 +139,26 @@ public actor JPIPBandwidthThrottle {
             }
             globalBucket = bucket
         }
-        
+
         // Check per-client limit
         if let limit = perClientLimit {
             var bucket = clientBuckets[clientID] ?? TokenBucket(
                 capacity: limit * 2,
                 refillRate: limit
             )
-            
+
             if !bucket.tryConsume(bytes) {
                 stats.clientThrottles += 1
                 clientBuckets[clientID] = bucket
                 return false
             }
-            
+
             clientBuckets[clientID] = bucket
         }
-        
+
         return true
     }
-    
+
     /// Records that data was sent to a client.
     ///
     /// - Parameters:
@@ -166,7 +166,7 @@ public actor JPIPBandwidthThrottle {
     ///   - bytes: Number of bytes sent.
     public func recordSent(clientID: String, bytes: Int) {
         stats.totalBytesSent += bytes
-        
+
         // Ensure client bucket exists
         if perClientLimit != nil, clientBuckets[clientID] == nil {
             if let limit = perClientLimit {
@@ -176,10 +176,10 @@ public actor JPIPBandwidthThrottle {
                 )
             }
         }
-        
+
         stats.activeClients = clientBuckets.count
     }
-    
+
     /// Removes tracking for a client (e.g., when session closes).
     ///
     /// - Parameter clientID: The client identifier.
@@ -187,14 +187,14 @@ public actor JPIPBandwidthThrottle {
         clientBuckets.removeValue(forKey: clientID)
         stats.activeClients = clientBuckets.count
     }
-    
+
     /// Gets the current bandwidth statistics.
     ///
     /// - Returns: Bandwidth statistics.
     public func getStatistics() -> Statistics {
         return stats
     }
-    
+
     /// Gets the current available bandwidth for a client.
     ///
     /// - Parameter clientID: The client identifier.
@@ -203,20 +203,20 @@ public actor JPIPBandwidthThrottle {
         if let bucket = clientBuckets[clientID] {
             return bucket.tokens
         }
-        
+
         if let bucket = globalBucket {
             return bucket.tokens
         }
-        
+
         return nil // Unlimited
     }
-    
+
     /// Resets bandwidth statistics.
     public func resetStatistics() {
         stats = Statistics()
         stats.activeClients = clientBuckets.count
     }
-    
+
     /// Clears all client buckets.
     public func clearClients() {
         clientBuckets.removeAll()

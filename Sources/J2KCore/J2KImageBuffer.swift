@@ -27,31 +27,31 @@ import Foundation
 public struct J2KImageBuffer: Sendable {
     /// The underlying storage.
     private var storage: Storage
-    
+
     /// The width of the image in pixels.
     public let width: Int
-    
+
     /// The height of the image in pixels.
     public let height: Int
-    
+
     /// The bit depth per pixel.
     public let bitDepth: Int
-    
+
     /// The number of pixels in the buffer.
     public var count: Int {
         width * height
     }
-    
+
     /// The size of the buffer in bytes.
     public var sizeInBytes: Int {
         count * bytesPerPixel
     }
-    
+
     /// The number of bytes per pixel.
     private var bytesPerPixel: Int {
         (bitDepth + 7) / 8
     }
-    
+
     /// Creates a new image buffer with the specified dimensions.
     ///
     /// - Parameters:
@@ -65,7 +65,7 @@ public struct J2KImageBuffer: Sendable {
         let capacity = width * height * ((bitDepth + 7) / 8)
         self.storage = Storage(capacity: capacity)
     }
-    
+
     /// Creates a buffer from existing data.
     ///
     /// - Parameters:
@@ -79,7 +79,7 @@ public struct J2KImageBuffer: Sendable {
         self.bitDepth = bitDepth
         self.storage = Storage(data: data)
     }
-    
+
     /// Gets the value of a pixel at the specified index.
     ///
     /// - Parameter index: The pixel index (0-based).
@@ -87,7 +87,7 @@ public struct J2KImageBuffer: Sendable {
     public func getPixel(at index: Int) -> Int {
         storage.getPixel(at: index, bytesPerPixel: bytesPerPixel)
     }
-    
+
     /// Sets the value of a pixel at the specified index.
     ///
     /// - Parameters:
@@ -97,7 +97,7 @@ public struct J2KImageBuffer: Sendable {
         ensureUnique()
         storage.setPixel(at: index, value: value, bytesPerPixel: bytesPerPixel)
     }
-    
+
     /// Gets the value of a pixel at the specified coordinates.
     ///
     /// - Parameters:
@@ -108,7 +108,7 @@ public struct J2KImageBuffer: Sendable {
         let index = y * width + x
         return getPixel(at: index)
     }
-    
+
     /// Sets the value of a pixel at the specified coordinates.
     ///
     /// - Parameters:
@@ -119,7 +119,7 @@ public struct J2KImageBuffer: Sendable {
         let index = y * width + x
         setPixel(at: index, value: value)
     }
-    
+
     /// Provides read-only access to the raw buffer data.
     ///
     /// - Parameter body: A closure that receives the buffer pointer.
@@ -130,7 +130,7 @@ public struct J2KImageBuffer: Sendable {
     ) rethrows -> Result {
         try storage.withUnsafeBytes(body)
     }
-    
+
     /// Provides mutable access to the raw buffer data.
     ///
     /// - Parameter body: A closure that receives the mutable buffer pointer.
@@ -142,26 +142,26 @@ public struct J2KImageBuffer: Sendable {
         ensureUnique()
         return try storage.withUnsafeMutableBytes(body)
     }
-    
+
     /// Converts the buffer to Data.
     ///
     /// - Returns: A Data object containing the buffer's contents.
     public func toData() -> Data {
         storage.toData()
     }
-    
+
     /// Ensures the storage is uniquely referenced.
     private mutating func ensureUnique() {
         if !isKnownUniquelyReferenced(&storage) {
             storage = storage.copy()
         }
     }
-    
+
     /// Internal storage class for the buffer.
     private final class Storage: @unchecked Sendable {
         private let buffer: UnsafeMutableRawBufferPointer
         private let capacity: Int
-        
+
         init(capacity: Int) {
             self.capacity = capacity
             self.buffer = UnsafeMutableRawBufferPointer.allocate(
@@ -171,7 +171,7 @@ public struct J2KImageBuffer: Sendable {
             // Initialize to zero
             buffer.initializeMemory(as: UInt8.self, repeating: 0)
         }
-        
+
         init(data: Data) {
             self.capacity = data.count
             self.buffer = UnsafeMutableRawBufferPointer.allocate(
@@ -182,15 +182,15 @@ public struct J2KImageBuffer: Sendable {
                 buffer.copyMemory(from: srcPtr)
             }
         }
-        
+
         deinit {
             buffer.deallocate()
         }
-        
+
         func getPixel(at index: Int, bytesPerPixel: Int) -> Int {
             let offset = index * bytesPerPixel
             guard offset + bytesPerPixel <= capacity else { return 0 }
-            
+
             switch bytesPerPixel {
             case 1:
                 return Int(buffer.load(fromByteOffset: offset, as: UInt8.self))
@@ -207,11 +207,11 @@ public struct J2KImageBuffer: Sendable {
                 return value
             }
         }
-        
+
         func setPixel(at index: Int, value: Int, bytesPerPixel: Int) {
             let offset = index * bytesPerPixel
             guard offset + bytesPerPixel <= capacity else { return }
-            
+
             switch bytesPerPixel {
             case 1:
                 buffer.storeBytes(of: UInt8(value & 0xFF), toByteOffset: offset, as: UInt8.self)
@@ -227,23 +227,23 @@ public struct J2KImageBuffer: Sendable {
                 }
             }
         }
-        
+
         func withUnsafeBytes<Result>(
             _ body: (UnsafeRawBufferPointer) throws -> Result
         ) rethrows -> Result {
             try body(UnsafeRawBufferPointer(buffer))
         }
-        
+
         func withUnsafeMutableBytes<Result>(
             _ body: (UnsafeMutableRawBufferPointer) throws -> Result
         ) rethrows -> Result {
             try body(buffer)
         }
-        
+
         func toData() -> Data {
             Data(bytes: buffer.baseAddress!, count: capacity)
         }
-        
+
         func copy() -> Storage {
             let newStorage = Storage(capacity: capacity)
             newStorage.buffer.copyMemory(from: UnsafeRawBufferPointer(buffer))

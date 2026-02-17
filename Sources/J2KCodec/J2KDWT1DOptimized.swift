@@ -37,12 +37,11 @@ import J2KCore
 /// )
 /// ```
 public struct J2KDWT1DOptimizer: Sendable {
-    
     /// Creates a new DWT optimizer.
     public init() {}
-    
+
     // MARK: - Optimized Inverse Transform
-    
+
     /// Optimized inverse transform using 5/3 reversible filter.
     ///
     /// This implementation includes several optimizations:
@@ -64,11 +63,11 @@ public struct J2KDWT1DOptimizer: Sendable {
     ) throws -> [Int32] {
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
-        
+
         guard lowpassSize > 0 && highpassSize > 0 else {
             throw J2KError.invalidParameter("Lowpass and highpass subbands must be non-empty")
         }
-        
+
         // Fast path for symmetric extension (most common in JPEG 2000)
         if boundaryExtension == .symmetric {
             return try inverseTransform53Symmetric(
@@ -76,7 +75,7 @@ public struct J2KDWT1DOptimizer: Sendable {
                 highpass: highpass
             )
         }
-        
+
         // Fallback to generic implementation for other modes
         return try inverseTransform53Generic(
             lowpass: lowpass,
@@ -84,9 +83,9 @@ public struct J2KDWT1DOptimizer: Sendable {
             boundaryExtension: boundaryExtension
         )
     }
-    
+
     // MARK: - Symmetric Boundary Extension (Optimized)
-    
+
     /// Optimized inverse transform with symmetric boundary extension.
     ///
     /// This is the most common case and is heavily optimized with:
@@ -100,39 +99,39 @@ public struct J2KDWT1DOptimizer: Sendable {
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
         let n = lowpassSize + highpassSize
-        
+
         // Pre-allocate result arrays
         var even = lowpass
         var odd = [Int32](repeating: 0, count: highpassSize)
-        
+
         // Pre-compute boundary-extended values for highpass
         let highLeft = highpass.first ?? 0
         let highRight = highpass.last ?? 0
-        
+
         // Undo update step: even[n] = s[n] - floor((d[n-1] + d[n]) / 4)
         // Optimized with reduced branching
         for i in 0..<lowpassSize {
             let left: Int32
             let right: Int32
-            
+
             if i == 0 {
                 // Symmetric extension: d[-1] mirrors to d[0]
                 left = highLeft
             } else {
                 left = highpass[i - 1]
             }
-            
+
             if i < highpassSize {
                 right = highpass[i]
             } else {
                 // Symmetric extension: d[n] mirrors to d[n-1]
                 right = highRight
             }
-            
+
             // Use bit shift for division by 4 (floor division)
             even[i] = lowpass[i] - ((left + right + 2) >> 2)
         }
-        
+
         // Undo predict step: odd[n] = d[n] + floor((even[n] + even[n+1]) / 2)
         // Optimized with bounds pre-checking
         if highpassSize > 0 {
@@ -141,18 +140,18 @@ public struct J2KDWT1DOptimizer: Sendable {
                 let right = even[i + 1]
                 odd[i] = highpass[i] + ((left + right) >> 1)
             }
-            
+
             // Handle last odd sample with boundary extension
             let lastIdx = highpassSize - 1
             let left = even[lastIdx]
             let right = even[min(lastIdx + 1, lowpassSize - 1)]  // Symmetric extension
             odd[lastIdx] = highpass[lastIdx] + ((left + right) >> 1)
         }
-        
+
         // Merge even and odd samples
         // Optimized interleaving with explicit loop unrolling hint
         var result = [Int32](repeating: 0, count: n)
-        
+
         // Process in pairs for better instruction-level parallelism
         let pairs = min(lowpassSize, highpassSize)
         for i in 0..<pairs {
@@ -161,17 +160,17 @@ public struct J2KDWT1DOptimizer: Sendable {
             result[evenIdx] = even[i]
             result[oddIdx] = odd[i]
         }
-        
+
         // Handle remaining even sample if odd length
         if lowpassSize > highpassSize {
             result[n - 1] = even[lowpassSize - 1]
         }
-        
+
         return result
     }
-    
+
     // MARK: - Generic Implementation (Fallback)
-    
+
     /// Generic inverse transform for non-symmetric boundary extensions.
     private func inverseTransform53Generic(
         lowpass: [Int32],
@@ -192,12 +191,11 @@ public struct J2KDWT1DOptimizer: Sendable {
 
 /// Optimized 2D DWT operations for lossless decoding.
 public struct J2KDWT2DOptimizer: Sendable {
-    
     private let optimizer1D = J2KDWT1DOptimizer()
-    
+
     /// Creates a new 2D DWT optimizer.
     public init() {}
-    
+
     /// Optimized 2D inverse transform for lossless decoding.
     ///
     /// This implementation optimizes column processing by:
@@ -224,7 +222,7 @@ public struct J2KDWT2DOptimizer: Sendable {
         guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
             throw J2KError.invalidParameter("All subbands must be non-empty")
         }
-        
+
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
@@ -233,46 +231,46 @@ public struct J2KDWT2DOptimizer: Sendable {
         let hlWidth = hl[0].count
         let hhHeight = hh.count
         let hhWidth = hh[0].count
-        
+
         // Validate subband dimensions
         guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
             )
         }
-        
+
         guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
             )
         }
-        
+
         // For lossless, use optimized 1D transforms
         // Apply inverse 1D DWT to columns first
         var columnInversed = [[Int32]]()
-        
+
         // Process low-frequency columns (LL + HL -> L)
         for col in 0..<llWidth {
             var llColumn = [Int32]()
             var hlColumn = [Int32]()
-            
+
             llColumn.reserveCapacity(llHeight)
             hlColumn.reserveCapacity(hlHeight)
-            
+
             for row in 0..<llHeight {
                 llColumn.append(ll[row][col])
             }
             for row in 0..<hlHeight {
                 hlColumn.append(hl[row][col])
             }
-            
+
             // Use optimized transform
             let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
                 lowpass: llColumn,
                 highpass: hlColumn,
                 boundaryExtension: boundaryExtension
             )
-            
+
             if columnInversed.isEmpty {
                 columnInversed = Array(repeating: [Int32](), count: reconstructedColumn.count)
             }
@@ -280,64 +278,64 @@ public struct J2KDWT2DOptimizer: Sendable {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Process high-frequency columns (LH + HH -> H)
         for col in 0..<lhWidth {
             var lhColumn = [Int32]()
             var hhColumn = [Int32]()
-            
+
             lhColumn.reserveCapacity(lhHeight)
             hhColumn.reserveCapacity(hhHeight)
-            
+
             for row in 0..<lhHeight {
                 lhColumn.append(lh[row][col])
             }
             for row in 0..<hhHeight {
                 hhColumn.append(hh[row][col])
             }
-            
+
             // Use optimized transform
             let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
                 lowpass: lhColumn,
                 highpass: hhColumn,
                 boundaryExtension: boundaryExtension
             )
-            
+
             for i in 0..<reconstructedColumn.count {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Apply inverse 1D DWT to rows
         var result = [[Int32]]()
         result.reserveCapacity(columnInversed.count)
-        
+
         for row in columnInversed {
             let lowpassSize = (row.count + 1) / 2
             let highpassSize = row.count / 2
-            
+
             var lowpass = [Int32]()
             var highpass = [Int32]()
             lowpass.reserveCapacity(lowpassSize)
             highpass.reserveCapacity(highpassSize)
-            
+
             for i in 0..<lowpassSize {
                 lowpass.append(row[i])
             }
             for i in lowpassSize..<row.count {
                 highpass.append(row[i])
             }
-            
+
             // Use optimized transform
             let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
                 lowpass: lowpass,
                 highpass: highpass,
                 boundaryExtension: boundaryExtension
             )
-            
+
             result.append(reconstructedRow)
         }
-        
+
         return result
     }
 }

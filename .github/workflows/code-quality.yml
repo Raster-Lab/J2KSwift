@@ -17,7 +17,7 @@ permissions:
 jobs:
   swiftlint:
     name: SwiftLint
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout code
@@ -43,14 +43,14 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v3
+        uses: SwiftyLab/setup-swift@latest
         with:
           swift-version: '6.2'
 
@@ -67,14 +67,14 @@ jobs:
 
   code-coverage:
     name: Code Coverage
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v3
+        uses: SwiftyLab/setup-swift@latest
         with:
           swift-version: '6.2'
 
@@ -111,14 +111,14 @@ jobs:
 
   validation:
     name: Package Validation
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Swift
-        uses: swift-actions/setup-swift@v3
+        uses: SwiftyLab/setup-swift@latest
         with:
           swift-version: '6.2'
 

@@ -4,7 +4,6 @@ import XCTest
 
 /// Tests for COD and COC marker generation and parsing with HTJ2K support.
 final class J2KCODCOCMarkerTests: XCTestCase {
-
     // MARK: - COD Marker Tests
 
     func testCODMarkerLegacyMode() throws {
@@ -17,23 +16,23 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 5,
             useHTJ2K: false
         )
-        
+
         // Act: Create encoder pipeline and encode a test image
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Assert: Verify the codestream contains COD marker without HT bit
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
         XCTAssertFalse(codMarkerData.isEmpty, "COD marker should be present")
-        
+
         // COD marker structure:
         // Scod (1 byte) + progression (1 byte) + layers (2 bytes) + MCT (1 byte)
         // + levels (1 byte) + cb_width_exp (1 byte) + cb_height_exp (1 byte)
         // + cb_style (1 byte) + transform (1 byte)
         // Total minimum: 10 bytes
         XCTAssertGreaterThanOrEqual(codMarkerData.count, 10, "COD marker data should have at least 10 bytes")
-        
+
         if codMarkerData.count >= 9 {
             let codeBlockStyle = codMarkerData[8] // 8th byte (0-indexed) is code-block style
             XCTAssertEqual(codeBlockStyle & 0x40, 0, "HT bit (bit 6) should be 0 for legacy mode")
@@ -50,17 +49,17 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 5,
             useHTJ2K: true
         )
-        
+
         // Act: Create encoder pipeline and encode a test image
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Assert: Verify the codestream contains COD marker with HT bit set
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
         XCTAssertFalse(codMarkerData.isEmpty, "COD marker should be present")
         XCTAssertGreaterThanOrEqual(codMarkerData.count, 10, "COD marker data should have at least 10 bytes")
-        
+
         if codMarkerData.count >= 9 {
             let codeBlockStyle = codMarkerData[8]
             XCTAssertEqual(codeBlockStyle & 0x40, 0x40, "HT bit (bit 6) should be 1 for HTJ2K mode")
@@ -77,17 +76,17 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 1,
             useHTJ2K: false
         )
-        
+
         // Act: Encode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Assert: Verify wavelet transform type is reversible
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
         XCTAssertFalse(codMarkerData.isEmpty, "COD marker should be present")
         XCTAssertGreaterThanOrEqual(codMarkerData.count, 10, "COD marker data should have at least 10 bytes")
-        
+
         if codMarkerData.count >= 10 {
             let transformType = codMarkerData[9] // 9th byte is transform type
             XCTAssertEqual(transformType, 1, "Lossless mode should use reversible 5/3 transform (type = 1)")
@@ -104,20 +103,20 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 1,
             useHTJ2K: true
         )
-        
+
         // Act: Encode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Assert: Verify both HT bit and reversible transform
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
         XCTAssertGreaterThanOrEqual(codMarkerData.count, 10, "COD marker data should have at least 10 bytes")
-        
+
         if codMarkerData.count >= 10 {
             let codeBlockStyle = codMarkerData[8]
             XCTAssertEqual(codeBlockStyle & 0x40, 0x40, "HT bit should be set")
-            
+
             let transformType = codMarkerData[9]
             XCTAssertEqual(transformType, 1, "Lossless should use reversible transform")
         }
@@ -131,11 +130,11 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Act: Parse the codestream
         let decoderPipeline = DecoderPipeline()
         let decodedImage = try decoderPipeline.decode(encodedData)
-        
+
         // Assert: Image decoded successfully (parser handled legacy mode)
         XCTAssertEqual(decodedImage.width, 64)
         XCTAssertEqual(decodedImage.height, 64)
@@ -147,10 +146,10 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         // Act: Parse the codestream
         let decoderPipeline = DecoderPipeline()
-        
+
         // Note: Full decoding with HTJ2K block coder may not be implemented yet,
         // so we just verify the marker parsing doesn't fail
         do {
@@ -171,14 +170,14 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // The COC marker is optional and written per-component
         // For now, we test that the writeCOCMarker function is available
         // In a real scenario, it would be called for component-specific parameters
-        
+
         let config = J2KEncodingConfiguration(
             decompositionLevels: 5,
             codeBlockSize: (32, 32),
             useHTJ2K: false
         )
         let pipeline = EncoderPipeline(config: config)
-        
+
         // Verify the encoder pipeline has the COC marker writer available
         // (This is a structural test - the method exists and compiles)
         XCTAssertNotNil(pipeline)
@@ -193,7 +192,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         )
         let pipeline = EncoderPipeline(config: config)
         XCTAssertNotNil(pipeline)
-        
+
         // In the future, when COC markers are written, verify they contain HT bit
     }
 
@@ -209,15 +208,15 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 3,
             useHTJ2K: false
         )
-        
+
         // Act: Encode and decode with single component
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 128, height: 128, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         let decoderPipeline = DecoderPipeline()
         let decodedImage = try decoderPipeline.decode(encodedData)
-        
+
         // Assert: Image properties preserved
         XCTAssertEqual(decodedImage.width, image.width)
         XCTAssertEqual(decodedImage.height, image.height)
@@ -234,19 +233,19 @@ final class J2KCODCOCMarkerTests: XCTestCase {
             qualityLayers: 1,
             useHTJ2K: false
         )
-        
+
         // Act: Encode and decode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
         let encodedData = try pipeline.encode(image)
-        
+
         let decoderPipeline = DecoderPipeline()
         let decodedImage = try decoderPipeline.decode(encodedData)
-        
+
         // Assert: Lossless reconstruction
         XCTAssertEqual(decodedImage.width, image.width)
         XCTAssertEqual(decodedImage.height, image.height)
-        
+
         // For lossless, pixel values should match exactly (within acceptable tolerance for rounding)
         // This is a basic check - full pixel-by-pixel comparison would be more thorough
         XCTAssertEqual(decodedImage.componentCount, image.componentCount)
@@ -261,14 +260,14 @@ final class J2KCODCOCMarkerTests: XCTestCase {
 
     private func extractMarkerData(from data: Data, marker: J2KMarker) throws -> Data {
         var reader = J2KBitReader(data: data)
-        
+
         // Skip SOC marker
         _ = try reader.readMarker()
-        
+
         // Search for the requested marker
         while reader.position < data.count - 2 {
             let markerValue = try reader.readMarker()
-            
+
             if markerValue == marker.rawValue {
                 // Found the marker, read its segment length
                 let length = Int(try reader.readUInt16())
@@ -281,7 +280,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
                 try reader.skip(length - 2)
             }
         }
-        
+
         return Data() // Marker not found
     }
 }

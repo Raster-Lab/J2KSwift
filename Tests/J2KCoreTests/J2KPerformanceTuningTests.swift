@@ -4,7 +4,6 @@ import Foundation
 
 /// Tests for the pipeline profiler, optimized allocator, thread pool, and zero-copy buffer.
 final class J2KPerformanceTuningTests: XCTestCase {
-
     // MARK: - J2KPipelineProfiler Tests
 
     func testProfilerMeasureRecordsTiming() throws {

@@ -49,38 +49,38 @@ public struct J2KVisualWeightingConfiguration: Sendable, Equatable {
     ///
     /// Default is 4.0 cycles/degree based on empirical studies.
     public let peakFrequency: Double
-    
+
     /// The CSF sensitivity decay rate.
     ///
     /// Controls how quickly sensitivity drops off from the peak frequency.
     /// Default is 0.4 based on the Mannos-Sakrison model.
     public let decayRate: Double
-    
+
     /// Viewing distance in centimeters.
     ///
     /// The distance from the viewer to the display. Affects the mapping
     /// from image frequencies to retinal frequencies. Default is 60 cm
     /// (typical computer monitor viewing distance).
     public let viewingDistance: Double
-    
+
     /// Display resolution in pixels per inch (PPI).
     ///
     /// Used to convert image spatial frequencies to visual angles.
     /// Default is 96 PPI (standard screen resolution).
     public let displayPPI: Double
-    
+
     /// Minimum weight to apply (prevents over-quantization).
     ///
     /// Even the least sensitive frequencies should not be completely discarded.
     /// Default is 0.1 (10% of base quantization).
     public let minimumWeight: Double
-    
+
     /// Maximum weight to apply (prevents under-quantization).
     ///
     /// Even the most sensitive frequencies should not dominate excessively.
     /// Default is 4.0 (4x base quantization).
     public let maximumWeight: Double
-    
+
     /// Creates a new visual weighting configuration.
     ///
     /// - Parameters:
@@ -105,7 +105,7 @@ public struct J2KVisualWeightingConfiguration: Sendable, Equatable {
         self.minimumWeight = minimumWeight
         self.maximumWeight = maximumWeight
     }
-    
+
     /// Default configuration with standard viewing conditions.
     public static let `default` = J2KVisualWeightingConfiguration()
 }
@@ -116,14 +116,14 @@ public struct J2KVisualWeightingConfiguration: Sendable, Equatable {
 public struct J2KVisualWeighting: Sendable {
     /// Configuration parameters for the CSF model.
     public let configuration: J2KVisualWeightingConfiguration
-    
+
     /// Creates a new visual weighting instance.
     ///
     /// - Parameter configuration: The CSF configuration parameters.
     public init(configuration: J2KVisualWeightingConfiguration = .default) {
         self.configuration = configuration
     }
-    
+
     /// Calculates the visual weight for a specific wavelet subband.
     ///
     /// The weight is derived from the CSF based on the subband's spatial frequency.
@@ -150,34 +150,34 @@ public struct J2KVisualWeighting: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         // Convert to cycles per degree using viewing geometry
         let frequencyCPD = pixelFrequencyToCyclesPerDegree(
             pixelFrequency: spatialFrequency,
             imageWidth: imageWidth,
             imageHeight: imageHeight
         )
-        
+
         // Apply CSF model to get sensitivity
         let sensitivity = contrastSensitivity(frequency: frequencyCPD)
-        
+
         // Convert sensitivity to weight (inverse relationship)
         // Higher sensitivity = LOWER weight (preserve detail, less quantization)
         // Lower sensitivity = HIGHER weight (can quantize more)
         // Normalize sensitivity to a reference value around peak
         let peakSensitivity = contrastSensitivity(frequency: configuration.peakFrequency)
         let normalizedSensitivity = sensitivity / peakSensitivity
-        
+
         // Weight is inverse of normalized sensitivity
         let rawWeight = 1.0 / max(0.1, normalizedSensitivity)
-        
+
         // Clamp to configured bounds
         return min(
             configuration.maximumWeight,
             max(configuration.minimumWeight, rawWeight)
         )
     }
-    
+
     /// Calculates weights for all subbands in a wavelet decomposition.
     ///
     /// - Parameters:
@@ -191,10 +191,10 @@ public struct J2KVisualWeighting: Sendable {
         imageHeight: Int
     ) -> [[J2KSubband: Double]] {
         var weights: [[J2KSubband: Double]] = []
-        
+
         for level in 0..<totalLevels {
             var levelWeights: [J2KSubband: Double] = [:]
-            
+
             // For the coarsest level, include LL subband
             if level == totalLevels - 1 {
                 levelWeights[.ll] = weight(
@@ -205,7 +205,7 @@ public struct J2KVisualWeighting: Sendable {
                     imageHeight: imageHeight
                 )
             }
-            
+
             // All levels have HL, LH, HH subbands
             for subband in [J2KSubband.lh, .hl, .hh] {
                 levelWeights[subband] = weight(
@@ -216,15 +216,15 @@ public struct J2KVisualWeighting: Sendable {
                     imageHeight: imageHeight
                 )
             }
-            
+
             weights.append(levelWeights)
         }
-        
+
         return weights
     }
-    
+
     // MARK: - Private Methods
-    
+
     /// Calculates the spatial frequency of a subband in cycles per pixel.
     ///
     /// Wavelet decomposition creates subbands with different frequency ranges.
@@ -244,12 +244,12 @@ public struct J2KVisualWeighting: Sendable {
         // Each decomposition level halves the frequency range
         // Level 0 (finest) represents frequencies near Nyquist (0.5 cycles/pixel)
         // Level N (coarsest) represents lowest frequencies
-        
+
         let levelFromFinest = totalLevels - decompositionLevel - 1
-        
+
         // Base frequency for this level (center of the band)
         let baseFrequency = 0.25 / pow(2.0, Double(levelFromFinest))
-        
+
         // Different subbands have different frequency characteristics
         switch subband {
         case .ll:
@@ -263,7 +263,7 @@ public struct J2KVisualWeighting: Sendable {
             return baseFrequency * 1.414  // sqrt(2)
         }
     }
-    
+
     /// Converts pixel-based frequency to cycles per degree of visual angle.
     ///
     /// This requires knowledge of the viewing geometry (distance and display size).
@@ -280,22 +280,22 @@ public struct J2KVisualWeighting: Sendable {
     ) -> Double {
         // Convert pixels to inches
         let pixelsPerInch = configuration.displayPPI
-        
+
         // Average image dimension for typical viewing
         let averageDimension = sqrt(Double(imageWidth * imageHeight))
         let imageSizeInches = averageDimension / pixelsPerInch
-        
+
         // Convert to centimeters
         let imageSizeCm = imageSizeInches * 2.54
-        
+
         // Calculate visual angle in degrees
         let visualAngleDegrees = 2.0 * atan(imageSizeCm / (2.0 * configuration.viewingDistance)) * 180.0 / .pi
-        
+
         // Cycles per pixel * pixels per degree = cycles per degree
         let pixelsPerDegree = averageDimension / visualAngleDegrees
         return pixelFrequency * pixelsPerDegree
     }
-    
+
     /// Calculates contrast sensitivity for a given spatial frequency.
     ///
     /// Uses the Mannos-Sakrison CSF model, which is suitable for wavelet-based
@@ -308,17 +308,17 @@ public struct J2KVisualWeighting: Sendable {
         // Mannos-Sakrison CSF model
         // CSF(f) = A * f * exp(-B * f)
         // where A controls the peak height and B controls the decay rate
-        
+
         let f = abs(frequency)
         let peak = configuration.peakFrequency
         let decay = configuration.decayRate
-        
+
         // Normalize frequency relative to peak
         let normalizedFreq = f / peak
-        
+
         // CSF with peak at configuration.peakFrequency
         let sensitivity = normalizedFreq * exp(1.0 - normalizedFreq / decay)
-        
+
         // Ensure sensitivity is at least a small positive value
         return max(0.01, sensitivity)
     }
@@ -356,7 +356,7 @@ extension J2KVisualWeighting {
             imageWidth: imageWidth,
             imageHeight: imageHeight
         )
-        
+
         return baseStepSize * visualWeight
     }
 }

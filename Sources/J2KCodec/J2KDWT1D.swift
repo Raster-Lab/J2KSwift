@@ -24,14 +24,14 @@ import J2KCore
 /// ```swift
 /// let signal: [Int32] = [1, 2, 3, 4, 5, 6, 7, 8]
 /// let filter = J2KDWTFilter.reversible53
-/// 
+///
 /// // Forward transform
 /// let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
 ///     signal: signal,
 ///     filter: filter,
 ///     boundaryExtension: .symmetric
 /// )
-/// 
+///
 /// // Inverse transform
 /// let reconstructed = try J2KDWT1D.inverseTransform(
 ///     lowpass: lowpass,
@@ -41,9 +41,8 @@ import J2KCore
 /// )
 /// ```
 public struct J2KDWT1D: Sendable {
-    
     // MARK: - Filter Types
-    
+
     /// Lifting step specification for custom filters.
     ///
     /// Defines a single lifting step in the wavelet transform.
@@ -51,10 +50,10 @@ public struct J2KDWT1D: Sendable {
     public struct LiftingStep: Sendable, Equatable {
         /// Coefficients for the lifting step.
         public let coefficients: [Double]
-        
+
         /// Whether this is a predict step (true) or update step (false).
         public let isPredict: Bool
-        
+
         /// Creates a lifting step.
         ///
         /// - Parameters:
@@ -65,7 +64,7 @@ public struct J2KDWT1D: Sendable {
             self.isPredict = isPredict
         }
     }
-    
+
     /// Custom filter specification for wavelet transform.
     ///
     /// Allows definition of arbitrary wavelet filters using the lifting scheme.
@@ -73,16 +72,16 @@ public struct J2KDWT1D: Sendable {
     public struct CustomFilter: Sendable, Equatable {
         /// Sequence of lifting steps to apply.
         public let steps: [LiftingStep]
-        
+
         /// Scaling factor for lowpass coefficients (K in CDF 9/7).
         public let lowpassScale: Double
-        
+
         /// Scaling factor for highpass coefficients (1/K in CDF 9/7).
         public let highpassScale: Double
-        
+
         /// Whether this filter preserves integers (reversible).
         public let isReversible: Bool
-        
+
         /// Creates a custom filter.
         ///
         /// - Parameters:
@@ -101,7 +100,7 @@ public struct J2KDWT1D: Sendable {
             self.highpassScale = highpassScale
             self.isReversible = isReversible
         }
-        
+
         /// Creates a CDF 9/7 custom filter equivalent.
         public static var cdf97: CustomFilter {
             CustomFilter(
@@ -116,7 +115,7 @@ public struct J2KDWT1D: Sendable {
                 isReversible: false
             )
         }
-        
+
         /// Creates a Le Gall 5/3 custom filter equivalent.
         public static var leGall53: CustomFilter {
             CustomFilter(
@@ -130,7 +129,7 @@ public struct J2KDWT1D: Sendable {
             )
         }
     }
-    
+
     /// Wavelet filter types supported by JPEG 2000.
     public enum Filter: Sendable {
         /// Le Gall 5/3 reversible filter for lossless compression.
@@ -138,40 +137,40 @@ public struct J2KDWT1D: Sendable {
         /// This filter uses integer arithmetic and provides perfect reconstruction.
         /// Analysis filters: LP [1/2, 1, 1/2], HP [-1/2, 1, -1/2]
         case reversible53
-        
+
         /// Cohen-Daubechies-Feauveau 9/7 irreversible filter for lossy compression.
         ///
         /// This filter uses floating-point arithmetic for better compression at the
         /// cost of not being perfectly reversible in integer domain.
         case irreversible97
-        
+
         /// Custom filter with user-defined lifting steps.
         ///
         /// Allows implementation of arbitrary wavelet filters using the lifting scheme.
         /// The filter specification includes lifting steps and optional scaling factors.
         case custom(CustomFilter)
     }
-    
+
     /// Boundary extension modes for handling signal edges.
     public enum BoundaryExtension: Sendable {
         /// Symmetric extension (mirror without repeating edge).
         ///
         /// For signal [a, b, c, d], extends as [c, b, a | a, b, c, d | d, c, b]
         case symmetric
-        
+
         /// Periodic extension (wrap around).
         ///
         /// For signal [a, b, c, d], extends as [c, d | a, b, c, d | a, b]
         case periodic
-        
+
         /// Zero padding extension.
         ///
         /// For signal [a, b, c, d], extends as [0, 0 | a, b, c, d | 0, 0]
         case zeroPadding
     }
-    
+
     // MARK: - Transform Functions
-    
+
     /// Performs 1D forward discrete wavelet transform.
     ///
     /// Decomposes the input signal into lowpass (approximation) and highpass (detail)
@@ -200,7 +199,7 @@ public struct J2KDWT1D: Sendable {
         guard signal.count >= 2 else {
             throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
         }
-        
+
         switch filter {
         case .reversible53:
             return try forwardTransform53(signal: signal, boundaryExtension: boundaryExtension)
@@ -224,7 +223,7 @@ public struct J2KDWT1D: Sendable {
             return (lowpass: lowpass, highpass: highpass)
         }
     }
-    
+
     /// Performs 1D inverse discrete wavelet transform.
     ///
     /// Reconstructs the original signal from lowpass and highpass subbands using
@@ -255,7 +254,7 @@ public struct J2KDWT1D: Sendable {
         guard !lowpass.isEmpty && !highpass.isEmpty else {
             throw J2KError.invalidParameter("Subbands cannot be empty")
         }
-        
+
         // For typical dyadic decomposition, lowpass and highpass should have equal
         // or nearly equal lengths (differ by at most 1)
         guard abs(lowpass.count - highpass.count) <= 1 else {
@@ -263,7 +262,7 @@ public struct J2KDWT1D: Sendable {
                 "Incompatible subband sizes: lowpass=\(lowpass.count), highpass=\(highpass.count)"
             )
         }
-        
+
         switch filter {
         case .reversible53:
             return try inverseTransform53(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
@@ -286,9 +285,9 @@ public struct J2KDWT1D: Sendable {
             return resultDouble.map { Int32($0.rounded()) }
         }
     }
-    
+
     // MARK: - 5/3 Reversible Filter Implementation
-    
+
     /// Forward transform using 5/3 reversible filter with lifting scheme.
     ///
     /// Implements the Le Gall 5/3 wavelet using integer arithmetic:
@@ -300,45 +299,45 @@ public struct J2KDWT1D: Sendable {
         boundaryExtension: BoundaryExtension
     ) throws -> (lowpass: [Int32], highpass: [Int32]) {
         let n = signal.count
-        
+
         // Calculate output sizes (dyadic decomposition)
         let lowpassSize = (n + 1) / 2
         let highpassSize = n / 2
-        
+
         var lowpass = [Int32](repeating: 0, count: lowpassSize)
         var highpass = [Int32](repeating: 0, count: highpassSize)
-        
+
         // Split into even and odd samples
         var even = [Int32](repeating: 0, count: lowpassSize)
         var odd = [Int32](repeating: 0, count: highpassSize)
-        
+
         for i in 0..<lowpassSize {
             even[i] = signal[i * 2]
         }
-        
+
         for i in 0..<highpassSize {
             odd[i] = signal[i * 2 + 1]
         }
-        
+
         // Predict step: d[n] = odd[n] - floor((even[n] + even[n+1]) / 2)
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
             highpass[i] = odd[i] - ((left + right) >> 1) // >> 1 is floor division by 2
         }
-        
+
         // Update step: s[n] = even[n] + floor((d[n-1] + d[n]) / 4)
         for i in 0..<lowpassSize {
             let left = getExtendedValue(highpass, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? highpass[i] : getExtendedValue(highpass, index: i, extension: boundaryExtension)
-            
+
             // Addition for rounding: (a + b + 2) / 4 for floor((a + b) / 4)
             lowpass[i] = even[i] + ((left + right + 2) >> 2) // >> 2 is floor division by 4
         }
-        
+
         return (lowpass: lowpass, highpass: highpass)
     }
-    
+
     /// Inverse transform using 5/3 reversible filter with lifting scheme.
     ///
     /// Reconstructs the signal by reversing the lifting steps:
@@ -353,26 +352,26 @@ public struct J2KDWT1D: Sendable {
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
         let n = lowpassSize + highpassSize
-        
+
         var even = lowpass
         var odd = [Int32](repeating: 0, count: highpassSize)
-        
+
         // Undo update step: even[n] = s[n] - floor((d[n-1] + d[n]) / 4)
         for i in 0..<lowpassSize {
             let left = getExtendedValue(highpass, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? highpass[i] : getExtendedValue(highpass, index: i, extension: boundaryExtension)
-            
+
             even[i] = lowpass[i] - ((left + right + 2) >> 2)
         }
-        
+
         // Undo predict step: odd[n] = d[n] + floor((even[n] + even[n+1]) / 2)
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
-            
+
             odd[i] = highpass[i] + ((left + right) >> 1)
         }
-        
+
         // Merge even and odd samples
         var result = [Int32](repeating: 0, count: n)
         for i in 0..<lowpassSize {
@@ -381,12 +380,12 @@ public struct J2KDWT1D: Sendable {
         for i in 0..<highpassSize {
             result[i * 2 + 1] = odd[i]
         }
-        
+
         return result
     }
-    
+
     // MARK: - Boundary Extension Helpers
-    
+
     /// Gets a value from an array with boundary extension.
     ///
     /// - Parameters:
@@ -400,13 +399,13 @@ public struct J2KDWT1D: Sendable {
         extension: BoundaryExtension
     ) -> Int32 {
         let n = array.count
-        
+
         guard n > 0 else { return 0 }
-        
+
         if index >= 0 && index < n {
             return array[index]
         }
-        
+
         switch `extension` {
         case .symmetric:
             // Mirror extension without repeating edge
@@ -418,7 +417,7 @@ public struct J2KDWT1D: Sendable {
                 let mirrorIndex = 2 * n - index - 1
                 return array[max(mirrorIndex, 0)]
             }
-            
+
         case .periodic:
             // Wrap around
             var wrappedIndex = index % n
@@ -426,7 +425,7 @@ public struct J2KDWT1D: Sendable {
                 wrappedIndex += n
             }
             return array[wrappedIndex]
-            
+
         case .zeroPadding:
             return 0
         }
@@ -436,7 +435,6 @@ public struct J2KDWT1D: Sendable {
 // MARK: - Floating-Point Transform for 9/7 Filter
 
 extension J2KDWT1D {
-    
     /// Performs 1D forward DWT using 9/7 irreversible filter.
     ///
     /// - Parameters:
@@ -451,14 +449,14 @@ extension J2KDWT1D {
         guard signal.count >= 2 else {
             throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
         }
-        
+
         let n = signal.count
         let lowpassSize = (n + 1) / 2
         let highpassSize = n / 2
-        
+
         var even = [Double](repeating: 0, count: lowpassSize)
         var odd = [Double](repeating: 0, count: highpassSize)
-        
+
         // Split
         for i in 0..<lowpassSize {
             even[i] = signal[i * 2]
@@ -466,42 +464,42 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] = signal[i * 2 + 1]
         }
-        
+
         // CDF 9/7 lifting coefficients (from ISO/IEC 15444-1)
         let alpha = -1.586134342
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
         let k = 1.149604398
-        
+
         // Predict 1: odd[n] += alpha * (even[n] + even[n+1])
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
             odd[i] += alpha * (left + right)
         }
-        
+
         // Update 1: even[n] += beta * (odd[n-1] + odd[n])
         for i in 0..<lowpassSize {
             let left = getExtendedValue(odd, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? odd[i] : getExtendedValue(odd, index: i, extension: boundaryExtension)
             even[i] += beta * (left + right)
         }
-        
+
         // Predict 2: odd[n] += gamma * (even[n] + even[n+1])
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
             odd[i] += gamma * (left + right)
         }
-        
+
         // Update 2: even[n] += delta * (odd[n-1] + odd[n])
         for i in 0..<lowpassSize {
             let left = getExtendedValue(odd, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? odd[i] : getExtendedValue(odd, index: i, extension: boundaryExtension)
             even[i] += delta * (left + right)
         }
-        
+
         // Scaling
         for i in 0..<lowpassSize {
             even[i] *= k
@@ -509,10 +507,10 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] /= k
         }
-        
+
         return (lowpass: even, highpass: odd)
     }
-    
+
     /// Performs 1D inverse DWT using 9/7 irreversible filter.
     ///
     /// - Parameters:
@@ -529,27 +527,27 @@ extension J2KDWT1D {
         guard !lowpass.isEmpty && !highpass.isEmpty else {
             throw J2KError.invalidParameter("Subbands cannot be empty")
         }
-        
+
         guard abs(lowpass.count - highpass.count) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband sizes: lowpass=\(lowpass.count), highpass=\(highpass.count)"
             )
         }
-        
+
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
         let n = lowpassSize + highpassSize
-        
+
         var even = lowpass
         var odd = highpass
-        
+
         // CDF 9/7 lifting coefficients
         let alpha = -1.586134342
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
         let k = 1.149604398
-        
+
         // Undo scaling
         for i in 0..<lowpassSize {
             even[i] /= k
@@ -557,35 +555,35 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] *= k
         }
-        
+
         // Undo update 2
         for i in 0..<lowpassSize {
             let left = getExtendedValue(odd, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? odd[i] : getExtendedValue(odd, index: i, extension: boundaryExtension)
             even[i] -= delta * (left + right)
         }
-        
+
         // Undo predict 2
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
             odd[i] -= gamma * (left + right)
         }
-        
+
         // Undo update 1
         for i in 0..<lowpassSize {
             let left = getExtendedValue(odd, index: i - 1, extension: boundaryExtension)
             let right = i < highpassSize ? odd[i] : getExtendedValue(odd, index: i, extension: boundaryExtension)
             even[i] -= beta * (left + right)
         }
-        
+
         // Undo predict 1
         for i in 0..<highpassSize {
             let left = even[i]
             let right = getExtendedValue(even, index: i + 1, extension: boundaryExtension)
             odd[i] -= alpha * (left + right)
         }
-        
+
         // Merge
         var result = [Double](repeating: 0, count: n)
         for i in 0..<lowpassSize {
@@ -594,10 +592,10 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             result[i * 2 + 1] = odd[i]
         }
-        
+
         return result
     }
-    
+
     /// Gets a value from a Double array with boundary extension.
     private static func getExtendedValue(
         _ array: [Double],
@@ -605,13 +603,13 @@ extension J2KDWT1D {
         extension: BoundaryExtension
     ) -> Double {
         let n = array.count
-        
+
         guard n > 0 else { return 0 }
-        
+
         if index >= 0 && index < n {
             return array[index]
         }
-        
+
         switch `extension` {
         case .symmetric:
             if index < 0 {
@@ -621,21 +619,21 @@ extension J2KDWT1D {
                 let mirrorIndex = 2 * n - index - 1
                 return array[max(mirrorIndex, 0)]
             }
-            
+
         case .periodic:
             var wrappedIndex = index % n
             if wrappedIndex < 0 {
                 wrappedIndex += n
             }
             return array[wrappedIndex]
-            
+
         case .zeroPadding:
             return 0
         }
     }
-    
+
     // MARK: - Custom Filter Implementation
-    
+
     /// Performs 1D forward DWT using a custom filter.
     ///
     /// - Parameters:
@@ -652,14 +650,14 @@ extension J2KDWT1D {
         guard signal.count >= 2 else {
             throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
         }
-        
+
         let n = signal.count
         let lowpassSize = (n + 1) / 2
         let highpassSize = n / 2
-        
+
         var even = [Double](repeating: 0, count: lowpassSize)
         var odd = [Double](repeating: 0, count: highpassSize)
-        
+
         // Split
         for i in 0..<lowpassSize {
             even[i] = signal[i * 2]
@@ -667,7 +665,7 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] = signal[i * 2 + 1]
         }
-        
+
         // Apply lifting steps
         for step in filter.steps {
             if step.isPredict {
@@ -689,8 +687,8 @@ extension J2KDWT1D {
                     for (idx, coef) in step.coefficients.enumerated() {
                         let offset = idx - step.coefficients.count / 2
                         let left = getExtendedValue(odd, index: i + offset - 1, extension: boundaryExtension)
-                        let right = i + offset < highpassSize ? 
-                            odd[i + offset] : 
+                        let right = i + offset < highpassSize ?
+                            odd[i + offset] :
                             getExtendedValue(odd, index: i + offset, extension: boundaryExtension)
                         sum += coef * (left + right)
                     }
@@ -698,7 +696,7 @@ extension J2KDWT1D {
                 }
             }
         }
-        
+
         // Scaling
         for i in 0..<lowpassSize {
             even[i] *= filter.lowpassScale
@@ -706,10 +704,10 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] *= filter.highpassScale
         }
-        
+
         return (lowpass: even, highpass: odd)
     }
-    
+
     /// Performs 1D inverse DWT using a custom filter.
     ///
     /// - Parameters:
@@ -728,20 +726,20 @@ extension J2KDWT1D {
         guard !lowpass.isEmpty && !highpass.isEmpty else {
             throw J2KError.invalidParameter("Subbands cannot be empty")
         }
-        
+
         guard abs(lowpass.count - highpass.count) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband sizes: lowpass=\(lowpass.count), highpass=\(highpass.count)"
             )
         }
-        
+
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
         let n = lowpassSize + highpassSize
-        
+
         var even = lowpass
         var odd = highpass
-        
+
         // Undo scaling
         for i in 0..<lowpassSize {
             even[i] /= filter.lowpassScale
@@ -749,7 +747,7 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             odd[i] /= filter.highpassScale
         }
-        
+
         // Undo lifting steps in reverse order
         for step in filter.steps.reversed() {
             if step.isPredict {
@@ -771,8 +769,8 @@ extension J2KDWT1D {
                     for (idx, coef) in step.coefficients.enumerated() {
                         let offset = idx - step.coefficients.count / 2
                         let left = getExtendedValue(odd, index: i + offset - 1, extension: boundaryExtension)
-                        let right = i + offset < highpassSize ? 
-                            odd[i + offset] : 
+                        let right = i + offset < highpassSize ?
+                            odd[i + offset] :
                             getExtendedValue(odd, index: i + offset, extension: boundaryExtension)
                         sum += coef * (left + right)
                     }
@@ -780,7 +778,7 @@ extension J2KDWT1D {
                 }
             }
         }
-        
+
         // Merge
         var result = [Double](repeating: 0, count: n)
         for i in 0..<lowpassSize {
@@ -789,7 +787,7 @@ extension J2KDWT1D {
         for i in 0..<highpassSize {
             result[i * 2 + 1] = odd[i]
         }
-        
+
         return result
     }
 }

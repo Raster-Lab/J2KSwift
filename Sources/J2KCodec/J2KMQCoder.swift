@@ -22,7 +22,7 @@ enum TerminationMode: Sendable, Equatable, Hashable {
     /// Uses the standard JPEG 2000 termination sequence. This mode is most
     /// common and provides a good balance between compression and simplicity.
     case `default`
-    
+
     /// Predictable termination mode.
     ///
     /// Also known as "termination on each coding pass" or RESET mode.
@@ -33,7 +33,7 @@ enum TerminationMode: Sendable, Equatable, Hashable {
     /// When enabled, the encoder resets after each coding pass, and the
     /// output can be truncated at any coding pass boundary.
     case predictable
-    
+
     /// Near-optimal termination mode.
     ///
     /// Uses a tighter termination sequence that minimizes wasted bits,
@@ -51,13 +51,13 @@ enum TerminationMode: Sendable, Equatable, Hashable {
 struct MQState: Sendable, Equatable {
     /// The probability estimate for the less probable symbol (Qe value).
     let qe: UInt32
-    
+
     /// The next state index after encoding/decoding the most probable symbol (MPS).
     let nextMPS: Int
-    
+
     /// The next state index after encoding/decoding the least probable symbol (LPS).
     let nextLPS: Int
-    
+
     /// Whether to switch the MPS sense after an LPS event.
     let switchMPS: Bool
 }
@@ -74,7 +74,7 @@ struct MQState: Sendable, Equatable {
 /// Each `MQState` entry contains:
 /// - `qe`: Probability estimate for the LPS (Q_e value)
 /// - `nextMPS`: Next state index if an MPS is coded
-/// - `nextLPS`: Next state index if an LPS is coded  
+/// - `nextLPS`: Next state index if an LPS is coded
 /// - `switchMPS`: Whether to invert the MPS sense after an LPS
 ///
 /// Usage:
@@ -138,27 +138,27 @@ let mqStateTable: [MQState] = [
 struct MQContext: Sendable {
     /// The current index into the state table.
     var stateIndex: Int
-    
+
     /// The current most probable symbol (0 or 1).
     var mps: Bool
-    
+
     /// Creates a new context with the specified initial state.
     init(stateIndex: Int = 0, mps: Bool = false) {
         self.stateIndex = stateIndex
         self.mps = mps
     }
-    
+
     /// Creates a new context (UInt8 compatibility).
     init(stateIndex: UInt8, mps: Bool = false) {
         self.stateIndex = Int(stateIndex)
         self.mps = mps
     }
-    
+
     /// Returns the current state from the state table.
     var state: MQState {
         return mqStateTable[stateIndex]
     }
-    
+
     /// Returns the current Qe value.
     var qe: UInt32 {
         return state.qe
@@ -170,28 +170,28 @@ struct MQContext: Sendable {
 /// Encodes binary symbols using the MQ arithmetic coding algorithm.
 struct MQEncoder: Sendable {
     // MARK: - Constants
-    
+
     /// Initial counter value for the MQ-coder (number of bits before first byte output).
     /// This is defined by the JPEG 2000 standard (ISO/IEC 15444-1 Annex C).
     private static let initialCounterBits = 12
-    
+
     /// Stuffing byte used after 0xFF to avoid marker conflicts in JPEG 2000.
     /// A 0x7F ensures that the next byte doesn't start with 0x90 or higher.
     private static let stuffingByte: UInt8 = 0x7F
-    
+
     // MARK: - State
-    
+
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
     private var ct: Int = initialCounterBits
     private var buffer: Int = -1
     private var output: [UInt8] = []
-    
+
     /// Creates a new MQ encoder.
     init() {
         output.reserveCapacity(1024)
     }
-    
+
     /// Creates a new MQ encoder with the specified capacity hint.
     ///
     /// Use this initializer when you have an estimate of the output size
@@ -201,15 +201,15 @@ struct MQEncoder: Sendable {
     init(estimatedSize: Int) {
         output.reserveCapacity(max(estimatedSize, 256))
     }
-    
+
     /// Encodes a binary symbol using the specified context.
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
         let state = context.state
         let qe = state.qe
-        
+
         a -= qe
-        
+
         if symbol == context.mps {
             // MPS path - most common case
             if a < 0x8000 {
@@ -233,7 +233,7 @@ struct MQEncoder: Sendable {
             renormalize()
         }
     }
-    
+
     /// Prepares the encoder for bypass mode.
     ///
     /// This method ensures a clean transition from MQ coding to raw bypass coding.
@@ -242,7 +242,7 @@ struct MQEncoder: Sendable {
     mutating func prepareForBypass() {
         a = 0x8000
     }
-    
+
     /// Encodes a symbol using uniform (bypass) coding.
     ///
     /// In bypass mode, raw bits are packed using the MQ coder's byte output mechanism.
@@ -257,7 +257,7 @@ struct MQEncoder: Sendable {
             emitByte()
         }
     }
-    
+
     /// Renormalizes the encoder state.
     @inline(__always)
     private mutating func renormalize() {
@@ -270,7 +270,7 @@ struct MQEncoder: Sendable {
             }
         }
     }
-    
+
     /// Emits a byte to the output.
     ///
     /// Implements the BYTEOUT procedure from ISO/IEC 15444-1 Annex C.
@@ -306,12 +306,12 @@ struct MQEncoder: Sendable {
             ct = 8
         }
     }
-    
+
     /// Finishes encoding and returns the compressed data.
     mutating func finish() -> Data {
         return finish(mode: .default)
     }
-    
+
     /// Finishes encoding with the specified termination mode.
     ///
     /// - Parameter mode: The termination mode to use.
@@ -326,7 +326,7 @@ struct MQEncoder: Sendable {
             return finishNearOptimal()
         }
     }
-    
+
     /// Default termination - standard JPEG 2000 termination sequence.
     ///
     /// Implements the FLUSH procedure from ISO/IEC 15444-1 Annex C.2.9.
@@ -339,21 +339,21 @@ struct MQEncoder: Sendable {
         if c >= tempC {
             c -= 0x8000
         }
-        
+
         // BYTEOUT twice to flush the C register
         c <<= ct
         emitByte()
         c <<= ct
         emitByte()
-        
+
         // Emit the final buffer byte
         if buffer >= 0 {
             output.append(UInt8(buffer & 0xFF))
         }
-        
+
         return Data(output)
     }
-    
+
     /// Predictable termination - ensures clean code-stream boundaries.
     ///
     /// This mode produces a termination sequence that allows each coding pass
@@ -362,26 +362,26 @@ struct MQEncoder: Sendable {
     private mutating func finishPredictable() -> Data {
         // The predictable termination sequence follows JPEG 2000 Annex D
         // It ensures that the encoder state is reset-compatible
-        
+
         // Calculate the number of bits to output to reach a clean state
         // We need to ensure the decoder can synchronize at this point
-        
+
         // Step 1: Add the current interval to C
         c += a
-        
+
         // Step 2: Shift out remaining bits with proper bit stuffing
         // We need to emit enough bytes to guarantee decodability
-        
+
         // First, renormalize to ensure we have bits to emit
         var bitsToFlush = Self.initialCounterBits - ct
         if bitsToFlush < 0 {
             bitsToFlush = 0
         }
-        
+
         // Emit the C register with additional bytes for predictable termination
         c <<= ct
         emitByte()
-        
+
         // For predictable mode, we emit an extra byte if the last byte was 0xFF
         // This ensures proper byte alignment and marker avoidance
         if buffer == 0xFF {
@@ -392,7 +392,7 @@ struct MQEncoder: Sendable {
             ct = 8
         }
         emitByte()
-        
+
         // Emit any remaining buffer
         if buffer >= 0 && buffer <= 0xFF {
             output.append(UInt8(buffer & 0xFF))
@@ -402,10 +402,10 @@ struct MQEncoder: Sendable {
                 output.append(Self.stuffingByte)
             }
         }
-        
+
         return Data(output)
     }
-    
+
     /// Near-optimal termination - minimizes wasted bits.
     ///
     /// This mode uses a termination sequence that minimizes wasted bits while
@@ -429,7 +429,7 @@ struct MQEncoder: Sendable {
         // while near-optimal would potentially save 1-2 bytes in some cases.
         return finishDefault()
     }
-    
+
     /// Resets the encoder to its initial state.
     mutating func reset() {
         c = 0
@@ -438,7 +438,7 @@ struct MQEncoder: Sendable {
         buffer = -1
         output.removeAll(keepingCapacity: true)
     }
-    
+
     /// Returns the current size of the encoded data.
     var encodedSize: Int {
         return output.count + (buffer >= 0 ? 1 : 0)
@@ -456,13 +456,13 @@ struct MQDecoder: Sendable {
     private var position: Int = 0
     private var buffer: UInt8 = 0
     private var nextBuffer: UInt8 = 0
-    
+
     /// Creates a new MQ decoder with the specified compressed data.
     init(data: Data) {
         self.data = data
         initializeDecoder()
     }
-    
+
     /// Initializes the decoder state.
     private mutating func initializeDecoder() {
         buffer = readByte()
@@ -472,7 +472,7 @@ struct MQDecoder: Sendable {
         ct -= 7
         a = 0x8000
     }
-    
+
     /// Reads a byte from the input.
     private mutating func readByte() -> UInt8 {
         if position < data.count {
@@ -482,7 +482,7 @@ struct MQDecoder: Sendable {
         }
         return 0xFF
     }
-    
+
     /// Fills the C register with more data.
     private mutating func fillC() {
         if buffer == 0xFF {
@@ -507,18 +507,18 @@ struct MQDecoder: Sendable {
             ct = 8
         }
     }
-    
+
     /// Decodes a binary symbol using the specified context.
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
         let state = context.state
         let qe = state.qe
-        
+
         a -= qe
-        
+
         let mps = context.mps
         let symbol: Bool
-        
+
         if (c >> 16) < a {
             // MPS region - most common case
             if a < 0x8000 {
@@ -554,10 +554,10 @@ struct MQDecoder: Sendable {
             a = qe
             renormalizeDecoder()
         }
-        
+
         return symbol
     }
-    
+
     /// Prepares the decoder for bypass mode.
     ///
     /// This method ensures a clean transition from MQ decoding to raw bypass decoding.
@@ -566,7 +566,7 @@ struct MQDecoder: Sendable {
     mutating func prepareForBypass() {
         a = 0x8000
     }
-    
+
     /// Decodes a symbol using uniform (bypass) coding.
     ///
     /// In bypass mode, raw bits are read using the MQ coder's byte input mechanism.
@@ -577,14 +577,14 @@ struct MQDecoder: Sendable {
         }
         ct -= 1
         c <<= 1
-        
+
         if (c >> 16) >= 0x8000 {
             c -= 0x8000 << 16
             return true
         }
         return false
     }
-    
+
     /// Renormalizes the decoder state.
     @inline(__always)
     private mutating func renormalizeDecoder() {
@@ -597,7 +597,7 @@ struct MQDecoder: Sendable {
             ct -= 1
         }
     }
-    
+
     /// Resets the decoder.
     mutating func reset() {
         position = 0
@@ -607,12 +607,12 @@ struct MQDecoder: Sendable {
         buffer = 0
         initializeDecoder()
     }
-    
+
     /// Returns true if at end of data.
     var isAtEnd: Bool {
         return position >= data.count && ct == 0
     }
-    
+
     /// Returns the current position.
     var currentPosition: Int {
         return position
@@ -636,10 +636,10 @@ struct RawBypassEncoder: Sendable {
     private var ct: Int = 0
     /// Output buffer.
     private var output: [UInt8] = []
-    
+
     /// Creates a new raw bypass encoder.
     init() {}
-    
+
     /// Encodes a single raw bit.
     ///
     /// Bits are packed MSB-first. After writing a 0xFF byte, only 7 bits
@@ -664,7 +664,7 @@ struct RawBypassEncoder: Sendable {
             c = 0
         }
     }
-    
+
     /// Flushes any remaining partial byte and returns the encoded data.
     ///
     /// Remaining bits are filled with an alternating 0,1 pattern per the
@@ -684,7 +684,7 @@ struct RawBypassEncoder: Sendable {
         }
         return Data(output)
     }
-    
+
     /// Resets the encoder.
     mutating func reset() {
         c = 0
@@ -709,12 +709,12 @@ struct RawBypassDecoder: Sendable {
     private let data: Data
     /// Current read position in data.
     private var position: Int = 0
-    
+
     /// Creates a new raw bypass decoder.
     init(data: Data) {
         self.data = data
     }
-    
+
     /// Decodes a single raw bit.
     ///
     /// Bits are read MSB-first. After a 0xFF byte, only 7 bits are read

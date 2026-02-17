@@ -55,7 +55,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
     /// - Quality-adaptive streaming
     /// - Bandwidth-constrained networks
     case snr(layers: Int)
-    
+
     /// Spatial (resolution) progressive encoding.
     ///
     /// Encodes multiple resolution levels through wavelet decomposition.
@@ -68,7 +68,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
     /// - Zoom applications
     /// - Responsive image delivery
     case spatial(maxLevel: Int)
-    
+
     /// Layer-progressive encoding for streaming.
     ///
     /// Organizes packets to enable layer-by-layer decoding with immediate display
@@ -83,7 +83,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
     /// - Network-adaptive delivery
     /// - Interactive applications
     case layerProgressive(layers: Int, resolutionFirst: Bool)
-    
+
     /// Combined SNR and spatial progressive encoding.
     ///
     /// Provides both quality and resolution progression for maximum flexibility.
@@ -97,10 +97,10 @@ public enum J2KProgressiveMode: Sendable, Equatable {
     /// - Multi-purpose image delivery
     /// - Adaptive content delivery networks
     case combined(qualityLayers: Int, decompositionLevels: Int)
-    
+
     /// No progressive encoding (single quality, single resolution).
     case none
-    
+
     /// Returns the number of quality layers for this progressive mode.
     public var qualityLayers: Int {
         switch self {
@@ -114,7 +114,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
             return 1
         }
     }
-    
+
     /// Returns the number of decomposition levels for this progressive mode.
     public var decompositionLevels: Int? {
         switch self {
@@ -130,7 +130,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
             return nil
         }
     }
-    
+
     /// Returns the recommended progression order for this mode.
     public var recommendedProgressionOrder: J2KProgressionOrder {
         switch self {
@@ -146,7 +146,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
             return .lrcp
         }
     }
-    
+
     /// Validates the progressive mode parameters.
     ///
     /// - Throws: ``J2KError/invalidParameter(_:)`` if parameters are invalid.
@@ -181,24 +181,24 @@ public struct J2KProgressiveDecodingOptions: Sendable, Equatable {
     ///
     /// If nil, decodes all available layers.
     public var maxLayer: Int?
-    
+
     /// Maximum resolution level to decode (inclusive).
     ///
     /// - 0: Decode only the coarsest resolution (1/2^N of full resolution)
     /// - nil: Decode all resolution levels (full resolution)
     public var maxResolutionLevel: Int?
-    
+
     /// Specific region to decode (in full-resolution coordinates).
     ///
     /// If nil, decodes the entire image.
     public var region: J2KRegion?
-    
+
     /// Whether to stop decoding early once the requested quality/resolution is reached.
     ///
     /// When true, stops parsing packets after reaching the target layer/resolution,
     /// saving processing time and memory.
     public var earlyStop: Bool
-    
+
     /// Creates new progressive decoding options.
     ///
     /// - Parameters:
@@ -225,16 +225,16 @@ public struct J2KProgressiveDecodingOptions: Sendable, Equatable {
 public struct J2KRegion: Sendable, Equatable {
     /// The x-coordinate of the top-left corner.
     public let x: Int
-    
+
     /// The y-coordinate of the top-left corner.
     public let y: Int
-    
+
     /// The width of the region.
     public let width: Int
-    
+
     /// The height of the region.
     public let height: Int
-    
+
     /// Creates a new region.
     ///
     /// - Parameters:
@@ -248,7 +248,7 @@ public struct J2KRegion: Sendable, Equatable {
         self.width = width
         self.height = height
     }
-    
+
     /// Validates the region against image dimensions.
     ///
     /// - Parameters:
@@ -259,11 +259,11 @@ public struct J2KRegion: Sendable, Equatable {
         if x < 0 || y < 0 {
             throw J2KError.invalidParameter("Region coordinates must be non-negative")
         }
-        
+
         if width <= 0 || height <= 0 {
             throw J2KError.invalidParameter("Region dimensions must be positive")
         }
-        
+
         if x + width > imageWidth || y + height > imageHeight {
             throw J2KError.invalidParameter("Region extends beyond image bounds")
         }
@@ -276,19 +276,19 @@ public struct J2KRegion: Sendable, Equatable {
 public struct J2KProgressiveEncodingStrategy: Sendable {
     /// The progressive mode to use.
     public let mode: J2KProgressiveMode
-    
+
     /// Whether to use SNR scalability within each resolution level.
     public let snrScalable: Bool
-    
+
     /// Whether to use spatial (resolution) scalability.
     public let spatialScalable: Bool
-    
+
     /// Target bitrates for each quality layer (in bits per pixel).
     ///
     /// If provided, the encoder will target these bitrates for each layer.
     /// If nil, layers are distributed evenly.
     public let layerBitrates: [Double]?
-    
+
     /// Creates a new progressive encoding strategy.
     ///
     /// - Parameters:
@@ -307,7 +307,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
         self.spatialScalable = spatialScalable
         self.layerBitrates = layerBitrates
     }
-    
+
     /// Creates a strategy optimized for quality progression.
     ///
     /// - Parameter layers: Number of quality layers.
@@ -319,7 +319,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
             spatialScalable: false
         )
     }
-    
+
     /// Creates a strategy optimized for resolution progression.
     ///
     /// - Parameter levels: Maximum decomposition level.
@@ -331,7 +331,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
             spatialScalable: true
         )
     }
-    
+
     /// Creates a strategy optimized for streaming.
     ///
     /// - Parameters:
@@ -345,23 +345,23 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
             spatialScalable: true
         )
     }
-    
+
     /// Validates the strategy parameters.
     ///
     /// - Throws: ``J2KError/invalidParameter(_:)`` if parameters are invalid.
     public func validate() throws {
         try mode.validate()
-        
+
         if let bitrates = layerBitrates {
             if bitrates.count != mode.qualityLayers {
                 throw J2KError.invalidParameter("Layer bitrates count must match quality layers")
             }
-            
+
             for (index, bitrate) in bitrates.enumerated() {
                 if bitrate <= 0 {
                     throw J2KError.invalidParameter("Layer bitrate[\(index)] must be positive")
                 }
-                
+
                 // Verify increasing bitrates
                 if index > 0 && bitrate <= bitrates[index - 1] {
                     throw J2KError.invalidParameter("Layer bitrates must be strictly increasing")

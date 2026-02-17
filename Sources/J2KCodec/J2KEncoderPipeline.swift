@@ -104,7 +104,6 @@ final class ParallelResultCollector<T>: @unchecked Sendable {
 /// 6. Rate Control — quality layer formation
 /// 7. Codestream Generation — write JPEG 2000 markers and data
 struct EncoderPipeline: Sendable {
-
     let config: J2KEncodingConfiguration
 
     init(config: J2KEncodingConfiguration) {
@@ -791,7 +790,7 @@ struct EncoderPipeline: Sendable {
         // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
         //   00 = No HT sets
         //   01 = HT set A (set bit 3, clear bit 4)
-        //   10 = HT set B  
+        //   10 = HT set B
         //   11 = HT sets C and D
         // When HTJ2K mode is enabled, use default HT set A
         if config.useHTJ2K {
@@ -877,7 +876,7 @@ struct EncoderPipeline: Sendable {
         componentCount: Int
     ) throws {
         var segment = J2KBitWriter()
-        
+
         // Ccoc — Component index
         if componentCount < 257 {
             // 1 byte for component index if < 257 components
@@ -886,31 +885,31 @@ struct EncoderPipeline: Sendable {
             // 2 bytes for component index if >= 257 components
             segment.writeUInt16(UInt16(componentIndex))
         }
-        
+
         // Scoc — Coding style for this component
         // Same structure as COD's SPcod
-        
+
         // Number of decomposition levels
         segment.writeUInt8(UInt8(config.decompositionLevels))
-        
+
         // Code-block width exponent (offset by 2)
         let cbWidthExp = Int(log2(Double(config.codeBlockSize.width)))
         segment.writeUInt8(UInt8(cbWidthExp - 2))
-        
+
         // Code-block height exponent (offset by 2)
         let cbHeightExp = Int(log2(Double(config.codeBlockSize.height)))
         segment.writeUInt8(UInt8(cbHeightExp - 2))
-        
+
         // Code-block style (with HT bit if HTJ2K is enabled)
         var codeBlockStyle: UInt8 = 0
         if config.useHTJ2K {
             codeBlockStyle |= 0x40 // Set bit 6 for HTJ2K mode
         }
         segment.writeUInt8(codeBlockStyle)
-        
+
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.lossless ? 1 : 0)
-        
+
         // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
         if config.useHTJ2K {
             // For HT set A (default), write the HT set configuration byte
@@ -923,7 +922,7 @@ struct EncoderPipeline: Sendable {
             }
             segment.writeUInt8(htSetConfig)
         }
-        
+
         writer.writeMarkerSegment(J2KMarker.coc.rawValue, segmentData: segment.data)
     }
 

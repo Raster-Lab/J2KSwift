@@ -9,7 +9,6 @@ import XCTest
 
 /// Tests for JPIP HTJ2K integration features.
 final class JPIPHTJ2KSupportTests: XCTestCase {
-
     // MARK: - JPIPCodingPreference Tests
 
     func testCodingPreferenceRawValues() {

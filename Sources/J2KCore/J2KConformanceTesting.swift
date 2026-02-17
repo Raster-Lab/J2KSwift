@@ -21,7 +21,6 @@ import Foundation
 ///
 /// Implements standard image quality metrics used in JPEG 2000 conformance testing.
 public struct J2KErrorMetrics: Sendable {
-    
     /// Calculates Mean Squared Error (MSE) between two images.
     ///
     /// MSE is the average of the squared differences between corresponding pixels.
@@ -37,20 +36,20 @@ public struct J2KErrorMetrics: Sendable {
         guard reference.count == test.count else {
             return nil
         }
-        
+
         guard !reference.isEmpty else {
             return 0.0
         }
-        
+
         var sum: Double = 0.0
         for i in 0..<reference.count {
             let diff = Double(reference[i] - test[i])
             sum += diff * diff
         }
-        
+
         return sum / Double(reference.count)
     }
-    
+
     /// Calculates Peak Signal-to-Noise Ratio (PSNR) between two images.
     ///
     /// PSNR is expressed in decibels (dB) and measures the ratio between
@@ -69,16 +68,16 @@ public struct J2KErrorMetrics: Sendable {
         guard let mse = meanSquaredError(reference: reference, test: test) else {
             return nil
         }
-        
+
         // If MSE is 0, images are identical (infinite PSNR)
         guard mse > 0 else {
             return Double.infinity
         }
-        
+
         let maxValue = Double((1 << bitDepth) - 1)
         return 10.0 * log10((maxValue * maxValue) / mse)
     }
-    
+
     /// Calculates Maximum Absolute Error (MAE) between two images.
     ///
     /// MAE is the maximum absolute difference between any two corresponding pixels.
@@ -94,11 +93,11 @@ public struct J2KErrorMetrics: Sendable {
         guard reference.count == test.count else {
             return nil
         }
-        
+
         guard !reference.isEmpty else {
             return 0
         }
-        
+
         var maxError: Int32 = 0
         for i in 0..<reference.count {
             let error = abs(reference[i] - test[i])
@@ -106,10 +105,10 @@ public struct J2KErrorMetrics: Sendable {
                 maxError = error
             }
         }
-        
+
         return maxError
     }
-    
+
     /// Checks if two images are within an acceptable error tolerance.
     ///
     /// - Parameters:
@@ -138,39 +137,39 @@ public struct J2KErrorMetrics: Sendable {
 public struct J2KTestVector: Sendable {
     /// The name of the test vector.
     public let name: String
-    
+
     /// Description of what this test vector validates.
     public let description: String
-    
+
     /// The encoded JPEG 2000 codestream.
     public let codestream: Data
-    
+
     /// The expected decoded image data (if available).
     public let referenceImage: [Int32]?
-    
+
     /// Expected image dimensions.
     public let width: Int
     public let height: Int
-    
+
     /// Expected number of components.
     public let components: Int
-    
+
     /// Expected bit depth per component.
     public let bitDepth: Int
-    
+
     /// Maximum allowable error for conformance.
     ///
     /// Different conformance classes allow different error tolerances.
     /// - Lossless: 0
     /// - Lossy: typically 1-2 for near-lossless
     public let maxAllowableError: Int32
-    
+
     /// Whether this test should decode successfully.
     ///
     /// Some test vectors are designed to test error handling for
     /// malformed or unsupported codestreams.
     public let shouldSucceed: Bool
-    
+
     /// Creates a new test vector.
     public init(
         name: String,
@@ -204,28 +203,27 @@ public struct J2KTestVector: Sendable {
 /// This validator checks that encoded/decoded images meet the error tolerances
 /// specified in ISO/IEC 15444-4.
 public struct J2KConformanceValidator: Sendable {
-    
     /// Results from a conformance test.
     public struct TestResult: Sendable {
         /// The test vector that was run.
         public let vector: J2KTestVector
-        
+
         /// Whether the test passed.
         public let passed: Bool
-        
+
         /// Error message if the test failed.
         public let errorMessage: String?
-        
+
         /// Calculated MSE (if applicable).
         public let mse: Double?
-        
+
         /// Calculated PSNR (if applicable).
         public let psnr: Double?
-        
+
         /// Calculated MAE (if applicable).
         public let mae: Int32?
     }
-    
+
     /// Validates a decoded image against a test vector.
     ///
     /// - Parameters:
@@ -246,7 +244,7 @@ public struct J2KConformanceValidator: Sendable {
                 mae: nil
             )
         }
-        
+
         // Check size
         let expectedSize = vector.width * vector.height * vector.components
         guard decoded.count == expectedSize else {
@@ -259,7 +257,7 @@ public struct J2KConformanceValidator: Sendable {
                 mae: nil
             )
         }
-        
+
         // Calculate error metrics
         let mse = J2KErrorMetrics.meanSquaredError(reference: referenceImage, test: decoded)
         let psnr = J2KErrorMetrics.peakSignalToNoiseRatio(
@@ -268,7 +266,7 @@ public struct J2KConformanceValidator: Sendable {
             bitDepth: vector.bitDepth
         )
         let mae = J2KErrorMetrics.maximumAbsoluteError(reference: referenceImage, test: decoded)
-        
+
         guard let mae = mae else {
             return TestResult(
                 vector: vector,
@@ -279,11 +277,11 @@ public struct J2KConformanceValidator: Sendable {
                 mae: nil
             )
         }
-        
+
         // Check against tolerance
         let passed = mae <= vector.maxAllowableError
         let errorMessage = passed ? nil : "MAE (\(mae)) exceeds maximum allowable error (\(vector.maxAllowableError))"
-        
+
         return TestResult(
             vector: vector,
             passed: passed,
@@ -293,7 +291,7 @@ public struct J2KConformanceValidator: Sendable {
             mae: mae
         )
     }
-    
+
     /// Runs a suite of conformance tests.
     ///
     /// - Parameter vectors: The test vectors to run.
@@ -303,7 +301,7 @@ public struct J2KConformanceValidator: Sendable {
         decoder: (Data) throws -> [Int32]
     ) -> [TestResult] {
         var results: [TestResult] = []
-        
+
         for vector in vectors {
             do {
                 let decoded = try decoder(vector.codestream)
@@ -320,10 +318,10 @@ public struct J2KConformanceValidator: Sendable {
                 ))
             }
         }
-        
+
         return results
     }
-    
+
     /// Generates a conformance report.
     ///
     /// - Parameter results: The test results.
@@ -331,13 +329,13 @@ public struct J2KConformanceValidator: Sendable {
     public static func generateReport(results: [TestResult]) -> String {
         var report = "JPEG 2000 Conformance Test Report\n"
         report += String(repeating: "=", count: 50) + "\n\n"
-        
+
         let passed = results.filter { $0.passed }.count
         let total = results.count
         let percentage = total > 0 ? Double(passed) / Double(total) * 100.0 : 0.0
-        
+
         report += "Summary: \(passed)/\(total) tests passed (\(String(format: "%.1f", percentage))%)\n\n"
-        
+
         // Failed tests
         let failures = results.filter { !$0.passed }
         if !failures.isEmpty {
@@ -354,7 +352,7 @@ public struct J2KConformanceValidator: Sendable {
             }
             report += "\n"
         }
-        
+
         return report
     }
 }
@@ -379,7 +377,6 @@ public struct J2KConformanceValidator: Sendable {
 /// let syntheticVectors = J2KISOTestSuiteLoader.syntheticTestVectors()
 /// ```
 public struct J2KISOTestSuiteLoader: Sendable {
-    
     /// ISO conformance class for categorizing test vectors.
     public enum ConformanceClass: String, Sendable, CaseIterable {
         /// Profile 0: Baseline JPEG 2000 features.
@@ -389,7 +386,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
         /// HTJ2K: High Throughput JPEG 2000 (ISO/IEC 15444-15).
         case htj2k = "HTJ2K"
     }
-    
+
     /// Wavelet filter type used in conformance testing.
     public enum WaveletFilter: String, Sendable {
         /// Reversible 5/3 wavelet filter for lossless compression.
@@ -397,7 +394,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
         /// Irreversible 9/7 wavelet filter for lossy compression.
         case irreversible9_7 = "9/7"
     }
-    
+
     /// Represents metadata for an ISO test case.
     public struct ISOTestCase: Sendable {
         /// Unique identifier for the test case.
@@ -420,7 +417,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
         public let maxAllowableError: Int32
         /// Whether lossless decoding is expected.
         public let isLossless: Bool
-        
+
         /// Creates a new ISO test case.
         public init(
             identifier: String,
@@ -446,10 +443,10 @@ public struct J2KISOTestSuiteLoader: Sendable {
             self.isLossless = isLossless
         }
     }
-    
+
     /// Creates a new ISO test suite loader.
     public init() {}
-    
+
     /// Loads test vectors from an ISO test suite directory.
     ///
     /// Expects the directory to contain `.j2k` or `.j2c` codestream files
@@ -461,36 +458,36 @@ public struct J2KISOTestSuiteLoader: Sendable {
     public func loadTestVectors(from path: String) throws -> [J2KTestVector] {
         let fileManager = FileManager.default
         let url = URL(fileURLWithPath: path)
-        
+
         guard fileManager.fileExists(atPath: path) else {
             throw J2KError.invalidParameter("ISO test suite directory not found: \(path)")
         }
-        
+
         let contents = try fileManager.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: nil
         )
-        
+
         let codestreamFiles = contents.filter { url in
             let ext = url.pathExtension.lowercased()
             return ext == "j2k" || ext == "j2c" || ext == "jp2"
         }
-        
+
         var vectors: [J2KTestVector] = []
-        
+
         for codestreamFile in codestreamFiles {
             let name = codestreamFile.deletingPathExtension().lastPathComponent
             let codestream = try Data(contentsOf: codestreamFile)
-            
+
             // Look for corresponding reference image
             let referenceImage = loadReferenceImage(
                 named: name,
                 in: url
             )
-            
+
             // Parse test case metadata from filename if possible
             let testCase = parseTestCaseMetadata(from: name)
-            
+
             let vector = J2KTestVector(
                 name: name,
                 description: testCase?.description ?? "ISO test vector: \(name)",
@@ -504,10 +501,10 @@ public struct J2KISOTestSuiteLoader: Sendable {
             )
             vectors.append(vector)
         }
-        
+
         return vectors
     }
-    
+
     /// Checks if the ISO test suite is available at the given path.
     ///
     /// - Parameter path: Path to check for the ISO test suite.
@@ -515,17 +512,17 @@ public struct J2KISOTestSuiteLoader: Sendable {
     public func isTestSuiteAvailable(at path: String) -> Bool {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: path) else { return false }
-        
+
         guard let contents = try? fileManager.contentsOfDirectory(atPath: path) else {
             return false
         }
-        
+
         return contents.contains { name in
             let ext = (name as NSString).pathExtension.lowercased()
             return ext == "j2k" || ext == "j2c" || ext == "jp2"
         }
     }
-    
+
     /// Returns the catalog of ISO/IEC 15444-4 test cases.
     ///
     /// This catalog describes the expected test cases from the official ISO test suite.
@@ -629,7 +626,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
             ),
         ]
     }
-    
+
     /// Generates synthetic test vectors based on ISO/IEC 15444-4 specifications.
     ///
     /// These vectors simulate the characteristics of official ISO test cases
@@ -639,7 +636,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
     /// - Returns: Array of synthetic test vectors.
     public static func syntheticTestVectors() -> [J2KTestVector] {
         var vectors: [J2KTestVector] = []
-        
+
         for testCase in isoTestCaseCatalog() {
             let pixelCount = testCase.width * testCase.height * testCase.components
             let referenceImage = generateTestImage(
@@ -648,7 +645,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 components: testCase.components,
                 bitDepth: testCase.bitDepth
             )
-            
+
             let vector = J2KTestVector(
                 name: testCase.identifier,
                 description: testCase.description,
@@ -662,10 +659,10 @@ public struct J2KISOTestSuiteLoader: Sendable {
             )
             vectors.append(vector)
         }
-        
+
         return vectors
     }
-    
+
     /// Generates a deterministic test image for conformance testing.
     ///
     /// Creates a gradient pattern that exercises the full dynamic range
@@ -686,14 +683,14 @@ public struct J2KISOTestSuiteLoader: Sendable {
         let maxValue = Int32((1 << bitDepth) - 1)
         var pixels = [Int32]()
         pixels.reserveCapacity(width * height * components)
-        
+
         for c in 0..<components {
             for y in 0..<height {
                 for x in 0..<width {
                     // Generate a deterministic gradient pattern
                     let normalizedX = Double(x) / Double(max(1, width - 1))
                     let normalizedY = Double(y) / Double(max(1, height - 1))
-                    
+
                     // Different pattern per component for diversity
                     let value: Double
                     switch c % 3 {
@@ -704,17 +701,17 @@ public struct J2KISOTestSuiteLoader: Sendable {
                     default:
                         value = (normalizedX + normalizedY) / 2.0 * Double(maxValue)
                     }
-                    
+
                     pixels.append(Int32(min(Double(maxValue), max(0, value))))
                 }
             }
         }
-        
+
         return pixels
     }
-    
+
     // MARK: - Private Helpers
-    
+
     /// Reference image data loaded from file.
     private struct ReferenceImageData {
         let pixels: [Int32]
@@ -722,7 +719,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
         let height: Int
         let components: Int
     }
-    
+
     /// Loads a reference image from the test suite directory.
     private func loadReferenceImage(
         named name: String,
@@ -730,11 +727,11 @@ public struct J2KISOTestSuiteLoader: Sendable {
     ) -> ReferenceImageData? {
         // Try common reference image formats
         let extensions = ["raw", "pgm", "ppm", "rawl"]
-        
+
         for ext in extensions {
             let url = directory.appendingPathComponent("\(name).\(ext)")
             guard let data = try? Data(contentsOf: url) else { continue }
-            
+
             if ext == "pgm" || ext == "ppm" {
                 return parsePNMImage(data: data)
             } else {
@@ -742,24 +739,24 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 return nil
             }
         }
-        
+
         return nil
     }
-    
+
     /// Parses a PNM (PGM/PPM) format image.
     private func parsePNMImage(data: Data) -> ReferenceImageData? {
         guard data.count > 3 else { return nil }
-        
+
         let bytes = [UInt8](data)
         guard bytes[0] == 0x50 else { return nil } // 'P'
-        
+
         let isPGM = bytes[1] == 0x35  // 'P5' = binary PGM
         let isPPM = bytes[1] == 0x36  // 'P6' = binary PPM
         guard isPGM || isPPM else { return nil }
-        
+
         // Parse header (simplified)
         var offset = 2
-        
+
         // Skip whitespace and comments
         func skipWhitespaceAndComments() {
             while offset < bytes.count {
@@ -773,7 +770,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 }
             }
         }
-        
+
         func readNumber() -> Int? {
             skipWhitespaceAndComments()
             var num = 0
@@ -785,25 +782,25 @@ public struct J2KISOTestSuiteLoader: Sendable {
             }
             return found ? num : nil
         }
-        
+
         guard let width = readNumber(),
               let height = readNumber(),
               let maxVal = readNumber() else {
             return nil
         }
-        
+
         // Skip single whitespace after maxVal
         offset += 1
-        
+
         let components = isPPM ? 3 : 1
         let bytesPerPixel = maxVal > 255 ? 2 : 1
         let expectedBytes = width * height * components * bytesPerPixel
-        
+
         guard offset + expectedBytes <= data.count else { return nil }
-        
+
         var pixels = [Int32]()
         pixels.reserveCapacity(width * height * components)
-        
+
         for i in 0..<(width * height * components) {
             if bytesPerPixel == 2 {
                 let high = Int32(bytes[offset + i * 2])
@@ -813,7 +810,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 pixels.append(Int32(bytes[offset + i]))
             }
         }
-        
+
         return ReferenceImageData(
             pixels: pixels,
             width: width,
@@ -821,7 +818,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
             components: components
         )
     }
-    
+
     /// Parses test case metadata from a filename.
     private func parseTestCaseMetadata(from name: String) -> ISOTestCase? {
         let catalog = Self.isoTestCaseCatalog()
@@ -836,7 +833,6 @@ public struct J2KISOTestSuiteLoader: Sendable {
 /// This utility helps identify the current platform and available features,
 /// enabling platform-aware testing and graceful degradation.
 public struct J2KPlatformInfo: Sendable {
-    
     /// The operating system family.
     public enum OperatingSystem: String, Sendable {
         case macOS = "macOS"
@@ -848,7 +844,7 @@ public struct J2KPlatformInfo: Sendable {
         case windows = "Windows"
         case unknown = "Unknown"
     }
-    
+
     /// The CPU architecture.
     public enum Architecture: String, Sendable {
         case arm64 = "arm64"
@@ -857,7 +853,7 @@ public struct J2KPlatformInfo: Sendable {
         case i386 = "i386"
         case unknown = "Unknown"
     }
-    
+
     /// Returns the current operating system.
     public static var currentOS: OperatingSystem {
         #if os(macOS)
@@ -878,7 +874,7 @@ public struct J2KPlatformInfo: Sendable {
         return .unknown
         #endif
     }
-    
+
     /// Returns the current CPU architecture.
     public static var currentArchitecture: Architecture {
         #if arch(arm64)
@@ -893,7 +889,7 @@ public struct J2KPlatformInfo: Sendable {
         return .unknown
         #endif
     }
-    
+
     /// Whether hardware-accelerated operations are available.
     public static var hasHardwareAcceleration: Bool {
         #if canImport(Accelerate)
@@ -902,7 +898,7 @@ public struct J2KPlatformInfo: Sendable {
         return false
         #endif
     }
-    
+
     /// Whether the platform is an Apple platform.
     public static var isApplePlatform: Bool {
         #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
@@ -911,7 +907,7 @@ public struct J2KPlatformInfo: Sendable {
         return false
         #endif
     }
-    
+
     /// Returns a summary of the current platform capabilities.
     ///
     /// - Returns: A formatted string describing the platform.
@@ -925,19 +921,18 @@ public struct J2KPlatformInfo: Sendable {
         summary += "  Byte Order: \(isLittleEndian ? "Little Endian" : "Big Endian")\n"
         return summary
     }
-    
+
     /// Whether the platform uses little-endian byte order.
     public static var isLittleEndian: Bool {
         let value: UInt16 = 0x0001
         return withUnsafeBytes(of: value) { $0[0] == 1 }
     }
-    
+
     /// The pointer size in bytes on the current platform.
     public static var pointerSize: Int {
         return MemoryLayout<Int>.size
     }
 }
-
 
 // MARK: - HTJ2K Test Vector Generator
 
@@ -947,54 +942,53 @@ public struct J2KPlatformInfo: Sendable {
 /// HTJ2K encoders and decoders. Test vectors include various patterns and edge
 /// cases to ensure comprehensive coverage.
 public struct HTJ2KTestVectorGenerator: Sendable {
-    
     /// Types of test patterns that can be generated.
     public enum TestPattern: Sendable {
         /// Solid color pattern (all pixels same value).
         case solid(value: Int32)
-        
+
         /// Gradient pattern (linear ramp from 0 to max value).
         case gradient
-        
+
         /// Checkerboard pattern (alternating black and white squares).
         case checkerboard(squareSize: Int)
-        
+
         /// Random noise pattern.
         case randomNoise(seed: UInt64)
-        
+
         /// Frequency sweep pattern (sinusoidal with increasing frequency).
         case frequencySweep
-        
+
         /// Edge pattern (sharp transitions to test high-frequency coding).
         case edges
     }
-    
+
     /// Configuration for test vector generation.
     public struct Configuration: Sendable {
         /// Image width in pixels.
         public let width: Int
-        
+
         /// Image height in pixels.
         public let height: Int
-        
+
         /// Number of components (1 for grayscale, 3 for RGB).
         public let components: Int
-        
+
         /// Bit depth per component.
         public let bitDepth: Int
-        
+
         /// Test pattern to generate.
         public let pattern: TestPattern
-        
+
         /// Whether to use lossless compression.
         public let lossless: Bool
-        
+
         /// Quality factor for lossy compression (0.0-1.0).
         public let quality: Double
-        
+
         /// Whether to use HTJ2K or legacy coding.
         public let useHTJ2K: Bool
-        
+
         /// Creates a new test vector configuration.
         public init(
             width: Int,
@@ -1016,7 +1010,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
             self.useHTJ2K = useHTJ2K
         }
     }
-    
+
     /// Generates a test image based on the specified pattern.
     ///
     /// - Parameters:
@@ -1026,11 +1020,11 @@ public struct HTJ2KTestVectorGenerator: Sendable {
         let pixelCount = config.width * config.height * config.components
         var pixels = [Int32](repeating: 0, count: pixelCount)
         let maxValue = Int32((1 << config.bitDepth) - 1)
-        
+
         switch config.pattern {
         case .solid(let value):
             pixels = [Int32](repeating: min(value, maxValue), count: pixelCount)
-            
+
         case .gradient:
             for y in 0..<config.height {
                 for x in 0..<config.width {
@@ -1041,7 +1035,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                     }
                 }
             }
-            
+
         case .checkerboard(let squareSize):
             for y in 0..<config.height {
                 for x in 0..<config.width {
@@ -1054,13 +1048,13 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                     }
                 }
             }
-            
+
         case .randomNoise(let seed):
             var rng = SeededRandomNumberGenerator(seed: seed)
             for i in 0..<pixelCount {
                 pixels[i] = Int32.random(in: 0...maxValue, using: &rng)
             }
-            
+
         case .frequencySweep:
             for y in 0..<config.height {
                 for x in 0..<config.width {
@@ -1074,7 +1068,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                     }
                 }
             }
-            
+
         case .edges:
             for y in 0..<config.height {
                 for x in 0..<config.width {
@@ -1087,10 +1081,10 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                 }
             }
         }
-        
+
         return pixels
     }
-    
+
     /// Creates a test vector with the specified configuration.
     ///
     /// - Parameters:
@@ -1104,7 +1098,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
         config: Configuration
     ) -> J2KTestVector {
         let referenceImage = generateImage(config: config)
-        
+
         return J2KTestVector(
             name: name,
             description: description,
@@ -1125,11 +1119,11 @@ public struct HTJ2KTestVectorGenerator: Sendable {
 /// A simple seeded random number generator for reproducible test data.
 private struct SeededRandomNumberGenerator: RandomNumberGenerator {
     private var state: UInt64
-    
+
     init(seed: UInt64) {
         self.state = seed
     }
-    
+
     mutating func next() -> UInt64 {
         // Linear congruential generator
         state = state &* 6364136223846793005 &+ 1442695040888963407
@@ -1144,24 +1138,23 @@ private struct SeededRandomNumberGenerator: RandomNumberGenerator {
 /// This harness extends the basic conformance validator with HTJ2K-specific
 /// validation rules and test scenarios as specified in ISO/IEC 15444-15.
 public struct HTJ2KConformanceTestHarness: Sendable {
-    
     /// HTJ2K-specific validation rules.
     public struct ValidationRules: Sendable {
         /// Whether to validate CAP marker presence.
         public let requireCAPMarker: Bool
-        
+
         /// Whether to validate CPF marker presence.
         public let requireCPFMarker: Bool
-        
+
         /// Whether to validate HT set parameters in COD/COC markers.
         public let validateHTSetParameters: Bool
-        
+
         /// Whether to validate mixed-mode codestreams (HT + legacy blocks).
         public let allowMixedMode: Bool
-        
+
         /// Maximum allowable encoding/decoding time in seconds.
         public let maxProcessingTime: Double?
-        
+
         /// Creates new validation rules.
         public init(
             requireCAPMarker: Bool = true,
@@ -1177,46 +1170,46 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             self.maxProcessingTime = maxProcessingTime
         }
     }
-    
+
     /// Result of HTJ2K-specific validation.
     public struct HTValidationResult: Sendable {
         /// Basic conformance test result.
         public let conformanceResult: J2KConformanceValidator.TestResult
-        
+
         /// Whether CAP marker was found (if required).
         public let hasCAPMarker: Bool?
-        
+
         /// Whether CPF marker was found (if required).
         public let hasCPFMarker: Bool?
-        
+
         /// Whether HT set parameters were valid (if validated).
         public let validHTSetParameters: Bool?
-        
+
         /// Whether mixed-mode coding was detected.
         public let isMixedMode: Bool?
-        
+
         /// Processing time in seconds.
         public let processingTime: Double?
-        
+
         /// Additional validation errors specific to HTJ2K.
         public let htValidationErrors: [String]
-        
+
         /// Overall pass/fail status.
         public var passed: Bool {
             conformanceResult.passed && htValidationErrors.isEmpty
         }
     }
-    
+
     /// The validation rules to apply.
     public let rules: ValidationRules
-    
+
     /// Creates a new HTJ2K conformance test harness.
     ///
     /// - Parameter rules: Validation rules to apply.
     public init(rules: ValidationRules = ValidationRules()) {
         self.rules = rules
     }
-    
+
     /// Validates HTJ2K codestream structure.
     ///
     /// This performs basic marker validation without full decoding.
@@ -1225,13 +1218,13 @@ public struct HTJ2KConformanceTestHarness: Sendable {
     /// - Returns: Validation errors, if any.
     public func validateCodestreamStructure(_ codestream: Data) -> [String] {
         var errors: [String] = []
-        
+
         // Check minimum size
         guard codestream.count >= 2 else {
             errors.append("Codestream too short")
             return errors
         }
-        
+
         // Check for JPEG 2000 SOC marker (0xFF4F)
         if codestream.count >= 2 {
             let soc = (UInt16(codestream[0]) << 8) | UInt16(codestream[1])
@@ -1239,21 +1232,21 @@ public struct HTJ2KConformanceTestHarness: Sendable {
                 errors.append("Missing or invalid SOC marker")
             }
         }
-        
+
         // Scan for required markers
         var hasCAP = false
         var hasCPF = false
         var hasCOD = false
-        
+
         var offset = 2  // Skip SOC
         while offset + 2 <= codestream.count {
             let marker = (UInt16(codestream[offset]) << 8) | UInt16(codestream[offset + 1])
             offset += 2
-            
+
             // Check marker length
             guard offset + 2 <= codestream.count else { break }
             let length = (Int(codestream[offset]) << 8) | Int(codestream[offset + 1])
-            
+
             switch marker {
             case 0xFF50:  // CAP
                 hasCAP = true
@@ -1267,25 +1260,25 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             default:
                 break
             }
-            
+
             offset += length
         }
-        
+
         if rules.requireCAPMarker && !hasCAP {
             errors.append("Missing required CAP marker for HTJ2K")
         }
-        
+
         if rules.requireCPFMarker && !hasCPF {
             errors.append("Missing required CPF marker for HTJ2K")
         }
-        
+
         if !hasCOD {
             errors.append("Missing required COD marker")
         }
-        
+
         return errors
     }
-    
+
     /// Validates a decoded image with HTJ2K-specific checks.
     ///
     /// - Parameters:
@@ -1305,10 +1298,10 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             decoded: decoded,
             against: vector
         )
-        
+
         // Then perform HTJ2K-specific validation
         let structureErrors = validateCodestreamStructure(codestream)
-        
+
         // Check processing time if specified
         var timeErrors: [String] = []
         if let maxTime = rules.maxProcessingTime,
@@ -1316,14 +1309,14 @@ public struct HTJ2KConformanceTestHarness: Sendable {
            actualTime > maxTime {
             timeErrors.append("Processing time \(actualTime)s exceeds maximum \(maxTime)s")
         }
-        
+
         // For now, we'll set these to nil since we need actual marker parsing
         // A full implementation would parse the codestream to extract these
         let hasCAPMarker: Bool? = nil
         let hasCPFMarker: Bool? = nil
         let validHTSetParameters: Bool? = nil
         let isMixedMode: Bool? = nil
-        
+
         return HTValidationResult(
             conformanceResult: conformanceResult,
             hasCAPMarker: hasCAPMarker,
@@ -1334,7 +1327,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             htValidationErrors: structureErrors + timeErrors
         )
     }
-    
+
     /// Generates a comprehensive report for multiple HTJ2K validation results.
     ///
     /// - Parameter results: Array of validation results.
@@ -1342,19 +1335,19 @@ public struct HTJ2KConformanceTestHarness: Sendable {
     public static func generateReport(results: [HTValidationResult]) -> String {
         var report = "HTJ2K Conformance Test Report\n"
         report += "==============================\n\n"
-        
+
         let passCount = results.filter { $0.passed }.count
         let totalCount = results.count
         let passRate = totalCount > 0 ? Double(passCount) / Double(totalCount) * 100.0 : 0.0
-        
+
         report += "Summary: \(passCount)/\(totalCount) tests passed (\(String(format: "%.1f", passRate))%)\n\n"
-        
+
         // Detailed results
         for (index, result) in results.enumerated() {
             let status = result.passed ? "✓ PASS" : "✗ FAIL"
             report += "Test \(index + 1): \(status)\n"
             report += "  Name: \(result.conformanceResult.vector.name)\n"
-            
+
             if let mae = result.conformanceResult.mae {
                 report += "  MAE: \(mae)\n"
             }
@@ -1364,30 +1357,30 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             if let time = result.processingTime {
                 report += "  Processing Time: \(String(format: "%.3f", time))s\n"
             }
-            
+
             if !result.htValidationErrors.isEmpty {
                 report += "  HTJ2K Validation Errors:\n"
                 for error in result.htValidationErrors {
                     report += "    - \(error)\n"
                 }
             }
-            
+
             if let errorMsg = result.conformanceResult.errorMessage {
                 report += "  Error: \(errorMsg)\n"
             }
-            
+
             report += "\n"
         }
-        
+
         return report
     }
-    
+
     /// Creates a standard set of HTJ2K test vectors for basic conformance testing.
     ///
     /// - Returns: Array of test vectors covering common scenarios.
     public static func createStandardTestVectors() -> [J2KTestVector] {
         var vectors: [J2KTestVector] = []
-        
+
         // 1. Lossless grayscale
         let losslessGrayConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 64,
@@ -1403,7 +1396,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             description: "Lossless HTJ2K encoding of 64×64 grayscale checkerboard",
             config: losslessGrayConfig
         ))
-        
+
         // 2. Lossy RGB
         let lossyRGBConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 128,
@@ -1420,7 +1413,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             description: "Lossy HTJ2K encoding of 128×128 RGB gradient",
             config: lossyRGBConfig
         ))
-        
+
         // 3. High-frequency edges
         let edgesConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 32,
@@ -1436,7 +1429,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             description: "HTJ2K encoding of high-frequency edge pattern",
             config: edgesConfig
         ))
-        
+
         // 4. Random noise
         let noiseConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 64,
@@ -1453,7 +1446,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             description: "HTJ2K encoding of random noise pattern",
             config: noiseConfig
         ))
-        
+
         // 5. Solid color (trivial case)
         let solidConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 16,
@@ -1469,7 +1462,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             description: "HTJ2K encoding of solid gray pattern",
             config: solidConfig
         ))
-        
+
         return vectors
     }
 }
@@ -1498,22 +1491,21 @@ public struct HTJ2KConformanceTestHarness: Sendable {
 /// HTJ2K: true
 /// ```
 public struct HTJ2KTestVectorParser: Sendable {
-    
     /// Errors that can occur during parsing.
     public enum ParseError: Error, Sendable {
         /// Required field is missing.
         case missingField(String)
-        
+
         /// Invalid value for a field.
         case invalidValue(field: String, value: String)
-        
+
         /// Unknown pattern type.
         case unknownPattern(String)
-        
+
         /// File format error.
         case formatError(String)
     }
-    
+
     /// Parses a test vector from a text string.
     ///
     /// - Parameter text: The test vector specification as text.
@@ -1521,67 +1513,67 @@ public struct HTJ2KTestVectorParser: Sendable {
     /// - Throws: `ParseError` if parsing fails.
     public static func parse(_ text: String) throws -> J2KTestVector {
         var fields: [String: String] = [:]
-        
+
         // Parse key-value pairs
         for line in text.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            
+
             // Skip empty lines and comments
             if trimmed.isEmpty || trimmed.hasPrefix("#") {
                 continue
             }
-            
+
             // Split on first colon
             guard let colonIndex = trimmed.firstIndex(of: ":") else {
                 continue
             }
-            
+
             let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespaces).uppercased()
             let value = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
             fields[key] = value
         }
-        
+
         // Extract required fields
         guard let name = fields["NAME"] else {
             throw ParseError.missingField("NAME")
         }
-        
+
         guard let description = fields["DESCRIPTION"] else {
             throw ParseError.missingField("DESCRIPTION")
         }
-        
+
         guard let widthStr = fields["WIDTH"],
               let width = Int(widthStr) else {
             throw ParseError.invalidValue(field: "WIDTH", value: fields["WIDTH"] ?? "")
         }
-        
+
         guard let heightStr = fields["HEIGHT"],
               let height = Int(heightStr) else {
             throw ParseError.invalidValue(field: "HEIGHT", value: fields["HEIGHT"] ?? "")
         }
-        
+
         guard let componentsStr = fields["COMPONENTS"],
               let components = Int(componentsStr) else {
             throw ParseError.invalidValue(field: "COMPONENTS", value: fields["COMPONENTS"] ?? "")
         }
-        
+
         guard let bitDepthStr = fields["BITDEPTH"],
               let bitDepth = Int(bitDepthStr) else {
             throw ParseError.invalidValue(field: "BITDEPTH", value: fields["BITDEPTH"] ?? "")
         }
-        
+
         guard let patternStr = fields["PATTERN"] else {
             throw ParseError.missingField("PATTERN")
         }
-        
+
         // Parse pattern
         let pattern = try parsePattern(patternStr)
-        
+
         // Parse optional fields
         let lossless = fields["LOSSLESS"]?.lowercased() == "true"
         let quality = Double(fields["QUALITY"] ?? "1.0") ?? 1.0
         let useHTJ2K = fields["HTJ2K"]?.lowercased() == "true"
-        
+
         // Generate test vector
         let config = HTJ2KTestVectorGenerator.Configuration(
             width: width,
@@ -1593,14 +1585,14 @@ public struct HTJ2KTestVectorParser: Sendable {
             quality: quality,
             useHTJ2K: useHTJ2K
         )
-        
+
         return HTJ2KTestVectorGenerator.createTestVector(
             name: name,
             description: description,
             config: config
         )
     }
-    
+
     /// Parses a pattern specification string.
     ///
     /// - Parameter patternStr: Pattern specification (e.g., "solid(128)", "checkerboard(8)").
@@ -1608,37 +1600,37 @@ public struct HTJ2KTestVectorParser: Sendable {
     /// - Throws: `ParseError.unknownPattern` if the pattern is not recognized.
     private static func parsePattern(_ patternStr: String) throws -> HTJ2KTestVectorGenerator.TestPattern {
         let trimmed = patternStr.trimmingCharacters(in: .whitespaces).lowercased()
-        
+
         // Pattern with argument
         if let openParen = trimmed.firstIndex(of: "("),
            let closeParen = trimmed.lastIndex(of: ")") {
             let patternName = String(trimmed[..<openParen])
             let argStr = String(trimmed[trimmed.index(after: openParen)..<closeParen])
-            
+
             switch patternName {
             case "solid":
                 guard let value = Int32(argStr) else {
                     throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
                 }
                 return .solid(value: value)
-                
+
             case "checkerboard":
                 guard let size = Int(argStr) else {
                     throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
                 }
                 return .checkerboard(squareSize: size)
-                
+
             case "randomnoise", "random":
                 guard let seed = UInt64(argStr) else {
                     throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
                 }
                 return .randomNoise(seed: seed)
-                
+
             default:
                 throw ParseError.unknownPattern(patternName)
             }
         }
-        
+
         // Pattern without argument
         switch trimmed {
         case "gradient":
@@ -1651,7 +1643,7 @@ public struct HTJ2KTestVectorParser: Sendable {
             throw ParseError.unknownPattern(trimmed)
         }
     }
-    
+
     /// Parses multiple test vectors from a file-like string.
     ///
     /// Test vectors are separated by lines containing only "---".
@@ -1662,17 +1654,17 @@ public struct HTJ2KTestVectorParser: Sendable {
     public static func parseMultiple(_ text: String) throws -> [J2KTestVector] {
         let sections = text.components(separatedBy: "\n---\n")
         var vectors: [J2KTestVector] = []
-        
+
         for section in sections {
             let trimmed = section.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 try vectors.append(parse(trimmed))
             }
         }
-        
+
         return vectors
     }
-    
+
     /// Validates a test vector specification without generating the full vector.
     ///
     /// - Parameter text: The test vector specification.

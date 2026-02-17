@@ -13,16 +13,16 @@ import FoundationNetworking
 public struct JPIPResponse: Sendable {
     /// The channel ID (cid) from JPIP-cnew header, if present.
     public let channelID: String?
-    
+
     /// The response data.
     public let data: Data
-    
+
     /// HTTP status code.
     public let statusCode: Int
-    
+
     /// All HTTP headers.
     public let headers: [String: String]
-    
+
     /// Creates a new JPIP response.
     ///
     /// - Parameters:
@@ -61,7 +61,7 @@ public struct JPIPResponseParser: Sendable {
         }
         return nil
     }
-    
+
     /// Parses HTTP headers from URLResponse.
     ///
     /// - Parameter response: The HTTP URL response.
@@ -75,7 +75,7 @@ public struct JPIPResponseParser: Sendable {
         }
         return headers
     }
-    
+
     /// Extracts channel ID from response headers.
     ///
     /// - Parameter headers: HTTP response headers.
@@ -95,19 +95,19 @@ public struct JPIPResponseParser: Sendable {
 public enum JPIPDataBinClass: Int, Sendable {
     /// Main header data bin.
     case mainHeader = 0
-    
+
     /// Tile header data bin.
     case tileHeader = 1
-    
+
     /// Precinct data bin.
     case precinct = 2
-    
+
     /// Tile data bin.
     case tile = 3
-    
+
     /// Extended precinct data bin.
     case extendedPrecinct = 4
-    
+
     /// Metadata data bin.
     case metadata = 5
 }
@@ -116,16 +116,16 @@ public enum JPIPDataBinClass: Int, Sendable {
 public struct JPIPDataBin: Sendable {
     /// The data bin class.
     public let binClass: JPIPDataBinClass
-    
+
     /// The data bin ID.
     public let binID: Int
-    
+
     /// The data content.
     public let data: Data
-    
+
     /// Whether this is the complete bin.
     public let isComplete: Bool
-    
+
     /// Creates a new data bin.
     ///
     /// - Parameters:

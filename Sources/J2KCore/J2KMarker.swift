@@ -17,93 +17,93 @@ import Foundation
 /// > Direct use of this type is not recommended. Use ``J2KDecoder`` or ``J2KFileReader`` instead.
 public enum J2KMarker: UInt16, Sendable {
     // MARK: - Delimiting Markers
-    
+
     /// Start of codestream (SOC).
     case soc = 0xFF4F
-    
+
     /// Start of tile-part (SOT).
     case sot = 0xFF90
-    
+
     /// Start of data (SOD).
     case sod = 0xFF93
-    
+
     /// End of codestream (EOC).
     case eoc = 0xFFD9
-    
+
     // MARK: - Fixed Information Marker Segments
-    
+
     /// Image and tile size (SIZ).
     case siz = 0xFF51
-    
+
     // MARK: - Functional Marker Segments
-    
+
     /// Coding style default (COD).
     case cod = 0xFF52
-    
+
     /// Coding style component (COC).
     case coc = 0xFF53
-    
+
     /// Region of interest (RGN).
     case rgn = 0xFF5E
-    
+
     /// Quantization default (QCD).
     case qcd = 0xFF5C
-    
+
     /// Quantization component (QCC).
     case qcc = 0xFF5D
-    
+
     /// Progression order change (POC).
     case poc = 0xFF5F
-    
+
     // MARK: - Pointer Marker Segments
-    
+
     /// Tile-part lengths (TLM).
     case tlm = 0xFF55
-    
+
     /// Packet length, main header (PLM).
     case plm = 0xFF57
-    
+
     /// Packet length, tile-part header (PLT).
     case plt = 0xFF58
-    
+
     /// Packed packet headers, main header (PPM).
     case ppm = 0xFF60
-    
+
     /// Packed packet headers, tile-part header (PPT).
     case ppt = 0xFF61
-    
+
     // MARK: - In-Bit-Stream Marker Segments
-    
+
     /// Start of packet (SOP).
     case sop = 0xFF91
-    
+
     /// End of packet header (EPH).
     case eph = 0xFF92
-    
+
     // MARK: - Informational Marker Segments
-    
+
     /// Component registration (CRG).
     case crg = 0xFF63
-    
+
     /// Comment (COM).
     case com = 0xFF64
-    
+
     // MARK: - HTJ2K (Part 15) Marker Segments
-    
+
     /// Extended capabilities (CAP) — ISO/IEC 15444-15.
     ///
     /// Signals HTJ2K (High-Throughput JPEG 2000) support and other
     /// extended capabilities in the codestream.
     case cap = 0xFF50
-    
+
     /// Corresponding profile (CPF) — ISO/IEC 15444-15.
     ///
     /// Specifies the profile to which the codestream conforms, including
     /// HTJ2K-specific profiles.
     case cpf = 0xFF59
-    
+
     // MARK: - Marker Categories
-    
+
     /// Returns `true` if this marker has a marker segment (length + data).
     public var hasSegment: Bool {
         switch self {
@@ -113,7 +113,7 @@ public enum J2KMarker: UInt16, Sendable {
             return true
         }
     }
-    
+
     /// Returns `true` if this is a delimiting marker.
     public var isDelimiting: Bool {
         switch self {
@@ -123,7 +123,7 @@ public enum J2KMarker: UInt16, Sendable {
             return false
         }
     }
-    
+
     /// Returns `true` if this marker can appear in the main header.
     public var canAppearInMainHeader: Bool {
         switch self {
@@ -134,7 +134,7 @@ public enum J2KMarker: UInt16, Sendable {
             return false
         }
     }
-    
+
     /// Returns `true` if this marker can appear in a tile-part header.
     public var canAppearInTileHeader: Bool {
         switch self {
@@ -144,7 +144,7 @@ public enum J2KMarker: UInt16, Sendable {
             return false
         }
     }
-    
+
     /// Returns a human-readable name for the marker.
     public var name: String {
         switch self {
@@ -182,13 +182,13 @@ public enum J2KMarker: UInt16, Sendable {
 public struct J2KMarkerSegment: Sendable {
     /// The marker code.
     public let marker: J2KMarker
-    
+
     /// The position of the marker in the codestream.
     public let position: Int
-    
+
     /// The segment data (not including marker and length field).
     public let data: Data
-    
+
     /// The total length of the marker segment in bytes.
     public var totalLength: Int {
         if marker.hasSegment {
@@ -197,7 +197,7 @@ public struct J2KMarkerSegment: Sendable {
             return 2 // marker only
         }
     }
-    
+
     /// Creates a new marker segment.
     ///
     /// - Parameters:
@@ -224,14 +224,14 @@ public struct J2KMarkerSegment: Sendable {
 public struct J2KMarkerParser: Sendable {
     /// The codestream data.
     private let data: Data
-    
+
     /// Creates a new marker parser.
     ///
     /// - Parameter data: The codestream data to parse.
     public init(data: Data) {
         self.data = data
     }
-    
+
     /// Parses a single marker segment at the specified position.
     ///
     /// - Parameter position: The byte position of the marker.
@@ -240,12 +240,12 @@ public struct J2KMarkerParser: Sendable {
     public func parseMarkerSegment(at position: Int) throws -> J2KMarkerSegment {
         var reader = J2KBitReader(data: data)
         try reader.seek(to: position)
-        
+
         let markerCode = try reader.readUInt16()
         guard let marker = J2KMarker(rawValue: markerCode) else {
             throw J2KError.invalidData("Unknown marker 0x\(String(markerCode, radix: 16)) at position \(position)")
         }
-        
+
         if marker.hasSegment {
             let length = Int(try reader.readUInt16())
             guard length >= 2 else {
@@ -257,7 +257,7 @@ public struct J2KMarkerParser: Sendable {
             return J2KMarkerSegment(marker: marker, position: position, data: Data())
         }
     }
-    
+
     /// Parses the main header of the codestream.
     ///
     /// The main header starts with SOC and ends with the first SOT marker.
@@ -267,35 +267,35 @@ public struct J2KMarkerParser: Sendable {
     public func parseMainHeader() throws -> [J2KMarkerSegment] {
         var segments: [J2KMarkerSegment] = []
         var reader = J2KBitReader(data: data)
-        
+
         // First marker must be SOC
         let socMarker = try reader.readUInt16()
         guard socMarker == J2KMarker.soc.rawValue else {
             throw J2KError.invalidData("Codestream must start with SOC marker, found 0x\(String(socMarker, radix: 16))")
         }
         segments.append(J2KMarkerSegment(marker: .soc, position: 0))
-        
+
         var position = 2
-        
+
         while position < data.count {
             // Read next marker
             if reader.bytesRemaining < 2 {
                 break
             }
-            
+
             let markerCode = try reader.readUInt16()
-            
+
             // Check for SOT (end of main header)
             if markerCode == J2KMarker.sot.rawValue {
                 // SOT marks the end of the main header
                 segments.append(J2KMarkerSegment(marker: .sot, position: position))
                 break
             }
-            
+
             guard let marker = J2KMarker(rawValue: markerCode) else {
                 throw J2KError.invalidData("Unknown marker 0x\(String(markerCode, radix: 16)) at position \(position)")
             }
-            
+
             if marker.hasSegment {
                 guard reader.bytesRemaining >= 2 else {
                     throw J2KError.invalidData("Unexpected end of data reading segment length at position \(position)")
@@ -315,20 +315,20 @@ public struct J2KMarkerParser: Sendable {
                 position = reader.position
             }
         }
-        
+
         return segments
     }
-    
+
     /// Validates that the codestream has the required markers.
     ///
     /// - Returns: `true` if the codestream appears valid.
     public func validateBasicStructure() -> Bool {
         guard data.count >= 4 else { return false }
-        
+
         // Check for SOC marker at start
         let socMarker = UInt16(data[0]) << 8 | UInt16(data[1])
         guard socMarker == J2KMarker.soc.rawValue else { return false }
-        
+
         // Check for EOC marker at end (if present)
         if data.count >= 2 {
             let lastTwo = UInt16(data[data.count - 2]) << 8 | UInt16(data[data.count - 1])
@@ -336,16 +336,16 @@ public struct J2KMarkerParser: Sendable {
                 return true
             }
         }
-        
+
         // Look for SIZ marker (required after SOC)
         if data.count >= 4 {
             let sizMarker = UInt16(data[2]) << 8 | UInt16(data[3])
             return sizMarker == J2KMarker.siz.rawValue
         }
-        
+
         return false
     }
-    
+
     /// Finds all occurrences of a specific marker in the codestream.
     ///
     /// - Parameter marker: The marker to search for.
@@ -353,7 +353,7 @@ public struct J2KMarkerParser: Sendable {
     public func findMarkers(_ marker: J2KMarker) -> [Int] {
         var positions: [Int] = []
         let markerBytes = [UInt8(marker.rawValue >> 8), UInt8(marker.rawValue & 0xFF)]
-        
+
         var index = 0
         while index < data.count - 1 {
             if data[index] == markerBytes[0] && data[index + 1] == markerBytes[1] {
@@ -361,7 +361,7 @@ public struct J2KMarkerParser: Sendable {
             }
             index += 1
         }
-        
+
         return positions
     }
 }

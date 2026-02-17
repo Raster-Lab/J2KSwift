@@ -30,21 +30,21 @@ import J2KCore
 internal actor J2KBufferPool {
     /// Shared instance for global buffer pooling.
     internal static let shared = J2KBufferPool()
-    
+
     /// Maximum number of buffers to cache per size category.
     private let maxCachedBuffers = 8
-    
+
     /// Cached Int32 buffers, grouped by size.
     private var int32Buffers: [Int: [[Int32]]] = [:]
-    
+
     /// Cached Double buffers, grouped by size.
     private var doubleBuffers: [Int: [[Double]]] = [:]
-    
+
     /// Creates a new buffer pool.
     internal init() {}
-    
+
     // MARK: - Int32 Buffer Management
-    
+
     /// Acquires an Int32 buffer of the specified size.
     ///
     /// If a buffer of the requested size is available in the pool, it will be reused.
@@ -60,7 +60,7 @@ internal actor J2KBufferPool {
         }
         return [Int32](repeating: 0, count: size)
     }
-    
+
     /// Releases an Int32 buffer back to the pool.
     ///
     /// The buffer will be zeroed and cached for future reuse if the pool is not full.
@@ -69,22 +69,22 @@ internal actor J2KBufferPool {
     internal func releaseInt32Buffer(_ buffer: [Int32]) {
         let size = buffer.count
         guard size > 0 else { return }
-        
+
         var buffers = int32Buffers[size] ?? []
         guard buffers.count < maxCachedBuffers else { return }
-        
+
         // Zero the buffer before caching
         var clearedBuffer = buffer
         for i in 0..<clearedBuffer.count {
             clearedBuffer[i] = 0
         }
-        
+
         buffers.append(clearedBuffer)
         int32Buffers[size] = buffers
     }
-    
+
     // MARK: - Double Buffer Management
-    
+
     /// Acquires a Double buffer of the specified size.
     ///
     /// If a buffer of the requested size is available in the pool, it will be reused.
@@ -100,7 +100,7 @@ internal actor J2KBufferPool {
         }
         return [Double](repeating: 0, count: size)
     }
-    
+
     /// Releases a Double buffer back to the pool.
     ///
     /// The buffer will be zeroed and cached for future reuse if the pool is not full.
@@ -109,22 +109,22 @@ internal actor J2KBufferPool {
     internal func releaseDoubleBuffer(_ buffer: [Double]) {
         let size = buffer.count
         guard size > 0 else { return }
-        
+
         var buffers = doubleBuffers[size] ?? []
         guard buffers.count < maxCachedBuffers else { return }
-        
+
         // Zero the buffer before caching
         var clearedBuffer = buffer
         for i in 0..<clearedBuffer.count {
             clearedBuffer[i] = 0.0
         }
-        
+
         buffers.append(clearedBuffer)
         doubleBuffers[size] = buffers
     }
-    
+
     // MARK: - Pool Management
-    
+
     /// Clears all cached buffers from the pool.
     ///
     /// This can be called to free memory when decoding is complete.
@@ -132,7 +132,7 @@ internal actor J2KBufferPool {
         int32Buffers.removeAll()
         doubleBuffers.removeAll()
     }
-    
+
     /// Returns statistics about the current state of the pool.
     ///
     /// - Returns: A dictionary mapping buffer sizes to cached buffer counts.
@@ -155,7 +155,7 @@ extension J2KBufferPool {
     internal nonisolated func acquireInt32BufferSync(size: Int) -> [Int32] {
         return [Int32](repeating: 0, count: size)
     }
-    
+
     /// Synchronously acquires a Double buffer (for non-async contexts).
     ///
     /// This creates a new buffer without pooling. For optimal performance,

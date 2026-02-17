@@ -9,7 +9,6 @@ import XCTest
 
 /// Tests for JPIPTranscodingService functionality.
 final class JPIPTranscodingServiceTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testTranscodingServiceInitialization() {

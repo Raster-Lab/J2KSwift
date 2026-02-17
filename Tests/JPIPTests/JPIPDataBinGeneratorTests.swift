@@ -9,7 +9,6 @@ import XCTest
 
 /// Tests for JPIPDataBinGenerator functionality.
 final class JPIPDataBinGeneratorTests: XCTestCase {
-
     // MARK: - Initialization Tests
 
     func testDataBinGeneratorInitialization() {
