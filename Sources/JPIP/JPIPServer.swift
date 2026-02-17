@@ -431,7 +431,7 @@ public actor JPIPServer {
         
         // Apply on-the-fly transcoding if client prefers a different format
         if transcodingService.needsTranscoding(preference: preference, sourceIsHTJ2K: sourceIsHTJ2K) {
-            let sourceHash = String(sourceData.hashValue)
+            let sourceHash = stableHash(for: sourceData)
             if let direction = transcodingService.determineDirection(
                 preference: preference, sourceIsHTJ2K: sourceIsHTJ2K
             ) {
@@ -442,6 +442,7 @@ public actor JPIPServer {
                     preference: preference,
                     sourceIsHTJ2K: sourceIsHTJ2K
                 ), result.wasTranscoded {
+                    // Transcoding succeeded; use transcoded data
                     dataToServe = result.data
                     await transcodingCache.put(
                         data: result.data,
@@ -449,6 +450,9 @@ public actor JPIPServer {
                         direction: direction
                     )
                 }
+                // If transcoding fails, gracefully fall back to serving original data.
+                // This ensures clients always receive valid image data even if
+                // the source codestream cannot be transcoded to the preferred format.
             }
         }
         
@@ -518,6 +522,21 @@ public actor JPIPServer {
     /// - Returns: The image info if available, nil otherwise.
     public func getImageInfo(name: String) -> JPIPImageInfo? {
         return imageInfoCache[name]
+    }
+    
+    /// Computes a stable hash string for data, suitable for cache keys.
+    ///
+    /// Uses a simple FNV-1a-like hash that is stable across executions.
+    ///
+    /// - Parameter data: The data to hash.
+    /// - Returns: A hex string hash.
+    private func stableHash(for data: Data) -> String {
+        var hash: UInt64 = 14695981039346656037 // FNV offset basis
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211 // FNV prime
+        }
+        return String(hash, radix: 16)
     }
 }
 

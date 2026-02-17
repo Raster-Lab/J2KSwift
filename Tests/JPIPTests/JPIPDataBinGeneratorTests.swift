@@ -44,7 +44,8 @@ final class JPIPDataBinGeneratorTests: XCTestCase {
         let generator = JPIPDataBinGenerator()
 
         // J2K codestream: SOC + SIZ + SOT + SOD + data + EOC
-        // Psot = 2 (SOT marker) + 10 (Lsot content) + 2 (SOD) + 4 (data) = 18 = 0x12
+        // Psot (tile-part length) = total bytes from first byte of SOT to last byte
+        // of tile-part = 2 (SOT marker) + 10 (Lsot content) + 2 (SOD) + 4 (data) = 18 = 0x12
         let data = Data([
             0xFF, 0x4F,                         // SOC
             0xFF, 0x51, 0x00, 0x04, 0x00, 0x00, // SIZ marker (length 4)
@@ -84,8 +85,8 @@ final class JPIPDataBinGeneratorTests: XCTestCase {
         let generator = JPIPDataBinGenerator()
 
         // J2K codestream with 2 tiles
-        // Psot = total tile-part size including SOT marker
-        // = 2 (SOT marker) + 10 (Lsot content) + 2 (SOD) + 4 (data) = 18 = 0x12
+        // Psot (tile-part length) = total bytes from first byte of SOT to last byte
+        // of tile-part = 2 (SOT marker) + 10 (Lsot content) + 2 (SOD) + 4 (data) = 18 = 0x12
         var data = Data([
             0xFF, 0x4F,                         // SOC
             0xFF, 0x51, 0x00, 0x04, 0x00, 0x00  // SIZ marker

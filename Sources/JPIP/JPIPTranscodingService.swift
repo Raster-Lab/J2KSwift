@@ -192,7 +192,7 @@ public actor JPIPTranscodingCache {
     ///   - direction: The transcoding direction.
     /// - Returns: The cached data if available.
     public func get(sourceHash: String, direction: TranscodingDirection) -> Data? {
-        let key = "\(sourceHash):\(direction.rawValue)"
+        let key = cacheKey(sourceHash: sourceHash, direction: direction)
         if let entry = cache[key] {
             hits += 1
             return entry.data
@@ -208,7 +208,7 @@ public actor JPIPTranscodingCache {
     ///   - sourceHash: Hash of the source data.
     ///   - direction: The transcoding direction.
     public func put(data: Data, sourceHash: String, direction: TranscodingDirection) {
-        let key = "\(sourceHash):\(direction.rawValue)"
+        let key = cacheKey(sourceHash: sourceHash, direction: direction)
 
         // Evict if over size limit
         while currentSize + data.count > maxCacheSize && !cache.isEmpty {
@@ -251,5 +251,10 @@ public actor JPIPTranscodingCache {
         }
         currentSize -= oldest.value.data.count
         cache.removeValue(forKey: oldest.key)
+    }
+
+    /// Constructs a cache key from source hash and direction.
+    private func cacheKey(sourceHash: String, direction: TranscodingDirection) -> String {
+        return "\(sourceHash):\(direction.rawValue)"
     }
 }
