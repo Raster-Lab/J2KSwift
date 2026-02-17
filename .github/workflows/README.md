@@ -4,6 +4,17 @@ This directory contains GitHub Actions workflows for J2KSwift.
 
 ## Workflows
 
+### ✅ CI (`ci.yml`)
+**Triggers**: Push to main/develop, Pull Requests, Manual
+
+Primary continuous integration workflow:
+- **Build and Test (macOS)**: Builds and runs all tests on macOS 14 with Swift 6.2
+- **Build and Test (Linux)**: Builds and runs all tests on Ubuntu with Swift 6.2
+- **SwiftLint**: Enforces code style guidelines
+- SPM dependency caching for faster builds
+
+**Badge**: ![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)
+
 ### 🔨 Swift Build and Test (`swift-build-test.yml`)
 **Triggers**: Push to main/develop, Pull Requests, Manual
 
@@ -122,7 +133,7 @@ No secrets are required for basic workflows. The following permissions are used:
 
 Add to main README.md:
 ```markdown
-[![Swift Build](https://github.com/Raster-Lab/J2KSwift/actions/workflows/swift-build-test.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/swift-build-test.yml)
+[![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml)
 [![Code Quality](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml)
 [![Documentation](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml)
 ```
