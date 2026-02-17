@@ -1530,22 +1530,78 @@ public struct J2KTranscoder: Sendable {
         targetMode: HTCodingMode,
         metadata: TranscodingCoefficients
     ) throws -> Data {
-        var tileData = Data()
+        // Collect all code-blocks with their ordering metadata
+        struct PendingBlock: Sendable {
+            let index: Int
+            let cb: TranscodingCodeBlockCoefficients
+            let subband: J2KSubband
+        }
+
+        var pendingBlocks: [PendingBlock] = []
+        var blockIndex = 0
 
         for componentSubbands in tile.components {
             for (subband, codeBlocks) in componentSubbands.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
                 for cb in codeBlocks {
-                    let encodedBlock = try encodeCodeBlock(
-                        cb,
-                        targetMode: targetMode,
+                    pendingBlocks.append(PendingBlock(
+                        index: blockIndex,
+                        cb: cb,
                         subband: subband
-                    )
-
-                    // Write packet header for this code-block contribution
-                    // Simplified: just append the coded data
-                    tileData.append(encodedBlock)
+                    ))
+                    blockIndex += 1
                 }
             }
+        }
+
+        // Encode code-blocks in parallel when there are multiple blocks
+        let useParallel = configuration.enableParallelProcessing && pendingBlocks.count > 1
+        let encodedBlocks: [(Int, Data)]
+
+        if useParallel {
+            let maxConcurrency = configuration.maxConcurrency
+            let totalBlocks = pendingBlocks.count
+            let chunkSize = max(1, totalBlocks / maxConcurrency)
+            let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
+                let end = min(start + chunkSize, totalBlocks)
+                return Array(pendingBlocks[start..<end])
+            }
+
+            let collector = ParallelResultCollector<(Int, Data)>(capacity: totalBlocks)
+            let capturedTargetMode = targetMode
+
+            DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
+                let chunk = chunks[chunkIdx]
+                var localResults: [(Int, Data)] = []
+                localResults.reserveCapacity(chunk.count)
+
+                for pending in chunk {
+                    guard let encodedBlock = try? self.encodeCodeBlock(
+                        pending.cb,
+                        targetMode: capturedTargetMode,
+                        subband: pending.subband
+                    ) else { continue }
+                    localResults.append((pending.index, encodedBlock))
+                }
+
+                collector.append(contentsOf: localResults)
+            }
+
+            encodedBlocks = collector.results.sorted { $0.0 < $1.0 }
+        } else {
+            encodedBlocks = try pendingBlocks.map { pending in
+                let encodedBlock = try encodeCodeBlock(
+                    pending.cb,
+                    targetMode: targetMode,
+                    subband: pending.subband
+                )
+                return (pending.index, encodedBlock)
+            }
+        }
+
+        // Assemble tile data in order
+        var tileData = Data()
+        for (_, blockData) in encodedBlocks {
+            tileData.append(blockData)
         }
 
         return tileData
