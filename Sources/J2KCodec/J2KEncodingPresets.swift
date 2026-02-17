@@ -216,6 +216,19 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: false (use legacy EBCOT block coding)
     public var useHTJ2K: Bool
     
+    /// Whether to enable parallel code-block encoding.
+    ///
+    /// When enabled, independent code-blocks within a tile are encoded in parallel
+    /// using Swift structured concurrency. This provides significant speedups for
+    /// images with many code-blocks on multi-core systems.
+    ///
+    /// Each code-block in JPEG 2000 is an independent unit of entropy coding with
+    /// its own MQ encoder state and context models, making them ideal for parallel
+    /// processing without any synchronization overhead.
+    ///
+    /// - Default: true
+    public var enableParallelCodeBlocks: Bool
+    
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -230,6 +243,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - bitrateMode: Bitrate control mode (default: .constantQuality).
     ///   - maxThreads: Maximum encoding threads, 0 for auto (default: 0).
     ///   - useHTJ2K: Use HTJ2K block coding (default: false).
+    ///   - enableParallelCodeBlocks: Enable parallel code-block encoding (default: true).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -241,7 +255,8 @@ public struct J2KEncodingConfiguration: Sendable {
         tileSize: (width: Int, height: Int) = (0, 0),
         bitrateMode: J2KBitrateMode = .constantQuality,
         maxThreads: Int = 0,
-        useHTJ2K: Bool = false
+        useHTJ2K: Bool = false,
+        enableParallelCodeBlocks: Bool = true
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -260,6 +275,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.bitrateMode = bitrateMode
         self.maxThreads = max(0, maxThreads)
         self.useHTJ2K = useHTJ2K
+        self.enableParallelCodeBlocks = enableParallelCodeBlocks
     }
     
     /// Validates the configuration parameters.

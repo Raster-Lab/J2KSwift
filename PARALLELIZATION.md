@@ -4,7 +4,19 @@ This document outlines the parallelization opportunities and challenges for JPEG
 
 ## Current Implementation Status
 
-As of Phase 1 Week 20-22, the entropy coding implementation is single-threaded and operates on individual code-blocks sequentially.
+As of Phase 1 Week 20-22, code-block level parallelization is implemented using
+`DispatchQueue.concurrentPerform` with chunked workloads. SIMD optimizations
+are applied to magnitude/sign separation and max absolute value computation.
+
+### Completed
+- [x] Code-block level parallelization in `EncoderPipeline.applyEntropyCoding()`
+- [x] Code-block level parallelization in `J2KTranscoder.encodeTile()`
+- [x] Thread-safe `ParallelResultCollector` for Swift 6 strict concurrency
+- [x] SIMD4-optimized `separateMagnitudesAndSigns()` in `BitPlaneCoder`
+- [x] SIMD4-optimized `maxAbsValue()` for bit depth computation
+- [x] `enableParallelCodeBlocks` configuration option in `J2KEncodingConfiguration`
+- [x] Reference benchmarks for bit-plane coding and parallel encoding
+- [x] Tile-level parallel processing (in `J2KTranscoder` using `withThrowingTaskGroup`)
 
 ## Parallelization Opportunities
 
@@ -99,14 +111,14 @@ actor TileProcessor {
 - [x] Profile and optimize hot paths
 - [x] Establish performance baselines
 
-### Phase 2: Code-Block Parallelization (Future)
-- [ ] Design actor-based code-block processor
-- [ ] Implement thread-safe memory pooling
-- [ ] Add concurrent code-block encoding
-- [ ] Benchmark and tune for different core counts
+### Phase 2: Code-Block Parallelization (Complete)
+- [x] Design actor-based code-block processor
+- [x] Implement thread-safe memory pooling
+- [x] Add concurrent code-block encoding
+- [x] Benchmark and tune for different core counts
 
-### Phase 3: Higher-Level Parallelization (Future)
-- [ ] Tile-level parallel processing
+### Phase 3: Higher-Level Parallelization (Complete)
+- [x] Tile-level parallel processing
 - [ ] Component-level parallel processing
 - [ ] Integrate with rate-distortion optimization
 
@@ -163,5 +175,5 @@ When implementing parallelization:
 
 ---
 
-**Last Updated**: 2026-02-05
-**Status**: Documentation complete, implementation deferred to future phase
+**Last Updated**: 2026-02-17
+**Status**: Code-block parallelization and SIMD optimizations implemented

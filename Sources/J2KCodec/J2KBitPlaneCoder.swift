@@ -309,19 +309,65 @@ struct BitPlaneCoder: Sendable {
     
     /// Separates coefficients into magnitudes and signs.
     private func separateMagnitudesAndSigns(_ coefficients: [Int32]) -> ([UInt32], [Bool]) {
-        var magnitudes = [UInt32](repeating: 0, count: coefficients.count)
-        var signs = [Bool](repeating: false, count: coefficients.count)
-        
-        for (i, coeff) in coefficients.enumerated() {
-            if coeff < 0 {
-                magnitudes[i] = UInt32(-coeff)
-                signs[i] = true
-            } else {
-                magnitudes[i] = UInt32(coeff)
-                signs[i] = false
+        let count = coefficients.count
+        var magnitudes = [UInt32](repeating: 0, count: count)
+        var signs = [Bool](repeating: false, count: count)
+
+        // SIMD-optimized path: process 4 coefficients at a time using SIMD4
+        let simdCount = count / 4
+        let remainder = count % 4
+
+        coefficients.withUnsafeBufferPointer { coeffPtr in
+            magnitudes.withUnsafeMutableBufferPointer { magPtr in
+                signs.withUnsafeMutableBufferPointer { signPtr in
+                    let coeffBase = coeffPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let signBase = signPtr.baseAddress!
+
+                    for i in 0..<simdCount {
+                        let offset = i * 4
+                        // Load 4 coefficients into SIMD vector
+                        let v = SIMD4<Int32>(
+                            coeffBase[offset],
+                            coeffBase[offset + 1],
+                            coeffBase[offset + 2],
+                            coeffBase[offset + 3]
+                        )
+
+                        // Compute absolute values using SIMD
+                        let negative = v .< SIMD4<Int32>.zero
+                        let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+
+                        // Store magnitudes
+                        magBase[offset] = UInt32(bitPattern: absV[0])
+                        magBase[offset + 1] = UInt32(bitPattern: absV[1])
+                        magBase[offset + 2] = UInt32(bitPattern: absV[2])
+                        magBase[offset + 3] = UInt32(bitPattern: absV[3])
+
+                        // Store signs
+                        signBase[offset] = negative[0]
+                        signBase[offset + 1] = negative[1]
+                        signBase[offset + 2] = negative[2]
+                        signBase[offset + 3] = negative[3]
+                    }
+
+                    // Handle remainder
+                    let remStart = simdCount * 4
+                    for i in 0..<remainder {
+                        let idx = remStart + i
+                        let coeff = coeffBase[idx]
+                        if coeff < 0 {
+                            magBase[idx] = UInt32(-coeff)
+                            signBase[idx] = true
+                        } else {
+                            magBase[idx] = UInt32(coeff)
+                            signBase[idx] = false
+                        }
+                    }
+                }
             }
         }
-        
+
         return (magnitudes, signs)
     }
     

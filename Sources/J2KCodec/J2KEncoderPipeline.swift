@@ -47,6 +47,50 @@ public struct EncoderProgressUpdate: Sendable {
     public let overallProgress: Double
 }
 
+// MARK: - Parallel Result Collector
+
+/// Thread-safe result collector for parallel code-block encoding.
+///
+/// This class uses `@unchecked Sendable` because it manually synchronizes access
+/// to mutable state using `NSLock`. All methods acquire the lock before
+/// accessing or modifying the internal results array.
+final class ParallelResultCollector<T>: @unchecked Sendable {
+    private var _results: [T]
+    private var _firstError: (any Error)?
+    private let lock = NSLock()
+
+    init(capacity: Int = 0) {
+        _results = []
+        _results.reserveCapacity(capacity)
+    }
+
+    func append(contentsOf elements: [T]) {
+        lock.lock()
+        _results.append(contentsOf: elements)
+        lock.unlock()
+    }
+
+    func recordError(_ error: any Error) {
+        lock.lock()
+        if _firstError == nil {
+            _firstError = error
+        }
+        lock.unlock()
+    }
+
+    var results: [T] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _results
+    }
+
+    var firstError: (any Error)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _firstError
+    }
+}
+
 // MARK: - Encoder Pipeline
 
 /// Internal encoding pipeline that connects all JPEG 2000 encoding components.
@@ -341,21 +385,33 @@ struct EncoderPipeline: Sendable {
 
     // MARK: - Stage 5: Entropy Coding
 
+    /// Describes a pending code-block to be encoded.
+    private struct PendingCodeBlock: Sendable {
+        let index: Int
+        let x: Int
+        let y: Int
+        let width: Int
+        let height: Int
+        let subband: J2KSubband
+        let coefficients: [Int32]
+        let bitDepth: Int
+    }
+
     /// Applies EBCOT entropy coding to all subbands, producing code blocks.
     private func applyEntropyCoding(
         _ componentSubbands: [[SubbandInfo]]
     ) throws -> [J2KCodeBlock] {
-        let encoder = CodeBlockEncoder()
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
-        var allCodeBlocks: [J2KCodeBlock] = []
+
+        // First pass: collect all pending code-blocks with their metadata
+        var pendingBlocks: [PendingCodeBlock] = []
         var blockIndex = 0
 
         for subbands in componentSubbands {
             for info in subbands {
                 guard info.width > 0 && info.height > 0 else { continue }
 
-                // Split subband into code blocks
                 let blocksX = (info.width + cbWidth - 1) / cbWidth
                 let blocksY = (info.height + cbHeight - 1) / cbHeight
 
@@ -364,7 +420,7 @@ struct EncoderPipeline: Sendable {
                         let blockW = min(cbWidth, info.width - bx * cbWidth)
                         let blockH = min(cbHeight, info.height - by * cbHeight)
 
-                        // Extract code block coefficients (optimized with array slicing)
+                        // Extract code block coefficients
                         var blockCoeffs: [Int32] = []
                         blockCoeffs.reserveCapacity(blockW * blockH)
                         for row in 0..<blockH {
@@ -374,41 +430,189 @@ struct EncoderPipeline: Sendable {
                             blockCoeffs.append(contentsOf: info.coefficients[srcStart..<srcEnd])
                         }
 
-                        // Determine bit depth from max coefficient magnitude
-                        // Add 1 for sign bit and 1 for headroom to avoid overflow
-                        let maxMag = blockCoeffs.reduce(0) { max($0, abs($1)) }
+                        // Determine bit depth from max coefficient magnitude (SIMD-optimized)
+                        let maxMag = Self.maxAbsValue(blockCoeffs)
                         let bitDepth = maxMag > 0 ? Int(log2(Double(maxMag))) + 2 : 1
 
-                        var codeBlock = try encoder.encode(
-                            coefficients: blockCoeffs,
-                            width: blockW,
-                            height: blockH,
-                            subband: info.subband,
-                            bitDepth: bitDepth
-                        )
-
-                        // Update block metadata
-                        codeBlock = J2KCodeBlock(
+                        pendingBlocks.append(PendingCodeBlock(
                             index: blockIndex,
                             x: bx * cbWidth,
                             y: by * cbHeight,
                             width: blockW,
                             height: blockH,
-                            subband: codeBlock.subband,
-                            data: codeBlock.data,
-                            passeCount: codeBlock.passeCount,
-                            zeroBitPlanes: codeBlock.zeroBitPlanes,
-                            passSegmentLengths: codeBlock.passSegmentLengths
-                        )
-
-                        allCodeBlocks.append(codeBlock)
+                            subband: info.subband,
+                            coefficients: blockCoeffs,
+                            bitDepth: bitDepth
+                        ))
                         blockIndex += 1
                     }
                 }
             }
         }
 
+        // Second pass: encode code-blocks (parallel or sequential)
+        let useParallel = config.enableParallelCodeBlocks && pendingBlocks.count > 1
+        let allCodeBlocks: [J2KCodeBlock]
+
+        if useParallel {
+            allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks)
+        } else {
+            allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks)
+        }
+
         return allCodeBlocks
+    }
+
+    /// Encodes code-blocks sequentially.
+    private func encodeCodeBlocksSequential(
+        _ pendingBlocks: [PendingCodeBlock]
+    ) throws -> [J2KCodeBlock] {
+        let encoder = CodeBlockEncoder()
+        var results: [J2KCodeBlock] = []
+        results.reserveCapacity(pendingBlocks.count)
+
+        for pending in pendingBlocks {
+            var codeBlock = try encoder.encode(
+                coefficients: pending.coefficients,
+                width: pending.width,
+                height: pending.height,
+                subband: pending.subband,
+                bitDepth: pending.bitDepth
+            )
+
+            codeBlock = J2KCodeBlock(
+                index: pending.index,
+                x: pending.x,
+                y: pending.y,
+                width: pending.width,
+                height: pending.height,
+                subband: codeBlock.subband,
+                data: codeBlock.data,
+                passeCount: codeBlock.passeCount,
+                zeroBitPlanes: codeBlock.zeroBitPlanes,
+                passSegmentLengths: codeBlock.passSegmentLengths
+            )
+
+            results.append(codeBlock)
+        }
+
+        return results
+    }
+
+    /// Encodes code-blocks in parallel using structured concurrency.
+    ///
+    /// Each code-block is an independent unit of entropy coding with its own
+    /// MQ encoder state and context models, making them safe to process in parallel.
+    private func encodeCodeBlocksParallel(
+        _ pendingBlocks: [PendingCodeBlock]
+    ) throws -> [J2KCodeBlock] {
+        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
+        let totalBlocks = pendingBlocks.count
+
+        // Thread-safe result collector
+        let collector = ParallelResultCollector<(Int, J2KCodeBlock)>(capacity: totalBlocks)
+
+        // Determine chunk size for balanced workload
+        let chunkSize = max(1, totalBlocks / maxConcurrency)
+        let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
+            let end = min(start + chunkSize, totalBlocks)
+            return Array(pendingBlocks[start..<end])
+        }
+
+        DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
+            let chunk = chunks[chunkIdx]
+            let encoder = CodeBlockEncoder()
+            var localResults: [(Int, J2KCodeBlock)] = []
+            localResults.reserveCapacity(chunk.count)
+
+            for pending in chunk {
+                do {
+                    var codeBlock = try encoder.encode(
+                        coefficients: pending.coefficients,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: pending.subband,
+                        bitDepth: pending.bitDepth
+                    )
+
+                    codeBlock = J2KCodeBlock(
+                        index: pending.index,
+                        x: pending.x,
+                        y: pending.y,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: codeBlock.subband,
+                        data: codeBlock.data,
+                        passeCount: codeBlock.passeCount,
+                        zeroBitPlanes: codeBlock.zeroBitPlanes,
+                        passSegmentLengths: codeBlock.passSegmentLengths
+                    )
+
+                    localResults.append((pending.index, codeBlock))
+                } catch {
+                    collector.recordError(error)
+                }
+            }
+
+            collector.append(contentsOf: localResults)
+        }
+
+        // Propagate any encoding errors
+        if let error = collector.firstError {
+            throw error
+        }
+
+        // Sort by original index to maintain order
+        return collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    // MARK: - SIMD Helpers
+
+    /// Computes the maximum absolute value in an array using SIMD operations.
+    ///
+    /// Processes 4 elements at a time using SIMD4 vectors for improved throughput
+    /// on coefficient arrays during bit depth computation.
+    ///
+    /// - Parameter values: The array of Int32 values.
+    /// - Returns: The maximum absolute value in the array.
+    static func maxAbsValue(_ values: [Int32]) -> Int32 {
+        guard !values.isEmpty else { return 0 }
+
+        return values.withUnsafeBufferPointer { ptr in
+            let base = ptr.baseAddress!
+            let count = ptr.count
+            let simdCount = count / 4
+
+            var maxVec = SIMD4<Int32>.zero
+
+            for i in 0..<simdCount {
+                let offset = i * 4
+                let v = SIMD4<Int32>(
+                    base[offset],
+                    base[offset + 1],
+                    base[offset + 2],
+                    base[offset + 3]
+                )
+                // Compute absolute values: abs(v) = v < 0 ? -v : v
+                let negative = v .< SIMD4<Int32>.zero
+                let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                maxVec = pointwiseMax(maxVec, absV)
+            }
+
+            // Reduce SIMD4 to scalar max
+            var result = Swift.max(
+                Swift.max(maxVec[0], maxVec[1]),
+                Swift.max(maxVec[2], maxVec[3])
+            )
+
+            // Handle remainder
+            let remStart = simdCount * 4
+            for i in remStart..<count {
+                result = Swift.max(result, abs(base[i]))
+            }
+
+            return result
+        }
     }
 
     // MARK: - Stage 6: Rate Control
