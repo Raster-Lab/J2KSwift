@@ -200,16 +200,16 @@ The packet parsing code was updated to use a separate index (`dataIndex`) to tra
 
 ## Future Improvements
 
-### HTJ2K (High Throughput JPEG 2000)
+### Enhanced JPIP HTJ2K Streaming
 
-J2KSwift v2.0 will include HTJ2K (ISO/IEC 15444-15) support, which uses a completely redesigned block coder (FBCOT) that addresses many limitations of the legacy MQ coder:
-- Significantly faster encoding/decoding (4-10× throughput)
-- Simpler state machine with fewer edge cases
-- Better handling of large blocks
-- Backward compatible with JPEG 2000 Part 1
+J2KSwift v1.4.0 introduces HTJ2K support in the JPIP module. Future improvements include:
+- Full HTJ2K-aware data bin generation for JPIP responses
+- Codec-level integration for on-the-fly transcoding during JPIP serving
+- HTJ2K-specific progressive quality layer optimization for streaming
+- Expanded conformance testing for JPIP+HTJ2K interoperability
 
 ---
 
-**Last Updated:** 2026-02-16  
-**Version:** 1.2.0  
-**Status:** Released
+**Last Updated:** 2026-02-17  
+**Version:** 1.4.0  
+**Status:** In Development

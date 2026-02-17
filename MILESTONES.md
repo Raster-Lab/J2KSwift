@@ -918,10 +918,35 @@ Major release consolidating Phase 9 (HTJ2K Codec) and Phase 10 (Lossless Transco
 - [x] Build successful with no warnings
 - [x] Cross-platform validated (macOS, Linux)
 
+### v1.4.0 (In Development) 🚧
+Phase 11: Enhanced JPIP with HTJ2K Support.
+
+#### JPIP HTJ2K Integration
+- [x] JPIP HTJ2K format detection (JPIPHTJ2KSupport)
+  - [x] J2K/JPH format auto-detection via file signatures
+  - [x] CAP marker detection for HTJ2K capability in J2K codestreams
+  - [x] JPIPImageInfo type for tracking registered image formats
+- [x] JPIP capability signaling
+  - [x] HTJ2K capability headers in session creation responses (JPIP-cap, JPIP-pref)
+  - [x] Format-aware metadata generation for JPIP clients
+  - [x] JPIPCodingPreference enum for client-side format preferences
+- [x] JPIPRequest enhancements
+  - [x] codingPreference field for HTJ2K/legacy preference signaling
+  - [x] Query parameter serialization for coding preferences
+- [x] JPIPServer enhancements
+  - [x] Image format detection on registration
+  - [x] Image info caching for registered images
+  - [x] HTJ2K-aware session creation with capability headers
+  - [x] Format-aware metadata generation
+  - [x] getImageInfo() public API
+- [x] Comprehensive tests (26 JPIP HTJ2K tests, 100% pass rate)
+- [ ] Full codec integration for HTJ2K data bin streaming
+- [ ] On-the-fly transcoding during JPIP serving
+
 ---
 
 **Last Updated**: 2026-02-17  
-**Current Phase**: Post-Phase 10 - All Development Complete ✅  
-**Current Version**: 1.3.0 (Released February 17, 2026)  
-**Previous Release**: 1.2.0 (Released February 16, 2026)  
-**Next Milestone**: v1.4.0 Planning and Future Enhancements
+**Current Phase**: Phase 11 - Enhanced JPIP with HTJ2K Support 🚧  
+**Current Version**: 1.4.0 (In Development)  
+**Previous Release**: 1.3.0 (Released February 17, 2026)  
+**Next Milestone**: v1.4.0 Release
