@@ -229,6 +229,43 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: true
     public var enableParallelCodeBlocks: Bool
     
+    /// Whether to enable fast MEL encoding optimization for HTJ2K.
+    ///
+    /// When enabled, uses optimized run-length encoding in the MEL (Magnitude Exchange
+    /// Length) coder with adaptive thresholding and efficient buffering strategies.
+    /// This optimization provides faster MEL encoding at the cost of slightly larger
+    /// MEL segments in some cases.
+    ///
+    /// Only applies when `useHTJ2K` is true.
+    ///
+    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Default: true
+    public var enableFastMEL: Bool
+    
+    /// Whether to enable VLC table optimization for HTJ2K.
+    ///
+    /// When enabled, uses optimized lookup tables for VLC (Variable Length Coding)
+    /// encoding and decoding, providing faster throughput at the cost of increased
+    /// memory usage (approximately 4-8 KB per encoder instance).
+    ///
+    /// Only applies when `useHTJ2K` is true.
+    ///
+    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Default: true
+    public var enableVLCOptimization: Bool
+    
+    /// Whether to enable efficient magnitude/sign bit packing for HTJ2K.
+    ///
+    /// When enabled, uses optimized bit packing strategies for the MagSgn (Magnitude
+    /// and Sign) coder, reducing the number of bit-level operations and improving
+    /// cache efficiency during encoding and decoding.
+    ///
+    /// Only applies when `useHTJ2K` is true.
+    ///
+    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Default: true
+    public var enableMagSgnPacking: Bool
+    
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -244,6 +281,9 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - maxThreads: Maximum encoding threads, 0 for auto (default: 0).
     ///   - useHTJ2K: Use HTJ2K block coding (default: false).
     ///   - enableParallelCodeBlocks: Enable parallel code-block encoding (default: true).
+    ///   - enableFastMEL: Enable fast MEL encoding for HTJ2K (default: true).
+    ///   - enableVLCOptimization: Enable VLC table optimization for HTJ2K (default: true).
+    ///   - enableMagSgnPacking: Enable efficient magnitude/sign packing for HTJ2K (default: true).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -256,7 +296,10 @@ public struct J2KEncodingConfiguration: Sendable {
         bitrateMode: J2KBitrateMode = .constantQuality,
         maxThreads: Int = 0,
         useHTJ2K: Bool = false,
-        enableParallelCodeBlocks: Bool = true
+        enableParallelCodeBlocks: Bool = true,
+        enableFastMEL: Bool = true,
+        enableVLCOptimization: Bool = true,
+        enableMagSgnPacking: Bool = true
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -276,6 +319,9 @@ public struct J2KEncodingConfiguration: Sendable {
         self.maxThreads = max(0, maxThreads)
         self.useHTJ2K = useHTJ2K
         self.enableParallelCodeBlocks = enableParallelCodeBlocks
+        self.enableFastMEL = enableFastMEL
+        self.enableVLCOptimization = enableVLCOptimization
+        self.enableMagSgnPacking = enableMagSgnPacking
     }
     
     /// Validates the configuration parameters.

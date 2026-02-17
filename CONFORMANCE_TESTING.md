@@ -318,7 +318,6 @@ print(J2KPlatformInfo.platformSummary())
 swift test --filter J2KCrossPlatformValidationTests
 swift test --filter J2KISOTestSuiteTests
 ```
-
 ## Future Enhancements
 
 Planned improvements to the conformance framework:
