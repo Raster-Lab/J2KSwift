@@ -1,4 +1,4 @@
-/// # JPIPHTj2KSupportTests
+/// # JPIPHTJ2KSupportTests
 ///
 /// Tests for JPIP HTJ2K (High-Throughput JPEG 2000) support.
 
