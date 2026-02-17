@@ -1175,4 +1175,55 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertEqual(failCount, 0, "All HTJ2K conformance tests should pass")
         XCTAssertEqual(passRate, 100.0, "Should achieve 100% conformance")
     }
+    
+    // MARK: - HT-Specific Optimization Flags Tests
+    
+    func testEncodingConfigurationWithHTOptimizationFlags() throws {
+        // Test default values
+        let config = J2KEncodingConfiguration(useHTJ2K: true)
+        XCTAssertTrue(config.enableFastMEL, "Fast MEL should be enabled by default")
+        XCTAssertTrue(config.enableVLCOptimization, "VLC optimization should be enabled by default")
+        XCTAssertTrue(config.enableMagSgnPacking, "MagSgn packing should be enabled by default")
+    }
+    
+    func testEncodingConfigurationDisableHTOptimizations() throws {
+        // Test disabling all HT optimizations
+        let config = J2KEncodingConfiguration(
+            useHTJ2K: true,
+            enableFastMEL: false,
+            enableVLCOptimization: false,
+            enableMagSgnPacking: false
+        )
+        XCTAssertFalse(config.enableFastMEL, "Fast MEL should be disabled")
+        XCTAssertFalse(config.enableVLCOptimization, "VLC optimization should be disabled")
+        XCTAssertFalse(config.enableMagSgnPacking, "MagSgn packing should be disabled")
+    }
+    
+    func testEncodingConfigurationSelectiveHTOptimizations() throws {
+        // Test selective optimization flags
+        let config = J2KEncodingConfiguration(
+            useHTJ2K: true,
+            enableFastMEL: true,
+            enableVLCOptimization: false,
+            enableMagSgnPacking: true
+        )
+        XCTAssertTrue(config.enableFastMEL, "Fast MEL should be enabled")
+        XCTAssertFalse(config.enableVLCOptimization, "VLC optimization should be disabled")
+        XCTAssertTrue(config.enableMagSgnPacking, "MagSgn packing should be enabled")
+    }
+    
+    func testHTOptimizationFlagsWithLegacyMode() throws {
+        // Test that HT optimization flags can be set even when not using HTJ2K
+        // (they should be ignored but not cause errors)
+        let config = J2KEncodingConfiguration(
+            useHTJ2K: false,
+            enableFastMEL: true,
+            enableVLCOptimization: true,
+            enableMagSgnPacking: true
+        )
+        XCTAssertFalse(config.useHTJ2K, "Should be using legacy mode")
+        XCTAssertTrue(config.enableFastMEL, "Fast MEL flag should be set")
+        XCTAssertTrue(config.enableVLCOptimization, "VLC optimization flag should be set")
+        XCTAssertTrue(config.enableMagSgnPacking, "MagSgn packing flag should be set")
+    }
 }
