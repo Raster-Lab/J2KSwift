@@ -940,8 +940,8 @@ Phase 11: Enhanced JPIP with HTJ2K Support.
   - [x] Format-aware metadata generation
   - [x] getImageInfo() public API
 - [x] Comprehensive tests (26 JPIP HTJ2K tests, 100% pass rate)
-- [ ] Full codec integration for HTJ2K data bin streaming
-- [ ] On-the-fly transcoding during JPIP serving
+- [x] Full codec integration for HTJ2K data bin streaming
+- [x] On-the-fly transcoding during JPIP serving
 
 ---
 

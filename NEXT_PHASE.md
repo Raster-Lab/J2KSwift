@@ -267,8 +267,8 @@ This feature allows converting between encoding formats without quality loss or 
    - ✅ HTJ2K capability headers in JPIP session creation
    - ✅ Format-aware metadata generation in JPIPServer
    - ✅ 26 comprehensive JPIP HTJ2K tests (100% pass rate)
-   - ⏭️ Full codec integration for HTJ2K data bin streaming
-   - ⏭️ On-the-fly transcoding during JPIP serving
+   - ✅ Full codec integration for HTJ2K data bin streaming
+   - ✅ On-the-fly transcoding during JPIP serving
 
 2. **Future Planning** 🎯
    - v1.4.0 release with JPIP HTJ2K features
@@ -333,7 +333,7 @@ J2KSwift has successfully completed its initial 100-week development roadmap and
 
 ### 🎯 Current Status (February 17, 2026)
 
-- **1,631 tests** passing (100% pass rate)
+- **1,666 tests** passing (100% pass rate)
 - **HTJ2K codec** fully implemented with exceptional performance
 - **Lossless transcoding** between JPEG 2000 and HTJ2K formats
 - **Parallel processing** for multi-tile transcoding operations
@@ -344,8 +344,8 @@ J2KSwift has successfully completed its initial 100-week development roadmap and
 
 **Phase 11: Enhanced JPIP with HTJ2K Support** 🚧: Adding HTJ2K format detection, capability signaling, and format-aware streaming to the JPIP module:
 - ✅ JPIP HTJ2K format detection and capability signaling (26 tests)
-- ⏭️ Full codec integration for HTJ2K data bin streaming
-- ⏭️ On-the-fly transcoding during JPIP serving
+- ✅ Full codec integration for HTJ2K data bin streaming
+- ✅ On-the-fly transcoding during JPIP serving
 - ⏭️ v1.4.0 release preparation
 
 **Future Development**: J2KSwift now offers a complete, modern JPEG 2000 solution with both legacy and high-throughput codec support. Future work will focus on:
