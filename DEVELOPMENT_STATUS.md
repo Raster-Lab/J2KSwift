@@ -5,10 +5,10 @@
 ## Quick Status
 
 ```
-Current Version: v1.3.0 (Released)
-Current Phase:   Post-Phase 10 - All Development Complete ✅
-Test Status:     1,605 tests, 100% pass rate
-Next Milestone:  v1.4.0 Planning and Future Enhancements
+Current Version: v1.4.0 (In Development)
+Current Phase:   Phase 11 - Enhanced JPIP with HTJ2K Support 🚧
+Test Status:     1,631 tests, 100% pass rate
+Next Milestone:  v1.4.0 Release
 ```
 
 ## Roadmap Visualization
@@ -86,17 +86,19 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 | **Phase 9: HTJ2K Codec** | **✅ Complete** | **20 weeks** | **Feb 16, 2026** |
 | **Phase 10: Lossless Transcoding** | **✅ Complete** | **10 weeks** | **Feb 17, 2026** |
 | **v1.3.0 Release** | **✅ Released** | **-** | **Feb 17, 2026** |
+| **Phase 11: JPIP HTJ2K** | **🚧 In Progress** | **TBD** | **TBD** |
 
 ## Key Metrics
 
-### Current State (v1.3.0 - RELEASED ✅)
+### Current State (v1.4.0 - IN DEVELOPMENT 🚧)
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
 | Test Pass Rate | 100% | >95% | ✅ |
-| Total Tests | 1,605 | >1,500 | ✅ |
+| Total Tests | 1,631 | >1,600 | ✅ |
 | HTJ2K Tests | 86 | >50 | ✅ |
 | Transcoding Tests | 31 | >20 | ✅ |
+| JPIP HTJ2K Tests | 26 | >20 | ✅ |
 | HTJ2K Conformance | 100% | 100% | ✅ |
 | HTJ2K Speedup | 57-70× | 10-100× | ✅ **EXCEEDS TARGET** |
 | Code Coverage | ~90% | >90% | ✅ |
@@ -128,10 +130,17 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 4. ✅ Performance optimization (parallel processing)
 
 ### Medium-term (Post-v1.3.0)
-1. ⏭️ v1.4.0 planning and feature roadmap
+1. 🚧 v1.4.0: Enhanced JPIP with HTJ2K support (Phase 11)
+   - ✅ JPIP HTJ2K format detection and capability signaling
+   - ✅ JPIPCodingPreference for client-side format preferences
+   - ✅ JPIPImageInfo for tracking registered image formats
+   - ✅ HTJ2K capability headers in JPIP session creation
+   - ✅ Format-aware metadata generation
+   - ✅ 26 comprehensive JPIP HTJ2K tests
+   - ⏭️ Full codec integration for HTJ2K streaming
+   - ⏭️ On-the-fly transcoding during JPIP serving
 2. ⏭️ Additional HTJ2K optimizations
-3. ⏭️ Enhanced JPIP with HTJ2K support
-4. ⏭️ Extended transcoding features
+3. ⏭️ Extended transcoding features
 
 ## Documentation
 

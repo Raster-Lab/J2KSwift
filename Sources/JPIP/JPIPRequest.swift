@@ -39,6 +39,9 @@ public struct JPIPRequest: Sendable {
     /// Whether to request metadata only.
     public var metadata: Bool?
     
+    /// Coding preference for HTJ2K or legacy JPEG 2000 responses.
+    public var codingPreference: JPIPCodingPreference?
+    
     /// Creates a new JPIP request.
     ///
     /// - Parameter target: The target image identifier.
@@ -92,6 +95,10 @@ public struct JPIPRequest: Sendable {
         
         if let metadata = metadata, metadata {
             items["meta"] = "yes"
+        }
+        
+        if let codingPreference = codingPreference, codingPreference != .none {
+            items["pref"] = codingPreference.rawValue
         }
         
         return items

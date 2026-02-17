@@ -1,12 +1,12 @@
-# J2KSwift: Development Roadmap - Phase 9 & 10 Complete
+# J2KSwift: Development Roadmap - Phase 11 In Progress
 
 **Last Updated**: February 17, 2026  
-**Current Version**: 1.3.0  
-**Current Status**: v1.3.0 Released, All Planned Development Complete
+**Current Version**: 1.4.0 (In Development)  
+**Current Status**: Phase 11 - Enhanced JPIP with HTJ2K Support 🚧
 
 ## Executive Summary
 
-J2KSwift has successfully completed **all planned development phases** including the original 8 phases (100 weeks), Phase 9 (HTJ2K Codec), and Phase 10 (Lossless Transcoding). The project is now a comprehensive JPEG 2000 framework with both legacy and high-throughput codec support, featuring exceptional performance (57-70× speedup with HTJ2K) and lossless format transcoding capabilities.
+J2KSwift has successfully completed **all original planned development phases** including the original 8 phases (100 weeks), Phase 9 (HTJ2K Codec), and Phase 10 (Lossless Transcoding). The project is now working on **Phase 11: Enhanced JPIP with HTJ2K Support**, adding HTJ2K format detection, capability signaling, and format-aware streaming to the JPIP module.
 
 ---
 
@@ -212,6 +212,8 @@ This feature allows converting between encoding formats without quality loss or 
 | **v1.2.0 Release** | - | Feb 2026 | Feb 16, 2026 | ✅ Released |
 | **Phase 9: HTJ2K** | Weeks 101-120 | Feb 2026 | Feb 16, 2026 | ✅ Complete |
 | **Phase 10: Transcoding** | Weeks 121-130 | Feb 2026 | Feb 17, 2026 | ✅ Complete |
+| **v1.3.0 Release** | - | Feb 2026 | Feb 17, 2026 | ✅ Released |
+| **Phase 11: JPIP HTJ2K** | Weeks 131+ | Feb 2026 | TBD | 🚧 In Progress |
 
 ---
 
@@ -258,15 +260,18 @@ This feature allows converting between encoding formats without quality loss or 
 
 ### Current (Post-v1.3.0)
 
-1. **v1.3.0 Release Complete** ✅
-   - Phase 9 and Phase 10 achievements consolidated
-   - Comprehensive release notes prepared
-   - All documentation updated for v1.3.0
-   - Final testing and validation complete
+1. **Phase 11: Enhanced JPIP with HTJ2K Support** 🚧
+   - ✅ JPIP HTJ2K format detection and capability signaling
+   - ✅ JPIPCodingPreference for client-side format preferences
+   - ✅ JPIPImageInfo for tracking registered image formats
+   - ✅ HTJ2K capability headers in JPIP session creation
+   - ✅ Format-aware metadata generation in JPIPServer
+   - ✅ 26 comprehensive JPIP HTJ2K tests (100% pass rate)
+   - ⏭️ Full codec integration for HTJ2K data bin streaming
+   - ⏭️ On-the-fly transcoding during JPIP serving
 
 2. **Future Planning** 🎯
-   - v1.4.0 feature roadmap
-   - Enhanced JPIP with HTJ2K support
+   - v1.4.0 release with JPIP HTJ2K features
    - Additional HTJ2K optimizations
    - Extended transcoding capabilities
    - Community feedback integration
@@ -328,24 +333,23 @@ J2KSwift has successfully completed its initial 100-week development roadmap and
 
 ### 🎯 Current Status (February 17, 2026)
 
-- **1,605 tests** passing (100% pass rate)
+- **1,631 tests** passing (100% pass rate)
 - **HTJ2K codec** fully implemented with exceptional performance
 - **Lossless transcoding** between JPEG 2000 and HTJ2K formats
 - **Parallel processing** for multi-tile transcoding operations
+- **JPIP HTJ2K support** - format detection and capability signaling (Phase 11)
 - **Comprehensive documentation** (HTJ2K.md, HTJ2K_PERFORMANCE.md)
 
 ### 🚀 Next Steps
 
-**v1.3.0 Release Complete** ✅: Phase 9 and Phase 10 achievements consolidated into a major release featuring:
-- HTJ2K encoding and decoding (57-70× speedup)
-- Lossless transcoding capabilities (bit-exact conversion)
-- Parallel processing for multi-tile transcoding
-- Enhanced performance and throughput
-- Comprehensive documentation and release notes
+**Phase 11: Enhanced JPIP with HTJ2K Support** 🚧: Adding HTJ2K format detection, capability signaling, and format-aware streaming to the JPIP module:
+- ✅ JPIP HTJ2K format detection and capability signaling (26 tests)
+- ⏭️ Full codec integration for HTJ2K data bin streaming
+- ⏭️ On-the-fly transcoding during JPIP serving
+- ⏭️ v1.4.0 release preparation
 
 **Future Development**: J2KSwift now offers a complete, modern JPEG 2000 solution with both legacy and high-throughput codec support. Future work will focus on:
-- v1.4.0 planning and feature additions
-- Enhanced JPIP streaming with HTJ2K support
+- v1.4.0 release with JPIP HTJ2K features
 - Additional optimizations and performance improvements
 - Community-driven feature requests
 
