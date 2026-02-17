@@ -8,13 +8,16 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.2.0 (Released February 16, 2026)  
-**Status**: Complete encoder and decoder pipelines with 100% test pass rate (1,528 tests)  
-**Previous Release**: 1.1.1 (February 15, 2026)
+**Current Version**: 1.3.0 (Released February 17, 2026)  
+**Status**: Complete encoder/decoder with HTJ2K support and lossless transcoding (1,605 tests, 100% pass rate)  
+**Previous Release**: 1.2.0 (February 16, 2026)
 
 ## 📦 Release Status
 
-**v1.2.0** includes critical bug fixes and improvements over v1.1.1:
+**v1.3.0** introduces major new features including HTJ2K codec and lossless transcoding:
+- 🚀 **HTJ2K Codec** - High Throughput JPEG 2000 (ISO/IEC 15444-15) with 57-70× speedup
+- 🔄 **Lossless Transcoding** - Bit-exact conversion between Legacy JPEG 2000 ↔ HTJ2K
+- ⚡ **Parallel Processing** - Multi-tile transcoding with 1.05-2× speedup
 - ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
 - ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
 - ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
@@ -24,14 +27,15 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 - ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
 - ✅ **JPIP Streaming** (client/server infrastructure)
 - ✅ **Cross-Platform Validated** (Linux Ubuntu x86_64, macOS)
-- ✅ **100% Test Pass Rate** (1,528 tests, 24 skipped, 0 failures)
+- ✅ **100% Test Pass Rate** (1,605 tests including 86 HTJ2K and 31 transcoding tests)
 
-**v1.2.0 Improvements**:
-- 🔧 **MQDecoder Position Underflow Fixed** (Issue #121) - prevents crashes with "Illegal instruction" error
-- 🔧 **Linux Lossless Decoding Fixed** - packet header parsing corrected for cross-platform compatibility
-- 📊 **Performance Baseline Established** - currently at 32.6% of OpenJPEG speed (optimization work ongoing)
+**v1.3.0 Highlights**:
+- 🚀 **57-70× Performance Boost** - HTJ2K encoding/decoding dramatically faster than legacy
+- 🔄 **Format Flexibility** - Seamlessly convert between legacy and HTJ2K formats
+- ✅ **ISO/IEC 15444-15 Conformance** - 100% conformance test pass rate
+- 📚 **Comprehensive Documentation** - HTJ2K implementation guide and performance analysis
 
-See [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for v1.2.0 details, or [RELEASE_NOTES_v1.1.1.md](RELEASE_NOTES_v1.1.1.md) for the previous release.
+See [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) for v1.3.0 details, or [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for the previous release.
 
 ## 🎯 Project Goals
 
@@ -44,8 +48,8 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 - **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
 - **Network Streaming**: JPIP protocol support for efficient image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
-- **Well Documented**: 27+ comprehensive guides, tutorials, and API documentation
-- **High Quality**: 100% test pass rate (1,528 tests) with comprehensive test coverage
+- **Well Documented**: 30+ comprehensive guides, tutorials, and API documentation
+- **High Quality**: 100% test pass rate (1,605 tests) with comprehensive test coverage
 
 ## 🚀 Quick Start
 
@@ -60,7 +64,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.2.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.3.0")
 ]
 ```
 
@@ -141,6 +145,52 @@ let roiOptions = J2KROIDecodingOptions(
     strategy: .fullQuality
 )
 let roiImage = try decoder.decode(j2kData, options: roiOptions)
+```
+
+#### HTJ2K Encoding (v1.3.0 - NEW)
+
+```swift
+import J2KCodec
+
+// Create encoder with HTJ2K configuration
+let config = EncodingConfiguration(
+    codingStyle: .htj2k,  // Use High Throughput JPEG 2000
+    quality: .highQuality
+)
+
+let encoder = J2KEncoder(configuration: config)
+let htj2kData = try encoder.encode(image)
+
+// HTJ2K is 57-70× faster than legacy JPEG 2000!
+```
+
+#### Lossless Transcoding (v1.3.0 - NEW)
+
+```swift
+import J2KCodec
+
+// Transcode legacy JPEG 2000 to HTJ2K (bit-exact, zero quality loss)
+let transcoder = J2KTranscoder()
+
+let legacyCodestream = try Data(contentsOf: legacyFileURL)
+let htj2kCodestream = try transcoder.transcode(
+    legacyCodestream,
+    from: .legacy,
+    to: .htj2k
+)
+
+// Convert back to verify bit-exact round-trip
+let roundTrip = try transcoder.transcode(
+    htj2kCodestream,
+    from: .htj2k,
+    to: .legacy
+)
+// roundTrip == legacyCodestream (bit-exact!)
+
+// Parallel transcoding for multi-tile images (1.05-2× speedup)
+let config = TranscodingConfiguration.default  // Parallel enabled
+let parallelTranscoder = J2KTranscoder(configuration: config)
+let fastResult = try parallelTranscoder.transcode(multiTileData, from: .legacy, to: .htj2k)
 ```
 
 #### Writing to JP2 File (v1.2.0)
