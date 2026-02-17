@@ -173,7 +173,7 @@ This document outlines the phased development approach for J2KSwift, organized i
 - [x] Add YCbCr to RGB (inverse ICT)
 - [x] Support floating-point precision
 - [x] Implement component decorrelation
-- [ ] Optimize using hardware acceleration (deferred to future phase)
+- [x] Optimize using hardware acceleration (vDSP in J2KAccelerate module)
 
 ### Week 55-56: Advanced Color Support ✅
 - [x] Support arbitrary color spaces

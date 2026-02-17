@@ -890,10 +890,11 @@ Completed features:
 
 ### Remaining Enhancements
 
-1. **Hardware Acceleration**
+1. **Hardware Acceleration** (Partially Complete ✅)
+   - Accelerate framework integration for ICT (Apple platforms) ✅
+   - vDSP-accelerated forward/inverse ICT in J2KAccelerate module ✅
    - SIMD vectorization for grayscale conversion
    - SIMD vectorization for palette operations
-   - Accelerate framework integration (Apple platforms)
    - 2-4× speedup potential
    - Parallel tile processing
 
