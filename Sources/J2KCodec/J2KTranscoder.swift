@@ -27,6 +27,42 @@
 import Foundation
 import J2KCore
 
+// MARK: - Transcoding Configuration
+
+/// Configuration options for transcoding operations.
+public struct TranscodingConfiguration: Sendable {
+    /// Whether to enable parallel tile processing.
+    ///
+    /// When enabled, tiles are processed in parallel using Swift structured concurrency.
+    /// This provides significant speedups for multi-tile images on multi-core systems.
+    /// For single-tile images, parallel processing is automatically disabled.
+    public let enableParallelProcessing: Bool
+    
+    /// Maximum number of concurrent tile processing tasks.
+    ///
+    /// Set to 0 to use the system processor count. Defaults to system processor count.
+    public let maxConcurrency: Int
+    
+    /// Creates a new transcoding configuration.
+    ///
+    /// - Parameters:
+    ///   - enableParallelProcessing: Whether to enable parallel tile processing (default: `true`).
+    ///   - maxConcurrency: Maximum concurrent tasks (default: 0 = system processor count).
+    public init(
+        enableParallelProcessing: Bool = true,
+        maxConcurrency: Int = 0
+    ) {
+        self.enableParallelProcessing = enableParallelProcessing
+        self.maxConcurrency = maxConcurrency <= 0 ? ProcessInfo.processInfo.processorCount : maxConcurrency
+    }
+    
+    /// Default configuration with parallel processing enabled.
+    public static let `default` = TranscodingConfiguration()
+    
+    /// Configuration with parallel processing disabled.
+    public static let sequential = TranscodingConfiguration(enableParallelProcessing: false)
+}
+
 // MARK: - Transcoding Direction
 
 /// The direction of transcoding between JPEG 2000 formats.
@@ -516,8 +552,15 @@ public struct TranscodingResult: Sendable {
 /// )
 /// ```
 public struct J2KTranscoder: Sendable {
-    /// Creates a new transcoder.
-    public init() {}
+    /// The transcoding configuration.
+    public let configuration: TranscodingConfiguration
+    
+    /// Creates a new transcoder with the specified configuration.
+    ///
+    /// - Parameter configuration: The transcoding configuration (default: `.default`).
+    public init(configuration: TranscodingConfiguration = .default) {
+        self.configuration = configuration
+    }
 
     // MARK: - High-Level Transcoding
 
@@ -525,6 +568,9 @@ public struct J2KTranscoder: Sendable {
     ///
     /// This is the primary transcoding entry point. It automatically detects
     /// the source format and re-encodes the Tier-1 data with the target coder.
+    ///
+    /// For multi-tile images, this method automatically uses parallel processing
+    /// if enabled in the configuration.
     ///
     /// - Parameters:
     ///   - data: The source codestream data.
@@ -536,8 +582,43 @@ public struct J2KTranscoder: Sendable {
     public func transcode(
         _ data: Data,
         direction: TranscodingDirection,
-        progress: ((TranscodingProgressUpdate) -> Void)? = nil
+        progress: (@Sendable (TranscodingProgressUpdate) -> Void)? = nil
     ) throws -> TranscodingResult {
+        // Use task with unsafe continuation for sync-to-async bridging
+        nonisolated(unsafe) var capturedResult: Result<TranscodingResult, Error>?
+        let group = DispatchGroup()
+        group.enter()
+        
+        Task { @Sendable in
+            do {
+                capturedResult = .success(try await transcodeAsync(data, direction: direction, progress: progress))
+            } catch {
+                capturedResult = .failure(error)
+            }
+            group.leave()
+        }
+        
+        group.wait()
+        return try capturedResult!.get()
+    }
+    
+    /// Asynchronously transcodes a JPEG 2000 codestream between legacy and HTJ2K formats.
+    ///
+    /// This method supports parallel tile processing for multi-tile images when enabled
+    /// in the configuration. Use this method for better integration with async/await code.
+    ///
+    /// - Parameters:
+    ///   - data: The source codestream data.
+    ///   - direction: The transcoding direction.
+    ///   - progress: Optional progress callback.
+    /// - Returns: A ``TranscodingResult`` with the transcoded data and metadata.
+    /// - Throws: ``J2KError/decodingError(_:)`` if the source codestream is invalid.
+    /// - Throws: ``J2KError/encodingError(_:)`` if re-encoding fails.
+    public func transcodeAsync(
+        _ data: Data,
+        direction: TranscodingDirection,
+        progress: (@Sendable (TranscodingProgressUpdate) -> Void)? = nil
+    ) async throws -> TranscodingResult {
         let startTime = DispatchTime.now()
 
         // Stage 1: Extract coefficients from source
@@ -553,7 +634,7 @@ public struct J2KTranscoder: Sendable {
         // Stage 3: Re-encode with target coder
         let targetMode: HTCodingMode = direction == .legacyToHT ? .ht : .legacy
         reportProgress(progress, stage: .reEncoding, stageProgress: 0.0, direction: direction)
-        let result = try encodeFromCoefficients(coefficients, targetMode: targetMode, progress: { p in
+        let result = try await encodeFromCoefficientsAsync(coefficients, targetMode: targetMode, progress: { p in
             self.reportProgress(progress, stage: .reEncoding, stageProgress: p, direction: direction)
         })
         reportProgress(progress, stage: .reEncoding, stageProgress: 1.0, direction: direction)
@@ -633,7 +714,7 @@ public struct J2KTranscoder: Sendable {
     public func encodeFromCoefficients(
         _ coefficients: TranscodingCoefficients,
         useHTJ2K: Bool,
-        progress: ((Double) -> Void)? = nil
+        progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Data {
         let targetMode: HTCodingMode = useHTJ2K ? .ht : .legacy
         return try encodeFromCoefficients(coefficients, targetMode: targetMode, progress: progress)
@@ -653,8 +734,43 @@ public struct J2KTranscoder: Sendable {
     func encodeFromCoefficients(
         _ coefficients: TranscodingCoefficients,
         targetMode: HTCodingMode,
-        progress: ((Double) -> Void)? = nil
+        progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Data {
+        // Use task with unsafe continuation for sync-to-async bridging
+        nonisolated(unsafe) var capturedResult: Result<Data, Error>?
+        let group = DispatchGroup()
+        group.enter()
+        
+        Task { @Sendable in
+            do {
+                capturedResult = .success(try await encodeFromCoefficientsAsync(coefficients, targetMode: targetMode, progress: progress))
+            } catch {
+                capturedResult = .failure(error)
+            }
+            group.leave()
+        }
+        
+        group.wait()
+        return try capturedResult!.get()
+    }
+    
+    /// Asynchronously re-encodes intermediate coefficients with the specified Tier-1 coder.
+    ///
+    /// Takes the unified coefficient representation and encodes it into a
+    /// complete JPEG 2000 codestream using the target block coding mode.
+    /// Supports parallel tile processing for multi-tile images.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The intermediate coefficients to encode.
+    ///   - targetMode: The target block coding mode (.ht or .legacy).
+    ///   - progress: Optional progress callback (0.0 to 1.0).
+    /// - Returns: The encoded codestream data.
+    /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
+    func encodeFromCoefficientsAsync(
+        _ coefficients: TranscodingCoefficients,
+        targetMode: HTCodingMode,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> Data {
         var codestream = Data()
 
         // Write SOC marker
@@ -695,15 +811,86 @@ public struct J2KTranscoder: Sendable {
         codestream.append(UInt8(qcdLength & 0xFF))
         codestream.append(qcdData)
 
-        // Process each tile
+        // Process tiles in parallel if enabled and there are multiple tiles
         let totalTiles = coefficients.tiles.count
-        for (tileIdx, tile) in coefficients.tiles.enumerated() {
-            let tileData = try encodeTile(
-                tile,
-                targetMode: targetMode,
-                metadata: coefficients
-            )
-
+        let shouldUseParallel = configuration.enableParallelProcessing && totalTiles > 1
+        
+        let encodedTiles: [(index: Int, data: Data)]
+        
+        if shouldUseParallel {
+            // Parallel tile processing using Swift structured concurrency
+            encodedTiles = try await withThrowingTaskGroup(
+                of: (Int, Data).self,
+                returning: [(Int, Data)].self
+            ) { group in
+                // Limit concurrency by batching submissions
+                let maxConcurrency = configuration.maxConcurrency
+                var nextIndex = 0
+                var collectedResults: [(Int, Data)] = []
+                collectedResults.reserveCapacity(totalTiles)
+                
+                // Submit initial batch
+                let initialBatch = min(maxConcurrency, totalTiles)
+                for index in 0..<initialBatch {
+                    let tile = coefficients.tiles[index]
+                    group.addTask {
+                        let tileData = try self.encodeTile(
+                            tile,
+                            targetMode: targetMode,
+                            metadata: coefficients
+                        )
+                        return (index, tileData)
+                    }
+                }
+                nextIndex = initialBatch
+                
+                // Process results and submit more work
+                for try await (index, tileData) in group {
+                    collectedResults.append((index, tileData))
+                    
+                    // Report progress
+                    if let progress = progress {
+                        progress(Double(collectedResults.count) / Double(totalTiles))
+                    }
+                    
+                    // Submit next tile if available
+                    if nextIndex < totalTiles {
+                        let tile = coefficients.tiles[nextIndex]
+                        let capturedIndex = nextIndex
+                        group.addTask {
+                            let tileData = try self.encodeTile(
+                                tile,
+                                targetMode: targetMode,
+                                metadata: coefficients
+                            )
+                            return (capturedIndex, tileData)
+                        }
+                        nextIndex += 1
+                    }
+                }
+                
+                // Sort by original index to maintain order
+                return collectedResults.sorted { $0.0 < $1.0 }
+            }
+        } else {
+            // Sequential tile processing
+            encodedTiles = try coefficients.tiles.enumerated().map { (tileIdx, tile) in
+                let tileData = try self.encodeTile(
+                    tile,
+                    targetMode: targetMode,
+                    metadata: coefficients
+                )
+                
+                progress?(Double(tileIdx + 1) / Double(totalTiles))
+                
+                return (index: tileIdx, data: tileData)
+            }
+        }
+        
+        // Write tiles in order
+        for (tileIdx, tileData) in encodedTiles {
+            let tile = coefficients.tiles[tileIdx]
+            
             // Write SOT marker
             codestream.append(contentsOf: [0xFF, 0x90]) // SOT marker
             let sotLength: UInt16 = 10 // Fixed SOT segment length
@@ -728,8 +915,6 @@ public struct J2KTranscoder: Sendable {
 
             // Write tile data
             codestream.append(tileData)
-
-            progress?(Double(tileIdx + 1) / Double(totalTiles))
         }
 
         // Write EOC marker
