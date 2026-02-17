@@ -242,15 +242,92 @@ measure {
 }
 ```
 
+## ISO/IEC 15444-4 Test Suite Integration
+
+### ISO Test Suite Loader
+
+The `J2KISOTestSuiteLoader` provides infrastructure for loading and managing ISO conformance test vectors:
+
+```swift
+// Check if official ISO test suite is available
+let loader = J2KISOTestSuiteLoader()
+if loader.isTestSuiteAvailable(at: "/path/to/iso-test-suite") {
+    let vectors = try loader.loadTestVectors(from: "/path/to/iso-test-suite")
+    let results = J2KConformanceValidator.runTestSuite(vectors: vectors, decoder: myDecoder)
+}
+```
+
+### Supported File Formats
+
+The loader can import test vectors from:
+- `.j2k` / `.j2c` — JPEG 2000 codestream files
+- `.jp2` — JP2 container files
+- `.pgm` / `.ppm` — PNM reference image files (PGM for grayscale, PPM for RGB)
+- `.raw` — Raw pixel data files
+
+### ISO Test Case Catalog
+
+The built-in catalog covers ISO/IEC 15444-4 conformance classes:
+
+| Class | Tests | Description |
+|-------|-------|-------------|
+| Profile-0 | 6 | Baseline JPEG 2000 (lossless/lossy, 8/12/16-bit) |
+| Profile-1 | 2 | Extended features (tiling, multi-component) |
+| HTJ2K | 2 | High Throughput JPEG 2000 (ISO/IEC 15444-15) |
+
+### Synthetic Test Vectors
+
+When the official ISO test suite is not available, synthetic test vectors based on the specification can be used:
+
+```swift
+let vectors = J2KISOTestSuiteLoader.syntheticTestVectors()
+for vector in vectors {
+    guard let decoded = vector.referenceImage else { continue }
+    let result = J2KConformanceValidator.validate(decoded: decoded, against: vector)
+    print("\(vector.name): \(result.passed ? "PASS" : "FAIL")")
+}
+```
+
+## Cross-Platform Validation
+
+### Platform Detection
+
+The `J2KPlatformInfo` utility provides platform detection and capability reporting:
+
+```swift
+print(J2KPlatformInfo.platformSummary())
+// J2KSwift Platform Info
+//   OS: Linux
+//   Architecture: x86_64
+//   Apple Platform: false
+//   Hardware Acceleration: false
+//   Pointer Size: 64-bit
+//   Byte Order: Little Endian
+```
+
+### Platform-Specific Considerations
+
+- **Byte Order**: All JPEG 2000 markers use big-endian (network) byte order, tested across platforms
+- **Floating Point**: IEEE 754 double precision consistency verified for error metrics
+- **Hardware Acceleration**: Accelerate framework on Apple platforms, software fallback elsewhere
+- **Data Types**: Int32, Double sizes and ranges verified consistent across platforms
+
+### Running Cross-Platform Tests
+
+```bash
+swift test --filter J2KCrossPlatformValidationTests
+swift test --filter J2KISOTestSuiteTests
+```
+
 ## Future Enhancements
 
 Planned improvements to the conformance framework:
 
-1. **ISO Test Suite Integration**: Automatic import of official test vectors
+1. ~~**ISO Test Suite Integration**: Automatic import of official test vectors~~ ✅ Complete
 2. **Visual Comparison**: Side-by-side image comparison tools
 3. **Detailed Reports**: HTML/PDF report generation
 4. **Regression Testing**: Track quality metrics over time
-5. **Platform-Specific Tests**: Accelerate framework validation
+5. ~~**Platform-Specific Tests**: Accelerate framework validation~~ ✅ Complete
 
 ## References
 
@@ -269,6 +346,6 @@ For questions about conformance testing:
 
 ---
 
-**Last Updated**: 2026-02-07  
-**Version**: 1.0  
+**Last Updated**: 2026-02-17  
+**Version**: 2.0  
 **Status**: Active Development
