@@ -38,35 +38,35 @@ public enum ProgressionOrder: UInt8, Sendable, CaseIterable {
     /// then component, and finally spatial position. This order is optimal
     /// for progressive quality refinement.
     case lrcp = 0
-    
+
     /// Resolution-Layer-Component-Position (RLCP).
     ///
     /// Packets are ordered by resolution level first, then quality layer,
     /// then component, and finally spatial position. This order is optimal
     /// for progressive resolution refinement.
     case rlcp = 1
-    
+
     /// Resolution-Position-Component-Layer (RPCL).
     ///
     /// Packets are ordered by resolution level, then spatial position,
     /// then component, and finally quality layer. This order allows for
     /// efficient spatial region-of-interest decoding.
     case rpcl = 2
-    
+
     /// Position-Component-Resolution-Layer (PCRL).
     ///
     /// Packets are ordered by spatial position first, then component,
     /// then resolution level, and finally quality layer. This order is
     /// optimal for random access to spatial regions.
     case pcrl = 3
-    
+
     /// Component-Position-Resolution-Layer (CPRL).
     ///
     /// Packets are ordered by component first, then spatial position,
     /// then resolution level, and finally quality layer. This order is
     /// useful for component-specific processing.
     case cprl = 4
-    
+
     /// Returns a human-readable name for the progression order.
     public var name: String {
         switch self {
@@ -77,7 +77,7 @@ public enum ProgressionOrder: UInt8, Sendable, CaseIterable {
         case .cprl: return "CPRL (Component-Position-Resolution-Layer)"
         }
     }
-    
+
     /// Returns a short acronym for the progression order.
     public var acronym: String {
         switch self {
@@ -99,15 +99,15 @@ public enum ProgressionOrder: UInt8, Sendable, CaseIterable {
 public struct QualityLayer: Sendable {
     /// The layer index (0-based).
     public let index: Int
-    
+
     /// The target bit rate for this layer (bits per pixel), or nil for lossless.
     public let targetRate: Double?
-    
+
     /// Code-block contributions for this layer.
     ///
     /// Maps code-block index to the number of coding passes included from that block.
     public var codeBlockContributions: [Int: Int]
-    
+
     /// Creates a new quality layer.
     ///
     /// - Parameters:
@@ -134,35 +134,35 @@ public struct QualityLayer: Sendable {
 public struct PacketHeader: Sendable {
     /// The layer index this packet belongs to.
     public let layerIndex: Int
-    
+
     /// The resolution level index.
     public let resolutionLevel: Int
-    
+
     /// The component index.
     public let componentIndex: Int
-    
+
     /// The precinct index.
     public let precinctIndex: Int
-    
+
     /// Whether the packet is empty (no code-block data).
     public let isEmpty: Bool
-    
+
     /// Code-block inclusion information.
     ///
     /// For each code-block in the precinct, indicates whether it has
     /// any contribution in this packet.
     public var codeBlockInclusions: [Bool]
-    
+
     /// Number of coding passes for each included code-block.
     ///
     /// Only valid for code-blocks where `codeBlockInclusions` is true.
     public var codingPasses: [Int]
-    
+
     /// Length of encoded data for each included code-block.
     ///
     /// Only valid for code-blocks where `codeBlockInclusions` is true.
     public var dataLengths: [Int]
-    
+
     /// Creates a new packet header.
     ///
     /// - Parameters:
@@ -212,7 +212,7 @@ public struct PacketHeader: Sendable {
 public struct PacketHeaderWriter: Sendable {
     /// Creates a new packet header writer.
     public init() {}
-    
+
     /// Encodes a packet header.
     ///
     /// - Parameter header: The packet header to encode.
@@ -220,23 +220,23 @@ public struct PacketHeaderWriter: Sendable {
     /// - Throws: ``J2KError`` if encoding fails.
     public func encode(_ header: PacketHeader) throws -> Data {
         var writer = J2KBitWriter()
-        
+
         // Write empty packet flag (1 bit)
         if header.isEmpty {
             writer.writeBit(false)
             return writer.data
         }
         writer.writeBit(true)
-        
+
         // Initialize MQ encoder for tag tree and other packet header elements
         var encoder = MQEncoder()
         var context = MQContext()
-        
+
         // Encode code-block inclusions
         for included in header.codeBlockInclusions {
             encoder.encode(symbol: included, context: &context)
         }
-        
+
         // For included code-blocks, encode number of coding passes
         var passIndex = 0
         for (_, included) in header.codeBlockInclusions.enumerated() {
@@ -245,7 +245,7 @@ public struct PacketHeaderWriter: Sendable {
                     throw J2KError.invalidData("Missing coding passes information")
                 }
                 let passes = header.codingPasses[passIndex]
-                
+
                 // Encode number of coding passes (typically 1-164)
                 // Using a simple encoding scheme for now
                 if passes == 1 {
@@ -266,11 +266,11 @@ public struct PacketHeaderWriter: Sendable {
                         remaining >>= 1
                     }
                 }
-                
+
                 passIndex += 1
             }
         }
-        
+
         // Encode data lengths
         passIndex = 0
         for (_, included) in header.codeBlockInclusions.enumerated() {
@@ -279,7 +279,7 @@ public struct PacketHeaderWriter: Sendable {
                     throw J2KError.invalidData("Missing data length information")
                 }
                 let length = header.dataLengths[passIndex]
-                
+
                 // Encode length in a simple way (this is simplified)
                 // In real JPEG 2000, this uses a more sophisticated encoding
                 var remaining = length
@@ -288,20 +288,20 @@ public struct PacketHeaderWriter: Sendable {
                     remaining >>= 1
                 }
                 encoder.encode(symbol: false, context: &context) // Terminator
-                
+
                 passIndex += 1
             }
         }
-        
+
         // Finish MQ encoding
         let mqData = encoder.finish()
-        
+
         // Write MQ encoded data
         writer.writeBytes(mqData)
-        
+
         return writer.data
     }
-    
+
     /// Encodes multiple packet headers in sequence.
     ///
     /// - Parameter headers: The packet headers to encode.
@@ -339,10 +339,10 @@ public struct PacketHeaderWriter: Sendable {
 public struct PacketHeaderReader: Sendable {
     /// The codestream data.
     private let data: Data
-    
+
     /// The current read position.
     private var position: Int
-    
+
     /// Creates a new packet header reader.
     ///
     /// - Parameters:
@@ -352,7 +352,7 @@ public struct PacketHeaderReader: Sendable {
         self.data = data
         self.position = position
     }
-    
+
     /// Decodes a packet header.
     ///
     /// - Parameters:
@@ -372,7 +372,7 @@ public struct PacketHeaderReader: Sendable {
     ) throws -> PacketHeader {
         var reader = J2KBitReader(data: data)
         try reader.seek(to: position)
-        
+
         // Read empty packet flag
         let notEmpty = try reader.readBit()
         if !notEmpty {
@@ -385,19 +385,19 @@ public struct PacketHeaderReader: Sendable {
                 isEmpty: true
             )
         }
-        
+
         // Initialize MQ decoder
         let mqData = data.suffix(from: reader.position)
         var decoder = MQDecoder(data: mqData)
         var context = MQContext()
-        
+
         // Decode code-block inclusions
         var inclusions = [Bool]()
         for _ in 0..<codeBlockCount {
             let included = decoder.decode(context: &context)
             inclusions.append(included)
         }
-        
+
         // Decode coding passes for included code-blocks
         var codingPasses = [Int]()
         for included in inclusions {
@@ -428,7 +428,7 @@ public struct PacketHeaderReader: Sendable {
                 }
             }
         }
-        
+
         // Decode data lengths for included code-blocks
         var dataLengths = [Int]()
         for included in inclusions {
@@ -444,12 +444,12 @@ public struct PacketHeaderReader: Sendable {
                 dataLengths.append(length)
             }
         }
-        
+
         // Update position (approximate - we advance by the data we've processed)
         // In practice, packet headers are followed by packet body, so position
         // management is handled by the higher-level packet parser
         position = reader.position
-        
+
         return PacketHeader(
             layerIndex: layerIndex,
             resolutionLevel: resolutionLevel,
@@ -473,10 +473,10 @@ public struct PacketHeaderReader: Sendable {
 public struct LayerFormation: Sendable {
     /// The target bit rates for each layer (bits per pixel).
     public let targetRates: [Double]
-    
+
     /// Whether to use rate-distortion optimization.
     public let useRDOptimization: Bool
-    
+
     /// Creates a new layer formation configuration.
     ///
     /// - Parameters:
@@ -486,7 +486,7 @@ public struct LayerFormation: Sendable {
         self.targetRates = targetRates
         self.useRDOptimization = useRDOptimization
     }
-    
+
     /// Forms quality layers from code-block data.
     ///
     /// - Parameters:
@@ -506,51 +506,51 @@ public struct LayerFormation: Sendable {
                 totalPixels: totalPixels
             )
         }
-        
+
         // Otherwise use simple proportional allocation
         var layers = [QualityLayer]()
-        
+
         for (index, targetRate) in targetRates.enumerated() {
             var contributions = [Int: Int]()
-            
+
             // Calculate target bytes for this layer
             let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
             var currentBytes = 0
-            
+
             // Distribute coding passes to code-blocks
             for codeBlock in codeBlocks {
                 // Simple strategy: include passes proportionally
                 let maxPasses = min(codeBlock.passeCount, 3 * (index + 1))
-                
+
                 if maxPasses > 0 && currentBytes < targetBytes {
                     contributions[codeBlock.index] = maxPasses
                     currentBytes += codeBlock.data.count
                 }
             }
-            
+
             layers.append(QualityLayer(
                 index: index,
                 targetRate: targetRate,
                 codeBlockContributions: contributions
             ))
         }
-        
+
         return layers
     }
-    
+
     /// Forms layers with lossless encoding (all passes in final layer).
     ///
     /// - Parameter codeBlocks: The code-blocks to organize.
     /// - Returns: A single quality layer containing all code-block data.
     public func formLosslessLayer(codeBlocks: [J2KCodeBlock]) -> QualityLayer {
         var contributions = [Int: Int]()
-        
+
         for codeBlock in codeBlocks {
             if codeBlock.passeCount > 0 {
                 contributions[codeBlock.index] = codeBlock.passeCount
             }
         }
-        
+
         return QualityLayer(
             index: 0,
             targetRate: nil,

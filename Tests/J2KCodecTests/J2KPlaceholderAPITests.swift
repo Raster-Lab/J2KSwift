@@ -7,7 +7,6 @@ import XCTest
 /// Encoder tests validate that `J2KEncoder.encode()` produces valid JPEG 2000 codestreams.
 /// Decoder tests validate that `J2KDecoder.decode()` still throws `notImplemented` (planned for v1.1).
 final class J2KPlaceholderAPITests: XCTestCase {
-
     // MARK: - J2KEncoder Tests
 
     /// Tests that `J2KEncoder.encode()` produces non-empty output for a grayscale image.

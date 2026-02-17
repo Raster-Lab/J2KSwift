@@ -27,31 +27,31 @@ import Foundation
 public struct J2KBuffer: Sendable {
     /// The underlying storage for the buffer.
     private var storage: Storage
-    
+
     /// The capacity of the buffer in bytes.
     public var capacity: Int {
         storage.capacity
     }
-    
+
     /// The current size of valid data in the buffer.
     public var count: Int {
         storage.count
     }
-    
+
     /// Creates a new buffer with the specified capacity.
     ///
     /// - Parameter capacity: The capacity in bytes.
     public init(capacity: Int) {
         self.storage = Storage(capacity: capacity)
     }
-    
+
     /// Creates a buffer from existing data.
     ///
     /// - Parameter data: The data to store in the buffer.
     public init(data: Data) {
         self.storage = Storage(data: data)
     }
-    
+
     /// Provides read-only access to the buffer's bytes.
     ///
     /// - Parameter body: A closure that takes an unsafe buffer pointer.
@@ -62,7 +62,7 @@ public struct J2KBuffer: Sendable {
     ) rethrows -> Result {
         try storage.withUnsafeBytes(body)
     }
-    
+
     /// Provides mutable access to the buffer's bytes.
     ///
     /// - Parameter body: A closure that takes a mutable unsafe buffer pointer.
@@ -80,32 +80,32 @@ public struct J2KBuffer: Sendable {
         }
         return try storage.withUnsafeMutableBytes(body)
     }
-    
+
     /// Converts the buffer to Data.
     ///
     /// - Returns: A Data object containing the buffer's contents.
     public func toData() -> Data {
         storage.toData()
     }
-    
+
     /// Updates the count of valid data in the buffer.
     ///
     /// - Parameter newCount: The new count value.
     public mutating func updateCount(_ newCount: Int) {
         storage.updateCount(newCount)
     }
-    
+
     /// Private initializer for copy-on-write.
     private init(storage: Storage) {
         self.storage = storage
     }
-    
+
     /// Internal storage class for reference-counted buffer management.
     private final class Storage: @unchecked Sendable {
         private let buffer: UnsafeMutableRawBufferPointer
         let capacity: Int
         private(set) var count: Int
-        
+
         init(capacity: Int) {
             self.capacity = capacity
             self.count = 0
@@ -114,7 +114,7 @@ public struct J2KBuffer: Sendable {
                 alignment: MemoryLayout<UInt64>.alignment
             )
         }
-        
+
         init(data: Data) {
             self.capacity = data.count
             self.count = data.count
@@ -126,31 +126,31 @@ public struct J2KBuffer: Sendable {
                 buffer.copyMemory(from: srcPtr)
             }
         }
-        
+
         deinit {
             buffer.deallocate()
         }
-        
+
         func withUnsafeBytes<Result>(
             _ body: (UnsafeRawBufferPointer) throws -> Result
         ) rethrows -> Result {
             try body(UnsafeRawBufferPointer(buffer))
         }
-        
+
         func withUnsafeMutableBytes<Result>(
             _ body: (UnsafeMutableRawBufferPointer) throws -> Result
         ) rethrows -> Result {
             try body(buffer)
         }
-        
+
         func toData() -> Data {
             Data(bytes: buffer.baseAddress!, count: count)
         }
-        
+
         func updateCount(_ newCount: Int) {
             self.count = min(newCount, capacity)
         }
-        
+
         func copy() -> Storage {
             let newStorage = Storage(capacity: capacity)
             newStorage.buffer.copyMemory(from: UnsafeRawBufferPointer(buffer))

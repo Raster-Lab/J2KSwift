@@ -4,7 +4,6 @@ import XCTest
 
 /// Tests for the HTJ2K (High-Throughput JPEG 2000) block coder and codec.
 final class J2KHTCodecTests: XCTestCase {
-
     // MARK: - HTCodingMode Tests
 
     func testHTCodingModeEquality() throws {
@@ -482,13 +481,13 @@ final class J2KHTCodecTests: XCTestCase {
         let cpfData = encoder.generateCPFMarkerData()
 
         XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes (Pcpf)")
-        
+
         // Extract Pcpf
         let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
-        
+
         // Bit 15 should be 1 for HTJ2K
         XCTAssertTrue((pcpf & 0x8000) != 0, "Bit 15 should be set for HTJ2K profile")
-        
+
         // Profile number should be 0 for lossless
         let profile = Int(pcpf & 0x7FFF)
         XCTAssertEqual(profile, 0, "Lossless HTJ2K should use profile 0")
@@ -500,12 +499,12 @@ final class J2KHTCodecTests: XCTestCase {
         let cpfData = encoder.generateCPFMarkerData()
 
         XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
-        
+
         let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
-        
+
         // Bit 15 should be 1 for HTJ2K
         XCTAssertTrue((pcpf & 0x8000) != 0, "Bit 15 should be set for HTJ2K profile")
-        
+
         // Profile number should be 1 for lossy
         let profile = Int(pcpf & 0x7FFF)
         XCTAssertEqual(profile, 1, "Lossy HTJ2K should use profile 1")
@@ -517,12 +516,12 @@ final class J2KHTCodecTests: XCTestCase {
         let cpfData = encoder.generateCPFMarkerData()
 
         XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
-        
+
         let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
-        
+
         // Bit 15 should be 0 for legacy
         XCTAssertTrue((pcpf & 0x8000) == 0, "Bit 15 should NOT be set for legacy profile")
-        
+
         // Profile number should be 0 for lossless
         let profile = Int(pcpf & 0x7FFF)
         XCTAssertEqual(profile, 0, "Lossless legacy should use profile 0")
@@ -534,12 +533,12 @@ final class J2KHTCodecTests: XCTestCase {
         let cpfData = encoder.generateCPFMarkerData()
 
         XCTAssertEqual(cpfData.count, 2, "CPF marker should have exactly 2 bytes")
-        
+
         let pcpf = UInt16(cpfData[0]) << 8 | UInt16(cpfData[1])
-        
+
         // Bit 15 should be 0 for legacy
         XCTAssertTrue((pcpf & 0x8000) == 0, "Bit 15 should NOT be set for legacy profile")
-        
+
         // Profile number should be 1 for lossy
         let profile = Int(pcpf & 0x7FFF)
         XCTAssertEqual(profile, 1, "Lossy legacy should use profile 1")
@@ -547,16 +546,16 @@ final class J2KHTCodecTests: XCTestCase {
 
     func testCPFMarkerParsingHTJ2KLossless() throws {
         let decoder = HTJ2KDecoder()
-        
+
         // Construct CPF data for HTJ2K lossless (profile 0)
         // Bit 15 = 1 (HTJ2K), Profile = 0
         let pcpf: UInt16 = 0x8000 | 0x0000
         var cpfData = Data()
         cpfData.append(UInt8((pcpf >> 8) & 0xFF))
         cpfData.append(UInt8(pcpf & 0xFF))
-        
+
         let result = try decoder.parseCPFMarker(data: cpfData)
-        
+
         XCTAssertTrue(result.isHTJ2K, "Should detect HTJ2K profile")
         XCTAssertEqual(result.profileNumber, 0, "Should extract profile 0")
         XCTAssertTrue(result.lossless, "Profile 0 should indicate lossless")
@@ -564,15 +563,15 @@ final class J2KHTCodecTests: XCTestCase {
 
     func testCPFMarkerParsingHTJ2KLossy() throws {
         let decoder = HTJ2KDecoder()
-        
+
         // Construct CPF data for HTJ2K lossy (profile 1)
         let pcpf: UInt16 = 0x8000 | 0x0001
         var cpfData = Data()
         cpfData.append(UInt8((pcpf >> 8) & 0xFF))
         cpfData.append(UInt8(pcpf & 0xFF))
-        
+
         let result = try decoder.parseCPFMarker(data: cpfData)
-        
+
         XCTAssertTrue(result.isHTJ2K, "Should detect HTJ2K profile")
         XCTAssertEqual(result.profileNumber, 1, "Should extract profile 1")
         XCTAssertFalse(result.lossless, "Profile 1 should indicate lossy")
@@ -580,15 +579,15 @@ final class J2KHTCodecTests: XCTestCase {
 
     func testCPFMarkerParsingLegacy() throws {
         let decoder = HTJ2KDecoder()
-        
+
         // Construct CPF data for legacy Part 1 profile
         let pcpf: UInt16 = 0x0001 // Bit 15 = 0, Profile = 1
         var cpfData = Data()
         cpfData.append(UInt8((pcpf >> 8) & 0xFF))
         cpfData.append(UInt8(pcpf & 0xFF))
-        
+
         let result = try decoder.parseCPFMarker(data: cpfData)
-        
+
         XCTAssertFalse(result.isHTJ2K, "Should detect legacy profile")
         XCTAssertEqual(result.profileNumber, 1, "Should extract profile 1")
         XCTAssertFalse(result.lossless, "Profile 1 should indicate lossy")
@@ -597,7 +596,7 @@ final class J2KHTCodecTests: XCTestCase {
     func testCPFMarkerParsingTooShort() throws {
         let decoder = HTJ2KDecoder()
         let cpfData = Data([0xFF]) // Only 1 byte, need 2
-        
+
         XCTAssertThrowsError(try decoder.parseCPFMarker(data: cpfData)) { error in
             XCTAssertTrue(error is J2KError)
             if case J2KError.decodingError(let message) = error {
@@ -614,19 +613,19 @@ final class J2KHTCodecTests: XCTestCase {
             .legacyCompatible,
             HTJ2KConfiguration(codingMode: .ht, lossless: false)
         ]
-        
+
         let decoder = HTJ2KDecoder()
-        
+
         for config in configs {
             let encoder = HTJ2KEncoder(configuration: config)
             let cpfData = encoder.generateCPFMarkerData()
             let result = try decoder.parseCPFMarker(data: cpfData)
-            
+
             // Verify HTJ2K detection
             let expectedHTJ2K = (config.codingMode == .ht || config.allowMixedMode)
             XCTAssertEqual(result.isHTJ2K, expectedHTJ2K,
                           "HTJ2K detection mismatch for config: \(config.codingMode)")
-            
+
             // Verify lossless detection
             XCTAssertEqual(result.lossless, config.lossless,
                           "Lossless detection mismatch for config")
@@ -800,18 +799,18 @@ final class J2KHTCodecTests: XCTestCase {
     func testHTJ2KConformanceDetectsMissingCAP() throws {
         // Create a minimal invalid codestream without CAP marker
         var data = Data()
-        
+
         // Add SOC marker
         data.append(contentsOf: [0xFF, 0x4F])
-        
+
         // Add COD marker (but no CAP marker for HTJ2K)
         data.append(contentsOf: [0xFF, 0x52])
         data.append(contentsOf: [0x00, 0x0C]) // Length
         data.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00])
-        
+
         let validator = HTJ2KConformanceValidator()
         let result = validator.validate(codestream: data)
-        
+
         XCTAssertFalse(result.isValid, "Should detect missing CAP marker")
         XCTAssertTrue(result.issues.contains { $0.contains("CAP") }, "Should report missing CAP marker")
     }
@@ -819,7 +818,7 @@ final class J2KHTCodecTests: XCTestCase {
     /// Tests HTJ2K block coder validation with various block sizes per ISO/IEC 15444-15.
     func testHTJ2KConformanceBlockSizes() throws {
         let encoder = HTJ2KEncoder()
-        
+
         // Test various block sizes per ISO/IEC 15444-15
         let testCases: [(width: Int, height: Int, description: String)] = [
             (4, 4, "minimal 4×4"),
@@ -828,21 +827,21 @@ final class J2KHTCodecTests: XCTestCase {
             (32, 32, "large 32×32"),
             (64, 64, "maximum 64×64")
         ]
-        
+
         for testCase in testCases {
             let size = testCase.width * testCase.height
             let coefficients = [Int](repeating: 10, count: size)
-            
+
             let result = try encoder.encodeCodeBlocks(
                 coefficients: coefficients,
                 width: testCase.width,
                 height: testCase.height,
                 subband: .hh
             )
-            
+
             let validator = HTJ2KConformanceValidator()
             let validation = validator.validate(encodedResult: result)
-            
+
             XCTAssertTrue(validation.isValid, "HTJ2K block coder \(testCase.description) should be conformant. Issues: \(validation.issues)")
         }
     }
@@ -853,23 +852,23 @@ final class J2KHTCodecTests: XCTestCase {
         let width = 32
         let height = 32
         let size = width * height
-        
+
         // Create sparse data (mostly zeros with a few non-zero values)
         var coefficients = [Int](repeating: 0, count: size)
         coefficients[100] = 127
         coefficients[200] = -100
         coefficients[300] = 85
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: width,
             height: height,
             subband: .hh
         )
-        
+
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K sparse coefficients should be conformant. Issues: \(validation.issues)")
     }
 
@@ -879,23 +878,23 @@ final class J2KHTCodecTests: XCTestCase {
         let width = 32
         let height = 32
         let size = width * height
-        
+
         // Create dense high-frequency data
         var coefficients = [Int](repeating: 0, count: size)
         for i in 0..<size {
             coefficients[i] = (i * 7 + 13) % 255 - 127
         }
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: width,
             height: height,
             subband: .hh
         )
-        
+
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K dense coefficients should be conformant. Issues: \(validation.issues)")
     }
 
@@ -904,9 +903,9 @@ final class J2KHTCodecTests: XCTestCase {
         let encoder = HTJ2KEncoder()
         let size = 256  // 16×16 block
         let coefficients = [Int](repeating: 42, count: size)
-        
+
         let subbands: [J2KSubband] = [.ll, .hl, .lh, .hh]
-        
+
         for subband in subbands {
             let result = try encoder.encodeCodeBlocks(
                 coefficients: coefficients,
@@ -914,10 +913,10 @@ final class J2KHTCodecTests: XCTestCase {
                 height: 16,
                 subband: subband
             )
-            
+
             let validator = HTJ2KConformanceValidator()
             let validation = validator.validate(encodedResult: result)
-            
+
             XCTAssertTrue(validation.isValid, "HTJ2K \(subband) subband should be conformant. Issues: \(validation.issues)")
         }
     }
@@ -928,7 +927,7 @@ final class J2KHTCodecTests: XCTestCase {
         let width = 16
         let height = 16
         let size = width * height
-        
+
         // Test with maximum and minimum values
         let testCases: [(coefficients: [Int], description: String)] = [
             ([Int](repeating: 0, count: size), "all zeros"),
@@ -936,7 +935,7 @@ final class J2KHTCodecTests: XCTestCase {
             ([Int](repeating: -128, count: size), "max negative"),
             ([Int]((0..<size).map { $0 % 2 == 0 ? 100 : -100 }), "alternating")
         ]
-        
+
         for testCase in testCases {
             let result = try encoder.encodeCodeBlocks(
                 coefficients: testCase.coefficients,
@@ -944,10 +943,10 @@ final class J2KHTCodecTests: XCTestCase {
                 height: height,
                 subband: .hh
             )
-            
+
             let validator = HTJ2KConformanceValidator()
             let validation = validator.validate(encodedResult: result)
-            
+
             XCTAssertTrue(validation.isValid, "HTJ2K \(testCase.description) should be conformant. Issues: \(validation.issues)")
         }
     }
@@ -958,7 +957,7 @@ final class J2KHTCodecTests: XCTestCase {
         let width = 16
         let height = 16
         let size = width * height
-        
+
         // Test with different magnitude ranges to exercise different bit planes
         let testCases: [(maxValue: Int, description: String)] = [
             (1, "1-bit magnitude"),
@@ -966,23 +965,23 @@ final class J2KHTCodecTests: XCTestCase {
             (15, "4-bit magnitude"),
             (127, "7-bit magnitude")
         ]
-        
+
         for testCase in testCases {
             var coefficients = [Int](repeating: 0, count: size)
             for i in 0..<size {
                 coefficients[i] = (i % testCase.maxValue) * (i % 2 == 0 ? 1 : -1)
             }
-            
+
             let result = try encoder.encodeCodeBlocks(
                 coefficients: coefficients,
                 width: width,
                 height: height,
                 subband: .hh
             )
-            
+
             let validator = HTJ2KConformanceValidator()
             let validation = validator.validate(encodedResult: result)
-            
+
             XCTAssertTrue(validation.isValid, "HTJ2K \(testCase.description) should be conformant. Issues: \(validation.issues)")
         }
     }
@@ -991,51 +990,51 @@ final class J2KHTCodecTests: XCTestCase {
     func testHTJ2KConformanceCleanupPass() throws {
         let encoder = HTJ2KEncoder()
         let coefficients = [Int](repeating: 50, count: 64)  // 8×8 block
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: 8,
             height: 8,
             subband: .hh
         )
-        
+
         // Verify cleanup pass structure
         XCTAssertEqual(result.codingMode, .ht, "Should use HT coding mode")
         XCTAssertEqual(result.cleanupPass.passType, .htCleanup, "Cleanup pass should have correct type")
         XCTAssertFalse(result.cleanupPass.codedData.isEmpty, "Cleanup pass should have coded data")
         XCTAssertGreaterThan(result.totalPasses, 0, "Should have at least one pass")
-        
+
         // Validate conformance
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K cleanup pass should be conformant. Issues: \(validation.issues)")
     }
 
     /// Tests HTJ2K multiple coding passes maintain conformance.
     func testHTJ2KConformanceMultiplePasses() throws {
         let encoder = HTJ2KEncoder()
-        
+
         // Use larger magnitudes to generate multiple passes
         var coefficients = [Int](repeating: 0, count: 256)  // 16×16 block
         for i in 0..<coefficients.count {
             coefficients[i] = (i * 13) % 128 - 64
         }
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: 16,
             height: 16,
             subband: .hh
         )
-        
+
         // Verify we have multiple passes
         XCTAssertGreaterThan(result.totalPasses, 1, "Should generate multiple coding passes")
-        
+
         // Validate conformance
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K multiple passes should be conformant. Issues: \(validation.issues)")
     }
 
@@ -1043,7 +1042,7 @@ final class J2KHTCodecTests: XCTestCase {
     func testHTJ2KConformanceCoderOutputs() throws {
         let encoder = HTJ2KEncoder()
         var coefficients = [Int](repeating: 0, count: 64)  // 8×8 block
-        
+
         // Create varied data to exercise all three coders
         for i in 0..<coefficients.count {
             if i % 3 == 0 {
@@ -1054,23 +1053,23 @@ final class J2KHTCodecTests: XCTestCase {
                 coefficients[i] = 0
             }
         }
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: 8,
             height: 8,
             subband: .hh
         )
-        
+
         // Verify cleanup pass contains MEL, VLC, and MagSgn data
         let cleanup = result.cleanupPass
         // Note: lengths might be 0 if not used, but total data should exist
         XCTAssertFalse(cleanup.codedData.isEmpty, "Should have coded data")
-        
+
         // Validate conformance
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K coder outputs should be conformant. Issues: \(validation.issues)")
     }
 
@@ -1079,22 +1078,22 @@ final class J2KHTCodecTests: XCTestCase {
         // Test that validator can handle both HT and legacy results
         let htConfig = HTJ2KConfiguration(codingMode: .ht, allowMixedMode: true)
         XCTAssertTrue(htConfig.allowMixedMode, "Mixed mode should be configurable")
-        
+
         // Encode with HT mode
         let encoder = HTJ2KEncoder(configuration: htConfig)
         let coefficients = [Int](repeating: 25, count: 64)
-        
+
         let result = try encoder.encodeCodeBlocks(
             coefficients: coefficients,
             width: 8,
             height: 8,
             subband: .hh
         )
-        
+
         // Validate HT result
         let validator = HTJ2KConformanceValidator()
         let validation = validator.validate(encodedResult: result)
-        
+
         XCTAssertTrue(validation.isValid, "HTJ2K mixed mode should be conformant. Issues: \(validation.issues)")
         XCTAssertEqual(result.codingMode, .ht, "Should use HT coding mode")
     }
@@ -1105,17 +1104,17 @@ final class J2KHTCodecTests: XCTestCase {
         var passCount = 0
         var failCount = 0
         var issues: [String] = []
-        
+
         // Test matrix: various sizes and coefficient patterns
         let testMatrix: [(width: Int, height: Int, pattern: String)] = [
             (4, 4, "uniform"), (8, 8, "sparse"), (16, 16, "dense"),
             (32, 32, "alternating"), (64, 64, "gradient")
         ]
-        
+
         for test in testMatrix {
             let size = test.width * test.height
             var coefficients = [Int](repeating: 0, count: size)
-            
+
             // Generate pattern
             switch test.pattern {
             case "uniform":
@@ -1131,7 +1130,7 @@ final class J2KHTCodecTests: XCTestCase {
             default:
                 break
             }
-            
+
             do {
                 let result = try encoder.encodeCodeBlocks(
                     coefficients: coefficients,
@@ -1139,10 +1138,10 @@ final class J2KHTCodecTests: XCTestCase {
                     height: test.height,
                     subband: .hh
                 )
-                
+
                 let validator = HTJ2KConformanceValidator()
                 let validation = validator.validate(encodedResult: result)
-                
+
                 if validation.isValid {
                     passCount += 1
                 } else {
@@ -1154,11 +1153,11 @@ final class J2KHTCodecTests: XCTestCase {
                 issues.append("\(test.width)×\(test.height) \(test.pattern): encoding failed - \(error)")
             }
         }
-        
+
         // Report results
         let totalTests = testMatrix.count
         let passRate = Double(passCount) / Double(totalTests) * 100.0
-        
+
         print("\n=== HTJ2K ISO/IEC 15444-15 Conformance Report ===")
         print("Total tests: \(totalTests)")
         print("Passed: \(passCount) (\(String(format: "%.1f", passRate))%)")
@@ -1170,14 +1169,14 @@ final class J2KHTCodecTests: XCTestCase {
             }
         }
         print("==================================================\n")
-        
+
         // All tests should pass for full conformance
         XCTAssertEqual(failCount, 0, "All HTJ2K conformance tests should pass")
         XCTAssertEqual(passRate, 100.0, "Should achieve 100% conformance")
     }
-    
+
     // MARK: - HT-Specific Optimization Flags Tests
-    
+
     func testEncodingConfigurationWithHTOptimizationFlags() throws {
         // Test default values
         let config = J2KEncodingConfiguration(useHTJ2K: true)
@@ -1185,7 +1184,7 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertTrue(config.enableVLCOptimization, "VLC optimization should be enabled by default")
         XCTAssertTrue(config.enableMagSgnPacking, "MagSgn packing should be enabled by default")
     }
-    
+
     func testEncodingConfigurationDisableHTOptimizations() throws {
         // Test disabling all HT optimizations
         let config = J2KEncodingConfiguration(
@@ -1198,7 +1197,7 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertFalse(config.enableVLCOptimization, "VLC optimization should be disabled")
         XCTAssertFalse(config.enableMagSgnPacking, "MagSgn packing should be disabled")
     }
-    
+
     func testEncodingConfigurationSelectiveHTOptimizations() throws {
         // Test selective optimization flags
         let config = J2KEncodingConfiguration(
@@ -1211,7 +1210,7 @@ final class J2KHTCodecTests: XCTestCase {
         XCTAssertFalse(config.enableVLCOptimization, "VLC optimization should be disabled")
         XCTAssertTrue(config.enableMagSgnPacking, "MagSgn packing should be enabled")
     }
-    
+
     func testHTOptimizationFlagsWithLegacyMode() throws {
         // Test that HT optimization flags can be set even when not using HTJ2K
         // (they should be ignored but not cause errors)

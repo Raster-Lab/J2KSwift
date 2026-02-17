@@ -61,9 +61,9 @@ import Accelerate
 public struct J2KDWTAccelerated: Sendable {
     /// Creates a new accelerated DWT processor.
     public init() {}
-    
+
     // MARK: - Availability Check
-    
+
     /// Indicates whether hardware acceleration is available on this platform.
     ///
     /// Returns `true` on Apple platforms where the Accelerate framework is available,
@@ -75,9 +75,9 @@ public struct J2KDWTAccelerated: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - 9/7 Irreversible Filter (Accelerated)
-    
+
     /// Performs 1D forward DWT using the accelerated 9/7 irreversible filter.
     ///
     /// This method uses hardware acceleration when available (via Accelerate framework
@@ -105,14 +105,14 @@ public struct J2KDWTAccelerated: Sendable {
         guard signal.count >= 2 else {
             throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
         }
-        
+
         let n = signal.count
         let lowpassSize = (n + 1) / 2
         let highpassSize = n / 2
-        
+
         var even = [Double](repeating: 0, count: lowpassSize)
         var odd = [Double](repeating: 0, count: highpassSize)
-        
+
         // Split into even and odd samples using vDSP
         // This is more efficient than a loop for large arrays
         signal.withUnsafeBufferPointer { signalPtr in
@@ -122,7 +122,7 @@ public struct J2KDWTAccelerated: Sendable {
                     evenPtr[i] = signalPtr[i * 2]
                 }
             }
-            
+
             odd.withUnsafeMutableBufferPointer { oddPtr in
                 // Extract odd samples: signal[1], signal[3], signal[5], ...
                 for i in 0..<highpassSize {
@@ -130,43 +130,43 @@ public struct J2KDWTAccelerated: Sendable {
                 }
             }
         }
-        
+
         // CDF 9/7 lifting coefficients (from ISO/IEC 15444-1)
         let alpha = -1.586134342
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
         let k = 1.149604398
-        
+
         // Predict 1: odd[n] += alpha * (even[n] + even[n+1])
         try applyLiftingStep(&odd, reference: even, coefficient: alpha, isPredict: true, extension: boundaryExtension)
-        
+
         // Update 1: even[n] += beta * (odd[n-1] + odd[n])
         try applyLiftingStep(&even, reference: odd, coefficient: beta, isPredict: false, extension: boundaryExtension)
-        
+
         // Predict 2: odd[n] += gamma * (even[n] + even[n+1])
         try applyLiftingStep(&odd, reference: even, coefficient: gamma, isPredict: true, extension: boundaryExtension)
-        
+
         // Update 2: even[n] += delta * (odd[n-1] + odd[n])
         try applyLiftingStep(&even, reference: odd, coefficient: delta, isPredict: false, extension: boundaryExtension)
-        
+
         // Scaling using vDSP for vectorized operations
         even.withUnsafeMutableBufferPointer { evenPtr in
             var scalar = k
             vDSP_vsmulD(evenPtr.baseAddress!, 1, &scalar, evenPtr.baseAddress!, 1, vDSP_Length(lowpassSize))
         }
-        
+
         odd.withUnsafeMutableBufferPointer { oddPtr in
             var scalar = 1.0 / k
             vDSP_vsmulD(oddPtr.baseAddress!, 1, &scalar, oddPtr.baseAddress!, 1, vDSP_Length(highpassSize))
         }
-        
+
         return (lowpass: even, highpass: odd)
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     /// Performs 1D inverse DWT using the accelerated 9/7 irreversible filter.
     ///
     /// This method uses hardware acceleration when available to reconstruct the signal
@@ -196,50 +196,50 @@ public struct J2KDWTAccelerated: Sendable {
         guard !lowpass.isEmpty && !highpass.isEmpty else {
             throw J2KError.invalidParameter("Subbands cannot be empty")
         }
-        
+
         guard abs(lowpass.count - highpass.count) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband sizes: lowpass=\(lowpass.count), highpass=\(highpass.count)"
             )
         }
-        
+
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
         let n = lowpassSize + highpassSize
-        
+
         var even = lowpass
         var odd = highpass
-        
+
         // CDF 9/7 lifting coefficients
         let alpha = -1.586134342
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
         let k = 1.149604398
-        
+
         // Undo scaling using vDSP
         even.withUnsafeMutableBufferPointer { evenPtr in
             var scalar = 1.0 / k
             vDSP_vsmulD(evenPtr.baseAddress!, 1, &scalar, evenPtr.baseAddress!, 1, vDSP_Length(lowpassSize))
         }
-        
+
         odd.withUnsafeMutableBufferPointer { oddPtr in
             var scalar = k
             vDSP_vsmulD(oddPtr.baseAddress!, 1, &scalar, oddPtr.baseAddress!, 1, vDSP_Length(highpassSize))
         }
-        
+
         // Undo update 2: even[n] -= delta * (odd[n-1] + odd[n])
         try applyLiftingStepOptimized(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
-        
+
         // Undo predict 2: odd[n] -= gamma * (even[n] + even[n+1])
         try applyLiftingStepOptimized(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
-        
+
         // Undo update 1: even[n] -= beta * (odd[n-1] + odd[n])
         try applyLiftingStepOptimized(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
-        
+
         // Undo predict 1: odd[n] -= alpha * (even[n] + even[n+1])
         try applyLiftingStepOptimized(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
-        
+
         // Merge even and odd samples
         var result = [Double](repeating: 0, count: n)
         result.withUnsafeMutableBufferPointer { resultPtr in
@@ -248,22 +248,22 @@ public struct J2KDWTAccelerated: Sendable {
                     resultPtr[i * 2] = evenPtr[i]
                 }
             }
-            
+
             odd.withUnsafeBufferPointer { oddPtr in
                 for i in 0..<highpassSize {
                     resultPtr[i * 2 + 1] = oddPtr[i]
                 }
             }
         }
-        
+
         return result
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     // MARK: - Helper Methods
-    
+
     #if canImport(Accelerate)
     /// Applies a lifting step operation with hardware acceleration.
     ///
@@ -286,14 +286,14 @@ public struct J2KDWTAccelerated: Sendable {
     ) throws {
         let targetSize = target.count
         let refSize = reference.count
-        
+
         // For predict step: target[n] += coef * (ref[n] + ref[n+1])
         // For update step: target[n] += coef * (ref[n-1] + ref[n])
-        
+
         for i in 0..<targetSize {
             let left: Double
             let right: Double
-            
+
             if isPredict {
                 // Predict: use reference[i] and reference[i+1]
                 left = reference[i]
@@ -303,11 +303,11 @@ public struct J2KDWTAccelerated: Sendable {
                 left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
                 right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
             }
-            
+
             target[i] += coefficient * (left + right)
         }
     }
-    
+
     /// SIMD-optimized lifting step for interior elements with boundary handling.
     ///
     /// This method uses vDSP operations for vectorized processing of interior elements,
@@ -331,13 +331,13 @@ public struct J2KDWTAccelerated: Sendable {
         #if canImport(Accelerate)
         let targetSize = target.count
         let refSize = reference.count
-        
+
         guard targetSize > 0 && refSize > 0 else { return }
-        
+
         // Determine interior range (where no boundary extension is needed)
         let interiorStart: Int
         let interiorEnd: Int
-        
+
         if isPredict {
             // Predict: target[n] += coef * (ref[n] + ref[n+1])
             // Interior: 0 <= n < targetSize where n+1 < refSize
@@ -349,17 +349,17 @@ public struct J2KDWTAccelerated: Sendable {
             interiorStart = 1
             interiorEnd = min(targetSize, refSize)
         }
-        
+
         // Process interior elements with vDSP (vectorized)
         if interiorEnd > interiorStart {
             let interiorCount = interiorEnd - interiorStart
-            
+
             // Allocate temporary arrays for vectorized operations
             var leftValues = [Double](repeating: 0, count: interiorCount)
             var rightValues = [Double](repeating: 0, count: interiorCount)
             var sumValues = [Double](repeating: 0, count: interiorCount)
             var scaledValues = [Double](repeating: 0, count: interiorCount)
-            
+
             if isPredict {
                 // Copy ref[i] and ref[i+1] for interior elements
                 reference.withUnsafeBufferPointer { refPtr in
@@ -377,14 +377,14 @@ public struct J2KDWTAccelerated: Sendable {
                     }
                 }
             }
-            
+
             // Vectorized addition: sum = left + right
             vDSP_vaddD(leftValues, 1, rightValues, 1, &sumValues, 1, vDSP_Length(interiorCount))
-            
+
             // Vectorized scaling: scaled = coefficient * sum
             var coef = coefficient
             vDSP_vsmulD(sumValues, 1, &coef, &scaledValues, 1, vDSP_Length(interiorCount))
-            
+
             // Vectorized accumulation: target += scaled
             target.withUnsafeMutableBufferPointer { targetPtr in
                 scaledValues.withUnsafeBufferPointer { scaledPtr in
@@ -397,13 +397,13 @@ public struct J2KDWTAccelerated: Sendable {
                 }
             }
         }
-        
+
         // Handle boundary elements with scalar operations
         if interiorStart > 0 {
             for i in 0..<interiorStart {
                 let left: Double
                 let right: Double
-                
+
                 if isPredict {
                     left = reference[i]
                     right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
@@ -411,16 +411,16 @@ public struct J2KDWTAccelerated: Sendable {
                     left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
                     right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
                 }
-                
+
                 target[i] += coefficient * (left + right)
             }
         }
-        
+
         if interiorEnd < targetSize {
             for i in interiorEnd..<targetSize {
                 let left: Double
                 let right: Double
-                
+
                 if isPredict {
                     left = reference[i]
                     right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
@@ -428,17 +428,17 @@ public struct J2KDWTAccelerated: Sendable {
                     left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
                     right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
                 }
-                
+
                 target[i] += coefficient * (left + right)
             }
         }
         #else
         // Fallback to non-optimized version on platforms without Accelerate
-        try applyLiftingStep(&target, reference: reference, coefficient: coefficient, 
+        try applyLiftingStep(&target, reference: reference, coefficient: coefficient,
                            isPredict: isPredict, extension: boundaryExtension)
         #endif
     }
-    
+
     /// Gets a value from an array with boundary extension.
     ///
     /// - Parameters:
@@ -452,13 +452,13 @@ public struct J2KDWTAccelerated: Sendable {
         extension: BoundaryExtension
     ) -> Double {
         let n = array.count
-        
+
         guard n > 0 else { return 0 }
-        
+
         if index >= 0 && index < n {
             return array[index]
         }
-        
+
         switch `extension` {
         case .symmetric:
             // Mirror extension without repeating edge
@@ -469,7 +469,7 @@ public struct J2KDWTAccelerated: Sendable {
                 let mirrorIndex = 2 * n - index - 1
                 return array[max(mirrorIndex, 0)]
             }
-            
+
         case .periodic:
             // Wrap around
             var wrappedIndex = index % n
@@ -477,15 +477,15 @@ public struct J2KDWTAccelerated: Sendable {
                 wrappedIndex += n
             }
             return array[wrappedIndex]
-            
+
         case .zeroPadding:
             return 0
         }
     }
     #endif
-    
+
     // MARK: - 2D Transform (Accelerated)
-    
+
     /// Performs 2D forward DWT on image data using hardware acceleration.
     ///
     /// Applies separable 2D wavelet transform (rows first, then columns) using
@@ -524,34 +524,34 @@ public struct J2KDWTAccelerated: Sendable {
         guard width >= 2 && height >= 2 else {
             throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
         }
-        
+
         guard levels >= 1 else {
             throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
         }
-        
+
         guard data.count == width * height else {
             throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
         }
-        
+
         var currentData = data
         var currentWidth = width
         var currentHeight = height
         var results: [DecompositionLevel] = []
-        
+
         for level in 0..<levels {
             guard currentWidth >= 2 && currentHeight >= 2 else {
                 throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
             }
-            
+
             // Transform rows
             var rowTransformed = [Double](repeating: 0, count: currentData.count)
             for row in 0..<currentHeight {
                 let rowStart = row * currentWidth
                 let rowEnd = rowStart + currentWidth
                 let rowData = Array(currentData[rowStart..<rowEnd])
-                
+
                 let (low, high) = try forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
-                
+
                 // Store transformed row: [LL...LL|LH...LH]
                 let outputRowStart = row * currentWidth
                 for i in 0..<low.count {
@@ -561,7 +561,7 @@ public struct J2KDWTAccelerated: Sendable {
                     rowTransformed[outputRowStart + low.count + i] = high[i]
                 }
             }
-            
+
             // Transform columns
             var colTransformed = [Double](repeating: 0, count: currentData.count)
             for col in 0..<currentWidth {
@@ -569,9 +569,9 @@ public struct J2KDWTAccelerated: Sendable {
                 for row in 0..<currentHeight {
                     colData[row] = rowTransformed[row * currentWidth + col]
                 }
-                
+
                 let (low, high) = try forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
-                
+
                 // Store transformed column
                 for i in 0..<low.count {
                     colTransformed[i * currentWidth + col] = low[i]
@@ -580,7 +580,7 @@ public struct J2KDWTAccelerated: Sendable {
                     colTransformed[(low.count + i) * currentWidth + col] = high[i]
                 }
             }
-            
+
             // Calculate subband dimensions
             let llWidth = (currentWidth + 1) / 2
             let llHeight = (currentHeight + 1) / 2
@@ -590,13 +590,13 @@ public struct J2KDWTAccelerated: Sendable {
             let hlHeight = currentHeight / 2
             let hhWidth = lhWidth
             let hhHeight = hlHeight
-            
+
             // Extract subbands
             let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
             let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
             let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
             let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
-            
+
             results.append(DecompositionLevel(
                 ll: ll,
                 lh: lh,
@@ -606,19 +606,19 @@ public struct J2KDWTAccelerated: Sendable {
                 llHeight: llHeight,
                 level: level
             ))
-            
+
             // For next level, use only the LL subband
             currentData = ll
             currentWidth = llWidth
             currentHeight = llHeight
         }
-        
+
         return results
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     /// Performs parallel 2D forward DWT on image data using hardware acceleration and Swift Concurrency.
     ///
     /// This method processes rows and columns in parallel using Swift's TaskGroup for improved
@@ -659,32 +659,32 @@ public struct J2KDWTAccelerated: Sendable {
         guard width >= 2 && height >= 2 else {
             throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
         }
-        
+
         guard levels >= 1 else {
             throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
         }
-        
+
         guard data.count == width * height else {
             throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
         }
-        
+
         var currentData = data
         var currentWidth = width
         var currentHeight = height
         var results: [DecompositionLevel] = []
-        
+
         for level in 0..<levels {
             guard currentWidth >= 2 && currentHeight >= 2 else {
                 throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
             }
-            
+
             // Transform rows in parallel
             var rowTransformed = [Double](repeating: 0, count: currentData.count)
-            
+
             try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
                 // Limit concurrent tasks to avoid overwhelming the system
                 var activeTasks = 0
-                
+
                 for row in 0..<currentHeight {
                     // Wait if we've reached the limit
                     if activeTasks >= maxConcurrentTasks {
@@ -698,18 +698,18 @@ public struct J2KDWTAccelerated: Sendable {
                         }
                         activeTasks -= 1
                     }
-                    
+
                     let rowStart = row * currentWidth
                     let rowEnd = rowStart + currentWidth
                     let rowData = Array(currentData[rowStart..<rowEnd])
-                    
+
                     group.addTask {
                         let (low, high) = try self.forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
                         return (row, low, high)
                     }
                     activeTasks += 1
                 }
-                
+
                 // Collect remaining results
                 while let (rowIdx, low, high) = try await group.next() {
                     let outputRowStart = rowIdx * currentWidth
@@ -721,13 +721,13 @@ public struct J2KDWTAccelerated: Sendable {
                     }
                 }
             }
-            
+
             // Transform columns in parallel
             var colTransformed = [Double](repeating: 0, count: currentData.count)
-            
+
             try await withThrowingTaskGroup(of: (Int, [Double], [Double]).self) { group in
                 var activeTasks = 0
-                
+
                 for col in 0..<currentWidth {
                     // Wait if we've reached the limit
                     if activeTasks >= maxConcurrentTasks {
@@ -740,19 +740,19 @@ public struct J2KDWTAccelerated: Sendable {
                         }
                         activeTasks -= 1
                     }
-                    
+
                     var colData = [Double](repeating: 0, count: currentHeight)
                     for row in 0..<currentHeight {
                         colData[row] = rowTransformed[row * currentWidth + col]
                     }
-                    
+
                     group.addTask {
                         let (low, high) = try self.forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
                         return (col, low, high)
                     }
                     activeTasks += 1
                 }
-                
+
                 // Collect remaining results
                 while let (colIdx, low, high) = try await group.next() {
                     for i in 0..<low.count {
@@ -763,7 +763,7 @@ public struct J2KDWTAccelerated: Sendable {
                     }
                 }
             }
-            
+
             // Calculate subband dimensions
             let llWidth = (currentWidth + 1) / 2
             let llHeight = (currentHeight + 1) / 2
@@ -773,13 +773,13 @@ public struct J2KDWTAccelerated: Sendable {
             let hlHeight = currentHeight / 2
             let hhWidth = lhWidth
             let hhHeight = hlHeight
-            
+
             // Extract subbands
             let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
             let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
             let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
             let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
-            
+
             results.append(DecompositionLevel(
                 ll: ll,
                 lh: lh,
@@ -789,19 +789,19 @@ public struct J2KDWTAccelerated: Sendable {
                 llHeight: llHeight,
                 level: level
             ))
-            
+
             // For next level, use only the LL subband
             currentData = ll
             currentWidth = llWidth
             currentHeight = llHeight
         }
-        
+
         return results
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     /// Performs cache-optimized 2D forward DWT using matrix transpose.
     ///
     /// This method uses hardware-accelerated matrix transpose to convert column operations
@@ -840,34 +840,34 @@ public struct J2KDWTAccelerated: Sendable {
         guard width >= 2 && height >= 2 else {
             throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
         }
-        
+
         guard levels >= 1 else {
             throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
         }
-        
+
         guard data.count == width * height else {
             throw J2KError.invalidParameter("Data size (\(data.count)) does not match dimensions (\(width)x\(height))")
         }
-        
+
         var currentData = data
         var currentWidth = width
         var currentHeight = height
         var results: [DecompositionLevel] = []
-        
+
         for level in 0..<levels {
             guard currentWidth >= 2 && currentHeight >= 2 else {
                 throw J2KError.invalidParameter("Cannot decompose further at level \(level): size is \(currentWidth)x\(currentHeight)")
             }
-            
+
             // Transform rows (already contiguous - good cache locality)
             var rowTransformed = [Double](repeating: 0, count: currentData.count)
             for row in 0..<currentHeight {
                 let rowStart = row * currentWidth
                 let rowEnd = rowStart + currentWidth
                 let rowData = Array(currentData[rowStart..<rowEnd])
-                
+
                 let (low, high) = try forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
-                
+
                 // Store transformed row: [LL...LL|LH...LH]
                 let outputRowStart = row * currentWidth
                 for i in 0..<low.count {
@@ -877,19 +877,19 @@ public struct J2KDWTAccelerated: Sendable {
                     rowTransformed[outputRowStart + low.count + i] = high[i]
                 }
             }
-            
+
             // Transpose matrix to make columns contiguous
             let transposed = transposeMatrix(rowTransformed, rows: currentHeight, cols: currentWidth)
-            
+
             // Transform "rows" in transposed matrix (which are columns in original)
             var colTransformed = [Double](repeating: 0, count: transposed.count)
             for col in 0..<currentWidth {
                 let colStart = col * currentHeight
                 let colEnd = colStart + currentHeight
                 let colData = Array(transposed[colStart..<colEnd])
-                
+
                 let (low, high) = try forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
-                
+
                 // Store transformed "row" in transposed space
                 let outputColStart = col * currentHeight
                 for i in 0..<low.count {
@@ -899,10 +899,10 @@ public struct J2KDWTAccelerated: Sendable {
                     colTransformed[outputColStart + low.count + i] = high[i]
                 }
             }
-            
+
             // Transpose back to original orientation
             let finalTransformed = transposeMatrix(colTransformed, rows: currentWidth, cols: currentHeight)
-            
+
             // Calculate subband dimensions
             let llWidth = (currentWidth + 1) / 2
             let llHeight = (currentHeight + 1) / 2
@@ -912,13 +912,13 @@ public struct J2KDWTAccelerated: Sendable {
             let hlHeight = currentHeight / 2
             let hhWidth = lhWidth
             let hhHeight = hlHeight
-            
+
             // Extract subbands
             let ll = extractSubband(from: finalTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
             let lh = extractSubband(from: finalTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
             let hl = extractSubband(from: finalTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
             let hh = extractSubband(from: finalTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
-            
+
             results.append(DecompositionLevel(
                 ll: ll,
                 lh: lh,
@@ -928,19 +928,19 @@ public struct J2KDWTAccelerated: Sendable {
                 llHeight: llHeight,
                 level: level
             ))
-            
+
             // For next level, use only the LL subband
             currentData = ll
             currentWidth = llWidth
             currentHeight = llHeight
         }
-        
+
         return results
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     /// Performs 2D inverse DWT on decomposed image data using hardware acceleration.
     ///
     /// Reconstructs image data from wavelet decomposition using the accelerated inverse
@@ -973,26 +973,26 @@ public struct J2KDWTAccelerated: Sendable {
         guard !decompositions.isEmpty else {
             throw J2KError.invalidParameter("Decompositions array cannot be empty")
         }
-        
+
         // Reconstruct from deepest level to shallowest
         var currentData = decompositions.last!.ll
-        
+
         for level in decompositions.reversed() {
             let llWidth = level.llWidth
             let llHeight = level.llHeight
             let currentWidth = llWidth + level.lh.count / llHeight
             let currentHeight = llHeight + level.hl.count / llWidth
-            
+
             // Reassemble subbands into single array
             var combined = [Double](repeating: 0, count: currentWidth * currentHeight)
-            
+
             // Place LL
             for y in 0..<llHeight {
                 for x in 0..<llWidth {
                     combined[y * currentWidth + x] = level.ll[y * llWidth + x]
                 }
             }
-            
+
             // Place LH
             let lhWidth = level.lh.count / llHeight
             for y in 0..<llHeight {
@@ -1000,7 +1000,7 @@ public struct J2KDWTAccelerated: Sendable {
                     combined[y * currentWidth + llWidth + x] = level.lh[y * lhWidth + x]
                 }
             }
-            
+
             // Place HL
             let hlHeight = level.hl.count / llWidth
             for y in 0..<hlHeight {
@@ -1008,7 +1008,7 @@ public struct J2KDWTAccelerated: Sendable {
                     combined[(llHeight + y) * currentWidth + x] = level.hl[y * llWidth + x]
                 }
             }
-            
+
             // Place HH
             let hhWidth = lhWidth
             let hhHeight = hlHeight
@@ -1017,7 +1017,7 @@ public struct J2KDWTAccelerated: Sendable {
                     combined[(llHeight + y) * currentWidth + llWidth + x] = level.hh[y * hhWidth + x]
                 }
             }
-            
+
             // Inverse transform columns
             var colInverse = [Double](repeating: 0, count: combined.count)
             for col in 0..<currentWidth {
@@ -1025,47 +1025,47 @@ public struct J2KDWTAccelerated: Sendable {
                 for row in 0..<currentHeight {
                     colData[row] = combined[row * currentWidth + col]
                 }
-                
+
                 let lowSize = llHeight
                 let highSize = currentHeight - llHeight
                 let lowpass = Array(colData[0..<lowSize])
                 let highpass = Array(colData[lowSize..<currentHeight])
-                
+
                 let reconstructedCol = try inverseTransform97(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
-                
+
                 for row in 0..<reconstructedCol.count {
                     colInverse[row * currentWidth + col] = reconstructedCol[row]
                 }
             }
-            
+
             // Inverse transform rows
             var rowInverse = [Double](repeating: 0, count: combined.count)
             for row in 0..<currentHeight {
                 let rowStart = row * currentWidth
                 let rowEnd = rowStart + currentWidth
                 let rowData = Array(colInverse[rowStart..<rowEnd])
-                
+
                 let lowSize = llWidth
                 let highSize = currentWidth - llWidth
                 let lowpass = Array(rowData[0..<lowSize])
                 let highpass = Array(rowData[lowSize..<currentWidth])
-                
+
                 let reconstructedRow = try inverseTransform97(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
-                
+
                 for col in 0..<reconstructedRow.count {
                     rowInverse[rowStart + col] = reconstructedRow[col]
                 }
             }
-            
+
             currentData = rowInverse
         }
-        
+
         return currentData
         #else
         throw J2KError.unsupportedFeature("Hardware acceleration not available on this platform")
         #endif
     }
-    
+
     #if canImport(Accelerate)
     /// Transposes a 2D matrix using hardware acceleration for cache-friendly access.
     ///
@@ -1083,7 +1083,7 @@ public struct J2KDWTAccelerated: Sendable {
         cols: Int
     ) -> [Double] {
         var result = [Double](repeating: 0, count: data.count)
-        
+
         data.withUnsafeBufferPointer { srcPtr in
             result.withUnsafeMutableBufferPointer { dstPtr in
                 // vDSP_mtrans performs optimized matrix transpose
@@ -1096,10 +1096,10 @@ public struct J2KDWTAccelerated: Sendable {
                 )
             }
         }
-        
+
         return result
     }
-    
+
     /// Extracts a subband from the transformed data.
     private func extractSubband(
         from data: [Double],
@@ -1132,25 +1132,25 @@ public struct J2KDWTAccelerated: Sendable {
 public struct DecompositionLevel: Sendable {
     /// Low-low subband (approximation).
     public let ll: [Double]
-    
+
     /// Low-high subband (horizontal details).
     public let lh: [Double]
-    
+
     /// High-low subband (vertical details).
     public let hl: [Double]
-    
+
     /// High-high subband (diagonal details).
     public let hh: [Double]
-    
+
     /// Width of the LL subband.
     public let llWidth: Int
-    
+
     /// Height of the LL subband.
     public let llHeight: Int
-    
+
     /// Decomposition level (0 = first level, 1 = second level, etc.).
     public let level: Int
-    
+
     /// Creates a new decomposition level.
     public init(ll: [Double], lh: [Double], hl: [Double], hh: [Double], llWidth: Int, llHeight: Int, level: Int) {
         self.ll = ll
@@ -1171,12 +1171,12 @@ public enum BoundaryExtension: Sendable {
     ///
     /// For signal [a, b, c, d], extends as [c, b, a | a, b, c, d | d, c, b]
     case symmetric
-    
+
     /// Periodic extension (wrap around).
     ///
     /// For signal [a, b, c, d], extends as [c, d | a, b, c, d | a, b]
     case periodic
-    
+
     /// Zero padding extension.
     ///
     /// For signal [a, b, c, d], extends as [0, 0 | a, b, c, d | 0, 0]
@@ -1217,9 +1217,9 @@ public enum BoundaryExtension: Sendable {
 public struct J2KColorTransform: Sendable {
     /// Creates a new accelerated color transform processor.
     public init() {}
-    
+
     // MARK: - Availability Check
-    
+
     /// Indicates whether hardware acceleration is available on this platform.
     ///
     /// Returns `true` on Apple platforms where the Accelerate framework is available,
@@ -1231,9 +1231,9 @@ public struct J2KColorTransform: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - Forward ICT (RGB → YCbCr)
-    
+
     /// Applies the hardware-accelerated forward Irreversible Color Transform (RGB → YCbCr).
     ///
     /// Uses vDSP vectorized operations for high-performance color conversion.
@@ -1265,53 +1265,53 @@ public struct J2KColorTransform: Sendable {
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = red.count
         let n = vDSP_Length(count)
-        
+
         // ICT coefficients from ISO/IEC 15444-1 Annex G.3
         var coeffY_R = 0.299
         var coeffY_G = 0.587
         var coeffY_B = 0.114
-        
+
         var coeffCb_R = -0.168736
         var coeffCb_G = -0.331264
         var coeffCb_B = 0.5
-        
+
         var coeffCr_R = 0.5
         var coeffCr_G = -0.418688
         var coeffCr_B = -0.081312
-        
+
         var y = [Double](repeating: 0, count: count)
         var cb = [Double](repeating: 0, count: count)
         var cr = [Double](repeating: 0, count: count)
-        
+
         // Y = coeffY_R * R + coeffY_G * G + coeffY_B * B
         // Using vDSP_vsmulD for scalar-vector multiply and vDSP_vaddD for vector add
         var temp1 = [Double](repeating: 0, count: count)
         var temp2 = [Double](repeating: 0, count: count)
-        
+
         // Y component
         vDSP_vsmulD(red, 1, &coeffY_R, &temp1, 1, n)
         vDSP_vsmulD(green, 1, &coeffY_G, &temp2, 1, n)
         vDSP_vaddD(temp1, 1, temp2, 1, &y, 1, n)
         vDSP_vsmulD(blue, 1, &coeffY_B, &temp1, 1, n)
         vDSP_vaddD(y, 1, temp1, 1, &y, 1, n)
-        
+
         // Cb component
         vDSP_vsmulD(red, 1, &coeffCb_R, &temp1, 1, n)
         vDSP_vsmulD(green, 1, &coeffCb_G, &temp2, 1, n)
         vDSP_vaddD(temp1, 1, temp2, 1, &cb, 1, n)
         vDSP_vsmulD(blue, 1, &coeffCb_B, &temp1, 1, n)
         vDSP_vaddD(cb, 1, temp1, 1, &cb, 1, n)
-        
+
         // Cr component
         vDSP_vsmulD(red, 1, &coeffCr_R, &temp1, 1, n)
         vDSP_vsmulD(green, 1, &coeffCr_G, &temp2, 1, n)
         vDSP_vaddD(temp1, 1, temp2, 1, &cr, 1, n)
         vDSP_vsmulD(blue, 1, &coeffCr_B, &temp1, 1, n)
         vDSP_vaddD(cr, 1, temp1, 1, &cr, 1, n)
-        
+
         return (y, cb, cr)
         #else
         throw J2KError.unsupportedFeature(
@@ -1319,9 +1319,9 @@ public struct J2KColorTransform: Sendable {
         )
         #endif
     }
-    
+
     // MARK: - Inverse ICT (YCbCr → RGB)
-    
+
     /// Applies the hardware-accelerated inverse Irreversible Color Transform (YCbCr → RGB).
     ///
     /// Uses vDSP vectorized operations for high-performance color conversion.
@@ -1353,36 +1353,36 @@ public struct J2KColorTransform: Sendable {
         guard !y.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = y.count
         let n = vDSP_Length(count)
-        
+
         // Inverse ICT coefficients from ISO/IEC 15444-1 Annex G.3
         var coeffR_Cr = 1.402
         var coeffG_Cb = -0.344136
         var coeffG_Cr = -0.714136
         var coeffB_Cb = 1.772
-        
+
         var red = [Double](repeating: 0, count: count)
         var green = [Double](repeating: 0, count: count)
         var blue = [Double](repeating: 0, count: count)
-        
+
         var temp = [Double](repeating: 0, count: count)
-        
+
         // R = Y + 1.402 × Cr
         vDSP_vsmulD(cr, 1, &coeffR_Cr, &temp, 1, n)
         vDSP_vaddD(y, 1, temp, 1, &red, 1, n)
-        
+
         // G = Y - 0.344136 × Cb - 0.714136 × Cr
         vDSP_vsmulD(cb, 1, &coeffG_Cb, &temp, 1, n)
         vDSP_vaddD(y, 1, temp, 1, &green, 1, n)
         vDSP_vsmulD(cr, 1, &coeffG_Cr, &temp, 1, n)
         vDSP_vaddD(green, 1, temp, 1, &green, 1, n)
-        
+
         // B = Y + 1.772 × Cb
         vDSP_vsmulD(cb, 1, &coeffB_Cb, &temp, 1, n)
         vDSP_vaddD(y, 1, temp, 1, &blue, 1, n)
-        
+
         return (red, green, blue)
         #else
         throw J2KError.unsupportedFeature(
@@ -1390,9 +1390,9 @@ public struct J2KColorTransform: Sendable {
         )
         #endif
     }
-    
+
     // MARK: - Interleaved API
-    
+
     /// Converts interleaved RGB data to YCbCr color space using the ICT.
     ///
     /// The input array must contain interleaved RGB values: [R0, G0, B0, R1, G1, B1, ...].
@@ -1411,21 +1411,21 @@ public struct J2KColorTransform: Sendable {
                 "RGB data length must be a multiple of 3, got \(rgb.count)"
             )
         }
-        
+
         let pixelCount = rgb.count / 3
         var red = [Double](repeating: 0, count: pixelCount)
         var green = [Double](repeating: 0, count: pixelCount)
         var blue = [Double](repeating: 0, count: pixelCount)
-        
+
         // De-interleave
         for i in 0..<pixelCount {
             red[i] = rgb[i * 3]
             green[i] = rgb[i * 3 + 1]
             blue[i] = rgb[i * 3 + 2]
         }
-        
+
         let (y, cb, cr) = try forwardICT(red: red, green: green, blue: blue)
-        
+
         // Re-interleave
         var result = [Double](repeating: 0, count: rgb.count)
         for i in 0..<pixelCount {
@@ -1433,10 +1433,10 @@ public struct J2KColorTransform: Sendable {
             result[i * 3 + 1] = cb[i]
             result[i * 3 + 2] = cr[i]
         }
-        
+
         return result
     }
-    
+
     /// Converts interleaved YCbCr data to RGB color space using the inverse ICT.
     ///
     /// The input array must contain interleaved YCbCr values: [Y0, Cb0, Cr0, Y1, Cb1, Cr1, ...].
@@ -1455,21 +1455,21 @@ public struct J2KColorTransform: Sendable {
                 "YCbCr data length must be a multiple of 3, got \(ycbcr.count)"
             )
         }
-        
+
         let pixelCount = ycbcr.count / 3
         var y = [Double](repeating: 0, count: pixelCount)
         var cb = [Double](repeating: 0, count: pixelCount)
         var cr = [Double](repeating: 0, count: pixelCount)
-        
+
         // De-interleave
         for i in 0..<pixelCount {
             y[i] = ycbcr[i * 3]
             cb[i] = ycbcr[i * 3 + 1]
             cr[i] = ycbcr[i * 3 + 2]
         }
-        
+
         let (red, green, blue) = try inverseICT(y: y, cb: cb, cr: cr)
-        
+
         // Re-interleave
         var result = [Double](repeating: 0, count: ycbcr.count)
         for i in 0..<pixelCount {
@@ -1477,7 +1477,7 @@ public struct J2KColorTransform: Sendable {
             result[i * 3 + 1] = green[i]
             result[i * 3 + 2] = blue[i]
         }
-        
+
         return result
     }
 }

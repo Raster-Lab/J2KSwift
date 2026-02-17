@@ -48,48 +48,47 @@ import J2KCore
 /// }
 /// ```
 public struct J2KDWT2DTiled: Sendable {
-    
     // MARK: - Types
-    
+
     /// Result of a tile-wise 2D DWT decomposition.
     public struct TileDecompositionResult: Sendable {
         /// The tile metadata.
         public let tile: J2KTile
-        
+
         /// Multi-level decomposition result for the tile.
         public let decomposition: J2KDWT2D.MultiLevelDecomposition
-        
+
         public init(tile: J2KTile, decomposition: J2KDWT2D.MultiLevelDecomposition) {
             self.tile = tile
             self.decomposition = decomposition
         }
     }
-    
+
     /// Configuration for tile processing.
     public struct Configuration: Sendable {
         /// Whether to use memory pooling for temporary buffers.
         public let useMemoryPooling: Bool
-        
+
         /// Maximum number of tiles to keep in memory simultaneously.
         public let maxCachedTiles: Int
-        
+
         public init(useMemoryPooling: Bool = true, maxCachedTiles: Int = 4) {
             self.useMemoryPooling = useMemoryPooling
             self.maxCachedTiles = maxCachedTiles
         }
     }
-    
+
     private let configuration: Configuration
-    
+
     /// Creates a new tiled DWT processor.
     ///
     /// - Parameter configuration: Configuration options for tile processing.
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
-    
+
     // MARK: - Tile Extraction
-    
+
     /// Extracts a specific tile from an image.
     ///
     /// Creates a J2KTile structure containing metadata for the specified
@@ -112,39 +111,39 @@ public struct J2KDWT2DTiled: Sendable {
                 "Tile index \(tileIndex) out of range [0, \(image.tileCount))"
             )
         }
-        
+
         // Calculate tile grid position
         let tileX = tileIndex % image.tilesX
         let tileY = tileIndex / image.tilesX
-        
+
         // Calculate tile boundaries in image coordinates
         let tileStartX = tileX * image.tileWidth + image.tileOffsetX
         let tileStartY = tileY * image.tileHeight + image.tileOffsetY
-        
+
         // Calculate actual tile dimensions (may be smaller at image edges)
         let tileEndX = min(tileStartX + image.tileWidth, image.width)
         let tileEndY = min(tileStartY + image.tileHeight, image.height)
-        
+
         let actualTileWidth = tileEndX - tileStartX
         let actualTileHeight = tileEndY - tileStartY
-        
+
         // Extract tile-components for each image component
         var tileComponents: [J2KTileComponent] = []
-        
+
         for (compIndex, component) in image.components.enumerated() {
             // Calculate tile-component dimensions accounting for subsampling
             let tcWidth = (actualTileWidth + component.subsamplingX - 1) / component.subsamplingX
             let tcHeight = (actualTileHeight + component.subsamplingY - 1) / component.subsamplingY
-            
+
             let tileComponent = J2KTileComponent(
                 componentIndex: compIndex,
                 width: tcWidth,
                 height: tcHeight
             )
-            
+
             tileComponents.append(tileComponent)
         }
-        
+
         let tile = J2KTile(
             index: tileIndex,
             x: tileX,
@@ -155,10 +154,10 @@ public struct J2KDWT2DTiled: Sendable {
             offsetY: tileStartY,
             components: tileComponents
         )
-        
+
         return tile
     }
-    
+
     /// Extracts tile data from a 2D image array.
     ///
     /// Extracts the pixel data for a specific tile region from a 2D array.
@@ -175,12 +174,12 @@ public struct J2KDWT2DTiled: Sendable {
     ) throws -> [[Int32]] {
         let imageHeight = imageData.count
         let imageWidth = imageData.isEmpty ? 0 : imageData[0].count
-        
+
         // Validate tile bounds
         guard tile.offsetY >= 0 && tile.offsetX >= 0 else {
             throw J2KError.invalidParameter("Tile offset cannot be negative")
         }
-        
+
         guard tile.offsetY + tile.height <= imageHeight &&
               tile.offsetX + tile.width <= imageWidth else {
             throw J2KError.invalidParameter(
@@ -188,21 +187,21 @@ public struct J2KDWT2DTiled: Sendable {
                 "exceed image dimensions [\(imageWidth)x\(imageHeight)]"
             )
         }
-        
+
         // Extract tile region
         var tileData: [[Int32]] = []
         tileData.reserveCapacity(tile.height)
-        
+
         for y in tile.offsetY..<(tile.offsetY + tile.height) {
             let row = Array(imageData[y][tile.offsetX..<(tile.offsetX + tile.width)])
             tileData.append(row)
         }
-        
+
         return tileData
     }
-    
+
     // MARK: - Tile Assembly
-    
+
     /// Assembles tiles back into a full image.
     ///
     /// Combines multiple tile results back into a single image array.
@@ -222,24 +221,24 @@ public struct J2KDWT2DTiled: Sendable {
                 "Expected \(image.tileCount) tiles, got \(tiles.count)"
             )
         }
-        
+
         // Initialize output image
         var result: [[Int32]] = Array(
             repeating: Array(repeating: 0, count: image.width),
             count: image.height
         )
-        
+
         // Place each tile into the output
         for tileIndex in 0..<tiles.count {
             let tile = try extractTile(from: image, tileIndex: tileIndex)
             let tileData = tiles[tileIndex]
-            
+
             guard tileData.count == tile.height else {
                 throw J2KError.invalidParameter(
                     "Tile \(tileIndex) has incorrect height: \(tileData.count) vs expected \(tile.height)"
                 )
             }
-            
+
             // Copy tile data into result
             for (localY, row) in tileData.enumerated() {
                 let globalY = tile.offsetY + localY
@@ -248,19 +247,19 @@ public struct J2KDWT2DTiled: Sendable {
                         "Tile \(tileIndex) row \(localY) has incorrect width: \(row.count) vs expected \(tile.width)"
                     )
                 }
-                
+
                 for (localX, value) in row.enumerated() {
                     let globalX = tile.offsetX + localX
                     result[globalY][globalX] = value
                 }
             }
         }
-        
+
         return result
     }
-    
+
     // MARK: - Tile-wise DWT
-    
+
     /// Performs forward DWT on a single tile.
     ///
     /// Applies multi-level 2D DWT to a tile's data. The boundary extension
@@ -301,7 +300,7 @@ public struct J2KDWT2DTiled: Sendable {
             boundaryExtension: boundaryExtension
         )
     }
-    
+
     /// Performs forward DWT on a tile with metadata.
     ///
     /// Convenience method that combines tile data extraction and transformation.
@@ -328,10 +327,10 @@ public struct J2KDWT2DTiled: Sendable {
             filter: filter,
             boundaryExtension: boundaryExtension
         )
-        
+
         return TileDecompositionResult(tile: tile, decomposition: decomposition)
     }
-    
+
     /// Performs inverse DWT on a tile.
     ///
     /// Reconstructs tile data from its multi-level decomposition.
@@ -353,9 +352,9 @@ public struct J2KDWT2DTiled: Sendable {
             boundaryExtension: boundaryExtension
         )
     }
-    
+
     // MARK: - Full Image Processing
-    
+
     /// Processes an entire image tile-by-tile.
     ///
     /// Applies DWT to each tile independently and returns all decomposition results.
@@ -392,7 +391,7 @@ public struct J2KDWT2DTiled: Sendable {
     ) throws -> [TileDecompositionResult] {
         var results: [TileDecompositionResult] = []
         results.reserveCapacity(image.tileCount)
-        
+
         // Process each tile
         for tileIndex in 0..<image.tileCount {
             let tile = try extractTile(from: image, tileIndex: tileIndex)
@@ -405,10 +404,10 @@ public struct J2KDWT2DTiled: Sendable {
             )
             results.append(result)
         }
-        
+
         return results
     }
-    
+
     /// Reconstructs a full image from tile decompositions.
     ///
     /// Applies inverse DWT to each tile and assembles the results into a full image.
@@ -431,11 +430,11 @@ public struct J2KDWT2DTiled: Sendable {
                 "Expected \(image.tileCount) tile decompositions, got \(tileDecompositions.count)"
             )
         }
-        
+
         // Reconstruct each tile
         var reconstructedTiles: [[[Int32]]] = []
         reconstructedTiles.reserveCapacity(tileDecompositions.count)
-        
+
         for tileResult in tileDecompositions {
             let tileData = try inverseTransformTile(
                 decomposition: tileResult.decomposition,
@@ -444,7 +443,7 @@ public struct J2KDWT2DTiled: Sendable {
             )
             reconstructedTiles.append(tileData)
         }
-        
+
         // Assemble tiles into full image
         return try assembleTiles(reconstructedTiles, into: image)
     }

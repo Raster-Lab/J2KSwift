@@ -134,7 +134,7 @@ public struct J2KEncoder: Sendable {
 public struct J2KDecoder: Sendable {
     /// Creates a new decoder.
     public init() {}
-    
+
     /// Decodes JPEG 2000 data into an image.
     ///
     /// This method processes the codestream through the complete JPEG 2000 decoding pipeline:
@@ -154,7 +154,7 @@ public struct J2KDecoder: Sendable {
         let pipeline = DecoderPipeline()
         return try pipeline.decode(data)
     }
-    
+
     /// Decodes JPEG 2000 data into an image with progress reporting.
     ///
     /// - Parameters:

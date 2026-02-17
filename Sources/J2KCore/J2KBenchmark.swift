@@ -21,19 +21,19 @@ import Foundation
 public struct J2KBenchmark: Sendable {
     /// The name of this benchmark.
     public let name: String
-    
+
     /// Creates a new benchmark with the given name.
     ///
     /// - Parameter name: A descriptive name for the benchmark.
     public init(name: String) {
         self.name = name
     }
-    
+
     /// Gets the current time in seconds.
     private static func currentTime() -> TimeInterval {
         Date().timeIntervalSinceReferenceDate
     }
-    
+
     /// Measures the execution time of a synchronous operation.
     ///
     /// - Parameters:
@@ -50,21 +50,21 @@ public struct J2KBenchmark: Sendable {
         for _ in 0..<warmupIterations {
             operation()
         }
-        
+
         // Measurement
         var times: [TimeInterval] = []
         times.reserveCapacity(iterations)
-        
+
         for _ in 0..<iterations {
             let start = Self.currentTime()
             operation()
             let end = Self.currentTime()
             times.append(end - start)
         }
-        
+
         return BenchmarkResult(name: name, times: times)
     }
-    
+
     /// Measures the execution time of a throwing operation.
     ///
     /// - Parameters:
@@ -82,21 +82,21 @@ public struct J2KBenchmark: Sendable {
         for _ in 0..<warmupIterations {
             try operation()
         }
-        
+
         // Measurement
         var times: [TimeInterval] = []
         times.reserveCapacity(iterations)
-        
+
         for _ in 0..<iterations {
             let start = Self.currentTime()
             try operation()
             let end = Self.currentTime()
             times.append(end - start)
         }
-        
+
         return BenchmarkResult(name: name, times: times)
     }
-    
+
     /// Measures the execution time of an async operation.
     ///
     /// - Parameters:
@@ -113,18 +113,18 @@ public struct J2KBenchmark: Sendable {
         for _ in 0..<warmupIterations {
             await operation()
         }
-        
+
         // Measurement
         var times: [TimeInterval] = []
         times.reserveCapacity(iterations)
-        
+
         for _ in 0..<iterations {
             let start = Self.currentTime()
             await operation()
             let end = Self.currentTime()
             times.append(end - start)
         }
-        
+
         return BenchmarkResult(name: name, times: times)
     }
 }
@@ -133,32 +133,32 @@ public struct J2KBenchmark: Sendable {
 public struct BenchmarkResult: Sendable, CustomStringConvertible {
     /// The name of the benchmark.
     public let name: String
-    
+
     /// Individual timing measurements in seconds.
     public let times: [TimeInterval]
-    
+
     /// The number of iterations.
     public var iterations: Int { times.count }
-    
+
     /// The total time across all iterations.
     public var totalTime: TimeInterval { times.reduce(0, +) }
-    
+
     /// The average time per iteration.
     public var averageTime: TimeInterval {
         guard !times.isEmpty else { return 0 }
         return totalTime / Double(times.count)
     }
-    
+
     /// The minimum time across all iterations.
     public var minTime: TimeInterval {
         times.min() ?? 0
     }
-    
+
     /// The maximum time across all iterations.
     public var maxTime: TimeInterval {
         times.max() ?? 0
     }
-    
+
     /// The median time across all iterations.
     public var medianTime: TimeInterval {
         guard !times.isEmpty else { return 0 }
@@ -170,7 +170,7 @@ public struct BenchmarkResult: Sendable, CustomStringConvertible {
             return sorted[mid]
         }
     }
-    
+
     /// The standard deviation of the times.
     public var standardDeviation: TimeInterval {
         guard times.count > 1 else { return 0 }
@@ -179,13 +179,13 @@ public struct BenchmarkResult: Sendable, CustomStringConvertible {
         let variance = squaredDiffs.reduce(0, +) / Double(times.count - 1)
         return sqrt(variance)
     }
-    
+
     /// Operations per second based on average time.
     public var operationsPerSecond: Double {
         guard averageTime > 0 else { return 0 }
         return 1.0 / averageTime
     }
-    
+
     /// A summary string of the benchmark results.
     public var summary: String {
         let avgMs = averageTime * 1000
@@ -194,7 +194,7 @@ public struct BenchmarkResult: Sendable, CustomStringConvertible {
         let medMs = medianTime * 1000
         let stdMs = standardDeviation * 1000
         let ops = operationsPerSecond
-        
+
         return """
         \(name):
           Iterations: \(iterations)
@@ -206,9 +206,9 @@ public struct BenchmarkResult: Sendable, CustomStringConvertible {
           Ops/sec:    \(String(format: "%.2f", ops))
         """
     }
-    
+
     public var description: String { summary }
-    
+
     /// Compares this result against a baseline.
     ///
     /// - Parameter baseline: The baseline result to compare against.
@@ -222,32 +222,32 @@ public struct BenchmarkResult: Sendable, CustomStringConvertible {
 public struct BenchmarkComparison: Sendable, CustomStringConvertible {
     /// The current benchmark result.
     public let current: BenchmarkResult
-    
+
     /// The baseline benchmark result.
     public let baseline: BenchmarkResult
-    
+
     /// The ratio of current to baseline average time (< 1 is faster).
     public var speedupRatio: Double {
         guard baseline.averageTime > 0 else { return 1.0 }
         return baseline.averageTime / current.averageTime
     }
-    
+
     /// The percentage improvement (positive = faster).
     public var percentImprovement: Double {
         guard baseline.averageTime > 0 else { return 0 }
         return ((baseline.averageTime - current.averageTime) / baseline.averageTime) * 100
     }
-    
+
     /// Whether the current result is faster than baseline.
     public var isFaster: Bool {
         current.averageTime < baseline.averageTime
     }
-    
+
     /// Whether the current result is slower than baseline.
     public var isSlower: Bool {
         current.averageTime > baseline.averageTime
     }
-    
+
     /// A summary of the comparison.
     public var summary: String {
         let direction = isFaster ? "faster" : (isSlower ? "slower" : "same")
@@ -260,7 +260,7 @@ public struct BenchmarkComparison: Sendable, CustomStringConvertible {
           Baseline:   \(String(format: "%.4f", baseline.averageTime * 1000)) ms
         """
     }
-    
+
     public var description: String { summary }
 }
 
@@ -272,13 +272,13 @@ public struct BenchmarkComparison: Sendable, CustomStringConvertible {
 public final class J2KBenchmarkRunner: @unchecked Sendable {
     /// Results collected by the runner.
     private var results: [BenchmarkResult] = []
-    
+
     /// Lock for thread-safe access to results.
     private let lock = NSLock()
-    
+
     /// Creates a new benchmark runner.
     public init() {}
-    
+
     /// Adds a benchmark result.
     ///
     /// - Parameter result: The result to add.
@@ -287,7 +287,7 @@ public final class J2KBenchmarkRunner: @unchecked Sendable {
         defer { lock.unlock() }
         results.append(result)
     }
-    
+
     /// Gets all collected results.
     ///
     /// - Returns: Array of benchmark results.
@@ -296,40 +296,40 @@ public final class J2KBenchmarkRunner: @unchecked Sendable {
         defer { lock.unlock() }
         return results
     }
-    
+
     /// Clears all collected results.
     public func clear() {
         lock.lock()
         defer { lock.unlock() }
         results.removeAll()
     }
-    
+
     /// Generates a full report of all benchmarks.
     ///
     /// - Returns: A formatted report string.
     public func report() -> String {
         lock.lock()
         defer { lock.unlock() }
-        
+
         guard !results.isEmpty else {
             return "No benchmark results collected."
         }
-        
+
         var report = """
         ═══════════════════════════════════════════════════════════════
         J2KSwift Benchmark Report
         ═══════════════════════════════════════════════════════════════
-        
+
         """
-        
+
         for result in results {
             report += result.summary + "\n"
         }
-        
+
         report += """
         ═══════════════════════════════════════════════════════════════
         """
-        
+
         return report
     }
 }
@@ -347,16 +347,16 @@ public struct J2KMemoryBenchmark: Sendable {
     public static func measureMemory(operation: () -> Void) -> Int {
         // Get baseline memory
         let baselineMemory = getMemoryUsage()
-        
+
         // Run operation
         operation()
-        
+
         // Get peak memory
         let peakMemory = getMemoryUsage()
-        
+
         return max(0, peakMemory - baselineMemory)
     }
-    
+
     /// Gets current memory usage in bytes.
     private static func getMemoryUsage() -> Int {
         #if os(Linux)

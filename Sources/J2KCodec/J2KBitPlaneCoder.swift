@@ -25,10 +25,10 @@ import J2KCore
 enum CodingPassType: Sendable {
     /// Significance propagation pass.
     case significancePropagation
-    
+
     /// Magnitude refinement pass.
     case magnitudeRefinement
-    
+
     /// Cleanup pass.
     case cleanup
 }
@@ -44,20 +44,20 @@ struct CodingOptions: Sendable {
     /// When enabled, magnitude refinement passes after a certain bit-plane
     /// use raw (bypass) mode instead of context-adaptive arithmetic coding.
     let bypassEnabled: Bool
-    
+
     /// The bit-plane index at which to start using bypass mode.
     ///
     /// Only applies when `bypassEnabled` is true. Bypass mode is used for
     /// magnitude refinement passes in bit-planes less than this threshold.
     /// A value of 0 disables bypass mode effectively.
     let bypassThreshold: Int
-    
+
     /// The termination mode for arithmetic coding.
     ///
     /// Controls how the MQ-coder terminates its encoded output. Different
     /// modes offer trade-offs between compression efficiency and error resilience.
     let terminationMode: TerminationMode
-    
+
     /// Whether to reset the encoder after each coding pass (predictable termination).
     ///
     /// When enabled, the encoder state is reset after each coding pass,
@@ -66,7 +66,7 @@ struct CodingOptions: Sendable {
     var resetOnEachPass: Bool {
         return terminationMode == .predictable
     }
-    
+
     /// Creates new coding options.
     ///
     /// - Parameters:
@@ -82,21 +82,21 @@ struct CodingOptions: Sendable {
         self.bypassThreshold = max(0, bypassThreshold)
         self.terminationMode = terminationMode
     }
-    
+
     /// Default coding options (no bypass, default termination).
     public static let `default` = CodingOptions()
-    
+
     /// Typical bypass configuration for improved speed.
     ///
     /// Enables bypass mode for magnitude refinement passes in the lower 4 bit-planes.
     public static let fastEncoding = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
-    
+
     /// Predictable termination for error resilience.
     ///
     /// Each coding pass can be independently decoded, enabling error resilience
     /// and parallel decoding at the cost of compression efficiency.
     public static let errorResilient = CodingOptions(terminationMode: .predictable)
-    
+
     /// Near-optimal termination for better compression.
     ///
     /// Uses a tighter termination sequence to minimize wasted bits.
@@ -121,22 +121,22 @@ struct CodingOptions: Sendable {
 struct BitPlaneCoder: Sendable {
     /// The width of the code-block.
     let width: Int
-    
+
     /// The height of the code-block.
     let height: Int
-    
+
     /// The subband type for context formation.
     let subband: J2KSubband
-    
+
     /// The context modeler for this subband.
     private let contextModeler: ContextModeler
-    
+
     /// The neighbor calculator.
     private let neighborCalculator: NeighborCalculator
-    
+
     /// Coding options for this encoder.
     private let options: CodingOptions
-    
+
     /// Creates a new bit-plane coder for the specified dimensions and subband.
     ///
     /// - Parameters:
@@ -152,7 +152,7 @@ struct BitPlaneCoder: Sendable {
         self.neighborCalculator = NeighborCalculator(width: width, height: height)
         self.options = options
     }
-    
+
     /// Encodes wavelet coefficients using EBCOT bit-plane coding.
     ///
     /// - Parameters:
@@ -170,39 +170,39 @@ struct BitPlaneCoder: Sendable {
         guard coefficients.count == width * height else {
             throw J2KError.invalidParameter("Coefficient count mismatch")
         }
-        
+
         // Find the number of zero bit-planes (MSBs that are all zero)
         let (magnitudes, signs) = separateMagnitudesAndSigns(coefficients)
         let maxMagnitude = magnitudes.max() ?? 0
         let activeBitPlanes = maxMagnitude > 0 ? Int(log2(Double(maxMagnitude))) + 1 : 0
         let zeroBitPlanes = max(0, bitDepth - activeBitPlanes)
-        
+
         // Initialize state arrays
         var states = [CoefficientState](repeating: [], count: width * height)
         var firstRefineFlags = [Bool](repeating: false, count: width * height)
         let signArray = signs
-        
+
         // Initialize MQ encoder and contexts
         var encoder = MQEncoder()
         var contextStates = ContextStateArray()
-        
+
         // When bypass mode is enabled, per-pass segments are required for bypass
         // bit-planes to separate MQ-coded and raw-coded data per JPEG 2000 standard.
         let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
-        
+
         // For per-pass termination, we collect pass data separately
         var passDataSegments: [Data] = []
-        
+
         var passCount = 0
         let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
-        
+
         // Process each bit-plane from MSB to LSB
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
-            
+
             // Determine if bypass mode should be used for this bit-plane
             let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
-            
+
             // Pass 1: Significance Propagation Pass
             if passCount < maxPassLimit {
                 encodeSignificancePropagationPass(
@@ -214,7 +214,7 @@ struct BitPlaneCoder: Sendable {
                     contexts: &contextStates
                 )
                 passCount += 1
-                
+
                 // For per-pass mode, finish and reset after each pass
                 if usePerPassSegments {
                     let passData = encoder.finish(mode: options.terminationMode)
@@ -223,7 +223,7 @@ struct BitPlaneCoder: Sendable {
                     contextStates.reset()
                 }
             }
-            
+
             // Pass 2: Magnitude Refinement Pass
             if passCount < maxPassLimit {
                 if useBypass {
@@ -250,7 +250,7 @@ struct BitPlaneCoder: Sendable {
                         useBypass: false
                     )
                     passCount += 1
-                    
+
                     // For per-pass mode, finish and reset after each pass
                     if usePerPassSegments {
                         let passData = encoder.finish(mode: options.terminationMode)
@@ -260,7 +260,7 @@ struct BitPlaneCoder: Sendable {
                     }
                 }
             }
-            
+
             // Pass 3: Cleanup Pass
             if passCount < maxPassLimit {
                 encodeCleanupPass(
@@ -272,7 +272,7 @@ struct BitPlaneCoder: Sendable {
                     contexts: &contextStates
                 )
                 passCount += 1
-                
+
                 // For per-pass mode, finish and reset after each pass
                 if usePerPassSegments {
                     let passData = encoder.finish(mode: options.terminationMode)
@@ -281,13 +281,13 @@ struct BitPlaneCoder: Sendable {
                     contextStates.reset()
                 }
             }
-            
+
             // Clear coded-this-pass flags for next bit-plane
             for i in 0..<states.count {
                 states[i].remove(.codedThisPass)
             }
         }
-        
+
         // Finish encoding
         let encodedData: Data
         var segmentLengths: [Int] = []
@@ -303,10 +303,10 @@ struct BitPlaneCoder: Sendable {
             // Single termination at the end
             encodedData = encoder.finish(mode: options.terminationMode)
         }
-        
+
         return (encodedData, passCount, zeroBitPlanes, segmentLengths)
     }
-    
+
     /// Separates coefficients into magnitudes and signs.
     private func separateMagnitudesAndSigns(_ coefficients: [Int32]) -> ([UInt32], [Bool]) {
         let count = coefficients.count
@@ -370,9 +370,9 @@ struct BitPlaneCoder: Sendable {
 
         return (magnitudes, signs)
     }
-    
+
     // MARK: - Significance Propagation Pass
-    
+
     /// Encodes the significance propagation pass.
     ///
     /// This pass codes coefficients that are not yet significant but have at least
@@ -389,52 +389,52 @@ struct BitPlaneCoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 // Skip if already significant or coded this pass
                 if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
                     continue
                 }
-                
+
                 // Check if any neighbors are significant
                 let neighbors = neighborCalculator.calculate(
                     x: x, y: y,
                     states: states,
                     signs: signs
                 )
-                
+
                 // Only process if at least one neighbor is significant
                 guard neighbors.hasAny else { continue }
-                
+
                 // Get significance context
                 let sigContext = contextModeler.significanceContext(neighbors: neighbors)
-                
+
                 // Check if this coefficient becomes significant at this bit-plane
                 let isSignificant = (magnitudes[idx] & bitMask) != 0
-                
+
                 // Encode significance bit
                 encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
-                
+
                 if isSignificant {
                     // Encode sign
                     let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
                     let signBit = signs[idx]
                     let codedSign = signBit != xorBit // XOR with prediction
                     encoder.encode(symbol: codedSign, context: &contexts[signContext])
-                    
+
                     // Update state
                     states[idx].insert(.significant)
                     if signBit {
                         states[idx].insert(.signBit)
                     }
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     // MARK: - Magnitude Refinement Pass
-    
+
     /// Encodes the magnitude refinement pass.
     ///
     /// This pass refines the magnitude of coefficients that are already significant
@@ -461,14 +461,14 @@ struct BitPlaneCoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 // Only process coefficients that are significant and not coded this pass
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
-                
+
                 // Get the bit value
                 let bitValue = (magnitudes[idx] & bitMask) != 0
-                
+
                 if useBypass {
                     // Use bypass (raw) mode - no context
                     encoder.encodeBypass(symbol: bitValue)
@@ -476,31 +476,31 @@ struct BitPlaneCoder: Sendable {
                     // Use context-adaptive arithmetic coding
                     // Check if this is the first refinement
                     let isFirstRefinement = !firstRefineFlags[idx]
-                    
+
                     // Get neighbors to determine context
                     let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
                     let hasSignificantNeighbors = neighbors.hasAny
-                    
+
                     // Get magnitude refinement context
                     let magContext = contextModeler.magnitudeRefinementContext(
                         firstRefinement: isFirstRefinement,
                         neighborsWereSignificant: hasSignificantNeighbors
                     )
-                    
+
                     // Encode the magnitude bit
                     encoder.encode(symbol: bitValue, context: &contexts[magContext])
                 }
-                
+
                 // Update refinement flag
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     /// Encodes the magnitude refinement pass using raw bypass coding.
     ///
     /// This method uses a separate `RawBypassEncoder` to write raw bits directly
@@ -522,24 +522,24 @@ struct BitPlaneCoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
-                
+
                 let bitValue = (magnitudes[idx] & bitMask) != 0
                 bypassEncoder.encode(symbol: bitValue)
-                
+
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     // MARK: - Cleanup Pass
-    
+
     /// Encodes the cleanup pass.
     ///
     /// This pass codes all remaining coefficients that were not coded in the
@@ -555,10 +555,10 @@ struct BitPlaneCoder: Sendable {
     ) {
         // Process in stripes of 4 rows
         let stripeHeight = 4
-        
+
         for stripeY in stride(from: 0, to: height, by: stripeHeight) {
             let stripeEnd = min(stripeY + stripeHeight, height)
-            
+
             for x in 0..<width {
                 // Check if this column is eligible for run-length coding
                 let eligible = isEligibleForRunLengthCoding(
@@ -567,7 +567,7 @@ struct BitPlaneCoder: Sendable {
                     stripeEnd: stripeEnd,
                     states: states
                 )
-                
+
                 if eligible {
                     // Check if any coefficient in the column becomes significant
                     let hasSignificant = anyBecomeSignificant(
@@ -577,10 +577,10 @@ struct BitPlaneCoder: Sendable {
                         magnitudes: magnitudes,
                         bitMask: bitMask
                     )
-                    
+
                     // Encode run-length flag: true if at least one becomes significant
                     encoder.encode(symbol: hasSignificant, context: &contexts[.runLength])
-                    
+
                     if !hasSignificant {
                         // All coefficients remain zero, mark as coded and skip
                         for y in stripeY..<stripeEnd {
@@ -591,19 +591,19 @@ struct BitPlaneCoder: Sendable {
                     }
                 } else {
                 }
-                
+
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 // Per ISO/IEC 15444-1, states are updated immediately as each coefficient
                 // is processed, so subsequent coefficients see updated neighbor states.
-                
+
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
-                    
+
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
                         continue
                     }
-                    
+
                     // Get neighbors (using current state which includes any updates
                     // from previously processed coefficients in this stripe column)
                     let neighbors = neighborCalculator.calculate(
@@ -611,36 +611,36 @@ struct BitPlaneCoder: Sendable {
                         states: states,
                         signs: signs
                     )
-                    
+
                     // Get significance context
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
-                    
+
                     // Check if significant
                     let isSignificant = (magnitudes[idx] & bitMask) != 0
-                    
+
                     // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
-                    
+
                     if isSignificant {
                         // Encode sign
                         let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
                         let signBit = signs[idx]
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
-                        
+
                         // Update state immediately
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
-                    
+
                     states[idx].insert(.codedThisPass)
                 }
             }
         }
     }
-    
+
     /// Checks if a column is eligible for run-length coding.
     ///
     /// A column is eligible if all coefficients are not yet significant,
@@ -653,22 +653,22 @@ struct BitPlaneCoder: Sendable {
     ) -> Bool {
         for y in stripeStart..<stripeEnd {
             let idx = y * width + x
-            
+
             // Can't use RLC if any coefficient is already significant or coded
             if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
                 return false
             }
-            
+
             // Can't use RLC if any neighbor is significant
             let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
             if neighbors.hasAny {
                 return false
             }
         }
-        
+
         return true
     }
-    
+
     /// Checks if any coefficient in a column becomes significant at this bit-plane.
     private func anyBecomeSignificant(
         x: Int,
@@ -685,7 +685,7 @@ struct BitPlaneCoder: Sendable {
         }
         return false
     }
-    
+
     /// Checks if run-length coding can be used for a column in a stripe (legacy method for encoder).
     ///
     /// This checks both eligibility AND that no coefficients become significant.
@@ -712,22 +712,22 @@ struct BitPlaneCoder: Sendable {
 struct BitPlaneDecoder: Sendable {
     /// The width of the code-block.
     let width: Int
-    
+
     /// The height of the code-block.
     let height: Int
-    
+
     /// The subband type for context formation.
     let subband: J2KSubband
-    
+
     /// The context modeler for this subband.
     private let contextModeler: ContextModeler
-    
+
     /// The neighbor calculator.
     private let neighborCalculator: NeighborCalculator
-    
+
     /// Coding options for this decoder.
     private let options: CodingOptions
-    
+
     /// Creates a new bit-plane decoder for the specified dimensions and subband.
     ///
     /// - Parameters:
@@ -743,7 +743,7 @@ struct BitPlaneDecoder: Sendable {
         self.neighborCalculator = NeighborCalculator(width: width, height: height)
         self.options = options
     }
-    
+
     /// Decodes wavelet coefficients from EBCOT encoded data.
     ///
     /// - Parameters:
@@ -766,10 +766,10 @@ struct BitPlaneDecoder: Sendable {
         var signs = [Bool](repeating: false, count: width * height)
         var states = [CoefficientState](repeating: [], count: width * height)
         var firstRefineFlags = [Bool](repeating: false, count: width * height)
-        
+
         // Determine if we need per-pass segment decoding
         let usePerPassSegments = !passSegmentLengths.isEmpty
-        
+
         // For per-pass segments, split data into individual segments
         var passSegments: [Data] = []
         if usePerPassSegments {
@@ -786,26 +786,26 @@ struct BitPlaneDecoder: Sendable {
                 offset = end
             }
         }
-        
+
         // Initialize MQ decoder and contexts
         var decoder = MQDecoder(data: Data())  // Will be replaced before first use
         var contextStates = ContextStateArray()
         var passSegmentIndex = 0
-        
+
         if !usePerPassSegments {
             decoder = MQDecoder(data: data)
         }
-        
+
         let activeBitPlanes = bitDepth - zeroBitPlanes
         var passesDecoded = 0
-        
+
         // Process each bit-plane from MSB to LSB
         for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
             let bitMask: UInt32 = 1 << bitPlane
-            
+
             // Determine if bypass mode should be used for this bit-plane
             let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
-            
+
             // Pass 1: Significance Propagation Pass
             if passesDecoded < passCount {
                 // Load segment for this pass if using per-pass segments
@@ -818,7 +818,7 @@ struct BitPlaneDecoder: Sendable {
                     contextStates.reset()
                     passSegmentIndex += 1
                 }
-                
+
                 decodeSignificancePropagationPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -829,7 +829,7 @@ struct BitPlaneDecoder: Sendable {
                 )
                 passesDecoded += 1
             }
-            
+
             // Pass 2: Magnitude Refinement Pass
             if passesDecoded < passCount {
                 if useBypass {
@@ -858,7 +858,7 @@ struct BitPlaneDecoder: Sendable {
                         contextStates.reset()
                         passSegmentIndex += 1
                     }
-                    
+
                     decodeMagnitudeRefinementPass(
                         magnitudes: &magnitudes,
                         states: &states,
@@ -871,7 +871,7 @@ struct BitPlaneDecoder: Sendable {
                 }
                 passesDecoded += 1
             }
-            
+
             // Pass 3: Cleanup Pass
             if passesDecoded < passCount {
                 // Load segment for this pass if using per-pass segments
@@ -884,7 +884,7 @@ struct BitPlaneDecoder: Sendable {
                     contextStates.reset()
                     passSegmentIndex += 1
                 }
-                
+
                 decodeCleanupPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -895,13 +895,13 @@ struct BitPlaneDecoder: Sendable {
                 )
                 passesDecoded += 1
             }
-            
+
             // Clear coded-this-pass flags for next bit-plane
             for i in 0..<states.count {
                 states[i].remove(.codedThisPass)
             }
         }
-        
+
         // Reconstruct signed coefficients
         var coefficients = [Int32](repeating: 0, count: width * height)
         for i in 0..<coefficients.count {
@@ -911,12 +911,12 @@ struct BitPlaneDecoder: Sendable {
                 coefficients[i] = Int32(magnitudes[i])
             }
         }
-        
+
         return coefficients
     }
-    
+
     // MARK: - Significance Propagation Pass (Decode)
-    
+
     /// Decodes the significance propagation pass.
     private func decodeSignificancePropagationPass(
         magnitudes: inout [UInt32],
@@ -929,52 +929,52 @@ struct BitPlaneDecoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 // Skip if already significant or coded this pass
                 if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
                     continue
                 }
-                
+
                 // Check if any neighbors are significant
                 let neighbors = neighborCalculator.calculate(
                     x: x, y: y,
                     states: states,
                     signs: signs
                 )
-                
+
                 // Only process if at least one neighbor is significant
                 guard neighbors.hasAny else { continue }
-                
+
                 // Get significance context
                 let sigContext = contextModeler.significanceContext(neighbors: neighbors)
-                
+
                 // Decode significance bit
                 let isSignificant = decoder.decode(context: &contexts[sigContext])
-                
+
                 if isSignificant {
                     // Decode sign
                     let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
                     let codedSign = decoder.decode(context: &contexts[signContext])
                     let signBit = codedSign != xorBit
-                    
+
                     // Update coefficient
                     magnitudes[idx] = magnitudes[idx] | bitMask
                     signs[idx] = signBit
-                    
+
                     // Update state
                     states[idx].insert(.significant)
                     if signBit {
                         states[idx].insert(.signBit)
                     }
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     // MARK: - Magnitude Refinement Pass (Decode)
-    
+
     /// Decodes the magnitude refinement pass.
     ///
     /// - Parameters:
@@ -997,11 +997,11 @@ struct BitPlaneDecoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 // Only process coefficients that are significant and not coded this pass
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
-                
+
                 // Decode the magnitude bit
                 let bitValue: Bool
                 if useBypass {
@@ -1011,35 +1011,35 @@ struct BitPlaneDecoder: Sendable {
                     // Use context-adaptive arithmetic decoding
                     // Check if this is the first refinement
                     let isFirstRefinement = !firstRefineFlags[idx]
-                    
+
                     // Get neighbors to determine context
                     let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
                     let hasSignificantNeighbors = neighbors.hasAny
-                    
+
                     // Get magnitude refinement context
                     let magContext = contextModeler.magnitudeRefinementContext(
                         firstRefinement: isFirstRefinement,
                         neighborsWereSignificant: hasSignificantNeighbors
                     )
-                    
+
                     bitValue = decoder.decode(context: &contexts[magContext])
                 }
-                
+
                 // Update magnitude
                 if bitValue {
                     magnitudes[idx] = magnitudes[idx] | bitMask
                 }
-                
+
                 // Update refinement flag
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     /// Decodes the magnitude refinement pass using raw bypass coding.
     ///
     /// This method uses a separate `RawBypassDecoder` to read raw bits directly
@@ -1061,27 +1061,27 @@ struct BitPlaneDecoder: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 guard states[idx].contains(.significant) else { continue }
                 guard !states[idx].contains(.codedThisPass) else { continue }
-                
+
                 let bitValue = bypassDecoder.decode()
-                
+
                 if bitValue {
                     magnitudes[idx] = magnitudes[idx] | bitMask
                 }
-                
+
                 if !firstRefineFlags[idx] {
                     firstRefineFlags[idx] = true
                 }
-                
+
                 states[idx].insert(.codedThisPass)
             }
         }
     }
-    
+
     // MARK: - Cleanup Pass (Decode)
-    
+
     /// Decodes the cleanup pass.
     private func decodeCleanupPass(
         magnitudes: inout [UInt32],
@@ -1093,10 +1093,10 @@ struct BitPlaneDecoder: Sendable {
     ) {
         // Process in stripes of 4 rows
         let stripeHeight = 4
-        
+
         for stripeY in stride(from: 0, to: height, by: stripeHeight) {
             let stripeEnd = min(stripeY + stripeHeight, height)
-            
+
             for x in 0..<width {
                 // Check if this column is eligible for run-length decoding
                 let eligible = canUseRunLengthDecoding(
@@ -1105,11 +1105,11 @@ struct BitPlaneDecoder: Sendable {
                     stripeEnd: stripeEnd,
                     states: states
                 )
-                
+
                 if eligible {
                     // Decode run-length flag: true if at least one becomes significant
                     let hasSignificant = decoder.decode(context: &contexts[.runLength])
-                    
+
                     if !hasSignificant {
                         // All coefficients remain zero, mark as coded and skip
                         for y in stripeY..<stripeEnd {
@@ -1120,19 +1120,19 @@ struct BitPlaneDecoder: Sendable {
                     }
                 } else {
                 }
-                
+
                 // Process individually (either not eligible for RLC, or RLC flag indicated significance)
                 // Per ISO/IEC 15444-1, states are updated immediately as each coefficient
                 // is processed, so subsequent coefficients see updated neighbor states.
-                
+
                 for y in stripeY..<stripeEnd {
                     let idx = y * width + x
-                    
+
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
                         continue
                     }
-                    
+
                     // Get neighbors (using current state which includes any updates
                     // from previously processed coefficients in this stripe column)
                     let neighbors = neighborCalculator.calculate(
@@ -1140,36 +1140,36 @@ struct BitPlaneDecoder: Sendable {
                         states: states,
                         signs: signs
                     )
-                    
+
                     // Get significance context
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
-                    
+
                     // Decode significance
                     let isSignificant = decoder.decode(context: &contexts[sigContext])
-                    
+
                     if isSignificant {
                         // Decode sign
                         let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
                         let codedSign = decoder.decode(context: &contexts[signContext])
                         let signBit = codedSign != xorBit
-                        
+
                         // Update coefficient magnitude
                         magnitudes[idx] = magnitudes[idx] | bitMask
                         signs[idx] = signBit
-                        
+
                         // Update state immediately
                         states[idx].insert(.significant)
                         if signBit {
                             states[idx].insert(.signBit)
                         }
                     }
-                    
+
                     states[idx].insert(.codedThisPass)
                 }
             }
         }
     }
-    
+
      /// Checks if run-length decoding can be used for a column in a stripe.
     ///
     /// This is the decoder equivalent of `isEligibleForRunLengthCoding` in the encoder.
@@ -1185,19 +1185,19 @@ struct BitPlaneDecoder: Sendable {
         // This must match isEligibleForRunLengthCoding in the encoder
         for y in stripeStart..<stripeEnd {
             let idx = y * width + x
-            
+
             // Can't use RLC if any coefficient is already significant or coded
             if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
                 return false
             }
-            
+
             // Can't use RLC if any neighbor is significant
             let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
             if neighbors.hasAny {
                 return false
             }
         }
-        
+
         return true
     }
 }
@@ -1211,19 +1211,19 @@ struct BitPlaneDecoder: Sendable {
 struct CodeBlockEncoder: Sendable {
     /// The maximum code-block width.
     public static let maxWidth = 64
-    
+
     /// The maximum code-block height.
     public static let maxHeight = 64
-    
+
     /// The default code-block width.
     public static let defaultWidth = 64
-    
+
     /// The default code-block height.
     public static let defaultHeight = 64
-    
+
     /// Creates a new code-block encoder.
     init() {}
-    
+
     /// Encodes a code-block with default options.
     ///
     /// - Parameters:
@@ -1250,7 +1250,7 @@ struct CodeBlockEncoder: Sendable {
             options: .default
         )
     }
-    
+
     /// Encodes a code-block with custom coding options.
     ///
     /// - Parameters:
@@ -1275,7 +1275,7 @@ struct CodeBlockEncoder: Sendable {
             coefficients: coefficients,
             bitDepth: bitDepth
         )
-        
+
         return J2KCodeBlock(
             index: 0,
             x: 0,
@@ -1300,7 +1300,7 @@ struct CodeBlockEncoder: Sendable {
 struct CodeBlockDecoder: Sendable {
     /// Creates a new code-block decoder.
     init() {}
-    
+
     /// Decodes a code-block with default options.
     ///
     /// - Parameters:
@@ -1314,7 +1314,7 @@ struct CodeBlockDecoder: Sendable {
     ) throws -> [Int32] {
         return try decode(codeBlock: codeBlock, bitDepth: bitDepth, options: .default)
     }
-    
+
     /// Decodes a code-block with custom coding options.
     ///
     /// - Parameters:
@@ -1334,7 +1334,7 @@ struct CodeBlockDecoder: Sendable {
             subband: codeBlock.subband,
             options: options
         )
-        
+
         return try decoder.decode(
             data: codeBlock.data,
             passCount: codeBlock.passeCount,

@@ -30,14 +30,14 @@ import J2KCore
 public struct J2KSignatureBox: J2KBox {
     /// The signature content (always 0x0D0A870A).
     public static let signatureValue: UInt32 = 0x0D0A870A
-    
+
     public var boxType: J2KBoxType {
         .jp
     }
-    
+
     /// Creates a new signature box.
     public init() {}
-    
+
     public func write() throws -> Data {
         var data = Data(capacity: 4)
         data.append(UInt8(0x0D))
@@ -46,17 +46,17 @@ public struct J2KSignatureBox: J2KBox {
         data.append(UInt8(0x0A))
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count == 4 else {
             throw J2KError.fileFormatError("Invalid signature box length: \(data.count), expected 4")
         }
-        
+
         let signature = UInt32(data[0]) << 24 |
                        UInt32(data[1]) << 16 |
                        UInt32(data[2]) << 8 |
                        UInt32(data[3])
-        
+
         guard signature == Self.signatureValue else {
             throw J2KError.fileFormatError(
                 "Invalid JP2 signature: expected 0x\(String(Self.signatureValue, radix: 16, uppercase: true)), " +
@@ -92,19 +92,19 @@ public struct J2KFileTypeBox: J2KBox {
     public enum Brand: Equatable, Sendable {
         /// JP2 (JPEG 2000 Part 1)
         case jp2
-        
+
         /// JPX (JPEG 2000 Part 2)
         case jpx
-        
+
         /// JPM (JPEG 2000 Part 6)
         case jpm
-        
+
         /// JPH (HTJ2K - JPEG 2000 Part 15)
         case jph
-        
+
         /// Custom brand
         case custom(String)
-        
+
         /// Returns the four-character brand identifier.
         public var identifier: String {
             switch self {
@@ -115,7 +115,7 @@ public struct J2KFileTypeBox: J2KBox {
             case .custom(let str): return str
             }
         }
-        
+
         /// Creates a brand from a four-character identifier.
         public init(identifier: String) {
             switch identifier {
@@ -127,20 +127,20 @@ public struct J2KFileTypeBox: J2KBox {
             }
         }
     }
-    
+
     public var boxType: J2KBoxType {
         .ftyp
     }
-    
+
     /// The primary brand identifier.
     public var brand: Brand
-    
+
     /// The minor version number.
     public var minorVersion: UInt32
-    
+
     /// List of compatible brands.
     public var compatibleBrands: [Brand]
-    
+
     /// Creates a new file type box.
     ///
     /// - Parameters:
@@ -152,23 +152,23 @@ public struct J2KFileTypeBox: J2KBox {
         self.minorVersion = minorVersion
         self.compatibleBrands = compatibleBrands
     }
-    
+
     public func write() throws -> Data {
         var data = Data(capacity: 8 + compatibleBrands.count * 4)
-        
+
         // Write brand
         let brandBytes = [UInt8](brand.identifier.utf8)
         guard brandBytes.count == 4 else {
             throw J2KError.invalidParameter("Brand identifier must be exactly 4 characters")
         }
         data.append(contentsOf: brandBytes)
-        
+
         // Write minor version
         data.append(UInt8((minorVersion >> 24) & 0xFF))
         data.append(UInt8((minorVersion >> 16) & 0xFF))
         data.append(UInt8((minorVersion >> 8) & 0xFF))
         data.append(UInt8(minorVersion & 0xFF))
-        
+
         // Write compatible brands
         for compatBrand in compatibleBrands {
             let compatBytes = [UInt8](compatBrand.identifier.utf8)
@@ -177,35 +177,35 @@ public struct J2KFileTypeBox: J2KBox {
             }
             data.append(contentsOf: compatBytes)
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 8 else {
             throw J2KError.fileFormatError("File type box too small: \(data.count) bytes, expected at least 8")
         }
-        
+
         // Read brand
         let brandBytes = data[0..<4]
         guard let brandString = String(bytes: brandBytes, encoding: .ascii) else {
             throw J2KError.fileFormatError("Invalid brand identifier in file type box")
         }
         brand = Brand(identifier: brandString)
-        
+
         // Read minor version
         minorVersion = UInt32(data[4]) << 24 |
                       UInt32(data[5]) << 16 |
                       UInt32(data[6]) << 8 |
                       UInt32(data[7])
-        
+
         // Read compatible brands
         compatibleBrands = []
         let remainingBytes = data.count - 8
         guard remainingBytes % 4 == 0 else {
             throw J2KError.fileFormatError("Invalid compatible brands list length: \(remainingBytes)")
         }
-        
+
         let numCompatBrands = remainingBytes / 4
         for i in 0..<numCompatBrands {
             let offset = 8 + i * 4
@@ -241,17 +241,17 @@ public struct J2KHeaderBox: J2KBox {
     public var boxType: J2KBoxType {
         .jp2h
     }
-    
+
     /// The child boxes contained in this header box.
     public var boxes: [any J2KBox]
-    
+
     /// Creates a new JP2 header box.
     ///
     /// - Parameter boxes: The child boxes (default: empty).
     public init(boxes: [any J2KBox] = []) {
         self.boxes = boxes
     }
-    
+
     public func write() throws -> Data {
         var writer = J2KBoxWriter()
         for box in boxes {
@@ -259,16 +259,16 @@ public struct J2KHeaderBox: J2KBox {
         }
         return writer.data
     }
-    
+
     public mutating func read(from data: Data) throws {
         // For now, we just store the raw data
         // A full implementation would parse all contained boxes
         boxes = []
-        
+
         var reader = J2KBoxReader(data: data)
         while let boxInfo = try reader.readNextBox() {
             let content = reader.extractContent(from: boxInfo)
-            
+
             // Parse known box types
             switch boxInfo.type {
             case .ihdr:
@@ -316,41 +316,41 @@ public struct J2KHeaderBox: J2KBox {
 public struct J2KImageHeaderBox: J2KBox {
     /// Compression type value for JPEG 2000.
     public static let compressionType: UInt8 = 7
-    
+
     public var boxType: J2KBoxType {
         .ihdr
     }
-    
+
     /// The image height in pixels.
     public var height: UInt32
-    
+
     /// The image width in pixels.
     public var width: UInt32
-    
+
     /// The number of image components.
     public var numComponents: UInt16
-    
+
     /// The default bits per component (bit depth).
     ///
     /// This value is used when all components have the same bit depth.
     /// If components have different bit depths, a bits per component box (bpcc) must be used.
     public var bitsPerComponent: UInt8
-    
+
     /// Compression type (always 7 for JPEG 2000).
     public var compressionType: UInt8
-    
+
     /// Color space unknown flag.
     ///
     /// - `0`: Color space is known (specified in a color specification box)
     /// - `1`: Color space is unknown
     public var colorSpaceUnknown: UInt8
-    
+
     /// Intellectual property flag.
     ///
     /// - `0`: No intellectual property rights information
     /// - `1`: Intellectual property rights information exists elsewhere in the file
     public var intellectualProperty: UInt8
-    
+
     /// Creates a new image header box.
     ///
     /// - Parameters:
@@ -378,89 +378,89 @@ public struct J2KImageHeaderBox: J2KBox {
         self.colorSpaceUnknown = colorSpaceUnknown
         self.intellectualProperty = intellectualProperty
     }
-    
+
     public func write() throws -> Data {
         guard compressionType == Self.compressionType else {
             throw J2KError.invalidParameter("Invalid compression type: \(compressionType), must be 7")
         }
-        
+
         guard colorSpaceUnknown <= 1 else {
             throw J2KError.invalidParameter("Invalid color space unknown flag: \(colorSpaceUnknown), must be 0 or 1")
         }
-        
+
         guard intellectualProperty <= 1 else {
             throw J2KError.invalidParameter("Invalid intellectual property flag: \(intellectualProperty), must be 0 or 1")
         }
-        
+
         var data = Data(capacity: 14)
-        
+
         // Height (4 bytes)
         data.append(UInt8((height >> 24) & 0xFF))
         data.append(UInt8((height >> 16) & 0xFF))
         data.append(UInt8((height >> 8) & 0xFF))
         data.append(UInt8(height & 0xFF))
-        
+
         // Width (4 bytes)
         data.append(UInt8((width >> 24) & 0xFF))
         data.append(UInt8((width >> 16) & 0xFF))
         data.append(UInt8((width >> 8) & 0xFF))
         data.append(UInt8(width & 0xFF))
-        
+
         // Number of components (2 bytes)
         data.append(UInt8((numComponents >> 8) & 0xFF))
         data.append(UInt8(numComponents & 0xFF))
-        
+
         // Bits per component (1 byte)
         data.append(bitsPerComponent)
-        
+
         // Compression type (1 byte)
         data.append(compressionType)
-        
+
         // Color space unknown (1 byte)
         data.append(colorSpaceUnknown)
-        
+
         // Intellectual property (1 byte)
         data.append(intellectualProperty)
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count == 14 else {
             throw J2KError.fileFormatError("Invalid image header box length: \(data.count), expected 14")
         }
-        
+
         // Height (4 bytes)
         height = UInt32(data[0]) << 24 |
                 UInt32(data[1]) << 16 |
                 UInt32(data[2]) << 8 |
                 UInt32(data[3])
-        
+
         // Width (4 bytes)
         width = UInt32(data[4]) << 24 |
                UInt32(data[5]) << 16 |
                UInt32(data[6]) << 8 |
                UInt32(data[7])
-        
+
         // Number of components (2 bytes)
         numComponents = UInt16(data[8]) << 8 |
                        UInt16(data[9])
-        
+
         // Bits per component (1 byte)
         bitsPerComponent = data[10]
-        
+
         // Compression type (1 byte)
         compressionType = data[11]
         guard compressionType == Self.compressionType else {
             throw J2KError.fileFormatError("Unsupported compression type: \(compressionType), expected 7")
         }
-        
+
         // Color space unknown (1 byte)
         colorSpaceUnknown = data[12]
         guard colorSpaceUnknown <= 1 else {
             throw J2KError.fileFormatError("Invalid color space unknown flag: \(colorSpaceUnknown)")
         }
-        
+
         // Intellectual property (1 byte)
         intellectualProperty = data[13]
         guard intellectualProperty <= 1 else {
@@ -515,10 +515,10 @@ public struct J2KBitsPerComponentBox: J2KBox {
     public enum BitDepth: Equatable, Sendable {
         /// Unsigned component with specified bit depth (1-128).
         case unsigned(UInt8)
-        
+
         /// Signed component with specified bit depth (1-128).
         case signed(UInt8)
-        
+
         /// Encodes the bit depth as a byte value.
         ///
         /// - Returns: Encoded byte value: (bits - 1) | (signed ? 0x80 : 0)
@@ -530,7 +530,7 @@ public struct J2KBitsPerComponentBox: J2KBox {
                 return (bits - 1) | 0x80
             }
         }
-        
+
         /// Decodes a byte value into a bit depth.
         ///
         /// - Parameter value: The encoded byte value.
@@ -540,7 +540,7 @@ public struct J2KBitsPerComponentBox: J2KBox {
             let bits = (value & 0x7F) + 1
             return isSigned ? .signed(bits) : .unsigned(bits)
         }
-        
+
         /// Returns the actual bit depth value.
         public var bits: UInt8 {
             switch self {
@@ -548,7 +548,7 @@ public struct J2KBitsPerComponentBox: J2KBox {
                 return bits
             }
         }
-        
+
         /// Returns whether the component is signed.
         public var isSigned: Bool {
             switch self {
@@ -557,30 +557,30 @@ public struct J2KBitsPerComponentBox: J2KBox {
             }
         }
     }
-    
+
     public var boxType: J2KBoxType {
         .bpcc
     }
-    
+
     /// The bit depth for each component.
     public var bitDepths: [BitDepth]
-    
+
     /// Creates a new bits per component box.
     ///
     /// - Parameter bitDepths: The bit depth for each component.
     public init(bitDepths: [BitDepth]) {
         self.bitDepths = bitDepths
     }
-    
+
     public func write() throws -> Data {
         guard !bitDepths.isEmpty else {
             throw J2KError.invalidParameter("Bits per component box must have at least one component")
         }
-        
+
         guard bitDepths.count <= 16384 else {
             throw J2KError.invalidParameter("Too many components: \(bitDepths.count), maximum is 16384")
         }
-        
+
         // Validate bit depths
         for (index, depth) in bitDepths.enumerated() {
             let bits = depth.bits
@@ -590,20 +590,20 @@ public struct J2KBitsPerComponentBox: J2KBox {
                 )
             }
         }
-        
+
         var data = Data(capacity: bitDepths.count)
         for depth in bitDepths {
             data.append(depth.encodedValue)
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard !data.isEmpty else {
             throw J2KError.fileFormatError("Bits per component box is empty")
         }
-        
+
         bitDepths = []
         for (index, byte) in data.enumerated() {
             let depth = BitDepth.decode(byte)
@@ -665,16 +665,16 @@ public struct J2KColorSpecificationBox: J2KBox {
     public enum Method: Equatable, Sendable {
         /// Enumerated color space (method 1).
         case enumerated(EnumeratedColorSpace)
-        
+
         /// Restricted ICC profile (method 2).
         case restrictedICC(Data)
-        
+
         /// Any ICC profile (method 3).
         case anyICC(Data)
-        
+
         /// Vendor-specific color space (method 4).
         case vendor(Data)
-        
+
         /// Returns the method code.
         public var methodCode: UInt8 {
             switch self {
@@ -685,44 +685,44 @@ public struct J2KColorSpecificationBox: J2KBox {
             }
         }
     }
-    
+
     /// Enumerated color space identifiers.
     public enum EnumeratedColorSpace: UInt32, Equatable, Sendable {
         /// sRGB color space (ITU-R BT.709).
         case sRGB = 16
-        
+
         /// Greyscale (sGrey).
         case greyscale = 17
-        
+
         /// YCbCr color space.
         case yCbCr = 18
-        
+
         /// CMYK color space.
         case cmyk = 12
-        
+
         /// e-sRGB color space.
         case esRGB = 20
-        
+
         /// ROMM-RGB (ProPhoto RGB) color space.
         case rommRGB = 21
     }
-    
+
     public var boxType: J2KBoxType {
         .colr
     }
-    
+
     /// The color specification method.
     public var method: Method
-    
+
     /// The precedence of this color specification (0-255).
     ///
     /// When multiple color specification boxes exist, the one with the
     /// lowest precedence value takes priority. Value 0 has highest priority.
     public var precedence: UInt8
-    
+
     /// The approximation level (0=accurate, 1=approximate).
     public var approximation: UInt8
-    
+
     /// Creates a new color specification box.
     ///
     /// - Parameters:
@@ -734,23 +734,23 @@ public struct J2KColorSpecificationBox: J2KBox {
         self.precedence = precedence
         self.approximation = approximation
     }
-    
+
     public func write() throws -> Data {
         guard approximation <= 1 else {
             throw J2KError.invalidParameter("Invalid approximation value: \(approximation), must be 0 or 1")
         }
-        
+
         var data = Data(capacity: 7)
-        
+
         // METH (1 byte)
         data.append(method.methodCode)
-        
+
         // PREC (1 byte)
         data.append(precedence)
-        
+
         // APPROX (1 byte)
         data.append(approximation)
-        
+
         // Method-specific data
         switch method {
         case .enumerated(let colorSpace):
@@ -760,34 +760,34 @@ public struct J2KColorSpecificationBox: J2KBox {
             data.append(UInt8((value >> 16) & 0xFF))
             data.append(UInt8((value >> 8) & 0xFF))
             data.append(UInt8(value & 0xFF))
-            
+
         case .restrictedICC(let profile), .anyICC(let profile), .vendor(let profile):
             guard !profile.isEmpty else {
                 throw J2KError.invalidParameter("ICC profile data cannot be empty")
             }
             data.append(profile)
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 3 else {
             throw J2KError.fileFormatError("Color specification box too small: \(data.count) bytes, expected at least 3")
         }
-        
+
         // METH (1 byte)
         let methodCode = data[0]
-        
+
         // PREC (1 byte)
         precedence = data[1]
-        
+
         // APPROX (1 byte)
         approximation = data[2]
         guard approximation <= 1 else {
             throw J2KError.fileFormatError("Invalid approximation value: \(approximation)")
         }
-        
+
         // Method-specific data
         switch methodCode {
         case 1:
@@ -797,18 +797,18 @@ public struct J2KColorSpecificationBox: J2KBox {
                     "Invalid enumerated color space box length: \(data.count), expected 7"
                 )
             }
-            
+
             let enumValue = UInt32(data[3]) << 24 |
                            UInt32(data[4]) << 16 |
                            UInt32(data[5]) << 8 |
                            UInt32(data[6])
-            
+
             guard let colorSpace = EnumeratedColorSpace(rawValue: enumValue) else {
                 throw J2KError.fileFormatError("Unknown enumerated color space: \(enumValue)")
             }
-            
+
             method = .enumerated(colorSpace)
-            
+
         case 2:
             // Restricted ICC profile
             guard data.count > 3 else {
@@ -816,7 +816,7 @@ public struct J2KColorSpecificationBox: J2KBox {
             }
             let profile = data.subdata(in: 3..<data.count)
             method = .restrictedICC(profile)
-            
+
         case 3:
             // Any ICC profile
             guard data.count > 3 else {
@@ -824,7 +824,7 @@ public struct J2KColorSpecificationBox: J2KBox {
             }
             let profile = data.subdata(in: 3..<data.count)
             method = .anyICC(profile)
-            
+
         case 4:
             // Vendor color space
             guard data.count > 3 else {
@@ -832,7 +832,7 @@ public struct J2KColorSpecificationBox: J2KBox {
             }
             let profile = data.subdata(in: 3..<data.count)
             method = .vendor(profile)
-            
+
         default:
             throw J2KError.fileFormatError("Invalid color specification method: \(methodCode)")
         }
@@ -876,26 +876,26 @@ public struct J2KPaletteBox: J2KBox {
     public var boxType: J2KBoxType {
         .pclr
     }
-    
+
     /// Palette entries, where each entry is an array of component values.
     ///
     /// The outer array has NE elements (number of entries).
     /// Each inner array has NPC elements (number of components per entry).
     public var entries: [[UInt32]]
-    
+
     /// Bit depth specification for each palette component.
     public var componentBitDepths: [J2KBitsPerComponentBox.BitDepth]
-    
+
     /// Number of palette entries.
     public var numEntries: Int {
         entries.count
     }
-    
+
     /// Number of components per palette entry.
     public var numComponents: Int {
         componentBitDepths.count
     }
-    
+
     /// Creates a new palette box.
     ///
     /// - Parameters:
@@ -906,7 +906,7 @@ public struct J2KPaletteBox: J2KBox {
         self.entries = entries
         self.componentBitDepths = componentBitDepths
     }
-    
+
     public func write() throws -> Data {
         // Validate number of entries
         guard numEntries >= 1 && numEntries <= 1024 else {
@@ -914,14 +914,14 @@ public struct J2KPaletteBox: J2KBox {
                 "Invalid number of palette entries: \(numEntries), must be 1-1024"
             )
         }
-        
+
         // Validate number of components
         guard numComponents >= 1 && numComponents <= 255 else {
             throw J2KError.invalidParameter(
                 "Invalid number of palette components: \(numComponents), must be 1-255"
             )
         }
-        
+
         // Validate component bit depths
         for (i, depth) in componentBitDepths.enumerated() {
             let bits = depth.bits
@@ -931,7 +931,7 @@ public struct J2KPaletteBox: J2KBox {
                 )
             }
         }
-        
+
         // Validate all entries have correct number of components
         for (i, entry) in entries.enumerated() {
             guard entry.count == numComponents else {
@@ -940,27 +940,27 @@ public struct J2KPaletteBox: J2KBox {
                 )
             }
         }
-        
+
         var data = Data()
-        
+
         // NE (2 bytes)
         data.append(UInt8((numEntries >> 8) & 0xFF))
         data.append(UInt8(numEntries & 0xFF))
-        
+
         // NPC (1 byte)
         data.append(UInt8(numComponents))
-        
+
         // B[i] - bit depths
         for depth in componentBitDepths {
             data.append(depth.encodedValue)
         }
-        
+
         // C[i][j] - palette data
         for entry in entries {
             for (componentIndex, value) in entry.enumerated() {
                 let bits = componentBitDepths[componentIndex].bits
                 let numBytes = (Int(bits) + 7) / 8
-                
+
                 // Validate value fits in specified bit depth
                 let maxValue = (UInt32(1) << bits) - 1
                 guard value <= maxValue else {
@@ -968,7 +968,7 @@ public struct J2KPaletteBox: J2KBox {
                         "Palette value \(value) exceeds maximum for \(bits)-bit component: \(maxValue)"
                     )
                 }
-                
+
                 // Write value as big-endian
                 for byteIndex in (0..<numBytes).reversed() {
                     let byte = UInt8((value >> (byteIndex * 8)) & 0xFF)
@@ -976,79 +976,79 @@ public struct J2KPaletteBox: J2KBox {
                 }
             }
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 3 else {
             throw J2KError.fileFormatError("Palette box too small: \(data.count) bytes, expected at least 3")
         }
-        
+
         // NE (2 bytes)
         let ne = Int(data[0]) << 8 | Int(data[1])
         guard ne >= 1 && ne <= 1024 else {
             throw J2KError.fileFormatError("Invalid number of palette entries: \(ne), must be 1-1024")
         }
-        
+
         // NPC (1 byte)
         let npc = Int(data[2])
         guard npc >= 1 && npc <= 255 else {
             throw J2KError.fileFormatError("Invalid number of palette components: \(npc), must be 1-255")
         }
-        
+
         // B[i] - bit depths
         guard data.count >= 3 + npc else {
             throw J2KError.fileFormatError("Palette box too small for bit depth array")
         }
-        
+
         componentBitDepths = []
         var totalBytesPerEntry = 0
-        
+
         for i in 0..<npc {
             let byte = data[3 + i]
             let depth = J2KBitsPerComponentBox.BitDepth.decode(byte)
             let bits = depth.bits
-            
+
             guard bits >= 1 && bits <= 38 else {
                 throw J2KError.fileFormatError(
                     "Invalid bit depth for component \(i): \(bits), must be 1-38"
                 )
             }
-            
+
             componentBitDepths.append(depth)
             totalBytesPerEntry += (Int(bits) + 7) / 8
         }
-        
+
         // C[i][j] - palette data
         let headerSize = 3 + npc
         let expectedDataSize = headerSize + ne * totalBytesPerEntry
-        
+
         guard data.count == expectedDataSize else {
             throw J2KError.fileFormatError(
                 "Invalid palette data size: \(data.count) bytes, expected \(expectedDataSize)"
             )
         }
-        
+
         entries = []
         var offset = headerSize
-        
+
         for _ in 0..<ne {
             var entry: [UInt32] = []
-            
+
             for depth in componentBitDepths {
                 let bits = depth.bits
                 let numBytes = (Int(bits) + 7) / 8
-                
+
                 var value: UInt32 = 0
                 for byteIndex in 0..<numBytes {
                     value = (value << 8) | UInt32(data[offset + byteIndex])
                 }
-                
+
                 entry.append(value)
                 offset += numBytes
             }
-            
+
             entries.append(entry)
         }
     }
@@ -1095,10 +1095,10 @@ public struct J2KComponentMappingBox: J2KBox {
     public enum Mapping: Equatable, Sendable {
         /// Direct mapping to a codestream component.
         case direct(component: UInt16)
-        
+
         /// Palette mapping to a component and palette column.
         case palette(component: UInt16, paletteColumn: UInt8)
-        
+
         /// Returns the component index.
         public var component: UInt16 {
             switch self {
@@ -1106,7 +1106,7 @@ public struct J2KComponentMappingBox: J2KBox {
                 return comp
             }
         }
-        
+
         /// Returns the mapping type (0=direct, 1=palette).
         public var mappingType: UInt8 {
             switch self {
@@ -1114,7 +1114,7 @@ public struct J2KComponentMappingBox: J2KBox {
             case .palette: return 1
             }
         }
-        
+
         /// Returns the palette column (0 for direct mapping).
         public var paletteColumn: UInt8 {
             switch self {
@@ -1123,71 +1123,71 @@ public struct J2KComponentMappingBox: J2KBox {
             }
         }
     }
-    
+
     public var boxType: J2KBoxType {
         .cmap
     }
-    
+
     /// The component mappings.
     public var mappings: [Mapping]
-    
+
     /// Creates a new component mapping box.
     ///
     /// - Parameter mappings: The component mappings.
     public init(mappings: [Mapping]) {
         self.mappings = mappings
     }
-    
+
     public func write() throws -> Data {
         guard !mappings.isEmpty else {
             throw J2KError.invalidParameter("Component mapping box must have at least one mapping")
         }
-        
+
         var data = Data(capacity: mappings.count * 4)
-        
+
         for mapping in mappings {
             let comp = mapping.component
             let mtyp = mapping.mappingType
             let pcol = mapping.paletteColumn
-            
+
             // CMP (2 bytes)
             data.append(UInt8((comp >> 8) & 0xFF))
             data.append(UInt8(comp & 0xFF))
-            
+
             // MTYP (1 byte)
             data.append(mtyp)
-            
+
             // PCOL (1 byte)
             data.append(pcol)
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 4 else {
             throw J2KError.fileFormatError("Component mapping box too small: \(data.count) bytes, expected at least 4")
         }
-        
+
         guard data.count % 4 == 0 else {
             throw J2KError.fileFormatError("Invalid component mapping box size: \(data.count), must be multiple of 4")
         }
-        
+
         let numMappings = data.count / 4
         mappings = []
-        
+
         for i in 0..<numMappings {
             let offset = i * 4
-            
+
             // CMP (2 bytes)
             let comp = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
-            
+
             // MTYP (1 byte)
             let mtyp = data[offset + 2]
-            
+
             // PCOL (1 byte)
             let pcol = data[offset + 3]
-            
+
             let mapping: Mapping
             switch mtyp {
             case 0:
@@ -1197,7 +1197,7 @@ public struct J2KComponentMappingBox: J2KBox {
             default:
                 throw J2KError.fileFormatError("Invalid mapping type at index \(i): \(mtyp), must be 0 or 1")
             }
-            
+
             mappings.append(mapping)
         }
     }
@@ -1257,17 +1257,17 @@ public struct J2KChannelDefinitionBox: J2KBox {
     public struct Channel: Equatable, Sendable {
         /// The channel index in the codestream (0-65535).
         public let index: UInt16
-        
+
         /// The channel type.
         public let type: ChannelType
-        
+
         /// The associated channel or image (0-65535).
         ///
         /// - 0: Associated with whole image
         /// - 1-65534: Associated with specific color channel
         /// - 65535: Unassociated
         public let association: UInt16
-        
+
         /// Creates a new channel definition.
         ///
         /// - Parameters:
@@ -1279,7 +1279,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
             self.type = type
             self.association = association
         }
-        
+
         /// Creates a color channel definition.
         ///
         /// - Parameters:
@@ -1289,7 +1289,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
         public static func color(index: UInt16, association: UInt16 = 0) -> Channel {
             Channel(index: index, type: .color, association: association)
         }
-        
+
         /// Creates an opacity (alpha) channel definition.
         ///
         /// - Parameters:
@@ -1299,7 +1299,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
         public static func opacity(index: UInt16, association: UInt16 = 0) -> Channel {
             Channel(index: index, type: .opacity, association: association)
         }
-        
+
         /// Creates a premultiplied opacity channel definition.
         ///
         /// - Parameters:
@@ -1309,7 +1309,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
         public static func premultipliedOpacity(index: UInt16, association: UInt16 = 0) -> Channel {
             Channel(index: index, type: .premultipliedOpacity, association: association)
         }
-        
+
         /// Creates an unspecified channel definition.
         ///
         /// - Parameters:
@@ -1320,103 +1320,103 @@ public struct J2KChannelDefinitionBox: J2KBox {
             Channel(index: index, type: .unspecified, association: association)
         }
     }
-    
+
     /// Channel type identifiers.
     public enum ChannelType: UInt16, Equatable, Sendable {
         /// Color channel.
         case color = 0
-        
+
         /// Opacity (alpha) channel.
         case opacity = 1
-        
+
         /// Premultiplied opacity channel.
         case premultipliedOpacity = 2
-        
+
         /// Unspecified channel type.
         case unspecified = 65535
     }
-    
+
     public var boxType: J2KBoxType {
         .cdef
     }
-    
+
     /// The channel definitions.
     public var channels: [Channel]
-    
+
     /// Creates a new channel definition box.
     ///
     /// - Parameter channels: The channel definitions.
     public init(channels: [Channel]) {
         self.channels = channels
     }
-    
+
     public func write() throws -> Data {
         guard !channels.isEmpty else {
             throw J2KError.invalidParameter("Channel definition box must have at least one channel")
         }
-        
+
         guard channels.count <= 65535 else {
             throw J2KError.invalidParameter("Too many channels: \(channels.count), maximum is 65535")
         }
-        
+
         var data = Data(capacity: 2 + channels.count * 6)
-        
+
         // N (2 bytes)
         let n = UInt16(channels.count)
         data.append(UInt8((n >> 8) & 0xFF))
         data.append(UInt8(n & 0xFF))
-        
+
         // Channel definitions
         for channel in channels {
             // Cn (2 bytes)
             data.append(UInt8((channel.index >> 8) & 0xFF))
             data.append(UInt8(channel.index & 0xFF))
-            
+
             // Typ (2 bytes)
             let typ = channel.type.rawValue
             data.append(UInt8((typ >> 8) & 0xFF))
             data.append(UInt8(typ & 0xFF))
-            
+
             // Asoc (2 bytes)
             data.append(UInt8((channel.association >> 8) & 0xFF))
             data.append(UInt8(channel.association & 0xFF))
         }
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 2 else {
             throw J2KError.fileFormatError("Channel definition box too small: \(data.count) bytes, expected at least 2")
         }
-        
+
         // N (2 bytes)
         let n = Int(data[0]) << 8 | Int(data[1])
-        
+
         let expectedSize = 2 + n * 6
         guard data.count == expectedSize else {
             throw J2KError.fileFormatError(
                 "Invalid channel definition box size: \(data.count) bytes, expected \(expectedSize)"
             )
         }
-        
+
         channels = []
-        
+
         for i in 0..<n {
             let offset = 2 + i * 6
-            
+
             // Cn (2 bytes)
             let index = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
-            
+
             // Typ (2 bytes)
             let typValue = UInt16(data[offset + 2]) << 8 | UInt16(data[offset + 3])
             guard let type = ChannelType(rawValue: typValue) else {
                 throw J2KError.fileFormatError("Invalid channel type at index \(i): \(typValue)")
             }
-            
+
             // Asoc (2 bytes)
             let association = UInt16(data[offset + 4]) << 8 | UInt16(data[offset + 5])
-            
+
             channels.append(Channel(index: index, type: type, association: association))
         }
     }
@@ -1456,14 +1456,14 @@ public struct J2KChannelDefinitionBox: J2KBox {
 public struct J2KResolutionBox: J2KBox {
     /// The capture resolution box (optional).
     public var captureResolution: J2KCaptureResolutionBox?
-    
+
     /// The display resolution box (optional).
     public var displayResolution: J2KDisplayResolutionBox?
-    
+
     public var boxType: J2KBoxType {
         .res
     }
-    
+
     /// Creates a new resolution box.
     ///
     /// - Parameters:
@@ -1476,29 +1476,29 @@ public struct J2KResolutionBox: J2KBox {
         self.captureResolution = captureResolution
         self.displayResolution = displayResolution
     }
-    
+
     public func write() throws -> Data {
         var writer = J2KBoxWriter()
-        
+
         // Write capture resolution box if present
         if let captureRes = captureResolution {
             try writer.writeBox(captureRes)
         }
-        
+
         // Write display resolution box if present
         if let displayRes = displayResolution {
             try writer.writeBox(displayRes)
         }
-        
+
         return writer.data
     }
-    
+
     public mutating func read(from data: Data) throws {
         var reader = J2KBoxReader(data: data)
-        
+
         while let boxInfo = try reader.readNextBox() {
             let content = reader.extractContent(from: boxInfo)
-            
+
             switch boxInfo.type {
             case .resc:
                 var captureRes = J2KCaptureResolutionBox(
@@ -1508,7 +1508,7 @@ public struct J2KResolutionBox: J2KBox {
                 )
                 try captureRes.read(from: content)
                 self.captureResolution = captureRes
-                
+
             case .resd:
                 var displayRes = J2KDisplayResolutionBox(
                     horizontalResolution: (1, 1, 0),
@@ -1517,7 +1517,7 @@ public struct J2KResolutionBox: J2KBox {
                 )
                 try displayRes.read(from: content)
                 self.displayResolution = displayRes
-                
+
             default:
                 // Ignore unknown boxes
                 break
@@ -1567,27 +1567,27 @@ public struct J2KCaptureResolutionBox: J2KBox {
     public enum Unit: UInt8, Sendable {
         /// Unknown or unspecified units
         case unknown = 0
-        
+
         /// Pixels per metre
         case metre = 1
-        
+
         /// Pixels per inch
         case inch = 2
     }
-    
+
     /// Horizontal resolution (numerator, denominator, exponent).
     public var horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
-    
+
     /// Vertical resolution (numerator, denominator, exponent).
     public var verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
-    
+
     /// Resolution unit.
     public var unit: Unit
-    
+
     public var boxType: J2KBoxType {
         .resc
     }
-    
+
     /// Creates a new capture resolution box.
     ///
     /// - Parameters:
@@ -1603,86 +1603,86 @@ public struct J2KCaptureResolutionBox: J2KBox {
         self.verticalResolution = verticalResolution
         self.unit = unit
     }
-    
+
     public func write() throws -> Data {
         var data = Data(capacity: 19)
-        
+
         // HRcN (4 bytes)
         data.append(UInt8((horizontalResolution.numerator >> 24) & 0xFF))
         data.append(UInt8((horizontalResolution.numerator >> 16) & 0xFF))
         data.append(UInt8((horizontalResolution.numerator >> 8) & 0xFF))
         data.append(UInt8(horizontalResolution.numerator & 0xFF))
-        
+
         // HRcD (4 bytes)
         data.append(UInt8((horizontalResolution.denominator >> 24) & 0xFF))
         data.append(UInt8((horizontalResolution.denominator >> 16) & 0xFF))
         data.append(UInt8((horizontalResolution.denominator >> 8) & 0xFF))
         data.append(UInt8(horizontalResolution.denominator & 0xFF))
-        
+
         // HRcE (1 byte)
         data.append(UInt8(bitPattern: horizontalResolution.exponent))
-        
+
         // VRcN (4 bytes)
         data.append(UInt8((verticalResolution.numerator >> 24) & 0xFF))
         data.append(UInt8((verticalResolution.numerator >> 16) & 0xFF))
         data.append(UInt8((verticalResolution.numerator >> 8) & 0xFF))
         data.append(UInt8(verticalResolution.numerator & 0xFF))
-        
+
         // VRcD (4 bytes)
         data.append(UInt8((verticalResolution.denominator >> 24) & 0xFF))
         data.append(UInt8((verticalResolution.denominator >> 16) & 0xFF))
         data.append(UInt8((verticalResolution.denominator >> 8) & 0xFF))
         data.append(UInt8(verticalResolution.denominator & 0xFF))
-        
+
         // VRcE (1 byte)
         data.append(UInt8(bitPattern: verticalResolution.exponent))
-        
+
         // Unit (1 byte)
         data.append(unit.rawValue)
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count == 19 else {
             throw J2KError.fileFormatError("Invalid capture resolution box length: \(data.count), expected 19")
         }
-        
+
         // HRcN (4 bytes)
         let hrcn = UInt32(data[0]) << 24 |
                    UInt32(data[1]) << 16 |
                    UInt32(data[2]) << 8 |
                    UInt32(data[3])
-        
+
         // HRcD (4 bytes)
         let hrcd = UInt32(data[4]) << 24 |
                    UInt32(data[5]) << 16 |
                    UInt32(data[6]) << 8 |
                    UInt32(data[7])
-        
+
         // HRcE (1 byte, signed)
         let hrce = Int8(bitPattern: data[8])
-        
+
         // VRcN (4 bytes)
         let vrcn = UInt32(data[9]) << 24 |
                    UInt32(data[10]) << 16 |
                    UInt32(data[11]) << 8 |
                    UInt32(data[12])
-        
+
         // VRcD (4 bytes)
         let vrcd = UInt32(data[13]) << 24 |
                    UInt32(data[14]) << 16 |
                    UInt32(data[15]) << 8 |
                    UInt32(data[16])
-        
+
         // VRcE (1 byte, signed)
         let vrce = Int8(bitPattern: data[17])
-        
+
         // Unit (1 byte)
         guard let unitValue = Unit(rawValue: data[18]) else {
             throw J2KError.fileFormatError("Invalid resolution unit: \(data[18])")
         }
-        
+
         self.horizontalResolution = (hrcn, hrcd, hrce)
         self.verticalResolution = (vrcn, vrcd, vrce)
         self.unit = unitValue
@@ -1711,20 +1711,20 @@ public struct J2KCaptureResolutionBox: J2KBox {
 public struct J2KDisplayResolutionBox: J2KBox {
     /// Resolution units (same as Capture Resolution Box).
     public typealias Unit = J2KCaptureResolutionBox.Unit
-    
+
     /// Horizontal resolution (numerator, denominator, exponent).
     public var horizontalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
-    
+
     /// Vertical resolution (numerator, denominator, exponent).
     public var verticalResolution: (numerator: UInt32, denominator: UInt32, exponent: Int8)
-    
+
     /// Resolution unit.
     public var unit: Unit
-    
+
     public var boxType: J2KBoxType {
         .resd
     }
-    
+
     /// Creates a new display resolution box.
     ///
     /// - Parameters:
@@ -1740,86 +1740,86 @@ public struct J2KDisplayResolutionBox: J2KBox {
         self.verticalResolution = verticalResolution
         self.unit = unit
     }
-    
+
     public func write() throws -> Data {
         var data = Data(capacity: 19)
-        
+
         // HRdN (4 bytes)
         data.append(UInt8((horizontalResolution.numerator >> 24) & 0xFF))
         data.append(UInt8((horizontalResolution.numerator >> 16) & 0xFF))
         data.append(UInt8((horizontalResolution.numerator >> 8) & 0xFF))
         data.append(UInt8(horizontalResolution.numerator & 0xFF))
-        
+
         // HRdD (4 bytes)
         data.append(UInt8((horizontalResolution.denominator >> 24) & 0xFF))
         data.append(UInt8((horizontalResolution.denominator >> 16) & 0xFF))
         data.append(UInt8((horizontalResolution.denominator >> 8) & 0xFF))
         data.append(UInt8(horizontalResolution.denominator & 0xFF))
-        
+
         // HRdE (1 byte)
         data.append(UInt8(bitPattern: horizontalResolution.exponent))
-        
+
         // VRdN (4 bytes)
         data.append(UInt8((verticalResolution.numerator >> 24) & 0xFF))
         data.append(UInt8((verticalResolution.numerator >> 16) & 0xFF))
         data.append(UInt8((verticalResolution.numerator >> 8) & 0xFF))
         data.append(UInt8(verticalResolution.numerator & 0xFF))
-        
+
         // VRdD (4 bytes)
         data.append(UInt8((verticalResolution.denominator >> 24) & 0xFF))
         data.append(UInt8((verticalResolution.denominator >> 16) & 0xFF))
         data.append(UInt8((verticalResolution.denominator >> 8) & 0xFF))
         data.append(UInt8(verticalResolution.denominator & 0xFF))
-        
+
         // VRdE (1 byte)
         data.append(UInt8(bitPattern: verticalResolution.exponent))
-        
+
         // Unit (1 byte)
         data.append(unit.rawValue)
-        
+
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count == 19 else {
             throw J2KError.fileFormatError("Invalid display resolution box length: \(data.count), expected 19")
         }
-        
+
         // HRdN (4 bytes)
         let hrdn = UInt32(data[0]) << 24 |
                    UInt32(data[1]) << 16 |
                    UInt32(data[2]) << 8 |
                    UInt32(data[3])
-        
+
         // HRdD (4 bytes)
         let hrdd = UInt32(data[4]) << 24 |
                    UInt32(data[5]) << 16 |
                    UInt32(data[6]) << 8 |
                    UInt32(data[7])
-        
+
         // HRdE (1 byte, signed)
         let hrde = Int8(bitPattern: data[8])
-        
+
         // VRdN (4 bytes)
         let vrdn = UInt32(data[9]) << 24 |
                    UInt32(data[10]) << 16 |
                    UInt32(data[11]) << 8 |
                    UInt32(data[12])
-        
+
         // VRdD (4 bytes)
         let vrdd = UInt32(data[13]) << 24 |
                    UInt32(data[14]) << 16 |
                    UInt32(data[15]) << 8 |
                    UInt32(data[16])
-        
+
         // VRdE (1 byte, signed)
         let vrde = Int8(bitPattern: data[17])
-        
+
         // Unit (1 byte)
         guard let unitValue = Unit(rawValue: data[18]) else {
             throw J2KError.fileFormatError("Invalid resolution unit: \(data[18])")
         }
-        
+
         self.horizontalResolution = (hrdn, hrdd, hrde)
         self.verticalResolution = (vrdn, vrdd, vrde)
         self.unit = unitValue
@@ -1853,14 +1853,14 @@ public struct J2KDisplayResolutionBox: J2KBox {
 public struct J2KUUIDBox: J2KBox {
     /// The 16-byte UUID identifying this box's content type.
     public var uuid: UUID
-    
+
     /// The application-specific data.
     public var data: Data
-    
+
     public var boxType: J2KBoxType {
         .uuid
     }
-    
+
     /// Creates a new UUID box.
     ///
     /// - Parameters:
@@ -1870,27 +1870,27 @@ public struct J2KUUIDBox: J2KBox {
         self.uuid = uuid
         self.data = data
     }
-    
+
     public func write() throws -> Data {
         var output = Data(capacity: 16 + data.count)
-        
+
         // Write UUID (16 bytes)
         var uuidBytes = uuid.uuid
         withUnsafeBytes(of: &uuidBytes) { bytes in
             output.append(contentsOf: bytes)
         }
-        
+
         // Write data
         output.append(data)
-        
+
         return output
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 16 else {
             throw J2KError.fileFormatError("Invalid UUID box length: \(data.count), expected at least 16")
         }
-        
+
         // Read UUID (16 bytes)
         let uuidBytes = data.prefix(16)
         var uuidTuple: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -1898,7 +1898,7 @@ public struct J2KUUIDBox: J2KBox {
             uuidBytes.copyBytes(to: buffer)
         }
         self.uuid = UUID(uuid: uuidTuple)
-        
+
         // Read remaining data
         self.data = data.suffix(from: 16)
     }
@@ -1932,11 +1932,11 @@ public struct J2KUUIDBox: J2KBox {
 public struct J2KXMLBox: J2KBox {
     /// The XML content as a string.
     public var xmlString: String
-    
+
     public var boxType: J2KBoxType {
         .xml
     }
-    
+
     /// Creates a new XML box.
     ///
     /// - Parameter xmlString: The XML content as a string.
@@ -1948,7 +1948,7 @@ public struct J2KXMLBox: J2KBox {
         }
         self.xmlString = xmlString
     }
-    
+
     /// Creates a new XML box from raw data.
     ///
     /// - Parameter data: The XML content as UTF-8 encoded data.
@@ -1959,14 +1959,14 @@ public struct J2KXMLBox: J2KBox {
         }
         self.xmlString = string
     }
-    
+
     public func write() throws -> Data {
         guard let data = xmlString.data(using: .utf8) else {
             throw J2KError.fileFormatError("Failed to encode XML as UTF-8")
         }
         return data
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard let string = String(data: data, encoding: .utf8) else {
             throw J2KError.fileFormatError("XML box data is not valid UTF-8")
@@ -2004,38 +2004,38 @@ public struct J2KXMLBox: J2KBox {
 public struct J2KFragmentTableBox: J2KBox {
     /// The fragment list contained in this table.
     public var fragmentList: J2KFragmentListBox
-    
+
     public var boxType: J2KBoxType {
         .ftbl
     }
-    
+
     /// Creates a new fragment table box.
     ///
     /// - Parameter fragmentList: The fragment list for this table.
     public init(fragmentList: J2KFragmentListBox) {
         self.fragmentList = fragmentList
     }
-    
+
     public func write() throws -> Data {
         var writer = J2KBoxWriter()
         try writer.writeBox(fragmentList)
         return writer.data
     }
-    
+
     public mutating func read(from data: Data) throws {
         var reader = J2KBoxReader(data: data)
-        
+
         // Read the fragment list box
         guard let boxInfo = try reader.readNextBox() else {
             throw J2KError.fileFormatError("Fragment table box is empty")
         }
-        
+
         guard boxInfo.type == .flst else {
             throw J2KError.fileFormatError(
                 "Expected fragment list box ('flst'), found '\(boxInfo.type.stringValue)'"
             )
         }
-        
+
         let content = reader.extractContent(from: boxInfo)
         var flst = J2KFragmentListBox(fragments: [])
         try flst.read(from: content)
@@ -2051,10 +2051,10 @@ public struct J2KFragmentTableBox: J2KBox {
 public struct J2KFragment: Sendable, Equatable {
     /// The byte offset of this fragment from the start of the file.
     public var offset: UInt64
-    
+
     /// The length of this fragment in bytes.
     public var length: UInt32
-    
+
     /// Creates a new fragment.
     ///
     /// - Parameters:
@@ -2095,40 +2095,40 @@ public struct J2KFragment: Sendable, Equatable {
 public struct J2KFragmentListBox: J2KBox {
     /// The list of fragments making up the codestream.
     public var fragments: [J2KFragment]
-    
+
     public var boxType: J2KBoxType {
         .flst
     }
-    
+
     /// Creates a new fragment list box.
     ///
     /// - Parameter fragments: The list of fragments.
     public init(fragments: [J2KFragment]) {
         self.fragments = fragments
     }
-    
+
     public func write() throws -> Data {
         guard fragments.count <= UInt16.max else {
             throw J2KError.fileFormatError("Too many fragments: \(fragments.count), maximum is \(UInt16.max)")
         }
-        
+
         // Determine the minimum DR (fragment data size) needed
         // DR can be 4 or 8 bytes depending on the maximum offset
         let maxOffset = fragments.map { $0.offset }.max() ?? 0
         let dr: UInt16 = maxOffset > UInt32.max ? 8 : 4
-        
+
         var output = Data()
         output.reserveCapacity(4 + fragments.count * (Int(dr) + 4))
-        
+
         // Fragment count (2 bytes)
         let nf = UInt16(fragments.count)
         output.append(UInt8((nf >> 8) & 0xFF))
         output.append(UInt8(nf & 0xFF))
-        
+
         // Fragment data size (2 bytes)
         output.append(UInt8((dr >> 8) & 0xFF))
         output.append(UInt8(dr & 0xFF))
-        
+
         // Write each fragment
         for fragment in fragments {
             if dr == 8 {
@@ -2149,32 +2149,32 @@ public struct J2KFragmentListBox: J2KBox {
                 output.append(UInt8((offset32 >> 8) & 0xFF))
                 output.append(UInt8(offset32 & 0xFF))
             }
-            
+
             // Write length (4 bytes)
             output.append(UInt8((fragment.length >> 24) & 0xFF))
             output.append(UInt8((fragment.length >> 16) & 0xFF))
             output.append(UInt8((fragment.length >> 8) & 0xFF))
             output.append(UInt8(fragment.length & 0xFF))
         }
-        
+
         return output
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 4 else {
             throw J2KError.fileFormatError("Invalid fragment list box length: \(data.count), expected at least 4")
         }
-        
+
         // Fragment count (2 bytes)
         let nf = UInt16(data[0]) << 8 | UInt16(data[1])
-        
+
         // Fragment data size (2 bytes)
         let dr = UInt16(data[2]) << 8 | UInt16(data[3])
-        
+
         guard dr == 4 || dr == 8 else {
             throw J2KError.fileFormatError("Invalid fragment data size: \(dr), expected 4 or 8")
         }
-        
+
         // Calculate expected size
         let expectedSize = 4 + Int(nf) * (Int(dr) + 4)
         guard data.count >= expectedSize else {
@@ -2182,12 +2182,12 @@ public struct J2KFragmentListBox: J2KBox {
                 "Invalid fragment list box length: \(data.count), expected at least \(expectedSize)"
             )
         }
-        
+
         // Read fragments
         var offset = 4
         var result: [J2KFragment] = []
         result.reserveCapacity(Int(nf))
-        
+
         for _ in 0..<nf {
             // Read offset (dr bytes)
             let fragmentOffset: UInt64
@@ -2209,17 +2209,17 @@ public struct J2KFragmentListBox: J2KBox {
                 fragmentOffset = UInt64(offset32)
                 offset += 4
             }
-            
+
             // Read length (4 bytes)
             let fragmentLength = UInt32(data[offset]) << 24 |
                                UInt32(data[offset + 1]) << 16 |
                                UInt32(data[offset + 2]) << 8 |
                                UInt32(data[offset + 3])
             offset += 4
-            
+
             result.append(J2KFragment(offset: fragmentOffset, length: fragmentLength))
         }
-        
+
         self.fragments = result
     }
 }
@@ -2233,34 +2233,34 @@ public struct J2KFragmentListBox: J2KBox {
 public struct J2KCompositionInstruction: Sendable, Equatable {
     /// The width of the composition layer in pixels.
     public var width: UInt32
-    
+
     /// The height of the composition layer in pixels.
     public var height: UInt32
-    
+
     /// The horizontal offset of the layer from the origin.
     public var horizontalOffset: UInt32
-    
+
     /// The vertical offset of the layer from the origin.
     public var verticalOffset: UInt32
-    
+
     /// The index of the codestream to use for this layer (0-based).
     public var codestreamIndex: UInt16
-    
+
     /// Compositing mode for blending layers.
     public enum CompositingMode: UInt8, Sendable {
         /// Replace mode - layer replaces background
         case replace = 0
-        
+
         /// Alpha blending mode
         case alphaBlend = 1
-        
+
         /// Pre-multiplied alpha blending
         case preMulAlphaBlend = 2
     }
-    
+
     /// The compositing mode for this layer.
     public var compositingMode: CompositingMode
-    
+
     /// Creates a new composition instruction.
     ///
     /// - Parameters:
@@ -2340,24 +2340,24 @@ public struct J2KCompositionInstruction: Sendable, Equatable {
 public struct J2KCompositionBox: J2KBox {
     /// The width of the composition canvas in pixels.
     public var width: UInt32
-    
+
     /// The height of the composition canvas in pixels.
     public var height: UInt32
-    
+
     /// The number of times to loop through the composition sequence.
     /// - 0: Loop infinitely (for animations)
     /// - 1: Play once (single image or single animation playthrough)
     /// - N: Play N times
     public var loopCount: UInt16
-    
+
     /// The list of composition instructions.
     /// For animations, each instruction represents a frame.
     public var instructions: [J2KCompositionInstruction]
-    
+
     public var boxType: J2KBoxType {
         .comp
     }
-    
+
     /// Creates a new composition box.
     ///
     /// - Parameters:
@@ -2376,38 +2376,38 @@ public struct J2KCompositionBox: J2KBox {
         self.loopCount = loopCount
         self.instructions = instructions
     }
-    
+
     public func write() throws -> Data {
         guard instructions.count <= UInt16.max else {
             throw J2KError.fileFormatError(
                 "Too many composition instructions: \(instructions.count), maximum is \(UInt16.max)"
             )
         }
-        
+
         var output = Data()
         output.reserveCapacity(8 + instructions.count * 19)
-        
+
         // Width (4 bytes)
         output.append(UInt8((width >> 24) & 0xFF))
         output.append(UInt8((width >> 16) & 0xFF))
         output.append(UInt8((width >> 8) & 0xFF))
         output.append(UInt8(width & 0xFF))
-        
+
         // Height (4 bytes)
         output.append(UInt8((height >> 24) & 0xFF))
         output.append(UInt8((height >> 16) & 0xFF))
         output.append(UInt8((height >> 8) & 0xFF))
         output.append(UInt8(height & 0xFF))
-        
+
         // Loop count (2 bytes)
         output.append(UInt8((loopCount >> 8) & 0xFF))
         output.append(UInt8(loopCount & 0xFF))
-        
+
         // Instruction count (2 bytes)
         let count = UInt16(instructions.count)
         output.append(UInt8((count >> 8) & 0xFF))
         output.append(UInt8(count & 0xFF))
-        
+
         // Write each instruction
         for instruction in instructions {
             // Layer width (4 bytes)
@@ -2415,61 +2415,61 @@ public struct J2KCompositionBox: J2KBox {
             output.append(UInt8((instruction.width >> 16) & 0xFF))
             output.append(UInt8((instruction.width >> 8) & 0xFF))
             output.append(UInt8(instruction.width & 0xFF))
-            
+
             // Layer height (4 bytes)
             output.append(UInt8((instruction.height >> 24) & 0xFF))
             output.append(UInt8((instruction.height >> 16) & 0xFF))
             output.append(UInt8((instruction.height >> 8) & 0xFF))
             output.append(UInt8(instruction.height & 0xFF))
-            
+
             // Horizontal offset (4 bytes)
             output.append(UInt8((instruction.horizontalOffset >> 24) & 0xFF))
             output.append(UInt8((instruction.horizontalOffset >> 16) & 0xFF))
             output.append(UInt8((instruction.horizontalOffset >> 8) & 0xFF))
             output.append(UInt8(instruction.horizontalOffset & 0xFF))
-            
+
             // Vertical offset (4 bytes)
             output.append(UInt8((instruction.verticalOffset >> 24) & 0xFF))
             output.append(UInt8((instruction.verticalOffset >> 16) & 0xFF))
             output.append(UInt8((instruction.verticalOffset >> 8) & 0xFF))
             output.append(UInt8(instruction.verticalOffset & 0xFF))
-            
+
             // Codestream index (2 bytes)
             output.append(UInt8((instruction.codestreamIndex >> 8) & 0xFF))
             output.append(UInt8(instruction.codestreamIndex & 0xFF))
-            
+
             // Compositing mode (1 byte)
             output.append(instruction.compositingMode.rawValue)
         }
-        
+
         return output
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 12 else {
             throw J2KError.fileFormatError(
                 "Invalid composition box length: \(data.count), expected at least 12"
             )
         }
-        
+
         // Width (4 bytes)
         self.width = UInt32(data[0]) << 24 |
                     UInt32(data[1]) << 16 |
                     UInt32(data[2]) << 8 |
                     UInt32(data[3])
-        
+
         // Height (4 bytes)
         self.height = UInt32(data[4]) << 24 |
                      UInt32(data[5]) << 16 |
                      UInt32(data[6]) << 8 |
                      UInt32(data[7])
-        
+
         // Loop count (2 bytes)
         self.loopCount = UInt16(data[8]) << 8 | UInt16(data[9])
-        
+
         // Instruction count (2 bytes)
         let count = UInt16(data[10]) << 8 | UInt16(data[11])
-        
+
         // Calculate expected size
         let expectedSize = 12 + Int(count) * 19
         guard data.count >= expectedSize else {
@@ -2477,12 +2477,12 @@ public struct J2KCompositionBox: J2KBox {
                 "Invalid composition box length: \(data.count), expected at least \(expectedSize)"
             )
         }
-        
+
         // Read instructions
         var offset = 12
         var result: [J2KCompositionInstruction] = []
         result.reserveCapacity(Int(count))
-        
+
         for _ in 0..<count {
             // Layer width (4 bytes)
             let layerWidth = UInt32(data[offset]) << 24 |
@@ -2490,38 +2490,38 @@ public struct J2KCompositionBox: J2KBox {
                            UInt32(data[offset + 2]) << 8 |
                            UInt32(data[offset + 3])
             offset += 4
-            
+
             // Layer height (4 bytes)
             let layerHeight = UInt32(data[offset]) << 24 |
                             UInt32(data[offset + 1]) << 16 |
                             UInt32(data[offset + 2]) << 8 |
                             UInt32(data[offset + 3])
             offset += 4
-            
+
             // Horizontal offset (4 bytes)
             let hOffset = UInt32(data[offset]) << 24 |
                         UInt32(data[offset + 1]) << 16 |
                         UInt32(data[offset + 2]) << 8 |
                         UInt32(data[offset + 3])
             offset += 4
-            
+
             // Vertical offset (4 bytes)
             let vOffset = UInt32(data[offset]) << 24 |
                         UInt32(data[offset + 1]) << 16 |
                         UInt32(data[offset + 2]) << 8 |
                         UInt32(data[offset + 3])
             offset += 4
-            
+
             // Codestream index (2 bytes)
             let csIndex = UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
             offset += 2
-            
+
             // Compositing mode (1 byte)
             guard let mode = J2KCompositionInstruction.CompositingMode(rawValue: data[offset]) else {
                 throw J2KError.fileFormatError("Invalid compositing mode: \(data[offset])")
             }
             offset += 1
-            
+
             let instruction = J2KCompositionInstruction(
                 width: layerWidth,
                 height: layerHeight,
@@ -2532,7 +2532,7 @@ public struct J2KCompositionBox: J2KBox {
             )
             result.append(instruction)
         }
-        
+
         self.instructions = result
     }
 }
@@ -2560,18 +2560,18 @@ public struct J2KCompositionBox: J2KBox {
 public struct J2KPageCollectionBox: J2KBox {
     /// The pages in this collection.
     public var pages: [J2KPageBox]
-    
+
     public var boxType: J2KBoxType {
         .pcol
     }
-    
+
     /// Creates a new page collection box.
     ///
     /// - Parameter pages: The list of pages.
     public init(pages: [J2KPageBox]) {
         self.pages = pages
     }
-    
+
     public func write() throws -> Data {
         var writer = J2KBoxWriter()
         for page in pages {
@@ -2579,11 +2579,11 @@ public struct J2KPageCollectionBox: J2KBox {
         }
         return writer.data
     }
-    
+
     public mutating func read(from data: Data) throws {
         var reader = J2KBoxReader(data: data)
         var result: [J2KPageBox] = []
-        
+
         // Read all page boxes
         while let boxInfo = try reader.readNextBox() {
             guard boxInfo.type == .page else {
@@ -2591,13 +2591,13 @@ public struct J2KPageCollectionBox: J2KBox {
                     "Expected page box ('page'), found '\(boxInfo.type.stringValue)'"
                 )
             }
-            
+
             let content = reader.extractContent(from: boxInfo)
             var page = J2KPageBox(pageNumber: 0, width: 0, height: 0)
             try page.read(from: content)
             result.append(page)
         }
-        
+
         self.pages = result
     }
 }
@@ -2632,20 +2632,20 @@ public struct J2KPageCollectionBox: J2KBox {
 public struct J2KPageBox: J2KBox {
     /// The page number (0-based index).
     public var pageNumber: UInt16
-    
+
     /// The width of the page in pixels.
     public var width: UInt32
-    
+
     /// The height of the page in pixels.
     public var height: UInt32
-    
+
     /// Optional layout information for objects on this page.
     public var layouts: [J2KLayoutBox]
-    
+
     public var boxType: J2KBoxType {
         .page
     }
-    
+
     /// Creates a new page box.
     ///
     /// - Parameters:
@@ -2664,27 +2664,27 @@ public struct J2KPageBox: J2KBox {
         self.height = height
         self.layouts = layouts
     }
-    
+
     public func write() throws -> Data {
         var output = Data()
         output.reserveCapacity(10)
-        
+
         // Page number (2 bytes)
         output.append(UInt8((pageNumber >> 8) & 0xFF))
         output.append(UInt8(pageNumber & 0xFF))
-        
+
         // Width (4 bytes)
         output.append(UInt8((width >> 24) & 0xFF))
         output.append(UInt8((width >> 16) & 0xFF))
         output.append(UInt8((width >> 8) & 0xFF))
         output.append(UInt8(width & 0xFF))
-        
+
         // Height (4 bytes)
         output.append(UInt8((height >> 24) & 0xFF))
         output.append(UInt8((height >> 16) & 0xFF))
         output.append(UInt8((height >> 8) & 0xFF))
         output.append(UInt8(height & 0xFF))
-        
+
         // Write layout boxes if any
         if !layouts.isEmpty {
             var writer = J2KBoxWriter()
@@ -2693,38 +2693,38 @@ public struct J2KPageBox: J2KBox {
             }
             output.append(writer.data)
         }
-        
+
         return output
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 10 else {
             throw J2KError.fileFormatError(
                 "Invalid page box length: \(data.count), expected at least 10"
             )
         }
-        
+
         // Page number (2 bytes)
         self.pageNumber = UInt16(data[0]) << 8 | UInt16(data[1])
-        
+
         // Width (4 bytes)
         self.width = UInt32(data[2]) << 24 |
                     UInt32(data[3]) << 16 |
                     UInt32(data[4]) << 8 |
                     UInt32(data[5])
-        
+
         // Height (4 bytes)
         self.height = UInt32(data[6]) << 24 |
                      UInt32(data[7]) << 16 |
                      UInt32(data[8]) << 8 |
                      UInt32(data[9])
-        
+
         // Read layout boxes if present
         if data.count > 10 {
             let layoutData = Data(data.suffix(from: 10))  // Create a new Data to avoid slice issues
             var reader = J2KBoxReader(data: layoutData)
             var result: [J2KLayoutBox] = []
-            
+
             while let boxInfo = try reader.readNextBox() {
                 if boxInfo.type == .lobj {
                     let content = reader.extractContent(from: boxInfo)
@@ -2733,7 +2733,7 @@ public struct J2KPageBox: J2KBox {
                     result.append(layout)
                 }
             }
-            
+
             self.layouts = result
         } else {
             self.layouts = []
@@ -2774,23 +2774,23 @@ public struct J2KPageBox: J2KBox {
 public struct J2KLayoutBox: J2KBox {
     /// The unique identifier for this object.
     public var objectID: UInt16
-    
+
     /// The horizontal position on the page in pixels.
     public var x: UInt32
-    
+
     /// The vertical position on the page in pixels.
     public var y: UInt32
-    
+
     /// The width of the object in pixels.
     public var width: UInt32
-    
+
     /// The height of the object in pixels.
     public var height: UInt32
-    
+
     public var boxType: J2KBoxType {
         .lobj
     }
-    
+
     /// Creates a new layout box.
     ///
     /// - Parameters:
@@ -2812,69 +2812,69 @@ public struct J2KLayoutBox: J2KBox {
         self.width = width
         self.height = height
     }
-    
+
     public func write() throws -> Data {
         var output = Data(capacity: 18)
-        
+
         // Object ID (2 bytes)
         output.append(UInt8((objectID >> 8) & 0xFF))
         output.append(UInt8(objectID & 0xFF))
-        
+
         // X position (4 bytes)
         output.append(UInt8((x >> 24) & 0xFF))
         output.append(UInt8((x >> 16) & 0xFF))
         output.append(UInt8((x >> 8) & 0xFF))
         output.append(UInt8(x & 0xFF))
-        
+
         // Y position (4 bytes)
         output.append(UInt8((y >> 24) & 0xFF))
         output.append(UInt8((y >> 16) & 0xFF))
         output.append(UInt8((y >> 8) & 0xFF))
         output.append(UInt8(y & 0xFF))
-        
+
         // Width (4 bytes)
         output.append(UInt8((width >> 24) & 0xFF))
         output.append(UInt8((width >> 16) & 0xFF))
         output.append(UInt8((width >> 8) & 0xFF))
         output.append(UInt8(width & 0xFF))
-        
+
         // Height (4 bytes)
         output.append(UInt8((height >> 24) & 0xFF))
         output.append(UInt8((height >> 16) & 0xFF))
         output.append(UInt8((height >> 8) & 0xFF))
         output.append(UInt8(height & 0xFF))
-        
+
         return output
     }
-    
+
     public mutating func read(from data: Data) throws {
         guard data.count >= 18 else {
             throw J2KError.fileFormatError(
                 "Invalid layout box length: \(data.count), expected at least 18"
             )
         }
-        
+
         // Object ID (2 bytes)
         self.objectID = UInt16(data[0]) << 8 | UInt16(data[1])
-        
+
         // X position (4 bytes)
         self.x = UInt32(data[2]) << 24 |
                 UInt32(data[3]) << 16 |
                 UInt32(data[4]) << 8 |
                 UInt32(data[5])
-        
+
         // Y position (4 bytes)
         self.y = UInt32(data[6]) << 24 |
                 UInt32(data[7]) << 16 |
                 UInt32(data[8]) << 8 |
                 UInt32(data[9])
-        
+
         // Width (4 bytes)
         self.width = UInt32(data[10]) << 24 |
                     UInt32(data[11]) << 16 |
                     UInt32(data[12]) << 8 |
                     UInt32(data[13])
-        
+
         // Height (4 bytes)
         self.height = UInt32(data[14]) << 24 |
                      UInt32(data[15]) << 16 |

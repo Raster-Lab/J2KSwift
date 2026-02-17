@@ -9,19 +9,19 @@ import J2KCore
 public struct JPIPPrecinctID: Hashable, Sendable {
     /// The tile index.
     public let tile: Int
-    
+
     /// The component index.
     public let component: Int
-    
+
     /// The resolution level.
     public let resolution: Int
-    
+
     /// The precinct position in X direction.
     public let precinctX: Int
-    
+
     /// The precinct position in Y direction.
     public let precinctY: Int
-    
+
     /// Creates a new precinct identifier.
     ///
     /// - Parameters:
@@ -43,19 +43,19 @@ public struct JPIPPrecinctID: Hashable, Sendable {
 public struct JPIPPrecinctData: Sendable {
     /// The precinct identifier.
     public let precinctID: JPIPPrecinctID
-    
+
     /// The cached data.
     public let data: Data
-    
+
     /// Whether this precinct is complete.
     public let isComplete: Bool
-    
+
     /// Quality layers that have been received.
     public let receivedLayers: Set<Int>
-    
+
     /// Timestamp when this data was cached.
     public let timestamp: Date
-    
+
     /// Creates new precinct data.
     ///
     /// - Parameters:
@@ -85,46 +85,46 @@ public struct JPIPPrecinctCache: Sendable {
     public struct Statistics: Sendable {
         /// Total number of precincts cached.
         public var totalPrecincts: Int = 0
-        
+
         /// Number of complete precincts.
         public var completePrecincts: Int = 0
-        
+
         /// Number of partial precincts.
         public var partialPrecincts: Int = 0
-        
+
         /// Total size of cached precinct data.
         public var totalSize: Int = 0
-        
+
         /// Number of precinct cache hits.
         public var hits: Int = 0
-        
+
         /// Number of precinct cache misses.
         public var misses: Int = 0
-        
+
         /// Completion rate (0.0 to 1.0).
         public var completionRate: Double {
             return totalPrecincts > 0 ? Double(completePrecincts) / Double(totalPrecincts) : 0.0
         }
-        
+
         /// Hit rate (0.0 to 1.0).
         public var hitRate: Double {
             let total = hits + misses
             return total > 0 ? Double(hits) / Double(total) : 0.0
         }
     }
-    
+
     /// Cached precincts mapped by precinct ID.
     private var precincts: [JPIPPrecinctID: JPIPPrecinctData]
-    
+
     /// Cache statistics.
     private(set) var statistics: Statistics
-    
+
     /// Maximum cache size in bytes.
     private let maxCacheSize: Int
-    
+
     /// Maximum number of precincts to cache.
     private let maxPrecincts: Int
-    
+
     /// Creates a new precinct cache.
     ///
     /// - Parameters:
@@ -136,13 +136,13 @@ public struct JPIPPrecinctCache: Sendable {
         self.maxCacheSize = maxCacheSize
         self.maxPrecincts = maxPrecincts
     }
-    
+
     /// Adds or updates a precinct in the cache.
     ///
     /// - Parameter precinctData: The precinct data to cache.
     public mutating func addPrecinct(_ precinctData: JPIPPrecinctData) {
         let id = precinctData.precinctID
-        
+
         // Update statistics if this is a new precinct
         if precincts[id] == nil {
             statistics.totalPrecincts += 1
@@ -161,17 +161,17 @@ public struct JPIPPrecinctCache: Sendable {
                 }
             }
         }
-        
+
         // Check if we need to evict precincts
-        while (statistics.totalSize + precinctData.data.count > maxCacheSize || 
+        while (statistics.totalSize + precinctData.data.count > maxCacheSize ||
                statistics.totalPrecincts > maxPrecincts) && !precincts.isEmpty {
             evictOldest()
         }
-        
+
         precincts[id] = precinctData
         statistics.totalSize += precinctData.data.count
     }
-    
+
     /// Retrieves a precinct from the cache.
     ///
     /// - Parameter precinctID: The precinct identifier.
@@ -185,7 +185,7 @@ public struct JPIPPrecinctCache: Sendable {
             return nil
         }
     }
-    
+
     /// Checks if a precinct is in the cache.
     ///
     /// - Parameter precinctID: The precinct identifier.
@@ -193,7 +193,7 @@ public struct JPIPPrecinctCache: Sendable {
     public func hasPrecinct(_ precinctID: JPIPPrecinctID) -> Bool {
         return precincts[precinctID] != nil
     }
-    
+
     /// Checks if a precinct is complete.
     ///
     /// - Parameter precinctID: The precinct identifier.
@@ -201,7 +201,7 @@ public struct JPIPPrecinctCache: Sendable {
     public func isPrecinctComplete(_ precinctID: JPIPPrecinctID) -> Bool {
         return precincts[precinctID]?.isComplete ?? false
     }
-    
+
     /// Gets all precincts for a given tile.
     ///
     /// - Parameter tile: The tile index.
@@ -209,7 +209,7 @@ public struct JPIPPrecinctCache: Sendable {
     public func getPrecincts(forTile tile: Int) -> [JPIPPrecinctData] {
         return precincts.values.filter { $0.precinctID.tile == tile }
     }
-    
+
     /// Gets all precincts for a given resolution level.
     ///
     /// - Parameter resolution: The resolution level.
@@ -217,7 +217,7 @@ public struct JPIPPrecinctCache: Sendable {
     public func getPrecincts(forResolution resolution: Int) -> [JPIPPrecinctData] {
         return precincts.values.filter { $0.precinctID.resolution == resolution }
     }
-    
+
     /// Invalidates all precincts for a tile.
     ///
     /// - Parameter tile: The tile index to invalidate.
@@ -234,7 +234,7 @@ public struct JPIPPrecinctCache: Sendable {
             }
         }
     }
-    
+
     /// Invalidates all precincts for a resolution level.
     ///
     /// - Parameter resolution: The resolution level to invalidate.
@@ -251,19 +251,19 @@ public struct JPIPPrecinctCache: Sendable {
             }
         }
     }
-    
+
     /// Clears all cached precincts.
     public mutating func clear() {
         precincts.removeAll()
         statistics = Statistics()
     }
-    
+
     /// Evicts the oldest precinct from the cache.
     private mutating func evictOldest() {
         guard let oldest = precincts.min(by: { $0.value.timestamp < $1.value.timestamp }) else {
             return
         }
-        
+
         if let data = precincts.removeValue(forKey: oldest.key) {
             statistics.totalSize -= data.data.count
             statistics.totalPrecincts -= 1
@@ -274,7 +274,7 @@ public struct JPIPPrecinctCache: Sendable {
             }
         }
     }
-    
+
     /// Merges partial precinct data with existing cached data.
     ///
     /// If the precinct already exists in the cache, this method merges the new
@@ -296,18 +296,18 @@ public struct JPIPPrecinctCache: Sendable {
             // Merge layers
             var mergedLayers = existing.receivedLayers
             mergedLayers.formUnion(layers)
-            
+
             // Combine data (in real implementation, this would be more sophisticated)
             var mergedData = existing.data
             mergedData.append(data)
-            
+
             let merged = JPIPPrecinctData(
                 precinctID: precinctID,
                 data: mergedData,
                 isComplete: isComplete || existing.isComplete,
                 receivedLayers: mergedLayers
             )
-            
+
             addPrecinct(merged)
             return merged
         } else {

@@ -10,15 +10,15 @@ import J2KFileFormat
 struct J2KCLI {
     static func main() async {
         let args = CommandLine.arguments
-        
+
         guard args.count > 1 else {
             printUsage()
             exit(1)
         }
-        
+
         let command = args[1]
         let commandArgs = Array(args.dropFirst(2))
-        
+
         do {
             switch command {
             case "encode":
@@ -41,26 +41,26 @@ struct J2KCLI {
             exit(1)
         }
     }
-    
+
     static func printVersion() {
         let version = getVersion()
         print("J2KSwift version \(version)")
     }
-    
+
     static func printUsage() {
         print("""
         J2KSwift - JPEG 2000 Encoder/Decoder CLI
-        
+
         USAGE:
             j2k <command> [options]
-        
+
         COMMANDS:
             encode      Encode an image to JPEG 2000
             decode      Decode a JPEG 2000 image
             benchmark   Run encoding/decoding benchmarks
             version     Print version information
             help        Show this help message
-        
+
         ENCODE OPTIONS:
             -i, --input PATH        Input image file (PGM, PPM, RAW)
             -o, --output PATH       Output J2K/JP2 file
@@ -73,13 +73,13 @@ struct J2KCLI {
             --format FORMAT         Output format: j2k or jp2 (default: j2k)
             --timing                Show detailed timing information
             --json                  Output results as JSON
-        
+
         DECODE OPTIONS:
             -i, --input PATH        Input J2K/JP2 file
             -o, --output PATH       Output image file (PGM, PPM, RAW)
             --timing                Show detailed timing information
             --json                  Output results as JSON
-        
+
         BENCHMARK OPTIONS:
             -i, --input PATH        Input image file for benchmarking
             -r, --runs N            Number of runs (default: 3)
@@ -87,17 +87,17 @@ struct J2KCLI {
             --encode-only           Only benchmark encoding
             --decode-only           Only benchmark decoding
             --preset NAME           Use preset: fast, balanced, quality
-        
+
         EXAMPLES:
             # Encode an image with default settings
             j2k encode -i input.pgm -o output.j2k
-            
+
             # Encode with lossless compression
             j2k encode -i input.pgm -o output.j2k --lossless
-            
+
             # Decode a JPEG 2000 file
             j2k decode -i input.j2k -o output.pgm
-            
+
             # Benchmark encoding performance
             j2k benchmark -i test.pgm -r 10 -o results.json
         """)

@@ -26,14 +26,14 @@ internal actor J2KMemoryTracker {
     internal struct Configuration: Sendable {
         /// Maximum memory usage in bytes (0 = unlimited).
         public let limit: Int
-        
+
         /// Whether to track detailed allocation statistics.
         public let trackStatistics: Bool
-        
+
         /// Memory pressure threshold (0.0 - 1.0).
         /// When usage exceeds this threshold, a warning is triggered.
         public let pressureThreshold: Double
-        
+
         /// Creates a new configuration.
         ///
         /// - Parameters:
@@ -50,49 +50,49 @@ internal actor J2KMemoryTracker {
             self.pressureThreshold = pressureThreshold
         }
     }
-    
+
     /// Memory usage statistics.
     internal struct Statistics: Sendable {
         /// Current memory usage in bytes.
         public let currentUsage: Int
-        
+
         /// Peak memory usage in bytes.
         public let peakUsage: Int
-        
+
         /// Total number of allocations.
         public let allocationCount: Int
-        
+
         /// Total number of deallocations.
         public let deallocationCount: Int
-        
+
         /// Number of failed allocations (due to limit).
         public let failedAllocations: Int
-        
+
         /// Current memory pressure (0.0 - 1.0).
         public let pressure: Double
     }
-    
+
     private let configuration: Configuration
     private var currentUsage: Int = 0
     private var peakUsage: Int = 0
     private var allocationCount: Int = 0
     private var deallocationCount: Int = 0
     private var failedAllocations: Int = 0
-    
+
     /// Creates a new memory tracker with the specified configuration.
     ///
     /// - Parameter configuration: The tracker configuration (default: default configuration).
     internal init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
-    
+
     /// Convenience initializer with just a memory limit.
     ///
     /// - Parameter limit: The maximum memory limit in bytes.
     internal init(limit: Int) {
         self.configuration = Configuration(limit: limit)
     }
-    
+
     /// Attempts to allocate the specified amount of memory.
     ///
     /// - Parameter size: The number of bytes to allocate.
@@ -108,15 +108,15 @@ internal actor J2KMemoryTracker {
                 )
             }
         }
-        
+
         // Update tracking
         currentUsage += size
         peakUsage = max(peakUsage, currentUsage)
-        
+
         if configuration.trackStatistics {
             allocationCount += 1
         }
-        
+
         // Check for memory pressure
         if configuration.limit > 0 {
             let pressure = Double(currentUsage) / Double(configuration.limit)
@@ -126,18 +126,18 @@ internal actor J2KMemoryTracker {
             }
         }
     }
-    
+
     /// Deallocates the specified amount of memory.
     ///
     /// - Parameter size: The number of bytes to deallocate.
     internal func deallocate(_ size: Int) {
         currentUsage = max(0, currentUsage - size)
-        
+
         if configuration.trackStatistics {
             deallocationCount += 1
         }
     }
-    
+
     /// Returns current memory usage statistics.
     ///
     /// - Returns: Statistics about memory usage.
@@ -148,7 +148,7 @@ internal actor J2KMemoryTracker {
         } else {
             pressure = 0.0
         }
-        
+
         return Statistics(
             currentUsage: currentUsage,
             peakUsage: peakUsage,
@@ -158,7 +158,7 @@ internal actor J2KMemoryTracker {
             pressure: pressure
         )
     }
-    
+
     /// Resets the tracker statistics.
     ///
     /// This resets peak usage and counters, but maintains current usage.
@@ -168,7 +168,7 @@ internal actor J2KMemoryTracker {
         deallocationCount = 0
         failedAllocations = 0
     }
-    
+
     /// Resets the tracker completely, including current usage.
     ///
     /// Warning: This should only be used when all tracked allocations
@@ -180,7 +180,7 @@ internal actor J2KMemoryTracker {
         deallocationCount = 0
         failedAllocations = 0
     }
-    
+
     /// Checks if there is sufficient memory available for an allocation.
     ///
     /// - Parameter size: The number of bytes to check.
@@ -191,7 +191,7 @@ internal actor J2KMemoryTracker {
         }
         return currentUsage + size <= configuration.limit
     }
-    
+
     /// Returns the amount of memory available for allocation.
     ///
     /// - Returns: Available memory in bytes, or `Int.max` if unlimited.

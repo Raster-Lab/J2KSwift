@@ -10,19 +10,19 @@ final class J2KFileFormatTests: XCTestCase {
         let reader = J2KFileReader()
         XCTAssertNotNil(reader)
     }
-    
+
     /// Tests that the file writer can be instantiated with default format.
     func testFileWriterDefaultFormat() throws {
         let writer = J2KFileWriter()
         XCTAssertEqual(writer.format, .jp2)
     }
-    
+
     /// Tests that the file writer can be instantiated with custom format.
     func testFileWriterCustomFormat() throws {
         let writer = J2KFileWriter(format: .j2k)
         XCTAssertEqual(writer.format, .j2k)
     }
-    
+
     /// Tests that all format types are accessible.
     func testFormatTypes() throws {
         XCTAssertEqual(J2KFormat.jp2.rawValue, "jp2")

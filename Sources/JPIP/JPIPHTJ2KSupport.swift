@@ -70,7 +70,6 @@ public struct JPIPImageInfo: Sendable {
 /// let headers = support.capabilityHeaders(for: info)
 /// ```
 public struct JPIPHTJ2KSupport: Sendable {
-
     /// Creates a new HTJ2K support helper.
     public init() {}
 

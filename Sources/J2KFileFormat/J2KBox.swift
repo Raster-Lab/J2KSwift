@@ -36,13 +36,13 @@ import J2KCore
 public protocol J2KBox: Sendable {
     /// The four-character box type identifier.
     var boxType: J2KBoxType { get }
-    
+
     /// Writes the box to binary data.
     ///
     /// - Returns: The serialized box data including header.
     /// - Throws: ``J2KError`` if writing fails.
     func write() throws -> Data
-    
+
     /// Reads the box content from data.
     ///
     /// - Parameter data: The box content (excluding the box header).
@@ -55,11 +55,11 @@ public protocol J2KBox: Sendable {
 /// These are the standard box types defined in ISO/IEC 15444-1 (JPEG 2000 Part 1).
 public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
     public let rawValue: UInt32
-    
+
     public init(rawValue: UInt32) {
         self.rawValue = rawValue
     }
-    
+
     /// Creates a box type from a four-character string.
     ///
     /// - Parameter string: The four-character box type identifier.
@@ -71,7 +71,7 @@ public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
                        UInt32(bytes[2]) << 8 |
                        UInt32(bytes[3])
     }
-    
+
     /// Returns the box type as a four-character string.
     public var stringValue: String {
         let bytes: [UInt8] = [
@@ -82,85 +82,85 @@ public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
         ]
         return String(bytes: bytes, encoding: .ascii) ?? "????"
     }
-    
+
     // MARK: - Standard Box Types
-    
+
     /// Signature box ('jP  ') - JP2 file signature
     public static let jp = J2KBoxType(string: "jP  ")
-    
+
     /// File type box ('ftyp') - File type and compatibility
     public static let ftyp = J2KBoxType(string: "ftyp")
-    
+
     /// JP2 header box ('jp2h') - Container for header boxes
     public static let jp2h = J2KBoxType(string: "jp2h")
-    
+
     /// Image header box ('ihdr') - Image dimensions and properties
     public static let ihdr = J2KBoxType(string: "ihdr")
-    
+
     /// Bits per component box ('bpcc') - Bit depth per component
     public static let bpcc = J2KBoxType(string: "bpcc")
-    
+
     /// Color specification box ('colr') - Color space information
     public static let colr = J2KBoxType(string: "colr")
-    
+
     /// Palette box ('pclr') - Palette data for indexed color
     public static let pclr = J2KBoxType(string: "pclr")
-    
+
     /// Component mapping box ('cmap') - Maps palette indices to components
     public static let cmap = J2KBoxType(string: "cmap")
-    
+
     /// Channel definition box ('cdef') - Channel/component definitions
     public static let cdef = J2KBoxType(string: "cdef")
-    
+
     /// Resolution box ('res ') - Container for resolution boxes
     public static let res = J2KBoxType(string: "res ")
-    
+
     /// Capture resolution box ('resc') - Original capture resolution
     public static let resc = J2KBoxType(string: "resc")
-    
+
     /// Display resolution box ('resd') - Recommended display resolution
     public static let resd = J2KBoxType(string: "resd")
-    
+
     /// Contiguous codestream box ('jp2c') - JPEG 2000 codestream
     public static let jp2c = J2KBoxType(string: "jp2c")
-    
+
     /// UUID box ('uuid') - Vendor-specific extensions
     public static let uuid = J2KBoxType(string: "uuid")
-    
+
     /// UUID info box ('uinf') - UUID list and URL
     public static let uinf = J2KBoxType(string: "uinf")
-    
+
     /// UUID list box ('ulst') - List of UUIDs
     public static let ulst = J2KBoxType(string: "ulst")
-    
+
     /// XML box ('xml ') - XML metadata
     public static let xml = J2KBoxType(string: "xml ")
-    
+
     // MARK: - JPX Box Types (ISO/IEC 15444-2)
-    
+
     /// Reader requirements box ('rreq') - Requirements for reading the file
     public static let rreq = J2KBoxType(string: "rreq")
-    
+
     /// Fragment table box ('ftbl') - Container for fragment list
     public static let ftbl = J2KBoxType(string: "ftbl")
-    
+
     /// Fragment list box ('flst') - List of codestream fragments
     public static let flst = J2KBoxType(string: "flst")
-    
+
     /// Composition box ('comp') - Instructions for composing layers
     public static let comp = J2KBoxType(string: "comp")
-    
+
     /// Compositing layer header box ('cgrp') - Grouping of composition layers
     public static let cgrp = J2KBoxType(string: "cgrp")
-    
+
     // MARK: - JPM Box Types (ISO/IEC 15444-6)
-    
+
     /// Page collection box ('pcol') - Container for pages
     public static let pcol = J2KBoxType(string: "pcol")
-    
+
     /// Page box ('page') - Single page in a multi-page document
     public static let page = J2KBoxType(string: "page")
-    
+
     /// Layout box ('lobj') - Layout information for objects
     public static let lobj = J2KBoxType(string: "lobj")
 }
@@ -182,33 +182,33 @@ public struct J2KBoxReader: Sendable {
     public struct BoxInfo: Sendable {
         /// The box type.
         public let type: J2KBoxType
-        
+
         /// The offset of the box header in the data.
         public let headerOffset: Int
-        
+
         /// The size of the box header (8 for standard, 16 for extended).
         public let headerSize: Int
-        
+
         /// The total length of the box including header.
         public let totalLength: Int
-        
+
         /// The offset of the box content (after the header).
         public var contentOffset: Int {
             headerOffset + headerSize
         }
-        
+
         /// The length of the box content (excluding the header).
         public var contentLength: Int {
             totalLength - headerSize
         }
     }
-    
+
     /// The data being read.
     private let data: Data
-    
+
     /// The current read position.
     private var position: Int
-    
+
     /// Creates a new box reader.
     ///
     /// - Parameter data: The data to read boxes from.
@@ -216,36 +216,36 @@ public struct J2KBoxReader: Sendable {
         self.data = data
         self.position = 0
     }
-    
+
     /// The current read position in the data.
     public var currentPosition: Int {
         position
     }
-    
+
     /// Returns `true` if there are no more boxes to read.
     public var isAtEnd: Bool {
         position >= data.count
     }
-    
+
     /// Reads the next box header without advancing the position.
     ///
     /// - Returns: Information about the next box, or `nil` if at end.
     /// - Throws: ``J2KError`` if the box header is invalid.
     public func peekNextBox() throws -> BoxInfo? {
         guard position < data.count else { return nil }
-        
+
         guard position + 8 <= data.count else {
             throw J2KError.fileFormatError("Incomplete box header at offset \(position)")
         }
-        
+
         // Read standard header
         let length = readUInt32(at: position)
         let type = J2KBoxType(rawValue: readUInt32(at: position + 4))
-        
+
         // Determine actual length and header size
         var actualLength: Int
         var headerSize: Int
-        
+
         if length == 0 {
             // Box extends to end of file
             actualLength = data.count - position
@@ -268,12 +268,12 @@ public struct J2KBoxReader: Sendable {
         } else {
             throw J2KError.fileFormatError("Invalid box length \(length) at offset \(position)")
         }
-        
+
         // Validate that box doesn't extend beyond data
         guard position + actualLength <= data.count else {
             throw J2KError.fileFormatError("Box extends beyond end of data at offset \(position)")
         }
-        
+
         return BoxInfo(
             type: type,
             headerOffset: position,
@@ -281,7 +281,7 @@ public struct J2KBoxReader: Sendable {
             totalLength: actualLength
         )
     }
-    
+
     /// Reads and returns the next box header, advancing the position.
     ///
     /// - Returns: Information about the next box, or `nil` if at end.
@@ -293,7 +293,7 @@ public struct J2KBoxReader: Sendable {
         position = info.headerOffset + info.totalLength
         return info
     }
-    
+
     /// Extracts the content of a box.
     ///
     /// - Parameter info: The box information.
@@ -303,14 +303,14 @@ public struct J2KBoxReader: Sendable {
         let end = start + info.contentLength
         return data.subdata(in: start..<end)
     }
-    
+
     /// Skips the current box and moves to the next one.
     ///
     /// - Throws: ``J2KError`` if skipping fails.
     public mutating func skipBox() throws {
         _ = try readNextBox()
     }
-    
+
     /// Seeks to a specific position in the data.
     ///
     /// - Parameter offset: The offset to seek to.
@@ -321,7 +321,7 @@ public struct J2KBoxReader: Sendable {
         }
         position = offset
     }
-    
+
     /// Reads all boxes from the current position to the end.
     ///
     /// - Returns: An array of box information structures.
@@ -333,16 +333,16 @@ public struct J2KBoxReader: Sendable {
         }
         return boxes
     }
-    
+
     // MARK: - Private Helpers
-    
+
     private func readUInt32(at offset: Int) -> UInt32 {
         UInt32(data[offset]) << 24 |
         UInt32(data[offset + 1]) << 16 |
         UInt32(data[offset + 2]) << 8 |
         UInt32(data[offset + 3])
     }
-    
+
     private func readUInt64(at offset: Int) -> UInt64 {
         UInt64(data[offset]) << 56 |
         UInt64(data[offset + 1]) << 48 |
@@ -370,7 +370,7 @@ public struct J2KBoxReader: Sendable {
 public struct J2KBoxWriter: Sendable {
     /// The buffer containing written data.
     private var buffer: Data
-    
+
     /// Creates a new box writer.
     ///
     /// - Parameter capacity: The initial capacity in bytes (default: 4096).
@@ -378,17 +378,17 @@ public struct J2KBoxWriter: Sendable {
         self.buffer = Data()
         self.buffer.reserveCapacity(capacity)
     }
-    
+
     /// The data written so far.
     public var data: Data {
         buffer
     }
-    
+
     /// The number of bytes written.
     public var count: Int {
         buffer.count
     }
-    
+
     /// Writes a box to the buffer.
     ///
     /// - Parameter box: The box to write.
@@ -397,7 +397,7 @@ public struct J2KBoxWriter: Sendable {
         let content = try box.write()
         try writeRawBox(type: box.boxType, content: content)
     }
-    
+
     /// Writes a raw box with the given type and content.
     ///
     /// - Parameters:
@@ -407,7 +407,7 @@ public struct J2KBoxWriter: Sendable {
     public mutating func writeRawBox(type: J2KBoxType, content: Data) throws {
         let headerSize = 8
         let totalLength = headerSize + content.count
-        
+
         // Determine if we need extended length
         if totalLength > UInt32.max {
             // Use extended length format
@@ -422,23 +422,23 @@ public struct J2KBoxWriter: Sendable {
             buffer.append(content)
         }
     }
-    
+
     /// Writes raw bytes to the buffer.
     ///
     /// - Parameter data: The data to write.
     public mutating func writeData(_ data: Data) {
         buffer.append(data)
     }
-    
+
     // MARK: - Private Helpers
-    
+
     private mutating func writeUInt32(_ value: UInt32) {
         buffer.append(UInt8((value >> 24) & 0xFF))
         buffer.append(UInt8((value >> 16) & 0xFF))
         buffer.append(UInt8((value >> 8) & 0xFF))
         buffer.append(UInt8(value & 0xFF))
     }
-    
+
     private mutating func writeUInt64(_ value: UInt64) {
         buffer.append(UInt8((value >> 56) & 0xFF))
         buffer.append(UInt8((value >> 48) & 0xFF))

@@ -23,7 +23,6 @@ import J2KFileFormat
 /// let bins = try generator.generateDataBins(from: codestreamData)
 /// ```
 public struct JPIPDataBinGenerator: Sendable {
-
     /// Creates a new data bin generator.
     public init() {}
 

@@ -78,7 +78,7 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// q = sign(c) × floor(|c| / Δ)
     /// ```
     case scalar
-    
+
     /// Deadzone quantization.
     ///
     /// Similar to scalar quantization but with an enlarged zero bin (deadzone).
@@ -90,14 +90,14 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// ```
     /// where t is the deadzone threshold (typically 0.5 × Δ to 1.5 × Δ).
     case deadzone
-    
+
     /// Expounded quantization.
     ///
     /// Each subband has an explicitly specified step size.
     /// This allows fine-grained control over quality at different
     /// frequency bands.
     case expounded
-    
+
     /// No quantization (lossless mode).
     ///
     /// Coefficients are passed through without modification.
@@ -115,7 +115,7 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
 public struct J2KGuardBits: Sendable, Equatable {
     /// The number of guard bits (0-7).
     public let count: Int
-    
+
     /// Creates guard bits configuration.
     ///
     /// - Parameter count: Number of guard bits (0-7).
@@ -126,7 +126,7 @@ public struct J2KGuardBits: Sendable, Equatable {
         }
         self.count = count
     }
-    
+
     /// Default guard bits (2 bits).
     public static let `default` = try! J2KGuardBits(count: 2)
 }
@@ -140,37 +140,37 @@ public struct J2KGuardBits: Sendable, Equatable {
 public struct J2KQuantizationParameters: Sendable, Equatable {
     /// The quantization mode.
     public let mode: J2KQuantizationMode
-    
+
     /// Base step size for quantization (Δ_base).
     ///
     /// This is the fundamental unit of quantization. Larger values
     /// result in more aggressive compression but lower quality.
     /// Range: 0.0 (lossless) to any positive value.
     public let baseStepSize: Double
-    
+
     /// Deadzone width as a multiple of the step size.
     ///
     /// Only used in deadzone mode. A value of 1.0 gives a deadzone
     /// equal to the step size. Typical values are 0.5 to 2.0.
     /// Default is 1.0 (one step size on each side of zero).
     public let deadzoneWidth: Double
-    
+
     /// Guard bits for overflow prevention.
     public let guardBits: J2KGuardBits
-    
+
     /// Whether to use implicit (derived) step sizes.
     ///
     /// When true, step sizes for subbands are derived from the base
     /// step size using standard JPEG 2000 formulas. When false,
     /// explicit step sizes must be provided for each subband.
     public let implicitStepSizes: Bool
-    
+
     /// Explicit step sizes for each subband (optional).
     ///
     /// Only used when `implicitStepSizes` is false.
     /// Keys should be subband names at specific levels (e.g., "HL1", "HH2").
     public let explicitStepSizes: [String: Double]
-    
+
     /// Creates quantization parameters.
     ///
     /// - Parameters:
@@ -195,20 +195,20 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         self.implicitStepSizes = implicitStepSizes
         self.explicitStepSizes = explicitStepSizes
     }
-    
+
     /// Default parameters for lossy compression.
     public static let lossy = J2KQuantizationParameters(
         mode: .deadzone,
         baseStepSize: 1.0,
         deadzoneWidth: 1.0
     )
-    
+
     /// Parameters for lossless compression.
     public static let lossless = J2KQuantizationParameters(
         mode: .noQuantization,
         baseStepSize: 1.0
     )
-    
+
     /// Creates parameters from a quality factor.
     ///
     /// - Parameter quality: Quality factor (0.0 = lowest, 1.0 = highest).
@@ -219,7 +219,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         // Quality 0.0 -> step size ~16.0 (high compression)
         let clampedQuality = max(0.0, min(1.0, quality))
         let stepSize = 16.0 * pow(0.1 / 16.0, clampedQuality)
-        
+
         return J2KQuantizationParameters(
             mode: .deadzone,
             baseStepSize: stepSize,
@@ -236,7 +236,6 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
 /// the wavelet transform. Different subbands have different energy
 /// levels and require appropriate scaling.
 public struct J2KSubbandGain: Sendable {
-    
     /// Returns the gain factor for a subband.
     ///
     /// For the 5/3 filter:
@@ -273,7 +272,7 @@ public struct J2KSubbandGain: Sendable {
             }
         }
     }
-    
+
     /// Returns the base 2 logarithm of the gain (for bit shifting).
     ///
     /// - Parameters:
@@ -309,7 +308,6 @@ public struct J2KSubbandGain: Sendable {
 /// - Subband type (detail subbands have different gains)
 /// - Filter type (5/3 vs 9/7 have different energy distributions)
 public struct J2KStepSizeCalculator: Sendable {
-    
     /// Calculates the step size for a specific subband.
     ///
     /// The step size is computed as:
@@ -334,14 +332,14 @@ public struct J2KStepSizeCalculator: Sendable {
         // Level scaling: coarser levels (higher decomposition) get larger steps
         // decompositionLevel 0 is finest, totalLevels-1 is coarsest
         let levelScale = pow(2.0, Double(decompositionLevel))
-        
+
         // Subband gain
         let gain = J2KSubbandGain.gain(for: subband, reversible: reversible)
-        
+
         // Final step size
         return baseStepSize * levelScale / gain
     }
-    
+
     /// Calculates step sizes for all subbands in a multi-level decomposition.
     ///
     /// - Parameters:
@@ -355,11 +353,11 @@ public struct J2KStepSizeCalculator: Sendable {
         reversible: Bool
     ) -> [String: Double] {
         var stepSizes: [String: Double] = [:]
-        
+
         // For each level, calculate step sizes for LH, HL, HH
         for level in 0..<totalLevels {
             let levelName = "\(level + 1)" // 1-indexed for naming
-            
+
             for subband in [J2KSubband.lh, .hl, .hh] {
                 let key = "\(subband.rawValue)\(levelName)"
                 stepSizes[key] = calculateStepSize(
@@ -371,7 +369,7 @@ public struct J2KStepSizeCalculator: Sendable {
                 )
             }
         }
-        
+
         // LL subband at the coarsest level
         stepSizes["LL\(totalLevels)"] = calculateStepSize(
             baseStepSize: baseStepSize,
@@ -380,10 +378,10 @@ public struct J2KStepSizeCalculator: Sendable {
             totalLevels: totalLevels,
             reversible: reversible
         )
-        
+
         return stepSizes
     }
-    
+
     /// Encodes step size as JPEG 2000 exponent/mantissa pair.
     ///
     /// In JPEG 2000, step sizes are encoded as:
@@ -400,28 +398,28 @@ public struct J2KStepSizeCalculator: Sendable {
         guard stepSize > 0 else {
             return (0, 0)
         }
-        
+
         // Find the exponent such that stepSize is in range [1, 2) × 2^e
         // i.e., e = floor(log2(stepSize))
         let log2Step = log2(stepSize)
         let floatExponent = floor(log2Step)
-        
+
         // The exponent in JPEG 2000 is stored as a 5-bit value
         // We need to encode it in a way that allows reconstruction
         // Exponent represents the power of 2 for the step size
         // We use signed representation: positive exponents for step > 1
         let exponent = Int(floatExponent) + 16 // Bias of 16 to handle both > 1 and < 1
         let clampedExponent = max(0, min(31, exponent))
-        
+
         // Calculate mantissa: stepSize = 2^(e) × (1 + μ/2048)
         // So μ = (stepSize / 2^e - 1) × 2048
         let baseValue = pow(2.0, floatExponent)
         let normalizedValue = stepSize / baseValue
         let mantissa = max(0, min(2047, Int((normalizedValue - 1.0) * 2048.0)))
-        
+
         return (clampedExponent, mantissa)
     }
-    
+
     /// Decodes JPEG 2000 exponent/mantissa pair to step size.
     ///
     /// - Parameters:
@@ -443,7 +441,6 @@ public struct J2KStepSizeCalculator: Sendable {
 /// Quantization parameters must be adjusted based on the bit depth
 /// of the input data to maintain consistent quality.
 public struct J2KDynamicRange: Sendable {
-    
     /// Calculates the scaling factor for a given bit depth.
     ///
     /// - Parameters:
@@ -456,7 +453,7 @@ public struct J2KDynamicRange: Sendable {
         let maxValue = Double((1 << bitDepth) - 1)
         return 1.0 / maxValue
     }
-    
+
     /// Calculates the maximum magnitude for a bit depth.
     ///
     /// - Parameters:
@@ -470,7 +467,7 @@ public struct J2KDynamicRange: Sendable {
             return Int32((1 << bitDepth) - 1)
         }
     }
-    
+
     /// Adjusts base step size for bit depth.
     ///
     /// Higher bit depths have a larger dynamic range and may need
@@ -499,13 +496,12 @@ public struct J2KDynamicRange: Sendable {
 /// Performs forward quantization (encoding) and inverse quantization
 /// (decoding/reconstruction) of wavelet transform coefficients.
 public struct J2KQuantizer: Sendable {
-    
     /// The quantization parameters.
     public let parameters: J2KQuantizationParameters
-    
+
     /// Whether to use the reversible (5/3) filter.
     public let reversible: Bool
-    
+
     /// Creates a new quantizer.
     ///
     /// - Parameters:
@@ -518,9 +514,9 @@ public struct J2KQuantizer: Sendable {
         self.parameters = parameters
         self.reversible = reversible
     }
-    
+
     // MARK: - Forward Quantization
-    
+
     /// Quantizes a single coefficient.
     ///
     /// - Parameters:
@@ -532,27 +528,27 @@ public struct J2KQuantizer: Sendable {
         case .noQuantization:
             // No quantization - round to nearest integer
             return Int32(coefficient.rounded())
-            
+
         case .scalar:
             // Scalar quantization: q = sign(c) × floor(|c| / Δ)
             let sign = coefficient >= 0 ? 1.0 : -1.0
             let magnitude = abs(coefficient)
             let quantizedMag = floor(magnitude / stepSize)
             return Int32(sign * quantizedMag)
-            
+
         case .deadzone:
             // Deadzone quantization with enlarged zero bin
             let sign = coefficient >= 0 ? 1.0 : -1.0
             let magnitude = abs(coefficient)
             let threshold = stepSize * parameters.deadzoneWidth * 0.5
-            
+
             if magnitude <= threshold {
                 return 0
             }
-            
+
             let quantizedMag = floor((magnitude - threshold) / stepSize) + 1
             return Int32(sign * quantizedMag)
-            
+
         case .expounded:
             // Same as scalar for individual coefficient
             // (step size should be provided from explicit table)
@@ -562,7 +558,7 @@ public struct J2KQuantizer: Sendable {
             return Int32(sign * quantizedMag)
         }
     }
-    
+
     /// Quantizes a single Int32 coefficient (optimized version).
     ///
     /// This overload avoids type conversion overhead by working directly with Int32 values.
@@ -577,27 +573,27 @@ public struct J2KQuantizer: Sendable {
         case .noQuantization:
             // No quantization - return as-is
             return coefficient
-            
+
         case .scalar:
             // Scalar quantization: q = sign(c) × floor(|c| / Δ)
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
             let quantizedMag = Int32(Double(magnitude) / stepSize)
             return sign * quantizedMag
-            
+
         case .deadzone:
             // Deadzone quantization with enlarged zero bin
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
             let threshold = Int32(stepSize * parameters.deadzoneWidth * 0.5)
-            
+
             if magnitude <= threshold {
                 return 0
             }
-            
+
             let quantizedMag = Int32((Double(magnitude) - Double(threshold)) / stepSize) + 1
             return sign * quantizedMag
-            
+
         case .expounded:
             // Same as scalar for individual coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
@@ -606,7 +602,7 @@ public struct J2KQuantizer: Sendable {
             return sign * quantizedMag
         }
     }
-    
+
     /// Quantizes an array of coefficients.
     ///
     /// - Parameters:
@@ -628,16 +624,16 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         guard stepSize > 0 else {
             throw J2KError.invalidParameter("Step size must be positive")
         }
-        
+
         return coefficients.map { coefficient in
             quantizeCoefficient(coefficient, stepSize: stepSize)
         }
     }
-    
+
     /// Quantizes an array of Int32 coefficients.
     ///
     /// This overload handles integer input from the DWT directly, avoiding
@@ -662,17 +658,17 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         guard stepSize > 0 else {
             throw J2KError.invalidParameter("Step size must be positive")
         }
-        
+
         // Directly quantize Int32 values using specialized Int32 method
         return coefficients.map { coefficient in
             quantizeCoefficient(coefficient, stepSize: stepSize)
         }
     }
-    
+
     /// Quantizes a 2D array of coefficients.
     ///
     /// - Parameters:
@@ -693,18 +689,18 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         guard stepSize > 0 else {
             throw J2KError.invalidParameter("Step size must be positive")
         }
-        
+
         return coefficients.map { row in
             row.map { coefficient in
                 quantizeCoefficient(coefficient, stepSize: stepSize)
             }
         }
     }
-    
+
     /// Quantizes a 2D array of Int32 coefficients.
     ///
     /// This overload handles integer input from the DWT directly.
@@ -727,20 +723,20 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         guard stepSize > 0 else {
             throw J2KError.invalidParameter("Step size must be positive")
         }
-        
+
         return coefficients.map { row in
             row.map { coefficient in
                 quantizeCoefficient(Double(coefficient), stepSize: stepSize)
             }
         }
     }
-    
+
     // MARK: - Inverse Quantization (Dequantization)
-    
+
     /// Dequantizes a single index.
     ///
     /// - Parameters:
@@ -752,7 +748,7 @@ public struct J2KQuantizer: Sendable {
         case .noQuantization:
             // No quantization - return as-is
             return Double(index)
-            
+
         case .scalar:
             // Scalar dequantization: c' = (q + 0.5 × sign(q)) × Δ
             // This reconstructs to the center of the quantization bin
@@ -762,7 +758,7 @@ public struct J2KQuantizer: Sendable {
             let sign = index >= 0 ? 1.0 : -1.0
             let magnitude = Double(abs(index)) + 0.5
             return sign * magnitude * stepSize
-            
+
         case .deadzone:
             // Deadzone dequantization
             if index == 0 {
@@ -772,7 +768,7 @@ public struct J2KQuantizer: Sendable {
             let threshold = stepSize * parameters.deadzoneWidth * 0.5
             let magnitude = (Double(abs(index)) - 0.5) * stepSize + threshold
             return sign * magnitude
-            
+
         case .expounded:
             // Same as scalar
             if index == 0 {
@@ -783,7 +779,7 @@ public struct J2KQuantizer: Sendable {
             return sign * magnitude * stepSize
         }
     }
-    
+
     /// Dequantizes an array of indices.
     ///
     /// - Parameters:
@@ -804,12 +800,12 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         return indices.map { index in
             dequantizeIndex(index, stepSize: stepSize)
         }
     }
-    
+
     /// Dequantizes a 2D array of indices.
     ///
     /// - Parameters:
@@ -830,14 +826,14 @@ public struct J2KQuantizer: Sendable {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         return indices.map { row in
             row.map { index in
                 dequantizeIndex(index, stepSize: stepSize)
             }
         }
     }
-    
+
     /// Dequantizes to integer values (for reversible transform).
     ///
     /// - Parameters:
@@ -857,22 +853,22 @@ public struct J2KQuantizer: Sendable {
         if parameters.mode == .noQuantization {
             return indices
         }
-        
+
         let stepSize = getStepSize(
             for: subband,
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         return indices.map { row in
             row.map { index in
                 Int32(dequantizeIndex(index, stepSize: stepSize).rounded())
             }
         }
     }
-    
+
     // MARK: - Helper Methods
-    
+
     /// Gets the step size for a specific subband.
     ///
     /// - Parameters:
@@ -892,7 +888,7 @@ public struct J2KQuantizer: Sendable {
                 return explicit
             }
         }
-        
+
         // Calculate implicit step size
         return J2KStepSizeCalculator.calculateStepSize(
             baseStepSize: parameters.baseStepSize,
@@ -907,7 +903,6 @@ public struct J2KQuantizer: Sendable {
 // MARK: - Convenience Extensions
 
 extension J2KQuantizer {
-    
     /// Quantizes a complete DWT decomposition result.
     ///
     /// - Parameters:
@@ -948,10 +943,10 @@ extension J2KQuantizer {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         return (quantizedLL, quantizedLH, quantizedHL, quantizedHH)
     }
-    
+
     /// Dequantizes a complete set of subbands.
     ///
     /// - Parameters:
@@ -995,7 +990,7 @@ extension J2KQuantizer {
             decompositionLevel: decompositionLevel,
             totalLevels: totalLevels
         )
-        
+
         return (dequantizedLL, dequantizedLH, dequantizedHL, dequantizedHH)
     }
 }

@@ -56,29 +56,28 @@ import J2KCore
 /// )
 /// ```
 public struct J2KDWT2D: Sendable {
-    
     // MARK: - Types
-    
+
     /// Result of a single-level 2D DWT decomposition.
     public struct DecompositionResult: Sendable {
         /// Low-low subband (approximation).
         public let ll: [[Int32]]
-        
+
         /// Low-high subband (horizontal details).
         public let lh: [[Int32]]
-        
+
         /// High-low subband (vertical details).
         public let hl: [[Int32]]
-        
+
         /// High-high subband (diagonal details).
         public let hh: [[Int32]]
-        
+
         /// Width of the LL subband.
         public var width: Int { ll[0].count }
-        
+
         /// Height of the LL subband.
         public var height: Int { ll.count }
-        
+
         public init(ll: [[Int32]], lh: [[Int32]], hl: [[Int32]], hh: [[Int32]]) {
             self.ll = ll
             self.lh = lh
@@ -86,25 +85,25 @@ public struct J2KDWT2D: Sendable {
             self.hh = hh
         }
     }
-    
+
     /// Result of a multi-level 2D DWT decomposition.
     public struct MultiLevelDecomposition: Sendable {
         /// Decomposition results for each level, from finest (index 0) to coarsest.
         public let levels: [DecompositionResult]
-        
+
         /// The final LL subband (coarsest approximation).
         public var coarsestLL: [[Int32]] {
             levels.last?.ll ?? []
         }
-        
+
         /// Number of decomposition levels.
         public var levelCount: Int { levels.count }
-        
+
         public init(levels: [DecompositionResult]) {
             self.levels = levels
         }
     }
-    
+
     /// Decomposition structure pattern for wavelet transform.
     ///
     /// Defines how the DWT should be applied across different levels and subbands.
@@ -122,7 +121,7 @@ public struct J2KDWT2D: Sendable {
         /// Level 2: LL2 -> LL3, LH3, HL3, HH3
         /// ```
         case dyadic(levels: Int)
-        
+
         /// Wavelet packet decomposition (all subbands can be decomposed).
         ///
         /// Allows decomposition of not just LL, but also LH, HL, and HH subbands.
@@ -133,7 +132,7 @@ public struct J2KDWT2D: Sendable {
         ///   For example: 0b0001 = decompose only LL (standard dyadic)
         ///               0b1111 = decompose all four subbands
         case waveletPacket(pattern: [UInt8])
-        
+
         /// Arbitrary decomposition with different levels for horizontal and vertical.
         ///
         /// Allows independent control of horizontal and vertical decomposition levels.
@@ -144,9 +143,9 @@ public struct J2KDWT2D: Sendable {
         ///   - verticalLevels: Number of vertical decomposition levels
         case arbitrary(horizontalLevels: Int, verticalLevels: Int)
     }
-    
+
     // MARK: - Forward Transform
-    
+
     /// Performs 2D forward discrete wavelet transform (single level).
     ///
     /// Applies 1D DWT to rows, then to columns of the result, producing four subbands.
@@ -173,24 +172,24 @@ public struct J2KDWT2D: Sendable {
         guard !image.isEmpty else {
             throw J2KError.invalidParameter("Image cannot be empty")
         }
-        
+
         let height = image.count
         let width = image[0].count
-        
+
         guard width >= 2 && height >= 2 else {
             throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
         }
-        
+
         // Validate all rows have the same length
         guard image.allSatisfy({ $0.count == width }) else {
             throw J2KError.invalidParameter("All rows must have the same length")
         }
-        
+
         // Step 1: Apply 1D DWT to each row
         var rowTransformed = [[Int32]]()
         var rowLowCount = 0
         var rowHighCount = 0
-        
+
         for row in image {
             let (low, high) = try J2KDWT1D.forwardTransform(
                 signal: row,
@@ -199,7 +198,7 @@ public struct J2KDWT2D: Sendable {
             )
             rowLowCount = low.count
             rowHighCount = high.count
-            
+
             // Interleave low and high for easier column processing
             var transformedRow = [Int32]()
             transformedRow.reserveCapacity(width)
@@ -207,13 +206,13 @@ public struct J2KDWT2D: Sendable {
             transformedRow.append(contentsOf: high)
             rowTransformed.append(transformedRow)
         }
-        
+
         // Step 2: Apply 1D DWT to each column of the row-transformed data
         var ll = [[Int32]]()
         var lh = [[Int32]]()
         var hl = [[Int32]]()
         var hh = [[Int32]]()
-        
+
         // Process low-frequency columns (from row transform)
         for col in 0..<rowLowCount {
             var column = [Int32]()
@@ -221,13 +220,13 @@ public struct J2KDWT2D: Sendable {
             for row in 0..<height {
                 column.append(rowTransformed[row][col])
             }
-            
+
             let (low, high) = try J2KDWT1D.forwardTransform(
                 signal: column,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             // low -> LL subband, high -> HL subband
             if ll.isEmpty {
                 ll = Array(repeating: [Int32](), count: low.count)
@@ -240,7 +239,7 @@ public struct J2KDWT2D: Sendable {
                 hl[i].append(high[i])
             }
         }
-        
+
         // Process high-frequency columns (from row transform)
         for col in rowLowCount..<(rowLowCount + rowHighCount) {
             var column = [Int32]()
@@ -248,13 +247,13 @@ public struct J2KDWT2D: Sendable {
             for row in 0..<height {
                 column.append(rowTransformed[row][col])
             }
-            
+
             let (low, high) = try J2KDWT1D.forwardTransform(
                 signal: column,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             // low -> LH subband, high -> HH subband
             if lh.isEmpty {
                 lh = Array(repeating: [Int32](), count: low.count)
@@ -267,10 +266,10 @@ public struct J2KDWT2D: Sendable {
                 hh[i].append(high[i])
             }
         }
-        
+
         return DecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh)
     }
-    
+
     /// Performs multi-level 2D forward DWT.
     ///
     /// Recursively applies the 2D DWT to the LL subband from each level.
@@ -301,39 +300,39 @@ public struct J2KDWT2D: Sendable {
         guard levels >= 1 else {
             throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
         }
-        
+
         var results = [DecompositionResult]()
         var currentImage = image
-        
+
         for level in 0..<levels {
             // Check if image is large enough for another level
             let height = currentImage.count
             let width = currentImage[0].count
-            
+
             guard width >= 2 && height >= 2 else {
                 throw J2KError.invalidParameter(
                     "Cannot decompose level \(level + 1): image size \(width)x\(height) is too small"
                 )
             }
-            
+
             // Perform single-level decomposition
             let result = try forwardTransform(
                 image: currentImage,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             results.append(result)
-            
+
             // Use LL subband as input for next level
             currentImage = result.ll
         }
-        
+
         return MultiLevelDecomposition(levels: results)
     }
-    
+
     // MARK: - Inverse Transform
-    
+
     /// Performs 2D inverse discrete wavelet transform (single level).
     ///
     /// Reconstructs the image from the four subbands.
@@ -367,7 +366,7 @@ public struct J2KDWT2D: Sendable {
         guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
             throw J2KError.invalidParameter("All subbands must be non-empty")
         }
-        
+
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
@@ -376,20 +375,20 @@ public struct J2KDWT2D: Sendable {
         let hlWidth = hl[0].count
         let hhHeight = hh.count
         let hhWidth = hh[0].count
-        
+
         // Validate subband dimensions - allow for off-by-one due to odd dimensions
         guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
             )
         }
-        
+
         guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
             )
         }
-        
+
         // Validate all rows have consistent lengths
         guard ll.allSatisfy({ $0.count == llWidth }) &&
               lh.allSatisfy({ $0.count == lhWidth }) &&
@@ -397,32 +396,32 @@ public struct J2KDWT2D: Sendable {
               hh.allSatisfy({ $0.count == hhWidth }) else {
             throw J2KError.invalidParameter("All subband rows must have consistent lengths")
         }
-        
+
         // Step 1: Apply inverse 1D DWT to columns
         var columnInversed = [[Int32]]()
-        
+
         // Reconstruct low-frequency columns (LL + HL -> L)
         for col in 0..<llWidth {
             var llColumn = [Int32]()
             var hlColumn = [Int32]()
-            
+
             llColumn.reserveCapacity(llHeight)
             hlColumn.reserveCapacity(hlHeight)
-            
+
             for row in 0..<llHeight {
                 llColumn.append(ll[row][col])
             }
             for row in 0..<hlHeight {
                 hlColumn.append(hl[row][col])
             }
-            
+
             let reconstructedColumn = try J2KDWT1D.inverseTransform(
                 lowpass: llColumn,
                 highpass: hlColumn,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             if columnInversed.isEmpty {
                 columnInversed = Array(repeating: [Int32](), count: reconstructedColumn.count)
             }
@@ -430,57 +429,57 @@ public struct J2KDWT2D: Sendable {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Reconstruct high-frequency columns (LH + HH -> H)
         let highFreqStartCol = columnInversed[0].count
         for col in 0..<lhWidth {
             var lhColumn = [Int32]()
             var hhColumn = [Int32]()
-            
+
             lhColumn.reserveCapacity(lhHeight)
             hhColumn.reserveCapacity(hhHeight)
-            
+
             for row in 0..<lhHeight {
                 lhColumn.append(lh[row][col])
             }
             for row in 0..<hhHeight {
                 hhColumn.append(hh[row][col])
             }
-            
+
             let reconstructedColumn = try J2KDWT1D.inverseTransform(
                 lowpass: lhColumn,
                 highpass: hhColumn,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             for i in 0..<reconstructedColumn.count {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Step 2: Apply inverse 1D DWT to rows
         var result = [[Int32]]()
         result.reserveCapacity(columnInversed.count)
-        
+
         for row in columnInversed {
             let midPoint = highFreqStartCol
             let lowpass = Array(row[0..<midPoint])
             let highpass = Array(row[midPoint..<row.count])
-            
+
             let reconstructedRow = try J2KDWT1D.inverseTransform(
                 lowpass: lowpass,
                 highpass: highpass,
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
             result.append(reconstructedRow)
         }
-        
+
         return result
     }
-    
+
     /// Performs multi-level 2D inverse DWT.
     ///
     /// Reconstructs the image from a multi-level decomposition by applying
@@ -508,13 +507,13 @@ public struct J2KDWT2D: Sendable {
         guard !decomposition.levels.isEmpty else {
             throw J2KError.invalidParameter("Decomposition must have at least one level")
         }
-        
+
         var currentImage = decomposition.coarsestLL
-        
+
         // Reconstruct from coarsest to finest
         for level in (0..<decomposition.levelCount).reversed() {
             let result = decomposition.levels[level]
-            
+
             currentImage = try inverseTransform(
                 ll: currentImage,
                 lh: result.lh,
@@ -524,12 +523,12 @@ public struct J2KDWT2D: Sendable {
                 boundaryExtension: boundaryExtension
             )
         }
-        
+
         return currentImage
     }
-    
+
     // MARK: - Arbitrary Decomposition Structures
-    
+
     /// Performs 2D forward DWT with a custom decomposition structure.
     ///
     /// This method allows for flexible decomposition patterns beyond standard dyadic,
@@ -568,7 +567,7 @@ public struct J2KDWT2D: Sendable {
         guard !image.isEmpty else {
             throw J2KError.invalidParameter("Image cannot be empty")
         }
-        
+
         switch structure {
         case .dyadic(let levels):
             // Standard dyadic decomposition - just call existing method
@@ -578,18 +577,18 @@ public struct J2KDWT2D: Sendable {
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            
+
         case .waveletPacket(let pattern):
             // Wavelet packet decomposition - decompose specified subbands
             guard !pattern.isEmpty else {
                 throw J2KError.invalidParameter("Wavelet packet pattern cannot be empty")
             }
-            
+
             // For now, implement basic packet decomposition (LL only)
             // Full packet decomposition would require tracking all subband trees
             var levels: [DecompositionResult] = []
             var currentImage = image
-            
+
             for (levelIdx, levelPattern) in pattern.enumerated() {
                 // Decompose LL subband if bit 0 is set
                 if levelPattern & 0b0001 != 0 {
@@ -600,7 +599,7 @@ public struct J2KDWT2D: Sendable {
                     )
                     levels.append(result)
                     currentImage = result.ll
-                    
+
                     // Note: Full wavelet packet would also decompose LH/HL/HH if their bits are set
                     // This is left as a future enhancement
                 } else {
@@ -609,9 +608,9 @@ public struct J2KDWT2D: Sendable {
                     )
                 }
             }
-            
+
             return MultiLevelDecomposition(levels: levels)
-            
+
         case .arbitrary(let hLevels, let vLevels):
             // Arbitrary decomposition with independent H/V levels
             guard hLevels >= 0 && vLevels >= 0 else {
@@ -619,31 +618,31 @@ public struct J2KDWT2D: Sendable {
                     "Horizontal and vertical levels must be non-negative, got h=\(hLevels), v=\(vLevels)"
                 )
             }
-            
+
             guard hLevels > 0 || vLevels > 0 else {
                 throw J2KError.invalidParameter("At least one decomposition level is required")
             }
-            
+
             // Apply separable transforms with different levels
             var currentImage = image
             var levels: [DecompositionResult] = []
-            
+
             let maxLevels = max(hLevels, vLevels)
-            
+
             for level in 0..<maxLevels {
                 let height = currentImage.count
                 let width = currentImage[0].count
-                
+
                 // Check if we can decompose further
                 guard width >= 2 && height >= 2 else {
                     throw J2KError.invalidParameter(
                         "Image too small for \(level + 1) levels of decomposition"
                     )
                 }
-                
+
                 var llRows = [[Int32]]()
                 var lhRows = [[Int32]]()
-                
+
                 // Apply horizontal transform if within horizontal levels
                 if level < hLevels {
                     // Standard row transform
@@ -663,13 +662,13 @@ public struct J2KDWT2D: Sendable {
                         lhRows.append([])  // Empty highpass
                     }
                 }
-                
+
                 // Apply vertical transform if within vertical levels
                 var ll: [[Int32]] = []
                 var lh: [[Int32]] = []
                 var hl: [[Int32]] = []
                 var hh: [[Int32]] = []
-                
+
                 if level < vLevels && level < hLevels {
                     // Standard 2D decomposition
                     let result = try forwardTransform(
@@ -692,7 +691,7 @@ public struct J2KDWT2D: Sendable {
                     let transposed = transpose(currentImage)
                     var llCols = [[Int32]]()
                     var hlCols = [[Int32]]()
-                    
+
                     for col in transposed {
                         let (low, high) = try J2KDWT1D.forwardTransform(
                             signal: col,
@@ -702,7 +701,7 @@ public struct J2KDWT2D: Sendable {
                         llCols.append(low)
                         hlCols.append(high)
                     }
-                    
+
                     ll = transpose(llCols)
                     lh = []
                     hl = transpose(hlCols)
@@ -711,21 +710,21 @@ public struct J2KDWT2D: Sendable {
                     // No decomposition
                     break
                 }
-                
+
                 levels.append(DecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh))
                 currentImage = ll
             }
-            
+
             return MultiLevelDecomposition(levels: levels)
         }
     }
-    
+
     /// Helper method to transpose a 2D array.
     private static func transpose(_ matrix: [[Int32]]) -> [[Int32]] {
         guard !matrix.isEmpty else { return [] }
         let rows = matrix.count
         let cols = matrix[0].count
-        
+
         var result = [[Int32]](repeating: [Int32](repeating: 0, count: rows), count: cols)
         for i in 0..<rows {
             for j in 0..<cols {
@@ -739,27 +738,26 @@ public struct J2KDWT2D: Sendable {
 // MARK: - Floating-Point Transform for 9/7 Filter
 
 extension J2KDWT2D {
-    
     /// Result of a single-level 2D DWT decomposition (floating-point).
     public struct DecompositionResult97: Sendable {
         /// Low-low subband (approximation).
         public let ll: [[Double]]
-        
+
         /// Low-high subband (horizontal details).
         public let lh: [[Double]]
-        
+
         /// High-low subband (vertical details).
         public let hl: [[Double]]
-        
+
         /// High-high subband (diagonal details).
         public let hh: [[Double]]
-        
+
         /// Width of the LL subband.
         public var width: Int { ll[0].count }
-        
+
         /// Height of the LL subband.
         public var height: Int { ll.count }
-        
+
         public init(ll: [[Double]], lh: [[Double]], hl: [[Double]], hh: [[Double]]) {
             self.ll = ll
             self.lh = lh
@@ -767,7 +765,7 @@ extension J2KDWT2D {
             self.hh = hh
         }
     }
-    
+
     /// Performs 2D forward DWT using 9/7 irreversible filter.
     ///
     /// - Parameters:
@@ -782,23 +780,23 @@ extension J2KDWT2D {
         guard !image.isEmpty else {
             throw J2KError.invalidParameter("Image cannot be empty")
         }
-        
+
         let height = image.count
         let width = image[0].count
-        
+
         guard width >= 2 && height >= 2 else {
             throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
         }
-        
+
         guard image.allSatisfy({ $0.count == width }) else {
             throw J2KError.invalidParameter("All rows must have the same length")
         }
-        
+
         // Step 1: Apply 1D DWT to each row
         var rowTransformed = [[Double]]()
         var rowLowCount = 0
         var rowHighCount = 0
-        
+
         for row in image {
             let (low, high) = try J2KDWT1D.forwardTransform97(
                 signal: row,
@@ -806,20 +804,20 @@ extension J2KDWT2D {
             )
             rowLowCount = low.count
             rowHighCount = high.count
-            
+
             var transformedRow = [Double]()
             transformedRow.reserveCapacity(width)
             transformedRow.append(contentsOf: low)
             transformedRow.append(contentsOf: high)
             rowTransformed.append(transformedRow)
         }
-        
+
         // Step 2: Apply 1D DWT to each column
         var ll = [[Double]]()
         var lh = [[Double]]()
         var hl = [[Double]]()
         var hh = [[Double]]()
-        
+
         // Process low-frequency columns
         for col in 0..<rowLowCount {
             var column = [Double]()
@@ -827,12 +825,12 @@ extension J2KDWT2D {
             for row in 0..<height {
                 column.append(rowTransformed[row][col])
             }
-            
+
             let (low, high) = try J2KDWT1D.forwardTransform97(
                 signal: column,
                 boundaryExtension: boundaryExtension
             )
-            
+
             if ll.isEmpty {
                 ll = Array(repeating: [Double](), count: low.count)
                 hl = Array(repeating: [Double](), count: high.count)
@@ -844,7 +842,7 @@ extension J2KDWT2D {
                 hl[i].append(high[i])
             }
         }
-        
+
         // Process high-frequency columns
         for col in rowLowCount..<(rowLowCount + rowHighCount) {
             var column = [Double]()
@@ -852,12 +850,12 @@ extension J2KDWT2D {
             for row in 0..<height {
                 column.append(rowTransformed[row][col])
             }
-            
+
             let (low, high) = try J2KDWT1D.forwardTransform97(
                 signal: column,
                 boundaryExtension: boundaryExtension
             )
-            
+
             if lh.isEmpty {
                 lh = Array(repeating: [Double](), count: low.count)
                 hh = Array(repeating: [Double](), count: high.count)
@@ -869,10 +867,10 @@ extension J2KDWT2D {
                 hh[i].append(high[i])
             }
         }
-        
+
         return DecompositionResult97(ll: ll, lh: lh, hl: hl, hh: hh)
     }
-    
+
     /// Performs 2D inverse DWT using 9/7 irreversible filter.
     ///
     /// - Parameters:
@@ -894,7 +892,7 @@ extension J2KDWT2D {
         guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
             throw J2KError.invalidParameter("All subbands must be non-empty")
         }
-        
+
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
@@ -903,50 +901,50 @@ extension J2KDWT2D {
         let hlWidth = hl[0].count
         let hhHeight = hh.count
         let hhWidth = hh[0].count
-        
+
         guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
             )
         }
-        
+
         guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
             throw J2KError.invalidParameter(
                 "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
             )
         }
-        
+
         guard ll.allSatisfy({ $0.count == llWidth }) &&
               lh.allSatisfy({ $0.count == lhWidth }) &&
               hl.allSatisfy({ $0.count == hlWidth }) &&
               hh.allSatisfy({ $0.count == hhWidth }) else {
             throw J2KError.invalidParameter("All subband rows must have consistent lengths")
         }
-        
+
         // Step 1: Apply inverse 1D DWT to columns
         var columnInversed = [[Double]]()
-        
+
         // Reconstruct low-frequency columns
         for col in 0..<llWidth {
             var llColumn = [Double]()
             var hlColumn = [Double]()
-            
+
             llColumn.reserveCapacity(llHeight)
             hlColumn.reserveCapacity(hlHeight)
-            
+
             for row in 0..<llHeight {
                 llColumn.append(ll[row][col])
             }
             for row in 0..<hlHeight {
                 hlColumn.append(hl[row][col])
             }
-            
+
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
                 lowpass: llColumn,
                 highpass: hlColumn,
                 boundaryExtension: boundaryExtension
             )
-            
+
             if columnInversed.isEmpty {
                 columnInversed = Array(repeating: [Double](), count: reconstructedColumn.count)
             }
@@ -954,52 +952,52 @@ extension J2KDWT2D {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Reconstruct high-frequency columns
         let highFreqStartCol = columnInversed[0].count
         for col in 0..<lhWidth {
             var lhColumn = [Double]()
             var hhColumn = [Double]()
-            
+
             lhColumn.reserveCapacity(lhHeight)
             hhColumn.reserveCapacity(hhHeight)
-            
+
             for row in 0..<lhHeight {
                 lhColumn.append(lh[row][col])
             }
             for row in 0..<hhHeight {
                 hhColumn.append(hh[row][col])
             }
-            
+
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
                 lowpass: lhColumn,
                 highpass: hhColumn,
                 boundaryExtension: boundaryExtension
             )
-            
+
             for i in 0..<reconstructedColumn.count {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
-        
+
         // Step 2: Apply inverse 1D DWT to rows
         var result = [[Double]]()
         result.reserveCapacity(columnInversed.count)
-        
+
         for row in columnInversed {
             let midPoint = highFreqStartCol
             let lowpass = Array(row[0..<midPoint])
             let highpass = Array(row[midPoint..<row.count])
-            
+
             let reconstructedRow = try J2KDWT1D.inverseTransform97(
                 lowpass: lowpass,
                 highpass: highpass,
                 boundaryExtension: boundaryExtension
             )
-            
+
             result.append(reconstructedRow)
         }
-        
+
         return result
     }
 }

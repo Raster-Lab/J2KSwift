@@ -58,10 +58,10 @@ import J2KCore
 public struct J2KQualityMetricResult: Sendable, Equatable {
     /// The metric value (higher is better for most metrics).
     public let value: Double
-    
+
     /// Per-component metric values if available.
     public let componentValues: [Double]?
-    
+
     /// Creates a new quality metric result.
     ///
     /// - Parameters:
@@ -77,12 +77,11 @@ public struct J2KQualityMetricResult: Sendable, Equatable {
 
 /// Implements perceptual quality metrics for image comparison.
 public struct J2KQualityMetrics: Sendable {
-    
     /// Creates a new quality metrics instance.
     public init() {}
-    
+
     // MARK: - PSNR (Peak Signal-to-Noise Ratio)
-    
+
     /// Calculates PSNR between two images.
     ///
     /// PSNR is a simple quality metric based on mean squared error (MSE).
@@ -102,23 +101,23 @@ public struct J2KQualityMetrics: Sendable {
         compressed: J2KImage
     ) throws -> J2KQualityMetricResult {
         try validateImagePair(original: original, compressed: compressed)
-        
+
         var componentPSNRs: [Double] = []
         var totalMSE: Double = 0.0
         var totalPixels: Int = 0
-        
+
         // Calculate PSNR for each component
         for (origComp, compComp) in zip(original.components, compressed.components) {
             let originalSamples = try extractSamples(from: origComp)
             let compressedSamples = try extractSamples(from: compComp)
-            
+
             let mse = try meanSquaredError(
                 original: originalSamples,
                 compressed: compressedSamples,
                 width: original.width,
                 height: original.height
             )
-            
+
             if mse == 0.0 {
                 // Perfect match, infinite PSNR
                 componentPSNRs.append(Double.infinity)
@@ -128,30 +127,30 @@ public struct J2KQualityMetrics: Sendable {
                 let psnrValue = 10.0 * log10((maxValue * maxValue) / mse)
                 componentPSNRs.append(psnrValue)
             }
-            
+
             totalMSE += mse
             totalPixels += original.width * original.height
         }
-        
+
         // Overall PSNR
         let avgMSE = totalMSE / Double(original.components.count)
         let maxValue = Double((1 << original.components[0].bitDepth) - 1)
         let overallPSNR: Double
-        
+
         if avgMSE == 0.0 {
             overallPSNR = Double.infinity
         } else {
             overallPSNR = 10.0 * log10((maxValue * maxValue) / avgMSE)
         }
-        
+
         return J2KQualityMetricResult(
             value: overallPSNR,
             componentValues: componentPSNRs
         )
     }
-    
+
     // MARK: - SSIM (Structural Similarity Index)
-    
+
     /// Calculates SSIM between two images.
     ///
     /// SSIM is a perceptually motivated metric that considers luminance, contrast,
@@ -169,14 +168,14 @@ public struct J2KQualityMetrics: Sendable {
         compressed: J2KImage
     ) throws -> J2KQualityMetricResult {
         try validateImagePair(original: original, compressed: compressed)
-        
+
         var componentSSIMs: [Double] = []
-        
+
         // Calculate SSIM for each component
         for (origComp, compComp) in zip(original.components, compressed.components) {
             let originalSamples = try extractSamples(from: origComp)
             let compressedSamples = try extractSamples(from: compComp)
-            
+
             let ssimValue = try calculateSSIM(
                 original: originalSamples,
                 compressed: compressedSamples,
@@ -186,18 +185,18 @@ public struct J2KQualityMetrics: Sendable {
             )
             componentSSIMs.append(ssimValue)
         }
-        
+
         // Average SSIM across components
         let overallSSIM = componentSSIMs.reduce(0.0, +) / Double(componentSSIMs.count)
-        
+
         return J2KQualityMetricResult(
             value: overallSSIM,
             componentValues: componentSSIMs
         )
     }
-    
+
     // MARK: - MS-SSIM (Multi-Scale SSIM)
-    
+
     /// Calculates MS-SSIM between two images.
     ///
     /// MS-SSIM extends SSIM by evaluating quality at multiple scales through
@@ -216,18 +215,18 @@ public struct J2KQualityMetrics: Sendable {
         scales: Int = 5
     ) throws -> J2KQualityMetricResult {
         try validateImagePair(original: original, compressed: compressed)
-        
+
         guard scales >= 1 && scales <= 5 else {
             throw J2KError.invalidParameter("MS-SSIM scales must be between 1 and 5")
         }
-        
+
         var componentMSSSIMs: [Double] = []
-        
+
         // Calculate MS-SSIM for each component
         for (origComp, compComp) in zip(original.components, compressed.components) {
             let originalSamples = try extractSamples(from: origComp)
             let compressedSamples = try extractSamples(from: compComp)
-            
+
             let msssimValue = try calculateMSSSIM(
                 original: originalSamples,
                 compressed: compressedSamples,
@@ -238,56 +237,56 @@ public struct J2KQualityMetrics: Sendable {
             )
             componentMSSSIMs.append(msssimValue)
         }
-        
+
         // Average MS-SSIM across components
         let overallMSSSIM = componentMSSSIMs.reduce(0.0, +) / Double(componentMSSSIMs.count)
-        
+
         return J2KQualityMetricResult(
             value: overallMSSSIM,
             componentValues: componentMSSSIMs
         )
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     /// Extracts samples as Int32 array from a component's Data.
     private func extractSamples(from component: J2KComponent) throws -> [Int32] {
         let sampleCount = component.width * component.height
         var samples = [Int32](repeating: 0, count: sampleCount)
-        
+
         // For now, assume data is stored as Int32 values
         // In a real implementation, this would handle various bit depths
         let bytesPerSample = (component.bitDepth + 7) / 8
-        
+
         guard component.data.count >= sampleCount * bytesPerSample else {
             throw J2KError.invalidParameter("Component data size mismatch")
         }
-        
+
         component.data.withUnsafeBytes { buffer in
             let int32Ptr = buffer.bindMemory(to: Int32.self)
             for i in 0..<min(sampleCount, int32Ptr.count) {
                 samples[i] = int32Ptr[i]
             }
         }
-        
+
         return samples
     }
-    
+
     /// Validates that two images can be compared.
     private func validateImagePair(original: J2KImage, compressed: J2KImage) throws {
         guard original.width == compressed.width else {
             throw J2KError.invalidParameter("Images have different widths: \(original.width) vs \(compressed.width)")
         }
-        
+
         guard original.height == compressed.height else {
             throw J2KError.invalidParameter("Images have different heights: \(original.height) vs \(compressed.height)")
         }
-        
+
         guard original.components.count == compressed.components.count else {
             throw J2KError.invalidParameter("Images have different number of components: \(original.components.count) vs \(compressed.components.count)")
         }
     }
-    
+
     /// Calculates mean squared error between two sample arrays.
     private func meanSquaredError(
         original: [Int32],
@@ -298,17 +297,17 @@ public struct J2KQualityMetrics: Sendable {
         guard original.count == compressed.count else {
             throw J2KError.invalidParameter("Sample arrays have different lengths")
         }
-        
+
         var sumSquaredDiff: Double = 0.0
-        
+
         for i in 0..<original.count {
             let diff = Double(original[i] - compressed[i])
             sumSquaredDiff += diff * diff
         }
-        
+
         return sumSquaredDiff / Double(original.count)
     }
-    
+
     /// Calculates SSIM for a single component.
     private func calculateSSIM(
         original: [Int32],
@@ -320,14 +319,14 @@ public struct J2KQualityMetrics: Sendable {
         // SSIM parameters
         let C1 = 0.01 * 0.01 * Double((1 << bitDepth) - 1) * Double((1 << bitDepth) - 1)
         let C2 = 0.03 * 0.03 * Double((1 << bitDepth) - 1) * Double((1 << bitDepth) - 1)
-        
+
         // Use 8x8 windows with stride 4 for efficiency
         let windowSize = 8
         let windowStride = 4
-        
+
         var ssimSum = 0.0
         var windowCount = 0
-        
+
         for y in stride(from: 0, to: height - windowSize, by: windowStride) {
             for x in stride(from: 0, to: width - windowSize, by: windowStride) {
                 let (meanX, meanY, varX, varY, covar) = try windowStatistics(
@@ -338,28 +337,28 @@ public struct J2KQualityMetrics: Sendable {
                     y: y,
                     windowSize: windowSize
                 )
-                
+
                 // SSIM formula - broken into parts for compiler
                 let meanXX = meanX * meanX
                 let meanYY = meanY * meanY
                 let luminance = (2.0 * meanX * meanY + C1) / (meanXX + meanYY + C1)
-                
+
                 let sqrtVarX = sqrt(varX)
                 let sqrtVarY = sqrt(varY)
                 let contrast = (2.0 * sqrtVarX * sqrtVarY + C2) / (varX + varY + C2)
-                
+
                 let sqrtVarProduct = sqrt(varX * varY)
                 let structure = (covar + C2 / 2.0) / (sqrtVarProduct + C2 / 2.0)
-                
+
                 let ssim = luminance * contrast * structure
                 ssimSum += ssim
                 windowCount += 1
             }
         }
-        
+
         return windowCount > 0 ? ssimSum / Double(windowCount) : 0.0
     }
-    
+
     /// Calculates statistics for a window.
     private func windowStatistics(
         original: [Int32],
@@ -375,19 +374,19 @@ public struct J2KQualityMetrics: Sendable {
         var sumYY = 0.0
         var sumXY = 0.0
         let n = windowSize * windowSize
-        
+
         for dy in 0..<windowSize {
             for dx in 0..<windowSize {
                 let idx = (y + dy) * width + (x + dx)
-                
+
                 // Bounds check
                 guard idx < original.count && idx < compressed.count else {
                     throw J2KError.invalidParameter("Window extends beyond image bounds")
                 }
-                
+
                 let vX = Double(original[idx])
                 let vY = Double(compressed[idx])
-                
+
                 sumX += vX
                 sumY += vY
                 sumXX += vX * vX
@@ -395,16 +394,16 @@ public struct J2KQualityMetrics: Sendable {
                 sumXY += vX * vY
             }
         }
-        
+
         let meanX = sumX / Double(n)
         let meanY = sumY / Double(n)
         let varX = (sumXX / Double(n)) - (meanX * meanX)
         let varY = (sumYY / Double(n)) - (meanY * meanY)
         let covar = (sumXY / Double(n)) - (meanX * meanY)
-        
+
         return (meanX, meanY, max(0, varX), max(0, varY), covar)
     }
-    
+
     /// Calculates MS-SSIM for a single component.
     private func calculateMSSSIM(
         original: [Int32],
@@ -416,15 +415,15 @@ public struct J2KQualityMetrics: Sendable {
     ) throws -> Double {
         // MS-SSIM weights for each scale (from Wang et al. 2003)
         let weights: [Double] = [0.0448, 0.2856, 0.3001, 0.2363, 0.1333]
-        
+
         var currentOriginal = original
         var currentCompressed = compressed
         var currentWidth = width
         var currentHeight = height
-        
+
         var contrastStructure: [Double] = []
         var luminance: Double = 0.0
-        
+
         // Calculate at multiple scales
         for scale in 0..<scales {
             let ssimValue = try calculateSSIM(
@@ -434,11 +433,11 @@ public struct J2KQualityMetrics: Sendable {
                 height: currentHeight,
                 bitDepth: bitDepth
             )
-            
+
             if scale < scales - 1 {
                 // Store contrast-structure for this scale
                 contrastStructure.append(ssimValue)
-                
+
                 // Downsample for next scale
                 let (downsampledOriginal, newWidth, newHeight) = try downsample2x(
                     samples: currentOriginal,
@@ -446,14 +445,14 @@ public struct J2KQualityMetrics: Sendable {
                     height: currentHeight
                 )
                 currentOriginal = downsampledOriginal
-                
+
                 let (downsampledCompressed, _, _) = try downsample2x(
                     samples: currentCompressed,
                     width: currentWidth,
                     height: currentHeight
                 )
                 currentCompressed = downsampledCompressed
-                
+
                 // Update dimensions for next iteration
                 currentWidth = newWidth
                 currentHeight = newHeight
@@ -462,17 +461,17 @@ public struct J2KQualityMetrics: Sendable {
                 luminance = ssimValue
             }
         }
-        
+
         // Combine scales with weights
         var msssim = pow(luminance, weights[scales - 1])
-        
+
         for i in 0..<contrastStructure.count {
             msssim *= pow(contrastStructure[i], weights[i])
         }
-        
+
         return msssim
     }
-    
+
     /// Downsamples an image by 2x using averaging.
     private func downsample2x(
         samples: [Int32],
@@ -481,29 +480,29 @@ public struct J2KQualityMetrics: Sendable {
     ) throws -> (samples: [Int32], width: Int, height: Int) {
         let newWidth = width / 2
         let newHeight = height / 2
-        
+
         guard newWidth > 0 && newHeight > 0 else {
             throw J2KError.invalidParameter("Image too small to downsample")
         }
-        
+
         var downsampled = [Int32](repeating: 0, count: newWidth * newHeight)
-        
+
         for y in 0..<newHeight {
             for x in 0..<newWidth {
                 let srcX = x * 2
                 let srcY = y * 2
-                
+
                 // Average 2x2 block
                 let v00 = samples[srcY * width + srcX]
                 let v01 = samples[srcY * width + srcX + 1]
                 let v10 = samples[(srcY + 1) * width + srcX]
                 let v11 = samples[(srcY + 1) * width + srcX + 1]
-                
+
                 let avg = (Int64(v00) + Int64(v01) + Int64(v10) + Int64(v11)) / 4
                 downsampled[y * newWidth + x] = Int32(avg)
             }
         }
-        
+
         return (downsampled, newWidth, newHeight)
     }
 }

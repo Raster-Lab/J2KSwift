@@ -48,7 +48,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
     /// **Quality:** Good for preview/draft quality
     /// **Use cases:** Real-time encoding, thumbnails, previews
     case fast
-    
+
     /// Balanced encoding for general use.
     ///
     /// - Standard decomposition levels (5 levels)
@@ -61,7 +61,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
     /// **Quality:** Excellent for most use cases
     /// **Use cases:** General purpose, web delivery, storage
     case balanced
-    
+
     /// Maximum quality encoding.
     ///
     /// - Maximum decomposition levels (6 levels)
@@ -74,7 +74,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
     /// **Quality:** Best possible quality
     /// **Use cases:** Archival, medical imaging, professional photography
     case quality
-    
+
     /// Creates an encoding configuration from this preset.
     ///
     /// - Parameters:
@@ -99,7 +99,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
                 bitrateMode: .constantQuality,
                 maxThreads: 1
             )
-            
+
         case .balanced:
             return J2KEncodingConfiguration(
                 quality: quality,
@@ -113,7 +113,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
                 bitrateMode: .constantQuality,
                 maxThreads: 0  // Auto-detect
             )
-            
+
         case .quality:
             return J2KEncodingConfiguration(
                 quality: quality,
@@ -140,34 +140,34 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - 0.0: Maximum compression (lowest quality)
     /// - 1.0: Lossless or minimal compression (highest quality)
     public var quality: Double
-    
+
     /// Whether to use lossless compression.
     ///
     /// When true, the encoder uses the reversible color transform (RCT)
     /// and reversible wavelet filter (5/3), ensuring perfect reconstruction.
     public var lossless: Bool
-    
+
     /// Number of wavelet decomposition levels.
     ///
     /// - Valid range: 0-10
     /// - Default: 5 for balanced, 3 for fast, 6 for quality
     /// - More levels = better compression but slower encoding
     public var decompositionLevels: Int
-    
+
     /// Size of code blocks for entropy coding.
     ///
     /// - Valid range: 4-1024 for each dimension
     /// - Default: 32×32 (balanced), 64×64 (fast)
     /// - Larger blocks = faster encoding, smaller blocks = better quality
     public var codeBlockSize: (width: Int, height: Int)
-    
+
     /// Number of quality layers.
     ///
     /// - Valid range: 1-20
     /// - Default: 5 (balanced), 3 (fast), 10 (quality)
     /// - More layers = finer quality progression, slower encoding
     public var qualityLayers: Int
-    
+
     /// Progression order for packet organization.
     ///
     /// Determines the order in which image data is encoded and streamed:
@@ -177,20 +177,20 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - PCRL: Position-Component-Resolution-Layer (spatial locality)
     /// - CPRL: Component-Position-Resolution-Layer (component-by-component)
     public var progressionOrder: J2KProgressionOrder
-    
+
     /// Whether to enable visual frequency weighting.
     ///
     /// When enabled, applies perceptual weighting to quantization based on
     /// the human visual system's contrast sensitivity function (CSF).
     public var enableVisualWeighting: Bool
-    
+
     /// Tile size for tiled encoding.
     ///
     /// - (0, 0): No tiling (single tile)
     /// - Otherwise: Width and height of each tile in pixels
     /// - Tiling enables memory-efficient processing of large images
     public var tileSize: (width: Int, height: Int)
-    
+
     /// Bitrate control mode.
     ///
     /// Determines how the encoder controls the output file size:
@@ -198,14 +198,14 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Constant bitrate: Target file size
     /// - Variable bitrate: Quality-constrained with size limit
     public var bitrateMode: J2KBitrateMode
-    
+
     /// Maximum number of threads for parallel encoding.
     ///
     /// - 0: Auto-detect optimal thread count
     /// - 1: Single-threaded encoding
     /// - &gt;1: Use specified number of threads
     public var maxThreads: Int
-    
+
     /// Whether to use HTJ2K (High-Throughput JPEG 2000) block coding.
     ///
     /// When enabled, uses the FBCOT (Fast Block Coder with Optimized Truncation)
@@ -215,7 +215,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Note: HTJ2K mode requires CAP and CPF markers to be written in the codestream.
     /// - Default: false (use legacy EBCOT block coding)
     public var useHTJ2K: Bool
-    
+
     /// Whether to enable parallel code-block encoding.
     ///
     /// When enabled, independent code-blocks within a tile are encoded in parallel
@@ -228,7 +228,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///
     /// - Default: true
     public var enableParallelCodeBlocks: Bool
-    
+
     /// Whether to enable fast MEL encoding optimization for HTJ2K.
     ///
     /// When enabled, uses optimized run-length encoding in the MEL (Magnitude Exchange
@@ -241,7 +241,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Note: This is an HTJ2K-specific optimization.
     /// - Default: true
     public var enableFastMEL: Bool
-    
+
     /// Whether to enable VLC table optimization for HTJ2K.
     ///
     /// When enabled, uses optimized lookup tables for VLC (Variable Length Coding)
@@ -253,7 +253,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Note: This is an HTJ2K-specific optimization.
     /// - Default: true
     public var enableVLCOptimization: Bool
-    
+
     /// Whether to enable efficient magnitude/sign bit packing for HTJ2K.
     ///
     /// When enabled, uses optimized bit packing strategies for the MagSgn (Magnitude
@@ -265,7 +265,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Note: This is an HTJ2K-specific optimization.
     /// - Default: true
     public var enableMagSgnPacking: Bool
-    
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -323,7 +323,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.enableVLCOptimization = enableVLCOptimization
         self.enableMagSgnPacking = enableMagSgnPacking
     }
-    
+
     /// Validates the configuration parameters.
     ///
     /// - Throws: ``J2KError/invalidParameter(_:)`` if any parameters are invalid.
@@ -331,27 +331,27 @@ public struct J2KEncodingConfiguration: Sendable {
         if quality < 0.0 || quality > 1.0 {
             throw J2KError.invalidParameter("Quality must be between 0.0 and 1.0, got \(quality)")
         }
-        
+
         if decompositionLevels < 0 || decompositionLevels > 10 {
             throw J2KError.invalidParameter("Decomposition levels must be between 0 and 10, got \(decompositionLevels)")
         }
-        
+
         if codeBlockSize.width < 4 || codeBlockSize.width > 1024 {
             throw J2KError.invalidParameter("Code block width must be between 4 and 1024, got \(codeBlockSize.width)")
         }
-        
+
         if codeBlockSize.height < 4 || codeBlockSize.height > 1024 {
             throw J2KError.invalidParameter("Code block height must be between 4 and 1024, got \(codeBlockSize.height)")
         }
-        
+
         if qualityLayers < 1 || qualityLayers > 20 {
             throw J2KError.invalidParameter("Quality layers must be between 1 and 20, got \(qualityLayers)")
         }
-        
+
         if tileSize.width < 0 || tileSize.height < 0 {
             throw J2KError.invalidParameter("Tile size must be non-negative")
         }
-        
+
         if maxThreads < 0 {
             throw J2KError.invalidParameter("Max threads must be non-negative, got \(maxThreads)")
         }
@@ -367,25 +367,25 @@ public enum J2KProgressionOrder: String, Sendable, CaseIterable {
     /// Encodes by quality layer first, then resolution, then component, then spatial position.
     /// Good for quality-progressive applications.
     case lrcp = "LRCP"
-    
+
     /// Resolution-Layer-Component-Position progression.
     ///
     /// Encodes by resolution first, then quality layer, then component, then spatial position.
     /// Good for resolution-progressive applications.
     case rlcp = "RLCP"
-    
+
     /// Resolution-Position-Component-Layer progression.
     ///
     /// Encodes by resolution first, then spatial position, then component, then quality layer.
     /// Best for streaming and progressive download.
     case rpcl = "RPCL"
-    
+
     /// Position-Component-Resolution-Layer progression.
     ///
     /// Encodes by spatial position first, then component, then resolution, then quality layer.
     /// Good for spatial locality and region-of-interest applications.
     case pcrl = "PCRL"
-    
+
     /// Component-Position-Resolution-Layer progression.
     ///
     /// Encodes by component first, then spatial position, then resolution, then quality layer.
@@ -402,7 +402,7 @@ public enum J2KBitrateMode: Sendable, Equatable {
     /// Maintains consistent quality across the image.
     /// File size varies based on image complexity.
     case constantQuality
-    
+
     /// Constant bitrate mode.
     ///
     /// Targets a specific file size or bitrate.
@@ -410,7 +410,7 @@ public enum J2KBitrateMode: Sendable, Equatable {
     ///
     /// - Parameter bitsPerPixel: Target bits per pixel (e.g., 0.5 for 2:1 compression).
     case constantBitrate(bitsPerPixel: Double)
-    
+
     /// Variable bitrate mode.
     ///
     /// Maintains quality above a threshold while respecting a maximum file size.
@@ -419,7 +419,7 @@ public enum J2KBitrateMode: Sendable, Equatable {
     ///   - minQuality: Minimum quality to maintain (0.0-1.0).
     ///   - maxBitsPerPixel: Maximum bits per pixel allowed.
     case variableBitrate(minQuality: Double, maxBitsPerPixel: Double)
-    
+
     /// Lossless mode.
     ///
     /// Perfect reconstruction, no quality loss.

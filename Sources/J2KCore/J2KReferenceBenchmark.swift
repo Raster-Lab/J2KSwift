@@ -37,7 +37,7 @@ public struct J2KReferenceBenchmark: Sendable {
         case tier2Decoding = "Tier-2 Decoding"
         case fullPipeline = "Full Encoding Pipeline"
     }
-    
+
     /// Standard test cases for reproducible benchmarking.
     public enum TestCase: String, Sendable {
         // Small test cases (1K-10K operations)
@@ -46,40 +46,40 @@ public struct J2KReferenceBenchmark: Sendable {
         case skewedPattern1K = "Skewed Pattern (1K)"
         case uniformPattern10K = "Uniform Pattern (10K)"
         case randomPattern10K = "Random Pattern (10K)"
-        
+
         // Medium test cases (100K operations)
         case uniformPattern100K = "Uniform Pattern (100K)"
         case randomPattern100K = "Random Pattern (100K)"
-        
+
         // Image test cases
         case image512x512RGB = "512x512 RGB Image"
         case image1024x1024RGB = "1024x1024 RGB Image"
         case image2048x2048RGB = "2048x2048 RGB Image"
         case image4096x4096RGB = "4096x4096 RGB Image"
-        
+
         // Tile test cases
         case tile256x256 = "256x256 Tile"
         case tile512x512 = "512x512 Tile"
-        
+
         // Code-block test cases
         case codeBlock32x32 = "32x32 Code-Block"
         case codeBlock64x64 = "64x64 Code-Block"
         case codeBlocks16Parallel = "16 Code-Blocks (Parallel)"
         case codeBlocks64Parallel = "64 Code-Blocks (Parallel)"
     }
-    
+
     /// The component being benchmarked.
     public let component: Component
-    
+
     /// The test case being used.
     public let testCase: TestCase
-    
+
     /// Number of iterations for measurement (default: 100).
     public let iterations: Int
-    
+
     /// Number of warmup iterations (default: 5).
     public let warmupIterations: Int
-    
+
     /// Creates a new reference benchmark.
     ///
     /// - Parameters:
@@ -98,7 +98,7 @@ public struct J2KReferenceBenchmark: Sendable {
         self.iterations = iterations
         self.warmupIterations = warmupIterations
     }
-    
+
     /// Measures the performance of a J2KSwift operation.
     ///
     /// - Parameter operation: The operation to measure.
@@ -110,7 +110,7 @@ public struct J2KReferenceBenchmark: Sendable {
             warmupIterations: warmupIterations,
             operation: operation
         )
-        
+
         return ReferenceBenchmarkResult(
             component: component,
             testCase: testCase,
@@ -123,7 +123,7 @@ public struct J2KReferenceBenchmark: Sendable {
             throughput: result.operationsPerSecond
         )
     }
-    
+
     /// Measures the performance of a throwing J2KSwift operation.
     ///
     /// - Parameter operation: The throwing operation to measure.
@@ -136,7 +136,7 @@ public struct J2KReferenceBenchmark: Sendable {
             warmupIterations: warmupIterations,
             operation: operation
         )
-        
+
         return ReferenceBenchmarkResult(
             component: component,
             testCase: testCase,
@@ -149,7 +149,7 @@ public struct J2KReferenceBenchmark: Sendable {
             throughput: result.operationsPerSecond
         )
     }
-    
+
     /// Measures the performance of an async J2KSwift operation.
     ///
     /// - Parameter operation: The async operation to measure.
@@ -161,7 +161,7 @@ public struct J2KReferenceBenchmark: Sendable {
             warmupIterations: warmupIterations,
             operation: operation
         )
-        
+
         return ReferenceBenchmarkResult(
             component: component,
             testCase: testCase,
@@ -180,34 +180,34 @@ public struct J2KReferenceBenchmark: Sendable {
 public struct ReferenceBenchmarkResult: Sendable {
     /// The component that was benchmarked.
     public let component: J2KReferenceBenchmark.Component
-    
+
     /// The test case that was used.
     public let testCase: J2KReferenceBenchmark.TestCase
-    
+
     /// The implementation name (e.g., "J2KSwift", "OpenJPEG").
     public let implementation: String
-    
+
     /// Average execution time in seconds.
     public let averageTime: TimeInterval
-    
+
     /// Median execution time in seconds.
     public let medianTime: TimeInterval
-    
+
     /// Minimum execution time in seconds.
     public let minTime: TimeInterval
-    
+
     /// Maximum execution time in seconds.
     public let maxTime: TimeInterval
-    
+
     /// Standard deviation of execution times.
     public let standardDeviation: TimeInterval
-    
+
     /// Throughput in operations per second.
     public let throughput: Double
-    
+
     /// Performance relative to a baseline (1.0 = same, 2.0 = 2x faster, 0.5 = 2x slower).
     public var relativePerformance: Double?
-    
+
     /// Creates a new reference benchmark result.
     public init(
         component: J2KReferenceBenchmark.Component,
@@ -232,7 +232,7 @@ public struct ReferenceBenchmarkResult: Sendable {
         self.throughput = throughput
         self.relativePerformance = relativePerformance
     }
-    
+
     /// Returns a formatted string with benchmark results.
     public var formattedSummary: String {
         var lines: [String] = []
@@ -244,17 +244,17 @@ public struct ReferenceBenchmarkResult: Sendable {
         lines.append(String(format: "Max Time:     %.3f ms", maxTime * 1000))
         lines.append(String(format: "Std Dev:      %.3f ms", standardDeviation * 1000))
         lines.append(String(format: "Throughput:   %.0f ops/sec", throughput))
-        
+
         if let relative = relativePerformance {
             let percentage = (relative - 1.0) * 100
             let direction = relative >= 1.0 ? "faster" : "slower"
             let multiplier = relative >= 1.0 ? relative : 1.0 / relative
             lines.append(String(format: "Relative:     %.1fx %@ (%.1f%%)", multiplier, direction, abs(percentage)))
         }
-        
+
         return lines.joined(separator: "\n")
     }
-    
+
     /// Compares this result with another to compute relative performance.
     ///
     /// - Parameter other: The baseline result to compare against.
@@ -280,58 +280,58 @@ public struct ReferenceBenchmarkResult: Sendable {
 public struct ReferenceBenchmarkSuite: Sendable {
     /// All benchmark results in this suite.
     public let results: [ReferenceBenchmarkResult]
-    
+
     /// Creates a new benchmark suite.
     ///
     /// - Parameter results: The benchmark results to include.
     public init(results: [ReferenceBenchmarkResult]) {
         self.results = results
     }
-    
+
     /// Returns a formatted comparison table.
     public var formattedComparison: String {
         guard !results.isEmpty else {
             return "No benchmark results available."
         }
-        
+
         var lines: [String] = []
         lines.append("=" * 80)
         lines.append("J2KSwift Reference Benchmark Suite")
         lines.append("=" * 80)
         lines.append("")
-        
+
         // Group by component
         let grouped = Dictionary(grouping: results) { $0.component }
-        
+
         for (component, componentResults) in grouped.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             lines.append("\(component.rawValue)")
             lines.append("-" * 80)
-            
+
             for result in componentResults {
                 lines.append("")
                 lines.append("Test Case: \(result.testCase.rawValue)")
-                lines.append(String(format: "  Average: %.3f ms (%.0f ops/sec)", 
+                lines.append(String(format: "  Average: %.3f ms (%.0f ops/sec)",
                                   result.averageTime * 1000, result.throughput))
-                
+
                 if let relative = result.relativePerformance {
                     let multiplier = relative >= 1.0 ? relative : 1.0 / relative
                     let direction = relative >= 1.0 ? "faster" : "slower"
                     lines.append(String(format: "  Relative: %.2fx %@ than baseline", multiplier, direction))
                 }
             }
-            
+
             lines.append("")
         }
-        
+
         lines.append("=" * 80)
         return lines.joined(separator: "\n")
     }
-    
+
     /// Exports results to CSV format.
     public var csvExport: String {
         var lines: [String] = []
         lines.append("Component,TestCase,Implementation,AvgTime(ms),MedianTime(ms),MinTime(ms),MaxTime(ms),StdDev(ms),Throughput(ops/sec),RelativePerf")
-        
+
         for result in results {
             let relativeStr = result.relativePerformance.map { String(format: "%.3f", $0) } ?? ""
             lines.append([
@@ -347,7 +347,7 @@ public struct ReferenceBenchmarkSuite: Sendable {
                 relativeStr
             ].joined(separator: ","))
         }
-        
+
         return lines.joined(separator: "\n")
     }
 }

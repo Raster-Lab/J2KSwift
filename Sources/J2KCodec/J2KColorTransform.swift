@@ -15,10 +15,10 @@ import J2KCore
 public enum J2KColorTransformMode: String, Sendable, CaseIterable {
     /// Reversible Color Transform (RCT) - integer-to-integer, lossless
     case reversible = "RCT"
-    
+
     /// Irreversible Color Transform (ICT) - floating-point, lossy
     case irreversible = "ICT"
-    
+
     /// No color transform applied
     case none = "None"
 }
@@ -27,10 +27,10 @@ public enum J2KColorTransformMode: String, Sendable, CaseIterable {
 public struct J2KColorTransformConfiguration: Sendable {
     /// The color transform mode to use.
     public let mode: J2KColorTransformMode
-    
+
     /// Whether to validate reversibility (for RCT).
     public let validateReversibility: Bool
-    
+
     /// Creates a new color transform configuration.
     ///
     /// - Parameters:
@@ -49,13 +49,13 @@ public struct J2KColorTransformConfiguration: Sendable {
         self.mode = mode
         self.validateReversibility = validateReversibility
     }
-    
+
     /// Lossless configuration using RCT.
     public static let lossless = J2KColorTransformConfiguration(mode: .reversible)
-    
+
     /// Lossy configuration using ICT.
     public static let lossy = J2KColorTransformConfiguration(mode: .irreversible)
-    
+
     /// No transform configuration.
     public static let none = J2KColorTransformConfiguration(mode: .none)
 }
@@ -105,16 +105,16 @@ public struct J2KColorTransformConfiguration: Sendable {
 public struct J2KColorTransform: Sendable {
     /// Configuration for the color transform.
     public let configuration: J2KColorTransformConfiguration
-    
+
     /// Creates a new color transform with the specified configuration.
     ///
     /// - Parameter configuration: The color transform configuration (default: lossless).
     public init(configuration: J2KColorTransformConfiguration = .lossless) {
         self.configuration = configuration
     }
-    
+
     // MARK: - Reversible Color Transform (RCT)
-    
+
     /// Applies the forward Reversible Color Transform (RGB → YCbCr).
     ///
     /// Transforms RGB components to YCbCr using integer arithmetic for perfect reversibility.
@@ -137,35 +137,35 @@ public struct J2KColorTransform: Sendable {
         guard red.count == green.count && green.count == blue.count else {
             throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
         }
-        
+
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = red.count
         var y = [Int32](repeating: 0, count: count)
         var cb = [Int32](repeating: 0, count: count)
         var cr = [Int32](repeating: 0, count: count)
-        
+
         // Apply RCT transform
         for i in 0..<count {
             let r = red[i]
             let g = green[i]
             let b = blue[i]
-            
+
             // Y = ⌊(R + 2G + B) / 4⌋
             y[i] = (r &+ (g &<< 1) &+ b) >> 2
-            
+
             // Cb = B - G
             cb[i] = b &- g
-            
+
             // Cr = R - G
             cr[i] = r &- g
         }
-        
+
         return (y, cb, cr)
     }
-    
+
     /// Applies the inverse Reversible Color Transform (YCbCr → RGB).
     ///
     /// Transforms YCbCr components back to RGB using integer arithmetic for perfect reconstruction.
@@ -188,35 +188,35 @@ public struct J2KColorTransform: Sendable {
         guard y.count == cb.count && cb.count == cr.count else {
             throw J2KError.invalidParameter("Component sizes must match: Y=\(y.count), Cb=\(cb.count), Cr=\(cr.count)")
         }
-        
+
         guard !y.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = y.count
         var red = [Int32](repeating: 0, count: count)
         var green = [Int32](repeating: 0, count: count)
         var blue = [Int32](repeating: 0, count: count)
-        
+
         // Apply inverse RCT transform
         for i in 0..<count {
             let yVal = y[i]
             let cbVal = cb[i]
             let crVal = cr[i]
-            
+
             // G = Y - ⌊(Cb + Cr) / 4⌋
             green[i] = yVal &- ((cbVal &+ crVal) >> 2)
-            
+
             // R = Cr + G
             red[i] = crVal &+ green[i]
-            
+
             // B = Cb + G
             blue[i] = cbVal &+ green[i]
         }
-        
+
         return (red, green, blue)
     }
-    
+
     /// Applies the forward RCT to multi-component image data.
     ///
     /// This is a convenience method that works with J2KComponent objects.
@@ -239,15 +239,15 @@ public struct J2KColorTransform: Sendable {
               greenComponent.height == blueComponent.height else {
             throw J2KError.invalidComponentConfiguration("Component dimensions must match")
         }
-        
+
         // Convert to signed Int32 arrays
         let red = try convertToInt32Array(redComponent)
         let green = try convertToInt32Array(greenComponent)
         let blue = try convertToInt32Array(blueComponent)
-        
+
         // Apply transform
         let (y, cb, cr) = try forwardRCT(red: red, green: green, blue: blue)
-        
+
         // Convert back to components
         let yComponent = try createComponent(
             from: y,
@@ -264,10 +264,10 @@ public struct J2KColorTransform: Sendable {
             template: blueComponent,
             index: 2
         )
-        
+
         return (yComponent, cbComponent, crComponent)
     }
-    
+
     /// Applies the inverse RCT to multi-component image data.
     ///
     /// This is a convenience method that works with J2KComponent objects.
@@ -290,15 +290,15 @@ public struct J2KColorTransform: Sendable {
               cbComponent.height == crComponent.height else {
             throw J2KError.invalidComponentConfiguration("Component dimensions must match")
         }
-        
+
         // Convert to signed Int32 arrays
         let y = try convertToInt32Array(yComponent)
         let cb = try convertToInt32Array(cbComponent)
         let cr = try convertToInt32Array(crComponent)
-        
+
         // Apply transform
         let (red, green, blue) = try inverseRCT(y: y, cb: cb, cr: cr)
-        
+
         // Convert back to components
         let redComponent = try createComponent(
             from: red,
@@ -315,12 +315,12 @@ public struct J2KColorTransform: Sendable {
             template: crComponent,
             index: 2
         )
-        
+
         return (redComponent, greenComponent, blueComponent)
     }
-    
+
     // MARK: - Irreversible Color Transform (ICT)
-    
+
     /// Applies the forward Irreversible Color Transform (RGB → YCbCr).
     ///
     /// Transforms RGB components to YCbCr using floating-point arithmetic for better decorrelation.
@@ -352,43 +352,43 @@ public struct J2KColorTransform: Sendable {
         guard red.count == green.count && green.count == blue.count else {
             throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
         }
-        
+
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = red.count
         var y = [Double](repeating: 0, count: count)
         var cb = [Double](repeating: 0, count: count)
         var cr = [Double](repeating: 0, count: count)
-        
+
         // ICT coefficients from ISO/IEC 15444-1 Annex G.3
         let coeffY_R: Double = 0.299
         let coeffY_G: Double = 0.587
         let coeffY_B: Double = 0.114
-        
+
         let coeffCb_R: Double = -0.168736
         let coeffCb_G: Double = -0.331264
         let coeffCb_B: Double = 0.5
-        
+
         let coeffCr_R: Double = 0.5
         let coeffCr_G: Double = -0.418688
         let coeffCr_B: Double = -0.081312
-        
+
         // Apply ICT transform
         for i in 0..<count {
             let r = red[i]
             let g = green[i]
             let b = blue[i]
-            
+
             y[i] = coeffY_R * r + coeffY_G * g + coeffY_B * b
             cb[i] = coeffCb_R * r + coeffCb_G * g + coeffCb_B * b
             cr[i] = coeffCr_R * r + coeffCr_G * g + coeffCr_B * b
         }
-        
+
         return (y, cb, cr)
     }
-    
+
     /// Applies the inverse Irreversible Color Transform (YCbCr → RGB).
     ///
     /// Transforms YCbCr components back to RGB using floating-point arithmetic.
@@ -419,36 +419,36 @@ public struct J2KColorTransform: Sendable {
         guard y.count == cb.count && cb.count == cr.count else {
             throw J2KError.invalidParameter("Component sizes must match: Y=\(y.count), Cb=\(cb.count), Cr=\(cr.count)")
         }
-        
+
         guard !y.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = y.count
         var red = [Double](repeating: 0, count: count)
         var green = [Double](repeating: 0, count: count)
         var blue = [Double](repeating: 0, count: count)
-        
+
         // Inverse ICT coefficients from ISO/IEC 15444-1 Annex G.3
         let coeffR_Cr: Double = 1.402
         let coeffG_Cb: Double = -0.344136
         let coeffG_Cr: Double = -0.714136
         let coeffB_Cb: Double = 1.772
-        
+
         // Apply inverse ICT transform
         for i in 0..<count {
             let yVal = y[i]
             let cbVal = cb[i]
             let crVal = cr[i]
-            
+
             red[i] = yVal + coeffR_Cr * crVal
             green[i] = yVal + coeffG_Cb * cbVal + coeffG_Cr * crVal
             blue[i] = yVal + coeffB_Cb * cbVal
         }
-        
+
         return (red, green, blue)
     }
-    
+
     /// Applies the forward ICT to multi-component image data.
     ///
     /// This is a convenience method that works with J2KComponent objects.
@@ -471,15 +471,15 @@ public struct J2KColorTransform: Sendable {
               greenComponent.height == blueComponent.height else {
             throw J2KError.invalidComponentConfiguration("Component dimensions must match")
         }
-        
+
         // Convert to Double arrays
         let red = try convertToDoubleArray(redComponent)
         let green = try convertToDoubleArray(greenComponent)
         let blue = try convertToDoubleArray(blueComponent)
-        
+
         // Apply transform
         let (y, cb, cr) = try forwardICT(red: red, green: green, blue: blue)
-        
+
         // Convert back to components
         let yComponent = try createComponentFromDouble(
             from: y,
@@ -496,10 +496,10 @@ public struct J2KColorTransform: Sendable {
             template: blueComponent,
             index: 2
         )
-        
+
         return (yComponent, cbComponent, crComponent)
     }
-    
+
     /// Applies the inverse ICT to multi-component image data.
     ///
     /// This is a convenience method that works with J2KComponent objects.
@@ -522,15 +522,15 @@ public struct J2KColorTransform: Sendable {
               cbComponent.height == crComponent.height else {
             throw J2KError.invalidComponentConfiguration("Component dimensions must match")
         }
-        
+
         // Convert to Double arrays
         let y = try convertToDoubleArray(yComponent)
         let cb = try convertToDoubleArray(cbComponent)
         let cr = try convertToDoubleArray(crComponent)
-        
+
         // Apply transform
         let (red, green, blue) = try inverseICT(y: y, cb: cb, cr: cr)
-        
+
         // Convert back to components
         let redComponent = try createComponentFromDouble(
             from: red,
@@ -547,12 +547,12 @@ public struct J2KColorTransform: Sendable {
             template: crComponent,
             index: 2
         )
-        
+
         return (redComponent, greenComponent, blueComponent)
     }
-    
+
     // MARK: - Grayscale Support
-    
+
     /// Converts RGB components to grayscale using standard luminance weights.
     ///
     /// Uses the standard ITU-R BT.601 luminance formula:
@@ -575,34 +575,34 @@ public struct J2KColorTransform: Sendable {
         guard red.count == green.count && green.count == blue.count else {
             throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
         }
-        
+
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = red.count
         var gray = [Int32](repeating: 0, count: count)
-        
+
         // Apply luminance formula
         // Y = 0.299 × R + 0.587 × G + 0.114 × B
         // Using fixed-point arithmetic for precision: multiply by 1024, then divide
         let weightR: Int32 = 306  // 0.299 × 1024
         let weightG: Int32 = 601  // 0.587 × 1024
         let weightB: Int32 = 117  // 0.114 × 1024
-        
+
         for i in 0..<count {
             let r = red[i]
             let g = green[i]
             let b = blue[i]
-            
+
             // Use fixed-point arithmetic for better precision
             let weighted = (r * weightR + g * weightG + b * weightB + 512) >> 10
             gray[i] = weighted
         }
-        
+
         return gray
     }
-    
+
     /// Converts RGB components to grayscale using floating-point precision.
     ///
     /// - Parameters:
@@ -620,26 +620,26 @@ public struct J2KColorTransform: Sendable {
         guard red.count == green.count && green.count == blue.count else {
             throw J2KError.invalidParameter("Component sizes must match: R=\(red.count), G=\(green.count), B=\(blue.count)")
         }
-        
+
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let count = red.count
         var gray = [Double](repeating: 0, count: count)
-        
+
         // Apply luminance formula
         let weightR: Double = 0.299
         let weightG: Double = 0.587
         let weightB: Double = 0.114
-        
+
         for i in 0..<count {
             gray[i] = weightR * red[i] + weightG * green[i] + weightB * blue[i]
         }
-        
+
         return gray
     }
-    
+
     /// Converts grayscale to RGB by replicating the gray value across all channels.
     ///
     /// - Parameter gray: The grayscale component data.
@@ -647,7 +647,7 @@ public struct J2KColorTransform: Sendable {
     public func grayscaleToRGB(gray: [Int32]) -> (red: [Int32], green: [Int32], blue: [Int32]) {
         return (red: gray, green: gray, blue: gray)
     }
-    
+
     /// Converts grayscale to RGB by replicating the gray value across all channels.
     ///
     /// - Parameter gray: The grayscale component data.
@@ -655,7 +655,7 @@ public struct J2KColorTransform: Sendable {
     public func grayscaleToRGB(gray: [Double]) -> (red: [Double], green: [Double], blue: [Double]) {
         return (red: gray, green: gray, blue: gray)
     }
-    
+
     /// Converts RGB component to grayscale using standard luminance weights.
     ///
     /// - Parameters:
@@ -676,15 +676,15 @@ public struct J2KColorTransform: Sendable {
               greenComponent.height == blueComponent.height else {
             throw J2KError.invalidComponentConfiguration("Component dimensions must match")
         }
-        
+
         // Convert to arrays
         let red = try convertToInt32Array(redComponent)
         let green = try convertToInt32Array(greenComponent)
         let blue = try convertToInt32Array(blueComponent)
-        
+
         // Apply transform
         let gray = try rgbToGrayscale(red: red, green: green, blue: blue)
-        
+
         // Convert back to component
         return try createComponent(
             from: gray,
@@ -692,27 +692,27 @@ public struct J2KColorTransform: Sendable {
             index: 0
         )
     }
-    
+
     // MARK: - Palette Support
-    
+
     /// Represents a color palette for indexed color images.
     public struct Palette: Sendable {
         /// The palette entries (RGB triplets).
         public let entries: [(red: UInt8, green: UInt8, blue: UInt8)]
-        
+
         /// Creates a new palette.
         ///
         /// - Parameter entries: The palette entries.
         public init(entries: [(red: UInt8, green: UInt8, blue: UInt8)]) {
             self.entries = entries
         }
-        
+
         /// The number of entries in the palette.
         public var count: Int {
             return entries.count
         }
     }
-    
+
     /// Expands indexed color data using a palette to RGB components.
     ///
     /// - Parameters:
@@ -727,38 +727,38 @@ public struct J2KColorTransform: Sendable {
         guard !indices.isEmpty else {
             throw J2KError.invalidParameter("Indices cannot be empty")
         }
-        
+
         let count = indices.count
         var red = [UInt8](repeating: 0, count: count)
         var green = [UInt8](repeating: 0, count: count)
         var blue = [UInt8](repeating: 0, count: count)
-        
+
         for i in 0..<count {
             let index = Int(indices[i])
             guard index < palette.count else {
                 throw J2KError.invalidParameter("Palette index \(index) out of range [0, \(palette.count))")
             }
-            
+
             let entry = palette.entries[index]
             red[i] = entry.red
             green[i] = entry.green
             blue[i] = entry.blue
         }
-        
+
         return (red, green, blue)
     }
-    
+
     /// A color value used for palette operations.
     private struct RGBColor: Hashable {
         let red: UInt8
         let green: UInt8
         let blue: UInt8
-        
+
         func asTuple() -> (red: UInt8, green: UInt8, blue: UInt8) {
             return (red: red, green: green, blue: blue)
         }
     }
-    
+
     /// Creates a palette from RGB component data using color quantization.
     ///
     /// This uses a simple median cut algorithm to reduce colors.
@@ -780,88 +780,88 @@ public struct J2KColorTransform: Sendable {
         guard red.count == green.count && green.count == blue.count else {
             throw J2KError.invalidParameter("Component sizes must match")
         }
-        
+
         guard !red.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         guard maxColors > 0 && maxColors <= 256 else {
             throw J2KError.invalidParameter("maxColors must be in range [1, 256]")
         }
-        
+
         // Build color histogram
         var colorMap: [RGBColor: Int] = [:]
         let count = red.count
-        
+
         for i in 0..<count {
             let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
             colorMap[color, default: 0] += 1
         }
-        
+
         // If we already have few enough colors, use them directly
         if colorMap.count <= maxColors {
             let entries = colorMap.keys.map { $0.asTuple() }
             let palette = Palette(entries: entries)
-            
+
             // Create index mapping
-            let colorToIndex = Dictionary(uniqueKeysWithValues: 
+            let colorToIndex = Dictionary(uniqueKeysWithValues:
                 colorMap.keys.enumerated().map { ($1, UInt8($0)) }
             )
             var indices = [UInt8](repeating: 0, count: count)
-            
+
             for i in 0..<count {
                 let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
                 indices[i] = colorToIndex[color] ?? 0
             }
-            
+
             return (palette, indices)
         }
-        
+
         // Otherwise, use simple color quantization
         // For simplicity, we'll use a basic approach: take the most common colors
         let sortedColors = colorMap.sorted { $0.value > $1.value }
         let topColors = Array(sortedColors.prefix(maxColors).map { $0.key })
         let entries = topColors.map { $0.asTuple() }
         let palette = Palette(entries: entries)
-        
+
         // Create index mapping
-        let colorToIndex = Dictionary(uniqueKeysWithValues: 
+        let colorToIndex = Dictionary(uniqueKeysWithValues:
             topColors.enumerated().map { ($1, UInt8($0)) }
         )
-        
+
         // Map each pixel to nearest palette entry
         var indices = [UInt8](repeating: 0, count: count)
         for i in 0..<count {
             let color = RGBColor(red: red[i], green: green[i], blue: blue[i])
-            
+
             if let index = colorToIndex[color] {
                 indices[i] = index
             } else {
                 // Find nearest color in palette
                 var minDistance = Int.max
                 var bestIndex: UInt8 = 0
-                
+
                 for (idx, entry) in entries.enumerated() {
                     let dr = Int(entry.red) - Int(color.red)
                     let dg = Int(entry.green) - Int(color.green)
                     let db = Int(entry.blue) - Int(color.blue)
                     let distance = dr * dr + dg * dg + db * db
-                    
+
                     if distance < minDistance {
                         minDistance = distance
                         bestIndex = UInt8(idx)
                     }
                 }
-                
+
                 indices[i] = bestIndex
             }
         }
-        
+
         return (palette, indices)
     }
-    
+
     // MARK: - Color Space Detection
-    
+
     /// Detects the color space based on the number and properties of components.
     ///
     /// - Parameter components: The image components.
@@ -870,9 +870,9 @@ public struct J2KColorTransform: Sendable {
         guard !components.isEmpty else {
             return .unknown
         }
-        
+
         let componentCount = components.count
-        
+
         switch componentCount {
         case 1:
             return .grayscale
@@ -886,7 +886,7 @@ public struct J2KColorTransform: Sendable {
             return .unknown
         }
     }
-    
+
     /// Validates that components are suitable for a given color space.
     ///
     /// - Parameters:
@@ -904,50 +904,50 @@ public struct J2KColorTransform: Sendable {
                     "Grayscale color space requires 1 component, got \(components.count)"
                 )
             }
-            
+
         case .sRGB, .yCbCr, .hdr, .hdrLinear:
             guard components.count >= 3 else {
                 throw J2KError.invalidComponentConfiguration(
                     "RGB/YCbCr/HDR color space requires at least 3 components, got \(components.count)"
                 )
             }
-            
+
         case .iccProfile:
             // ICC profiles can support arbitrary component counts
             break
-            
+
         case .unknown:
             // Unknown color space, no validation
             break
         }
     }
-    
+
     // MARK: - Component Subsampling Support
-    
+
     /// Information about component subsampling.
     public struct SubsamplingInfo: Sendable, Equatable {
         /// Horizontal subsampling factor (e.g., 2 for 4:2:0).
         public let horizontalFactor: Int
-        
+
         /// Vertical subsampling factor (e.g., 2 for 4:2:0).
         public let verticalFactor: Int
-        
+
         /// Creates a new subsampling info.
         public init(horizontalFactor: Int, verticalFactor: Int) {
             self.horizontalFactor = horizontalFactor
             self.verticalFactor = verticalFactor
         }
-        
+
         /// No subsampling (4:4:4).
         public static let none = SubsamplingInfo(horizontalFactor: 1, verticalFactor: 1)
-        
+
         /// 4:2:2 subsampling (horizontal only).
         public static let yuv422 = SubsamplingInfo(horizontalFactor: 2, verticalFactor: 1)
-        
+
         /// 4:2:0 subsampling (both horizontal and vertical).
         public static let yuv420 = SubsamplingInfo(horizontalFactor: 2, verticalFactor: 2)
     }
-    
+
     /// Validates that all components have matching subsampling.
     ///
     /// - Parameters:
@@ -957,10 +957,10 @@ public struct J2KColorTransform: Sendable {
         guard components.count >= 3 else {
             throw J2KError.invalidComponentConfiguration("Need at least 3 components for color transform")
         }
-        
+
         let refSubsamplingX = components[0].subsamplingX
         let refSubsamplingY = components[0].subsamplingY
-        
+
         for (index, component) in components.enumerated() {
             if component.subsamplingX != refSubsamplingX ||
                component.subsamplingY != refSubsamplingY {
@@ -971,20 +971,20 @@ public struct J2KColorTransform: Sendable {
             }
         }
     }
-    
+
     // MARK: - Helper Methods
-    
+
     /// Converts a J2KComponent to an Int32 array.
     private func convertToInt32Array(_ component: J2KComponent) throws -> [Int32] {
         let pixelCount = component.width * component.height
         var result = [Int32](repeating: 0, count: pixelCount)
-        
+
         // For now, assume data is stored as Int32 in native byte order
         // In a real implementation, this would handle various bit depths and formats
         guard component.data.count >= pixelCount * MemoryLayout<Int32>.size else {
             throw J2KError.invalidData("Component data size insufficient")
         }
-        
+
         component.data.withUnsafeBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
@@ -992,21 +992,21 @@ public struct J2KColorTransform: Sendable {
                 result[i] = int32Ptr[i]
             }
         }
-        
+
         return result
     }
-    
+
     /// Converts a J2KComponent to a Double array.
     private func convertToDoubleArray(_ component: J2KComponent) throws -> [Double] {
         let pixelCount = component.width * component.height
         var result = [Double](repeating: 0, count: pixelCount)
-        
+
         // For now, assume data is stored as Int32 in native byte order
         // In a real implementation, this would handle various bit depths and formats
         guard component.data.count >= pixelCount * MemoryLayout<Int32>.size else {
             throw J2KError.invalidData("Component data size insufficient")
         }
-        
+
         component.data.withUnsafeBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
@@ -1014,10 +1014,10 @@ public struct J2KColorTransform: Sendable {
                 result[i] = Double(int32Ptr[i])
             }
         }
-        
+
         return result
     }
-    
+
     /// Creates a J2KComponent from an Int32 array.
     private func createComponent(
         from data: [Int32],
@@ -1025,7 +1025,7 @@ public struct J2KColorTransform: Sendable {
         index: Int
     ) throws -> J2KComponent {
         var componentData = Data(count: data.count * MemoryLayout<Int32>.size)
-        
+
         componentData.withUnsafeMutableBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
@@ -1033,7 +1033,7 @@ public struct J2KColorTransform: Sendable {
                 int32Ptr[i] = data[i]
             }
         }
-        
+
         return J2KComponent(
             index: index,
             bitDepth: template.bitDepth,
@@ -1045,7 +1045,7 @@ public struct J2KColorTransform: Sendable {
             data: componentData
         )
     }
-    
+
     /// Creates a J2KComponent from a Double array.
     private func createComponentFromDouble(
         from data: [Double],
@@ -1053,7 +1053,7 @@ public struct J2KColorTransform: Sendable {
         index: Int
     ) throws -> J2KComponent {
         var componentData = Data(count: data.count * MemoryLayout<Int32>.size)
-        
+
         componentData.withUnsafeMutableBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
@@ -1062,7 +1062,7 @@ public struct J2KColorTransform: Sendable {
                 int32Ptr[i] = Int32(data[i].rounded())
             }
         }
-        
+
         return J2KComponent(
             index: index,
             bitDepth: template.bitDepth,

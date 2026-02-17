@@ -7,7 +7,6 @@ import XCTest
 /// These tests validate the complete encoding pipeline from image input
 /// to JPEG 2000 codestream output, including all intermediate stages.
 final class J2KEncoderPipelineTests: XCTestCase {
-
     // MARK: - Basic Encoding Tests
 
     /// Tests encoding a minimal grayscale image.

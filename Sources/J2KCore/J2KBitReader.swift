@@ -26,13 +26,13 @@ import Foundation
 public struct J2KBitReader: Sendable {
     /// The underlying data being read.
     private let data: Data
-    
+
     /// The current byte position in the data.
     private var bytePosition: Int
-    
+
     /// The current bit position within the current byte (0-7, where 0 is MSB).
     private var bitPosition: Int
-    
+
     /// Creates a new bit reader from the specified data.
     ///
     /// - Parameter data: The data to read from.
@@ -41,45 +41,45 @@ public struct J2KBitReader: Sendable {
         self.bytePosition = 0
         self.bitPosition = 0
     }
-    
+
     /// The total number of bytes in the data.
     public var count: Int {
         data.count
     }
-    
+
     /// The current byte position in the data.
     public var position: Int {
         bytePosition
     }
-    
+
     /// The current bit offset within the current byte (0-7).
     public var bitOffset: Int {
         bitPosition
     }
-    
+
     /// Returns `true` if the reader is at a byte boundary.
     public var isByteAligned: Bool {
         bitPosition == 0
     }
-    
+
     /// Returns `true` if there is no more data to read.
     public var isAtEnd: Bool {
         bytePosition >= data.count
     }
-    
+
     /// The number of bytes remaining to be read.
     public var bytesRemaining: Int {
         max(0, data.count - bytePosition)
     }
-    
+
     /// The number of bits remaining to be read.
     public var bitsRemaining: Int {
         guard bytePosition < data.count else { return 0 }
         return (data.count - bytePosition) * 8 - bitPosition
     }
-    
+
     // MARK: - Byte-Aligned Reading
-    
+
     /// Reads a single byte from the stream.
     ///
     /// - Returns: The byte value.
@@ -93,7 +93,7 @@ public struct J2KBitReader: Sendable {
         bytePosition += 1
         return value
     }
-    
+
     /// Reads a 16-bit big-endian unsigned integer from the stream.
     ///
     /// - Returns: The 16-bit value.
@@ -107,7 +107,7 @@ public struct J2KBitReader: Sendable {
         bytePosition += 2
         return value
     }
-    
+
     /// Reads a 32-bit big-endian unsigned integer from the stream.
     ///
     /// - Returns: The 32-bit value.
@@ -124,7 +124,7 @@ public struct J2KBitReader: Sendable {
         bytePosition += 4
         return value
     }
-    
+
     /// Reads a 64-bit big-endian unsigned integer from the stream.
     ///
     /// - Returns: The 64-bit value.
@@ -141,7 +141,7 @@ public struct J2KBitReader: Sendable {
         bytePosition += 8
         return value
     }
-    
+
     /// Reads the specified number of bytes from the stream.
     ///
     /// - Parameter count: The number of bytes to read.
@@ -156,9 +156,9 @@ public struct J2KBitReader: Sendable {
         bytePosition += count
         return result
     }
-    
+
     // MARK: - Bit-Level Reading
-    
+
     /// Reads a single bit from the stream.
     ///
     /// - Returns: `true` if the bit is 1, `false` if 0.
@@ -167,20 +167,20 @@ public struct J2KBitReader: Sendable {
         guard bytePosition < data.count else {
             throw J2KError.invalidData("Unexpected end of data at position \(bytePosition)")
         }
-        
+
         let byte = data[bytePosition]
         let mask = UInt8(1 << (7 - bitPosition))
         let bit = (byte & mask) != 0
-        
+
         bitPosition += 1
         if bitPosition >= 8 {
             bitPosition = 0
             bytePosition += 1
         }
-        
+
         return bit
     }
-    
+
     /// Reads the specified number of bits from the stream.
     ///
     /// - Parameter count: The number of bits to read (1-32).
@@ -191,39 +191,39 @@ public struct J2KBitReader: Sendable {
         guard count >= 1 && count <= 32 else {
             throw J2KError.invalidParameter("Bit count must be between 1 and 32, got \(count)")
         }
-        
+
         guard bitsRemaining >= count else {
             throw J2KError.invalidData("Insufficient bits: need \(count), have \(bitsRemaining)")
         }
-        
+
         var result: UInt32 = 0
         var bitsToRead = count
-        
+
         while bitsToRead > 0 {
             let bitsInCurrentByte = 8 - bitPosition
             let bitsThisIteration = min(bitsToRead, bitsInCurrentByte)
-            
+
             let byte = data[bytePosition]
             let shift = bitsInCurrentByte - bitsThisIteration
             let mask = UInt8((1 << bitsThisIteration) - 1)
             let bits = (byte >> shift) & mask
-            
+
             result = (result << bitsThisIteration) | UInt32(bits)
-            
+
             bitPosition += bitsThisIteration
             if bitPosition >= 8 {
                 bitPosition = 0
                 bytePosition += 1
             }
-            
+
             bitsToRead -= bitsThisIteration
         }
-        
+
         return result
     }
-    
+
     // MARK: - Alignment and Position
-    
+
     /// Aligns the reader to the next byte boundary.
     ///
     /// If already at a byte boundary, this method does nothing.
@@ -234,7 +234,7 @@ public struct J2KBitReader: Sendable {
             bytePosition += 1
         }
     }
-    
+
     /// Seeks to the specified byte position.
     ///
     /// - Parameter position: The byte position to seek to.
@@ -246,7 +246,7 @@ public struct J2KBitReader: Sendable {
         bytePosition = position
         bitPosition = 0
     }
-    
+
     /// Skips the specified number of bytes.
     ///
     /// - Parameter count: The number of bytes to skip.
@@ -259,7 +259,7 @@ public struct J2KBitReader: Sendable {
         }
         bytePosition = newPosition
     }
-    
+
     /// Skips the specified number of bits.
     ///
     /// - Parameter count: The number of bits to skip.
@@ -268,18 +268,18 @@ public struct J2KBitReader: Sendable {
         guard count >= 0 else {
             throw J2KError.invalidParameter("Cannot skip negative number of bits: \(count)")
         }
-        
+
         guard bitsRemaining >= count else {
             throw J2KError.invalidData("Insufficient bits to skip: need \(count), have \(bitsRemaining)")
         }
-        
+
         let totalBits = bitPosition + count
         bytePosition += totalBits / 8
         bitPosition = totalBits % 8
     }
-    
+
     // MARK: - Peek Operations
-    
+
     /// Peeks at the next byte without advancing the position.
     ///
     /// - Returns: The next byte, or `nil` if at end of data.
@@ -289,7 +289,7 @@ public struct J2KBitReader: Sendable {
         }
         return data[bytePosition]
     }
-    
+
     /// Peeks at the next 16-bit value without advancing the position.
     ///
     /// - Returns: The next 16-bit value, or `nil` if insufficient data.
@@ -299,9 +299,9 @@ public struct J2KBitReader: Sendable {
         }
         return UInt16(data[bytePosition]) << 8 | UInt16(data[bytePosition + 1])
     }
-    
+
     // MARK: - Marker Detection (JPEG 2000 specific)
-    
+
     /// Reads the next marker from the stream.
     ///
     /// A marker is a two-byte sequence starting with 0xFF.
@@ -316,7 +316,7 @@ public struct J2KBitReader: Sendable {
         }
         return marker
     }
-    
+
     /// Checks if the next two bytes form a valid marker.
     ///
     /// - Returns: `true` if the next bytes are a valid marker.

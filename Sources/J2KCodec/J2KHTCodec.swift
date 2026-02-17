@@ -239,16 +239,16 @@ struct HTJ2KEncoder: Sendable {
     /// - Returns: The CPF marker segment data.
     func generateCPFMarkerData() -> Data {
         var data = Data()
-        
+
         // Pcpf (2 bytes): Profile capability
         // Bits 0-14: Profile number
         // Bit 15: 0 = Part 1 profile, 1 = Part 15 (HTJ2K) profile
         var pcpf: UInt16 = 0
-        
+
         if configuration.codingMode == .ht || configuration.allowMixedMode {
             // HTJ2K profile
             pcpf |= 0x8000 // Bit 15 = 1 for Part 15 profile
-            
+
             // Profile numbers for HTJ2K (ISO/IEC 15444-15):
             // 0: HTJ2K reversible (lossless)
             // 1: HTJ2K irreversible (lossy)
@@ -269,10 +269,10 @@ struct HTJ2KEncoder: Sendable {
                 pcpf |= 0x0001 // Profile 1: extended (works for lossy)
             }
         }
-        
+
         data.append(UInt8((pcpf >> 8) & 0xFF))
         data.append(UInt8(pcpf & 0xFF))
-        
+
         return data
     }
 
@@ -481,15 +481,15 @@ struct HTJ2KDecoder: Sendable {
         guard data.count >= 2 else {
             throw J2KError.decodingError("CPF marker data too short")
         }
-        
+
         let pcpf = UInt16(data[0]) << 8 | UInt16(data[1])
-        
+
         // Bit 15: 0 = Part 1 profile, 1 = Part 15 (HTJ2K) profile
         let isHTJ2K = (pcpf & 0x8000) != 0
-        
+
         // Bits 0-14: Profile number
         let profileNumber = Int(pcpf & 0x7FFF)
-        
+
         // Determine if lossless based on profile
         // For HTJ2K: Profile 0 = reversible (lossless), Profile 1 = irreversible (lossy)
         // For Part 1: Profile 0 = basic (can be either lossless or lossy)
@@ -499,7 +499,7 @@ struct HTJ2KDecoder: Sendable {
         // mode is determined by the COD marker's wavelet transform type (5/3 vs 9/7).
         // This function provides a best-effort heuristic based on profile number.
         let lossless = (profileNumber == 0)
-        
+
         return (isHTJ2K, profileNumber, lossless)
     }
 
