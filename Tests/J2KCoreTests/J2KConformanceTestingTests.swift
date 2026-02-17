@@ -726,4 +726,243 @@ final class J2KConformanceTestingTests: XCTestCase {
         // Verify all vectors have reference images
         XCTAssertTrue(vectors.allSatisfy { $0.referenceImage != nil })
     }
+    
+    // MARK: - HTJ2K Test Vector Parser Tests
+    
+    func testHTJ2KTestVectorParserBasic() throws {
+        let text = """
+        NAME: test_basic
+        DESCRIPTION: Basic test vector
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: solid(128)
+        LOSSLESS: true
+        HTJ2K: true
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        
+        XCTAssertEqual(vector.name, "test_basic")
+        XCTAssertEqual(vector.description, "Basic test vector")
+        XCTAssertEqual(vector.width, 32)
+        XCTAssertEqual(vector.height, 32)
+        XCTAssertEqual(vector.components, 1)
+        XCTAssertEqual(vector.bitDepth, 8)
+        XCTAssertNotNil(vector.referenceImage)
+    }
+    
+    func testHTJ2KTestVectorParserWithComments() throws {
+        let text = """
+        # This is a comment
+        NAME: test_comments
+        # Another comment
+        DESCRIPTION: Test with comments
+        WIDTH: 16
+        HEIGHT: 16
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: gradient
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_comments")
+    }
+    
+    func testHTJ2KTestVectorParserCheckerboard() throws {
+        let text = """
+        NAME: test_checkerboard
+        DESCRIPTION: Checkerboard pattern
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: checkerboard(8)
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_checkerboard")
+        XCTAssertNotNil(vector.referenceImage)
+    }
+    
+    func testHTJ2KTestVectorParserRandomNoise() throws {
+        let text = """
+        NAME: test_random
+        DESCRIPTION: Random noise pattern
+        WIDTH: 64
+        HEIGHT: 64
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: randomnoise(12345)
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_random")
+    }
+    
+    func testHTJ2KTestVectorParserGradient() throws {
+        let text = """
+        NAME: test_gradient
+        DESCRIPTION: Gradient pattern
+        WIDTH: 64
+        HEIGHT: 64
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: gradient
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_gradient")
+    }
+    
+    func testHTJ2KTestVectorParserFrequencySweep() throws {
+        let text = """
+        NAME: test_frequency
+        DESCRIPTION: Frequency sweep pattern
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: frequencysweep
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_frequency")
+    }
+    
+    func testHTJ2KTestVectorParserEdges() throws {
+        let text = """
+        NAME: test_edges
+        DESCRIPTION: Edge pattern
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: edges
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        XCTAssertEqual(vector.name, "test_edges")
+    }
+    
+    func testHTJ2KTestVectorParserMissingField() throws {
+        let text = """
+        NAME: test_missing
+        WIDTH: 32
+        HEIGHT: 32
+        """
+        
+        XCTAssertThrowsError(try HTJ2KTestVectorParser.parse(text)) { error in
+            guard case HTJ2KTestVectorParser.ParseError.missingField = error else {
+                XCTFail("Expected missingField error")
+                return
+            }
+        }
+    }
+    
+    func testHTJ2KTestVectorParserInvalidWidth() throws {
+        let text = """
+        NAME: test_invalid
+        DESCRIPTION: Invalid width
+        WIDTH: invalid
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: solid(100)
+        """
+        
+        XCTAssertThrowsError(try HTJ2KTestVectorParser.parse(text)) { error in
+            guard case HTJ2KTestVectorParser.ParseError.invalidValue = error else {
+                XCTFail("Expected invalidValue error")
+                return
+            }
+        }
+    }
+    
+    func testHTJ2KTestVectorParserUnknownPattern() throws {
+        let text = """
+        NAME: test_unknown
+        DESCRIPTION: Unknown pattern
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: unknown_pattern
+        """
+        
+        XCTAssertThrowsError(try HTJ2KTestVectorParser.parse(text)) { error in
+            guard case HTJ2KTestVectorParser.ParseError.unknownPattern = error else {
+                XCTFail("Expected unknownPattern error")
+                return
+            }
+        }
+    }
+    
+    func testHTJ2KTestVectorParserMultiple() throws {
+        let text = """
+        NAME: test1
+        DESCRIPTION: First test
+        WIDTH: 16
+        HEIGHT: 16
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: solid(100)
+        ---
+        NAME: test2
+        DESCRIPTION: Second test
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: gradient
+        """
+        
+        let vectors = try HTJ2KTestVectorParser.parseMultiple(text)
+        
+        XCTAssertEqual(vectors.count, 2)
+        XCTAssertEqual(vectors[0].name, "test1")
+        XCTAssertEqual(vectors[1].name, "test2")
+    }
+    
+    func testHTJ2KTestVectorParserValidate() throws {
+        let validText = """
+        NAME: test_valid
+        DESCRIPTION: Valid test
+        WIDTH: 32
+        HEIGHT: 32
+        COMPONENTS: 1
+        BITDEPTH: 8
+        PATTERN: solid(128)
+        """
+        
+        let invalidText = """
+        NAME: test_invalid
+        WIDTH: invalid_value
+        """
+        
+        XCTAssertTrue(HTJ2KTestVectorParser.validate(validText))
+        XCTAssertFalse(HTJ2KTestVectorParser.validate(invalidText))
+    }
+    
+    func testHTJ2KTestVectorParserLossyQuality() throws {
+        let text = """
+        NAME: test_lossy
+        DESCRIPTION: Lossy compression test
+        WIDTH: 64
+        HEIGHT: 64
+        COMPONENTS: 3
+        BITDEPTH: 8
+        PATTERN: gradient
+        LOSSLESS: false
+        QUALITY: 0.85
+        HTJ2K: true
+        """
+        
+        let vector = try HTJ2KTestVectorParser.parse(text)
+        
+        XCTAssertEqual(vector.name, "test_lossy")
+        XCTAssertEqual(vector.components, 3)
+        XCTAssertGreaterThan(vector.maxAllowableError, 0, "Lossy should allow some error")
+    }
 }

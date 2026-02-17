@@ -893,3 +893,216 @@ public struct HTJ2KConformanceTestHarness: Sendable {
         return vectors
     }
 }
+
+// MARK: - HTJ2K Test Vector Parser
+
+/// Parser for HTJ2K test vector data files.
+///
+/// This parser reads test vector files in a simple text format that specifies
+/// image parameters, test patterns, and expected results. This allows external
+/// test data to be loaded for conformance testing.
+///
+/// ## File Format
+///
+/// Test vector files use a simple key-value format:
+///
+/// ```
+/// NAME: test_name
+/// DESCRIPTION: Test description
+/// WIDTH: 64
+/// HEIGHT: 64
+/// COMPONENTS: 1
+/// BITDEPTH: 8
+/// PATTERN: checkerboard(8)
+/// LOSSLESS: true
+/// HTJ2K: true
+/// ```
+public struct HTJ2KTestVectorParser: Sendable {
+    
+    /// Errors that can occur during parsing.
+    public enum ParseError: Error, Sendable {
+        /// Required field is missing.
+        case missingField(String)
+        
+        /// Invalid value for a field.
+        case invalidValue(field: String, value: String)
+        
+        /// Unknown pattern type.
+        case unknownPattern(String)
+        
+        /// File format error.
+        case formatError(String)
+    }
+    
+    /// Parses a test vector from a text string.
+    ///
+    /// - Parameter text: The test vector specification as text.
+    /// - Returns: A configured test vector.
+    /// - Throws: `ParseError` if parsing fails.
+    public static func parse(_ text: String) throws -> J2KTestVector {
+        var fields: [String: String] = [:]
+        
+        // Parse key-value pairs
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            
+            // Skip empty lines and comments
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                continue
+            }
+            
+            // Split on first colon
+            guard let colonIndex = trimmed.firstIndex(of: ":") else {
+                continue
+            }
+            
+            let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespaces).uppercased()
+            let value = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+            fields[key] = value
+        }
+        
+        // Extract required fields
+        guard let name = fields["NAME"] else {
+            throw ParseError.missingField("NAME")
+        }
+        
+        guard let description = fields["DESCRIPTION"] else {
+            throw ParseError.missingField("DESCRIPTION")
+        }
+        
+        guard let widthStr = fields["WIDTH"],
+              let width = Int(widthStr) else {
+            throw ParseError.invalidValue(field: "WIDTH", value: fields["WIDTH"] ?? "")
+        }
+        
+        guard let heightStr = fields["HEIGHT"],
+              let height = Int(heightStr) else {
+            throw ParseError.invalidValue(field: "HEIGHT", value: fields["HEIGHT"] ?? "")
+        }
+        
+        guard let componentsStr = fields["COMPONENTS"],
+              let components = Int(componentsStr) else {
+            throw ParseError.invalidValue(field: "COMPONENTS", value: fields["COMPONENTS"] ?? "")
+        }
+        
+        guard let bitDepthStr = fields["BITDEPTH"],
+              let bitDepth = Int(bitDepthStr) else {
+            throw ParseError.invalidValue(field: "BITDEPTH", value: fields["BITDEPTH"] ?? "")
+        }
+        
+        guard let patternStr = fields["PATTERN"] else {
+            throw ParseError.missingField("PATTERN")
+        }
+        
+        // Parse pattern
+        let pattern = try parsePattern(patternStr)
+        
+        // Parse optional fields
+        let lossless = fields["LOSSLESS"]?.lowercased() == "true"
+        let quality = Double(fields["QUALITY"] ?? "1.0") ?? 1.0
+        let useHTJ2K = fields["HTJ2K"]?.lowercased() == "true"
+        
+        // Generate test vector
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: width,
+            height: height,
+            components: components,
+            bitDepth: bitDepth,
+            pattern: pattern,
+            lossless: lossless,
+            quality: quality,
+            useHTJ2K: useHTJ2K
+        )
+        
+        return HTJ2KTestVectorGenerator.createTestVector(
+            name: name,
+            description: description,
+            config: config
+        )
+    }
+    
+    /// Parses a pattern specification string.
+    ///
+    /// - Parameter patternStr: Pattern specification (e.g., "solid(128)", "checkerboard(8)").
+    /// - Returns: The corresponding test pattern.
+    /// - Throws: `ParseError.unknownPattern` if the pattern is not recognized.
+    private static func parsePattern(_ patternStr: String) throws -> HTJ2KTestVectorGenerator.TestPattern {
+        let trimmed = patternStr.trimmingCharacters(in: .whitespaces).lowercased()
+        
+        // Pattern with argument
+        if let openParen = trimmed.firstIndex(of: "("),
+           let closeParen = trimmed.lastIndex(of: ")") {
+            let patternName = String(trimmed[..<openParen])
+            let argStr = String(trimmed[trimmed.index(after: openParen)..<closeParen])
+            
+            switch patternName {
+            case "solid":
+                guard let value = Int32(argStr) else {
+                    throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
+                }
+                return .solid(value: value)
+                
+            case "checkerboard":
+                guard let size = Int(argStr) else {
+                    throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
+                }
+                return .checkerboard(squareSize: size)
+                
+            case "randomnoise", "random":
+                guard let seed = UInt64(argStr) else {
+                    throw ParseError.invalidValue(field: "PATTERN", value: patternStr)
+                }
+                return .randomNoise(seed: seed)
+                
+            default:
+                throw ParseError.unknownPattern(patternName)
+            }
+        }
+        
+        // Pattern without argument
+        switch trimmed {
+        case "gradient":
+            return .gradient
+        case "frequencysweep", "frequency":
+            return .frequencySweep
+        case "edges":
+            return .edges
+        default:
+            throw ParseError.unknownPattern(trimmed)
+        }
+    }
+    
+    /// Parses multiple test vectors from a file-like string.
+    ///
+    /// Test vectors are separated by lines containing only "---".
+    ///
+    /// - Parameter text: The text containing multiple test vectors.
+    /// - Returns: Array of parsed test vectors.
+    /// - Throws: `ParseError` if any test vector fails to parse.
+    public static func parseMultiple(_ text: String) throws -> [J2KTestVector] {
+        let sections = text.components(separatedBy: "\n---\n")
+        var vectors: [J2KTestVector] = []
+        
+        for section in sections {
+            let trimmed = section.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                try vectors.append(parse(trimmed))
+            }
+        }
+        
+        return vectors
+    }
+    
+    /// Validates a test vector specification without generating the full vector.
+    ///
+    /// - Parameter text: The test vector specification.
+    /// - Returns: `true` if the specification is valid.
+    public static func validate(_ text: String) -> Bool {
+        do {
+            _ = try parse(text)
+            return true
+        } catch {
+            return false
+        }
+    }
+}
