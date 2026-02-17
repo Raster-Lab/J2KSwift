@@ -37,6 +37,12 @@ public actor JPIPServer {
     /// Registered images available for serving.
     private var registeredImages: [String: URL]
     
+    /// Cached image format information for registered images.
+    private var imageInfoCache: [String: JPIPImageInfo]
+    
+    /// HTJ2K support helper.
+    private let htj2kSupport: JPIPHTJ2KSupport
+    
     /// Active client sessions.
     private var sessions: [String: JPIPServerSession]
     
@@ -127,6 +133,8 @@ public actor JPIPServer {
         self.port = port
         self.configuration = configuration
         self.registeredImages = [:]
+        self.imageInfoCache = [:]
+        self.htj2kSupport = JPIPHTJ2KSupport()
         self.sessions = [:]
         self.requestQueue = JPIPRequestQueue(maxSize: configuration.maxQueueSize)
         self.bandwidthThrottle = JPIPBandwidthThrottle(
@@ -150,6 +158,11 @@ public actor JPIPServer {
         }
         
         registeredImages[name] = url
+        
+        // Detect format and cache image info
+        if let info = try? htj2kSupport.detectFormat(at: url) {
+            imageInfoCache[name] = info
+        }
     }
     
     /// Unregisters an image from serving.
@@ -157,6 +170,7 @@ public actor JPIPServer {
     /// - Parameter name: The image name to unregister.
     public func unregisterImage(name: String) {
         registeredImages.removeValue(forKey: name)
+        imageInfoCache.removeValue(forKey: name)
     }
     
     /// Gets the list of registered image names.
@@ -322,10 +336,20 @@ public actor JPIPServer {
         
         // For session creation, return minimal response with channel ID
         if request.cnew != nil {
-            let headers = [
+            var headers = [
                 "JPIP-cnew": "cid=\(session.channelID),path=/jpip,transport=http",
                 "Content-Type": "application/octet-stream"
             ]
+            
+            // Add HTJ2K capability headers if the image supports it
+            if let info = imageInfoCache[request.target] {
+                let capHeaders = htj2kSupport.capabilityHeaders(for: info)
+                for (key, value) in capHeaders {
+                    if key != "Content-Type" { // Don't override Content-Type
+                        headers[key] = value
+                    }
+                }
+            }
             
             return JPIPResponse(
                 channelID: session.channelID,
@@ -363,12 +387,14 @@ public actor JPIPServer {
     
     /// Generates metadata for an image.
     private func generateMetadata(for imageURL: URL) async throws -> Data {
-        // In a real implementation, this would:
-        // 1. Parse the JP2 file
-        // 2. Extract metadata (dimensions, color space, etc.)
-        // 3. Encode as JPIP data bins
+        // Check if we have cached image info for format-aware metadata
+        for (name, url) in registeredImages where url == imageURL {
+            if let info = imageInfoCache[name] {
+                return htj2kSupport.generateFormatMetadata(for: info)
+            }
+        }
         
-        // For now, return placeholder data
+        // Fallback: return basic metadata
         return Data("metadata".utf8)
     }
     
@@ -414,6 +440,14 @@ public actor JPIPServer {
     /// - Returns: Number of active sessions.
     public func getActiveSessionCount() async -> Int {
         return sessions.count
+    }
+    
+    /// Gets the format information for a registered image.
+    ///
+    /// - Parameter name: The registered image name.
+    /// - Returns: The image info if available, nil otherwise.
+    public func getImageInfo(name: String) -> JPIPImageInfo? {
+        return imageInfoCache[name]
     }
 }
 
