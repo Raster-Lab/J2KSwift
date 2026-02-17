@@ -220,8 +220,15 @@ final class J2KISOTestSuiteTests: XCTestCase {
     // MARK: - Conformance Validation with Synthetic Vectors
     
     func testValidateSyntheticVectorPerfectMatch() throws {
-        let vector = J2KISOTestSuiteLoader.syntheticTestVectors().first!
-        let decoded = vector.referenceImage!
+        let vectors = J2KISOTestSuiteLoader.syntheticTestVectors()
+        guard let vector = vectors.first else {
+            XCTFail("No synthetic test vectors available")
+            return
+        }
+        guard let decoded = vector.referenceImage else {
+            XCTFail("Synthetic vector should have reference image")
+            return
+        }
         
         let result = J2KConformanceValidator.validate(
             decoded: decoded,
@@ -230,8 +237,10 @@ final class J2KISOTestSuiteTests: XCTestCase {
         
         XCTAssertTrue(result.passed, "Perfect match should pass")
         XCTAssertNil(result.errorMessage)
-        XCTAssertEqual(result.mse!, 0.0, accuracy: 0.0001)
-        XCTAssertEqual(result.mae!, 0)
+        XCTAssertNotNil(result.mse)
+        XCTAssertNotNil(result.mae)
+        XCTAssertEqual(result.mse ?? -1, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(result.mae ?? -1, 0)
     }
     
     func testValidateAllSyntheticVectorsPerfectMatch() throws {

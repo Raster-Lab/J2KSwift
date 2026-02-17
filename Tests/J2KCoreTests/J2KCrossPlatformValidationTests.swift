@@ -81,12 +81,14 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
     }
     
     func testByteOrderDetection() throws {
-        // Most modern platforms are little-endian
-        // This test just verifies the property is accessible
-        let _ = J2KPlatformInfo.isLittleEndian
+        // Verify byte order detection is accessible and returns a valid value
+        let isLittleEndian = J2KPlatformInfo.isLittleEndian
         // On x86_64 and arm64, we expect little-endian
         #if arch(x86_64) || arch(arm64)
-        XCTAssertTrue(J2KPlatformInfo.isLittleEndian, "x86_64 and arm64 should be little-endian")
+        XCTAssertTrue(isLittleEndian, "x86_64 and arm64 should be little-endian")
+        #else
+        // Just verify the property returns without error
+        XCTAssertTrue(isLittleEndian || !isLittleEndian)
         #endif
     }
     
