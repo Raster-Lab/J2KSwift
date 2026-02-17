@@ -368,4 +368,71 @@ final class J2KAccelerateBenchmarks: XCTestCase {
         throw XCTSkip("Accelerate framework not available")
         #endif
     }
+    
+    // MARK: - ICT Benchmarks
+    
+    func testBenchmarkICTForwardSmall() throws {
+        #if canImport(Accelerate)
+        let ict = J2KColorTransform()
+        let count = 256 * 256
+        let red = (0..<count).map { Double($0 % 256) / 255.0 }
+        let green = (0..<count).map { Double(($0 + 85) % 256) / 255.0 }
+        let blue = (0..<count).map { Double(($0 + 170) % 256) / 255.0 }
+        
+        measure {
+            do {
+                for _ in 0..<10 {
+                    _ = try ict.forwardICT(red: red, green: green, blue: blue)
+                }
+            } catch {
+                XCTFail("ICT failed: \(error)")
+            }
+        }
+        #else
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
+    
+    func testBenchmarkICTForwardLarge() throws {
+        #if canImport(Accelerate)
+        let ict = J2KColorTransform()
+        let count = 1024 * 1024
+        let red = (0..<count).map { Double($0 % 256) / 255.0 }
+        let green = (0..<count).map { Double(($0 + 85) % 256) / 255.0 }
+        let blue = (0..<count).map { Double(($0 + 170) % 256) / 255.0 }
+        
+        measure {
+            do {
+                _ = try ict.forwardICT(red: red, green: green, blue: blue)
+            } catch {
+                XCTFail("ICT failed: \(error)")
+            }
+        }
+        #else
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
+    
+    func testBenchmarkICTRoundTrip() throws {
+        #if canImport(Accelerate)
+        let ict = J2KColorTransform()
+        let count = 512 * 512
+        let red = (0..<count).map { Double($0 % 256) / 255.0 }
+        let green = (0..<count).map { Double(($0 + 85) % 256) / 255.0 }
+        let blue = (0..<count).map { Double(($0 + 170) % 256) / 255.0 }
+        
+        measure {
+            do {
+                for _ in 0..<5 {
+                    let (y, cb, cr) = try ict.forwardICT(red: red, green: green, blue: blue)
+                    _ = try ict.inverseICT(y: y, cb: cb, cr: cr)
+                }
+            } catch {
+                XCTFail("ICT failed: \(error)")
+            }
+        }
+        #else
+        throw XCTSkip("Accelerate framework not available")
+        #endif
+    }
 }
