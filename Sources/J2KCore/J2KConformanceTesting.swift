@@ -556,3 +556,340 @@ private struct SeededRandomNumberGenerator: RandomNumberGenerator {
         return state
     }
 }
+
+// MARK: - HTJ2K Conformance Test Harness
+
+/// Comprehensive test harness for validating HTJ2K implementations.
+///
+/// This harness extends the basic conformance validator with HTJ2K-specific
+/// validation rules and test scenarios as specified in ISO/IEC 15444-15.
+public struct HTJ2KConformanceTestHarness: Sendable {
+    
+    /// HTJ2K-specific validation rules.
+    public struct ValidationRules: Sendable {
+        /// Whether to validate CAP marker presence.
+        public let requireCAPMarker: Bool
+        
+        /// Whether to validate CPF marker presence.
+        public let requireCPFMarker: Bool
+        
+        /// Whether to validate HT set parameters in COD/COC markers.
+        public let validateHTSetParameters: Bool
+        
+        /// Whether to validate mixed-mode codestreams (HT + legacy blocks).
+        public let allowMixedMode: Bool
+        
+        /// Maximum allowable encoding/decoding time in seconds.
+        public let maxProcessingTime: Double?
+        
+        /// Creates new validation rules.
+        public init(
+            requireCAPMarker: Bool = true,
+            requireCPFMarker: Bool = true,
+            validateHTSetParameters: Bool = true,
+            allowMixedMode: Bool = false,
+            maxProcessingTime: Double? = nil
+        ) {
+            self.requireCAPMarker = requireCAPMarker
+            self.requireCPFMarker = requireCPFMarker
+            self.validateHTSetParameters = validateHTSetParameters
+            self.allowMixedMode = allowMixedMode
+            self.maxProcessingTime = maxProcessingTime
+        }
+    }
+    
+    /// Result of HTJ2K-specific validation.
+    public struct HTValidationResult: Sendable {
+        /// Basic conformance test result.
+        public let conformanceResult: J2KConformanceValidator.TestResult
+        
+        /// Whether CAP marker was found (if required).
+        public let hasCAPMarker: Bool?
+        
+        /// Whether CPF marker was found (if required).
+        public let hasCPFMarker: Bool?
+        
+        /// Whether HT set parameters were valid (if validated).
+        public let validHTSetParameters: Bool?
+        
+        /// Whether mixed-mode coding was detected.
+        public let isMixedMode: Bool?
+        
+        /// Processing time in seconds.
+        public let processingTime: Double?
+        
+        /// Additional validation errors specific to HTJ2K.
+        public let htValidationErrors: [String]
+        
+        /// Overall pass/fail status.
+        public var passed: Bool {
+            conformanceResult.passed && htValidationErrors.isEmpty
+        }
+    }
+    
+    /// The validation rules to apply.
+    public let rules: ValidationRules
+    
+    /// Creates a new HTJ2K conformance test harness.
+    ///
+    /// - Parameter rules: Validation rules to apply.
+    public init(rules: ValidationRules = ValidationRules()) {
+        self.rules = rules
+    }
+    
+    /// Validates HTJ2K codestream structure.
+    ///
+    /// This performs basic marker validation without full decoding.
+    ///
+    /// - Parameter codestream: The HTJ2K codestream data.
+    /// - Returns: Validation errors, if any.
+    public func validateCodestreamStructure(_ codestream: Data) -> [String] {
+        var errors: [String] = []
+        
+        // Check minimum size
+        guard codestream.count >= 2 else {
+            errors.append("Codestream too short")
+            return errors
+        }
+        
+        // Check for JPEG 2000 SOC marker (0xFF4F)
+        if codestream.count >= 2 {
+            let soc = (UInt16(codestream[0]) << 8) | UInt16(codestream[1])
+            if soc != 0xFF4F {
+                errors.append("Missing or invalid SOC marker")
+            }
+        }
+        
+        // Scan for required markers
+        var hasCAP = false
+        var hasCPF = false
+        var hasCOD = false
+        
+        var offset = 2  // Skip SOC
+        while offset + 2 <= codestream.count {
+            let marker = (UInt16(codestream[offset]) << 8) | UInt16(codestream[offset + 1])
+            offset += 2
+            
+            // Check marker length
+            guard offset + 2 <= codestream.count else { break }
+            let length = (Int(codestream[offset]) << 8) | Int(codestream[offset + 1])
+            
+            switch marker {
+            case 0xFF50:  // CAP
+                hasCAP = true
+            case 0xFF59:  // CPF
+                hasCPF = true
+            case 0xFF52:  // COD
+                hasCOD = true
+            case 0xFF93:  // SOD (start of data)
+                // Stop scanning at SOD
+                offset = codestream.count
+            default:
+                break
+            }
+            
+            offset += length
+        }
+        
+        if rules.requireCAPMarker && !hasCAP {
+            errors.append("Missing required CAP marker for HTJ2K")
+        }
+        
+        if rules.requireCPFMarker && !hasCPF {
+            errors.append("Missing required CPF marker for HTJ2K")
+        }
+        
+        if !hasCOD {
+            errors.append("Missing required COD marker")
+        }
+        
+        return errors
+    }
+    
+    /// Validates a decoded image with HTJ2K-specific checks.
+    ///
+    /// - Parameters:
+    ///   - decoded: The decoded image data.
+    ///   - vector: The test vector with reference data.
+    ///   - codestream: The encoded codestream (for marker validation).
+    ///   - processingTime: Time taken to encode/decode (optional).
+    /// - Returns: HTJ2K validation result.
+    public func validate(
+        decoded: [Int32],
+        against vector: J2KTestVector,
+        codestream: Data,
+        processingTime: Double? = nil
+    ) -> HTValidationResult {
+        // First, perform standard conformance validation
+        let conformanceResult = J2KConformanceValidator.validate(
+            decoded: decoded,
+            against: vector
+        )
+        
+        // Then perform HTJ2K-specific validation
+        let structureErrors = validateCodestreamStructure(codestream)
+        
+        // Check processing time if specified
+        var timeErrors: [String] = []
+        if let maxTime = rules.maxProcessingTime,
+           let actualTime = processingTime,
+           actualTime > maxTime {
+            timeErrors.append("Processing time \(actualTime)s exceeds maximum \(maxTime)s")
+        }
+        
+        // For now, we'll set these to nil since we need actual marker parsing
+        // A full implementation would parse the codestream to extract these
+        let hasCAPMarker: Bool? = nil
+        let hasCPFMarker: Bool? = nil
+        let validHTSetParameters: Bool? = nil
+        let isMixedMode: Bool? = nil
+        
+        return HTValidationResult(
+            conformanceResult: conformanceResult,
+            hasCAPMarker: hasCAPMarker,
+            hasCPFMarker: hasCPFMarker,
+            validHTSetParameters: validHTSetParameters,
+            isMixedMode: isMixedMode,
+            processingTime: processingTime,
+            htValidationErrors: structureErrors + timeErrors
+        )
+    }
+    
+    /// Generates a comprehensive report for multiple HTJ2K validation results.
+    ///
+    /// - Parameter results: Array of validation results.
+    /// - Returns: Formatted report string.
+    public static func generateReport(results: [HTValidationResult]) -> String {
+        var report = "HTJ2K Conformance Test Report\n"
+        report += "==============================\n\n"
+        
+        let passCount = results.filter { $0.passed }.count
+        let totalCount = results.count
+        let passRate = totalCount > 0 ? Double(passCount) / Double(totalCount) * 100.0 : 0.0
+        
+        report += "Summary: \(passCount)/\(totalCount) tests passed (\(String(format: "%.1f", passRate))%)\n\n"
+        
+        // Detailed results
+        for (index, result) in results.enumerated() {
+            let status = result.passed ? "✓ PASS" : "✗ FAIL"
+            report += "Test \(index + 1): \(status)\n"
+            report += "  Name: \(result.conformanceResult.vector.name)\n"
+            
+            if let mae = result.conformanceResult.mae {
+                report += "  MAE: \(mae)\n"
+            }
+            if let psnr = result.conformanceResult.psnr {
+                report += "  PSNR: \(String(format: "%.2f", psnr)) dB\n"
+            }
+            if let time = result.processingTime {
+                report += "  Processing Time: \(String(format: "%.3f", time))s\n"
+            }
+            
+            if !result.htValidationErrors.isEmpty {
+                report += "  HTJ2K Validation Errors:\n"
+                for error in result.htValidationErrors {
+                    report += "    - \(error)\n"
+                }
+            }
+            
+            if let errorMsg = result.conformanceResult.errorMessage {
+                report += "  Error: \(errorMsg)\n"
+            }
+            
+            report += "\n"
+        }
+        
+        return report
+    }
+    
+    /// Creates a standard set of HTJ2K test vectors for basic conformance testing.
+    ///
+    /// - Returns: Array of test vectors covering common scenarios.
+    public static func createStandardTestVectors() -> [J2KTestVector] {
+        var vectors: [J2KTestVector] = []
+        
+        // 1. Lossless grayscale
+        let losslessGrayConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 64,
+            height: 64,
+            components: 1,
+            bitDepth: 8,
+            pattern: .checkerboard(squareSize: 8),
+            lossless: true,
+            useHTJ2K: true
+        )
+        vectors.append(HTJ2KTestVectorGenerator.createTestVector(
+            name: "htj2k_lossless_gray_64x64",
+            description: "Lossless HTJ2K encoding of 64×64 grayscale checkerboard",
+            config: losslessGrayConfig
+        ))
+        
+        // 2. Lossy RGB
+        let lossyRGBConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 128,
+            height: 128,
+            components: 3,
+            bitDepth: 8,
+            pattern: .gradient,
+            lossless: false,
+            quality: 0.9,
+            useHTJ2K: true
+        )
+        vectors.append(HTJ2KTestVectorGenerator.createTestVector(
+            name: "htj2k_lossy_rgb_128x128",
+            description: "Lossy HTJ2K encoding of 128×128 RGB gradient",
+            config: lossyRGBConfig
+        ))
+        
+        // 3. High-frequency edges
+        let edgesConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 32,
+            height: 32,
+            components: 1,
+            bitDepth: 8,
+            pattern: .edges,
+            lossless: true,
+            useHTJ2K: true
+        )
+        vectors.append(HTJ2KTestVectorGenerator.createTestVector(
+            name: "htj2k_edges_32x32",
+            description: "HTJ2K encoding of high-frequency edge pattern",
+            config: edgesConfig
+        ))
+        
+        // 4. Random noise
+        let noiseConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 64,
+            height: 64,
+            components: 1,
+            bitDepth: 8,
+            pattern: .randomNoise(seed: 42),
+            lossless: false,
+            quality: 0.8,
+            useHTJ2K: true
+        )
+        vectors.append(HTJ2KTestVectorGenerator.createTestVector(
+            name: "htj2k_noise_64x64",
+            description: "HTJ2K encoding of random noise pattern",
+            config: noiseConfig
+        ))
+        
+        // 5. Solid color (trivial case)
+        let solidConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 128),
+            lossless: true,
+            useHTJ2K: true
+        )
+        vectors.append(HTJ2KTestVectorGenerator.createTestVector(
+            name: "htj2k_solid_16x16",
+            description: "HTJ2K encoding of solid gray pattern",
+            config: solidConfig
+        ))
+        
+        return vectors
+    }
+}

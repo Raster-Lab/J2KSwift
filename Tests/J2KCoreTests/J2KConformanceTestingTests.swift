@@ -532,4 +532,198 @@ final class J2KConformanceTestingTests: XCTestCase {
         
         XCTAssertGreaterThan(lossyVector.maxAllowableError, 0, "Lossy should allow some error")
     }
+    
+    // MARK: - HTJ2K Conformance Test Harness Tests
+    
+    func testHTJ2KConformanceTestHarnessInitialization() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        XCTAssertTrue(harness.rules.requireCAPMarker)
+        XCTAssertTrue(harness.rules.requireCPFMarker)
+        XCTAssertTrue(harness.rules.validateHTSetParameters)
+        XCTAssertFalse(harness.rules.allowMixedMode)
+        XCTAssertNil(harness.rules.maxProcessingTime)
+    }
+    
+    func testHTJ2KConformanceTestHarnessCustomRules() throws {
+        let rules = HTJ2KConformanceTestHarness.ValidationRules(
+            requireCAPMarker: false,
+            requireCPFMarker: true,
+            validateHTSetParameters: false,
+            allowMixedMode: true,
+            maxProcessingTime: 1.0
+        )
+        let harness = HTJ2KConformanceTestHarness(rules: rules)
+        
+        XCTAssertFalse(harness.rules.requireCAPMarker)
+        XCTAssertTrue(harness.rules.requireCPFMarker)
+        XCTAssertFalse(harness.rules.validateHTSetParameters)
+        XCTAssertTrue(harness.rules.allowMixedMode)
+        XCTAssertEqual(harness.rules.maxProcessingTime, 1.0)
+    }
+    
+    func testHTJ2KValidateCodestreamStructureEmpty() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        let emptyData = Data()
+        
+        let errors = harness.validateCodestreamStructure(emptyData)
+        XCTAssertFalse(errors.isEmpty, "Should have errors for empty codestream")
+        XCTAssertTrue(errors.contains("Codestream too short"))
+    }
+    
+    func testHTJ2KValidateCodestreamStructureInvalidSOC() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        var data = Data()
+        data.append(0x00)  // Invalid SOC
+        data.append(0x00)
+        
+        let errors = harness.validateCodestreamStructure(data)
+        XCTAssertTrue(errors.contains("Missing or invalid SOC marker"))
+    }
+    
+    func testHTJ2KValidateCodestreamStructureValidSOC() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        var data = Data()
+        data.append(0xFF)  // SOC marker
+        data.append(0x4F)
+        
+        let errors = harness.validateCodestreamStructure(data)
+        // Should have errors about missing markers but not about SOC
+        XCTAssertFalse(errors.contains("Missing or invalid SOC marker"))
+    }
+    
+    func testHTJ2KValidateCodestreamStructureMissingCAP() throws {
+        let rules = HTJ2KConformanceTestHarness.ValidationRules(requireCAPMarker: true)
+        let harness = HTJ2KConformanceTestHarness(rules: rules)
+        
+        var data = Data()
+        data.append(0xFF)  // SOC
+        data.append(0x4F)
+        data.append(0xFF)  // COD marker
+        data.append(0x52)
+        data.append(0x00)  // Length
+        data.append(0x0C)
+        
+        let errors = harness.validateCodestreamStructure(data)
+        XCTAssertTrue(errors.contains("Missing required CAP marker for HTJ2K"))
+    }
+    
+    func testHTJ2KValidateWithTestVector() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 100),
+            lossless: true
+        )
+        
+        let vector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "test_vector",
+            description: "Test validation",
+            config: config
+        )
+        
+        // Create a simple codestream with SOC marker
+        var codestream = Data()
+        codestream.append(0xFF)
+        codestream.append(0x4F)
+        
+        let decoded = vector.referenceImage ?? []
+        let result = harness.validate(
+            decoded: decoded,
+            against: vector,
+            codestream: codestream,
+            processingTime: 0.1
+        )
+        
+        XCTAssertNotNil(result.conformanceResult)
+        XCTAssertNotNil(result.processingTime)
+        XCTAssertEqual(result.processingTime, 0.1)
+    }
+    
+    func testHTJ2KValidateProcessingTimeExceeded() throws {
+        let rules = HTJ2KConformanceTestHarness.ValidationRules(maxProcessingTime: 0.5)
+        let harness = HTJ2KConformanceTestHarness(rules: rules)
+        
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 100)
+        )
+        
+        let vector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "test_time",
+            description: "Test time limit",
+            config: config
+        )
+        
+        var codestream = Data()
+        codestream.append(0xFF)
+        codestream.append(0x4F)
+        
+        let decoded = vector.referenceImage ?? []
+        let result = harness.validate(
+            decoded: decoded,
+            against: vector,
+            codestream: codestream,
+            processingTime: 1.0  // Exceeds limit
+        )
+        
+        XCTAssertTrue(result.htValidationErrors.contains(where: { $0.contains("Processing time") }))
+    }
+    
+    func testHTJ2KGenerateReport() throws {
+        let harness = HTJ2KConformanceTestHarness()
+        
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 100)
+        )
+        
+        let vector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "test_report",
+            description: "Test report generation",
+            config: config
+        )
+        
+        var codestream = Data()
+        codestream.append(0xFF)
+        codestream.append(0x4F)
+        
+        let decoded = vector.referenceImage ?? []
+        let result = harness.validate(
+            decoded: decoded,
+            against: vector,
+            codestream: codestream
+        )
+        
+        let report = HTJ2KConformanceTestHarness.generateReport(results: [result])
+        
+        XCTAssertTrue(report.contains("HTJ2K Conformance Test Report"))
+        XCTAssertTrue(report.contains("test_report"))
+    }
+    
+    func testHTJ2KCreateStandardTestVectors() throws {
+        let vectors = HTJ2KConformanceTestHarness.createStandardTestVectors()
+        
+        XCTAssertEqual(vectors.count, 5, "Should create 5 standard test vectors")
+        
+        // Check that we have different types
+        let names = vectors.map { $0.name }
+        XCTAssertTrue(names.contains(where: { $0.contains("lossless") }))
+        XCTAssertTrue(names.contains(where: { $0.contains("lossy") }))
+        XCTAssertTrue(names.contains(where: { $0.contains("edges") }))
+        XCTAssertTrue(names.contains(where: { $0.contains("noise") }))
+        XCTAssertTrue(names.contains(where: { $0.contains("solid") }))
+        
+        // Verify all vectors have reference images
+        XCTAssertTrue(vectors.allSatisfy { $0.referenceImage != nil })
+    }
 }
