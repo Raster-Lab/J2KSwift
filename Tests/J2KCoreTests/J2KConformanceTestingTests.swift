@@ -322,4 +322,214 @@ final class J2KConformanceTestingTests: XCTestCase {
         XCTAssertTrue(report.contains("1/2 tests passed"))
         XCTAssertTrue(report.contains("fail_test"))
     }
+    
+    // MARK: - HTJ2K Test Vector Generator Tests
+    
+    func testHTJ2KTestVectorGeneratorSolidPattern() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 32,
+            height: 32,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 128)
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 32 * 32 * 1)
+        XCTAssertTrue(pixels.allSatisfy { $0 == 128 }, "All pixels should be 128")
+    }
+    
+    func testHTJ2KTestVectorGeneratorGradient() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 1,
+            bitDepth: 8,
+            pattern: .gradient
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 16 * 16 * 1)
+        // Check that gradient increases
+        XCTAssertTrue(pixels.first! <= pixels.last!, "Gradient should increase")
+    }
+    
+    func testHTJ2KTestVectorGeneratorCheckerboard() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 1,
+            bitDepth: 8,
+            pattern: .checkerboard(squareSize: 4)
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 16 * 16 * 1)
+        // Check that we have both 0 and 255 values
+        XCTAssertTrue(pixels.contains(0), "Should contain black squares")
+        XCTAssertTrue(pixels.contains(255), "Should contain white squares")
+    }
+    
+    func testHTJ2KTestVectorGeneratorRandomNoise() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 32,
+            height: 32,
+            components: 1,
+            bitDepth: 8,
+            pattern: .randomNoise(seed: 12345)
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 32 * 32 * 1)
+        // Check that we have varied values (not all the same)
+        let uniqueValues = Set(pixels)
+        XCTAssertGreaterThan(uniqueValues.count, 10, "Should have varied pixel values")
+    }
+    
+    func testHTJ2KTestVectorGeneratorRandomNoiseReproducibility() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 1,
+            bitDepth: 8,
+            pattern: .randomNoise(seed: 67890)
+        )
+        
+        let pixels1 = HTJ2KTestVectorGenerator.generateImage(config: config)
+        let pixels2 = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels1, pixels2, "Same seed should produce same random data")
+    }
+    
+    func testHTJ2KTestVectorGeneratorFrequencySweep() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 32,
+            height: 32,
+            components: 1,
+            bitDepth: 8,
+            pattern: .frequencySweep
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 32 * 32 * 1)
+        // Check that we have varied values
+        let uniqueValues = Set(pixels)
+        XCTAssertGreaterThan(uniqueValues.count, 5, "Should have varied pixel values")
+    }
+    
+    func testHTJ2KTestVectorGeneratorEdges() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 32,
+            height: 32,
+            components: 1,
+            bitDepth: 8,
+            pattern: .edges
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 32 * 32 * 1)
+        // Check that we have both 0 and 255 values (edges and non-edges)
+        XCTAssertTrue(pixels.contains(0), "Should contain non-edge pixels")
+        XCTAssertTrue(pixels.contains(255), "Should contain edge pixels")
+    }
+    
+    func testHTJ2KTestVectorGeneratorMultiComponent() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 3,
+            bitDepth: 8,
+            pattern: .solid(value: 100)
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        
+        XCTAssertEqual(pixels.count, 16 * 16 * 3, "Should have 3 components per pixel")
+        XCTAssertTrue(pixels.allSatisfy { $0 == 100 }, "All component values should be 100")
+    }
+    
+    func testHTJ2KTestVectorGeneratorBitDepthClamping() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 4,
+            pattern: .solid(value: 20)
+        )
+        
+        let pixels = HTJ2KTestVectorGenerator.generateImage(config: config)
+        let maxValue = (1 << 4) - 1  // 15 for 4-bit
+        
+        XCTAssertTrue(pixels.allSatisfy { $0 <= maxValue }, "Values should be clamped to bit depth")
+    }
+    
+    func testHTJ2KCreateTestVector() throws {
+        let config = HTJ2KTestVectorGenerator.Configuration(
+            width: 16,
+            height: 16,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 128)
+        )
+        
+        let vector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "test_solid_128",
+            description: "Solid gray image at value 128",
+            config: config
+        )
+        
+        XCTAssertEqual(vector.name, "test_solid_128")
+        XCTAssertEqual(vector.width, 16)
+        XCTAssertEqual(vector.height, 16)
+        XCTAssertEqual(vector.components, 1)
+        XCTAssertEqual(vector.bitDepth, 8)
+        XCTAssertNotNil(vector.referenceImage)
+        XCTAssertEqual(vector.referenceImage?.count, 16 * 16 * 1)
+        XCTAssertTrue(vector.shouldSucceed)
+    }
+    
+    func testHTJ2KTestVectorLosslessErrorTolerance() throws {
+        let losslessConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 100),
+            lossless: true
+        )
+        
+        let losslessVector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "lossless_test",
+            description: "Lossless test",
+            config: losslessConfig
+        )
+        
+        XCTAssertEqual(losslessVector.maxAllowableError, 0, "Lossless should have zero error tolerance")
+    }
+    
+    func testHTJ2KTestVectorLossyErrorTolerance() throws {
+        let lossyConfig = HTJ2KTestVectorGenerator.Configuration(
+            width: 8,
+            height: 8,
+            components: 1,
+            bitDepth: 8,
+            pattern: .solid(value: 100),
+            lossless: false,
+            quality: 0.9
+        )
+        
+        let lossyVector = HTJ2KTestVectorGenerator.createTestVector(
+            name: "lossy_test",
+            description: "Lossy test",
+            config: lossyConfig
+        )
+        
+        XCTAssertGreaterThan(lossyVector.maxAllowableError, 0, "Lossy should allow some error")
+    }
 }
