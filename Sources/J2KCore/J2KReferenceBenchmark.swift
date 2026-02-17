@@ -25,6 +25,8 @@ public struct J2KReferenceBenchmark: Sendable {
     public enum Component: String, Sendable {
         case entropyEncoding = "Entropy Encoding (MQ-Coder)"
         case entropyDecoding = "Entropy Decoding (MQ-Coder)"
+        case bitPlaneCoding = "Bit-Plane Coding (EBCOT)"
+        case parallelCodeBlocks = "Parallel Code-Block Encoding"
         case dwtForward = "DWT Forward Transform"
         case dwtInverse = "DWT Inverse Transform"
         case quantization = "Quantization"
@@ -58,6 +60,12 @@ public struct J2KReferenceBenchmark: Sendable {
         // Tile test cases
         case tile256x256 = "256x256 Tile"
         case tile512x512 = "512x512 Tile"
+        
+        // Code-block test cases
+        case codeBlock32x32 = "32x32 Code-Block"
+        case codeBlock64x64 = "64x64 Code-Block"
+        case codeBlocks16Parallel = "16 Code-Blocks (Parallel)"
+        case codeBlocks64Parallel = "64 Code-Blocks (Parallel)"
     }
     
     /// The component being benchmarked.
