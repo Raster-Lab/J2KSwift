@@ -638,7 +638,6 @@ public struct J2KISOTestSuiteLoader: Sendable {
         var vectors: [J2KTestVector] = []
 
         for testCase in isoTestCaseCatalog() {
-            let pixelCount = testCase.width * testCase.height * testCase.components
             let referenceImage = generateTestImage(
                 width: testCase.width,
                 height: testCase.height,

@@ -31,41 +31,37 @@ jobs:
 
       - name: Generate Documentation
         run: |
-          # Generate documentation for each target
-          swift package \
-            --allow-writing-to-directory ./docs \
-            generate-documentation \
-            --target J2KCore \
-            --output-path ./docs/J2KCore \
-            --hosting-base-path J2KSwift/J2KCore || true
+          # Create docs directory
+          mkdir -p ./docs
 
-          swift package \
-            --allow-writing-to-directory ./docs \
-            generate-documentation \
-            --target J2KCodec \
-            --output-path ./docs/J2KCodec \
-            --hosting-base-path J2KSwift/J2KCodec || true
-
-          swift package \
-            --allow-writing-to-directory ./docs \
-            generate-documentation \
-            --target J2KAccelerate \
-            --output-path ./docs/J2KAccelerate \
-            --hosting-base-path J2KSwift/J2KAccelerate || true
-
-          swift package \
-            --allow-writing-to-directory ./docs \
-            generate-documentation \
-            --target J2KFileFormat \
-            --output-path ./docs/J2KFileFormat \
-            --hosting-base-path J2KSwift/J2KFileFormat || true
-
-          swift package \
-            --allow-writing-to-directory ./docs \
-            generate-documentation \
-            --target JPIP \
-            --output-path ./docs/JPIP \
-            --hosting-base-path J2KSwift/JPIP || true
+          # Note: swift package generate-documentation requires Swift-DocC plugin
+          # which is not included in Swift 6.2 toolchain on macOS by default.
+          # Using xcodebuild docbuild as an alternative approach.
+          
+          # Try to generate documentation using xcodebuild
+          if command -v xcodebuild &> /dev/null; then
+            echo "Generating documentation with xcodebuild..."
+            
+            # Generate scheme if needed
+            swift package generate-xcodeproj 2>/dev/null || true
+            
+            # Use xcodebuild docbuild for each target
+            for target in J2KCore J2KCodec J2KAccelerate J2KFileFormat JPIP; do
+              echo "Generating docs for $target..."
+              xcodebuild docbuild \
+                -scheme "$target" \
+                -destination 'generic/platform=macOS' \
+                -derivedDataPath ./.docbuild 2>/dev/null || true
+              
+              # Copy generated docs if available
+              if [ -d "./.docbuild/Build/Products/Debug/$target.doccarchive" ]; then
+                mkdir -p "./docs/$target"
+                cp -r "./.docbuild/Build/Products/Debug/$target.doccarchive" "./docs/$target/"
+              fi
+            done
+          else
+            echo "xcodebuild not available, skipping documentation generation"
+          fi
 
           # Create index page
           cat > ./docs/index.html << 'EOF'
@@ -74,12 +70,14 @@ jobs:
           <head><meta charset="utf-8"><title>J2KSwift Documentation</title></head>
           <body>
             <h1>J2KSwift Documentation</h1>
+            <p>Documentation generation requires Swift-DocC plugin or Xcode.</p>
+            <p>To view documentation locally, use: <code>swift package generate-documentation --target [TargetName]</code></p>
             <ul>
-              <li><a href="J2KCore/documentation/j2kcore/">J2KCore</a></li>
-              <li><a href="J2KCodec/documentation/j2kcodec/">J2KCodec</a></li>
-              <li><a href="J2KAccelerate/documentation/j2kaccelerate/">J2KAccelerate</a></li>
-              <li><a href="J2KFileFormat/documentation/j2kfileformat/">J2KFileFormat</a></li>
-              <li><a href="JPIP/documentation/jpip/">JPIP</a></li>
+              <li>J2KCore - Core data types and utilities</li>
+              <li>J2KCodec - JPEG 2000 encoding and decoding</li>
+              <li>J2KAccelerate - Hardware-accelerated operations</li>
+              <li>J2KFileFormat - File format support (JP2, J2K, etc.)</li>
+              <li>JPIP - Network streaming protocol</li>
             </ul>
           </body>
           </html>
