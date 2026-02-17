@@ -145,31 +145,31 @@ This feature allows converting between encoding formats without quality loss or 
 
 #### Development Tasks
 
-##### Week 121-123: Codestream Parsing
-- [ ] Implement legacy JPEG 2000 Tier-1 decoder to intermediate coefficients
-- [ ] Implement HTJ2K Tier-1 decoder to intermediate coefficients
-- [ ] Create unified coefficient representation
-- [ ] Add coefficient validation and verification
-- [ ] Test round-trip coefficient integrity
+##### Week 121-123: Codestream Parsing ✅
+- [x] Implement legacy JPEG 2000 Tier-1 decoder to intermediate coefficients
+- [x] Implement HTJ2K Tier-1 decoder to intermediate coefficients
+- [x] Create unified coefficient representation
+- [x] Add coefficient validation and verification
+- [x] Test round-trip coefficient integrity
 
-##### Week 124-126: Transcoding Engine
-- [ ] Implement JPEG 2000 → HTJ2K transcoder
-- [ ] Implement HTJ2K → JPEG 2000 transcoder
-- [ ] Preserve quality layers during transcoding
-- [ ] Preserve progression orders during transcoding
-- [ ] Maintain all metadata (resolution, color space, etc.)
+##### Week 124-126: Transcoding Engine ✅
+- [x] Implement JPEG 2000 → HTJ2K transcoder
+- [x] Implement HTJ2K → JPEG 2000 transcoder
+- [x] Preserve quality layers during transcoding
+- [x] Preserve progression orders during transcoding
+- [x] Maintain all metadata (resolution, color space, etc.)
 
-##### Week 127-128: API & Performance
-- [ ] Create `J2KTranscoder` API
-- [ ] Add progress reporting for long transcoding operations
+##### Week 127-128: API & Performance 🚧
+- [x] Create `J2KTranscoder` API
+- [x] Add progress reporting for long transcoding operations
 - [ ] Implement parallel transcoding for multi-tile images
 - [ ] Optimize transcoding memory usage
 - [ ] Benchmark transcoding speed vs full re-encode
 
-##### Week 129-130: Validation & Testing
-- [ ] Validate bit-exact round-trip: JPEG 2000 → HTJ2K → JPEG 2000
-- [ ] Test metadata preservation across formats
-- [ ] Create comprehensive transcoding test suite
+##### Week 129-130: Validation & Testing 🚧
+- [x] Validate bit-exact round-trip: JPEG 2000 → HTJ2K → JPEG 2000
+- [x] Test metadata preservation across formats
+- [x] Create comprehensive transcoding test suite (29 tests)
 - [ ] Document transcoding API and use cases
 - [ ] Performance comparison with full re-encoding
 
