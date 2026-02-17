@@ -878,4 +878,234 @@ final class J2KTranscoderTests: XCTestCase {
         
         return data
     }
+    
+    /// Builds a multi-tile legacy JPEG 2000 codestream for parallel transcoding tests.
+    ///
+    /// - Parameters:
+    ///   - imageWidth: Total image width
+    ///   - imageHeight: Total image height
+    ///   - tileWidth: Width of each tile
+    ///   - tileHeight: Height of each tile
+    ///   - components: Number of image components
+    /// - Returns: A minimal valid multi-tile JPEG 2000 codestream
+    private func buildMultiTileLegacyCodestream(
+        imageWidth: Int = 512,
+        imageHeight: Int = 512,
+        tileWidth: Int = 256,
+        tileHeight: Int = 256,
+        components: Int = 1
+    ) -> Data {
+        var data = Data()
+        
+        // SOC marker
+        data.append(contentsOf: [0xFF, 0x4F])
+        
+        // SIZ marker with tiling parameters
+        data.append(contentsOf: [0xFF, 0x51])
+        var sizData = Data()
+        
+        // Rsiz (2 bytes) - capabilities
+        sizData.append(contentsOf: [0x00, 0x00])
+        
+        // Xsiz (4 bytes) - image width
+        sizData.append(UInt8((imageWidth >> 24) & 0xFF))
+        sizData.append(UInt8((imageWidth >> 16) & 0xFF))
+        sizData.append(UInt8((imageWidth >> 8) & 0xFF))
+        sizData.append(UInt8(imageWidth & 0xFF))
+        
+        // Ysiz (4 bytes) - image height
+        sizData.append(UInt8((imageHeight >> 24) & 0xFF))
+        sizData.append(UInt8((imageHeight >> 16) & 0xFF))
+        sizData.append(UInt8((imageHeight >> 8) & 0xFF))
+        sizData.append(UInt8(imageHeight & 0xFF))
+        
+        // XOsiz, YOsiz (8 bytes) - image offset
+        sizData.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        sizData.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        
+        // XTsiz (4 bytes) - tile width
+        sizData.append(UInt8((tileWidth >> 24) & 0xFF))
+        sizData.append(UInt8((tileWidth >> 16) & 0xFF))
+        sizData.append(UInt8((tileWidth >> 8) & 0xFF))
+        sizData.append(UInt8(tileWidth & 0xFF))
+        
+        // YTsiz (4 bytes) - tile height
+        sizData.append(UInt8((tileHeight >> 24) & 0xFF))
+        sizData.append(UInt8((tileHeight >> 16) & 0xFF))
+        sizData.append(UInt8((tileHeight >> 8) & 0xFF))
+        sizData.append(UInt8(tileHeight & 0xFF))
+        
+        // XTOsiz, YTOsiz (8 bytes) - tile offset
+        sizData.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        sizData.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        
+        // Csiz (2 bytes) - number of components
+        sizData.append(UInt8((components >> 8) & 0xFF))
+        sizData.append(UInt8(components & 0xFF))
+        
+        // Per-component: Ssiz, XRsiz, YRsiz
+        for _ in 0..<components {
+            sizData.append(0x07) // 8-bit unsigned
+            sizData.append(0x01) // XRsiz
+            sizData.append(0x01) // YRsiz
+        }
+        
+        let sizLength = UInt16(sizData.count + 2)
+        data.append(UInt8((sizLength >> 8) & 0xFF))
+        data.append(UInt8(sizLength & 0xFF))
+        data.append(sizData)
+        
+        // COD marker
+        data.append(contentsOf: [0xFF, 0x52])
+        let codData = buildMinimalCOD(htj2k: false)
+        let codLength = UInt16(codData.count + 2)
+        data.append(UInt8((codLength >> 8) & 0xFF))
+        data.append(UInt8(codLength & 0xFF))
+        data.append(contentsOf: codData)
+        
+        // QCD marker
+        data.append(contentsOf: [0xFF, 0x5C])
+        let qcdData: [UInt8] = [0x00, 0x07, 0x00, 0x88, 0x88, 0x88, 0x88]
+        data.append(UInt8((qcdData.count >> 8) & 0xFF))
+        data.append(UInt8(qcdData.count & 0xFF))
+        data.append(contentsOf: qcdData)
+        
+        // Calculate number of tiles
+        let tilesX = (imageWidth + tileWidth - 1) / tileWidth
+        let tilesY = (imageHeight + tileHeight - 1) / tileHeight
+        let totalTiles = tilesX * tilesY
+        
+        // Write tile data for each tile
+        for tileIdx in 0..<totalTiles {
+            // SOT marker
+            data.append(contentsOf: [0xFF, 0x90])
+            let sotLength: UInt16 = 10
+            data.append(UInt8((sotLength >> 8) & 0xFF))
+            data.append(UInt8(sotLength & 0xFF))
+            
+            // Isot (tile index)
+            data.append(UInt8((UInt16(tileIdx) >> 8) & 0xFF))
+            data.append(UInt8(UInt16(tileIdx) & 0xFF))
+            
+            // Psot (tile-part length)
+            let tileDataSize = 8 // Minimal tile data
+            let psot = UInt32(12 + tileDataSize)
+            data.append(UInt8((psot >> 24) & 0xFF))
+            data.append(UInt8((psot >> 16) & 0xFF))
+            data.append(UInt8((psot >> 8) & 0xFF))
+            data.append(UInt8(psot & 0xFF))
+            
+            // TPsot (tile-part index)
+            data.append(0x00)
+            
+            // TNsot (number of tile-parts)
+            data.append(0x01)
+            
+            // SOD marker
+            data.append(contentsOf: [0xFF, 0x93])
+            
+            // Minimal tile data (8 zero bytes)
+            data.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        }
+        
+        // EOC marker
+        data.append(contentsOf: [0xFF, 0xD9])
+        
+        return data
+    }
+    
+    // MARK: - Multi-Tile Parallel Transcoding Tests
+    
+    func testMultiTileParallelTranscoding() async throws {
+        // Create a 4-tile codestream (2x2 grid, 512x512 image with 256x256 tiles)
+        let data = buildMultiTileLegacyCodestream(
+            imageWidth: 512,
+            imageHeight: 512,
+            tileWidth: 256,
+            tileHeight: 256,
+            components: 1
+        )
+        
+        // Test with parallel processing
+        let parallelTranscoder = J2KTranscoder(configuration: .default)
+        let parallelResult = try await parallelTranscoder.transcodeAsync(
+            data,
+            direction: .legacyToHT
+        )
+        
+        // Verify results
+        XCTAssertEqual(parallelResult.direction, .legacyToHT)
+        XCTAssertEqual(parallelResult.tilesProcessed, 4, "Should process all 4 tiles")
+        XCTAssertGreaterThan(parallelResult.data.count, 0)
+        XCTAssertTrue(parallelResult.metadataPreserved)
+        
+        // Test with sequential processing for comparison
+        let sequentialTranscoder = J2KTranscoder(configuration: .sequential)
+        let sequentialResult = try await sequentialTranscoder.transcodeAsync(
+            data,
+            direction: .legacyToHT
+        )
+        
+        // Verify sequential results
+        XCTAssertEqual(sequentialResult.direction, .legacyToHT)
+        XCTAssertEqual(sequentialResult.tilesProcessed, 4)
+        XCTAssertTrue(sequentialResult.metadataPreserved)
+        
+        // Results should produce valid codestreams
+        XCTAssertGreaterThan(parallelResult.data.count, 100)
+        XCTAssertGreaterThan(sequentialResult.data.count, 100)
+    }
+    
+    func testParallelTranscodingPerformanceBenchmark() async throws {
+        // Create an 8-tile codestream (2x4 grid for better parallelization)
+        let data = buildMultiTileLegacyCodestream(
+            imageWidth: 1024,
+            imageHeight: 512,
+            tileWidth: 512,
+            tileHeight: 128,
+            components: 1
+        )
+        
+        // Benchmark parallel processing
+        let parallelTranscoder = J2KTranscoder(configuration: .default)
+        let parallelStart = DispatchTime.now()
+        let parallelResult = try await parallelTranscoder.transcodeAsync(
+            data,
+            direction: .legacyToHT
+        )
+        let parallelEnd = DispatchTime.now()
+        let parallelTime = Double(parallelEnd.uptimeNanoseconds - parallelStart.uptimeNanoseconds) / 1_000_000_000.0
+        
+        // Benchmark sequential processing
+        let sequentialTranscoder = J2KTranscoder(configuration: .sequential)
+        let sequentialStart = DispatchTime.now()
+        let sequentialResult = try await sequentialTranscoder.transcodeAsync(
+            data,
+            direction: .legacyToHT
+        )
+        let sequentialEnd = DispatchTime.now()
+        let sequentialTime = Double(sequentialEnd.uptimeNanoseconds - sequentialStart.uptimeNanoseconds) / 1_000_000_000.0
+        
+        // Log performance metrics
+        print("Multi-tile Transcoding Performance:")
+        print("  Tiles: \(parallelResult.tilesProcessed)")
+        print("  Parallel time: \(String(format: "%.4f", parallelTime))s")
+        print("  Sequential time: \(String(format: "%.4f", sequentialTime))s")
+        
+        if sequentialTime > 0 {
+            let speedup = sequentialTime / parallelTime
+            print("  Speedup: \(String(format: "%.2f", speedup))x")
+            
+            // For multi-tile images, parallel should be at least as fast
+            // (on multi-core systems, it should be faster)
+            XCTAssertLessThanOrEqual(parallelTime, sequentialTime * 1.5,
+                "Parallel processing should not be significantly slower than sequential")
+        }
+        
+        // Verify both produced valid results
+        XCTAssertEqual(parallelResult.tilesProcessed, 8)
+        XCTAssertEqual(sequentialResult.tilesProcessed, 8)
+        XCTAssertTrue(parallelResult.metadataPreserved)
+        XCTAssertTrue(sequentialResult.metadataPreserved)
+    }
 }
