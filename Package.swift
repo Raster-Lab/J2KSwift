@@ -65,7 +65,7 @@ let package = Package(
             ]),
         .target(
             name: "JPIP",
-            dependencies: ["J2KCore", "J2KFileFormat"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency"),
                 .enableExperimentalFeature("StrictConcurrency")
@@ -84,7 +84,7 @@ let package = Package(
             dependencies: ["J2KFileFormat"]),
         .testTarget(
             name: "JPIPTests",
-            dependencies: ["JPIP"]),
+            dependencies: ["JPIP", "J2KCodec"]),
         .testTarget(
             name: "J2KCLITests",
             dependencies: ["J2KCore"]),

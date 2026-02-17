@@ -4,6 +4,7 @@
 
 import Foundation
 import J2KCore
+import J2KCodec
 import J2KFileFormat
 
 #if canImport(FoundationNetworking)
@@ -14,6 +15,8 @@ import FoundationNetworking
 ///
 /// The server handles multiple concurrent clients, manages request queues,
 /// implements bandwidth throttling, and serves image data progressively.
+/// Supports HTJ2K format detection, data bin streaming, and on-the-fly
+/// transcoding between legacy JPEG 2000 and HTJ2K formats.
 ///
 /// Example usage:
 /// ```swift
@@ -42,6 +45,15 @@ public actor JPIPServer {
     
     /// HTJ2K support helper.
     private let htj2kSupport: JPIPHTJ2KSupport
+    
+    /// Data bin generator for codestream extraction.
+    private let dataBinGenerator: JPIPDataBinGenerator
+    
+    /// Transcoding service for on-the-fly format conversion.
+    private let transcodingService: JPIPTranscodingService
+    
+    /// Cache for transcoded data.
+    private let transcodingCache: JPIPTranscodingCache
     
     /// Active client sessions.
     private var sessions: [String: JPIPServerSession]
@@ -135,6 +147,9 @@ public actor JPIPServer {
         self.registeredImages = [:]
         self.imageInfoCache = [:]
         self.htj2kSupport = JPIPHTJ2KSupport()
+        self.dataBinGenerator = JPIPDataBinGenerator()
+        self.transcodingService = JPIPTranscodingService()
+        self.transcodingCache = JPIPTranscodingCache()
         self.sessions = [:]
         self.requestQueue = JPIPRequestQueue(maxSize: configuration.maxQueueSize)
         self.bandwidthThrottle = JPIPBandwidthThrottle(
@@ -404,15 +419,74 @@ public actor JPIPServer {
         request: JPIPRequest,
         session: JPIPServerSession
     ) async throws -> Data {
-        // In a real implementation, this would:
-        // 1. Parse the JP2 file
-        // 2. Extract requested precincts/tiles based on request parameters
-        // 3. Consider session cache model (don't resend cached data)
-        // 4. Encode as JPIP data bins
-        // 5. Apply any bandwidth limits
+        // Read the source codestream data
+        let sourceData = try Data(contentsOf: imageURL, options: .mappedIfSafe)
         
-        // For now, return placeholder data
-        return Data("image-data".utf8)
+        // Determine if on-the-fly transcoding is needed
+        let preference = request.codingPreference ?? .none
+        let imageName = registeredImages.first(where: { $0.value == imageURL })?.key
+        let sourceIsHTJ2K = imageName.flatMap { imageInfoCache[$0]?.isHTJ2K } ?? false
+        
+        var dataToServe = sourceData
+        
+        // Apply on-the-fly transcoding if client prefers a different format
+        if transcodingService.needsTranscoding(preference: preference, sourceIsHTJ2K: sourceIsHTJ2K) {
+            let sourceHash = stableHash(for: sourceData)
+            if let direction = transcodingService.determineDirection(
+                preference: preference, sourceIsHTJ2K: sourceIsHTJ2K
+            ) {
+                if let cached = await transcodingCache.get(sourceHash: sourceHash, direction: direction) {
+                    dataToServe = cached
+                } else if let result = try? transcodingService.transcode(
+                    data: sourceData,
+                    preference: preference,
+                    sourceIsHTJ2K: sourceIsHTJ2K
+                ), result.wasTranscoded {
+                    // Transcoding succeeded; use transcoded data
+                    dataToServe = result.data
+                    await transcodingCache.put(
+                        data: result.data,
+                        sourceHash: sourceHash,
+                        direction: direction
+                    )
+                }
+                // If transcoding fails, gracefully fall back to serving original data.
+                // This ensures clients always receive valid image data even if
+                // the source codestream cannot be transcoded to the preferred format.
+            }
+        }
+        
+        // Try to generate data bins from the codestream for progressive streaming
+        if let dataBins = try? dataBinGenerator.generateDataBins(from: dataToServe), !dataBins.isEmpty {
+            var responseData = Data()
+            for bin in dataBins {
+                let alreadySent = await session.hasDataBin(binClass: bin.binClass, binID: bin.binID)
+                if alreadySent {
+                    continue
+                }
+                responseData.append(bin.data)
+                await session.recordSentDataBin(bin)
+            }
+            
+            // If all bins were already sent, re-serve the full data
+            if responseData.isEmpty {
+                responseData = dataToServe
+            }
+            
+            // Apply response length limit if specified
+            if let maxLen = request.len, responseData.count > maxLen {
+                responseData = responseData.prefix(maxLen)
+            }
+            
+            return responseData
+        }
+        
+        // Fallback: serve raw data when codestream parsing is not applicable
+        var responseData = dataToServe
+        if let maxLen = request.len, responseData.count > maxLen {
+            responseData = responseData.prefix(maxLen)
+        }
+        return responseData
     }
     
     /// Gets the current server statistics.
@@ -448,6 +522,21 @@ public actor JPIPServer {
     /// - Returns: The image info if available, nil otherwise.
     public func getImageInfo(name: String) -> JPIPImageInfo? {
         return imageInfoCache[name]
+    }
+    
+    /// Computes a stable hash string for data, suitable for cache keys.
+    ///
+    /// Uses a simple FNV-1a-like hash that is stable across executions.
+    ///
+    /// - Parameter data: The data to hash.
+    /// - Returns: A hex string hash.
+    private func stableHash(for data: Data) -> String {
+        var hash: UInt64 = 14695981039346656037 // FNV offset basis
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211 // FNV prime
+        }
+        return String(hash, radix: 16)
     }
 }
 
