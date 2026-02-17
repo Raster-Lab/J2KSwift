@@ -18,28 +18,6 @@ final class J2KParallelCodeBlockTests: XCTestCase {
         // Create a simple test image
         let image = createTestImage(width: 64, height: 64, components: 1)
         
-        // Encode with parallel code-blocks enabled
-        var parallelConfig = J2KEncodingConfiguration(
-            quality: 0.9,
-            lossless: true,
-            decompositionLevels: 2,
-            codeBlockSize: (width: 32, height: 32),
-            qualityLayers: 1,
-            enableParallelCodeBlocks: true
-        )
-        _ = parallelConfig // suppress unused warning
-        
-        // Encode with parallel code-blocks disabled
-        var sequentialConfig = J2KEncodingConfiguration(
-            quality: 0.9,
-            lossless: true,
-            decompositionLevels: 2,
-            codeBlockSize: (width: 32, height: 32),
-            qualityLayers: 1,
-            enableParallelCodeBlocks: false
-        )
-        _ = sequentialConfig // suppress unused warning
-        
         let parallelPipeline = EncoderPipeline(config: J2KEncodingConfiguration(
             quality: 0.9,
             lossless: true,

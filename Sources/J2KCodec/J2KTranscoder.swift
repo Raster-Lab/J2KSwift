@@ -1575,15 +1575,24 @@ public struct J2KTranscoder: Sendable {
                 localResults.reserveCapacity(chunk.count)
 
                 for pending in chunk {
-                    guard let encodedBlock = try? self.encodeCodeBlock(
-                        pending.cb,
-                        targetMode: capturedTargetMode,
-                        subband: pending.subband
-                    ) else { continue }
-                    localResults.append((pending.index, encodedBlock))
+                    do {
+                        let encodedBlock = try self.encodeCodeBlock(
+                            pending.cb,
+                            targetMode: capturedTargetMode,
+                            subband: pending.subband
+                        )
+                        localResults.append((pending.index, encodedBlock))
+                    } catch {
+                        collector.recordError(error)
+                    }
                 }
 
                 collector.append(contentsOf: localResults)
+            }
+
+            // Propagate any encoding errors
+            if let error = collector.firstError {
+                throw error
             }
 
             encodedBlocks = collector.results.sorted { $0.0 < $1.0 }

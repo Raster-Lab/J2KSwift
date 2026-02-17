@@ -56,6 +56,7 @@ public struct EncoderProgressUpdate: Sendable {
 /// accessing or modifying the internal results array.
 final class ParallelResultCollector<T>: @unchecked Sendable {
     private var _results: [T]
+    private var _firstError: (any Error)?
     private let lock = NSLock()
 
     init(capacity: Int = 0) {
@@ -69,10 +70,24 @@ final class ParallelResultCollector<T>: @unchecked Sendable {
         lock.unlock()
     }
 
+    func recordError(_ error: any Error) {
+        lock.lock()
+        if _firstError == nil {
+            _firstError = error
+        }
+        lock.unlock()
+    }
+
     var results: [T] {
         lock.lock()
         defer { lock.unlock() }
         return _results
+    }
+
+    var firstError: (any Error)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _firstError
     }
 }
 
@@ -511,31 +526,40 @@ struct EncoderPipeline: Sendable {
             localResults.reserveCapacity(chunk.count)
 
             for pending in chunk {
-                guard var codeBlock = try? encoder.encode(
-                    coefficients: pending.coefficients,
-                    width: pending.width,
-                    height: pending.height,
-                    subband: pending.subband,
-                    bitDepth: pending.bitDepth
-                ) else { continue }
+                do {
+                    var codeBlock = try encoder.encode(
+                        coefficients: pending.coefficients,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: pending.subband,
+                        bitDepth: pending.bitDepth
+                    )
 
-                codeBlock = J2KCodeBlock(
-                    index: pending.index,
-                    x: pending.x,
-                    y: pending.y,
-                    width: pending.width,
-                    height: pending.height,
-                    subband: codeBlock.subband,
-                    data: codeBlock.data,
-                    passeCount: codeBlock.passeCount,
-                    zeroBitPlanes: codeBlock.zeroBitPlanes,
-                    passSegmentLengths: codeBlock.passSegmentLengths
-                )
+                    codeBlock = J2KCodeBlock(
+                        index: pending.index,
+                        x: pending.x,
+                        y: pending.y,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: codeBlock.subband,
+                        data: codeBlock.data,
+                        passeCount: codeBlock.passeCount,
+                        zeroBitPlanes: codeBlock.zeroBitPlanes,
+                        passSegmentLengths: codeBlock.passSegmentLengths
+                    )
 
-                localResults.append((pending.index, codeBlock))
+                    localResults.append((pending.index, codeBlock))
+                } catch {
+                    collector.recordError(error)
+                }
             }
 
             collector.append(contentsOf: localResults)
+        }
+
+        // Propagate any encoding errors
+        if let error = collector.firstError {
+            throw error
         }
 
         // Sort by original index to maintain order
