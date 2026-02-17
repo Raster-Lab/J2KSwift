@@ -7,6 +7,10 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -14,102 +18,115 @@ jobs:
   swiftlint:
     name: SwiftLint
     runs-on: macos-14
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-      
+        uses: actions/checkout@v4
+
       - name: Install SwiftLint
         run: brew install swiftlint
-      
+
       - name: Run SwiftLint
         run: swiftlint lint --reporter github-actions-logging
-      
+
       - name: Generate SwiftLint report
         if: always()
         run: |
           swiftlint lint --reporter json > swiftlint-report.json || true
-      
+
       - name: Upload SwiftLint results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: swiftlint-report
           path: swiftlint-report.json
-  
+
   security-audit:
     name: Security Audit
     runs-on: macos-14
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-      
+        uses: actions/checkout@v4
+
       - name: Setup Swift
         uses: swift-actions/setup-swift@v3
         with:
           swift-version: '6.2'
-      
+
       - name: Check for known vulnerabilities
         run: |
           # Resolve dependencies
           swift package resolve
-          
+
           # List all dependencies
           swift package show-dependencies
-      
+
       - name: Verify Package.swift
         run: swift package dump-package
-  
+
   code-coverage:
     name: Code Coverage
     runs-on: macos-14
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-      
+        uses: actions/checkout@v4
+
       - name: Setup Swift
         uses: swift-actions/setup-swift@v3
         with:
           swift-version: '6.2'
-      
+
       - name: Run tests with coverage
         run: |
           swift test --enable-code-coverage
-      
+
       - name: Generate coverage report
         run: |
-          xcrun llvm-cov export -format="lcov" \
-            .build/debug/J2KSwiftPackageTests.xctest/Contents/MacOS/J2KSwiftPackageTests \
-            -instr-profile .build/debug/codecov/default.profdata > coverage.lcov || true
-      
+          BIN_PATH=$(swift build --show-bin-path)
+          XCTEST_PATH=$(find "${BIN_PATH}" -name '*.xctest' -type d 2>/dev/null | head -1)
+          if [ -n "${XCTEST_PATH}" ]; then
+            EXEC_PATH="${XCTEST_PATH}/Contents/MacOS/$(basename "${XCTEST_PATH}" .xctest)"
+            echo "Found xctest bundle: ${XCTEST_PATH}"
+          else
+            EXEC_PATH=$(find "${BIN_PATH}" -name 'J2KSwiftPackageTests' -type f 2>/dev/null | head -1)
+            echo "Using fallback binary: ${EXEC_PATH}"
+          fi
+          PROFDATA=$(find .build -name 'default.profdata' -type f 2>/dev/null | head -1)
+          if [ -n "${EXEC_PATH}" ] && [ -n "${PROFDATA}" ]; then
+            echo "Generating coverage from: ${EXEC_PATH}"
+            xcrun llvm-cov export -format="lcov" "${EXEC_PATH}" -instr-profile "${PROFDATA}" > coverage.lcov
+          else
+            echo "Could not find test binary or profdata for coverage report"
+          fi
+
       - name: Upload coverage to artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.lcov
           if-no-files-found: warn
-  
+
   validation:
     name: Package Validation
     runs-on: macos-14
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-      
+        uses: actions/checkout@v4
+
       - name: Setup Swift
         uses: swift-actions/setup-swift@v3
         with:
           swift-version: '6.2'
-      
+
       - name: Validate Swift package
         run: |
           swift package describe
           swift package dump-package
-      
+
       - name: Check for Swift format
         run: |
           # Check if swift-format is available

@@ -10,7 +10,6 @@ This directory contains GitHub Actions workflows for J2KSwift.
 Tests the project on multiple platforms:
 - **macOS 14**: Full build and test with Swift 6.2
 - **Linux (Ubuntu)**: Cross-platform compatibility testing
-- **SwiftLint**: Code style and quality checks
 
 **Badge**: ![Swift Build](https://github.com/Raster-Lab/J2KSwift/actions/workflows/swift-build-test.yml/badge.svg)
 
