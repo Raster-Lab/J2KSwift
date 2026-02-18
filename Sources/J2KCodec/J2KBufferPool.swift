@@ -40,6 +40,9 @@ internal actor J2KBufferPool {
     /// Cached Double buffers, grouped by size.
     private var doubleBuffers: [Int: [[Double]]] = [:]
 
+    /// Cached UInt8 buffers, grouped by size.
+    private var uint8Buffers: [Int: [[UInt8]]] = [:]
+
     /// Creates a new buffer pool.
     internal init() {}
 
@@ -123,6 +126,46 @@ internal actor J2KBufferPool {
         doubleBuffers[size] = buffers
     }
 
+    // MARK: - UInt8 Buffer Management
+
+    /// Acquires a UInt8 buffer of the specified size.
+    ///
+    /// If a buffer of the requested size is available in the pool, it will be reused.
+    /// Otherwise, a new buffer is allocated.
+    ///
+    /// - Parameter size: Required buffer size.
+    /// - Returns: A UInt8 array of the specified size, filled with zeros.
+    internal func acquireUInt8Buffer(size: Int) -> [UInt8] {
+        if var buffers = uint8Buffers[size], !buffers.isEmpty {
+            let buffer = buffers.removeLast()
+            uint8Buffers[size] = buffers
+            return buffer
+        }
+        return [UInt8](repeating: 0, count: size)
+    }
+
+    /// Releases a UInt8 buffer back to the pool.
+    ///
+    /// The buffer will be zeroed and cached for future reuse if the pool is not full.
+    ///
+    /// - Parameter buffer: The buffer to release.
+    internal func releaseUInt8Buffer(_ buffer: [UInt8]) {
+        let size = buffer.count
+        guard size > 0 else { return }
+
+        var buffers = uint8Buffers[size] ?? []
+        guard buffers.count < maxCachedBuffers else { return }
+
+        // Zero the buffer before caching
+        var clearedBuffer = buffer
+        for i in 0..<clearedBuffer.count {
+            clearedBuffer[i] = 0
+        }
+
+        buffers.append(clearedBuffer)
+        uint8Buffers[size] = buffers
+    }
+
     // MARK: - Pool Management
 
     /// Clears all cached buffers from the pool.
@@ -131,15 +174,17 @@ internal actor J2KBufferPool {
     internal func clear() {
         int32Buffers.removeAll()
         doubleBuffers.removeAll()
+        uint8Buffers.removeAll()
     }
 
     /// Returns statistics about the current state of the pool.
     ///
     /// - Returns: A dictionary mapping buffer sizes to cached buffer counts.
-    internal func statistics() -> (int32: [Int: Int], double: [Int: Int]) {
+    internal func statistics() -> (int32: [Int: Int], double: [Int: Int], uint8: [Int: Int]) {
         let int32Stats = int32Buffers.mapValues { $0.count }
         let doubleStats = doubleBuffers.mapValues { $0.count }
-        return (int32Stats, doubleStats)
+        let uint8Stats = uint8Buffers.mapValues { $0.count }
+        return (int32Stats, doubleStats, uint8Stats)
     }
 }
 
@@ -165,5 +210,16 @@ extension J2KBufferPool {
     /// - Returns: A Double array of the specified size.
     internal nonisolated func acquireDoubleBufferSync(size: Int) -> [Double] {
         return [Double](repeating: 0, count: size)
+    }
+
+    /// Synchronously acquires a UInt8 buffer (for non-async contexts).
+    ///
+    /// This creates a new buffer without pooling. For optimal performance,
+    /// use the async version when possible.
+    ///
+    /// - Parameter size: Required buffer size.
+    /// - Returns: A UInt8 array of the specified size.
+    internal nonisolated func acquireUInt8BufferSync(size: Int) -> [UInt8] {
+        return [UInt8](repeating: 0, count: size)
     }
 }
