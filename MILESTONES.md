@@ -1069,26 +1069,26 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
 #### Extended JPIP Features (Weeks 139-144)
 
 ##### Week 139-141: JPIP over WebSocket Transport
-- [ ] WebSocket transport layer for JPIP
-  - [ ] WebSocket frame encapsulation for JPIP messages
-  - [ ] Binary and text message support for data bins
-  - [ ] Connection establishment and handshake protocol
-  - [ ] Automatic reconnection with exponential backoff
-- [ ] JPIPWebSocketClient implementation
-  - [ ] WebSocket-based session creation and management
-  - [ ] Multiplexed request/response over single connection
-  - [ ] Low-latency data bin delivery via WebSocket push
-  - [ ] Fallback to HTTP transport on WebSocket failure
-- [ ] JPIPWebSocketServer implementation
-  - [ ] WebSocket upgrade handling from HTTP connections
-  - [ ] Concurrent WebSocket session management
-  - [ ] Efficient binary frame serialization for data bins
-  - [ ] Connection health monitoring and keepalive
-- [ ] WebSocket transport testing
-  - [ ] Latency comparison: WebSocket vs HTTP polling
-  - [ ] Concurrent connection stress testing
-  - [ ] Reconnection and failover validation
-  - [ ] Protocol compliance tests
+- [x] WebSocket transport layer for JPIP
+  - [x] WebSocket frame encapsulation for JPIP messages
+  - [x] Binary and text message support for data bins
+  - [x] Connection establishment and handshake protocol
+  - [x] Automatic reconnection with exponential backoff
+- [x] JPIPWebSocketClient implementation
+  - [x] WebSocket-based session creation and management
+  - [x] Multiplexed request/response over single connection
+  - [x] Low-latency data bin delivery via WebSocket push
+  - [x] Fallback to HTTP transport on WebSocket failure
+- [x] JPIPWebSocketServer implementation
+  - [x] WebSocket upgrade handling from HTTP connections
+  - [x] Concurrent WebSocket session management
+  - [x] Efficient binary frame serialization for data bins
+  - [x] Connection health monitoring and keepalive
+- [x] WebSocket transport testing
+  - [x] Latency comparison: WebSocket vs HTTP polling
+  - [x] Concurrent connection stress testing
+  - [x] Reconnection and failover validation
+  - [x] Protocol compliance tests
 
 ##### Week 142-143: Server-Initiated Push for Predictive Prefetching
 - [ ] Predictive prefetching engine
