@@ -1030,23 +1030,23 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
   - [x] Automatic fallback to scalar implementation
   - [x] SIMD vs scalar performance comparison tests
 
-##### Week 134-136: FBCOT Memory Allocation Improvements
-- [ ] Memory allocation profiling for FBCOT block coder
-  - [ ] Identify hot allocation paths in encode/decode pipelines
-  - [ ] Measure allocation frequency and size distribution
-  - [ ] Profile peak memory usage across block sizes
-- [ ] Memory pool for FBCOT intermediate buffers
-  - [ ] Pre-allocated buffer pool for common block sizes (32×32, 64×64)
-  - [ ] Thread-local buffer caching to avoid contention
-  - [ ] Automatic pool sizing based on tile dimensions
-- [ ] Reduced temporary allocations in HT passes
-  - [ ] Stack-allocated scratch buffers for small code-blocks
-  - [ ] In-place coefficient transforms where possible
-  - [ ] Lazy allocation for optional coding passes
-- [ ] Memory usage regression tests
-  - [ ] Baseline memory benchmarks for encode/decode
-  - [ ] Allocation count tracking per code-block
-  - [ ] Peak memory validation under concurrent workloads
+##### Week 134-136: FBCOT Memory Allocation Improvements ✅
+- [x] Memory allocation profiling for FBCOT block coder (✅ completed Feb 18, 2026)
+  - [x] Identify hot allocation paths in encode/decode pipelines
+  - [x] Measure allocation frequency and size distribution
+  - [x] Profile peak memory usage across block sizes
+- [x] Memory pool for FBCOT intermediate buffers (✅ completed Feb 18, 2026)
+  - [x] Pre-allocated buffer pool for common block sizes (32×32, 64×64)
+  - [x] Thread-local buffer caching to avoid contention
+  - [x] Automatic pool sizing based on tile dimensions
+- [x] Reduced temporary allocations in HT passes (✅ completed Feb 18, 2026)
+  - [x] Stack-allocated scratch buffers for small code-blocks
+  - [x] In-place coefficient transforms where possible
+  - [x] Lazy allocation for optional coding passes
+- [x] Memory usage regression tests (✅ completed Feb 18, 2026)
+  - [x] Baseline memory benchmarks for encode/decode
+  - [x] Allocation count tracking per code-block
+  - [x] Peak memory validation under concurrent workloads
 
 ##### Week 137-138: Adaptive Block Size Selection
 - [ ] Content-aware block size analyzer
