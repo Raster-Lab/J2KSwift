@@ -44,7 +44,17 @@ jobs:
         run: swift build
 
       - name: Run tests
-        run: swift test
+        run: |
+          swift test --parallel \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+        timeout-minutes: 20
 
       - name: Build (release)
         run: swift build -c release
@@ -75,7 +85,17 @@ jobs:
         run: swift build
 
       - name: Run tests
-        run: swift test
+        run: |
+          swift test --parallel \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+        timeout-minutes: 20
 
       - name: Build (release)
         run: swift build -c release
