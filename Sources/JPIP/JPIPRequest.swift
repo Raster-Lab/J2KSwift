@@ -112,6 +112,9 @@ public enum JPIPChannelType: String, Sendable {
 
     /// HTTP with TCP (persistent connection).
     case httpTcp = "http-tcp"
+
+    /// WebSocket channel.
+    case webSocket = "ws"
 }
 
 extension JPIPRequest {
