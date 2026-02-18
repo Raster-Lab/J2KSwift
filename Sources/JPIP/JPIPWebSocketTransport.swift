@@ -790,9 +790,3 @@ public actor JPIPWebSocketTransport {
     }
 }
 
-// MARK: - Channel Type Extension
-
-extension JPIPChannelType {
-    /// WebSocket channel type.
-    public static let webSocket = JPIPChannelType(rawValue: "ws")!
-}
