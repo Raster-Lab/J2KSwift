@@ -1049,22 +1049,22 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
   - [x] Peak memory validation under concurrent workloads
 
 ##### Week 137-138: Adaptive Block Size Selection
-- [ ] Content-aware block size analyzer
-  - [ ] Edge density estimation for input tiles
-  - [ ] Frequency content analysis via DWT coefficients
-  - [ ] Texture complexity scoring per tile region
-- [ ] Adaptive block size selection strategy
-  - [ ] Block size mapping (16×16, 32×32, 64×64) based on content metrics
-  - [ ] Configurable aggressiveness (conservative, balanced, aggressive)
-  - [ ] Per-tile block size override support
-- [ ] Integration with J2KEncoder pipeline
-  - [ ] Auto-select mode in J2KEncodingConfiguration
-  - [ ] Backward-compatible API (manual block size still supported)
-  - [ ] Encode performance comparison: fixed vs adaptive block sizing
-- [ ] Validation and testing
-  - [ ] Quality comparison (PSNR/SSIM) across block size strategies
-  - [ ] Throughput benchmarks for adaptive vs fixed
-  - [ ] Edge-case testing (uniform images, high-frequency textures, gradients)
+- [x] Content-aware block size analyzer
+  - [x] Edge density estimation for input tiles
+  - [x] Frequency content analysis via DWT coefficients
+  - [x] Texture complexity scoring per tile region
+- [x] Adaptive block size selection strategy
+  - [x] Block size mapping (16×16, 32×32, 64×64) based on content metrics
+  - [x] Configurable aggressiveness (conservative, balanced, aggressive)
+  - [x] Per-tile block size override support
+- [x] Integration with J2KEncoder pipeline
+  - [x] Auto-select mode in J2KEncodingConfiguration
+  - [x] Backward-compatible API (manual block size still supported)
+  - [x] Encode performance comparison: fixed vs adaptive block sizing
+- [x] Validation and testing
+  - [x] Quality comparison (PSNR/SSIM) across block size strategies
+  - [x] Throughput benchmarks for adaptive vs fixed
+  - [x] Edge-case testing (uniform images, high-frequency textures, gradients)
 
 #### Extended JPIP Features (Weeks 139-144)
 
