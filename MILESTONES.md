@@ -1091,24 +1091,24 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
   - [x] Protocol compliance tests
 
 ##### Week 142-143: Server-Initiated Push for Predictive Prefetching
-- [ ] Predictive prefetching engine
-  - [ ] Viewport prediction based on navigation history
-  - [ ] Resolution-level prefetch heuristics
-  - [ ] Spatial locality-based tile prediction
-  - [ ] Configurable prefetch depth and aggressiveness
-- [ ] Server push integration with JPIP
-  - [ ] Unsolicited data bin delivery via WebSocket push
-  - [ ] Push priority scheduling (resolution > spatial > quality)
-  - [ ] Client-side push acceptance and rejection protocol
-  - [ ] Bandwidth-aware push throttling
-- [ ] Prefetch cache coordination
-  - [ ] Server-side tracking of client cache state
-  - [ ] Delta delivery (only push missing data bins)
-  - [ ] Cache invalidation on server-side image update
-- [ ] Push performance validation
-  - [ ] Time-to-first-display improvement measurements
-  - [ ] Bandwidth overhead of predictive push
-  - [ ] Accuracy of viewport prediction heuristics
+- [x] Predictive prefetching engine
+  - [x] Viewport prediction based on navigation history
+  - [x] Resolution-level prefetch heuristics
+  - [x] Spatial locality-based tile prediction
+  - [x] Configurable prefetch depth and aggressiveness
+- [x] Server push integration with JPIP
+  - [x] Unsolicited data bin delivery via WebSocket push
+  - [x] Push priority scheduling (resolution > spatial > quality)
+  - [x] Client-side push acceptance and rejection protocol
+  - [x] Bandwidth-aware push throttling
+- [x] Prefetch cache coordination
+  - [x] Server-side tracking of client cache state
+  - [x] Delta delivery (only push missing data bins)
+  - [x] Cache invalidation on server-side image update
+- [x] Push performance validation
+  - [x] Time-to-first-display improvement measurements
+  - [x] Bandwidth overhead of predictive push
+  - [x] Accuracy of viewport prediction heuristics
 
 ##### Week 144: Enhanced Session Persistence and Recovery
 - [ ] Session state serialization
