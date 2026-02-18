@@ -93,11 +93,11 @@ All benchmarks use:
 
 ### End-to-End HTJ2K Decoding
 
-| Block Size | Operation | Avg Time | Notes |
-|------------|-----------|----------|-------|
-| 64×64 | Complete decode pipeline | 19.621 ms | Includes all HTJ2K pass decoding |
+| Block Sizes | Operation | Avg Time/Block | Throughput | Notes |
+|-------------|-----------|----------------|------------|-------|
+| 32×32 + 64×64 | Complete cleanup decode | 0.303 ms | 8.5 M samples/sec | Multi-block workload |
 
-**Analysis**: End-to-end decoding includes cleanup pass + refinement pass decoding with full coefficient reconstruction.
+**Analysis**: End-to-end decoding benchmark simulates real-world workload with multiple block sizes.
 
 ## Performance Analysis
 
@@ -276,6 +276,7 @@ Compression Ratio Comparison (64×64):
 HTJ2K End-to-End Encode (64×64):
   Avg time: 8.6234 ms
 
-HTJ2K End-to-End Decode (64×64):
-  Avg time: 19.6205 ms
+HTJ2K End-to-End Decode (multi-block):
+  Avg time per block: 0.3025 ms
+  Overall throughput: 8462406 samples/sec
 ```

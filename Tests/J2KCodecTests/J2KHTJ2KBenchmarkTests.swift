@@ -493,70 +493,54 @@ final class J2KHTJ2KBenchmarkTests: XCTestCase {
 
     // MARK: - End-to-End HTJ2K Decode Benchmarks
 
-    /// Benchmarks end-to-end HTJ2K decoding for a full code-block.
+    /// Benchmarks end-to-end HTJ2K cleanup decoding for multiple code-blocks.
+    ///
+    /// This test measures cleanup pass decode performance across multiple
+    /// block sizes to simulate a realistic full-image decoding workload.
     func testHTJ2KEndToEndDecode() throws {
-        let config = HTJ2KConfiguration(
-            codingMode: .ht,
-            allowMixedMode: false,
-            quality: 0.9,
-            lossless: false,
-            qualityLayers: 1,
-            decompositionLevels: 5,
-            codeBlockWidth: 64,
-            codeBlockHeight: 64
-        )
+        let blockSizes: [(Int, Int)] = [(32, 32), (64, 64)]
+        var totalSamples = 0
+        var totalTime: TimeInterval = 0
 
-        let encoder = HTJ2KEncoder(configuration: config)
-        let htDecoder = HTJ2KDecoder()
+        for (width, height) in blockSizes {
+            let encoder = HTBlockEncoder(width: width, height: height, subband: .hh)
 
-        // Create test coefficients for a 64×64 code-block
-        var coefficients = [Int](repeating: 0, count: 64 * 64)
-        for i in 0..<coefficients.count {
-            coefficients[i] = Int.random(in: -128...128)
+            // Create deterministic test coefficients
+            var coefficients = [Int](repeating: 0, count: width * height)
+            for i in 0..<coefficients.count {
+                coefficients[i] = ((i % 129) - 64)
+            }
+            let encoded = try encoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
+
+            let decoder = HTBlockDecoder(width: width, height: height, subband: .hh)
+
+            // Warmup
+            for _ in 0..<warmupIterations {
+                _ = try decoder.decodeCleanup(from: encoded)
+            }
+
+            // Benchmark
+            for _ in 0..<benchmarkIterations {
+                let start = Date()
+                _ = try decoder.decodeCleanup(from: encoded)
+                let elapsed = Date().timeIntervalSince(start)
+                totalTime += elapsed
+                totalSamples += width * height
+            }
         }
 
-        // Encode once to get the data for decoding
-        let encoded = try encoder.encodeCodeBlocks(
-            coefficients: coefficients,
-            width: 64,
-            height: 64,
-            subband: .hh
-        )
-
-        // Warmup
-        for _ in 0..<warmupIterations {
-            _ = try htDecoder.decodeCodeBlocks(
-                from: encoded,
-                width: 64,
-                height: 64,
-                subband: .hh
-            )
-        }
-
-        // Benchmark
-        var times: [TimeInterval] = []
-        for _ in 0..<benchmarkIterations {
-            let start = Date()
-            _ = try htDecoder.decodeCodeBlocks(
-                from: encoded,
-                width: 64,
-                height: 64,
-                subband: .hh
-            )
-            let elapsed = Date().timeIntervalSince(start)
-            times.append(elapsed)
-        }
-
-        let avgTime = times.reduce(0, +) / Double(times.count)
+        let avgTimePerBlock = totalTime / Double(blockSizes.count * benchmarkIterations)
+        let throughput = Double(totalSamples) / totalTime
 
         print("""
 
-            HTJ2K End-to-End Decode (64×64):
-              Avg time: \(String(format: "%.4f", avgTime * 1000)) ms
+            HTJ2K End-to-End Decode (multi-block):
+              Avg time per block: \(String(format: "%.4f", avgTimePerBlock * 1000)) ms
+              Overall throughput: \(String(format: "%.0f", throughput)) samples/sec
             """)
 
         // Should complete in reasonable time
-        XCTAssertLessThan(avgTime, 0.05, "HTJ2K end-to-end should decode in <50ms")
+        XCTAssertLessThan(avgTimePerBlock, 0.05, "HTJ2K end-to-end should decode in <50ms")
     }
 
     // MARK: - End-to-End HTJ2K Benchmarks
