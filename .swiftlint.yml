@@ -68,6 +68,7 @@ opt_in_rules:
 disabled_rules:
   - todo
   - trailing_comma
+  - force_try
 
 # Rule configurations
 

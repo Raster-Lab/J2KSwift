@@ -19,6 +19,7 @@ jobs:
   test-macos:
     name: Test on macOS
     runs-on: macos-15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -45,6 +46,7 @@ jobs:
   test-linux:
     name: Test on Linux
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
       image: swift:6.2
 
