@@ -218,6 +218,96 @@ Refer to [MILESTONES.md](/MILESTONES.md) for the 100-week development roadmap. W
 
 Current phase focus: **Phase 0 - Foundation (Weeks 1-10)**
 
+## Compliance Enforcement (Mandatory)
+
+**This requirement is mandatory and must be repeated and enforced prior to every release cycle.**
+
+J2KSwift is an implementation of the ISO/IEC 15444 (JPEG 2000) standard. Compliance with Part 4 of the standard (Compliance Testing) is mandatory for all releases.
+
+### Compliance Requirements
+
+Before every release, you **MUST**:
+
+1. **Verify ISO/IEC 15444-4 Compliance**:
+   - Run all conformance tests in `Tests/J2KCoreTests/J2KConformanceTestingTests.swift`
+   - Validate against ISO test vectors (if available)
+   - Run cross-platform validation tests
+   - Verify security and stress tests pass
+
+2. **Document Compliance**:
+   - Update conformance reports for the release (see `CONFORMANCE_TESTING.md`)
+   - Document any known deviations or limitations
+   - Include test results and error metrics (MSE, PSNR, MAE)
+   - Verify all conformance classes tested (Profile 0, 1, 2, 3 as applicable)
+
+3. **Include in Release Checklist**:
+   - Every release checklist **MUST** explicitly include compliance verification as a required item
+   - Compliance testing must be marked complete before release approval
+   - Document test pass rates and any failures
+
+### Compliance Validation Commands
+
+Run these commands before every release:
+
+```bash
+# Run all conformance tests
+swift test --filter J2KConformanceTestingTests
+
+# Run security tests
+swift test --filter J2KSecurityTests
+
+# Run stress tests
+swift test --filter J2KStressTests
+
+# Run cross-platform validation tests (if available)
+swift test --filter J2KCrossPlatformValidationTests
+swift test --filter J2KISOTestSuiteTests
+```
+
+### Conformance Classes
+
+Verify compliance for applicable conformance classes:
+- **Profile 0 (Baseline)**: Core JPEG 2000 features
+- **Profile 1 (Extended)**: Additional color transforms, ROI
+- **Profile 2 (Cinema)**: Digital cinema applications
+- **Profile 3 (Broadcast)**: Broadcast video applications
+- **HTJ2K**: High Throughput JPEG 2000 (ISO/IEC 15444-15)
+- **JP3D**: 3D volumetric imaging (ISO/IEC 15444-10) - requires mandatory Part 4 compliance with automated CI checks
+
+### Error Tolerances
+
+Ensure decoded images meet required error tolerances:
+- **Lossless (Reversible 5/3)**: MAE = 0 (exact reconstruction)
+- **Near-lossless (Irreversible 9/7)**: MAE ≤ 1-2
+- **Lossy**: MAE within specified bounds per test case
+
+### Release Checklist Integration
+
+Every release checklist must include a **"Compliance Verification"** section with these items:
+
+```markdown
+### Compliance Verification (ISO/IEC 15444-4)
+- [ ] All conformance tests pass (J2KConformanceTestingTests)
+- [ ] Security tests pass (J2KSecurityTests)
+- [ ] Stress tests pass (J2KStressTests)
+- [ ] Cross-platform validation complete
+- [ ] Error metrics within tolerance (lossless: MAE=0, lossy: per spec)
+- [ ] Conformance report updated
+- [ ] Known limitations documented
+- [ ] Test pass rates documented (target: >95%)
+```
+
+### Non-Compliance Response
+
+If compliance tests fail before a release:
+1. **DO NOT release** until issues are resolved
+2. Document the failure and root cause
+3. Fix the issue or document as a known limitation
+4. Re-run all compliance tests
+5. Update conformance report with findings
+
+This is a **mandatory requirement** - no exceptions.
+
 ## README Updates
 
 When adding major features:

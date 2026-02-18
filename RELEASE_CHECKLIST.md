@@ -42,6 +42,29 @@ This document provides a comprehensive checklist for releasing version 1.0.0 of 
 - [x] Breaking changes from development branches documented
 - [x] All public types have `@available` annotations where needed
 
+### Compliance Verification (ISO/IEC 15444-4)
+
+**This section is MANDATORY for all releases.**
+
+- [x] All conformance tests pass (`swift test --filter J2KConformanceTestingTests`)
+- [x] Security tests pass (`swift test --filter J2KSecurityTests`)
+- [x] Stress tests pass (`swift test --filter J2KStressTests`)
+- [x] Cross-platform validation complete
+- [x] Error metrics within tolerance:
+  - [x] Lossless (Reversible 5/3): MAE = 0 (exact reconstruction)
+  - [x] Near-lossless (Irreversible 9/7): MAE ≤ 1-2
+  - [x] Lossy: MAE within specified bounds per test case
+- [x] Conformance report reviewed and updated (CONFORMANCE_TESTING.md)
+- [x] Known limitations documented
+- [x] Test pass rates documented (target: >95%)
+- [x] Conformance classes validated:
+  - [x] Profile 0 (Baseline)
+  - [x] Profile 1 (Extended) - if applicable
+  - [x] Profile 2 (Cinema) - if applicable
+  - [x] Profile 3 (Broadcast) - if applicable
+  - [x] HTJ2K (ISO/IEC 15444-15) - if applicable
+  - [x] JP3D (ISO/IEC 15444-10) - if applicable with mandatory Part 4 compliance
+
 ## Release Process
 
 ### Version Control
