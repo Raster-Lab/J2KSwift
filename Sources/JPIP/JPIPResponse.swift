@@ -116,15 +116,24 @@ public enum JPIPDataBinClass: Int, Sendable {
 public struct JPIPDataBin: Sendable {
     /// The data bin class.
     public let binClass: JPIPDataBinClass
+    
+    /// Class identifier (for compatibility).
+    public var classID: JPIPDataBinClass { binClass }
 
     /// The data bin ID.
     public let binID: Int
 
     /// The data content.
-    public let data: Data
+    public var data: Data
 
     /// Whether this is the complete bin.
     public let isComplete: Bool
+    
+    /// Quality layer for precinct data bins.
+    public var qualityLayer: Int
+    
+    /// Tile index for tile-based data bins.
+    public var tileIndex: Int
 
     /// Creates a new data bin.
     ///
@@ -133,10 +142,21 @@ public struct JPIPDataBin: Sendable {
     ///   - binID: The bin identifier.
     ///   - data: The data content.
     ///   - isComplete: Whether this is the complete bin.
-    public init(binClass: JPIPDataBinClass, binID: Int, data: Data, isComplete: Bool) {
+    ///   - qualityLayer: Quality layer (default: 0).
+    ///   - tileIndex: Tile index (default: 0).
+    public init(
+        binClass: JPIPDataBinClass,
+        binID: Int,
+        data: Data,
+        isComplete: Bool,
+        qualityLayer: Int = 0,
+        tileIndex: Int = 0
+    ) {
         self.binClass = binClass
         self.binID = binID
         self.data = data
         self.isComplete = isComplete
+        self.qualityLayer = qualityLayer
+        self.tileIndex = tileIndex
     }
 }
