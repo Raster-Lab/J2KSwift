@@ -1,15 +1,15 @@
 # HTJ2K Performance Benchmarks
 
-**Date**: February 16, 2026  
-**Version**: v1.2.0  
+**Date**: February 18, 2026  
+**Version**: v1.4.0  
 **Platform**: x86_64 Linux (GitHub Actions runner)
 
 ## Executive Summary
 
 J2KSwift's HTJ2K implementation **exceeds** the ISO/IEC 15444-15 performance target of 10-100× speedup over legacy JPEG 2000:
 
-- **32×32 code-blocks**: 57.85× faster encoding
-- **64×64 code-blocks**: 70.32× faster encoding  
+- **32×32 code-blocks**: 57.85× faster encoding, 257× faster decoding
+- **64×64 code-blocks**: 70.32× faster encoding, 290× faster decoding
 - **Compression efficiency**: Improved (92% smaller files in test cases)
 
 ## Benchmark Methodology
@@ -33,7 +33,8 @@ All benchmarks use:
 
 | Block Size | Avg Time | Throughput | Notes |
 |------------|----------|------------|-------|
-| 32×32 (1024 samples) | 0.068 ms | 15.1 M samples/sec | 3.6× faster than encoding |
+| 32×32 (1024 samples) | 0.068 ms | 13.7 M samples/sec | ~4× faster than encoding |
+| 64×64 (4096 samples) | 0.241 ms | 17.0 M samples/sec | Scales linearly |
 
 ### HTJ2K vs Legacy JPEG 2000 Comparison
 
@@ -55,6 +56,24 @@ All benchmarks use:
 
 **Analysis**: HTJ2K achieves 70.32× speedup with larger blocks, showing excellent scalability.
 
+#### 32×32 Code-Block Decoding
+
+| Implementation | Avg Time | Throughput | Relative Speed |
+|----------------|----------|------------|----------------|
+| **HTJ2K** | **0.068 ms** | **15.1 M samples/sec** | **257× faster** |
+| Legacy EBCOT | 17.347 ms | 59.0 K samples/sec | 1.0× baseline |
+
+**Analysis**: HTJ2K achieves 257× decoding speedup, far exceeding the 10-100× ISO target.
+
+#### 64×64 Code-Block Decoding
+
+| Implementation | Avg Time | Throughput | Relative Speed |
+|----------------|----------|------------|----------------|
+| **HTJ2K** | **0.271 ms** | **15.1 M samples/sec** | **290× faster** |
+| Legacy EBCOT | 78.364 ms | 52.3 K samples/sec | 1.0× baseline |
+
+**Analysis**: HTJ2K achieves 290× decoding speedup with larger blocks, with even greater advantage than encoding.
+
 ### Compression Efficiency
 
 | Implementation | Coded Size | Compression Ratio | Relative Size |
@@ -71,6 +90,14 @@ All benchmarks use:
 | 64×64 | Complete encode pipeline | 8.623 ms | Includes all HTJ2K passes |
 
 **Analysis**: End-to-end encoding includes cleanup pass + significance propagation + magnitude refinement passes.
+
+### End-to-End HTJ2K Decoding
+
+| Block Sizes | Operation | Avg Time/Block | Throughput | Notes |
+|-------------|-----------|----------------|------------|-------|
+| 32×32 + 64×64 | Complete cleanup decode | 0.303 ms | 8.5 M samples/sec | Multi-block workload |
+
+**Analysis**: End-to-end decoding benchmark simulates real-world workload with multiple block sizes.
 
 ## Performance Analysis
 
@@ -92,18 +119,24 @@ The throughput remains consistent across block sizes, indicating good algorithm 
 
 ### Decoding Performance
 
-HTJ2K decoding is **3.6× faster** than encoding:
+HTJ2K decoding is **~4× faster** than encoding:
 - Encoding: 0.248 ms (32×32)
 - Decoding: 0.068 ms (32×32)
 
 This asymmetry is expected since encoding involves more decision-making and buffer management.
+
+HTJ2K decoding is **257-290× faster** than legacy EBCOT decoding:
+- 32×32: 257× faster (0.068 ms vs 17.347 ms)
+- 64×64: 290× faster (0.271 ms vs 78.364 ms)
+
+The decoding speedup is significantly greater than the encoding speedup (57-70×) because the HT decoder's simple stream-parsing operations contrast more strongly with legacy EBCOT's complex MQ arithmetic decoder state machine.
 
 ## Comparison with ISO/IEC 15444-15 Targets
 
 | Metric | Target | Achieved | Status |
 |--------|--------|----------|--------|
 | Encoding speedup | 10-100× faster | 57-70× faster | ✅ **PASS** |
-| Decoding speedup | 10-100× faster | Not yet measured | ⏭️ Pending |
+| Decoding speedup | 10-100× faster | 257-290× faster | ✅ **PASS** |
 | Compression efficiency | Equivalent | Improved | ✅ **PASS** |
 | Memory usage | Comparable | Comparable | ✅ **PASS** |
 
@@ -152,10 +185,12 @@ This is consistent with typical JPEG 2000 Part 1 implementations, which are know
 The benchmark suite includes:
 
 1. **HTJ2K Cleanup Encoding** (32×32 and 64×64)
-2. **HTJ2K Cleanup Decoding** (32×32)
-3. **HTJ2K vs Legacy Comparison** (32×32 and 64×64)
-4. **Compression Ratio Comparison**
-5. **End-to-End HTJ2K Encoding**
+2. **HTJ2K Cleanup Decoding** (32×32 and 64×64)
+3. **HTJ2K vs Legacy Encoding Comparison** (32×32 and 64×64)
+4. **HTJ2K vs Legacy Decoding Comparison** (32×32 and 64×64)
+5. **Compression Ratio Comparison**
+6. **End-to-End HTJ2K Encoding**
+7. **End-to-End HTJ2K Decoding**
 
 All tests pass with 100% success rate.
 
@@ -164,17 +199,17 @@ All tests pass with 100% success rate.
 Planned additional benchmarks:
 
 1. **Full Image Encoding**: Benchmark complete image encoding (512×512, 2048×2048)
-2. **Decoder Performance**: Comprehensive decoding benchmarks
-3. **Multi-threaded Scaling**: Measure parallel encoding speedup
-4. **Memory Usage**: Profile memory consumption during encoding
-5. **Cross-Platform**: Benchmark on macOS, Windows, and various ARM platforms
-6. **Conformance Test Suite**: ISO/IEC 15444-15 official test vectors
+2. **Multi-threaded Scaling**: Measure parallel encoding speedup
+3. **Memory Usage**: Profile memory consumption during encoding
+4. **Cross-Platform**: Benchmark on macOS, Windows, and various ARM platforms
+5. **Conformance Test Suite**: ISO/IEC 15444-15 official test vectors
 
 ## Conclusion
 
 J2KSwift's HTJ2K implementation delivers **exceptional performance**, achieving:
 
 ✅ **57-70× faster encoding** than legacy JPEG 2000  
+✅ **257-290× faster decoding** than legacy JPEG 2000  
 ✅ **Better compression efficiency** in test cases  
 ✅ **Excellent scalability** across block sizes  
 ✅ **Production-ready performance** exceeding ISO targets
@@ -209,6 +244,10 @@ HTJ2K Cleanup Decode 32×32:
   Avg time: 0.0676 ms
   Throughput: 15145256 samples/sec
 
+HTJ2K Cleanup Decode 64×64:
+  Avg time: 0.2408 ms
+  Throughput: 17008593 samples/sec
+
 HTJ2K vs Legacy Encode Comparison (32×32):
   HTJ2K avg: 0.2539 ms
   Legacy avg: 14.6877 ms
@@ -219,6 +258,16 @@ HTJ2K vs Legacy Encode Comparison (64×64):
   Legacy avg: 66.9038 ms
   Speedup: 70.32× faster
 
+HTJ2K vs Legacy Decode Comparison (32×32):
+  HTJ2K avg: 0.0675 ms
+  Legacy avg: 17.3473 ms
+  Speedup: 256.96× faster
+
+HTJ2K vs Legacy Decode Comparison (64×64):
+  HTJ2K avg: 0.2705 ms
+  Legacy avg: 78.3640 ms
+  Speedup: 289.67× faster
+
 Compression Ratio Comparison (64×64):
   HTJ2K size: 340 bytes
   Legacy size: 4342 bytes
@@ -226,4 +275,8 @@ Compression Ratio Comparison (64×64):
 
 HTJ2K End-to-End Encode (64×64):
   Avg time: 8.6234 ms
+
+HTJ2K End-to-End Decode (multi-block):
+  Avg time per block: 0.3025 ms
+  Overall throughput: 8462406 samples/sec
 ```

@@ -1677,3 +1677,734 @@ public struct HTJ2KTestVectorParser: Sendable {
         }
     }
 }
+
+// MARK: - HTJ2K Interoperability Validator
+
+/// Validates HTJ2K codestream interoperability with other JPEG 2000 implementations.
+///
+/// This validator checks that J2KSwift-generated codestreams conform to the
+/// ISO/IEC 15444-15 standard in ways that ensure cross-implementation compatibility.
+/// It verifies marker segment ordering, format correctness, capability signaling,
+/// and codestream structure as required for interoperability with external
+/// implementations such as OpenJPEG HTJ2K, kakadu, and others.
+///
+/// ## Validation Areas
+///
+/// - **Marker ordering**: SOC, SIZ, CAP, COD, QCD must appear in the correct order
+/// - **Segment lengths**: All marker segment lengths must be valid
+/// - **Capability signaling**: CAP and CPF markers must correctly signal HTJ2K support
+/// - **Codestream structure**: Overall structure must be parseable by any conformant decoder
+/// - **Cross-format compatibility**: HTJ2K and legacy codestreams must coexist properly
+///
+/// ## Topics
+///
+/// ### Validation
+/// - ``validateInteroperability(codestream:)``
+/// - ``validateMarkerOrdering(codestream:)``
+/// - ``validateSegmentLengths(codestream:)``
+/// - ``validateCapabilitySignaling(codestream:)``
+///
+/// ### Results
+/// - ``InteroperabilityResult``
+/// - ``MarkerInfo``
+public struct J2KHTInteroperabilityValidator: Sendable {
+
+    /// Well-known JPEG 2000 marker codes.
+    public enum MarkerCode: UInt16, Sendable, CaseIterable {
+        /// Start of Codestream.
+        case soc = 0xFF4F
+        /// Image and tile size.
+        case siz = 0xFF51
+        /// Coding style default.
+        case cod = 0xFF52
+        /// Coding style component.
+        case coc = 0xFF53
+        /// Quantization default.
+        case qcd = 0xFF5C
+        /// Quantization component.
+        case qcc = 0xFF5D
+        /// Region of interest.
+        case rgn = 0xFF5E
+        /// Progression order change.
+        case poc = 0xFF5F
+        /// Comment.
+        case com = 0xFF64
+        /// Tile-part header.
+        case sot = 0xFF90
+        /// Start of data.
+        case sod = 0xFF93
+        /// End of codestream.
+        case eoc = 0xFFD9
+        /// Capabilities (HTJ2K).
+        case cap = 0xFF50
+        /// Codestream profile (HTJ2K).
+        case cpf = 0xFF59
+
+        /// Human-readable name.
+        public var name: String {
+            switch self {
+            case .soc: return "SOC"
+            case .siz: return "SIZ"
+            case .cod: return "COD"
+            case .coc: return "COC"
+            case .qcd: return "QCD"
+            case .qcc: return "QCC"
+            case .rgn: return "RGN"
+            case .poc: return "POC"
+            case .com: return "COM"
+            case .sot: return "SOT"
+            case .sod: return "SOD"
+            case .eoc: return "EOC"
+            case .cap: return "CAP"
+            case .cpf: return "CPF"
+            }
+        }
+    }
+
+    /// Information about a marker found in the codestream.
+    public struct MarkerInfo: Sendable {
+        /// The marker code.
+        public let code: UInt16
+
+        /// Byte offset in the codestream.
+        public let offset: Int
+
+        /// Length of the marker segment (excluding the marker itself).
+        /// `nil` for markers without a length field (SOC, SOD, EOC).
+        public let segmentLength: Int?
+
+        /// Human-readable marker name.
+        public var name: String {
+            MarkerCode(rawValue: code)?.name ?? String(format: "0x%04X", code)
+        }
+    }
+
+    /// Result of interoperability validation.
+    public struct InteroperabilityResult: Sendable {
+        /// Whether the codestream passes all interoperability checks.
+        public let passed: Bool
+
+        /// Markers found in the codestream, in order.
+        public let markers: [MarkerInfo]
+
+        /// Validation errors found.
+        public let errors: [String]
+
+        /// Validation warnings (non-fatal).
+        public let warnings: [String]
+
+        /// Whether the codestream signals HTJ2K capability.
+        public let isHTJ2K: Bool
+
+        /// Whether the codestream uses mixed-mode coding.
+        public let isMixedMode: Bool
+
+        /// Summary string.
+        public var summary: String {
+            let status = passed ? "PASS" : "FAIL"
+            var text = "Interoperability Check: \(status)\n"
+            text += "  Markers found: \(markers.count)\n"
+            text += "  HTJ2K: \(isHTJ2K)\n"
+            text += "  Mixed mode: \(isMixedMode)\n"
+            if !errors.isEmpty {
+                text += "  Errors:\n"
+                for error in errors {
+                    text += "    - \(error)\n"
+                }
+            }
+            if !warnings.isEmpty {
+                text += "  Warnings:\n"
+                for warning in warnings {
+                    text += "    - \(warning)\n"
+                }
+            }
+            return text
+        }
+    }
+
+    /// Creates a new interoperability validator.
+    public init() {}
+
+    /// Performs comprehensive interoperability validation on a codestream.
+    ///
+    /// This checks marker ordering, segment lengths, capability signaling, and
+    /// overall codestream structure to ensure compatibility with other
+    /// JPEG 2000 implementations.
+    ///
+    /// - Parameter codestream: The JPEG 2000 codestream data.
+    /// - Returns: The interoperability validation result.
+    public func validateInteroperability(codestream: Data) -> InteroperabilityResult {
+        var errors: [String] = []
+        var warnings: [String] = []
+
+        // Parse markers
+        let markers = parseMarkers(from: codestream)
+        if markers.isEmpty {
+            errors.append("No markers found in codestream")
+            return InteroperabilityResult(
+                passed: false, markers: [], errors: errors,
+                warnings: warnings, isHTJ2K: false, isMixedMode: false
+            )
+        }
+
+        // Validate marker ordering
+        let orderErrors = validateMarkerOrdering(markers: markers)
+        errors.append(contentsOf: orderErrors)
+
+        // Validate segment lengths
+        let lengthErrors = validateSegmentLengths(
+            codestream: codestream, markers: markers
+        )
+        errors.append(contentsOf: lengthErrors)
+
+        // Validate capability signaling
+        let (capErrors, capWarnings, isHTJ2K, isMixed) =
+            validateCapabilitySignaling(codestream: codestream, markers: markers)
+        errors.append(contentsOf: capErrors)
+        warnings.append(contentsOf: capWarnings)
+
+        // Check basic structure
+        let structureErrors = validateBasicStructure(markers: markers)
+        errors.append(contentsOf: structureErrors)
+
+        return InteroperabilityResult(
+            passed: errors.isEmpty,
+            markers: markers,
+            errors: errors,
+            warnings: warnings,
+            isHTJ2K: isHTJ2K,
+            isMixedMode: isMixed
+        )
+    }
+
+    /// Validates that markers appear in the required order per ISO/IEC 15444-1 and 15444-15.
+    ///
+    /// The required main header ordering is:
+    /// 1. SOC (must be first)
+    /// 2. SIZ (must be second)
+    /// 3. CAP (if present, must appear before COD)
+    /// 4. COD (required)
+    /// 5. QCD (required)
+    ///
+    /// - Parameter codestream: The JPEG 2000 codestream data.
+    /// - Returns: Array of ordering errors found.
+    public func validateMarkerOrdering(codestream: Data) -> [String] {
+        let markers = parseMarkers(from: codestream)
+        return validateMarkerOrdering(markers: markers)
+    }
+
+    /// Validates segment lengths for all marker segments.
+    ///
+    /// Each marker segment's declared length must be consistent with the data
+    /// available in the codestream. Invalid lengths would cause interoperability
+    /// failures with other decoders.
+    ///
+    /// - Parameter codestream: The JPEG 2000 codestream data.
+    /// - Returns: Array of segment length errors found.
+    public func validateSegmentLengths(codestream: Data) -> [String] {
+        let markers = parseMarkers(from: codestream)
+        return validateSegmentLengths(codestream: codestream, markers: markers)
+    }
+
+    /// Validates HTJ2K capability signaling in the codestream.
+    ///
+    /// For HTJ2K codestreams, the CAP marker must correctly signal Part 15
+    /// capability, and the CPF marker should indicate the appropriate profile.
+    ///
+    /// - Parameter codestream: The JPEG 2000 codestream data.
+    /// - Returns: Tuple of (errors, warnings, isHTJ2K, isMixedMode).
+    public func validateCapabilitySignaling(
+        codestream: Data
+    ) -> (errors: [String], warnings: [String], isHTJ2K: Bool, isMixedMode: Bool) {
+        let markers = parseMarkers(from: codestream)
+        return validateCapabilitySignaling(codestream: codestream, markers: markers)
+    }
+
+    // MARK: - Internal Validation Methods
+
+    /// Parses all markers from a codestream.
+    internal func parseMarkers(from data: Data) -> [MarkerInfo] {
+        var markers: [MarkerInfo] = []
+        var offset = 0
+
+        guard data.count >= 2 else { return markers }
+
+        while offset + 1 < data.count {
+            let byte1 = data[offset]
+            guard byte1 == 0xFF else {
+                offset += 1
+                continue
+            }
+
+            let byte2 = data[offset + 1]
+            let code = (UInt16(byte1) << 8) | UInt16(byte2)
+
+            // Skip fill bytes (0xFF followed by another 0xFF)
+            if byte2 == 0xFF {
+                offset += 1
+                continue
+            }
+
+            // Skip non-marker bytes
+            guard byte2 >= 0x01 else {
+                offset += 2
+                continue
+            }
+
+            // Markers without segment length: SOC, SOD, EOC
+            let noLengthMarkers: Set<UInt16> = [0xFF4F, 0xFF93, 0xFFD9]
+
+            if noLengthMarkers.contains(code) {
+                markers.append(MarkerInfo(
+                    code: code, offset: offset, segmentLength: nil
+                ))
+                offset += 2
+
+                // After SOD, skip to the next tile or end
+                if code == 0xFF93 {
+                    // SOD: data follows until the next marker
+                    break
+                }
+            } else {
+                // Read segment length (2 bytes, includes the length field itself)
+                guard offset + 3 < data.count else { break }
+                let lengthHigh = Int(data[offset + 2])
+                let lengthLow = Int(data[offset + 3])
+                let segmentLength = (lengthHigh << 8) | lengthLow
+
+                markers.append(MarkerInfo(
+                    code: code, offset: offset, segmentLength: segmentLength
+                ))
+
+                // Advance past marker (2 bytes) + segment data
+                offset += 2 + segmentLength
+            }
+        }
+
+        return markers
+    }
+
+    /// Validates marker ordering against the standard requirements.
+    private func validateMarkerOrdering(markers: [MarkerInfo]) -> [String] {
+        var errors: [String] = []
+
+        guard !markers.isEmpty else {
+            errors.append("No markers found")
+            return errors
+        }
+
+        // SOC must be first
+        if markers[0].code != MarkerCode.soc.rawValue {
+            errors.append(
+                "First marker must be SOC (0xFF4F), found \(markers[0].name)"
+            )
+        }
+
+        // SIZ must be second
+        if markers.count > 1 && markers[1].code != MarkerCode.siz.rawValue {
+            errors.append(
+                "Second marker must be SIZ (0xFF51), found \(markers[1].name)"
+            )
+        }
+
+        // CAP must appear before COD if present
+        let capIndex = markers.firstIndex { $0.code == MarkerCode.cap.rawValue }
+        let codIndex = markers.firstIndex { $0.code == MarkerCode.cod.rawValue }
+
+        if let capIdx = capIndex, let codIdx = codIndex {
+            if capIdx > codIdx {
+                errors.append("CAP marker must appear before COD marker")
+            }
+        }
+
+        // COD must appear before SOT/SOD
+        let sotIndex = markers.firstIndex { $0.code == MarkerCode.sot.rawValue }
+        let sodIndex = markers.firstIndex { $0.code == MarkerCode.sod.rawValue }
+
+        if let codIdx = codIndex {
+            if let sotIdx = sotIndex, codIdx > sotIdx {
+                errors.append("COD marker must appear before SOT marker")
+            }
+            if let sodIdx = sodIndex, codIdx > sodIdx {
+                errors.append("COD marker must appear before SOD marker")
+            }
+        }
+
+        // QCD must appear before SOT/SOD
+        let qcdIndex = markers.firstIndex { $0.code == MarkerCode.qcd.rawValue }
+        if let qcdIdx = qcdIndex {
+            if let sotIdx = sotIndex, qcdIdx > sotIdx {
+                errors.append("QCD marker must appear before SOT marker")
+            }
+        }
+
+        return errors
+    }
+
+    /// Validates segment lengths are consistent with the codestream data.
+    private func validateSegmentLengths(
+        codestream: Data,
+        markers: [MarkerInfo]
+    ) -> [String] {
+        var errors: [String] = []
+
+        for marker in markers {
+            guard let length = marker.segmentLength else { continue }
+
+            // Segment length must be at least 2 (the length field itself)
+            if length < 2 {
+                errors.append(
+                    "\(marker.name) at offset \(marker.offset): " +
+                    "segment length \(length) is less than minimum 2"
+                )
+                continue
+            }
+
+            // Segment must not extend beyond the codestream
+            let segmentEnd = marker.offset + 2 + length
+            if segmentEnd > codestream.count {
+                errors.append(
+                    "\(marker.name) at offset \(marker.offset): " +
+                    "segment extends beyond codestream " +
+                    "(end \(segmentEnd) > size \(codestream.count))"
+                )
+            }
+        }
+
+        return errors
+    }
+
+    /// Validates HTJ2K capability signaling.
+    private func validateCapabilitySignaling(
+        codestream: Data,
+        markers: [MarkerInfo]
+    ) -> (errors: [String], warnings: [String], isHTJ2K: Bool, isMixedMode: Bool) {
+        var errors: [String] = []
+        var warnings: [String] = []
+        var isHTJ2K = false
+        var isMixedMode = false
+
+        let capMarker = markers.first { $0.code == MarkerCode.cap.rawValue }
+        let cpfMarker = markers.first { $0.code == MarkerCode.cpf.rawValue }
+
+        if let cap = capMarker, let segLen = cap.segmentLength {
+            let dataStart = cap.offset + 4  // marker (2) + length (2)
+            let dataEnd = cap.offset + 2 + segLen
+
+            guard dataEnd <= codestream.count && dataStart + 4 <= codestream.count else {
+                errors.append("CAP marker segment data is truncated")
+                return (errors, warnings, false, false)
+            }
+
+            // Parse Pcap (4 bytes): capability bits
+            let pcap = (UInt32(codestream[dataStart]) << 24) |
+                       (UInt32(codestream[dataStart + 1]) << 16) |
+                       (UInt32(codestream[dataStart + 2]) << 8) |
+                       UInt32(codestream[dataStart + 3])
+
+            // Bit 14 (from MSB in 32-bit) = Part 15 HT capability
+            isHTJ2K = (pcap & (1 << 17)) != 0
+
+            if isHTJ2K && dataStart + 6 <= codestream.count {
+                let ccap = (UInt16(codestream[dataStart + 4]) << 8) |
+                           UInt16(codestream[dataStart + 5])
+                isMixedMode = (ccap & 0x0002) != 0
+            }
+
+            // Validate: if HTJ2K, CAP should have Part 15 extensions
+            if isHTJ2K && segLen < 8 {
+                warnings.append(
+                    "HTJ2K CAP marker segment may be missing Ccap extension data"
+                )
+            }
+        }
+
+        // If HTJ2K, CPF marker should be present
+        if isHTJ2K && cpfMarker == nil {
+            warnings.append("HTJ2K codestream should include a CPF marker")
+        }
+
+        // Validate CPF marker if present
+        if let cpf = cpfMarker, let segLen = cpf.segmentLength {
+            let dataStart = cpf.offset + 4
+            let dataEnd = cpf.offset + 2 + segLen
+
+            guard dataEnd <= codestream.count && dataStart + 2 <= codestream.count else {
+                errors.append("CPF marker segment data is truncated")
+                return (errors, warnings, isHTJ2K, isMixedMode)
+            }
+
+            let pcpf = (UInt16(codestream[dataStart]) << 8) |
+                       UInt16(codestream[dataStart + 1])
+
+            // Bit 15: 0 = Part 1, 1 = Part 15
+            let cpfIsHTJ2K = (pcpf & 0x8000) != 0
+
+            // Cross-validate CAP and CPF
+            if isHTJ2K && !cpfIsHTJ2K {
+                warnings.append(
+                    "CAP signals HTJ2K but CPF indicates Part 1 profile"
+                )
+            }
+            if !isHTJ2K && cpfIsHTJ2K {
+                warnings.append(
+                    "CPF indicates Part 15 but CAP does not signal HTJ2K"
+                )
+            }
+        }
+
+        return (errors, warnings, isHTJ2K, isMixedMode)
+    }
+
+    /// Validates basic codestream structure.
+    private func validateBasicStructure(markers: [MarkerInfo]) -> [String] {
+        var errors: [String] = []
+
+        let markerCodes = markers.map { $0.code }
+
+        // Required markers for any valid JPEG 2000 codestream
+        if !markerCodes.contains(MarkerCode.soc.rawValue) {
+            errors.append("Missing required SOC marker")
+        }
+
+        if !markerCodes.contains(MarkerCode.siz.rawValue) {
+            errors.append("Missing required SIZ marker")
+        }
+
+        if !markerCodes.contains(MarkerCode.cod.rawValue) {
+            errors.append("Missing required COD marker")
+        }
+
+        if !markerCodes.contains(MarkerCode.qcd.rawValue) {
+            errors.append("Missing required QCD marker")
+        }
+
+        // SOT or SOD should be present (codestream must have data)
+        let hasSOT = markerCodes.contains(MarkerCode.sot.rawValue)
+        let hasSOD = markerCodes.contains(MarkerCode.sod.rawValue)
+        if !hasSOT && !hasSOD {
+            errors.append("Missing SOT/SOD markers - codestream has no data section")
+        }
+
+        return errors
+    }
+
+    /// Generates an interoperability test report for multiple codestreams.
+    ///
+    /// - Parameter results: Array of interoperability results to summarize.
+    /// - Returns: A formatted report string.
+    public static func generateReport(
+        results: [InteroperabilityResult]
+    ) -> String {
+        var report = "HTJ2K Interoperability Test Report\n"
+        report += "===================================\n\n"
+
+        let passCount = results.filter { $0.passed }.count
+        let totalCount = results.count
+        let passRate = totalCount > 0
+            ? Double(passCount) / Double(totalCount) * 100.0 : 0.0
+
+        report += "Summary: \(passCount)/\(totalCount) passed "
+        report += "(\(String(format: "%.1f", passRate))%)\n\n"
+
+        for (index, result) in results.enumerated() {
+            let status = result.passed ? "✓ PASS" : "✗ FAIL"
+            report += "Test \(index + 1): \(status)\n"
+            report += "  Markers: \(result.markers.count)\n"
+            report += "  HTJ2K: \(result.isHTJ2K)\n"
+
+            if !result.errors.isEmpty {
+                report += "  Errors:\n"
+                for error in result.errors {
+                    report += "    - \(error)\n"
+                }
+            }
+
+            if !result.warnings.isEmpty {
+                report += "  Warnings:\n"
+                for warning in result.warnings {
+                    report += "    - \(warning)\n"
+                }
+            }
+            report += "\n"
+        }
+
+        return report
+    }
+
+    /// Creates a minimal valid JPEG 2000 codestream for testing interoperability.
+    ///
+    /// This generates a synthetic codestream with correct marker ordering and
+    /// structure that any conformant JPEG 2000 decoder should be able to parse.
+    ///
+    /// - Parameters:
+    ///   - width: Image width.
+    ///   - height: Image height.
+    ///   - components: Number of components.
+    ///   - bitDepth: Bit depth per component.
+    ///   - htj2k: Whether to include HTJ2K markers (CAP, CPF).
+    /// - Returns: The synthetic codestream data.
+    public static func createSyntheticCodestream(
+        width: Int,
+        height: Int,
+        components: Int,
+        bitDepth: Int,
+        htj2k: Bool
+    ) -> Data {
+        var data = Data()
+
+        // SOC marker
+        data.append(contentsOf: [0xFF, 0x4F])
+
+        // SIZ marker segment
+        var sizBody = Data()
+        // Rsiz (2 bytes): Profile 0
+        sizBody.append(contentsOf: [0x00, 0x00])
+        // Xsiz (4 bytes): image width
+        sizBody.append(contentsOf: withUnsafeBytes(of: UInt32(width).bigEndian) {
+            Array($0)
+        })
+        // Ysiz (4 bytes): image height
+        sizBody.append(contentsOf: withUnsafeBytes(of: UInt32(height).bigEndian) {
+            Array($0)
+        })
+        // XOsiz, YOsiz (8 bytes): origin = 0
+        sizBody.append(contentsOf: [0, 0, 0, 0, 0, 0, 0, 0])
+        // XTsiz, YTsiz (8 bytes): tile size = image size
+        sizBody.append(contentsOf: withUnsafeBytes(of: UInt32(width).bigEndian) {
+            Array($0)
+        })
+        sizBody.append(contentsOf: withUnsafeBytes(of: UInt32(height).bigEndian) {
+            Array($0)
+        })
+        // XTOsiz, YTOsiz (8 bytes): tile origin = 0
+        sizBody.append(contentsOf: [0, 0, 0, 0, 0, 0, 0, 0])
+        // Csiz (2 bytes): number of components
+        sizBody.append(contentsOf: [
+            UInt8((components >> 8) & 0xFF),
+            UInt8(components & 0xFF)
+        ])
+        // For each component: Ssiz (1), XRsiz (1), YRsiz (1)
+        for _ in 0..<components {
+            sizBody.append(UInt8(bitDepth - 1))  // Ssiz: bit depth - 1 (unsigned)
+            sizBody.append(1)  // XRsiz: horizontal subsampling = 1
+            sizBody.append(1)  // YRsiz: vertical subsampling = 1
+        }
+
+        let sizLength = UInt16(sizBody.count + 2)
+        data.append(contentsOf: [0xFF, 0x51])
+        data.append(contentsOf: [
+            UInt8((sizLength >> 8) & 0xFF),
+            UInt8(sizLength & 0xFF)
+        ])
+        data.append(sizBody)
+
+        // CAP marker (for HTJ2K)
+        if htj2k {
+            var capBody = Data()
+            // Pcap (4 bytes): Part 15 capability bit
+            var pcap: UInt32 = 1 << 17
+            capBody.append(contentsOf: withUnsafeBytes(of: pcap.bigEndian) {
+                Array($0)
+            })
+            // Ccap (2 bytes): HT capability extension
+            capBody.append(contentsOf: [0x00, 0x01])  // HTJ2K enabled, no mixed mode
+
+            let capLength = UInt16(capBody.count + 2)
+            data.append(contentsOf: [0xFF, 0x50])
+            data.append(contentsOf: [
+                UInt8((capLength >> 8) & 0xFF),
+                UInt8(capLength & 0xFF)
+            ])
+            data.append(capBody)
+        }
+
+        // COD marker segment
+        var codBody = Data()
+        // Scod (1 byte): coding style
+        codBody.append(0x00)
+        // SGcod: progression order (LRCP=0), layers=1, MCT=0
+        codBody.append(contentsOf: [0x00, 0x00, 0x01, 0x00])
+        // SPcod: decomposition levels, code-block size, style
+        codBody.append(5)  // NL: 5 decomposition levels
+        codBody.append(5)  // xcb: code-block width exponent offset = 5 (32)
+        codBody.append(5)  // ycb: code-block height exponent offset = 5 (32)
+        codBody.append(0)  // code-block style
+        codBody.append(0)  // wavelet transform: 9/7 irreversible
+
+        let codLength = UInt16(codBody.count + 2)
+        data.append(contentsOf: [0xFF, 0x52])
+        data.append(contentsOf: [
+            UInt8((codLength >> 8) & 0xFF),
+            UInt8(codLength & 0xFF)
+        ])
+        data.append(codBody)
+
+        // CPF marker (for HTJ2K)
+        if htj2k {
+            var cpfBody = Data()
+            // Pcpf (2 bytes): Part 15 profile
+            let pcpf: UInt16 = 0x8000  // Bit 15 set = Part 15 profile
+            cpfBody.append(contentsOf: [
+                UInt8((pcpf >> 8) & 0xFF),
+                UInt8(pcpf & 0xFF)
+            ])
+
+            let cpfLength = UInt16(cpfBody.count + 2)
+            data.append(contentsOf: [0xFF, 0x59])
+            data.append(contentsOf: [
+                UInt8((cpfLength >> 8) & 0xFF),
+                UInt8(cpfLength & 0xFF)
+            ])
+            data.append(cpfBody)
+        }
+
+        // QCD marker segment
+        var qcdBody = Data()
+        // Sqcd (1 byte): quantization style (no quantization)
+        qcdBody.append(0x00)
+        // SPqcd: step sizes for each subband
+        let numSubbands = 3 * 5 + 1  // 3 subbands × 5 levels + LL
+        for _ in 0..<numSubbands {
+            qcdBody.append(0x08)  // Exponent=1, mantissa=0
+        }
+
+        let qcdLength = UInt16(qcdBody.count + 2)
+        data.append(contentsOf: [0xFF, 0x5C])
+        data.append(contentsOf: [
+            UInt8((qcdLength >> 8) & 0xFF),
+            UInt8(qcdLength & 0xFF)
+        ])
+        data.append(qcdBody)
+
+        // SOT marker segment
+        var sotBody = Data()
+        // Isot (2 bytes): tile index = 0
+        sotBody.append(contentsOf: [0x00, 0x00])
+        // Psot (4 bytes): tile-part length = 0 (rest of codestream)
+        sotBody.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        // TPsot (1 byte): tile-part index = 0
+        sotBody.append(0x00)
+        // TNsot (1 byte): number of tile-parts = 1
+        sotBody.append(0x01)
+
+        let sotLength = UInt16(sotBody.count + 2)
+        data.append(contentsOf: [0xFF, 0x90])
+        data.append(contentsOf: [
+            UInt8((sotLength >> 8) & 0xFF),
+            UInt8(sotLength & 0xFF)
+        ])
+        data.append(sotBody)
+
+        // SOD marker
+        data.append(contentsOf: [0xFF, 0x93])
+
+        // Minimal encoded data (empty)
+        data.append(contentsOf: [0x00])
+
+        // EOC marker
+        data.append(contentsOf: [0xFF, 0xD9])
+
+        return data
+    }
+}
