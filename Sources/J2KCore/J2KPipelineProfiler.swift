@@ -310,17 +310,6 @@ public final class J2KPipelineProfiler: @unchecked Sendable {
     // MARK: - Private Helpers
 
     private func currentMemoryUsage() -> Int {
-        #if os(Linux)
-        guard let contents = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8) else {
-            return 0
-        }
-        let parts = contents.split(separator: " ")
-        if parts.count > 1, let residentPages = Int(parts[1]) {
-            return residentPages * 4096
-        }
-        return 0
-        #else
-        return 0
-        #endif
+        J2KMemoryInfo.currentResidentMemory()
     }
 }

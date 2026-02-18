@@ -359,22 +359,7 @@ public struct J2KMemoryBenchmark: Sendable {
 
     /// Gets current memory usage in bytes.
     private static func getMemoryUsage() -> Int {
-        #if os(Linux)
-        // On Linux, read from /proc/self/statm
-        // Format: size resident shared text lib data dt (all in pages)
-        if let contents = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8) {
-            let parts = contents.split(separator: " ")
-            // Check bounds before accessing parts[1] (resident memory)
-            if parts.count > 1, let residentPages = Int(parts[1]) {
-                // Multiply by page size (typically 4096)
-                return residentPages * 4096
-            }
-        }
-        return 0
-        #else
-        // On other platforms, return 0 (memory measurement not available)
-        return 0
-        #endif
+        J2KMemoryInfo.currentResidentMemory()
     }
 }
 
