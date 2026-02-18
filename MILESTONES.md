@@ -925,35 +925,91 @@ Major release consolidating Phase 9 (HTJ2K Codec) and Phase 10 (Lossless Transco
 - [x] Build successful with no warnings
 - [x] Cross-platform validated (macOS, Linux)
 
-### v1.4.0 (In Development) 🚧
+### v1.4.0 (February 18, 2026) ✅ RELEASED
 Phase 11: Enhanced JPIP with HTJ2K Support.
 
-#### JPIP HTJ2K Integration
+#### JPIP HTJ2K Format Detection
 - [x] JPIP HTJ2K format detection (JPIPHTJ2KSupport)
   - [x] J2K/JPH format auto-detection via file signatures
   - [x] CAP marker detection for HTJ2K capability in J2K codestreams
   - [x] JPIPImageInfo type for tracking registered image formats
+  - [x] Format-aware metadata generation for each image format
+
+#### JPIP Capability Signaling
 - [x] JPIP capability signaling
   - [x] HTJ2K capability headers in session creation responses (JPIP-cap, JPIP-pref)
   - [x] Format-aware metadata generation for JPIP clients
-  - [x] JPIPCodingPreference enum for client-side format preferences
+  - [x] JPIPCodingPreference enum for client-side format preferences (.none, .htj2k, .legacy)
 - [x] JPIPRequest enhancements
   - [x] codingPreference field for HTJ2K/legacy preference signaling
   - [x] Query parameter serialization for coding preferences
+
+#### Enhanced JPIPServer API
 - [x] JPIPServer enhancements
   - [x] Image format detection on registration
   - [x] Image info caching for registered images
   - [x] HTJ2K-aware session creation with capability headers
   - [x] Format-aware metadata generation
   - [x] getImageInfo() public API
-- [x] Comprehensive tests (26 JPIP HTJ2K tests, 100% pass rate)
-- [x] Full codec integration for HTJ2K data bin streaming
-- [x] On-the-fly transcoding during JPIP serving
+
+#### Full Codec Integration for Data Bin Streaming
+- [x] HTJ2K data bin streaming (JPIPDataBinGenerator)
+  - [x] Data bin extraction from JPEG 2000 and HTJ2K codestreams
+  - [x] Main header, tile-header, and precinct data bin support
+  - [x] Efficient codestream parsing with minimal overhead
+  - [x] Seamless integration with JPIP server streaming
+
+#### On-the-fly Transcoding
+- [x] Transcoding service (JPIPTranscodingService)
+  - [x] Automatic format conversion during JPIP serving
+  - [x] Legacy JPEG 2000 ↔ HTJ2K bidirectional transcoding
+  - [x] Transcoding result caching for efficiency
+  - [x] Client preference-based format selection
+  - [x] Integration with JPIPServer request handling
+
+#### Testing & Validation
+- [x] Comprehensive JPIP test suite (199 total tests, 100% pass rate)
+  - [x] JPIP HTJ2K support tests (26 tests)
+  - [x] Data bin generator tests (10 tests)
+  - [x] Transcoding service tests (25 tests)
+  - [x] 35 new Phase 11 tests total
+  - [x] All existing 164 JPIP tests maintained
+
+#### Documentation
+- [x] RELEASE_NOTES_v1.4.0.md created
+- [x] RELEASE_CHECKLIST_v1.4.0.md created
+- [x] JPIP_PROTOCOL.md updated with Phase 11 content
+- [x] API_REFERENCE.md updated for new JPIP APIs
+- [x] MILESTONES.md updated with v1.4.0 milestones
+- [x] README.md updated with v1.4.0 features
+
+**v1.4.0 Results**:
+- ✅ **HTJ2K format detection** with automatic J2K/JPH/JP2 identification
+- ✅ **Capability signaling** via JPIP-cap and JPIP-pref headers
+- ✅ **Data bin generation** from JPEG 2000 and HTJ2K codestreams
+- ✅ **On-the-fly transcoding** between legacy JPEG 2000 and HTJ2K
+- ✅ **199 JPIP tests** (35 new, 100% pass rate)
+- ✅ **Full backward compatibility** with v1.3.0
+
+#### Overall v1.4.0 Statistics
+- [x] Total tests: 1,666 (100% pass rate)
+  - 199 JPIP tests (35 new Phase 11 tests)
+  - All existing tests maintained
+- [x] New dependency: JPIP → J2KCodec (for data bin generation and transcoding)
+- [x] Documentation complete
+  - RELEASE_NOTES_v1.4.0.md
+  - RELEASE_CHECKLIST_v1.4.0.md
+  - JPIP_PROTOCOL.md updated
+  - API_REFERENCE.md updated
+  - README.md updated with v1.4.0 features
+- [x] Version strings updated to 1.4.0
+- [x] Build successful with no warnings
+- [x] No breaking changes from v1.3.0
 
 ---
 
-**Last Updated**: 2026-02-17  
-**Current Phase**: Phase 11 - Enhanced JPIP with HTJ2K Support 🚧  
-**Current Version**: 1.4.0 (In Development)  
+**Last Updated**: 2026-02-18  
+**Current Phase**: Phase 11 - Enhanced JPIP with HTJ2K Support ✅  
+**Current Version**: 1.4.0  
 **Previous Release**: 1.3.0 (Released February 17, 2026)  
-**Next Milestone**: v1.4.0 Release
+**Next Milestone**: v1.5.0 (Planned Q2 2026)

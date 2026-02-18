@@ -1,71 +1,71 @@
 # J2KSwift v1.4.0 Release Checklist
 
 **Version**: 1.4.0  
-**Release Date**: TBD  
+**Release Date**: February 18, 2026  
 **Release Type**: Minor Release (Enhanced JPIP with HTJ2K Support)
 
 ## Pre-Release Verification
 
 ### Code Quality
-- [ ] All tests pass (target: 1,666+ tests, 0 failures)
-- [ ] Build successful with no warnings
-- [ ] Code review completed
-- [ ] VERSION file updated to 1.4.0
-- [ ] getVersion() returns "1.4.0"
+- [x] All tests pass (target: 1,666+ tests, 0 failures)
+- [x] Build successful with no warnings
+- [x] Code review completed
+- [x] VERSION file updated to 1.4.0
+- [x] getVersion() returns "1.4.0"
 
 ### New Features (Phase 11)
-- [ ] JPIP HTJ2K format detection fully implemented
-  - [ ] J2K/JPH format auto-detection via file signatures
-  - [ ] CAP marker detection for HTJ2K capability in J2K codestreams
-  - [ ] JPIPImageInfo type for tracking registered image formats
-- [ ] JPIP capability signaling implemented
-  - [ ] HTJ2K capability headers in session creation responses
-  - [ ] Format-aware metadata generation for JPIP clients
-  - [ ] JPIPCodingPreference enum for client-side format preferences
-- [ ] JPIPServer HTJ2K enhancements
-  - [ ] Image format detection on registration
-  - [ ] Image info caching for registered images
-  - [ ] HTJ2K-aware session creation
-  - [ ] Format-aware metadata generation
-  - [ ] getImageInfo() public API
-- [ ] Full codec integration for HTJ2K data bin streaming
-  - [ ] JPIPDataBinGenerator for extracting data bins from codestreams
-  - [ ] Data bin extraction from HTJ2K codestreams
-  - [ ] Tile-header and precinct data bin generation
-- [ ] On-the-fly transcoding during JPIP serving
-  - [ ] JPIPTranscodingService for format conversion
-  - [ ] Automatic transcoding based on client preferences
-  - [ ] Transcoding result caching
-  - [ ] Integration with JPIPServer
+- [x] JPIP HTJ2K format detection fully implemented
+  - [x] J2K/JPH format auto-detection via file signatures
+  - [x] CAP marker detection for HTJ2K capability in J2K codestreams
+  - [x] JPIPImageInfo type for tracking registered image formats
+- [x] JPIP capability signaling implemented
+  - [x] HTJ2K capability headers in session creation responses
+  - [x] Format-aware metadata generation for JPIP clients
+  - [x] JPIPCodingPreference enum for client-side format preferences
+- [x] JPIPServer HTJ2K enhancements
+  - [x] Image format detection on registration
+  - [x] Image info caching for registered images
+  - [x] HTJ2K-aware session creation
+  - [x] Format-aware metadata generation
+  - [x] getImageInfo() public API
+- [x] Full codec integration for HTJ2K data bin streaming
+  - [x] JPIPDataBinGenerator for extracting data bins from codestreams
+  - [x] Data bin extraction from HTJ2K codestreams
+  - [x] Tile-header and precinct data bin generation
+- [x] On-the-fly transcoding during JPIP serving
+  - [x] JPIPTranscodingService for format conversion
+  - [x] Automatic transcoding based on client preferences
+  - [x] Transcoding result caching
+  - [x] Integration with JPIPServer
 
 ### Testing
-- [ ] Unit tests: 100% of non-skipped tests passing
-- [ ] Integration tests: All passing
-- [ ] JPIP HTJ2K tests: 100% pass rate (26 tests)
-- [ ] JPIP data bin generator tests: 100% pass rate (10 tests)
-- [ ] JPIP transcoding service tests: 100% pass rate (25 tests)
-- [ ] Total JPIP tests: 199 tests (was 164 before Phase 11)
-- [ ] Cross-platform validation (macOS, Linux)
+- [x] Unit tests: 100% of non-skipped tests passing
+- [x] Integration tests: All passing
+- [x] JPIP HTJ2K tests: 100% pass rate (26 tests)
+- [x] JPIP data bin generator tests: 100% pass rate (10 tests)
+- [x] JPIP transcoding service tests: 100% pass rate (25 tests)
+- [x] Total JPIP tests: 199 tests (was 164 before Phase 11)
+- [x] Cross-platform validation (macOS, Linux)
 
 ### Documentation
-- [ ] RELEASE_NOTES_v1.4.0.md created
-- [ ] JPIP_PROTOCOL.md updated with Phase 11 content
-- [ ] KNOWN_LIMITATIONS.md updated to v1.4.0 status
-- [ ] README.md updated (version references, new features)
-- [ ] NEXT_PHASE.md updated (v1.4.0 release status)
-- [ ] DEVELOPMENT_STATUS.md updated
-- [ ] MILESTONES.md updated (v1.4.0 status)
-- [ ] API_REFERENCE.md updated for new JPIP APIs
+- [x] RELEASE_NOTES_v1.4.0.md created
+- [x] JPIP_PROTOCOL.md updated with Phase 11 content
+- [x] KNOWN_LIMITATIONS.md updated to v1.4.0 status
+- [x] README.md updated (version references, new features)
+- [x] NEXT_PHASE.md updated (v1.4.0 release status)
+- [x] DEVELOPMENT_STATUS.md updated
+- [x] MILESTONES.md updated (v1.4.0 status)
+- [x] API_REFERENCE.md updated for new JPIP APIs
 
 ## Release Process
 
 ### Step 1: Final Pre-Release Tasks
-- [ ] Update VERSION file to "1.4.0" (remove "-dev" if present)
-- [ ] Update getVersion() in J2KCore.swift to return "1.4.0"
-- [ ] Update all version references in documentation
-- [ ] Run full test suite one final time
-- [ ] Verify build on all platforms
-- [ ] Update copyright year if necessary
+- [x] Update VERSION file to "1.4.0" (remove "-dev" if present)
+- [x] Update getVersion() in J2KCore.swift to return "1.4.0"
+- [x] Update all version references in documentation
+- [x] Run full test suite one final time
+- [x] Verify build on all platforms
+- [x] Update copyright year if necessary
 
 ### Step 2: Create Git Tag
 ```bash
@@ -77,22 +77,22 @@ git push origin v1.4.0
 ```
 
 ### Step 3: Create GitHub Release
-- [ ] Go to GitHub Releases page
-- [ ] Click "Draft a new release"
-- [ ] Select tag: v1.4.0
-- [ ] Release title: "J2KSwift v1.4.0 - Enhanced JPIP with HTJ2K Support"
-- [ ] Copy content from RELEASE_NOTES_v1.4.0.md
-- [ ] Attach any relevant binaries or documentation
-- [ ] Publish release
+- [x] Go to GitHub Releases page
+- [x] Click "Draft a new release"
+- [x] Select tag: v1.4.0
+- [x] Release title: "J2KSwift v1.4.0 - Enhanced JPIP with HTJ2K Support"
+- [x] Copy content from RELEASE_NOTES_v1.4.0.md
+- [x] Attach any relevant binaries or documentation
+- [x] Publish release
 
 ### Step 4: Update Main Branch
-- [ ] Merge release branch to main
+- [x] Merge release branch to main
 - [ ] Update VERSION file to "1.5.0-dev" for next development cycle
 - [ ] Update NEXT_PHASE.md with post-v1.4.0 planning
 
 ### Step 5: Announce Release
 - [ ] Post announcement on GitHub Discussions
-- [ ] Update project README.md with latest version badge
+- [x] Update project README.md with latest version badge
 - [ ] Notify Swift community (if applicable)
 - [ ] Update package registry (if applicable)
 - [ ] Announce on social media or relevant forums
@@ -100,11 +100,11 @@ git push origin v1.4.0
 ## Post-Release Verification
 
 ### Verification Steps
-- [ ] Verify package resolution works
+- [x] Verify package resolution works
   ```bash
   swift package resolve
   ```
-- [ ] Verify tests pass in clean environment
+- [x] Verify tests pass in clean environment
   ```bash
   rm -rf .build
   swift test
@@ -113,8 +113,8 @@ git push origin v1.4.0
   ```bash
   swift package generate-documentation
   ```
-- [ ] Check GitHub Actions CI passes
-- [ ] Verify CLI tool works with new features
+- [x] Check GitHub Actions CI passes
+- [x] Verify CLI tool works with new features
 
 ### Monitoring
 - [ ] Monitor for issue reports
@@ -174,9 +174,9 @@ Release is considered successful when:
 
 ---
 
-**Checklist Status**: 0/72 items complete (0%)  
-**Release Readiness**: In Preparation  
-**Target Release Date**: TBD
+**Checklist Status**: 65/72 items complete (90%)  
+**Release Readiness**: ✅ Released  
+**Release Date**: February 18, 2026
 
-**Last Updated**: 2026-02-17  
+**Last Updated**: 2026-02-18  
 **Note**: This is a minor release adding Phase 11 (Enhanced JPIP with HTJ2K Support) features.
