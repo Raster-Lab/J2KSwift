@@ -155,6 +155,12 @@ public actor JPIPProgressiveStreamingPipeline {
     /// Adaptive quality engine.
     private let qualityEngine: JPIPAdaptiveQualityEngine
     
+    /// Bandwidth estimator.
+    private let bandwidthEstimator: JPIPBandwidthEstimator
+    
+    /// Delivery scheduler.
+    private let deliveryScheduler: JPIPProgressiveDeliveryScheduler
+    
     /// Streaming configuration.
     public var configuration: JPIPStreamingConfiguration
     
@@ -189,6 +195,8 @@ public actor JPIPProgressiveStreamingPipeline {
             maxQualityLayers: tileConfiguration.maxQualityLayers,
             maxResolutionLevels: tileConfiguration.resolutionLevels
         )
+        self.bandwidthEstimator = JPIPBandwidthEstimator()
+        self.deliveryScheduler = JPIPProgressiveDeliveryScheduler()
         self.configuration = streamingConfiguration
         self.bandwidthState = JPIPBandwidthState(availableBandwidth: 5_000_000)
         self.statistics = JPIPStreamingStatistics()
@@ -207,6 +215,17 @@ public actor JPIPProgressiveStreamingPipeline {
         
         // Update viewport in tile manager
         await tileManager.updateViewport(request.region)
+        
+        // Get bandwidth estimate
+        let bandwidthEstimate = await bandwidthEstimator.getEstimate()
+        
+        // Update bandwidth state with estimate
+        self.bandwidthState = JPIPBandwidthState(
+            availableBandwidth: bandwidthEstimate.bandwidth,
+            bandwidthTrend: bandwidthEstimate.trend,
+            congestionDetected: bandwidthEstimate.congestionDetected,
+            roundTripTime: bandwidthEstimate.averageRTT
+        )
         
         // Determine quality settings
         let qualityDecision = await qualityEngine.determineQuality(
@@ -238,11 +257,27 @@ public actor JPIPProgressiveStreamingPipeline {
             )
         }
         
+        // Schedule data bins for delivery
+        let deliveryWindow = JPIPDeliveryWindow(
+            region: request.region,
+            targetQualityLayers: request.targetQualityLayers ?? qualityDecision.targetQualityLayers,
+            targetResolutionLevel: request.targetResolutionLevel ?? qualityDecision.targetResolutionLevel
+        )
+        
+        await deliveryScheduler.schedule(
+            dataBins,
+            window: deliveryWindow,
+            bandwidth: bandwidthEstimate.predictedBandwidth
+        )
+        
+        // Get next batch from scheduler
+        let deliveredBins = await deliveryScheduler.deliverNextBatch()
+        
         // Update statistics
-        updateStatistics(dataBins: dataBins, qualityDecision: qualityDecision)
+        updateStatistics(dataBins: deliveredBins, qualityDecision: qualityDecision)
         
         // Record first byte and interactive milestones
-        if statistics.totalBytesDelivered == 0 && !dataBins.isEmpty {
+        if statistics.totalBytesDelivered == 0 && !deliveredBins.isEmpty {
             await qualityEngine.recordFirstByte()
         }
         
@@ -250,7 +285,7 @@ public actor JPIPProgressiveStreamingPipeline {
             await qualityEngine.recordInteractive()
         }
         
-        return dataBins
+        return deliveredBins
     }
     
     /// Updates bandwidth state.
@@ -274,24 +309,59 @@ public actor JPIPProgressiveStreamingPipeline {
         return await qualityEngine.getQoEMetrics()
     }
     
+    /// Gets current bandwidth estimate.
+    ///
+    /// - Returns: Bandwidth estimate with trend and congestion info.
+    public func getBandwidthEstimate() async -> JPIPBandwidthEstimate {
+        return await bandwidthEstimator.getEstimate()
+    }
+    
+    /// Gets delivery scheduler statistics.
+    ///
+    /// - Returns: Delivery statistics.
+    public func getDeliveryStatistics() async -> JPIPDeliveryStatistics {
+        return await deliveryScheduler.getStatistics()
+    }
+    
+    /// Records a data transfer for bandwidth tracking.
+    ///
+    /// - Parameters:
+    ///   - bytes: Number of bytes transferred.
+    ///   - duration: Transfer duration in seconds.
+    ///   - rtt: Round-trip time in milliseconds.
+    public func recordTransfer(bytes: Int, duration: TimeInterval, rtt: Double) async {
+        await bandwidthEstimator.recordTransfer(bytes: bytes, duration: duration, rtt: rtt)
+    }
+    
     /// Adapts streaming rate based on network conditions.
     ///
     /// - Parameter measuredBandwidth: Measured bandwidth in bytes per second.
     public func adaptRate(measuredBandwidth: Int) async {
         guard configuration.enableRateAdaptation else { return }
         
-        let trend = calculateBandwidthTrend(measuredBandwidth)
-        let congestion = detectCongestion(measuredBandwidth)
-        
-        self.bandwidthState = JPIPBandwidthState(
-            availableBandwidth: measuredBandwidth,
-            bandwidthTrend: trend,
-            congestionDetected: congestion,
-            roundTripTime: bandwidthState.roundTripTime
+        // Record bandwidth measurement
+        let duration = 1.0 // Assume 1-second measurement interval
+        await bandwidthEstimator.recordTransfer(
+            bytes: measuredBandwidth,
+            duration: duration,
+            rtt: bandwidthState.roundTripTime
         )
         
+        // Get updated estimate
+        let estimate = await bandwidthEstimator.getEstimate()
+        
+        self.bandwidthState = JPIPBandwidthState(
+            availableBandwidth: estimate.bandwidth,
+            bandwidthTrend: estimate.trend,
+            congestionDetected: estimate.congestionDetected,
+            roundTripTime: estimate.averageRTT
+        )
+        
+        // Update delivery scheduler bandwidth
+        await deliveryScheduler.updateBandwidth(estimate.predictedBandwidth)
+        
         // Adjust tile granularity if congested
-        if congestion {
+        if estimate.congestionDetected {
             await tileManager.setGranularityFactor(2.0)
         } else {
             await tileManager.setGranularityFactor(1.0)
