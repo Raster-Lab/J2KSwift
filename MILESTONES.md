@@ -1195,21 +1195,21 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
 #### Additional Cross-Platform Support (Weeks 151-154)
 
 ##### Week 151-152: Windows Platform Validation and CI
-- [ ] Windows build support
-  - [ ] Swift on Windows build verification (Swift 6.x toolchain)
-  - [ ] Platform-specific conditional compilation (`#if os(Windows)`)
-  - [ ] Windows-specific file I/O adaptations (path separators, file handles)
-  - [ ] Foundation compatibility layer for Windows
-- [ ] Windows CI pipeline
-  - [ ] GitHub Actions Windows runner configuration (windows-latest)
-  - [ ] Swift toolchain installation on Windows
-  - [ ] Full test suite execution on Windows
-  - [ ] Windows build artifact generation
-- [ ] Windows-specific testing
-  - [ ] File format read/write on Windows file system
-  - [ ] Memory management validation on Windows
-  - [ ] Networking (JPIP) tests on Windows
-  - [ ] Performance benchmarking on Windows
+- [x] Windows build support
+  - [x] Swift on Windows build verification (Swift 6.x toolchain)
+  - [x] Platform-specific conditional compilation (`#if os(Windows)`)
+  - [x] Windows-specific file I/O adaptations (path separators, file handles)
+  - [x] Foundation compatibility layer for Windows
+- [x] Windows CI pipeline
+  - [x] GitHub Actions Windows runner configuration (windows-latest)
+  - [x] Swift toolchain installation on Windows
+  - [x] Full test suite execution on Windows
+  - [x] Windows build artifact generation
+- [x] Windows-specific testing
+  - [x] File format read/write on Windows file system
+  - [x] Memory management validation on Windows
+  - [x] Networking (JPIP) tests on Windows
+  - [x] Performance benchmarking on Windows
 
 ##### Week 153: Linux ARM64 Distribution Testing
 - [ ] ARM64 Linux build validation

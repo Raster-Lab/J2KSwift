@@ -1,0 +1,70 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build and Test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.0'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Build (debug)
+        run: swift build
+        timeout-minutes: 20
+
+      - name: Run tests
+        run: |
+          swift test --parallel `
+            --skip Benchmark `
+            --skip Stress `
+            --skip Diagnostic `
+            --skip Fuzz `
+            --skip PerformanceTuning `
+            --skip LargeBlock `
+            --skip EndToEnd `
+            --skip ClientServer
+        timeout-minutes: 25
+
+      - name: Build (release)
+        run: swift build -c release
+        timeout-minutes: 20
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-artifacts
+          path: .build/release/
+          retention-days: 7

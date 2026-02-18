@@ -907,6 +907,15 @@ public struct J2KPlatformInfo: Sendable {
         #endif
     }
 
+    /// Whether the platform is Windows.
+    public static var isWindowsPlatform: Bool {
+        #if os(Windows)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Returns a summary of the current platform capabilities.
     ///
     /// - Returns: A formatted string describing the platform.
@@ -915,6 +924,7 @@ public struct J2KPlatformInfo: Sendable {
         summary += "  OS: \(currentOS.rawValue)\n"
         summary += "  Architecture: \(currentArchitecture.rawValue)\n"
         summary += "  Apple Platform: \(isApplePlatform)\n"
+        summary += "  Windows Platform: \(isWindowsPlatform)\n"
         summary += "  Hardware Acceleration: \(hasHardwareAcceleration)\n"
         summary += "  Pointer Size: \(MemoryLayout<Int>.size * 8)-bit\n"
         summary += "  Byte Order: \(isLittleEndian ? "Little Endian" : "Big Endian")\n"
