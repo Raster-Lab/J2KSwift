@@ -234,7 +234,7 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             }
         }
 
-        let percentage = original.count > 0
+        let percentage = !original.isEmpty
             ? String(format: "%.2f", Double(mismatchCount) * 100.0 / Double(original.count))
             : "0.00"
 
