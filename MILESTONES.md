@@ -1013,22 +1013,22 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
 
 #### HTJ2K Optimizations (Weeks 131-138)
 
-##### Week 131-133: SIMD-Accelerated HT Cleanup Pass
-- [ ] ARM NEON SIMD implementation for HT cleanup pass
-  - [ ] NEON-accelerated MagSgn decoding
-  - [ ] NEON-accelerated VLC table lookups
-  - [ ] NEON-optimized MEL context propagation
-  - [ ] ARM-specific pipeline tuning and benchmarking
-- [ ] x86_64 SSE/AVX SIMD implementation for HT cleanup pass
-  - [ ] SSE4.2-accelerated MagSgn decoding
-  - [ ] AVX2-accelerated VLC table lookups
-  - [ ] AVX2-optimized MEL context propagation
-  - [ ] x86_64-specific pipeline tuning and benchmarking
-- [ ] Unified SIMD abstraction layer
-  - [ ] Platform-agnostic SIMD interface for HT passes
-  - [ ] Runtime CPU feature detection (NEON/SSE/AVX)
-  - [ ] Automatic fallback to scalar implementation
-  - [ ] SIMD vs scalar performance comparison tests
+##### Week 131-133: SIMD-Accelerated HT Cleanup Pass ✅
+- [x] ARM NEON SIMD implementation for HT cleanup pass (✅ completed Feb 18, 2026)
+  - [x] NEON-accelerated MagSgn decoding
+  - [x] NEON-accelerated VLC table lookups
+  - [x] NEON-optimized MEL context propagation
+  - [x] ARM-specific pipeline tuning and benchmarking
+- [x] x86_64 SSE/AVX SIMD implementation for HT cleanup pass (✅ completed Feb 18, 2026)
+  - [x] SSE4.2-accelerated MagSgn decoding
+  - [x] AVX2-accelerated VLC table lookups
+  - [x] AVX2-optimized MEL context propagation
+  - [x] x86_64-specific pipeline tuning and benchmarking
+- [x] Unified SIMD abstraction layer (✅ completed Feb 18, 2026)
+  - [x] Platform-agnostic SIMD interface for HT passes
+  - [x] Runtime CPU feature detection (NEON/SSE/AVX)
+  - [x] Automatic fallback to scalar implementation
+  - [x] SIMD vs scalar performance comparison tests
 
 ##### Week 134-136: FBCOT Memory Allocation Improvements
 - [ ] Memory allocation profiling for FBCOT block coder
