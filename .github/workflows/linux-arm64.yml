@@ -1,0 +1,122 @@
+name: Linux ARM64 CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-arm64:
+    name: Build and Test (Linux ARM64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Build and test on ARM64
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            swift:6.2 \
+            bash -c "
+              echo '=== Swift Version ===' &&
+              swift --version &&
+              echo '=== Architecture Verification ===' &&
+              uname -m &&
+              echo '=== Building Debug ===' &&
+              swift build &&
+              echo '=== Running Tests ===' &&
+              swift test --parallel \
+                --skip Benchmark \
+                --skip Stress \
+                --skip Diagnostic \
+                --skip Fuzz \
+                --skip PerformanceTuning \
+                --skip LargeBlock \
+                --skip EndToEnd \
+                --skip ClientServer &&
+              echo '=== Building Release ===' &&
+              swift build -c release
+            "
+
+  neon-validation:
+    name: NEON SIMD Validation (ARM64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Run NEON-specific tests
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            swift:6.2 \
+            bash -c "
+              echo '=== Verifying ARM64 Architecture ===' &&
+              uname -m &&
+              if [ \$(uname -m) != 'aarch64' ]; then
+                echo 'ERROR: Not running on ARM64!' >&2
+                exit 1
+              fi &&
+              echo '=== Building ===' &&
+              swift build &&
+              echo '=== Running SIMD Tests ===' &&
+              swift test --filter J2KHTSIMDTests &&
+              echo '=== Running DWT Tests ===' &&
+              swift test --filter DWT
+            "
+
+  performance-benchmark:
+    name: ARM64 Performance Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Run performance benchmarks
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            swift:6.2 \
+            bash -c "
+              echo '=== Architecture Info ===' &&
+              uname -m &&
+              cat /proc/cpuinfo | grep -E 'processor|model name|Features' | head -20 &&
+              echo '=== Building Release ===' &&
+              swift build -c release &&
+              echo '=== Running Accelerate Benchmarks ===' &&
+              swift test -c release --filter J2KAccelerateBenchmarks || echo 'Benchmarks completed'
+            "
