@@ -6,7 +6,6 @@
 
 import Foundation
 import J2KCore
-@testable import J2KCodec
 
 /// Comprehensive benchmarks for lossless decoding optimization.
 ///
