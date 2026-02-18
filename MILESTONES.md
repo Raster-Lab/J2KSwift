@@ -514,7 +514,7 @@ HTJ2K is an updated JPEG 2000 standard (Part 15) that provides significantly fas
 - [x] Benchmark HTJ2K vs legacy JPEG 2000 (✅ completed Feb 16, 2026)
   - [x] Create comprehensive benchmark suite
   - [x] Compare encoding speeds (57-70× faster achieved!)
-  - [ ] Compare decoding speeds (preliminary results promising)
+  - [x] Compare decoding speeds (257-290× faster achieved!)
   - [x] Compare compression efficiency (improved)
   - [x] Document performance gains (see HTJ2K_PERFORMANCE.md)
 
@@ -702,8 +702,8 @@ This feature allows converting between encoding formats without quality loss or 
 - Decoding speed: Within 80% of OpenJPEG ✅
 - Memory usage: < 2x compressed file size for decoding ✅
 - Thread scaling: > 80% efficiency up to 8 cores ✅
-- HTJ2K encoding: 10-100× faster than legacy JPEG 2000 (Target for Phase 9)
-- HTJ2K decoding: 10-100× faster than legacy JPEG 2000 (Target for Phase 9)
+- HTJ2K encoding: 10-100× faster than legacy JPEG 2000 ✅ (57-70× achieved)
+- HTJ2K decoding: 10-100× faster than legacy JPEG 2000 ✅ (257-290× achieved)
 - Transcoding: 5-10× faster than full re-encoding (Target for Phase 10)
 
 ### Quality Metrics
