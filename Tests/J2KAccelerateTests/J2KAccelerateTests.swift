@@ -466,7 +466,7 @@ final class J2KAccelerateTests: XCTestCase {
         )
 
         XCTAssertEqual(decompositions.count, 2, "Should have 2 levels")
-        XCTAssertTrue(decompositions[0].ll.count > 0, "LL subband should not be empty")
+        XCTAssertFalse(decompositions[0].ll.isEmpty, "LL subband should not be empty")
         #else
         // Skip on unsupported platforms
         throw XCTSkip("Accelerate framework not available")
@@ -588,7 +588,7 @@ final class J2KAccelerateTests: XCTestCase {
         )
 
         XCTAssertEqual(result.count, 3, "Should have 3 levels")
-        XCTAssertTrue(result[0].ll.count > 0, "LL subband should not be empty")
+        XCTAssertFalse(result[0].ll.isEmpty, "LL subband should not be empty")
         #else
         // Skip on unsupported platforms
         throw XCTSkip("Accelerate framework not available")

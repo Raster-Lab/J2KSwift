@@ -330,7 +330,8 @@ public struct ReferenceBenchmarkSuite: Sendable {
     /// Exports results to CSV format.
     public var csvExport: String {
         var lines: [String] = []
-        lines.append("Component,TestCase,Implementation,AvgTime(ms),MedianTime(ms),MinTime(ms),MaxTime(ms),StdDev(ms),Throughput(ops/sec),RelativePerf")
+        lines.append("Component,TestCase,Implementation,AvgTime(ms)," +
+            "MedianTime(ms),MinTime(ms),MaxTime(ms),StdDev(ms),Throughput(ops/sec),RelativePerf")
 
         for result in results {
             let relativeStr = result.relativePerformance.map { String(format: "%.3f", $0) } ?? ""

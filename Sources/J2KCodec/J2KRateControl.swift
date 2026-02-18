@@ -464,7 +464,7 @@ public struct J2KRateControl: Sendable {
             // For strict rate matching, check budget (but always add at least one contribution)
             if configuration.strictRateMatching &&
                currentBytes + additionalBytes > targetBytes &&
-               contributions.count > 0 {
+               !contributions.isEmpty {
                 continue
             }
 

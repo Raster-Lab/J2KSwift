@@ -316,7 +316,7 @@ final class J2KISOTestSuiteTests: XCTestCase {
 
         // Introduce error in a lossless test (should fail)
         var decoded = referenceImage
-        decoded[0] = decoded[0] + 1
+        decoded[0] += 1
 
         let vector = J2KTestVector(
             name: losslessCase.identifier,

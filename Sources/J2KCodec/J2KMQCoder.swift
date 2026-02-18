@@ -651,7 +651,7 @@ struct RawBypassEncoder: Sendable {
         }
         ct -= 1
         if symbol {
-            c = c + (1 << ct)
+            c += (1 << ct)
         }
         if ct == 0 {
             output.append(UInt8(c & 0xFF))
