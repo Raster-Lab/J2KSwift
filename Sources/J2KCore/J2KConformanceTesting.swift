@@ -2313,7 +2313,7 @@ public struct J2KHTInteroperabilityValidator: Sendable {
         if htj2k {
             var capBody = Data()
             // Pcap (4 bytes): Part 15 capability bit
-            var pcap: UInt32 = 1 << 17
+            let pcap: UInt32 = 1 << 17
             capBody.append(contentsOf: withUnsafeBytes(of: pcap.bigEndian) {
                 Array($0)
             })
