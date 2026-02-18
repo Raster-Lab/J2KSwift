@@ -266,6 +266,27 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: true
     public var enableMagSgnPacking: Bool
 
+    /// Block size selection mode.
+    ///
+    /// Controls whether code block sizes are fixed (manual) or adaptively
+    /// selected based on per-tile content analysis.
+    ///
+    /// - `.fixed`: Uses the `codeBlockSize` property for all tiles (default).
+    /// - `.adaptive(aggressiveness:)`: Automatically selects 16×16, 32×32, or 64×64
+    ///   block sizes per tile based on content complexity.
+    ///
+    /// - Default: `.fixed`
+    public var blockSizeMode: J2KBlockSizeMode
+
+    /// Per-tile block size overrides for adaptive mode.
+    ///
+    /// When `blockSizeMode` is `.adaptive`, these overrides bypass content
+    /// analysis for specific tiles. Tile indices map to explicit block sizes.
+    /// Ignored when `blockSizeMode` is `.fixed`.
+    ///
+    /// - Default: empty (no overrides)
+    public var tileBlockSizeOverrides: [Int: (width: Int, height: Int)]
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -284,6 +305,8 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - enableFastMEL: Enable fast MEL encoding for HTJ2K (default: true).
     ///   - enableVLCOptimization: Enable VLC table optimization for HTJ2K (default: true).
     ///   - enableMagSgnPacking: Enable efficient magnitude/sign packing for HTJ2K (default: true).
+    ///   - blockSizeMode: Block size selection mode (default: .fixed).
+    ///   - tileBlockSizeOverrides: Per-tile block size overrides for adaptive mode (default: empty).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -299,7 +322,9 @@ public struct J2KEncodingConfiguration: Sendable {
         enableParallelCodeBlocks: Bool = true,
         enableFastMEL: Bool = true,
         enableVLCOptimization: Bool = true,
-        enableMagSgnPacking: Bool = true
+        enableMagSgnPacking: Bool = true,
+        blockSizeMode: J2KBlockSizeMode = .fixed,
+        tileBlockSizeOverrides: [Int: (width: Int, height: Int)] = [:]
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -322,6 +347,8 @@ public struct J2KEncodingConfiguration: Sendable {
         self.enableFastMEL = enableFastMEL
         self.enableVLCOptimization = enableVLCOptimization
         self.enableMagSgnPacking = enableMagSgnPacking
+        self.blockSizeMode = blockSizeMode
+        self.tileBlockSizeOverrides = tileBlockSizeOverrides
     }
 
     /// Validates the configuration parameters.
