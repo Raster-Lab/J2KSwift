@@ -1275,8 +1275,863 @@ Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
 
 ---
 
+## Phase 13: ISO/IEC 15444 Part 2 Extensions (v1.6.0, Weeks 155-175)
+
+**Goal**: Implement complete ISO/IEC 15444 Part 2 (JPEG 2000 Extensions) support with optimizations for Apple Silicon and modern mobile processors.
+
+This phase adds the extended features defined in ISO/IEC 15444-2, including variable DC offset, arbitrary wavelet kernels, multi-component transforms, non-linear point transforms, trellis coded quantization, extended ROI methods, and visual masking. All implementations are optimized for Apple hardware using Accelerate framework and prepared for Metal GPU acceleration in Phase 14.
+
+**Target Platform**: Apple Silicon (M-series, A-series) with fallback support for x86-64 (clearly isolated for potential removal).
+
+### Week 155-156: Variable DC Offset and Extended Precision
+
+**Goal**: Implement Part 2 variable DC offset and extended precision arithmetic for improved compression of images with non-zero mean values.
+
+- [ ] Variable DC offset implementation
+  - [ ] Implement per-component DC offset extraction
+  - [ ] Add DC offset signaling in codestream (DCO marker segment)
+  - [ ] Integrate DC offset into quantization pipeline
+  - [ ] Support both encoder and decoder paths
+  - [ ] Add DC offset optimization for natural images
+- [ ] Extended precision arithmetic
+  - [ ] Support for guard bits beyond standard precision
+  - [ ] High-precision intermediate calculations
+  - [ ] Extended dynamic range for wavelet coefficients
+  - [ ] Precision preservation through pipeline
+  - [ ] Rounding mode control (truncate, round-to-nearest, round-to-even)
+- [ ] Accelerate framework optimization
+  - [ ] Use vDSP for DC offset removal/addition (vector operations)
+  - [ ] Optimize DC offset computation using vDSP_meanv
+  - [ ] Leverage NEON SIMD on Apple Silicon for offset operations
+  - [ ] Use Accelerate's vDSP_vsadd for efficient offset application
+- [ ] Testing and validation
+  - [ ] Unit tests for DC offset calculation
+  - [ ] Round-trip tests with various DC values
+  - [ ] Precision validation tests
+  - [ ] Performance benchmarks (Accelerate vs scalar)
+
+**Apple Silicon Optimizations**:
+- vDSP vector operations for DC offset (4-8× faster than scalar)
+- NEON SIMD intrinsics for Apple Silicon processors
+- Memory-aligned buffers for optimal SIMD performance
+- Batch processing for improved cache utilization
+
+**x86-64 Fallback**: Isolated in `#if arch(x86_64)` blocks, using SSE2/AVX when available.
+
+### Week 157-158: Extended Precision Integration and Validation
+
+**Goal**: Complete extended precision support and integrate with existing pipeline.
+
+- [ ] Integration with existing components
+  - [ ] Update encoder configuration for DC offset control
+  - [ ] Modify decoder to handle extended precision markers
+  - [ ] Integrate with rate-distortion optimization
+  - [ ] Update file format support (JP2/JPX boxes)
+  - [ ] Add API for precision control
+- [ ] Performance optimization
+  - [ ] Profile precision arithmetic overhead
+  - [ ] Optimize critical paths using Accelerate
+  - [ ] Minimize precision conversions
+  - [ ] Cache-friendly data layouts for SIMD
+- [ ] Comprehensive testing
+  - [ ] Conformance tests for Part 2 DC offset
+  - [ ] Interoperability with reference implementations
+  - [ ] Edge cases (extreme DC values, precision limits)
+  - [ ] Memory usage validation
+  - [ ] Cross-platform consistency tests
+- [ ] Documentation
+  - [ ] API documentation for DC offset features
+  - [ ] Performance characteristics guide
+  - [ ] Best practices for precision selection
+  - [ ] Example usage patterns
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KDCOffset.swift` - DC offset implementation
+- `Sources/J2KCodec/J2KExtendedPrecision.swift` - Extended precision arithmetic
+- `Tests/J2KCodecTests/J2KDCOffsetTests.swift` - 25+ tests
+- `Documentation/PART2_DC_OFFSET.md` - Feature guide
+- Performance gain: 5-15% compression improvement for non-zero mean images
+
+### Week 159-160: Arbitrary Wavelet Kernels - Foundation
+
+**Goal**: Implement support for custom wavelet kernels beyond standard 5/3 and 9/7 filters (Part 2 ADS marker).
+
+- [ ] Wavelet kernel framework
+  - [ ] Define wavelet kernel representation (coefficients, length, symmetry)
+  - [ ] Implement arbitrary kernel storage format
+  - [ ] Add kernel validation (orthogonality, perfect reconstruction)
+  - [ ] Create kernel library (Haar, CDF wavelets, Daubechies, etc.)
+  - [ ] Support symmetric and anti-symmetric filters
+- [ ] ADS (Arbitrary Decomposition Styles) marker support
+  - [ ] Implement ADS marker parsing
+  - [ ] Add ADS marker generation
+  - [ ] Support custom decomposition structures
+  - [ ] Validate decomposition styles
+- [ ] Filter implementation
+  - [ ] Generic convolution engine for arbitrary filters
+  - [ ] Support for lifting scheme implementation
+  - [ ] Boundary handling for custom filters
+  - [ ] Multi-level decomposition with arbitrary filters
+- [ ] Accelerate optimization for custom wavelets
+  - [ ] vDSP_conv for arbitrary filter convolution
+  - [ ] Optimized lifting scheme using vDSP operations
+  - [ ] SIMD-friendly memory layouts for coefficients
+  - [ ] Parallel wavelet transform for tiles
+
+**Apple Silicon Optimizations**:
+- vDSP_conv for fast convolution (10-20× faster than naive)
+- AMX (Apple Matrix coprocessor) for large filter operations on M-series
+- NEON-optimized lifting scheme for common filter sizes
+- Metal preparation: filter coefficients in Metal-compatible format
+
+**x86-64 Fallback**: SSE/AVX-based convolution in isolated blocks.
+
+### Week 161-162: Arbitrary Wavelet Kernels - Integration
+
+**Goal**: Complete wavelet kernel support and integrate with existing DWT infrastructure.
+
+- [ ] Integration with DWT pipeline
+  - [ ] Extend J2KDWT to support arbitrary kernels
+  - [ ] Update encoder/decoder for custom wavelets
+  - [ ] Integrate with J2KAccelerate module
+  - [ ] Add kernel selection API
+  - [ ] Support kernel per tile-component
+- [ ] Optimized kernel implementations
+  - [ ] Pre-compute filter properties (normalization, scaling)
+  - [ ] Fast paths for common kernel types
+  - [ ] SIMD-optimized convolution for popular filters
+  - [ ] Cache filter state for repeated operations
+- [ ] Testing and validation
+  - [ ] Test standard wavelets (5/3, 9/7) via arbitrary kernel path
+  - [ ] Validate custom wavelets (Haar, CDF, Daubechies)
+  - [ ] Perfect reconstruction tests
+  - [ ] Performance benchmarks vs standard wavelets
+  - [ ] Round-trip tests with various kernels
+- [ ] Documentation
+  - [ ] Wavelet kernel API guide
+  - [ ] Custom wavelet creation tutorial
+  - [ ] Performance comparison of different wavelets
+  - [ ] Best practices for wavelet selection
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KArbitraryWavelet.swift` - Custom wavelet support
+- `Sources/J2KCodec/J2KWaveletKernel.swift` - Kernel library
+- `Sources/J2KAccelerate/J2KAcceleratedWavelet.swift` - Accelerate-optimized wavelets
+- `Tests/J2KCodecTests/J2KArbitraryWaveletTests.swift` - 35+ tests
+- `Documentation/PART2_ARBITRARY_WAVELETS.md` - Feature guide
+- Performance: Within 10% of standard wavelets, faster for some applications
+
+### Week 163-164: Multi-Component Transform (MCT) - Array-Based
+
+**Goal**: Implement Part 2 array-based multi-component transform for decorrelating multiple image components.
+
+- [ ] Array-based MCT framework
+  - [ ] Define MCT matrix representation
+  - [ ] Implement forward MCT (encoding)
+  - [ ] Implement inverse MCT (decoding)
+  - [ ] Support arbitrary transform sizes (NxN components)
+  - [ ] Handle integer and floating-point transforms
+- [ ] MCT marker segment support
+  - [ ] Implement MCT marker (0xFF74) parsing
+  - [ ] Add MCC (Multi-Component Collection) marker support
+  - [ ] Support MCO (Multi-Component Ordering) marker
+  - [ ] Validate transform specifications
+- [ ] Optimized MCT implementation
+  - [ ] Matrix-vector multiplication using vDSP
+  - [ ] Batch processing for multiple pixels
+  - [ ] In-place transforms where possible
+  - [ ] Cache-optimized memory access patterns
+- [ ] Common transform library
+  - [ ] Decorrelation transforms for multi-spectral images
+  - [ ] KLT (Karhunen-Loève Transform) support
+  - [ ] PCA-based transforms
+  - [ ] Spectral decorrelation matrices
+
+**Apple Silicon Optimizations**:
+- vDSP_mmul for matrix multiplication (20-50× faster)
+- AMX acceleration for large matrices on M-series chips
+- NEON-optimized 3×3 and 4×4 fast paths
+- Vectorized operations for common transform sizes
+- Tile-level parallelism using Swift Concurrency
+
+**x86-64 Fallback**: AVX2-based matrix operations in isolated `#if arch(x86_64)` blocks.
+
+### Week 165-166: Multi-Component Transform (MCT) - Dependency and Integration
+
+**Goal**: Complete MCT support with dependency transforms and full pipeline integration.
+
+- [ ] Dependency transform support
+  - [ ] Implement component dependency chains
+  - [ ] Add decorrelation across component groups
+  - [ ] Support hierarchical component transforms
+  - [ ] Optimize dependency graph evaluation
+- [ ] Integration with encoding pipeline
+  - [ ] Update encoder for MCT support
+  - [ ] Integrate MCT with RCT/ICT
+  - [ ] Add MCT to rate-distortion optimization
+  - [ ] Support MCT in tiling pipeline
+  - [ ] Add MCT configuration API
+- [ ] Advanced MCT features
+  - [ ] Adaptive MCT matrix selection
+  - [ ] Per-tile MCT for spatially varying content
+  - [ ] MCT with extended precision
+  - [ ] Reversible integer MCT
+- [ ] Testing and validation
+  - [ ] MCT correctness tests (forward/inverse)
+  - [ ] Multi-spectral image tests
+  - [ ] Round-trip validation
+  - [ ] Performance benchmarks (MCT vs RCT/ICT)
+  - [ ] Compression efficiency comparison
+- [ ] Documentation
+  - [ ] MCT API documentation
+  - [ ] Multi-spectral encoding guide
+  - [ ] Transform matrix design guidelines
+  - [ ] Performance tuning guide
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KMCT.swift` - Array-based MCT implementation
+- `Sources/J2KCodec/J2KMCTDependency.swift` - Dependency transforms
+- `Sources/J2KAccelerate/J2KAcceleratedMCT.swift` - Accelerate-optimized MCT
+- `Tests/J2KCodecTests/J2KMCTTests.swift` - 40+ tests
+- `Documentation/PART2_MCT.md` - MCT feature guide
+- Compression gain: 10-30% for multi-spectral imagery
+
+### Week 167-168: Non-Linear Point Transforms
+
+**Goal**: Implement Part 2 non-linear point transforms (NLT) for enhanced compression of non-linear data.
+
+- [ ] NLT framework
+  - [ ] Define non-linear transform interface
+  - [ ] Implement lookup table (LUT) based transforms
+  - [ ] Add parametric transform functions (gamma, log, exponential)
+  - [ ] Support per-component transforms
+  - [ ] Implement inverse transforms for decoding
+- [ ] NLT marker segment support
+  - [ ] Parse NLT marker (Part 2 extension)
+  - [ ] Generate NLT marker for encoding
+  - [ ] Validate transform parameters
+  - [ ] Handle transform serialization
+- [ ] Common NLT implementations
+  - [ ] Gamma correction (linearization/delinearization)
+  - [ ] Logarithmic transforms (log/exp)
+  - [ ] Perceptual quantizers (PQ, HLG for HDR)
+  - [ ] Custom LUT transforms
+  - [ ] Piecewise linear approximations
+- [ ] Accelerate optimization
+  - [ ] Vectorized LUT application using vDSP_vindex
+  - [ ] Fast parametric transforms using vForce (vvpowf, vvlogf)
+  - [ ] SIMD-optimized transform evaluation
+  - [ ] Parallel processing across components
+
+**Apple Silicon Optimizations**:
+- vDSP_vindex for fast LUT lookups (8-12× faster)
+- vForce functions for transcendental operations (10-15× faster)
+- NEON intrinsics for custom transforms
+- Batch processing for improved cache efficiency
+- Pre-computed LUT storage in optimal memory layout
+
+**x86-64 Fallback**: SSE4.1 LUT operations in isolated architecture blocks.
+
+### Week 169-170: Trellis Coded Quantization (TCQ)
+
+**Goal**: Implement Part 2 trellis coded quantization for improved rate-distortion performance.
+
+- [ ] TCQ framework
+  - [ ] Implement trellis structure for quantization
+  - [ ] Add Viterbi algorithm for optimal path selection
+  - [ ] Support variable quantization step sizes
+  - [ ] Implement context-dependent quantization
+  - [ ] Add TCQ state management
+- [ ] Integration with quantization pipeline
+  - [ ] Extend J2KQuantizer for TCQ mode
+  - [ ] Integrate TCQ with rate-distortion optimization
+  - [ ] Support TCQ in code-block encoding
+  - [ ] Add TCQ decoder support
+  - [ ] TCQ configuration API
+- [ ] Optimization strategies
+  - [ ] Fast trellis evaluation using dynamic programming
+  - [ ] Pruned search space for real-time encoding
+  - [ ] SIMD-optimized distance metrics
+  - [ ] Parallel TCQ for multiple code-blocks
+  - [ ] Look-up table acceleration for small trellis
+- [ ] Testing and validation
+  - [ ] TCQ correctness tests
+  - [ ] Rate-distortion performance evaluation
+  - [ ] Comparison with scalar quantization
+  - [ ] Performance benchmarks
+  - [ ] Visual quality assessment
+- [ ] Documentation
+  - [ ] TCQ algorithm documentation
+  - [ ] API usage guide
+  - [ ] Performance vs quality trade-offs
+  - [ ] Configuration recommendations
+
+**Apple Silicon Optimizations**:
+- vDSP operations for trellis metric computation
+- Accelerate's vector operations for distance calculations
+- NEON-optimized Viterbi algorithm
+- Efficient memory access patterns for trellis state
+- Parallel trellis evaluation for multiple code-blocks
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KNonLinearTransform.swift` - NLT implementation (25+ tests)
+- `Sources/J2KCodec/J2KTrellisQuantizer.swift` - TCQ implementation (20+ tests)
+- `Sources/J2KAccelerate/J2KAcceleratedNLT.swift` - Accelerate-optimized NLT
+- `Documentation/PART2_NLT_TCQ.md` - Feature guide
+- R-D improvement: 0.5-1.5 dB PSNR at same bitrate with TCQ
+
+### Week 171-172: Extended ROI Methods
+
+**Goal**: Implement Part 2 extended ROI methods beyond MaxShift, including scaling-based and general ROI coding.
+
+- [ ] Extended ROI framework
+  - [ ] Implement general scaling-based ROI
+  - [ ] Add DWT domain ROI (arbitrary ROI after transform)
+  - [ ] Support multiple ROI regions with priorities
+  - [ ] Implement ROI blending and feathering
+  - [ ] Add ROI mask compression
+- [ ] Advanced ROI methods
+  - [ ] Bitplane-dependent ROI coding
+  - [ ] Quality layer-based ROI
+  - [ ] Adaptive ROI based on content analysis
+  - [ ] Hierarchical ROI (nested regions)
+  - [ ] ROI with custom scaling factors
+- [ ] ROI optimization
+  - [ ] Fast ROI mask generation
+  - [ ] Efficient ROI coefficient scaling
+  - [ ] SIMD-optimized mask operations
+  - [ ] Parallel ROI processing for tiles
+- [ ] Integration and API
+  - [ ] Extend J2KROI for Part 2 methods
+  - [ ] Add ROI configuration to encoder
+  - [ ] Implement ROI decoder support
+  - [ ] ROI editing and manipulation API
+  - [ ] Visual ROI editing helpers
+- [ ] Testing
+  - [ ] ROI correctness tests
+  - [ ] Multiple ROI scenarios
+  - [ ] ROI quality evaluation
+  - [ ] Performance benchmarks
+  - [ ] Round-trip validation
+
+**Apple Silicon Optimizations**:
+- vDSP vector operations for mask processing (5-10× faster)
+- Accelerate's vImage for efficient mask operations
+- NEON-optimized coefficient scaling
+- Parallel mask generation using Metal compute (prep for Phase 14)
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KExtendedROI.swift` - Extended ROI methods (30+ tests)
+- `Sources/J2KAccelerate/J2KAcceleratedROI.swift` - Accelerate-optimized ROI
+- `Documentation/PART2_EXTENDED_ROI.md` - ROI feature guide
+
+### Week 173: Visual Masking and Perceptual Encoding
+
+**Goal**: Implement Part 2 visual frequency weighting and perceptual encoding optimizations.
+
+- [ ] Visual masking implementation
+  - [ ] Implement CSF (Contrast Sensitivity Function) weighting
+  - [ ] Add visual frequency weighting for wavelet subbands
+  - [ ] Support luminance-dependent masking
+  - [ ] Texture-based masking
+  - [ ] Motion-adaptive masking (for video)
+- [ ] Perceptual quantization
+  - [ ] CSF-based quantization step adjustment
+  - [ ] Just-noticeable difference (JND) modeling
+  - [ ] Perceptual rate-distortion optimization
+  - [ ] Quality metric integration (SSIM, MS-SSIM)
+- [ ] Integration with encoder
+  - [ ] Add perceptual mode to encoder configuration
+  - [ ] Integrate visual masking with quantization
+  - [ ] Update rate-distortion optimization
+  - [ ] Perceptual quality target support
+- [ ] Testing and validation
+  - [ ] Perceptual quality tests (SSIM, MS-SSIM)
+  - [ ] A/B testing with standard encoding
+  - [ ] Performance validation
+  - [ ] Visual quality assessment
+
+**Apple Silicon Optimizations**:
+- Accelerate framework for CSF computation
+- vDSP operations for frequency weighting
+- Batch processing for improved efficiency
+- Preparation for Metal-based perceptual analysis in Phase 14
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KVisualMasking.swift` - Visual masking (20+ tests)
+- `Sources/J2KCodec/J2KPerceptualEncoder.swift` - Perceptual encoding
+- `Documentation/PART2_PERCEPTUAL.md` - Perceptual encoding guide
+- Quality improvement: 1-3 dB SSIM at same bitrate
+
+### Week 174-175: Part 2 Metadata and File Format Extensions
+
+**Goal**: Complete Part 2 file format support with extended metadata, JPX enhancements, and reader requirements.
+
+- [ ] Extended JPX support
+  - [ ] Implement composition and instruction set boxes
+  - [ ] Add animation support (ftbl, track boxes)
+  - [ ] Multi-layer compositing
+  - [ ] Fragment table extended features
+  - [ ] Cross-reference boxes
+- [ ] Reader requirements extensions
+  - [ ] Reader requirements (rreq) box enhancements
+  - [ ] Part 2 feature signaling
+  - [ ] Decoder capability negotiation
+  - [ ] Feature compatibility validation
+- [ ] Extended metadata boxes
+  - [ ] IPR (Intellectual Property Rights) box
+  - [ ] Digital signature boxes
+  - [ ] Label and cross-reference boxes
+  - [ ] Resolution and capture metadata
+  - [ ] Extended XML boxes for Part 2 features
+- [ ] Codestream markers
+  - [ ] Complete Part 2 marker segment support
+  - [ ] Extended SIZ capabilities
+  - [ ] Part 2-specific COD/COC extensions
+  - [ ] Extended QCD/QCC for Part 2 quantization
+- [ ] Testing and validation
+  - [ ] File format conformance tests
+  - [ ] Interoperability validation
+  - [ ] Metadata preservation tests
+  - [ ] Round-trip validation
+- [ ] Documentation
+  - [ ] Part 2 file format guide
+  - [ ] Metadata API documentation
+  - [ ] JPX animation tutorial
+  - [ ] Feature compatibility guide
+
+**Deliverables**:
+- `Sources/J2KFileFormat/J2KPart2Boxes.swift` - Part 2 box support (35+ tests)
+- `Sources/J2KFileFormat/J2KReaderRequirements.swift` - Reader requirements
+- `Sources/J2KFileFormat/J2KJPXAnimation.swift` - JPX animation support
+- `Documentation/PART2_FILE_FORMAT.md` - Complete Part 2 format guide
+- `Documentation/PART2_METADATA.md` - Metadata guide
+- `PART2_CONFORMANCE_TESTING.md` - Part 2 conformance testing guide
+
+#### Phase 13 Summary and v1.6.0 Release Preparation
+
+**Comprehensive Testing**:
+- [ ] Part 2 conformance test suite (100+ tests)
+- [ ] Cross-platform validation (macOS, iOS, Linux)
+- [ ] Interoperability testing with reference implementations
+- [ ] Performance regression testing
+- [ ] Memory usage validation
+- [ ] Security testing for new features
+
+**Documentation**:
+- [ ] Complete Part 2 feature documentation
+- [ ] API reference updates
+- [ ] Migration guide from Part 1-only
+- [ ] Performance tuning guide
+- [ ] Best practices documentation
+
+**Release Preparation**:
+- [ ] Version 1.6.0 release notes
+- [ ] Release checklist
+- [ ] API stability review
+- [ ] Breaking changes documentation
+- [ ] Upgrade guide for existing users
+
+**Expected Benefits**:
+- ✅ Complete ISO/IEC 15444-2 compliance
+- ✅ 10-30% compression improvement for specialized content
+- ✅ Enhanced quality for perceptual encoding
+- ✅ Flexible multi-component transform support
+- ✅ Advanced ROI capabilities
+- ✅ Full JPX animation and compositing support
+- ✅ Apple Silicon optimized (3-5× faster Part 2 operations)
+
+---
+
+## Phase 14: Metal GPU Acceleration (v1.7.0, Weeks 176-190)
+
+**Goal**: Leverage Metal framework for GPU-accelerated JPEG 2000 operations on Apple platforms, achieving significant performance improvements for compute-intensive tasks.
+
+This phase adds Metal compute shaders for wavelet transforms, color transforms, multi-component transforms, and other parallelizable operations. All Metal code is conditionally compiled for Apple platforms only, with graceful fallback to CPU (Accelerate) implementations.
+
+**Target Platform**: Apple platforms with Metal support (macOS 10.13+, iOS 11+, tvOS 11+). 100% Apple Silicon focus.
+
+**Architecture**: x86-64 code paths are clearly isolated in separate files (`*_x86.swift`) for easy identification and potential removal. Metal takes priority on Apple Silicon.
+
+### Week 176-177: Metal Framework Integration
+
+**Goal**: Set up Metal infrastructure for GPU-accelerated operations.
+
+- [ ] Metal foundation
+  - [ ] Metal device initialization and management
+  - [ ] Metal command queue setup
+  - [ ] Metal buffer management and pooling
+  - [ ] Shader library compilation and loading
+  - [ ] Error handling and fallback mechanisms
+- [ ] Memory management
+  - [ ] Shared/managed buffer allocation strategies
+  - [ ] Efficient CPU-GPU data transfer
+  - [ ] Buffer reuse and pooling
+  - [ ] Memory usage tracking and limits
+  - [ ] Automatic fallback for memory pressure
+- [ ] Platform detection
+  - [ ] Metal capability detection
+  - [ ] Feature tier identification (Apple Silicon vs Intel)
+  - [ ] GPU selection for multi-GPU systems
+  - [ ] Graceful degradation for unsupported features
+- [ ] Build system updates
+  - [ ] Conditional Metal compilation (`#if canImport(Metal)`)
+  - [ ] Metal shader compilation in Package.swift
+  - [ ] Platform-specific build targets
+  - [ ] x86-64 isolation: separate `J2KAccelerate_x86` target
+
+**Deliverables**:
+- `Sources/J2KMetal/J2KMetalDevice.swift` - Metal device management (actor)
+- `Sources/J2KMetal/J2KMetalBufferPool.swift` - GPU buffer pooling
+- `Sources/J2KMetal/J2KMetalShaderLibrary.swift` - Shader management
+- Package.swift updates for Metal support
+- 15+ tests for Metal infrastructure
+
+### Week 178-179: Metal-Accelerated Wavelet Transforms
+
+**Goal**: Implement GPU-accelerated discrete wavelet transforms using Metal compute shaders.
+
+- [ ] Metal DWT compute shaders
+  - [ ] 1D DWT forward shader (5/3 and 9/7 filters)
+  - [ ] 1D DWT inverse shader
+  - [ ] 2D DWT implementation (separable transforms)
+  - [ ] Multi-level decomposition shaders
+  - [ ] Boundary handling in shaders
+- [ ] Arbitrary wavelet kernel shaders
+  - [ ] Generic convolution shader for arbitrary filters
+  - [ ] Lifting scheme shader implementation
+  - [ ] Configurable filter length and coefficients
+  - [ ] Optimized for common filter sizes (3, 5, 7, 9 taps)
+- [ ] Performance optimization
+  - [ ] Tile-based processing for large images
+  - [ ] Shared memory (threadgroup memory) optimization
+  - [ ] Coalesced memory access patterns
+  - [ ] Async compute for overlapped execution
+  - [ ] SIMD group operations for Apple Silicon
+- [ ] Integration with existing DWT
+  - [ ] Extend J2KDWT for Metal backend
+  - [ ] Automatic CPU/GPU selection based on size
+  - [ ] Hybrid CPU-GPU pipeline for optimal performance
+  - [ ] Fallback to Accelerate when Metal unavailable
+- [ ] Testing and validation
+  - [ ] Numerical accuracy tests (vs CPU reference)
+  - [ ] Performance benchmarks (GPU vs CPU)
+  - [ ] Memory usage validation
+  - [ ] Multi-resolution tests
+  - [ ] Cross-platform consistency
+
+**Apple Silicon Optimizations**:
+- Apple GPU architecture-specific optimizations
+- 16-wide SIMD operations on Apple Silicon
+- Fast math mode for improved throughput
+- Unified memory for zero-copy operations
+- Tile-based deferred rendering optimizations
+
+**Performance Target**: 5-15× speedup vs Accelerate CPU for large images (>2K resolution).
+
+**Deliverables**:
+- `Sources/J2KMetal/Shaders/DWT.metal` - DWT compute shaders
+- `Sources/J2KMetal/J2KMetalDWT.swift` - Metal DWT interface (30+ tests)
+- `Documentation/METAL_DWT.md` - GPU wavelet transform guide
+- Benchmark results: 5-15× speedup on Apple Silicon
+
+### Week 180-181: Metal-Accelerated Color and MCT
+
+**Goal**: Implement GPU-accelerated color space transforms and multi-component transforms.
+
+- [ ] Color transform shaders
+  - [ ] RCT (Reversible Color Transform) shader
+  - [ ] ICT (Irreversible Color Transform) shader
+  - [ ] RGB to YCbCr conversions
+  - [ ] YCbCr to RGB conversions
+  - [ ] Extended color space support (wide gamut, HDR)
+- [ ] Multi-component transform shaders
+  - [ ] Matrix-vector multiplication shader
+  - [ ] Arbitrary NxN MCT shader
+  - [ ] Dependency transform evaluation shader
+  - [ ] Optimized 3×3 and 4×4 fast paths
+  - [ ] Batch processing for multiple pixels
+- [ ] Non-linear transform shaders
+  - [ ] LUT-based transform shader
+  - [ ] Parametric transform shader (gamma, log, exp)
+  - [ ] Perceptual quantizer (PQ, HLG)
+  - [ ] Texture-based LUT for large tables
+- [ ] Optimization
+  - [ ] Vectorized pixel processing
+  - [ ] Minimize kernel launches
+  - [ ] Fused operations (color + MCT)
+  - [ ] Shared memory for transform matrices
+- [ ] Integration and testing
+  - [ ] Extend color transform pipeline for Metal
+  - [ ] MCT Metal backend integration
+  - [ ] Accuracy validation
+  - [ ] Performance benchmarks
+
+**Apple Silicon Optimizations**:
+- Apple GPU texture units for LUT access
+- Fast packed pixel formats (RGBA32, RGB16)
+- Optimized matrix operations using SIMD types
+- Unified memory for zero overhead
+- Batch processing for improved GPU utilization
+
+**Performance Target**: 10-25× speedup vs CPU for MCT and color transforms.
+
+**Deliverables**:
+- `Sources/J2KMetal/Shaders/ColorTransform.metal` - Color transform shaders
+- `Sources/J2KMetal/Shaders/MCT.metal` - MCT shaders
+- `Sources/J2KMetal/J2KMetalColorTransform.swift` - Metal color transform (25+ tests)
+- `Sources/J2KMetal/J2KMetalMCT.swift` - Metal MCT interface (30+ tests)
+- Benchmark: 10-25× speedup for multi-component images
+
+### Week 182-183: Metal-Accelerated ROI and Quantization
+
+**Goal**: GPU acceleration for region of interest processing and quantization operations.
+
+- [ ] ROI processing shaders
+  - [ ] ROI mask generation shader
+  - [ ] Coefficient scaling shader
+  - [ ] Multiple ROI blending shader
+  - [ ] Feathering and smooth transitions
+  - [ ] ROI mask compression
+- [ ] Quantization shaders
+  - [ ] Scalar quantization shader
+  - [ ] Dead-zone quantization
+  - [ ] Visual frequency weighting application
+  - [ ] Perceptual quantization
+  - [ ] Dequantization for decoder
+- [ ] Advanced operations
+  - [ ] Trellis coded quantization (parallel trellis evaluation)
+  - [ ] Rate-distortion optimization helpers
+  - [ ] Parallel distortion metric computation
+  - [ ] Coefficient manipulation operations
+- [ ] Integration
+  - [ ] Metal backend for ROI pipeline
+  - [ ] GPU-accelerated quantizer
+  - [ ] Hybrid CPU-GPU R-D optimization
+  - [ ] Performance vs quality trade-offs
+- [ ] Testing
+  - [ ] ROI correctness on GPU
+  - [ ] Quantization accuracy validation
+  - [ ] Performance benchmarks
+  - [ ] Memory efficiency tests
+
+**Deliverables**:
+- `Sources/J2KMetal/Shaders/ROI.metal` - ROI shaders (20+ tests)
+- `Sources/J2KMetal/Shaders/Quantization.metal` - Quantization shaders (25+ tests)
+- `Sources/J2KMetal/J2KMetalROI.swift` - Metal ROI interface
+- `Sources/J2KMetal/J2KMetalQuantizer.swift` - Metal quantizer
+- Performance: 8-20× speedup for ROI operations
+
+### Week 184-185: Advanced Accelerate Framework Integration
+
+**Goal**: Maximize usage of Accelerate framework for operations not suitable for GPU, enhancing CPU performance on Apple Silicon.
+
+- [ ] Advanced vDSP operations
+  - [ ] FFT-based operations for large transforms
+  - [ ] Optimized correlation and convolution
+  - [ ] Vector math acceleration (vForce)
+  - [ ] Matrix operations (BLAS, LAPACK)
+- [ ] vImage integration
+  - [ ] Format conversion acceleration
+  - [ ] Resampling and interpolation
+  - [ ] Geometric transforms
+  - [ ] Alpha blending and compositing
+- [ ] BNNS (Basic Neural Network Subroutines)
+  - [ ] Convolution layers for filter operations
+  - [ ] Activation functions for NLT
+  - [ ] Batch normalization helpers
+  - [ ] Potential for ML-based encoding (future)
+- [ ] Optimize CPU paths
+  - [ ] Profile remaining CPU bottlenecks
+  - [ ] Replace scalar code with Accelerate
+  - [ ] Optimize memory access patterns
+  - [ ] Batch operations for efficiency
+- [ ] CPU-GPU load balancing
+  - [ ] Hybrid processing strategies
+  - [ ] Work distribution heuristics
+  - [ ] Minimize CPU-GPU transfers
+  - [ ] Async execution overlap
+
+**Apple Silicon Specific**:
+- AMX (Apple Matrix coprocessor) for large matrix operations (automatic via Accelerate)
+- NEON SIMD optimizations (Apple's 128-bit SIMD)
+- Rosetta 2 avoidance: ensure native ARM64 code paths
+- Efficient cache utilization for Apple Silicon cache hierarchy
+
+**x86-64 Isolation**:
+- Move x86-64 specific code to `Sources/J2KAccelerate/x86/` directory
+- Clear `#if arch(x86_64)` guards
+- Separate compilation units for x86-64 fallbacks
+- Documentation for future x86-64 removal
+
+**Deliverables**:
+- `Sources/J2KAccelerate/J2KAdvancedAccelerate.swift` - Advanced Accelerate usage
+- `Sources/J2KAccelerate/J2KVImageIntegration.swift` - vImage integration
+- `Sources/J2KAccelerate/x86/J2KAccelerate_x86.swift` - Isolated x86-64 code (clearly marked)
+- `Documentation/ACCELERATE_ADVANCED.md` - Advanced Accelerate guide
+- 20+ tests for new Accelerate integrations
+
+### Week 186: Memory and Networking Optimizations for Apple Platforms
+
+**Goal**: Apple-specific memory and networking optimizations for optimal performance.
+
+- [ ] Memory optimizations
+  - [ ] Unified memory exploitation (Apple Silicon)
+  - [ ] Large page support where applicable
+  - [ ] Memory-mapped file I/O with F_NOCACHE
+  - [ ] Optimized buffer alignment for SIMD
+  - [ ] Compressed memory support awareness
+- [ ] Networking optimizations
+  - [ ] Network.framework integration (modern Apple networking)
+  - [ ] QUIC protocol support for JPIP
+  - [ ] HTTP/3 for improved streaming performance
+  - [ ] Efficient TLS with Network.framework
+  - [ ] Background transfer service integration (iOS)
+- [ ] Platform-specific features
+  - [ ] Grand Central Dispatch optimization
+  - [ ] Quality of Service (QoS) classes
+  - [ ] Power efficiency modes
+  - [ ] Thermal state monitoring and throttling
+  - [ ] Battery-aware processing (iOS)
+- [ ] I/O optimization
+  - [ ] Asynchronous I/O using DispatchIO
+  - [ ] File coordination for iCloud Drive
+  - [ ] PhotoKit integration for image access (iOS/macOS)
+  - [ ] Documents browser support (iOS)
+- [ ] Testing
+  - [ ] Memory usage profiling
+  - [ ] Network performance benchmarks
+  - [ ] Power consumption testing
+  - [ ] Thermal management validation
+
+**Deliverables**:
+- `Sources/J2KCore/J2KAppleMemory.swift` - Apple memory optimizations (15+ tests)
+- `Sources/JPIP/JPIPNetworkFramework.swift` - Network.framework integration (20+ tests)
+- `Sources/J2KCore/J2KApplePlatform.swift` - Platform-specific features
+- `Documentation/APPLE_OPTIMIZATIONS.md` - Apple platform guide
+
+### Week 187-189: Comprehensive Performance Optimization
+
+**Goal**: System-wide performance tuning and optimization for Apple Silicon.
+
+- [ ] End-to-end profiling
+  - [ ] Profile entire encoding pipeline
+  - [ ] Profile decoding pipeline
+  - [ ] Identify remaining bottlenecks
+  - [ ] GPU utilization analysis
+  - [ ] CPU utilization analysis
+- [ ] Pipeline optimization
+  - [ ] Overlap CPU and GPU work
+  - [ ] Minimize synchronization points
+  - [ ] Batch operations for efficiency
+  - [ ] Reduce memory allocations
+  - [ ] Optimize cache utilization
+- [ ] Metal performance optimization
+  - [ ] Minimize kernel launches
+  - [ ] Optimize shader occupancy
+  - [ ] Reduce register pressure
+  - [ ] Improve memory bandwidth utilization
+  - [ ] Use async compute for parallelism
+- [ ] Accelerate optimization
+  - [ ] Maximize Accelerate usage
+  - [ ] Optimize NEON code paths
+  - [ ] Leverage AMX when available
+  - [ ] Minimize data conversions
+- [ ] Real-world benchmarks
+  - [ ] 4K image encoding/decoding
+  - [ ] 8K image processing
+  - [ ] Multi-spectral imagery
+  - [ ] HDR video frames
+  - [ ] Batch processing scenarios
+- [ ] Performance documentation
+  - [ ] Performance characteristics guide
+  - [ ] Optimization best practices
+  - [ ] Platform-specific tuning
+  - [ ] Trade-off analysis (speed vs quality vs power)
+
+**Performance Targets (Apple Silicon)**:
+- Encoding: 15-30× faster than v1.5.0 CPU-only (large images)
+- Decoding: 20-40× faster than v1.5.0 CPU-only
+- Multi-component transforms: 10-25× faster
+- Wavelet transforms: 5-15× faster
+- Power efficiency: 2-3× better performance per watt
+
+**Deliverables**:
+- Comprehensive performance test suite
+- Performance regression tracking
+- Optimization report and recommendations
+- `Documentation/PERFORMANCE_APPLE_SILICON.md` - Platform performance guide
+- `Documentation/METAL_PERFORMANCE.md` - Metal optimization guide
+
+### Week 190: Validation, Documentation, and v1.7.0 Release
+
+**Goal**: Comprehensive validation and release preparation for v1.7.0.
+
+- [ ] Comprehensive testing
+  - [ ] Full test suite on all Apple platforms (macOS, iOS, tvOS)
+  - [ ] Apple Silicon-specific tests (M1, M2, M3, M4 families)
+  - [ ] A-series processor tests (iPhone, iPad)
+  - [ ] Metal feature validation across GPU families
+  - [ ] CPU fallback validation
+  - [ ] Cross-platform consistency (Metal vs CPU)
+- [ ] Performance validation
+  - [ ] Achieve performance targets
+  - [ ] Power consumption validation
+  - [ ] Thermal characteristics
+  - [ ] Battery life impact (iOS)
+  - [ ] Real-world performance scenarios
+- [ ] x86-64 code isolation audit
+  - [ ] Verify all x86-64 code is isolated
+  - [ ] Document x86-64 components
+  - [ ] Create removal guide for x86-64 code
+  - [ ] Test x86-64 fallback paths
+- [ ] Documentation
+  - [ ] Complete Metal API documentation
+  - [ ] Apple Silicon optimization guide
+  - [ ] Migration guide from v1.6.0
+  - [ ] Performance tuning guide
+  - [ ] Best practices for GPU acceleration
+- [ ] Release preparation
+  - [ ] RELEASE_NOTES_v1.7.0.md
+  - [ ] RELEASE_CHECKLIST_v1.7.0.md
+  - [ ] Version updates
+  - [ ] API stability review
+  - [ ] Breaking changes documentation
+
+**Deliverables**:
+- `Documentation/METAL_API.md` - Complete Metal API guide
+- `Documentation/APPLE_SILICON_OPTIMIZATION.md` - Comprehensive optimization guide
+- `Documentation/X86_REMOVAL_GUIDE.md` - Guide for removing x86-64 code
+- `RELEASE_NOTES_v1.7.0.md` - v1.7.0 release notes
+- `RELEASE_CHECKLIST_v1.7.0.md` - Release checklist
+- Performance: 15-40× improvement for GPU-accelerated operations
+
+#### Phase 14 Summary
+
+**Expected Benefits**:
+- ✅ 15-40× performance improvement on Apple Silicon with Metal
+- ✅ 2-3× better power efficiency
+- ✅ Optimal utilization of Apple hardware (GPU, AMX, NEON)
+- ✅ Clear x86-64 code isolation for future maintainability
+- ✅ Graceful fallback to CPU implementations
+- ✅ Consistent quality across CPU and GPU paths
+- ✅ Production-ready Metal acceleration
+- ✅ Comprehensive documentation and best practices
+
+**Architecture Principles**:
+- **Apple-First**: All optimizations target Apple Silicon primarily
+- **Metal Priority**: GPU acceleration for compute-intensive operations
+- **Graceful Fallback**: CPU paths using Accelerate framework
+- **x86-64 Isolation**: Clear separation for potential removal
+- **Clean Architecture**: Platform-specific code in separate modules
+- **Performance**: Validated performance targets on real hardware
+- **Power Efficiency**: Optimized for mobile and battery-powered devices
+
+---
+
 **Last Updated**: 2026-02-18
 **Current Phase**: Phase 12 - Performance, Extended JPIP, and Cross-Platform Support ✅
 **Current Version**: 1.5.0 (Ready for Release)
-**Previous Release**: 1.4.0 (Released February 18, 2026)
-**Next Milestone**: v1.6.0 - Advanced Features and Optimization (Planned Q3 2026)
+**Next Phase**: Phase 13 - ISO/IEC 15444 Part 2 Extensions (v1.6.0, Weeks 155-175)
+**Future Phase**: Phase 14 - Metal GPU Acceleration (v1.7.0, Weeks 176-190)
+**Long-term Target**: Complete Part 2 compliance with world-class Apple Silicon performance
