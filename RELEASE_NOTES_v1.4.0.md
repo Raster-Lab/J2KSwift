@@ -1,6 +1,6 @@
 # J2KSwift v1.4.0 Release Notes
 
-**Release Date**: TBD  
+**Release Date**: February 18, 2026  
 **Release Type**: Minor Release  
 **GitHub Tag**: v1.4.0
 
@@ -348,7 +348,7 @@ Thank you to the Swift community and all contributors who provided feedback and 
 
 ---
 
-**Release Status**: In Preparation  
+**Release Status**: ✅ Released  
 **Total Tests**: 1,666 (100% pass rate)  
 **Phase Completion**: Phase 11 Complete ✅
 

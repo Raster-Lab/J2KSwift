@@ -8,16 +8,17 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.3.0 (Released February 17, 2026)  
-**Status**: Complete encoder/decoder with HTJ2K support and lossless transcoding (1,605 tests, 100% pass rate)  
-**Previous Release**: 1.2.0 (February 16, 2026)
+**Current Version**: 1.4.0 (Released February 18, 2026)  
+**Status**: Complete encoder/decoder with HTJ2K support, lossless transcoding, and enhanced JPIP streaming (1,666 tests, 100% pass rate)  
+**Previous Release**: 1.3.0 (February 17, 2026)
 
 ## 📦 Release Status
 
-**v1.3.0** introduces major new features including HTJ2K codec and lossless transcoding:
-- 🚀 **HTJ2K Codec** - High Throughput JPEG 2000 (ISO/IEC 15444-15) with 57-70× speedup
-- 🔄 **Lossless Transcoding** - Bit-exact conversion between Legacy JPEG 2000 ↔ HTJ2K
-- ⚡ **Parallel Processing** - Multi-tile transcoding with 1.05-2× speedup
+**v1.4.0** enhances JPIP with HTJ2K support, adding format-aware streaming and on-the-fly transcoding:
+- 🎯 **HTJ2K Format Detection** - Automatic J2K/JPH/JP2 format identification in JPIP
+- 📡 **Capability Signaling** - HTJ2K capability headers in JPIP session responses
+- 🔄 **On-the-fly Transcoding** - Automatic format conversion during JPIP serving
+- 📦 **Data Bin Generation** - Extract and stream data bins from HTJ2K codestreams
 - ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
 - ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
 - ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
@@ -25,17 +26,19 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 - ✅ **Multiple Encoding Presets** (lossless, fast, balanced, quality)
 - ✅ **Advanced Decoding** (ROI, progressive quality/resolution, partial decoding)
 - ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
-- ✅ **JPIP Streaming** (client/server infrastructure)
+- ✅ **JPIP Streaming** (client/server with HTJ2K support)
+- ✅ **HTJ2K Codec** (57-70× speedup, ISO/IEC 15444-15 conformance)
+- ✅ **Lossless Transcoding** (bit-exact Legacy JPEG 2000 ↔ HTJ2K conversion)
 - ✅ **Cross-Platform Validated** (Linux Ubuntu x86_64, macOS)
-- ✅ **100% Test Pass Rate** (1,605 tests including 86 HTJ2K and 31 transcoding tests)
+- ✅ **100% Test Pass Rate** (1,666 tests including 199 JPIP tests)
 
-**v1.3.0 Highlights**:
-- 🚀 **57-70× Performance Boost** - HTJ2K encoding/decoding dramatically faster than legacy
-- 🔄 **Format Flexibility** - Seamlessly convert between legacy and HTJ2K formats
-- ✅ **ISO/IEC 15444-15 Conformance** - 100% conformance test pass rate
-- 📚 **Comprehensive Documentation** - HTJ2K implementation guide and performance analysis
+**v1.4.0 Highlights**:
+- 🎯 **HTJ2K Format Detection** - Automatic format identification for intelligent JPIP streaming
+- 📡 **Capability Signaling** - JPIP-cap and JPIP-pref headers for HTJ2K awareness
+- 🔄 **On-the-fly Transcoding** - Seamless format conversion based on client preferences
+- ✅ **199 JPIP Tests** - 35 new Phase 11 tests, 100% pass rate
 
-See [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) for v1.3.0 details, or [RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md) for the previous release.
+See [RELEASE_NOTES_v1.4.0.md](RELEASE_NOTES_v1.4.0.md) for v1.4.0 details, or [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) for the previous release.
 
 ## 🎯 Project Goals
 
@@ -64,7 +67,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.3.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.4.0")
 ]
 ```
 
@@ -457,7 +460,7 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - ✅ Phase 7: Optimization & Features (Weeks 81-92)
 - ✅ Phase 8: Production Ready (Weeks 93-100)
 
-**Next**: Version 1.3.0 - Performance optimizations and additional features (see [MILESTONES.md](MILESTONES.md))
+**Next**: Version 1.5.0 - Additional optimizations and features (see [MILESTONES.md](MILESTONES.md))
 
 ## 🧪 Testing
 

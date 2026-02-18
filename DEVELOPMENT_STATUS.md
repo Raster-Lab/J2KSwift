@@ -1,14 +1,14 @@
 # J2KSwift Development Status
 
-**Last Updated**: February 17, 2026
+**Last Updated**: February 18, 2026
 
 ## Quick Status
 
 ```
-Current Version: v1.4.0 (In Development)
-Current Phase:   Phase 11 - Enhanced JPIP with HTJ2K Support 🚧
+Current Version: v1.4.0 (Released February 18, 2026)
+Current Phase:   Phase 11 - Enhanced JPIP with HTJ2K Support ✅
 Test Status:     1,666 tests, 100% pass rate
-Next Milestone:  v1.4.0 Release
+Next Milestone:  v1.5.0 (Planned Q2 2026)
 ```
 
 ## Roadmap Visualization
@@ -86,11 +86,12 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 | **Phase 9: HTJ2K Codec** | **✅ Complete** | **20 weeks** | **Feb 16, 2026** |
 | **Phase 10: Lossless Transcoding** | **✅ Complete** | **10 weeks** | **Feb 17, 2026** |
 | **v1.3.0 Release** | **✅ Released** | **-** | **Feb 17, 2026** |
-| **Phase 11: JPIP HTJ2K** | **🚧 In Progress** | **TBD** | **TBD** |
+| **Phase 11: JPIP HTJ2K** | **✅ Complete** | **Feb 2026** | **Feb 18, 2026** |
+| **v1.4.0 Release** | **✅ Released** | **-** | **Feb 18, 2026** |
 
 ## Key Metrics
 
-### Current State (v1.4.0 - IN DEVELOPMENT 🚧)
+### Current State (v1.4.0 - RELEASED ✅)
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
@@ -129,8 +130,8 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 3. ✅ Metadata preservation
 4. ✅ Performance optimization (parallel processing)
 
-### Medium-term (Post-v1.3.0)
-1. 🚧 v1.4.0: Enhanced JPIP with HTJ2K support (Phase 11)
+### Medium-term (Post-v1.4.0)
+1. ✅ v1.4.0: Enhanced JPIP with HTJ2K support (Phase 11)
    - ✅ JPIP HTJ2K format detection and capability signaling
    - ✅ JPIPCodingPreference for client-side format preferences
    - ✅ JPIPImageInfo for tracking registered image formats
@@ -147,7 +148,7 @@ Phase 10: Lossless Transcoding (Weeks 121-130)
 - **[HTJ2K.md](HTJ2K.md)**: HTJ2K implementation guide (NEW!)
 - **[NEXT_PHASE.md](NEXT_PHASE.md)**: Comprehensive next phase roadmap (332 lines)
 - **[MILESTONES.md](MILESTONES.md)**: Complete 100-week development history
-- **[RELEASE_NOTES_v1.2.0.md](RELEASE_NOTES_v1.2.0.md)**: Current release notes
+- **[RELEASE_NOTES_v1.4.0.md](RELEASE_NOTES_v1.4.0.md)**: Current release notes
 - **[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)**: Known issues and workarounds
 
 ## Legend
