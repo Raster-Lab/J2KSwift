@@ -1,10 +1,10 @@
 # J2KSwift Development Milestones
 
-A comprehensive 130-week roadmap for implementing a complete JPEG 2000 framework in Swift 6, including advanced HTJ2K support.
+A comprehensive development roadmap for implementing a complete JPEG 2000 framework in Swift 6, including advanced HTJ2K support, JPIP streaming, and cross-platform capabilities.
 
 ## Overview
 
-This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, while Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities.
+This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities, Phase 11 (v1.4.0) adds enhanced JPIP with HTJ2K support, and Phase 12 (v1.5.0, Weeks 131-154) targets performance optimizations, extended JPIP features, enhanced streaming, and broader platform support.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
@@ -1006,10 +1006,259 @@ Phase 11: Enhanced JPIP with HTJ2K Support.
 - [x] Build successful with no warnings
 - [x] No breaking changes from v1.3.0
 
+### v1.5.0 (Planned Q2 2026)
+Phase 12: Performance, Extended JPIP, and Cross-Platform Support.
+
+**Goal**: Optimize HTJ2K throughput with SIMD acceleration, extend JPIP with WebSocket transport and server push, enhance streaming capabilities, and broaden platform support to Windows and Linux ARM64.
+
+#### HTJ2K Optimizations (Weeks 131-138)
+
+##### Week 131-133: SIMD-Accelerated HT Cleanup Pass
+- [ ] ARM NEON SIMD implementation for HT cleanup pass
+  - [ ] NEON-accelerated MagSgn decoding
+  - [ ] NEON-accelerated VLC table lookups
+  - [ ] NEON-optimized MEL context propagation
+  - [ ] ARM-specific pipeline tuning and benchmarking
+- [ ] x86_64 SSE/AVX SIMD implementation for HT cleanup pass
+  - [ ] SSE4.2-accelerated MagSgn decoding
+  - [ ] AVX2-accelerated VLC table lookups
+  - [ ] AVX2-optimized MEL context propagation
+  - [ ] x86_64-specific pipeline tuning and benchmarking
+- [ ] Unified SIMD abstraction layer
+  - [ ] Platform-agnostic SIMD interface for HT passes
+  - [ ] Runtime CPU feature detection (NEON/SSE/AVX)
+  - [ ] Automatic fallback to scalar implementation
+  - [ ] SIMD vs scalar performance comparison tests
+
+##### Week 134-136: FBCOT Memory Allocation Improvements
+- [ ] Memory allocation profiling for FBCOT block coder
+  - [ ] Identify hot allocation paths in encode/decode pipelines
+  - [ ] Measure allocation frequency and size distribution
+  - [ ] Profile peak memory usage across block sizes
+- [ ] Memory pool for FBCOT intermediate buffers
+  - [ ] Pre-allocated buffer pool for common block sizes (32×32, 64×64)
+  - [ ] Thread-local buffer caching to avoid contention
+  - [ ] Automatic pool sizing based on tile dimensions
+- [ ] Reduced temporary allocations in HT passes
+  - [ ] Stack-allocated scratch buffers for small code-blocks
+  - [ ] In-place coefficient transforms where possible
+  - [ ] Lazy allocation for optional coding passes
+- [ ] Memory usage regression tests
+  - [ ] Baseline memory benchmarks for encode/decode
+  - [ ] Allocation count tracking per code-block
+  - [ ] Peak memory validation under concurrent workloads
+
+##### Week 137-138: Adaptive Block Size Selection
+- [ ] Content-aware block size analyzer
+  - [ ] Edge density estimation for input tiles
+  - [ ] Frequency content analysis via DWT coefficients
+  - [ ] Texture complexity scoring per tile region
+- [ ] Adaptive block size selection strategy
+  - [ ] Block size mapping (16×16, 32×32, 64×64) based on content metrics
+  - [ ] Configurable aggressiveness (conservative, balanced, aggressive)
+  - [ ] Per-tile block size override support
+- [ ] Integration with J2KEncoder pipeline
+  - [ ] Auto-select mode in J2KEncodingConfiguration
+  - [ ] Backward-compatible API (manual block size still supported)
+  - [ ] Encode performance comparison: fixed vs adaptive block sizing
+- [ ] Validation and testing
+  - [ ] Quality comparison (PSNR/SSIM) across block size strategies
+  - [ ] Throughput benchmarks for adaptive vs fixed
+  - [ ] Edge-case testing (uniform images, high-frequency textures, gradients)
+
+#### Extended JPIP Features (Weeks 139-144)
+
+##### Week 139-141: JPIP over WebSocket Transport
+- [ ] WebSocket transport layer for JPIP
+  - [ ] WebSocket frame encapsulation for JPIP messages
+  - [ ] Binary and text message support for data bins
+  - [ ] Connection establishment and handshake protocol
+  - [ ] Automatic reconnection with exponential backoff
+- [ ] JPIPWebSocketClient implementation
+  - [ ] WebSocket-based session creation and management
+  - [ ] Multiplexed request/response over single connection
+  - [ ] Low-latency data bin delivery via WebSocket push
+  - [ ] Fallback to HTTP transport on WebSocket failure
+- [ ] JPIPWebSocketServer implementation
+  - [ ] WebSocket upgrade handling from HTTP connections
+  - [ ] Concurrent WebSocket session management
+  - [ ] Efficient binary frame serialization for data bins
+  - [ ] Connection health monitoring and keepalive
+- [ ] WebSocket transport testing
+  - [ ] Latency comparison: WebSocket vs HTTP polling
+  - [ ] Concurrent connection stress testing
+  - [ ] Reconnection and failover validation
+  - [ ] Protocol compliance tests
+
+##### Week 142-143: Server-Initiated Push for Predictive Prefetching
+- [ ] Predictive prefetching engine
+  - [ ] Viewport prediction based on navigation history
+  - [ ] Resolution-level prefetch heuristics
+  - [ ] Spatial locality-based tile prediction
+  - [ ] Configurable prefetch depth and aggressiveness
+- [ ] Server push integration with JPIP
+  - [ ] Unsolicited data bin delivery via WebSocket push
+  - [ ] Push priority scheduling (resolution > spatial > quality)
+  - [ ] Client-side push acceptance and rejection protocol
+  - [ ] Bandwidth-aware push throttling
+- [ ] Prefetch cache coordination
+  - [ ] Server-side tracking of client cache state
+  - [ ] Delta delivery (only push missing data bins)
+  - [ ] Cache invalidation on server-side image update
+- [ ] Push performance validation
+  - [ ] Time-to-first-display improvement measurements
+  - [ ] Bandwidth overhead of predictive push
+  - [ ] Accuracy of viewport prediction heuristics
+
+##### Week 144: Enhanced Session Persistence and Recovery
+- [ ] Session state serialization
+  - [ ] Serializable JPIPSession state (channels, cache model, preferences)
+  - [ ] Persistent session storage (file-based and in-memory)
+  - [ ] Session state versioning for forward compatibility
+- [ ] Session recovery protocol
+  - [ ] Automatic session re-establishment after disconnect
+  - [ ] Cache model synchronization on reconnect
+  - [ ] Partial state recovery (resume from last known good state)
+  - [ ] Graceful degradation when full recovery is not possible
+- [ ] Session persistence testing
+  - [ ] Round-trip serialization/deserialization validation
+  - [ ] Recovery after simulated network interruption
+  - [ ] Multi-session concurrent persistence testing
+  - [ ] Backward compatibility with non-persistent sessions
+
+#### Enhanced Streaming Capabilities (Weeks 145-150)
+
+##### Week 145-147: Multi-Resolution Tiled Streaming with Adaptive Quality
+- [ ] Multi-resolution tile management
+  - [ ] Resolution-level aware tile decomposition
+  - [ ] Independent quality layer selection per tile
+  - [ ] Tile priority queue based on viewport visibility
+  - [ ] Dynamic tile granularity adjustment
+- [ ] Adaptive quality engine
+  - [ ] Quality layer selection based on available bandwidth
+  - [ ] Resolution scaling for low-bandwidth connections
+  - [ ] Quality of Experience (QoE) metric tracking
+  - [ ] Smooth quality transitions during streaming
+- [ ] Streaming pipeline integration
+  - [ ] Multi-resolution streaming with JPIP view-window requests
+  - [ ] Tile-level progressive rendering support
+  - [ ] Resolution-progressive and quality-progressive modes
+  - [ ] Real-time streaming rate adaptation
+- [ ] Streaming quality validation
+  - [ ] Visual quality assessment across bandwidth levels
+  - [ ] Tile delivery order verification
+  - [ ] Smooth transition testing under fluctuating bandwidth
+  - [ ] Comparison with single-resolution streaming
+
+##### Week 148-149: Bandwidth-Aware Progressive Delivery
+- [ ] Bandwidth estimation module
+  - [ ] Real-time throughput measurement
+  - [ ] Moving average bandwidth estimator
+  - [ ] Congestion detection and response
+  - [ ] Bandwidth prediction for proactive adaptation
+- [ ] Progressive delivery scheduler
+  - [ ] Rate-controlled data bin emission
+  - [ ] Priority-based delivery ordering (critical data first)
+  - [ ] Quality layer truncation at bandwidth limits
+  - [ ] Interruptible delivery for viewport changes
+- [ ] Delivery optimization
+  - [ ] Optimal quality layer allocation across tiles
+  - [ ] Minimum-viable-quality fast path for initial display
+  - [ ] Deferred high-quality refinement for background tiles
+- [ ] Bandwidth-aware delivery testing
+  - [ ] Simulated bandwidth constraint testing (1 Mbps, 10 Mbps, 100 Mbps)
+  - [ ] Time-to-interactive measurements
+  - [ ] Progressive rendering quality validation
+  - [ ] Bandwidth estimation accuracy tests
+
+##### Week 150: Client-Side Cache Management Improvements
+- [ ] Enhanced client cache architecture
+  - [ ] LRU eviction with resolution-aware priority
+  - [ ] Configurable cache size limits (memory and disk)
+  - [ ] Cache partitioning by image and resolution level
+  - [ ] Cache warm-up from persistent storage
+- [ ] Cache efficiency optimizations
+  - [ ] Data bin deduplication across sessions
+  - [ ] Compressed cache storage for inactive entries
+  - [ ] Predictive cache pre-population from prefetch engine
+  - [ ] Cache hit rate monitoring and statistics
+- [ ] Cache management API
+  - [ ] Public cache inspection and eviction API
+  - [ ] Per-image cache policy configuration
+  - [ ] Cache usage reporting for diagnostics
+- [ ] Cache management testing
+  - [ ] Eviction policy validation under memory pressure
+  - [ ] Cache persistence across client restarts
+  - [ ] Multi-image concurrent caching stress test
+  - [ ] Cache hit rate benchmarking
+
+#### Additional Cross-Platform Support (Weeks 151-154)
+
+##### Week 151-152: Windows Platform Validation and CI
+- [ ] Windows build support
+  - [ ] Swift on Windows build verification (Swift 6.x toolchain)
+  - [ ] Platform-specific conditional compilation (`#if os(Windows)`)
+  - [ ] Windows-specific file I/O adaptations (path separators, file handles)
+  - [ ] Foundation compatibility layer for Windows
+- [ ] Windows CI pipeline
+  - [ ] GitHub Actions Windows runner configuration (windows-latest)
+  - [ ] Swift toolchain installation on Windows
+  - [ ] Full test suite execution on Windows
+  - [ ] Windows build artifact generation
+- [ ] Windows-specific testing
+  - [ ] File format read/write on Windows file system
+  - [ ] Memory management validation on Windows
+  - [ ] Networking (JPIP) tests on Windows
+  - [ ] Performance benchmarking on Windows
+
+##### Week 153: Linux ARM64 Distribution Testing
+- [ ] ARM64 Linux build validation
+  - [ ] Ubuntu ARM64 (aarch64) build verification
+  - [ ] Amazon Linux ARM64 build verification
+  - [ ] ARM64-specific NEON optimization validation
+  - [ ] Cross-compilation support from x86_64 to ARM64
+- [ ] ARM64 CI pipeline
+  - [ ] GitHub Actions ARM64 runner configuration
+  - [ ] ARM64 test suite execution
+  - [ ] NEON SIMD correctness validation on native ARM64
+  - [ ] Performance benchmarking on ARM64 (Graviton, Apple Silicon Linux)
+- [ ] ARM64-specific optimizations
+  - [ ] Verify NEON SIMD paths on Linux ARM64
+  - [ ] DWT performance validation on ARM64
+  - [ ] Memory alignment optimization for ARM64
+
+##### Week 154: Swift 6.2+ Compatibility Verification
+- [ ] Swift 6.2+ language feature audit
+  - [ ] Verify strict concurrency compliance with Swift 6.2 compiler
+  - [ ] Adopt new Swift 6.2 concurrency features where beneficial
+  - [ ] Resolve any new compiler warnings or deprecations
+  - [ ] Update minimum Swift version requirement if needed
+- [ ] Toolchain CI matrix update
+  - [ ] Add Swift 6.2 to CI test matrix
+  - [ ] Maintain backward compatibility with Swift 6.0/6.1
+  - [ ] Conditional compilation for version-specific features
+- [ ] Compatibility testing
+  - [ ] Full test suite on Swift 6.2 (macOS, Linux)
+  - [ ] Performance regression testing across Swift versions
+  - [ ] Package compatibility with Swift Package Manager updates
+  - [ ] DocC documentation generation with Swift 6.2
+
+#### v1.5.0 Release Preparation (Week 154)
+- [ ] Integration testing across all v1.5.0 features
+- [ ] Performance regression suite (vs v1.4.0 baseline)
+- [ ] Release documentation
+  - [ ] RELEASE_NOTES_v1.5.0.md
+  - [ ] RELEASE_CHECKLIST_v1.5.0.md
+  - [ ] HTJ2K_PERFORMANCE.md updated with SIMD benchmarks
+  - [ ] JPIP_PROTOCOL.md updated with WebSocket and push features
+  - [ ] README.md updated with v1.5.0 features
+- [ ] Version strings updated to 1.5.0
+- [ ] Full cross-platform validation (macOS, Linux x86_64, Linux ARM64, Windows)
+
 ---
 
-**Last Updated**: 2026-02-18  
-**Current Phase**: Phase 11 - Enhanced JPIP with HTJ2K Support ✅  
-**Current Version**: 1.4.0  
-**Previous Release**: 1.3.0 (Released February 17, 2026)  
-**Next Milestone**: v1.5.0 (Planned Q2 2026)
+**Last Updated**: 2026-02-18
+**Current Phase**: Phase 11 - Enhanced JPIP with HTJ2K Support ✅
+**Current Version**: 1.4.0
+**Previous Release**: 1.3.0 (Released February 17, 2026)
+**Next Milestone**: v1.5.0 - Performance, Extended JPIP, and Cross-Platform Support (Planned Q2 2026)
