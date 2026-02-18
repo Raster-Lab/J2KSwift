@@ -87,8 +87,8 @@ git push origin v1.4.0
 
 ### Step 4: Update Main Branch
 - [x] Merge release branch to main
-- [ ] Update VERSION file to "1.5.0-dev" for next development cycle
-- [ ] Update NEXT_PHASE.md with post-v1.4.0 planning
+- [x] Update VERSION file to "1.5.0-dev" for next development cycle
+- [x] Update NEXT_PHASE.md with post-v1.4.0 planning
 
 ### Step 5: Announce Release
 - [ ] Post announcement on GitHub Discussions
@@ -174,7 +174,7 @@ Release is considered successful when:
 
 ---
 
-**Checklist Status**: 65/72 items complete (90%)  
+**Checklist Status**: 67/72 items complete (93%)  
 **Release Readiness**: ✅ Released  
 **Release Date**: February 18, 2026
 

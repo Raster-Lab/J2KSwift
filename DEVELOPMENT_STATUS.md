@@ -5,8 +5,9 @@
 ## Quick Status
 
 ```
-Current Version: v1.4.0 (Released February 18, 2026)
-Current Phase:   Phase 11 - Enhanced JPIP with HTJ2K Support ✅
+Current Version: 1.5.0-dev (Development)
+Last Release:    v1.4.0 (Released February 18, 2026)
+Current Phase:   Post-Phase 11 — Planning v1.5.0
 Test Status:     1,666 tests, 100% pass rate
 Next Milestone:  v1.5.0 (Planned Q2 2026)
 ```
