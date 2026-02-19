@@ -1896,37 +1896,37 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 - CPU reference implementation for all filter types
 - Automatic GPU/CPU backend selection
 
-### Week 180-181: Metal-Accelerated Color and MCT
+### Week 180-181: Metal-Accelerated Color and MCT ✅
 
 **Goal**: Implement GPU-accelerated color space transforms and multi-component transforms.
 
-- [ ] Color transform shaders
-  - [ ] RCT (Reversible Color Transform) shader
-  - [ ] ICT (Irreversible Color Transform) shader
-  - [ ] RGB to YCbCr conversions
-  - [ ] YCbCr to RGB conversions
-  - [ ] Extended color space support (wide gamut, HDR)
-- [ ] Multi-component transform shaders
-  - [ ] Matrix-vector multiplication shader
-  - [ ] Arbitrary NxN MCT shader
-  - [ ] Dependency transform evaluation shader
-  - [ ] Optimized 3×3 and 4×4 fast paths
-  - [ ] Batch processing for multiple pixels
-- [ ] Non-linear transform shaders
-  - [ ] LUT-based transform shader
-  - [ ] Parametric transform shader (gamma, log, exp)
-  - [ ] Perceptual quantizer (PQ, HLG)
-  - [ ] Texture-based LUT for large tables
-- [ ] Optimization
-  - [ ] Vectorized pixel processing
-  - [ ] Minimize kernel launches
-  - [ ] Fused operations (color + MCT)
-  - [ ] Shared memory for transform matrices
-- [ ] Integration and testing
-  - [ ] Extend color transform pipeline for Metal
-  - [ ] MCT Metal backend integration
-  - [ ] Accuracy validation
-  - [ ] Performance benchmarks
+- [x] Color transform shaders
+  - [x] RCT (Reversible Color Transform) shader
+  - [x] ICT (Irreversible Color Transform) shader
+  - [x] RGB to YCbCr conversions
+  - [x] YCbCr to RGB conversions
+  - [x] Extended color space support (wide gamut, HDR)
+- [x] Multi-component transform shaders
+  - [x] Matrix-vector multiplication shader
+  - [x] Arbitrary NxN MCT shader
+  - [x] Dependency transform evaluation shader
+  - [x] Optimized 3×3 and 4×4 fast paths
+  - [x] Batch processing for multiple pixels
+- [x] Non-linear transform shaders
+  - [x] LUT-based transform shader
+  - [x] Parametric transform shader (gamma, log, exp)
+  - [x] Perceptual quantizer (PQ, HLG)
+  - [x] Texture-based LUT for large tables
+- [x] Optimization
+  - [x] Vectorized pixel processing
+  - [x] Minimize kernel launches
+  - [x] Fused operations (color + MCT)
+  - [x] Shared memory for transform matrices
+- [x] Integration and testing
+  - [x] Extend color transform pipeline for Metal
+  - [x] MCT Metal backend integration
+  - [x] Accuracy validation
+  - [x] Performance benchmarks
 
 **Apple Silicon Optimizations**:
 - Apple GPU texture units for LUT access
@@ -1938,11 +1938,15 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 **Performance Target**: 10-25× speedup vs CPU for MCT and color transforms.
 
 **Deliverables**:
-- `Sources/J2KMetal/Shaders/ColorTransform.metal` - Color transform shaders
-- `Sources/J2KMetal/Shaders/MCT.metal` - MCT shaders
-- `Sources/J2KMetal/J2KMetalColorTransform.swift` - Metal color transform (25+ tests)
-- `Sources/J2KMetal/J2KMetalMCT.swift` - Metal MCT interface (30+ tests)
-- Benchmark: 10-25× speedup for multi-component images
+- `Sources/J2KMetal/J2KMetalColorTransform.swift` - Metal color transform actor (35 tests)
+- `Sources/J2KMetal/J2KMetalMCT.swift` - Metal MCT actor (42 tests)
+- `Tests/J2KMetalTests/J2KMetalColorTransformTests.swift` - Color transform tests
+- `Tests/J2KMetalTests/J2KMetalMCTTests.swift` - MCT tests
+- `Documentation/METAL_COLOR_MCT.md` - GPU color/MCT documentation
+- 7 new Metal compute kernels (NLT parametric/LUT/PQ/HLG, MCT 3×3/4×4, fused color+MCT)
+- 160 total Metal tests passing (36 device + 47 DWT + 35 color + 42 MCT)
+- CPU reference implementations for all transforms
+- Automatic GPU/CPU backend selection
 
 ### Week 182-183: Metal-Accelerated ROI and Quantization
 
