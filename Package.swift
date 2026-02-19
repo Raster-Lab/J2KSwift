@@ -78,7 +78,7 @@ let package = Package(
             ]),
         .target(
             name: "JPIP",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency"),
                 .enableExperimentalFeature("StrictConcurrency")
@@ -113,7 +113,7 @@ let package = Package(
             dependencies: ["J2KCore"]),
         .testTarget(
             name: "JP3DTests",
-            dependencies: ["J2K3D", "J2KCore"]),
+            dependencies: ["J2K3D", "J2KCore", "JPIP"]),
         .executableTarget(
             name: "J2KCLI",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
