@@ -263,6 +263,78 @@ public struct J2KMCTConfiguration: Sendable {
     public static let none = J2KMCTConfiguration(type: .arrayBased, matrix: nil)
 }
 
+/// Configuration for MCT in the encoding pipeline.
+///
+/// This configuration controls how multi-component transforms are applied
+/// during encoding, including adaptive selection, per-tile configuration,
+/// and integration with other Part 2 features.
+public struct J2KMCTEncodingConfiguration: Sendable {
+    /// MCT mode
+    public enum Mode: Sendable {
+        /// MCT disabled (use Part 1 RCT/ICT)
+        case disabled
+        
+        /// Array-based MCT with fixed matrix
+        case arrayBased(J2KMCTMatrix)
+        
+        /// Dependency-based MCT
+        case dependency(J2KMCTDependencyConfiguration)
+        
+        /// Adaptive MCT selection per tile
+        case adaptive(candidates: [J2KMCTMatrix], selectionCriteria: AdaptiveSelectionCriteria)
+    }
+    
+    /// Criteria for adaptive MCT matrix selection
+    public enum AdaptiveSelectionCriteria: Sendable {
+        /// Select based on component correlation
+        case correlation
+        
+        /// Select based on rate-distortion optimization
+        case rateDistortion
+        
+        /// Select based on compression efficiency
+        case compressionEfficiency
+    }
+    
+    /// The MCT mode
+    public let mode: Mode
+    
+    /// Whether to use extended precision for MCT operations
+    public let useExtendedPrecision: Bool
+    
+    /// Whether to use reversible integer MCT (when possible)
+    public let preferReversible: Bool
+    
+    /// Per-tile MCT overrides (tile index -> MCT matrix)
+    ///
+    /// When non-empty, overrides the global MCT configuration for specific tiles.
+    /// Useful for spatially varying content with different decorrelation needs.
+    public let perTileMCT: [Int: J2KMCTMatrix]
+    
+    /// Creates a new MCT encoding configuration.
+    ///
+    /// - Parameters:
+    ///   - mode: The MCT mode (default: .disabled).
+    ///   - useExtendedPrecision: Use extended precision arithmetic (default: false).
+    ///   - preferReversible: Prefer reversible integer transforms (default: false).
+    ///   - perTileMCT: Per-tile MCT overrides (default: empty).
+    public init(
+        mode: Mode = .disabled,
+        useExtendedPrecision: Bool = false,
+        preferReversible: Bool = false,
+        perTileMCT: [Int: J2KMCTMatrix] = [:]
+    ) {
+        self.mode = mode
+        self.useExtendedPrecision = useExtendedPrecision
+        self.preferReversible = preferReversible
+        self.perTileMCT = perTileMCT
+    }
+    
+    /// Disabled MCT configuration (Part 1 compatible).
+    public static let disabled = J2KMCTEncodingConfiguration(mode: .disabled)
+}
+
+
 /// Performs multi-component transforms for JPEG 2000 Part 2 encoding and decoding.
 ///
 /// The `J2KMCT` class provides array-based multi-component transforms that can decorrelate
