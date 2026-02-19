@@ -1363,27 +1363,27 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 
 **Goal**: Implement support for custom wavelet kernels beyond standard 5/3 and 9/7 filters (Part 2 ADS marker).
 
-- [ ] Wavelet kernel framework
-  - [ ] Define wavelet kernel representation (coefficients, length, symmetry)
-  - [ ] Implement arbitrary kernel storage format
-  - [ ] Add kernel validation (orthogonality, perfect reconstruction)
-  - [ ] Create kernel library (Haar, CDF wavelets, Daubechies, etc.)
-  - [ ] Support symmetric and anti-symmetric filters
-- [ ] ADS (Arbitrary Decomposition Styles) marker support
-  - [ ] Implement ADS marker parsing
-  - [ ] Add ADS marker generation
-  - [ ] Support custom decomposition structures
-  - [ ] Validate decomposition styles
-- [ ] Filter implementation
-  - [ ] Generic convolution engine for arbitrary filters
-  - [ ] Support for lifting scheme implementation
-  - [ ] Boundary handling for custom filters
-  - [ ] Multi-level decomposition with arbitrary filters
-- [ ] Accelerate optimization for custom wavelets
-  - [ ] vDSP_conv for arbitrary filter convolution
-  - [ ] Optimized lifting scheme using vDSP operations
-  - [ ] SIMD-friendly memory layouts for coefficients
-  - [ ] Parallel wavelet transform for tiles
+- [x] Wavelet kernel framework
+  - [x] Define wavelet kernel representation (coefficients, length, symmetry)
+  - [x] Implement arbitrary kernel storage format
+  - [x] Add kernel validation (orthogonality, perfect reconstruction)
+  - [x] Create kernel library (Haar, CDF wavelets, Daubechies, etc.)
+  - [x] Support symmetric and anti-symmetric filters
+- [x] ADS (Arbitrary Decomposition Styles) marker support
+  - [x] Implement ADS marker parsing
+  - [x] Add ADS marker generation
+  - [x] Support custom decomposition structures
+  - [x] Validate decomposition styles
+- [x] Filter implementation
+  - [x] Generic convolution engine for arbitrary filters
+  - [x] Support for lifting scheme implementation
+  - [x] Boundary handling for custom filters
+  - [x] Multi-level decomposition with arbitrary filters
+- [x] Accelerate optimization for custom wavelets
+  - [x] vDSP_conv for arbitrary filter convolution
+  - [x] Optimized lifting scheme using vDSP operations
+  - [x] SIMD-friendly memory layouts for coefficients
+  - [x] Parallel wavelet transform for tiles
 
 **Apple Silicon Optimizations**:
 - vDSP_conv for fast convolution (10-20× faster than naive)
@@ -1392,6 +1392,13 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 - Metal preparation: filter coefficients in Metal-compatible format
 
 **x86-64 Fallback**: SSE/AVX-based convolution in isolated blocks.
+
+**Deliverables**:
+- `Sources/J2KCodec/J2KWaveletKernel.swift` - Kernel representation and library (6 kernels)
+- `Sources/J2KCodec/J2KArbitraryWavelet.swift` - ADS marker, convolution engine, 2D transform
+- `Sources/J2KAccelerate/J2KAcceleratedWavelet.swift` - vDSP-accelerated convolution
+- `Tests/J2KCodecTests/J2KArbitraryWaveletTests.swift` - 39 tests (all passing)
+- `Documentation/PART2_ARBITRARY_WAVELETS.md` - Feature guide
 
 ### Week 161-162: Arbitrary Wavelet Kernels - Integration
 
