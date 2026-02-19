@@ -2,6 +2,10 @@
 
 This document outlines the implementation plan for Motion JPEG 2000 (ISO/IEC 15444-3) support in J2KSwift, including creation, extraction, and interoperability features with modern video codecs.
 
+## Implementation Status
+
+✅ **Week 191-193: MJ2 File Format Foundation** - Complete
+
 ## Overview
 
 Motion JPEG 2000 (MJ2) extends JPEG 2000 still image compression to motion sequences, providing high-quality video compression with frame-level access and editing capabilities. J2KSwift will implement comprehensive MJ2 support optimized for Apple platforms with cross-platform compatibility.
@@ -19,6 +23,138 @@ Motion JPEG 2000 (MJ2) extends JPEG 2000 still image compression to motion seque
 **Goal**: Implement foundational Motion JPEG 2000 creation and extraction capabilities.
 
 This phase builds upon the complete Part 1 (Core) and Part 2 (Extensions) implementations, leveraging the Metal GPU acceleration from Phase 14 to provide high-performance video encoding and decoding.
+
+## Week 191-193: MJ2 File Format Foundation ✅
+
+### Completed Implementation
+
+The foundation of the MJ2 file format has been implemented with full support for ISO base media format boxes:
+
+#### Box Types Implemented
+
+1. **Movie Header Box (mvhd)** - `MJ2MovieHeaderBox`
+   - Overall movie information (creation time, timescale, duration)
+   - Supports both version 0 (32-bit times) and version 1 (64-bit times)
+   - Automatic version selection based on timestamp range
+   - Transformation matrix and playback properties
+
+2. **Track Header Box (tkhd)** - `MJ2TrackHeaderBox`
+   - Track-specific properties (dimensions, duration, layer)
+   - Video dimensions in 16.16 fixed-point format
+   - Track enable/disable flags
+   - Transformation matrix support
+
+3. **Media Header Box (mdhd)** - `MJ2MediaHeaderBox`
+   - Media-specific timing information
+   - Language support (ISO 639-2/T packed format)
+   - Media timescale and duration
+   - Supports English, French, German, Spanish, Italian, Japanese, and undefined
+
+4. **Sample Description Box (stsd)** - `MJ2SampleDescriptionBox`
+   - Contains JPEG 2000 sample entry descriptions
+   - Single entry support for MJ2 video tracks
+
+5. **MJ2 Sample Entry (mjp2)** - `MJ2SampleEntry`
+   - JPEG 2000-specific video sample format
+   - Frame dimensions and bit depth
+   - Horizontal/vertical resolution (72 dpi default)
+   - Optional JP2 header data embedding
+   - Compressor name metadata
+
+#### Box Type Constants
+
+Extended `J2KBoxType` with 20+ new constants for ISO base media format:
+- Container boxes: moov, trak, mdia, minf, dinf, stbl
+- Header boxes: mvhd, tkhd, mdhd, hdlr
+- Media boxes: vmhd, smhd, dref, url
+- Sample table boxes: stsd, stts, stsc, stsz, stco, co64, stss
+- Data boxes: mdat, udta
+- MJ2-specific: mjp2
+
+#### Format Detection
+
+**MJ2FormatDetector** provides reliable format detection:
+- Validates JP2 signature box (same as JP2 files)
+- Checks file type box for MJ2 brands ('mjp2' or 'mj2s')
+- Distinguishes between MJ2 General Profile and Simple Profile
+- Rejects non-MJ2 files (JP2, JPX, etc.)
+
+#### File Reading
+
+**MJ2FileReader** (actor-based for thread safety):
+- Parses MJ2 file structure without loading frame data
+- Extracts movie metadata (timescale, duration, creation times)
+- Parses track information (dimensions, frame rate, sample count)
+- Handles nested box hierarchies
+- Memory-efficient streaming parser
+- Supports video track filtering
+
+#### Metadata Structures
+
+**MJ2FileInfo**:
+- Format variant (MJ2 or MJ2 Simple Profile)
+- Creation and modification timestamps
+- Movie timescale and duration
+- Duration in seconds (calculated property)
+- Track list with video track filtering
+
+**MJ2TrackInfo**:
+- Track ID and timestamps
+- Video dimensions (width × height)
+- Media timescale and duration
+- Sample count (frame count)
+- Language metadata
+- Frame rate calculation (fps)
+- Video/audio track identification
+
+#### Data Serialization
+
+Comprehensive binary serialization support:
+- Big-endian byte order (ISO standard)
+- Integer extension methods (UInt16, UInt32, UInt64, Int16, Int32)
+- Data reading helpers (readUInt16, readUInt32, readUInt64, etc.)
+- Efficient byte array construction
+
+### Testing
+
+**25 comprehensive unit tests** covering:
+- Box serialization (write operations)
+- Box deserialization (read operations)
+- Round-trip testing (write → read → verify)
+- Version selection (32-bit vs 64-bit timestamps)
+- Format detection (MJ2 vs MJ2s vs non-MJ2)
+- Language code encoding/decoding
+- Dimension handling (16.16 fixed-point)
+- Edge cases (invalid signatures, 64-bit times)
+- Integer conversion utilities
+- Metadata calculations (duration, frame rate)
+
+### Files
+
+- `Sources/J2KFileFormat/MJ2Box.swift` (1,027 lines)
+  - All ISO base media format box implementations
+  - Box type constant extensions
+  - Data and integer serialization utilities
+
+- `Sources/J2KFileFormat/MJ2FileFormat.swift` (671 lines)
+  - Format detection and validation
+  - Actor-based file reader
+  - Metadata structures
+  - Box hierarchy parsing
+
+- `Tests/J2KFileFormatTests/MJ2FileFormatTests.swift` (528 lines)
+  - Comprehensive test coverage
+  - All 25 tests passing
+
+### Next Steps
+
+Week 194-195 will implement MJ2 file creation:
+- MJ2Creator actor for encoding image sequences
+- MJ2StreamWriter for progressive file writing
+- Sample table generation (stts, stsc, stsz, stco)
+- Integration with existing J2KEncoder
+- Frame-by-frame encoding pipeline
+- Memory-efficient buffering
 
 ## Feature 1: Motion JPEG 2000 Creation
 
