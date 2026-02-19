@@ -2213,11 +2213,329 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 - **Performance**: Validated performance targets on real hardware
 - **Power Efficiency**: Optimized for mobile and battery-powered devices
 
+## Phase 15: Motion JPEG 2000 (v1.8.0, Weeks 191-210)
+
+**Goal**: Implement Motion JPEG 2000 (ISO/IEC 15444-3) for video encoding and decoding with hardware-accelerated transcoding to modern video codecs.
+
+This phase extends J2KSwift to support motion sequences, enabling high-quality video compression with frame-level access and editing capabilities. The implementation leverages Metal GPU acceleration from Phase 14 and provides seamless integration with Apple's VideoToolbox for H.264/H.265 conversion.
+
+**Target Platform**: Apple platforms with VideoToolbox support (macOS 10.13+, iOS 11+, tvOS 11+) with cross-platform fallbacks.
+
+### Week 191-193: MJ2 File Format Foundation
+
+**Goal**: Implement the ISO base media file format structure for Motion JPEG 2000.
+
+- [ ] File format structure
+  - [ ] Implement ISO base media file format (ISO/IEC 14496-12) boxes
+  - [ ] MJ2 file signature and brand identification
+  - [ ] Movie header box (mvhd) implementation
+  - [ ] Track header box (tkhd) for video tracks
+  - [ ] Media header box (mdhd) implementation
+  - [ ] Sample description box (stsd) for JPEG 2000 samples
+- [ ] Box parsing infrastructure
+  - [ ] Generic box reader/writer framework
+  - [ ] Box hierarchy validation
+  - [ ] Nested box support
+  - [ ] Size and offset calculation
+  - [ ] Memory-efficient streaming parser
+- [ ] MJ2 metadata support
+  - [ ] Creation time and modification time
+  - [ ] Duration and timescale
+  - [ ] Language and quality metadata
+  - [ ] User data boxes (udta)
+  - [ ] Copyright information
+- [ ] Testing
+  - [ ] Unit tests for box parsing/writing
+  - [ ] File format validation tests
+  - [ ] Conformance to ISO/IEC 15444-3
+  - [ ] Edge case handling
+
+**Deliverables**:
+- `Sources/J2KFileFormat/MJ2FileFormat.swift` - MJ2 file format support
+- `Sources/J2KFileFormat/MJ2Box.swift` - ISO box structures
+- `Tests/J2KFileFormatTests/MJ2FileFormatTests.swift` - Format tests
+
+### Week 194-195: MJ2 Creation
+
+**Goal**: Implement Motion JPEG 2000 file creation from image sequences.
+
+- [ ] MJ2Creator implementation
+  - [ ] Actor-based creator for thread safety
+  - [ ] Frame-by-frame encoding pipeline
+  - [ ] Automatic timecode generation
+  - [ ] Frame rate configuration
+  - [ ] Profile/level constraints
+- [ ] Sample table generation
+  - [ ] Sample size table (stsz)
+  - [ ] Sample-to-chunk mapping (stsc)
+  - [ ] Chunk offset table (stco/co64)
+  - [ ] Time-to-sample table (stts)
+  - [ ] Sync sample table (stss)
+- [ ] Streaming writer
+  - [ ] Progressive file writing
+  - [ ] Memory-efficient frame buffering
+  - [ ] Large file support (>4GB)
+  - [ ] Interruptible encoding
+  - [ ] Progress reporting
+- [ ] Configuration API
+  - [ ] Frame rate and timescale settings
+  - [ ] Encoding quality parameters
+  - [ ] Profile selection (Simple, Broadcast, Cinema)
+  - [ ] Metadata configuration
+  - [ ] Audio track support (structure only)
+- [ ] Integration with encoder
+  - [ ] Use existing J2KEncoder for frame encoding
+  - [ ] Parallel frame encoding
+  - [ ] Rate control for consistent bitrate
+  - [ ] Quality consistency across frames
+
+**Deliverables**:
+- `Sources/J2KCodec/MJ2Creator.swift` - MJ2 creation API
+- `Sources/J2KCodec/MJ2StreamWriter.swift` - Streaming writer
+- `Tests/J2KCodecTests/MJ2CreatorTests.swift` - Creation tests
+- `Documentation/MOTION_JPEG2000.md` updates
+
+### Week 196-198: MJ2 Extraction
+
+**Goal**: Implement frame extraction from Motion JPEG 2000 files.
+
+- [ ] MJ2Extractor implementation
+  - [ ] Parse MJ2 file structure
+  - [ ] Extract individual frames
+  - [ ] Frame sequence reconstruction
+  - [ ] Metadata extraction
+  - [ ] Time-based frame selection
+- [ ] Frame extraction strategies
+  - [ ] Extract all frames
+  - [ ] Extract key frames only
+  - [ ] Extract frame range
+  - [ ] Extract by timestamp
+  - [ ] Extract with frame skip
+- [ ] Output options
+  - [ ] Individual JPEG 2000 files
+  - [ ] Image sequence
+  - [ ] In-memory frame array
+  - [ ] Custom naming strategies
+- [ ] Performance optimization
+  - [ ] Parallel frame decoding
+  - [ ] Selective frame reading
+  - [ ] Memory-mapped file access
+  - [ ] Cached sample table
+- [ ] Delta time calculation
+  - [ ] Frame duration calculation
+  - [ ] Timestamp reconstruction
+  - [ ] Edit list support
+  - [ ] Variable frame rate handling
+
+**Deliverables**:
+- `Sources/J2KCodec/MJ2Extractor.swift` - MJ2 extraction API
+- `Sources/J2KCodec/MJ2FrameSequence.swift` - Frame sequence type
+- `Tests/J2KCodecTests/MJ2ExtractorTests.swift` - Extraction tests
+
+### Week 199-200: MJ2 Playback Support
+
+**Goal**: Enable real-time playback and seeking within Motion JPEG 2000 files.
+
+- [ ] MJ2Player implementation
+  - [ ] Frame-accurate seeking
+  - [ ] Sequential playback
+  - [ ] Reverse playback support
+  - [ ] Playback speed control
+  - [ ] Loop and ping-pong modes
+- [ ] Frame caching
+  - [ ] LRU cache for decoded frames
+  - [ ] Predictive prefetching
+  - [ ] Memory pressure handling
+  - [ ] Cache size configuration
+- [ ] Synchronization
+  - [ ] Frame timing accuracy
+  - [ ] Audio-video sync (structure only)
+  - [ ] Dropped frame handling
+  - [ ] Playback statistics
+- [ ] Testing
+  - [ ] Playback accuracy tests
+  - [ ] Seek precision tests
+  - [ ] Memory usage tests
+  - [ ] Performance benchmarks
+
+**Deliverables**:
+- `Sources/J2KCodec/MJ2Player.swift` - Playback engine
+- `Tests/J2KCodecTests/MJ2PlayerTests.swift` - Playback tests
+
+### Week 201-203: VideoToolbox Integration (Apple Platforms)
+
+**Goal**: Hardware-accelerated transcoding to H.264/H.265 using VideoToolbox.
+
+- [ ] VideoToolbox encoder integration
+  - [ ] H.264 (AVC) encoding from MJ2
+  - [ ] H.265 (HEVC) encoding from MJ2
+  - [ ] Hardware encoder selection
+  - [ ] Compression session management
+  - [ ] Bitrate and quality control
+- [ ] VideoToolbox decoder integration
+  - [ ] Decode H.264/H.265 to J2KImage
+  - [ ] Hardware decoder usage
+  - [ ] Frame buffer management
+  - [ ] Color space conversion
+- [ ] Metal preprocessing
+  - [ ] Use Metal for color conversion
+  - [ ] GPU-based scaling
+  - [ ] Efficient pixel format conversion
+  - [ ] Zero-copy buffer sharing
+- [ ] Accelerate framework usage
+  - [ ] vImage for format conversion
+  - [ ] vDSP for audio processing (structure)
+  - [ ] Optimized memory operations
+- [ ] Performance optimization
+  - [ ] Asynchronous encoding pipeline
+  - [ ] Frame reordering for B-frames
+  - [ ] Multi-pass encoding
+  - [ ] Hardware encoder capabilities detection
+
+**Deliverables**:
+- `Sources/J2KCodec/MJ2VideoToolbox.swift` - VideoToolbox integration (#if canImport(VideoToolbox))
+- `Sources/J2KMetal/MJ2MetalPreprocessing.swift` - Metal preprocessing
+- `Tests/J2KCodecTests/MJ2VideoToolboxTests.swift` - Integration tests (Apple platforms only)
+- `Documentation/MJ2_VIDEOTOOLBOX.md` - VideoToolbox integration guide
+
+### Week 204-205: Cross-Platform Fallbacks
+
+**Goal**: Software-based transcoding for non-Apple platforms.
+
+- [ ] Software encoder interfaces
+  - [ ] Abstract encoder protocol
+  - [ ] x264 library integration (optional)
+  - [ ] x265 library integration (optional)
+  - [ ] System tool fallback (ffmpeg)
+  - [ ] Quality and performance trade-offs
+- [ ] x86-64 code isolation
+  - [ ] Move x86-64 specific code to separate files
+  - [ ] Clear `#if arch(x86_64)` guards
+  - [ ] Deprecation warnings
+  - [ ] Linux compatibility testing
+- [ ] Platform detection
+  - [ ] Runtime capability detection
+  - [ ] Graceful feature degradation
+  - [ ] Error reporting for unsupported features
+  - [ ] Platform-specific optimizations
+- [ ] Testing
+  - [ ] Cross-platform consistency tests
+  - [ ] Fallback validation
+  - [ ] Performance comparisons
+  - [ ] Error handling tests
+
+**Deliverables**:
+- `Sources/J2KCodec/MJ2SoftwareEncoder.swift` - Software encoder interface
+- `Sources/J2KCodec/x86/MJ2_x86.swift` - x86-64 specific code (isolated)
+- `Tests/J2KCodecTests/MJ2CrossPlatformTests.swift` - Cross-platform tests
+
+### Week 206-208: Performance Optimization
+
+**Goal**: Optimize Motion JPEG 2000 operations for real-time performance.
+
+- [ ] Encoding optimization
+  - [ ] Parallel frame encoding
+  - [ ] GPU acceleration utilization
+  - [ ] Memory allocation reduction
+  - [ ] Cache-friendly data access
+  - [ ] SIMD optimizations
+- [ ] Decoding optimization
+  - [ ] Parallel frame decoding
+  - [ ] Predictive frame prefetching
+  - [ ] Zero-copy operations
+  - [ ] Efficient memory management
+- [ ] I/O optimization
+  - [ ] Asynchronous file operations
+  - [ ] Memory-mapped files
+  - [ ] Buffered reading/writing
+  - [ ] Progressive loading
+- [ ] Benchmarking
+  - [ ] Real-time playback tests
+  - [ ] Encoding throughput (fps)
+  - [ ] Memory usage profiling
+  - [ ] Power consumption (mobile)
+  - [ ] Comparison with H.264/H.265
+- [ ] Documentation
+  - [ ] Performance characteristics
+  - [ ] Optimization guidelines
+  - [ ] Hardware requirements
+  - [ ] Best practices
+
+**Deliverables**:
+- `Tests/J2KCodecTests/MJ2PerformanceTests.swift` - Performance benchmarks
+- `Documentation/MJ2_PERFORMANCE.md` - Performance guide
+
+### Week 209-210: Testing, Documentation, and v1.8.0 Release
+
+**Goal**: Comprehensive validation and release preparation for v1.8.0.
+
+- [ ] Comprehensive testing
+  - [ ] Full test suite for MJ2 creation
+  - [ ] Full test suite for MJ2 extraction
+  - [ ] VideoToolbox integration tests
+  - [ ] Cross-platform validation
+  - [ ] Conformance to ISO/IEC 15444-3
+  - [ ] Interoperability with other MJ2 implementations
+- [ ] Performance validation
+  - [ ] Real-time encoding benchmarks
+  - [ ] Playback performance tests
+  - [ ] Hardware acceleration verification
+  - [ ] Memory usage validation
+  - [ ] Power efficiency tests (mobile)
+- [ ] Documentation
+  - [ ] Complete API documentation
+  - [ ] Motion JPEG 2000 guide
+  - [ ] VideoToolbox integration guide
+  - [ ] Performance tuning guide
+  - [ ] Migration guide from v1.7.0
+  - [ ] Code examples and tutorials
+- [ ] Release preparation
+  - [ ] RELEASE_NOTES_v1.8.0.md
+  - [ ] RELEASE_CHECKLIST_v1.8.0.md
+  - [ ] Version updates to 1.8.0
+  - [ ] API stability review
+  - [ ] Breaking changes documentation
+  - [ ] Update README.md with v1.8.0 features
+
+**Deliverables**:
+- `RELEASE_NOTES_v1.8.0.md` - Release notes
+- `RELEASE_CHECKLIST_v1.8.0.md` - Release checklist
+- `Documentation/MJ2_GUIDE.md` - Complete Motion JPEG 2000 guide
+- Updated VERSION file (1.8.0)
+- Comprehensive test suite (target: 100+ new tests)
+
+#### Phase 15 Summary
+
+**Expected Benefits**:
+- Motion JPEG 2000 video encoding and decoding
+- Hardware-accelerated H.264/H.265 transcoding on Apple platforms
+- Frame-level access and editing capabilities
+- Real-time playback support
+- Cross-platform compatibility with graceful fallbacks
+- Integration with Apple VideoToolbox for optimal performance
+- Support for professional video workflows (Simple, Broadcast, Cinema profiles)
+
+**Architecture Principles**:
+- **Apple-First**: VideoToolbox and Metal for hardware acceleration
+- **ISO Compliance**: Full adherence to ISO/IEC 15444-3 standard
+- **Clean Integration**: Builds on existing J2KSwift architecture
+- **Cross-Platform**: Software fallbacks for non-Apple platforms
+- **x86-64 Isolation**: Clear separation for potential removal
+- **Professional Quality**: Support for cinema and broadcast profiles
+- **Real-Time Performance**: Optimized for playback and editing workflows
+
+**Performance Targets**:
+- Real-time encoding: 30+ fps at 1080p on Apple Silicon
+- Real-time decoding: 60+ fps at 1080p on Apple Silicon
+- Hardware transcoding: 2-5× faster than software encoders
+- Memory efficiency: Streaming support for large files
+- Power efficiency: Optimized for mobile devices
+
 ---
 
 **Last Updated**: 2026-02-19
 **Current Phase**: Phase 14 - Metal GPU Acceleration (v1.7.0) ✅
 **Current Version**: 1.7.0 (Ready for Release)
 **Completed Phases**: Phases 0-14 (Weeks 1-190)
-**Next Phase**: TBD - Future development planning
+**Next Phase**: Phase 15 - Motion JPEG 2000 (v1.8.0, Weeks 191-210)
 **Achievement**: Complete JPEG 2000 Part 1 & 2 implementation with world-class Apple Silicon performance
