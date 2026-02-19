@@ -455,7 +455,9 @@ final class JP3DEncoderTests: XCTestCase {
             tileData: tileData,
             width: 4, height: 4, depth: 1,
             components: 1, bitDepth: 8,
-            decompositionLevels: 3, isLossless: true
+            levelsX: 3, levelsY: 3, levelsZ: 1,
+            tileSizeX: 4, tileSizeY: 4, tileSizeZ: 1,
+            isLossless: true
         )
 
         // Assert
@@ -483,7 +485,9 @@ final class JP3DEncoderTests: XCTestCase {
             tileData: tileData,
             width: 8, height: 8, depth: 4,
             components: 1, bitDepth: 8,
-            decompositionLevels: 2, isLossless: false
+            levelsX: 2, levelsY: 2, levelsZ: 1,
+            tileSizeX: 8, tileSizeY: 8, tileSizeZ: 4,
+            isLossless: false
         )
 
         // Assert

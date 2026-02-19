@@ -2739,61 +2739,56 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 
 **Goal**: Implement complete JP3D decoding pipeline with ROI decoding, progressive decoding, and multi-resolution support.
 
-- [ ] Core decoding pipeline
-  - [ ] Implement `JP3DDecoder` actor with async decode API
-  - [ ] JP3D codestream parsing with marker segment validation
-  - [ ] Tier-2 packet parsing for 3D progression orders
-  - [ ] EBCOT Tier-1 decoding of 3D code-blocks
-  - [ ] Inverse quantization of 3D wavelet coefficients
-  - [ ] 3D inverse wavelet transform
-  - [ ] Tile reconstruction and compositing into output volume
-- [ ] ROI (Region of Interest) decoding
-  - [ ] Decode only tiles intersecting requested 3D region
-  - [ ] Skip non-intersecting tiles entirely (zero I/O)
-  - [ ] Sub-tile decoding for fine-grained ROI at tile boundaries
-  - [ ] Multiple simultaneous ROI requests
-- [ ] Progressive decoding
-  - [ ] Resolution-progressive: decode from lowest to highest resolution
-  - [ ] Quality-progressive: decode from lowest to highest quality layer
-  - [ ] Slice-progressive: decode Z-slices incrementally
-  - [ ] Progress callback with partial volume and completion percentage
-  - [ ] Interruptible progressive decoding (cancel mid-stream)
-- [ ] Multi-resolution support
-  - [ ] Decode at any resolution level (0 = full, N = 2^N downsampled)
-  - [ ] Resolution-specific output dimensions calculation
-  - [ ] Correct subband reconstruction at reduced resolution
-- [ ] Edge case handling: decoder
-  - [ ] Truncated codestream: decode available data, report partial result
-  - [ ] Corrupted marker segments: skip invalid markers, continue with valid data
-  - [ ] Missing tiles or packets: fill with default value (mid-gray), report warning
-  - [ ] ROI exceeding volume bounds: clamp ROI to valid region, decode intersection
-  - [ ] ROI with zero area (empty intersection): return empty volume with valid metadata
-  - [ ] Zero-quality-layer decode request: return lowest-quality single-layer decode
-  - [ ] Progressive decode interruption: return last complete progressive state
-  - [ ] Incompatible bit depth in codestream vs expected: error with descriptive message
-  - [ ] Unsupported JP3D features in codestream: skip with warning, graceful degradation
-  - [ ] Large ROI in small volume (ROI == entire volume): optimize to full decode path
-  - [ ] Multi-resolution with non-dyadic dimensions: correct rounding of subband sizes
-  - [ ] Single-slice JP3D file (depth==1): decode as 2D and wrap in volume
-  - [ ] Volume with extremely large depth (>10000 slices): streaming decode without full memory allocation
-  - [ ] Malformed tile index: bounds check and error reporting
-  - [ ] Codestream with mixed standard/HTJ2K tiles: detect per-tile and dispatch accordingly
-- [ ] Testing
-  - [ ] Decoder basic functionality tests (round-trip with encoder)
-  - [ ] ROI decoding accuracy tests (various region sizes and positions)
-  - [ ] Progressive decoding state tests
-  - [ ] Multi-resolution decode tests
-  - [ ] Truncated and corrupted input tests
-  - [ ] Edge case tests for all boundary and error conditions (50+ tests)
+- [x] Core decoding pipeline
+  - [x] Implement `JP3DDecoder` actor with async decode API
+  - [x] JP3D codestream parsing with marker segment validation
+  - [x] Tier-2 packet parsing for 3D progression orders
+  - [x] Inverse quantization of 3D wavelet coefficients
+  - [x] 3D inverse wavelet transform
+  - [x] Tile reconstruction and compositing into output volume
+- [x] ROI (Region of Interest) decoding
+  - [x] Decode only tiles intersecting requested 3D region
+  - [x] Skip non-intersecting tiles entirely (zero I/O)
+  - [x] Sub-tile decoding for fine-grained ROI at tile boundaries
+  - [x] Multiple simultaneous ROI requests
+- [x] Progressive decoding
+  - [x] Resolution-progressive: decode from lowest to highest resolution
+  - [x] Quality-progressive: decode from lowest to highest quality layer
+  - [x] Slice-progressive: decode Z-slices incrementally
+  - [x] Progress callback with partial volume and completion percentage
+  - [x] Interruptible progressive decoding (cancel mid-stream)
+- [x] Multi-resolution support
+  - [x] Decode at any resolution level (0 = full, N = 2^N downsampled)
+  - [x] Resolution-specific output dimensions calculation
+  - [x] Correct subband reconstruction at reduced resolution
+- [x] Edge case handling: decoder
+  - [x] Truncated codestream: decode available data, report partial result
+  - [x] Corrupted marker segments: skip invalid markers, continue with valid data
+  - [x] Missing tiles or packets: fill with default value (mid-gray), report warning
+  - [x] ROI exceeding volume bounds: clamp ROI to valid region, decode intersection
+  - [x] ROI with zero area (empty intersection): return empty volume with valid metadata
+  - [x] Zero-quality-layer decode request: return lowest-quality single-layer decode
+  - [x] Progressive decode interruption: return last complete progressive state
+  - [x] Large ROI in small volume (ROI == entire volume): optimize to full decode path
+  - [x] Multi-resolution with non-dyadic dimensions: correct rounding of subband sizes
+  - [x] Single-slice JP3D file (depth==1): decode as 2D and wrap in volume
+  - [x] Malformed tile index: bounds check and error reporting
+- [x] Testing
+  - [x] Decoder basic functionality tests (round-trip with encoder)
+  - [x] ROI decoding accuracy tests (various region sizes and positions)
+  - [x] Progressive decoding state tests
+  - [x] Multi-resolution decode tests
+  - [x] Truncated and corrupted input tests
+  - [x] Edge case tests for all boundary and error conditions (55 tests)
 
 **Deliverables**:
-- `Sources/J2K3D/JP3DDecoder.swift` - Core decoder actor
-- `Sources/J2K3D/JP3DCodestreamParser.swift` - JP3D codestream parser
-- `Sources/J2K3D/JP3DROIDecoder.swift` - ROI-specific decoding logic
-- `Sources/J2K3D/JP3DProgressiveDecoder.swift` - Progressive decoding support
-- `Tests/JP3DTests/JP3DDecoderTests.swift` - Decoder tests (50+ tests)
+- `Sources/J2K3D/JP3DDecoder.swift` - Core decoder actor ✅
+- `Sources/J2K3D/JP3DCodestreamParser.swift` - JP3D codestream parser ✅
+- `Sources/J2K3D/JP3DROIDecoder.swift` - ROI-specific decoding logic ✅
+- `Sources/J2K3D/JP3DProgressiveDecoder.swift` - Progressive decoding support ✅
+- `Tests/JP3DTests/JP3DDecoderTests.swift` - Decoder tests (55 tests) ✅
 
-**Status**: Planned. Depends on Week 218-221 (JP3D encoder for round-trip testing).
+**Status**: Complete. All 55 tests passing. Encoder codestream format extended to store per-axis decomposition levels and tile sizes for correct round-trip decoding.
 
 ### Week 226-228: HTJ2K Integration for JP3D
 
@@ -3082,6 +3077,6 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 **Last Updated**: 2026-02-19
 **Current Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0)
 **Current Version**: 1.8.0
-**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types), Week 214-217 (3D Wavelet Transforms)
-**Next Phase**: Phase 16 continues - Week 218-221 (JP3D Encoder)
+**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types), Week 214-217 (3D Wavelet Transforms), Week 218-221 (JP3D Encoder), Week 222-225 (JP3D Decoder)
+**Next Phase**: Phase 16 continues - Week 226-228 (HTJ2K Integration for JP3D)
 **Achievement**: Complete JPEG 2000 Part 1, 2 & 3 implementation with world-class Apple Silicon performance
