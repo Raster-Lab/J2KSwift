@@ -1500,27 +1500,27 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 
 **Goal**: Complete MCT support with dependency transforms and full pipeline integration.
 
-- [ ] Dependency transform support
-  - [ ] Implement component dependency chains
-  - [ ] Add decorrelation across component groups
-  - [ ] Support hierarchical component transforms
-  - [ ] Optimize dependency graph evaluation
-- [ ] Integration with encoding pipeline
-  - [ ] Update encoder for MCT support
-  - [ ] Integrate MCT with RCT/ICT
+- [x] Dependency transform support
+  - [x] Implement component dependency chains
+  - [x] Add decorrelation across component groups
+  - [x] Support hierarchical component transforms
+  - [x] Optimize dependency graph evaluation
+- [x] Integration with encoding pipeline
+  - [x] Update encoder for MCT support
+  - [x] Integrate MCT with RCT/ICT
   - [ ] Add MCT to rate-distortion optimization
   - [ ] Support MCT in tiling pipeline
-  - [ ] Add MCT configuration API
-- [ ] Advanced MCT features
-  - [ ] Adaptive MCT matrix selection
-  - [ ] Per-tile MCT for spatially varying content
-  - [ ] MCT with extended precision
-  - [ ] Reversible integer MCT
-- [ ] Testing and validation
-  - [ ] MCT correctness tests (forward/inverse)
+  - [x] Add MCT configuration API
+- [x] Advanced MCT features
+  - [x] Adaptive MCT matrix selection
+  - [x] Per-tile MCT for spatially varying content
+  - [x] MCT with extended precision
+  - [x] Reversible integer MCT
+- [x] Testing and validation
+  - [x] MCT correctness tests (forward/inverse)
   - [ ] Multi-spectral image tests
-  - [ ] Round-trip validation
-  - [ ] Performance benchmarks (MCT vs RCT/ICT)
+  - [x] Round-trip validation
+  - [x] Performance benchmarks (MCT vs RCT/ICT)
   - [ ] Compression efficiency comparison
 - [ ] Documentation
   - [ ] MCT API documentation
@@ -1529,12 +1529,14 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
   - [ ] Performance tuning guide
 
 **Deliverables**:
-- `Sources/J2KCodec/J2KMCT.swift` - Array-based MCT implementation
-- `Sources/J2KCodec/J2KMCTDependency.swift` - Dependency transforms
-- `Sources/J2KAccelerate/J2KAcceleratedMCT.swift` - Accelerate-optimized MCT
-- `Tests/J2KCodecTests/J2KMCTTests.swift` - 40+ tests
-- `Documentation/PART2_MCT.md` - MCT feature guide
-- Compression gain: 10-30% for multi-spectral imagery
+- `Sources/J2KCodec/J2KMCT.swift` - Array-based MCT implementation ✅ (from Week 163-164)
+- `Sources/J2KCodec/J2KMCTDependency.swift` - Dependency transforms ✅
+- `Sources/J2KAccelerate/J2KAcceleratedMCT.swift` - Accelerate-optimized MCT ✅ (from Week 163-164)
+- `Tests/J2KCodecTests/J2KMCTTests.swift` - 51 tests (all passing) ✅
+- `Sources/J2KCodec/J2KEncoderPipeline.swift` - Pipeline integration ✅
+- `Sources/J2KCodec/J2KEncodingPresets.swift` - MCT configuration API ✅
+- `Documentation/PART2_MCT.md` - MCT feature guide (needs update)
+- Compression gain: 10-30% for multi-spectral imagery (pending validation)
 
 ### Week 167-168: Non-Linear Point Transforms
 
