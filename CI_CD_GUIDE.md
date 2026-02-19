@@ -101,6 +101,13 @@ J2KSwift uses GitHub Actions for automated testing, code quality checks, documen
    - Extracted release notes from `RELEASE_NOTES_v*.md` files
    - Auto-generated release notes as fallback
    - Release assets (if any)
+3. **Create Release Branch**: Automatically creates a `release/vX.Y.Z` branch from the tag, enabling hotfix support for each release
+
+**Release Branches**:
+- A `release/vX.Y.Z` branch is automatically created for every release (e.g., `release/v1.2.0`)
+- If the branch already exists, the step is skipped
+- CI workflows (CI, Code Quality, Swift Build and Test) run on `release/*` branches
+- Hotfixes can be applied to release branches and cherry-picked back to `main`/`develop`
 
 **Creating a Release**:
 ```bash
@@ -119,7 +126,9 @@ git push
 git tag -a v1.2.0 -m "Release v1.2.0"
 git push origin v1.2.0
 
-# The workflow will automatically create the GitHub release
+# The workflow will automatically:
+# - Create the GitHub release
+# - Create a release/v1.2.0 branch
 ```
 
 ## Dependabot Configuration
