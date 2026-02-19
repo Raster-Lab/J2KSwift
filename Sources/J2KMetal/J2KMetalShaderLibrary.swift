@@ -64,6 +64,20 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtForwardLiftingVertical = "j2k_dwt_forward_lifting_vertical"
     /// Inverse lifting scheme DWT (vertical) with configurable lifting steps.
     case dwtInverseLiftingVertical = "j2k_dwt_inverse_lifting_vertical"
+    /// Parametric non-linear transform (gamma, log, exp).
+    case nltParametric = "j2k_nlt_parametric"
+    /// LUT-based non-linear transform.
+    case nltLUT = "j2k_nlt_lut"
+    /// Optimized 3×3 MCT matrix multiply.
+    case mctMatrixMultiply3x3 = "j2k_mct_matrix_multiply_3x3"
+    /// Optimized 4×4 MCT matrix multiply.
+    case mctMatrixMultiply4x4 = "j2k_mct_matrix_multiply_4x4"
+    /// Fused color + MCT transform.
+    case colorMCTFused = "j2k_color_mct_fused"
+    /// Perceptual Quantizer (SMPTE ST 2084).
+    case nltPQ = "j2k_nlt_pq"
+    /// Hybrid Log-Gamma (ITU-R BT.2100).
+    case nltHLG = "j2k_nlt_hlg"
 }
 
 // MARK: - Shader Library Configuration
@@ -1129,6 +1143,218 @@ enum J2KMetalShaderSource {
                         : (height - 2) * width + col;
                     data[evenIdx] += coeff * (data[topOdd] + data[botOdd]);
                 }
+            }
+        }
+    }
+
+    // MARK: - Parametric Non-Linear Transform
+
+    kernel void j2k_nlt_parametric(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant uint& count [[buffer(2)]],
+        constant uint& transformType [[buffer(3)]],
+        constant float& param1 [[buffer(4)]],
+        constant float& param2 [[buffer(5)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+
+        float val = input[gid];
+
+        // transformType: 0=gamma, 1=log, 2=exp
+        if (transformType == 0) {
+            // Gamma correction: output = sign(val) * |val|^param1
+            float sign = (val >= 0.0f) ? 1.0f : -1.0f;
+            output[gid] = sign * pow(abs(val), param1);
+        } else if (transformType == 1) {
+            // Logarithmic: output = param1 * log(1 + param2 * |val|) * sign(val)
+            float sign = (val >= 0.0f) ? 1.0f : -1.0f;
+            output[gid] = sign * param1 * log(1.0f + param2 * abs(val));
+        } else {
+            // Exponential: output = param1 * (exp(param2 * |val|) - 1) * sign(val)
+            float sign = (val >= 0.0f) ? 1.0f : -1.0f;
+            output[gid] = sign * param1 * (exp(param2 * abs(val)) - 1.0f);
+        }
+    }
+
+    // MARK: - LUT-Based Non-Linear Transform
+
+    kernel void j2k_nlt_lut(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        device const float* lut [[buffer(2)]],
+        constant uint& count [[buffer(3)]],
+        constant uint& lutSize [[buffer(4)]],
+        constant float& inputMin [[buffer(5)]],
+        constant float& inputMax [[buffer(6)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+
+        float val = input[gid];
+        float range = inputMax - inputMin;
+        if (range <= 0.0f) {
+            output[gid] = lut[0];
+            return;
+        }
+
+        // Normalize to [0, lutSize-1]
+        float normalized = (val - inputMin) / range * float(lutSize - 1);
+        normalized = clamp(normalized, 0.0f, float(lutSize - 1));
+
+        // Linear interpolation
+        uint idx0 = uint(normalized);
+        uint idx1 = min(idx0 + 1, lutSize - 1);
+        float frac = normalized - float(idx0);
+
+        output[gid] = lut[idx0] * (1.0f - frac) + lut[idx1] * frac;
+    }
+
+    // MARK: - Optimized 3×3 MCT Matrix Multiply
+
+    kernel void j2k_mct_matrix_multiply_3x3(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant float* matrix [[buffer(2)]],
+        constant uint& sampleCount [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= sampleCount) return;
+
+        float c0 = input[gid];
+        float c1 = input[sampleCount + gid];
+        float c2 = input[2 * sampleCount + gid];
+
+        output[gid]                  = matrix[0] * c0 + matrix[1] * c1 + matrix[2] * c2;
+        output[sampleCount + gid]    = matrix[3] * c0 + matrix[4] * c1 + matrix[5] * c2;
+        output[2 * sampleCount + gid] = matrix[6] * c0 + matrix[7] * c1 + matrix[8] * c2;
+    }
+
+    // MARK: - Optimized 4×4 MCT Matrix Multiply
+
+    kernel void j2k_mct_matrix_multiply_4x4(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant float* matrix [[buffer(2)]],
+        constant uint& sampleCount [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= sampleCount) return;
+
+        float c0 = input[gid];
+        float c1 = input[sampleCount + gid];
+        float c2 = input[2 * sampleCount + gid];
+        float c3 = input[3 * sampleCount + gid];
+
+        output[gid]                  = matrix[0]  * c0 + matrix[1]  * c1 + matrix[2]  * c2 + matrix[3]  * c3;
+        output[sampleCount + gid]    = matrix[4]  * c0 + matrix[5]  * c1 + matrix[6]  * c2 + matrix[7]  * c3;
+        output[2 * sampleCount + gid] = matrix[8]  * c0 + matrix[9]  * c1 + matrix[10] * c2 + matrix[11] * c3;
+        output[3 * sampleCount + gid] = matrix[12] * c0 + matrix[13] * c1 + matrix[14] * c2 + matrix[15] * c3;
+    }
+
+    // MARK: - Fused Color Transform + MCT
+
+    kernel void j2k_color_mct_fused(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant float* colorMatrix [[buffer(2)]],
+        constant float* mctMatrix [[buffer(3)]],
+        constant uint& componentCount [[buffer(4)]],
+        constant uint& sampleCount [[buffer(5)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= sampleCount) return;
+
+        // Apply color transform then MCT in a single pass
+        // First: color transform
+        float temp[16]; // Max 16 components
+        for (uint c = 0; c < componentCount && c < 16; c++) {
+            float sum = 0.0f;
+            for (uint k = 0; k < componentCount; k++) {
+                sum += colorMatrix[c * componentCount + k] * input[k * sampleCount + gid];
+            }
+            temp[c] = sum;
+        }
+
+        // Second: MCT
+        for (uint c = 0; c < componentCount && c < 16; c++) {
+            float sum = 0.0f;
+            for (uint k = 0; k < componentCount; k++) {
+                sum += mctMatrix[c * componentCount + k] * temp[k];
+            }
+            output[c * sampleCount + gid] = sum;
+        }
+    }
+
+    // MARK: - Perceptual Quantizer (PQ) - SMPTE ST 2084
+
+    kernel void j2k_nlt_pq(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant uint& count [[buffer(2)]],
+        constant uint& inverse [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+
+        // PQ constants (SMPTE ST 2084)
+        const float m1 = 0.1593017578125f;
+        const float m2 = 78.84375f;
+        const float c1 = 0.8359375f;
+        const float c2 = 18.8515625f;
+        const float c3 = 18.6875f;
+
+        float val = input[gid];
+
+        if (inverse == 0) {
+            // Forward PQ: linear to PQ
+            float y = clamp(val, 0.0f, 1.0f);
+            float ym1 = pow(y, m1);
+            output[gid] = pow((c1 + c2 * ym1) / (1.0f + c3 * ym1), m2);
+        } else {
+            // Inverse PQ: PQ to linear
+            float n = clamp(val, 0.0f, 1.0f);
+            float nm2 = pow(n, 1.0f / m2);
+            float num = max(nm2 - c1, 0.0f);
+            float den = c2 - c3 * nm2;
+            output[gid] = pow(num / max(den, 1e-10f), 1.0f / m1);
+        }
+    }
+
+    // MARK: - Hybrid Log-Gamma (HLG) - ITU-R BT.2100
+
+    kernel void j2k_nlt_hlg(
+        device const float* input [[buffer(0)]],
+        device float* output [[buffer(1)]],
+        constant uint& count [[buffer(2)]],
+        constant uint& inverse [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+
+        // HLG constants
+        const float a = 0.17883277f;
+        const float b = 0.28466892f;  // 1 - 4*a
+        const float c = 0.55991073f;  // 0.5 - a*ln(4*a)
+
+        float val = input[gid];
+
+        if (inverse == 0) {
+            // Forward HLG: linear to HLG
+            float e = clamp(val, 0.0f, 1.0f);
+            if (e <= 1.0f / 12.0f) {
+                output[gid] = sqrt(3.0f * e);
+            } else {
+                output[gid] = a * log(12.0f * e - b) + c;
+            }
+        } else {
+            // Inverse HLG: HLG to linear
+            float ep = clamp(val, 0.0f, 1.0f);
+            if (ep <= 0.5f) {
+                output[gid] = ep * ep / 3.0f;
+            } else {
+                output[gid] = (exp((ep - c) / a) + b) / 12.0f;
             }
         }
     }
