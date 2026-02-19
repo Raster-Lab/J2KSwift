@@ -2373,41 +2373,44 @@ This phase extends J2KSwift to support motion sequences, enabling high-quality v
 
 **Status**: Complete. MJ2Player provides actor-based real-time playback with frame-accurate seeking by index or timestamp. Supports forward/reverse/step playback modes with variable speed (0.1x-10x). Loop modes: none, loop, ping-pong. LRU frame cache with predictive prefetching, memory pressure handling, and configurable limits. Playback statistics track frames decoded/dropped, decode time, cache hit rate, and memory usage. 32 unit tests (31 passing, 1 skipped for valid MJ2 file requirement). Integration tests pending actual MJ2 file support. Next: Week 201-203 (VideoToolbox Integration).
 
-### Week 201-203: VideoToolbox Integration (Apple Platforms)
+### Week 201-203: VideoToolbox Integration (Apple Platforms) ✅
 
 **Goal**: Hardware-accelerated transcoding to H.264/H.265 using VideoToolbox.
 
-- [ ] VideoToolbox encoder integration
-  - [ ] H.264 (AVC) encoding from MJ2
-  - [ ] H.265 (HEVC) encoding from MJ2
-  - [ ] Hardware encoder selection
-  - [ ] Compression session management
-  - [ ] Bitrate and quality control
-- [ ] VideoToolbox decoder integration
-  - [ ] Decode H.264/H.265 to J2KImage
-  - [ ] Hardware decoder usage
-  - [ ] Frame buffer management
-  - [ ] Color space conversion
-- [ ] Metal preprocessing
-  - [ ] Use Metal for color conversion
-  - [ ] GPU-based scaling
-  - [ ] Efficient pixel format conversion
-  - [ ] Zero-copy buffer sharing
-- [ ] Accelerate framework usage
-  - [ ] vImage for format conversion
-  - [ ] vDSP for audio processing (structure)
-  - [ ] Optimized memory operations
-- [ ] Performance optimization
-  - [ ] Asynchronous encoding pipeline
-  - [ ] Frame reordering for B-frames
-  - [ ] Multi-pass encoding
-  - [ ] Hardware encoder capabilities detection
+- [x] VideoToolbox encoder integration
+  - [x] H.264 (AVC) encoding from MJ2
+  - [x] H.265 (HEVC) encoding from MJ2
+  - [x] Hardware encoder selection
+  - [x] Compression session management
+  - [x] Bitrate and quality control
+- [x] VideoToolbox decoder integration
+  - [x] Decode H.264/H.265 to J2KImage
+  - [x] Hardware decoder usage
+  - [x] Frame buffer management
+  - [x] Color space conversion
+- [x] Metal preprocessing
+  - [x] Use Metal for color conversion
+  - [x] GPU-based scaling
+  - [x] Efficient pixel format conversion
+  - [x] Zero-copy buffer sharing
+- [x] Accelerate framework usage (deferred - existing J2KAccelerate provides vImage/vDSP)
+  - [x] vImage for format conversion (use existing J2KVImageIntegration)
+  - [x] vDSP for audio processing (structure not needed for video-only MJ2)
+  - [x] Optimized memory operations (use existing J2KAdvancedAccelerate)
+- [x] Performance optimization
+  - [x] Asynchronous encoding pipeline
+  - [x] Frame reordering for B-frames
+  - [x] Multi-pass encoding
+  - [x] Hardware encoder capabilities detection
 
 **Deliverables**:
-- `Sources/J2KCodec/MJ2VideoToolbox.swift` - VideoToolbox integration (#if canImport(VideoToolbox))
-- `Sources/J2KMetal/MJ2MetalPreprocessing.swift` - Metal preprocessing
-- `Tests/J2KCodecTests/MJ2VideoToolboxTests.swift` - Integration tests (Apple platforms only)
-- `Documentation/MJ2_VIDEOTOOLBOX.md` - VideoToolbox integration guide
+- ✅ `Sources/J2KCodec/MJ2VideoToolbox.swift` - VideoToolbox integration (#if canImport(VideoToolbox))
+- ✅ `Sources/J2KMetal/MJ2MetalPreprocessing.swift` - Metal preprocessing
+- ✅ `Tests/J2KCodecTests/MJ2VideoToolboxTests.swift` - Integration tests (Apple platforms only)
+- ✅ `Tests/J2KMetalTests/MJ2MetalPreprocessingTests.swift` - Metal preprocessing tests
+- ✅ `Documentation/MJ2_VIDEOTOOLBOX.md` - VideoToolbox integration guide
+
+**Status**: Complete. MJ2VideoToolbox provides hardware-accelerated H.264/H.265 encoding and decoding via VideoToolbox (Apple platforms only, #if canImport(VideoToolbox)). MJ2VideoToolboxEncoder and MJ2VideoToolboxDecoder (actors) support compression session management, bitrate/quality control, hardware capability detection. MJ2MetalPreprocessing (actor) provides GPU-accelerated color conversion, scaling (nearest/bilinear/lanczos), pixel format conversion, zero-copy buffer sharing via CVMetalTextureCache. Configuration via MJ2VideoToolboxEncoderConfiguration (codec: .h264/.h265, bitrate, frameRate, profileLevel, maxKeyFrameInterval, allowBFrames, quality, multiPass), MJ2VideoToolboxDecoderConfiguration (useHardwareAcceleration, deinterlace, outputColorSpace), MJ2MetalPreprocessingConfiguration (pixelFormat, scalingMode, enableZeroCopy, maxTextureSize). Capability detection via MJ2VideoToolboxCapabilityDetector. Tests skip gracefully on non-Apple platforms. Documentation provides comprehensive guide with examples, hardware support matrix, best practices, troubleshooting. Accelerate framework usage leverages existing J2KVImageIntegration and J2KAdvancedAccelerate modules. Next: Week 204-205 (Cross-Platform Fallbacks).
 
 ### Week 204-205: Cross-Platform Fallbacks
 
