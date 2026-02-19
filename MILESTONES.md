@@ -1287,28 +1287,28 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 
 **Goal**: Implement Part 2 variable DC offset and extended precision arithmetic for improved compression of images with non-zero mean values.
 
-- [ ] Variable DC offset implementation
-  - [ ] Implement per-component DC offset extraction
-  - [ ] Add DC offset signaling in codestream (DCO marker segment)
-  - [ ] Integrate DC offset into quantization pipeline
-  - [ ] Support both encoder and decoder paths
-  - [ ] Add DC offset optimization for natural images
-- [ ] Extended precision arithmetic
-  - [ ] Support for guard bits beyond standard precision
-  - [ ] High-precision intermediate calculations
-  - [ ] Extended dynamic range for wavelet coefficients
-  - [ ] Precision preservation through pipeline
-  - [ ] Rounding mode control (truncate, round-to-nearest, round-to-even)
-- [ ] Accelerate framework optimization
-  - [ ] Use vDSP for DC offset removal/addition (vector operations)
-  - [ ] Optimize DC offset computation using vDSP_meanv
-  - [ ] Leverage NEON SIMD on Apple Silicon for offset operations
-  - [ ] Use Accelerate's vDSP_vsadd for efficient offset application
-- [ ] Testing and validation
-  - [ ] Unit tests for DC offset calculation
-  - [ ] Round-trip tests with various DC values
-  - [ ] Precision validation tests
-  - [ ] Performance benchmarks (Accelerate vs scalar)
+- [x] Variable DC offset implementation
+  - [x] Implement per-component DC offset extraction
+  - [x] Add DC offset signaling in codestream (DCO marker segment)
+  - [x] Integrate DC offset into quantization pipeline
+  - [x] Support both encoder and decoder paths
+  - [x] Add DC offset optimization for natural images
+- [x] Extended precision arithmetic
+  - [x] Support for guard bits beyond standard precision
+  - [x] High-precision intermediate calculations
+  - [x] Extended dynamic range for wavelet coefficients
+  - [x] Precision preservation through pipeline
+  - [x] Rounding mode control (truncate, round-to-nearest, round-to-even)
+- [x] Accelerate framework optimization
+  - [x] Use vDSP for DC offset removal/addition (vector operations)
+  - [x] Optimize DC offset computation using vDSP_meanv
+  - [x] Leverage NEON SIMD on Apple Silicon for offset operations
+  - [x] Use Accelerate's vDSP_vsadd for efficient offset application
+- [x] Testing and validation
+  - [x] Unit tests for DC offset calculation
+  - [x] Round-trip tests with various DC values
+  - [x] Precision validation tests
+  - [x] Performance benchmarks (Accelerate vs scalar)
 
 **Apple Silicon Optimizations**:
 - vDSP vector operations for DC offset (4-8× faster than scalar)
