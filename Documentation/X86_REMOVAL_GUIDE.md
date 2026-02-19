@@ -23,6 +23,25 @@ This guide documents all x86-64 specific code in J2KSwift and provides instructi
 #if canImport(Accelerate) && arch(x86_64)
 ```
 
+### 2. J2KCodec Module (Motion JPEG 2000)
+
+#### `Sources/J2KCodec/x86/MJ2_x86.swift` (106 lines)
+**Purpose**: x86-64 specific MJ2 operations and detection
+**Status**: Isolated in dedicated x86/ directory with deprecation notices
+**Dependencies**: None (Foundation only)
+
+**Key Components**:
+- `MJ2X86` struct providing x86-64 detection and warnings
+- CPU feature detection (SSE4.2, AVX, AVX2)
+- Deprecation warning messages for users
+
+**Conditional Compilation**:
+```swift
+#if arch(x86_64)
+```
+
+**Note**: VideoToolbox is not available on non-Apple x86-64 platforms, so hardware acceleration is limited to Apple Intel Macs.
+
 #### `Sources/J2KAccelerate/J2KHTSIMDAcceleration.swift`
 **Purpose**: SIMD acceleration with cross-platform support
 **Status**: Contains x86-64 fallback paths alongside ARM64 optimizations
@@ -60,12 +79,14 @@ private static func detectX86SIMDLevel() -> SIMDLevel {
 
 #### Step 1: Remove Dedicated x86-64 Files
 ```bash
-# Remove the x86 directory
+# Remove the x86 directories
 rm -rf Sources/J2KAccelerate/x86/
+rm -rf Sources/J2KCodec/x86/
 ```
 
 **Files to Remove**:
 - `Sources/J2KAccelerate/x86/J2KAccelerate_x86.swift`
+- `Sources/J2KCodec/x86/MJ2_x86.swift`
 
 #### Step 2: Clean Up Conditional Compilation
 
