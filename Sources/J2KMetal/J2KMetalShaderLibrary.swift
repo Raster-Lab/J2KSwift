@@ -48,6 +48,22 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case quantize = "j2k_quantize"
     /// Dequantization (scalar deadzone).
     case dequantize = "j2k_dequantize"
+    /// Forward arbitrary wavelet transform (horizontal) using generic convolution.
+    case dwtForwardArbitraryHorizontal = "j2k_dwt_forward_arbitrary_horizontal"
+    /// Inverse arbitrary wavelet transform (horizontal) using generic convolution.
+    case dwtInverseArbitraryHorizontal = "j2k_dwt_inverse_arbitrary_horizontal"
+    /// Forward arbitrary wavelet transform (vertical) using generic convolution.
+    case dwtForwardArbitraryVertical = "j2k_dwt_forward_arbitrary_vertical"
+    /// Inverse arbitrary wavelet transform (vertical) using generic convolution.
+    case dwtInverseArbitraryVertical = "j2k_dwt_inverse_arbitrary_vertical"
+    /// Forward lifting scheme DWT (horizontal) with configurable lifting steps.
+    case dwtForwardLiftingHorizontal = "j2k_dwt_forward_lifting_horizontal"
+    /// Inverse lifting scheme DWT (horizontal) with configurable lifting steps.
+    case dwtInverseLiftingHorizontal = "j2k_dwt_inverse_lifting_horizontal"
+    /// Forward lifting scheme DWT (vertical) with configurable lifting steps.
+    case dwtForwardLiftingVertical = "j2k_dwt_forward_lifting_vertical"
+    /// Inverse lifting scheme DWT (vertical) with configurable lifting steps.
+    case dwtInverseLiftingVertical = "j2k_dwt_inverse_lifting_vertical"
 }
 
 // MARK: - Shader Library Configuration
@@ -708,6 +724,412 @@ enum J2KMetalShaderSource {
         } else {
             float sign = (val > 0) ? 1.0f : -1.0f;
             output[gid] = sign * (float(abs(val)) + 0.5f) * stepSize;
+        }
+    }
+
+    // MARK: - Forward Arbitrary Wavelet (Horizontal) - Generic Convolution
+
+    kernel void j2k_dwt_forward_arbitrary_horizontal(
+        device const float* input [[buffer(0)]],
+        device float* lowpass [[buffer(1)]],
+        device float* highpass [[buffer(2)]],
+        device const float* analysisLow [[buffer(3)]],
+        device const float* analysisHigh [[buffer(4)]],
+        constant uint& width [[buffer(5)]],
+        constant uint& height [[buffer(6)]],
+        constant uint& filterLowLen [[buffer(7)]],
+        constant uint& filterHighLen [[buffer(8)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+        uint halfLow = filterLowLen / 2;
+        uint halfHigh = filterHighLen / 2;
+
+        // Lowpass: downsample by 2, convolve with analysis lowpass filter
+        for (uint i = 0; i < halfWidth; i++) {
+            float sum = 0.0f;
+            int center = int(2 * i);
+            for (uint k = 0; k < filterLowLen; k++) {
+                int srcIdx = center + int(k) - int(halfLow);
+                // Symmetric boundary extension
+                if (srcIdx < 0) srcIdx = -srcIdx;
+                if (srcIdx >= int(width)) srcIdx = 2 * int(width) - srcIdx - 2;
+                sum += input[row * width + uint(srcIdx)] * analysisLow[k];
+            }
+            lowpass[row * halfWidth + i] = sum;
+        }
+
+        // Highpass: downsample by 2, convolve with analysis highpass filter
+        uint halfWidthH = width / 2;
+        for (uint i = 0; i < halfWidthH; i++) {
+            float sum = 0.0f;
+            int center = int(2 * i + 1);
+            for (uint k = 0; k < filterHighLen; k++) {
+                int srcIdx = center + int(k) - int(halfHigh);
+                if (srcIdx < 0) srcIdx = -srcIdx;
+                if (srcIdx >= int(width)) srcIdx = 2 * int(width) - srcIdx - 2;
+                sum += input[row * width + uint(srcIdx)] * analysisHigh[k];
+            }
+            highpass[row * halfWidthH + i] = sum;
+        }
+    }
+
+    // MARK: - Inverse Arbitrary Wavelet (Horizontal) - Generic Convolution
+
+    kernel void j2k_dwt_inverse_arbitrary_horizontal(
+        device const float* lowpass [[buffer(0)]],
+        device const float* highpass [[buffer(1)]],
+        device float* output [[buffer(2)]],
+        device const float* synthesisLow [[buffer(3)]],
+        device const float* synthesisHigh [[buffer(4)]],
+        constant uint& width [[buffer(5)]],
+        constant uint& height [[buffer(6)]],
+        constant uint& filterLowLen [[buffer(7)]],
+        constant uint& filterHighLen [[buffer(8)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+        uint halfWidthH = width / 2;
+
+        // Upsample and convolve: interleave lowpass and highpass contributions
+        for (uint n = 0; n < width; n++) {
+            float sum = 0.0f;
+            // Lowpass contribution (upsampled at even positions)
+            for (uint k = 0; k < filterLowLen; k++) {
+                int idx = int(n) - int(k);
+                if (idx >= 0 && idx % 2 == 0) {
+                    uint j = uint(idx) / 2;
+                    if (j < halfWidth) {
+                        sum += lowpass[row * halfWidth + j] * synthesisLow[k];
+                    }
+                }
+            }
+            // Highpass contribution (upsampled at odd positions)
+            for (uint k = 0; k < filterHighLen; k++) {
+                int idx = int(n) - int(k);
+                if (idx >= 0 && (idx % 2 == 1)) {
+                    uint j = uint(idx) / 2;
+                    if (j < halfWidthH) {
+                        sum += highpass[row * halfWidthH + j] * synthesisHigh[k];
+                    }
+                }
+            }
+            output[row * width + n] = sum;
+        }
+    }
+
+    // MARK: - Forward Arbitrary Wavelet (Vertical) - Generic Convolution
+
+    kernel void j2k_dwt_forward_arbitrary_vertical(
+        device const float* input [[buffer(0)]],
+        device float* lowpass [[buffer(1)]],
+        device float* highpass [[buffer(2)]],
+        device const float* analysisLow [[buffer(3)]],
+        device const float* analysisHigh [[buffer(4)]],
+        constant uint& width [[buffer(5)]],
+        constant uint& height [[buffer(6)]],
+        constant uint& filterLowLen [[buffer(7)]],
+        constant uint& filterHighLen [[buffer(8)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+        uint halfLow = filterLowLen / 2;
+        uint halfHigh = filterHighLen / 2;
+
+        // Lowpass: downsample by 2, convolve vertically
+        for (uint i = 0; i < halfHeight; i++) {
+            float sum = 0.0f;
+            int center = int(2 * i);
+            for (uint k = 0; k < filterLowLen; k++) {
+                int srcRow = center + int(k) - int(halfLow);
+                if (srcRow < 0) srcRow = -srcRow;
+                if (srcRow >= int(height)) srcRow = 2 * int(height) - srcRow - 2;
+                sum += input[uint(srcRow) * width + col] * analysisLow[k];
+            }
+            lowpass[i * width + col] = sum;
+        }
+
+        // Highpass
+        uint halfHeightH = height / 2;
+        for (uint i = 0; i < halfHeightH; i++) {
+            float sum = 0.0f;
+            int center = int(2 * i + 1);
+            for (uint k = 0; k < filterHighLen; k++) {
+                int srcRow = center + int(k) - int(halfHigh);
+                if (srcRow < 0) srcRow = -srcRow;
+                if (srcRow >= int(height)) srcRow = 2 * int(height) - srcRow - 2;
+                sum += input[uint(srcRow) * width + col] * analysisHigh[k];
+            }
+            highpass[i * width + col] = sum;
+        }
+    }
+
+    // MARK: - Inverse Arbitrary Wavelet (Vertical) - Generic Convolution
+
+    kernel void j2k_dwt_inverse_arbitrary_vertical(
+        device const float* lowpass [[buffer(0)]],
+        device const float* highpass [[buffer(1)]],
+        device float* output [[buffer(2)]],
+        device const float* synthesisLow [[buffer(3)]],
+        device const float* synthesisHigh [[buffer(4)]],
+        constant uint& width [[buffer(5)]],
+        constant uint& height [[buffer(6)]],
+        constant uint& filterLowLen [[buffer(7)]],
+        constant uint& filterHighLen [[buffer(8)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+        uint halfHeightH = height / 2;
+
+        for (uint n = 0; n < height; n++) {
+            float sum = 0.0f;
+            for (uint k = 0; k < filterLowLen; k++) {
+                int idx = int(n) - int(k);
+                if (idx >= 0 && idx % 2 == 0) {
+                    uint j = uint(idx) / 2;
+                    if (j < halfHeight) {
+                        sum += lowpass[j * width + col] * synthesisLow[k];
+                    }
+                }
+            }
+            for (uint k = 0; k < filterHighLen; k++) {
+                int idx = int(n) - int(k);
+                if (idx >= 0 && (idx % 2 == 1)) {
+                    uint j = uint(idx) / 2;
+                    if (j < halfHeightH) {
+                        sum += highpass[j * width + col] * synthesisHigh[k];
+                    }
+                }
+            }
+            output[n * width + col] = sum;
+        }
+    }
+
+    // MARK: - Forward Lifting Scheme DWT (Horizontal)
+
+    kernel void j2k_dwt_forward_lifting_horizontal(
+        device float* data [[buffer(0)]],
+        device const float* liftingCoeffs [[buffer(1)]],
+        constant uint& width [[buffer(2)]],
+        constant uint& height [[buffer(3)]],
+        constant uint& numSteps [[buffer(4)]],
+        constant float& finalScaleL [[buffer(5)]],
+        constant float& finalScaleH [[buffer(6)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+
+        // Apply lifting steps in-place
+        // Even indices = lowpass, Odd indices = highpass
+        for (uint step = 0; step < numSteps; step++) {
+            float coeff = liftingCoeffs[step];
+            bool updateOdd = (step % 2 == 0); // Predict then Update alternation
+
+            if (updateOdd) {
+                // Update odd (highpass) samples using even (lowpass) neighbors
+                for (uint i = 0; i < width / 2; i++) {
+                    uint oddIdx = row * width + 2 * i + 1;
+                    uint leftEven = row * width + 2 * i;
+                    uint rightEven = (2 * i + 2 < width)
+                        ? row * width + 2 * i + 2
+                        : row * width + 2 * i;
+                    data[oddIdx] += coeff * (data[leftEven] + data[rightEven]);
+                }
+            } else {
+                // Update even (lowpass) samples using odd (highpass) neighbors
+                for (uint i = 0; i < halfWidth; i++) {
+                    uint evenIdx = row * width + 2 * i;
+                    uint leftOdd = (i > 0)
+                        ? row * width + 2 * i - 1
+                        : row * width + 1;
+                    uint rightOdd = (2 * i + 1 < width)
+                        ? row * width + 2 * i + 1
+                        : row * width + width - 2;
+                    data[evenIdx] += coeff * (data[leftOdd] + data[rightOdd]);
+                }
+            }
+        }
+
+        // Apply final scaling
+        for (uint i = 0; i < halfWidth; i++) {
+            data[row * width + 2 * i] *= finalScaleL;
+        }
+        for (uint i = 0; i < width / 2; i++) {
+            data[row * width + 2 * i + 1] *= finalScaleH;
+        }
+    }
+
+    // MARK: - Inverse Lifting Scheme DWT (Horizontal)
+
+    kernel void j2k_dwt_inverse_lifting_horizontal(
+        device float* data [[buffer(0)]],
+        device const float* liftingCoeffs [[buffer(1)]],
+        constant uint& width [[buffer(2)]],
+        constant uint& height [[buffer(3)]],
+        constant uint& numSteps [[buffer(4)]],
+        constant float& finalScaleL [[buffer(5)]],
+        constant float& finalScaleH [[buffer(6)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+
+        // Undo final scaling
+        for (uint i = 0; i < halfWidth; i++) {
+            data[row * width + 2 * i] /= finalScaleL;
+        }
+        for (uint i = 0; i < width / 2; i++) {
+            data[row * width + 2 * i + 1] /= finalScaleH;
+        }
+
+        // Apply lifting steps in reverse order with negated coefficients
+        for (int step = int(numSteps) - 1; step >= 0; step--) {
+            float coeff = -liftingCoeffs[step];
+            bool updateOdd = (step % 2 == 0);
+
+            if (updateOdd) {
+                for (uint i = 0; i < width / 2; i++) {
+                    uint oddIdx = row * width + 2 * i + 1;
+                    uint leftEven = row * width + 2 * i;
+                    uint rightEven = (2 * i + 2 < width)
+                        ? row * width + 2 * i + 2
+                        : row * width + 2 * i;
+                    data[oddIdx] += coeff * (data[leftEven] + data[rightEven]);
+                }
+            } else {
+                for (uint i = 0; i < halfWidth; i++) {
+                    uint evenIdx = row * width + 2 * i;
+                    uint leftOdd = (i > 0)
+                        ? row * width + 2 * i - 1
+                        : row * width + 1;
+                    uint rightOdd = (2 * i + 1 < width)
+                        ? row * width + 2 * i + 1
+                        : row * width + width - 2;
+                    data[evenIdx] += coeff * (data[leftOdd] + data[rightOdd]);
+                }
+            }
+        }
+    }
+
+    // MARK: - Forward Lifting Scheme DWT (Vertical)
+
+    kernel void j2k_dwt_forward_lifting_vertical(
+        device float* data [[buffer(0)]],
+        device const float* liftingCoeffs [[buffer(1)]],
+        constant uint& width [[buffer(2)]],
+        constant uint& height [[buffer(3)]],
+        constant uint& numSteps [[buffer(4)]],
+        constant float& finalScaleL [[buffer(5)]],
+        constant float& finalScaleH [[buffer(6)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+
+        for (uint step = 0; step < numSteps; step++) {
+            float coeff = liftingCoeffs[step];
+            bool updateOdd = (step % 2 == 0);
+
+            if (updateOdd) {
+                for (uint i = 0; i < height / 2; i++) {
+                    uint oddIdx = (2 * i + 1) * width + col;
+                    uint topEven = (2 * i) * width + col;
+                    uint botEven = (2 * i + 2 < height)
+                        ? (2 * i + 2) * width + col
+                        : (2 * i) * width + col;
+                    data[oddIdx] += coeff * (data[topEven] + data[botEven]);
+                }
+            } else {
+                for (uint i = 0; i < halfHeight; i++) {
+                    uint evenIdx = (2 * i) * width + col;
+                    uint topOdd = (i > 0)
+                        ? (2 * i - 1) * width + col
+                        : width + col;
+                    uint botOdd = (2 * i + 1 < height)
+                        ? (2 * i + 1) * width + col
+                        : (height - 2) * width + col;
+                    data[evenIdx] += coeff * (data[topOdd] + data[botOdd]);
+                }
+            }
+        }
+
+        for (uint i = 0; i < halfHeight; i++) {
+            data[(2 * i) * width + col] *= finalScaleL;
+        }
+        for (uint i = 0; i < height / 2; i++) {
+            data[(2 * i + 1) * width + col] *= finalScaleH;
+        }
+    }
+
+    // MARK: - Inverse Lifting Scheme DWT (Vertical)
+
+    kernel void j2k_dwt_inverse_lifting_vertical(
+        device float* data [[buffer(0)]],
+        device const float* liftingCoeffs [[buffer(1)]],
+        constant uint& width [[buffer(2)]],
+        constant uint& height [[buffer(3)]],
+        constant uint& numSteps [[buffer(4)]],
+        constant float& finalScaleL [[buffer(5)]],
+        constant float& finalScaleH [[buffer(6)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+
+        // Undo final scaling
+        for (uint i = 0; i < halfHeight; i++) {
+            data[(2 * i) * width + col] /= finalScaleL;
+        }
+        for (uint i = 0; i < height / 2; i++) {
+            data[(2 * i + 1) * width + col] /= finalScaleH;
+        }
+
+        for (int step = int(numSteps) - 1; step >= 0; step--) {
+            float coeff = -liftingCoeffs[step];
+            bool updateOdd = (step % 2 == 0);
+
+            if (updateOdd) {
+                for (uint i = 0; i < height / 2; i++) {
+                    uint oddIdx = (2 * i + 1) * width + col;
+                    uint topEven = (2 * i) * width + col;
+                    uint botEven = (2 * i + 2 < height)
+                        ? (2 * i + 2) * width + col
+                        : (2 * i) * width + col;
+                    data[oddIdx] += coeff * (data[topEven] + data[botEven]);
+                }
+            } else {
+                for (uint i = 0; i < halfHeight; i++) {
+                    uint evenIdx = (2 * i) * width + col;
+                    uint topOdd = (i > 0)
+                        ? (2 * i - 1) * width + col
+                        : width + col;
+                    uint botOdd = (2 * i + 1 < height)
+                        ? (2 * i + 1) * width + col
+                        : (height - 2) * width + col;
+                    data[evenIdx] += coeff * (data[topOdd] + data[botOdd]);
+                }
+            }
         }
     }
     """
