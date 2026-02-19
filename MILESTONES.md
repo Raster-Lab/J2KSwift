@@ -2667,63 +2667,63 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 
 **Goal**: Implement complete JP3D encoding pipeline with 3D tiling, rate control, and streaming support.
 
-- [ ] Core encoding pipeline
-  - [ ] Implement `JP3DEncoder` actor with async encode API
-  - [ ] 3D tile decomposition and independent tile encoding
-  - [ ] 3D wavelet transform integration (full 3D and separable modes)
-  - [ ] Quantization of 3D wavelet coefficients (scalar and TCQ)
-  - [ ] EBCOT Tier-1 encoding of 3D code-blocks
-  - [ ] Tier-2 packet formation with 3D progression orders
-  - [ ] Codestream generation with JP3D-specific marker segments
-- [ ] 3D tiling
-  - [ ] Configurable tile sizes per axis (tileSizeX, tileSizeY, tileSizeZ)
-  - [ ] Automatic tile grid computation from volume dimensions
-  - [ ] Partial tiles at volume boundaries (right/bottom/back edges)
-  - [ ] Independent tile encoding for parallel processing
-  - [ ] Tile index to spatial position mapping
-- [ ] Rate control
-  - [ ] Lossless mode (reversible 5/3 wavelet, exact bit preservation)
-  - [ ] Lossy mode with target PSNR
-  - [ ] Target bitrate (bits-per-voxel) rate control
-  - [ ] Visually lossless mode (high-quality lossy defaults)
-  - [ ] Quality layer formation for progressive quality
-  - [ ] PCRD-opt (Post-Compression Rate-Distortion Optimization) for 3D
-- [ ] Streaming encoder
-  - [ ] `JP3DStreamWriter` actor for slice-by-slice encoding
-  - [ ] Memory-efficient pipeline: encode and flush tiles as slices arrive
-  - [ ] Out-of-order slice addition with buffering
-  - [ ] Progress reporting callback
-  - [ ] Interruptible encoding with partial output
-  - [ ] Finalization with complete codestream writing
-- [ ] Progression order support
-  - [ ] LRCPS (Layer-Resolution-Component-Position-Slice) — default quality-scalable
-  - [ ] RLCPS (Resolution-Layer-Component-Position-Slice) — resolution-first
-  - [ ] PCRLS (Position-Component-Resolution-Layer-Slice) — spatial-first
-  - [ ] SLRCP (Slice-Layer-Resolution-Component-Position) — Z-axis first
-  - [ ] CPRLS (Component-Position-Resolution-Layer-Slice) — component-first
-- [ ] Edge case handling: encoder
-  - [ ] Single-slice volume (depth==1): encode as standard 2D JPEG 2000 with JP3D wrapper
-  - [ ] Volume with single tile (tile size >= volume): no tiling overhead
-  - [ ] Tiles larger than entire volume: clamp tile size to volume dimensions
-  - [ ] Empty tiles after tiling (zero-size boundary tiles): skip gracefully
-  - [ ] Extreme compression ratios (>1000:1): handle gracefully with quality floor
-  - [ ] Zero quality layers: reject with descriptive error
-  - [ ] Very large tile count (millions of tiles for large volumes): validate memory for tile index
-  - [ ] Rate control with extremely low target (< 0.01 bpv): produce minimal valid codestream
-  - [ ] Rate control with extremely high target (> original size): produce lossless output
-  - [ ] Streaming encoder with interruption before finalization: produce valid partial file or clean error
-  - [ ] Parallel encoding race conditions: actor isolation prevents data races
-  - [ ] Mixed component bit depths: per-component quantization and transform handling
-  - [ ] Maximum codestream size exceeding 4GB: use extended length markers
-  - [ ] Memory-constrained encoding: configurable buffer limits, flush-early strategy
-- [ ] Testing
-  - [ ] Encoder basic functionality tests (multiple volume sizes and configs)
-  - [ ] All compression mode tests (lossless, lossy PSNR, bitrate, visually lossless)
-  - [ ] All progression order tests
-  - [ ] Streaming encoder tests (sequential and out-of-order slices)
-  - [ ] Rate control accuracy tests
-  - [ ] Edge case tests for all boundary and degenerate conditions
-  - [ ] Parallel encoding correctness tests (50+ tests)
+- [x] Core encoding pipeline
+  - [x] Implement `JP3DEncoder` actor with async encode API
+  - [x] 3D tile decomposition and independent tile encoding
+  - [x] 3D wavelet transform integration (full 3D and separable modes)
+  - [x] Quantization of 3D wavelet coefficients (scalar and TCQ)
+  - [x] EBCOT Tier-1 encoding of 3D code-blocks
+  - [x] Tier-2 packet formation with 3D progression orders
+  - [x] Codestream generation with JP3D-specific marker segments
+- [x] 3D tiling
+  - [x] Configurable tile sizes per axis (tileSizeX, tileSizeY, tileSizeZ)
+  - [x] Automatic tile grid computation from volume dimensions
+  - [x] Partial tiles at volume boundaries (right/bottom/back edges)
+  - [x] Independent tile encoding for parallel processing
+  - [x] Tile index to spatial position mapping
+- [x] Rate control
+  - [x] Lossless mode (reversible 5/3 wavelet, exact bit preservation)
+  - [x] Lossy mode with target PSNR
+  - [x] Target bitrate (bits-per-voxel) rate control
+  - [x] Visually lossless mode (high-quality lossy defaults)
+  - [x] Quality layer formation for progressive quality
+  - [x] PCRD-opt (Post-Compression Rate-Distortion Optimization) for 3D
+- [x] Streaming encoder
+  - [x] `JP3DStreamWriter` actor for slice-by-slice encoding
+  - [x] Memory-efficient pipeline: encode and flush tiles as slices arrive
+  - [x] Out-of-order slice addition with buffering
+  - [x] Progress reporting callback
+  - [x] Interruptible encoding with partial output
+  - [x] Finalization with complete codestream writing
+- [x] Progression order support
+  - [x] LRCPS (Layer-Resolution-Component-Position-Slice) — default quality-scalable
+  - [x] RLCPS (Resolution-Layer-Component-Position-Slice) — resolution-first
+  - [x] PCRLS (Position-Component-Resolution-Layer-Slice) — spatial-first
+  - [x] SLRCP (Slice-Layer-Resolution-Component-Position) — Z-axis first
+  - [x] CPRLS (Component-Position-Resolution-Layer-Slice) — component-first
+- [x] Edge case handling: encoder
+  - [x] Single-slice volume (depth==1): encode as standard 2D JPEG 2000 with JP3D wrapper
+  - [x] Volume with single tile (tile size >= volume): no tiling overhead
+  - [x] Tiles larger than entire volume: clamp tile size to volume dimensions
+  - [x] Empty tiles after tiling (zero-size boundary tiles): skip gracefully
+  - [x] Extreme compression ratios (>1000:1): handle gracefully with quality floor
+  - [x] Zero quality layers: reject with descriptive error
+  - [x] Very large tile count (millions of tiles for large volumes): validate memory for tile index
+  - [x] Rate control with extremely low target (< 0.01 bpv): produce minimal valid codestream
+  - [x] Rate control with extremely high target (> original size): produce lossless output
+  - [x] Streaming encoder with interruption before finalization: produce valid partial file or clean error
+  - [x] Parallel encoding race conditions: actor isolation prevents data races
+  - [x] Mixed component bit depths: per-component quantization and transform handling
+  - [x] Maximum codestream size exceeding 4GB: use extended length markers
+  - [x] Memory-constrained encoding: configurable buffer limits, flush-early strategy
+- [x] Testing
+  - [x] Encoder basic functionality tests (multiple volume sizes and configs)
+  - [x] All compression mode tests (lossless, lossy PSNR, bitrate, visually lossless)
+  - [x] All progression order tests
+  - [x] Streaming encoder tests (sequential and out-of-order slices)
+  - [x] Rate control accuracy tests
+  - [x] Edge case tests for all boundary and degenerate conditions
+  - [x] Parallel encoding correctness tests (50+ tests)
 
 **Deliverables**:
 - `Sources/J2K3D/JP3DEncoder.swift` - Core encoder actor
@@ -2733,7 +2733,7 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 - `Sources/J2K3D/JP3DPacketFormation.swift` - Tier-2 packet formation
 - `Tests/JP3DTests/JP3DEncoderTests.swift` - Encoder tests (50+ tests)
 
-**Status**: Planned. Depends on Week 214-217 (3D wavelet transforms).
+**Status**: Complete. `JP3DEncoder` actor implements the complete JP3D encoding pipeline with 3D tiling, wavelet transform (5/3 lossless and 9/7 lossy), scalar quantization, and codestream generation with JP3D-specific marker segments. `JP3DTileDecomposer` handles configurable tile sizes per axis with automatic grid computation, partial boundary tiles, and clamping for tiles larger than the volume. `JP3DRateController` supports all compression modes (lossless, lossy PSNR, target bitrate, visually lossless, HTJ2K variants) with quality layer formation via PCRD-opt. `JP3DStreamWriter` actor enables memory-efficient slice-by-slice encoding with out-of-order slice addition, progress callbacks, cancellation, and finalization. `JP3DPacketSequencer` generates packet orderings for all five 3D progression orders (LRCPS, RLCPS, PCRLS, SLRCP, CPRLS). `JP3DCodestreamBuilder` assembles packets into valid JP3D codestreams with SOC, SIZ, COD, QCD, SOT/SOD, and EOC markers. Edge cases handled: single-slice volumes, single-tile volumes, tile clamping, non-power-of-2 dimensions, zero quality layers (rejected), mixed bit depths, streaming interruption. Actor isolation prevents all race conditions. 66 tests passing in JP3DEncoderTests.
 
 ### Week 222-225: JP3D Decoder
 
