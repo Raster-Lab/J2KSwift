@@ -292,7 +292,7 @@ public struct JP3DCodestreamBuilder: Sendable {
     /// Creates a new codestream builder.
     public init() {}
 
-    /// Builds a minimal JP3D codestream from encoded tile data.
+    /// Builds a JP3D codestream from encoded tile data.
     ///
     /// - Parameters:
     ///   - tileData: Encoded data for each tile.
@@ -301,7 +301,12 @@ public struct JP3DCodestreamBuilder: Sendable {
     ///   - depth: Volume depth.
     ///   - components: Number of components.
     ///   - bitDepth: Bit depth per component.
-    ///   - decompositionLevels: Number of wavelet decomposition levels.
+    ///   - levelsX: Decomposition levels along X.
+    ///   - levelsY: Decomposition levels along Y.
+    ///   - levelsZ: Decomposition levels along Z.
+    ///   - tileSizeX: Tile size along X.
+    ///   - tileSizeY: Tile size along Y.
+    ///   - tileSizeZ: Tile size along Z.
     ///   - isLossless: Whether lossless encoding was used.
     /// - Returns: The assembled JP3D codestream as `Data`.
     public func build(
@@ -311,7 +316,12 @@ public struct JP3DCodestreamBuilder: Sendable {
         depth: Int,
         components: Int,
         bitDepth: Int,
-        decompositionLevels: Int,
+        levelsX: Int,
+        levelsY: Int,
+        levelsZ: Int,
+        tileSizeX: Int,
+        tileSizeY: Int,
+        tileSizeZ: Int,
         isLossless: Bool
     ) -> Data {
         var stream = Data()
@@ -319,15 +329,17 @@ public struct JP3DCodestreamBuilder: Sendable {
         // SOC marker
         appendMarker(&stream, .soc)
 
-        // SIZ marker segment (simplified)
+        // SIZ marker segment
         appendSIZ(&stream, width: width, height: height, depth: depth,
-                   components: components, bitDepth: bitDepth)
+                   components: components, bitDepth: bitDepth,
+                   tileSizeX: tileSizeX, tileSizeY: tileSizeY, tileSizeZ: tileSizeZ)
 
-        // COD marker segment (simplified)
-        appendCOD(&stream, levels: decompositionLevels, isLossless: isLossless)
+        // COD marker segment (stores levelsX, levelsY, levelsZ separately)
+        appendCOD(&stream, levelsX: levelsX, levelsY: levelsY, levelsZ: levelsZ, isLossless: isLossless)
 
-        // QCD marker segment (simplified)
-        appendQCD(&stream, bitDepth: bitDepth, levels: decompositionLevels, isLossless: isLossless)
+        // QCD marker segment
+        let maxLevels = max(levelsX, max(levelsY, levelsZ))
+        appendQCD(&stream, bitDepth: bitDepth, levels: maxLevels, isLossless: isLossless)
 
         // Tile data
         for (index, data) in tileData.enumerated() {
@@ -362,11 +374,12 @@ public struct JP3DCodestreamBuilder: Sendable {
     private func appendSIZ(
         _ stream: inout Data,
         width: Int, height: Int, depth: Int,
-        components: Int, bitDepth: Int
+        components: Int, bitDepth: Int,
+        tileSizeX: Int, tileSizeY: Int, tileSizeZ: Int
     ) {
         appendMarker(&stream, .siz)
-        // Length (placeholder, simplified)
-        let segmentLength: UInt16 = UInt16(38 + 3 * components)
+        // Length: base(38) + 3*components + 8 (JP3D: tileSizeZ + extra depth fields)
+        let segmentLength: UInt16 = UInt16(38 + 3 * components + 8)
         appendUInt16BE(&stream, segmentLength)
         // Profile: 0 (no restrictions)
         appendUInt16BE(&stream, 0)
@@ -376,9 +389,9 @@ public struct JP3DCodestreamBuilder: Sendable {
         // Image offset
         appendUInt32BE(&stream, 0)
         appendUInt32BE(&stream, 0)
-        // Tile dimensions
-        appendUInt32BE(&stream, UInt32(width))
-        appendUInt32BE(&stream, UInt32(height))
+        // Tile dimensions (actual tile size, not volume size)
+        appendUInt32BE(&stream, UInt32(tileSizeX))
+        appendUInt32BE(&stream, UInt32(tileSizeY))
         // Tile offset
         appendUInt32BE(&stream, 0)
         appendUInt32BE(&stream, 0)
@@ -390,13 +403,15 @@ public struct JP3DCodestreamBuilder: Sendable {
             stream.append(UInt8(1)) // XRsiz
             stream.append(UInt8(1)) // YRsiz
         }
-        // Depth (JP3D extension)
+        // JP3D extensions: depth, tileSizeZ
         appendUInt32BE(&stream, UInt32(depth))
+        appendUInt32BE(&stream, UInt32(tileSizeZ))
     }
 
-    private func appendCOD(_ stream: inout Data, levels: Int, isLossless: Bool) {
+    private func appendCOD(_ stream: inout Data, levelsX: Int, levelsY: Int, levelsZ: Int, isLossless: Bool) {
         appendMarker(&stream, .cod)
-        let segmentLength: UInt16 = 12
+        // Extended COD: length 14 to store levelsX, levelsY, levelsZ separately
+        let segmentLength: UInt16 = 14
         appendUInt16BE(&stream, segmentLength)
         // Coding style: no precincts
         stream.append(UInt8(0))
@@ -406,8 +421,10 @@ public struct JP3DCodestreamBuilder: Sendable {
         appendUInt16BE(&stream, 1)
         // Multiple component transform: none
         stream.append(UInt8(0))
-        // Decomposition levels
-        stream.append(UInt8(levels))
+        // Decomposition levels X, Y, Z (JP3D: 3 bytes)
+        stream.append(UInt8(levelsX))
+        stream.append(UInt8(levelsY))
+        stream.append(UInt8(levelsZ))
         // Code-block width/height exponent (64x64)
         stream.append(UInt8(4))
         stream.append(UInt8(4))

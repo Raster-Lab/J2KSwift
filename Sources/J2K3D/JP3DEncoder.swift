@@ -278,6 +278,10 @@ public actor JP3DEncoder {
 
         var encodedTileData: [Data] = []
         encodedTileData.reserveCapacity(tiles.count)
+        // Track actual clamped decomposition levels (populated from first tile's decomposition)
+        var actualLevelsX = configuration.levelsX
+        var actualLevelsY = configuration.levelsY
+        var actualLevelsZ = configuration.levelsZ
 
         for (tileIdx, tile) in tiles.enumerated() {
             var tileBytes = Data()
@@ -296,6 +300,13 @@ public actor JP3DEncoder {
                     height: tileData.height,
                     depth: tileData.depth
                 )
+
+                // Capture clamped levels from the first component of the first tile
+                if tileIdx == 0 && comp == 0 {
+                    actualLevelsX = decomposition.levelsX
+                    actualLevelsY = decomposition.levelsY
+                    actualLevelsZ = decomposition.levelsZ
+                }
 
                 reportProgress(
                     .waveletTransform,
@@ -337,10 +348,7 @@ public actor JP3DEncoder {
 
         // Stage 4: Codestream Generation
         let builder = JP3DCodestreamBuilder()
-        let maxLevels = max(
-            configuration.levelsX,
-            max(configuration.levelsY, configuration.levelsZ)
-        )
+        let effectiveTiling = decomposer.clampedConfiguration(for: volume)
         let codestream = builder.build(
             tileData: encodedTileData,
             width: volume.width,
@@ -348,7 +356,12 @@ public actor JP3DEncoder {
             depth: volume.depth,
             components: volume.components.count,
             bitDepth: volume.components[0].bitDepth,
-            decompositionLevels: maxLevels,
+            levelsX: actualLevelsX,
+            levelsY: actualLevelsY,
+            levelsZ: actualLevelsZ,
+            tileSizeX: effectiveTiling.tileSizeX,
+            tileSizeY: effectiveTiling.tileSizeY,
+            tileSizeZ: effectiveTiling.tileSizeZ,
             isLossless: configuration.compressionMode.isLossless
         )
 

@@ -241,7 +241,12 @@ public actor JP3DStreamWriter {
             depth: config.depth,
             components: config.componentCount,
             bitDepth: config.bitDepth,
-            decompositionLevels: maxLevel,
+            levelsX: maxLevel,
+            levelsY: maxLevel,
+            levelsZ: maxLevel,
+            tileSizeX: config.tiling.tileSizeX,
+            tileSizeY: config.tiling.tileSizeY,
+            tileSizeZ: config.tiling.tileSizeZ,
             isLossless: config.compressionMode.isLossless
         )
 
