@@ -354,12 +354,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
     }
 
     func testSoftwareEncoderStartup() async throws {
-        let config = MJ2SoftwareEncoderConfiguration(
-            codec: .mj2,
-            quality: .medium,
-            performance: .balanced,
-            frameRate: 24.0
-        )
+        let config = MJ2SoftwareEncoderConfiguration.h264Default
 
         let startTime = Date()
         let encoder = MJ2SoftwareEncoder(configuration: config)
@@ -368,6 +363,8 @@ final class MJ2PerformanceValidationTests: XCTestCase {
 
         print("Software encoder startup time: \(String(format: "%.2f", elapsed * 1000)) ms")
         XCTAssertLessThan(elapsed, 5.0, "Software encoder startup should be fast")
+
+        await encoder.cancelEncoding()
     }
 
     // MARK: - Scalability
