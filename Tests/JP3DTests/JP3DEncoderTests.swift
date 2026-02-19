@@ -9,7 +9,7 @@ import XCTest
 @testable import J2K3D
 
 /// Thread-safe counter for use in Sendable closures.
-private final class ManagedAtomic: @unchecked Sendable {
+private final class ThreadSafeCounter: @unchecked Sendable {
     private var _value: Int
     private let lock = NSLock()
 
@@ -573,7 +573,7 @@ final class JP3DEncoderTests: XCTestCase {
         // Arrange
         let volume = makeTestVolume(width: 8, height: 8, depth: 4)
         let encoder = JP3DEncoder(configuration: .lossless)
-        let progressCount = ManagedAtomic(0)
+        let progressCount = ThreadSafeCounter(0)
 
         await encoder.setProgressCallback { _ in
             progressCount.increment()
@@ -858,7 +858,7 @@ final class JP3DEncoderTests: XCTestCase {
             width: 4, height: 4, depth: 2
         )
         let writer = JP3DStreamWriter(configuration: config)
-        let progressCount = ManagedAtomic(0)
+        let progressCount = ThreadSafeCounter(0)
 
         await writer.setProgressCallback { _ in
             progressCount.increment()

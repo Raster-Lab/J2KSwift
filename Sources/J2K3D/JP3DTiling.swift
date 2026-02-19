@@ -107,16 +107,20 @@ public struct JP3DTileDecomposer: Sendable {
         var data = [Float](repeating: 0, count: tw * th * td)
 
         let region = tile.region
+        let srcStride = component.width
+        let srcSliceStride = component.width * component.height
         for z in 0..<td {
             let srcZ = region.z.lowerBound + z
             guard srcZ < component.depth else { continue }
+            let srcZOffset = srcZ * srcSliceStride
             for y in 0..<th {
                 let srcY = region.y.lowerBound + y
                 guard srcY < component.height else { continue }
+                let srcYOffset = srcZOffset + srcY * srcStride
                 for x in 0..<tw {
                     let srcX = region.x.lowerBound + x
                     guard srcX < component.width else { continue }
-                    let srcIdx = srcZ * component.width * component.height + srcY * component.width + srcX
+                    let srcIdx = srcYOffset + srcX
                     let byteOffset = srcIdx * bytesPerSample
                     let dstIdx = z * tw * th + y * tw + x
                     if byteOffset + bytesPerSample <= component.data.count {

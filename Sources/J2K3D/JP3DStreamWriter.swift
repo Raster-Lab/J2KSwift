@@ -289,9 +289,6 @@ public actor JP3DStreamWriter {
 
             // Check if this tile-row hasn't already been encoded
             let expectedPriorTiles = tz * tileGrid.tilesX * tileGrid.tilesY
-            guard encodedTiles.count <= expectedPriorTiles + tileGrid.tilesX * tileGrid.tilesY else {
-                continue
-            }
             guard encodedTiles.count == expectedPriorTiles else { continue }
 
             // Encode all tiles in this Z-row
@@ -399,10 +396,11 @@ public actor JP3DStreamWriter {
             for y in 0..<th {
                 let srcY = tile.region.y.lowerBound + y
                 guard srcY < config.height else { continue }
+                let srcYOffset = componentIndex * compStride + srcY * config.width
                 for x in 0..<tw {
                     let srcX = tile.region.x.lowerBound + x
                     guard srcX < config.width else { continue }
-                    let srcIdx = componentIndex * compStride + srcY * config.width + srcX
+                    let srcIdx = srcYOffset + srcX
                     let dstIdx = z * tw * th + y * tw + x
                     if srcIdx < sliceData.count {
                         data[dstIdx] = sliceData[srcIdx]
