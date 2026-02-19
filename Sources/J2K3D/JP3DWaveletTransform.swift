@@ -662,14 +662,14 @@ public actor JP3DWaveletTransform {
     private func extendSymmetric(_ s: [Float], leftPad: Int, rightPad: Int) -> [Float] {
         let n = s.count
         var out = [Float](repeating: 0, count: n + leftPad + rightPad)
+        // Whole-sample symmetric (WSS) extension: x[-k] = x[k], x[n-1+k] = x[n-1-k]
         for i in 0..<leftPad {
-            let mirrorIdx = leftPad - 1 - i
-            let srcIdx = min(mirrorIdx, n - 1)
+            let srcIdx = min(leftPad - i, n - 1)
             out[i] = s[srcIdx]
         }
         for i in 0..<n { out[leftPad + i] = s[i] }
         for i in 0..<rightPad {
-            let srcIdx = max(0, n - 1 - i)
+            let srcIdx = max(0, n - 2 - i)
             out[leftPad + n + i] = s[srcIdx]
         }
         return out

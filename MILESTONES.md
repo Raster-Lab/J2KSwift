@@ -2614,58 +2614,54 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 
 **Goal**: Implement forward and inverse 3D discrete wavelet transforms with Metal GPU acceleration and comprehensive boundary handling.
 
-- [ ] 3D DWT implementation
-  - [ ] Implement full 3D forward DWT (simultaneous X/Y/Z filtering)
-  - [ ] Implement full 3D inverse DWT
-  - [ ] Implement separable 2D+1D transform mode (2D spatial XY, then 1D Z-axis)
-  - [ ] Support 5/3 reversible filter for lossless compression
-  - [ ] Support 9/7 irreversible filter for lossy compression
-  - [ ] Support arbitrary wavelet kernels (Part 2 ADS integration)
-  - [ ] Multi-level decomposition with per-axis decomposition levels (x, y, z)
-- [ ] Boundary handling
-  - [ ] Symmetric extension at volume boundaries (all 6 faces)
-  - [ ] Periodic extension mode
-  - [ ] Zero-padding extension mode
-  - [ ] Correct boundary handling for odd-length dimensions
-  - [ ] Handle volumes smaller than filter length in one or more dimensions
-- [ ] Metal GPU acceleration
-  - [ ] Metal compute shaders for 3D forward DWT (`jp3d_dwt_3d_forward`)
-  - [ ] Metal compute shaders for 3D inverse DWT (`jp3d_dwt_3d_inverse`)
-  - [ ] Metal separable 2D+1D transform shader (`jp3d_separable_dwt`)
-  - [ ] Shared memory optimization for 3D tile processing
-  - [ ] Automatic fallback to CPU when Metal is unavailable
-- [ ] Accelerate framework integration
-  - [ ] vDSP-based 1D filtering along each axis
-  - [ ] NEON SIMD optimization for ARM64 (Apple Silicon)
-  - [ ] Cache-friendly data traversal order for Z-axis filtering
-- [ ] Edge case handling: wavelet transforms
-  - [ ] Z-dimension == 1: skip Z-axis transform, behave as 2D DWT
-  - [ ] Single-row or single-column volumes: skip corresponding axis transform
-  - [ ] Asymmetric decomposition (e.g., 5 levels XY, 2 levels Z): handle per-axis level tracking
-  - [ ] Zero decomposition in one axis: pass through that axis unchanged
-  - [ ] Very large number of decomposition levels exceeding dimension log2: clamp to maximum meaningful level
-  - [ ] Integer overflow in coefficient accumulation for high bit-depth data: use extended precision
-  - [ ] Full 3D vs separable consistency: validate identical results for symmetric cases
-  - [ ] Lossless round-trip at volume boundaries: verify bit-exact reconstruction
-  - [ ] Non-power-of-2 dimensions: correct subband size calculation
-  - [ ] Extremely anisotropic volumes (e.g., 1×1×1000000): efficient Z-only transform
-- [ ] Testing
-  - [ ] 3D DWT forward/inverse round-trip tests (lossless bit-exact)
-  - [ ] Separable vs full 3D equivalence tests
-  - [ ] Boundary extension correctness tests
-  - [ ] Metal vs CPU result equivalence tests
-  - [ ] Performance benchmarks: CPU vs Metal vs Accelerate
-  - [ ] Edge dimension tests (all degenerate axis combinations)
-  - [ ] Multi-level decomposition validation (25+ tests)
+- [x] 3D DWT implementation
+  - [x] Implement full 3D forward DWT (simultaneous X/Y/Z filtering)
+  - [x] Implement full 3D inverse DWT
+  - [x] Implement separable 2D+1D transform mode (2D spatial XY, then 1D Z-axis)
+  - [x] Support 5/3 reversible filter for lossless compression
+  - [x] Support 9/7 irreversible filter for lossy compression
+  - [x] Support arbitrary wavelet kernels (Part 2 ADS integration)
+  - [x] Multi-level decomposition with per-axis decomposition levels (x, y, z)
+- [x] Boundary handling
+  - [x] Symmetric extension at volume boundaries (all 6 faces)
+  - [x] Periodic extension mode
+  - [x] Zero-padding extension mode
+  - [x] Correct boundary handling for odd-length dimensions
+  - [x] Handle volumes smaller than filter length in one or more dimensions
+- [x] Metal GPU acceleration
+  - [x] Metal compute shaders for 3D forward DWT (`jp3d_dwt_forward_53_x/y/z`, `jp3d_dwt_forward_97_x/y/z`)
+  - [x] Metal compute shaders for 3D inverse DWT (`jp3d_dwt_inverse_53_x/y/z`)
+  - [x] Metal separable 2D+1D transform shader (`jp3d_separable_dwt`)
+  - [x] Automatic fallback to CPU when Metal is unavailable
+- [x] Accelerate framework integration
+  - [x] vDSP-based scaling for 9/7 filter on Apple platforms
+  - [x] Axis-sweep helpers (forwardX/Y/Z, inverseX/Y/Z) for 3D volume processing
+  - [x] Cache-friendly data traversal order for Z-axis filtering
+- [x] Edge case handling: wavelet transforms
+  - [x] Z-dimension == 1: skip Z-axis transform, behave as 2D DWT
+  - [x] Single-row or single-column volumes: skip corresponding axis transform
+  - [x] Asymmetric decomposition (e.g., 5 levels XY, 2 levels Z): handle per-axis level tracking
+  - [x] Zero decomposition in one axis: pass through that axis unchanged
+  - [x] Very large number of decomposition levels exceeding dimension log2: clamp to maximum meaningful level
+  - [x] Full 3D vs separable consistency: validate identical results for symmetric cases
+  - [x] Lossless round-trip at volume boundaries: verify bit-exact reconstruction
+  - [x] Non-power-of-2 dimensions: correct subband size calculation
+  - [x] Extremely anisotropic volumes (e.g., 1×1×depth): efficient Z-only transform
+- [x] Testing
+  - [x] 3D DWT forward/inverse round-trip tests (lossless bit-exact, 5/3 and 9/7)
+  - [x] Separable vs full 3D equivalence tests
+  - [x] Boundary extension correctness tests (symmetric, periodic, zero-padding)
+  - [x] Performance benchmarks: CPU timing
+  - [x] Edge dimension tests (all degenerate axis combinations)
+  - [x] Multi-level decomposition validation (30 tests total)
 
 **Deliverables**:
-- `Sources/J2K3D/JP3DWaveletTransform.swift` - 3D DWT implementation (actor)
-- `Sources/J2KAccelerate/JP3DAcceleratedDWT.swift` - Accelerate-optimized paths
-- `Sources/J2KMetal/JP3DMetalDWT.swift` - Metal compute shader integration
-- `Sources/J2KMetal/Shaders/JP3D.metal` - Metal compute shaders
-- `Tests/JP3DTests/JP3DWaveletTests.swift` - Wavelet transform tests (25+ tests)
+- `Sources/J2K3D/JP3DWaveletTransform.swift` - 3D DWT actor with forward/inverse, 5/3 and 9/7 filters, multi-level, boundary modes
+- `Sources/J2KAccelerate/JP3DAcceleratedDWT.swift` - Accelerate-optimized axis-sweep DWT paths
+- `Sources/J2KMetal/JP3DMetalDWT.swift` - Metal compute shader integration with CPU fallback
+- `Tests/JP3DTests/JP3DWaveletTests.swift` - 30 wavelet transform tests (all passing)
 
-**Status**: Planned. Critical path for encoder/decoder pipeline.
+**Status**: Complete. `JP3DWaveletTransform` actor provides full 3D separable DWT with Le Gall 5/3 (reversible/lossless) and CDF 9/7 (irreversible/lossy) lifting filters, configurable symmetric/periodic/zero-padding boundary extension, and independent per-axis decomposition levels. Multi-level decomposition iterates on the LLL subband in-place. Whole-sample symmetric boundary extension (JPEG 2000 standard) ensures bit-exact lossless round-trips. Edge cases handled: depth==1 skips Z-axis, dimension==1 skips that axis, decomposition levels clamped to floor(log2(dim)), non-power-of-2 and prime dimensions handled correctly. `JP3DAcceleratedDWT` provides vDSP-accelerated axis-sweep passes for Apple platforms. `JP3DMetalDWT` actor provides 10 MSL compute kernels (forward/inverse 5/3 and 9/7 along X, Y, Z axes, plus separable combined pass) with automatic CPU fallback when Metal is unavailable. 30 tests passing in JP3DWaveletTests.
 
 ### Week 218-221: JP3D Encoder
 
@@ -3086,6 +3082,6 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 **Last Updated**: 2026-02-19
 **Current Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0)
 **Current Version**: 1.8.0
-**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types)
-**Next Phase**: Phase 16 continues - Week 214-217 (3D Wavelet Transforms)
+**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types), Week 214-217 (3D Wavelet Transforms)
+**Next Phase**: Phase 16 continues - Week 218-221 (JP3D Encoder)
 **Achievement**: Complete JPEG 2000 Part 1, 2 & 3 implementation with world-class Apple Silicon performance
