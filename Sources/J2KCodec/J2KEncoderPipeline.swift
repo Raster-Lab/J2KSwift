@@ -258,7 +258,19 @@ struct EncoderPipeline: Sendable {
     private func applyWaveletTransform(
         _ components: [[Int32]], width: Int, height: Int
     ) throws -> [[SubbandInfo]] {
-        let filter: J2KDWT1D.Filter = config.lossless ? .reversible53 : .irreversible97
+        // Select filter based on wavelet kernel configuration
+        let filter: J2KDWT1D.Filter
+        switch config.waveletKernelConfiguration {
+        case .standard:
+            // Use standard Part 1 wavelets
+            filter = config.lossless ? .reversible53 : .irreversible97
+        case .arbitrary(let kernel):
+            // Use arbitrary kernel for all components
+            filter = kernel.toDWTFilter()
+        case .perTileComponent:
+            // Per-tile-component selection handled below
+            filter = config.lossless ? .reversible53 : .irreversible97
+        }
 
         // Clamp decomposition levels to what the image dimensions can support
         let maxLevels = max(0, Int(log2(Double(min(width, height)))) - 1)
@@ -267,6 +279,22 @@ struct EncoderPipeline: Sendable {
         var allSubbands: [[SubbandInfo]] = []
 
         for (compIdx, compData) in components.enumerated() {
+            // Select filter for this component (if per-tile-component is enabled)
+            let componentFilter: J2KDWT1D.Filter
+            if case .perTileComponent(let kernelMap) = config.waveletKernelConfiguration {
+                // For now, assume tile index 0 for non-tiled images
+                // TODO: Add proper tile support
+                let key = J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: compIdx)
+                if let kernel = kernelMap[key] {
+                    componentFilter = kernel.toDWTFilter()
+                } else {
+                    // Fall back to standard filter
+                    componentFilter = config.lossless ? .reversible53 : .irreversible97
+                }
+            } else {
+                componentFilter = filter
+            }
+
             // Convert 1D array to 2D for DWT (optimized version)
             var image2D: [[Int32]] = []
             image2D.reserveCapacity(height)
@@ -291,7 +319,7 @@ struct EncoderPipeline: Sendable {
             }
 
             let decomposition = try J2KDWT2D.forwardDecomposition(
-                image: image2D, levels: levels, filter: filter
+                image: image2D, levels: levels, filter: componentFilter
             )
 
             var subbands: [SubbandInfo] = []
