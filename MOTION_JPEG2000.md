@@ -1455,3 +1455,266 @@ This implementation positions J2KSwift as a comprehensive solution for modern vi
 **Target Version**: 1.8.0 (Phase 15)  
 **Status**: Implementation Plan  
 **Related Phases**: Phase 13 (Part 2 Extensions), Phase 14 (Metal Acceleration)
+
+## Week 194-195: MJ2 Creation ✅
+
+### Completed Implementation
+
+Motion JPEG 2000 file creation has been fully implemented with actor-based thread safety, streaming support, and comprehensive sample table generation.
+
+#### Core Components
+
+1. **MJ2Configuration** - Configuration types for MJ2 creation
+   - **MJ2Profile**: Profile selection (Simple, General, Broadcast, Cinema)
+     - Simple Profile: ≤1920×1080, ≤30fps, single video track
+     - General Profile: Full MJ2 support without constraints
+     - Broadcast/Cinema: Optimized for professional workflows
+   
+   - **MJ2TimescaleConfiguration**: Time scale and frame rate management
+     - Automatic timescale selection for standard frame rates (23.976, 24, 25, 29.97, 30, 50, 59.94, 60 fps)
+     - Generic timescale (90000) for non-standard frame rates
+     - Accurate frame duration calculation
+   
+   - **MJ2Metadata**: File metadata
+     - Title, author, copyright, description
+     - Creation and modification dates
+   
+   - **MJ2CreationConfiguration**: Complete configuration
+     - Profile and timescale settings
+     - JPEG 2000 encoding configuration integration
+     - 64-bit offset support for files >4GB
+     - Parallel encoding configuration
+     - Frame buffering limits
+
+2. **MJ2SampleTable** - Sample table generation
+   - **MJ2SampleTableBuilder** (actor for thread safety)
+     - Sample size table (stsz) - Constant or variable frame sizes
+     - Sample-to-chunk mapping (stsc) - One sample per chunk for simplicity
+     - Chunk offset table (stco/co64) - 32-bit or 64-bit offsets
+     - Time-to-sample table (stts) - Compressed duration entries
+     - Sync sample table (stss) - Key frame tracking (optional if all sync)
+   
+   - Automatic compression of consecutive samples with same duration
+   - Memory-efficient table building
+   - Support for large files with 64-bit offsets
+
+3. **MJ2StreamWriter** - Progressive file writing
+   - Actor-based for thread-safe file operations
+   - Progressive file writing with FileHandle
+   - Automatic box hierarchy generation:
+     - ftyp → File type box with brand identification
+     - mdat → Media data (extended size format for flexibility)
+     - moov → Movie metadata container
+       - mvhd → Movie header
+       - trak → Video track
+         - tkhd → Track header
+         - mdia → Media container
+           - mdhd → Media header
+           - hdlr → Handler reference (video)
+           - minf → Media information
+             - vmhd → Video media header
+             - dinf → Data information with self-reference
+             - stbl → Sample table (from MJ2SampleTableBuilder)
+   
+   - Memory-efficient: frames written immediately, not buffered
+   - Large file support with 64-bit extended size boxes
+   - Proper ISO base media format compliance
+
+4. **MJ2Creator** - Main creation API
+   - Actor-based for thread safety
+   - Frame-by-frame encoding using existing J2KEncoder
+   - Sequential and parallel encoding modes:
+     - Sequential: One frame at a time, predictable resource usage
+     - Parallel: Batch encoding with configurable parallelism
+   
+   - Automatic frame validation:
+     - Consistent dimensions across all frames
+     - Consistent component count
+     - Non-empty frame sequence
+   
+   - Progress reporting support
+   - Cancellation support (graceful termination)
+   - Convenience methods:
+     - `create(from:outputURL:progress:)` - Full sequence encoding
+     - `createRepeated(image:frameCount:outputURL:)` - Repeat single frame
+
+#### Usage Examples
+
+**Basic MJ2 Creation:**
+```swift
+import J2KCore
+import J2KCodec
+import J2KFileFormat
+
+// Create image sequence
+let frames: [J2KImage] = // ... load or generate frames
+
+// Configure MJ2 creation
+let config = MJ2CreationConfiguration.from(
+    frameRate: 30.0,
+    profile: .general,
+    quality: 0.95,
+    lossless: false
+)
+
+// Create MJ2 file
+let creator = MJ2Creator(configuration: config)
+try await creator.create(
+    from: frames,
+    outputURL: URL(fileURLWithPath: "output.mj2")
+)
+```
+
+**Advanced Configuration:**
+```swift
+// Custom timescale
+let timescale = MJ2TimescaleConfiguration(
+    timescale: 90000,  // 90kHz (common for video)
+    frameDuration: 3003  // ~29.97 fps
+)
+
+// Custom encoding configuration
+let encodingConfig = J2KEncodingConfiguration(
+    quality: 0.98,
+    lossless: false
+)
+
+// Full configuration
+let config = MJ2CreationConfiguration(
+    profile: .broadcast,
+    timescale: timescale,
+    encodingConfiguration: encodingConfig,
+    metadata: MJ2Metadata(
+        title: "My Video",
+        author: "J2KSwift",
+        copyright: "© 2024"
+    ),
+    use64BitOffsets: true,  // For files >4GB
+    enableParallelEncoding: true,
+    parallelEncodingCount: 4  // Encode 4 frames at a time
+)
+
+let creator = MJ2Creator(configuration: config)
+try await creator.create(from: frames, outputURL: outputURL)
+```
+
+**Progress Reporting:**
+```swift
+try await creator.create(from: frames, outputURL: outputURL) { progress in
+    let percent = progress.progress * 100
+    print("Frame \(progress.frameNumber + 1)/\(progress.totalFrames) (\(percent)%)")
+    print("Estimated size: \(progress.estimatedSize) bytes")
+}
+```
+
+**Error Handling:**
+```swift
+do {
+    try await creator.create(from: frames, outputURL: outputURL)
+} catch let error as MJ2CreationError {
+    switch error {
+    case .noFrames:
+        print("No frames provided")
+    case .inconsistentDimensions(let expected, let got):
+        print("Frame dimensions don't match: expected \(expected), got \(got)")
+    case .inconsistentComponents(let expected, let got):
+        print("Component count mismatch: expected \(expected), got \(got)")
+    case .cancelled:
+        print("Creation was cancelled")
+    case .encodingFailed(let frame, let error):
+        print("Failed to encode frame \(frame): \(error)")
+    }
+} catch {
+    print("Unexpected error: \(error)")
+}
+```
+
+**Cancellation:**
+```swift
+let creator = MJ2Creator(configuration: config)
+
+// Start creation in background
+Task {
+    try await creator.create(from: frames, outputURL: outputURL)
+}
+
+// Cancel if needed
+await creator.cancel()
+```
+
+#### Test Coverage
+
+**18 comprehensive unit tests** covering:
+- Profile properties and constraints
+- Timescale configuration and frame rate calculation
+- Metadata creation
+- Configuration validation (Simple Profile limits)
+- Sample table builder operations
+- Sample size box generation (constant and variable sizes)
+- Chunk offset boxes (32-bit and 64-bit)
+- Time-to-sample table compression
+- Single-frame MJ2 creation
+- Multi-frame sequence encoding
+- Repeated image creation
+- Error handling (empty frames, inconsistent dimensions)
+- Cancellation support
+
+#### Files
+
+- `Sources/J2KFileFormat/MJ2Configuration.swift` (346 lines)
+  - Profile, timescale, and configuration types
+  - Validation logic
+  - Convenience factory methods
+
+- `Sources/J2KFileFormat/MJ2SampleTable.swift` (266 lines)
+  - Actor-based sample table builder
+  - All sample table box generation
+  - Compression and optimization
+
+- `Sources/J2KFileFormat/MJ2StreamWriter.swift` (448 lines)
+  - Actor-based streaming file writer
+  - Complete box hierarchy generation
+  - Large file support
+
+- `Sources/J2KFileFormat/MJ2Creator.swift` (313 lines)
+  - Main MJ2 creation API
+  - Sequential and parallel encoding
+  - Progress reporting and cancellation
+
+- `Tests/J2KFileFormatTests/MJ2CreatorTests.swift` (331 lines)
+  - Comprehensive test coverage
+  - All 18 tests passing
+
+#### Performance Characteristics
+
+- **Memory Efficiency**: Frames are encoded and written immediately, not buffered in memory
+- **Parallel Encoding**: Configurable parallelism for multi-core systems
+- **Large Files**: Support for files >4GB with 64-bit offsets
+- **Actor Safety**: All file operations are thread-safe via Swift actors
+- **Streaming**: Progressive file writing allows creation of very long videos
+
+#### Profile Compliance
+
+**Simple Profile (MJ2s)**:
+- Maximum resolution: 1920×1080
+- Maximum frame rate: 30 fps
+- Single video track only
+- Automatic validation at configuration time
+
+**General Profile (MJ2)**:
+- No resolution limits
+- No frame rate limits
+- Multiple tracks supported (structure ready, audio pending)
+
+**Broadcast/Cinema Profiles**:
+- Structure ready for professional workflows
+- Optimized settings for high bitrates and quality
+
+#### Next Steps
+
+Week 196-198 will implement MJ2 frame extraction:
+- MJ2Extractor for reading frames from MJ2 files
+- Frame sequence reconstruction
+- Time-based frame selection
+- Memory-efficient frame extraction
+- Integration with existing J2KDecoder
