@@ -120,6 +120,15 @@ public struct RateControlConfiguration: Sendable {
 
     /// The distortion estimation method.
     public let distortionEstimation: DistortionEstimationMethod
+    
+    /// Optional MCT configuration for distortion adjustment.
+    ///
+    /// When provided, rate-distortion optimization accounts for
+    /// improved compression efficiency from MCT decorrelation.
+    public let mctConfiguration: J2KMCTEncodingConfiguration?
+    
+    /// Number of image components for MCT distortion estimation.
+    public let componentCount: Int
 
     /// Creates a new rate control configuration.
     ///
@@ -128,16 +137,22 @@ public struct RateControlConfiguration: Sendable {
     ///   - layerCount: Number of quality layers (default: 1).
     ///   - strictRateMatching: Whether to strictly match target rates (default: true).
     ///   - distortionEstimation: Distortion estimation method (default: .normBased).
+    ///   - mctConfiguration: Optional MCT configuration for distortion adjustment (default: nil).
+    ///   - componentCount: Number of image components (default: 3).
     public init(
         mode: RateControlMode,
         layerCount: Int = 1,
         strictRateMatching: Bool = true,
-        distortionEstimation: DistortionEstimationMethod = .normBased
+        distortionEstimation: DistortionEstimationMethod = .normBased,
+        mctConfiguration: J2KMCTEncodingConfiguration? = nil,
+        componentCount: Int = 3
     ) {
         self.mode = mode
         self.layerCount = layerCount
         self.strictRateMatching = strictRateMatching
         self.distortionEstimation = distortionEstimation
+        self.mctConfiguration = mctConfiguration
+        self.componentCount = componentCount
     }
 
     /// Creates a configuration for lossless encoding.
@@ -355,6 +370,9 @@ public struct J2KRateControl: Sendable {
     }
 
     /// Estimates the initial distortion (before any coding passes).
+    ///
+    /// If MCT configuration is provided, adjusts the distortion estimate
+    /// to account for improved compression efficiency from decorrelation.
     private func estimateInitialDistortion(codeBlock: J2KCodeBlock) -> Double {
         let samples = codeBlock.width * codeBlock.height
 
@@ -362,7 +380,18 @@ public struct J2KRateControl: Sendable {
         // More missing bit-planes = higher initial distortion
         let bitPlaneWeight = pow(2.0, Double(codeBlock.zeroBitPlanes * 2))
 
-        return Double(samples) * bitPlaneWeight
+        var distortion = Double(samples) * bitPlaneWeight
+        
+        // Apply MCT distortion adjustment if configured
+        if let mctConfig = configuration.mctConfiguration {
+            let mctAdjustment = J2KMCTDistortionAdjustment(
+                configuration: mctConfig,
+                componentCount: configuration.componentCount
+            )
+            distortion = mctAdjustment.adjustDistortion(distortion)
+        }
+        
+        return distortion
     }
 
     /// Estimates distortion for a code-block after a given number of passes.
@@ -627,5 +656,120 @@ public struct J2KDCOffsetDistortionAdjustment: Sendable {
     public func adjustDistortion(_ distortion: Double, forComponent componentIndex: Int) -> Double {
         let gain = compressionEfficiencyGain(forComponent: componentIndex)
         return distortion / gain
+    }
+}
+
+// MARK: - MCT Rate-Distortion Integration
+
+/// Adjusts rate-distortion calculations for MCT-aware encoding.
+///
+/// When MCT is applied, component decorrelation reduces redundancy across
+/// components, improving compression efficiency. This utility estimates
+/// the distortion improvement from MCT application.
+///
+/// ## How It Works
+///
+/// MCT transforms components to remove inter-component correlation,
+/// concentrating energy in fewer components. This improves quantization
+/// efficiency and reduces bitrate for equivalent quality.
+///
+/// ## Usage
+///
+/// ```swift
+/// let adjustment = J2KMCTDistortionAdjustment(
+///     configuration: mctConfig,
+///     componentCount: 4
+/// )
+/// let factor = adjustment.compressionEfficiencyGain()
+/// ```
+public struct J2KMCTDistortionAdjustment: Sendable {
+    /// MCT encoding configuration.
+    public let configuration: J2KMCTEncodingConfiguration
+    
+    /// Number of image components.
+    public let componentCount: Int
+    
+    /// Creates an MCT distortion adjustment.
+    ///
+    /// - Parameters:
+    ///   - configuration: MCT encoding configuration.
+    ///   - componentCount: Number of image components.
+    public init(configuration: J2KMCTEncodingConfiguration, componentCount: Int) {
+        self.configuration = configuration
+        self.componentCount = componentCount
+    }
+    
+    /// Estimates the compression efficiency gain from MCT application.
+    ///
+    /// Returns a factor (>= 1.0) indicating how much more efficiently
+    /// components can be compressed after MCT decorrelation.
+    ///
+    /// The efficiency gain depends on:
+    /// - Component count (more components = higher potential gain)
+    /// - Transform type (array-based vs dependency)
+    /// - Whether extended precision is used
+    ///
+    /// - Returns: The efficiency gain factor (1.0 = no gain).
+    public func compressionEfficiencyGain() -> Double {
+        switch configuration.mode {
+        case .disabled:
+            return 1.0
+            
+        case .arrayBased:
+            // Array-based MCT provides decorrelation across all components
+            // Typical gain: 10-30% for multi-spectral (4+ components)
+            // Gain increases with component count
+            let baseGain = componentCount >= 4 ? 0.15 : 0.08
+            let componentBonus = Double(max(0, componentCount - 3)) * 0.03
+            return 1.0 + baseGain + componentBonus
+            
+        case .dependency:
+            // Dependency transforms are more efficient for sparse correlation
+            // Typical gain: 12-35% for multi-spectral imagery
+            let baseGain = componentCount >= 4 ? 0.18 : 0.10
+            let componentBonus = Double(max(0, componentCount - 3)) * 0.035
+            return 1.0 + baseGain + componentBonus
+            
+        case .adaptive:
+            // Adaptive selection provides optimal transform per tile
+            // Highest gain: 15-40% through content-aware decorrelation
+            let baseGain = componentCount >= 4 ? 0.22 : 0.12
+            let componentBonus = Double(max(0, componentCount - 3)) * 0.04
+            return 1.0 + baseGain + componentBonus
+        }
+    }
+    
+    /// Adjusts a distortion value for MCT-aware encoding.
+    ///
+    /// Scales the distortion estimate to account for improved decorrelation
+    /// after MCT application.
+    ///
+    /// - Parameter distortion: The original distortion estimate.
+    /// - Returns: The adjusted distortion estimate.
+    public func adjustDistortion(_ distortion: Double) -> Double {
+        let gain = compressionEfficiencyGain()
+        return distortion / gain
+    }
+    
+    /// Estimates the distortion improvement for a specific tile.
+    ///
+    /// When per-tile MCT is configured, different tiles may have
+    /// different decorrelation efficiency.
+    ///
+    /// - Parameters:
+    ///   - distortion: The original distortion estimate.
+    ///   - tileIndex: The tile index.
+    /// - Returns: The adjusted distortion estimate.
+    public func adjustDistortion(_ distortion: Double, forTile tileIndex: Int) -> Double {
+        // Check for per-tile override
+        if configuration.perTileMCT[tileIndex] != nil {
+            // Per-tile MCT typically provides better efficiency
+            // due to spatial content adaptation
+            let gain = compressionEfficiencyGain() * 1.05
+            return distortion / gain
+        }
+        
+        // Use global MCT efficiency
+        return adjustDistortion(distortion)
     }
 }
