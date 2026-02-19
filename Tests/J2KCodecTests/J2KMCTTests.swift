@@ -1462,4 +1462,247 @@ extension J2KMCTTests {
             XCTFail("Expected adaptive mode")
         }
     }
+    
+    // MARK: - Multi-Spectral Image Tests
+    
+    func testMultiSpectral4ComponentMCT() throws {
+        // Create a 4×4 identity matrix for 4 components
+        let matrix = try J2KMCTMatrix(
+            size: 4,
+            coefficients: [
+                1.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0
+            ],
+            precision: .floatingPoint
+        )
+        
+        // Create synthetic 4-component data
+        let component1 = Array(repeating: 100.0, count: 16)
+        let component2 = Array(repeating: 150.0, count: 16)
+        let component3 = Array(repeating: 200.0, count: 16)
+        let component4 = Array(repeating: 50.0, count: 16)
+        let components = [component1, component2, component3, component4]
+        
+        let config = J2KMCTConfiguration(type: .arrayBased, matrix: matrix)
+        let mct = J2KMCT(configuration: config)
+        
+        // Apply forward transform
+        let transformed = try mct.forwardTransform(components: components, matrix: matrix)
+        XCTAssertEqual(transformed.count, 4)
+        XCTAssertEqual(transformed[0].count, 16)
+        
+        // Identity should preserve values
+        for i in 0..<16 {
+            XCTAssertEqual(transformed[0][i], 100.0, accuracy: 0.001)
+            XCTAssertEqual(transformed[1][i], 150.0, accuracy: 0.001)
+            XCTAssertEqual(transformed[2][i], 200.0, accuracy: 0.001)
+            XCTAssertEqual(transformed[3][i], 50.0, accuracy: 0.001)
+        }
+    }
+    
+    func testMultiSpectral5ComponentDecorrelation() throws {
+        // Create a simple averaging matrix for 5 components
+        let matrix = try J2KMCTMatrix(
+            size: 5,
+            coefficients: [
+                0.2, 0.2, 0.2, 0.2, 0.2,  // Average
+                1.0, -1.0, 0.0, 0.0, 0.0,  // Difference 0-1
+                0.0, 1.0, -1.0, 0.0, 0.0,  // Difference 1-2
+                0.0, 0.0, 1.0, -1.0, 0.0,  // Difference 2-3
+                0.0, 0.0, 0.0, 1.0, -1.0   // Difference 3-4
+            ],
+            precision: .floatingPoint
+        )
+        
+        // Create correlated multi-spectral data
+        let component1 = Array(repeating: 100.0, count: 16)
+        let component2 = Array(repeating: 105.0, count: 16)
+        let component3 = Array(repeating: 110.0, count: 16)
+        let component4 = Array(repeating: 115.0, count: 16)
+        let component5 = Array(repeating: 120.0, count: 16)
+        let components = [component1, component2, component3, component4, component5]
+        
+        let config = J2KMCTConfiguration(type: .arrayBased, matrix: matrix)
+        let mct = J2KMCT(configuration: config)
+        
+        // Apply forward transform
+        let transformed = try mct.forwardTransform(components: components, matrix: matrix)
+        
+        // First component should be average (110)
+        XCTAssertEqual(transformed[0][0], 110.0, accuracy: 0.001)
+        
+        // Differences should be small (5.0 each)
+        XCTAssertEqual(transformed[1][0], -5.0, accuracy: 0.001)
+        XCTAssertEqual(transformed[2][0], -5.0, accuracy: 0.001)
+        XCTAssertEqual(transformed[3][0], -5.0, accuracy: 0.001)
+        XCTAssertEqual(transformed[4][0], -5.0, accuracy: 0.001)
+    }
+    
+    func testMultiSpectralMCTRoundTrip() throws {
+        // Create a decorrelation matrix for 6 components
+        let forwardMatrix = try J2KMCTMatrix(
+            size: 6,
+            coefficients: [
+                1.0/6.0, 1.0/6.0, 1.0/6.0, 1.0/6.0, 1.0/6.0, 1.0/6.0,  // Average
+                1.0, -0.5, -0.5, 0.0, 0.0, 0.0,
+                0.0, 1.0, -0.5, -0.5, 0.0, 0.0,
+                0.0, 0.0, 1.0, -0.5, -0.5, 0.0,
+                0.0, 0.0, 0.0, 1.0, -0.5, -0.5,
+                -0.5, 0.0, 0.0, 0.0, 1.0, -0.5
+            ],
+            precision: .floatingPoint
+        )
+        
+        // Get inverse matrix
+        let inverseMatrix = try forwardMatrix.inverse()
+        
+        // Create synthetic multi-spectral data (varying values)
+        let components: [[Double]] = [
+            Array(repeating: 80.0, count: 25),
+            Array(repeating: 90.0, count: 25),
+            Array(repeating: 100.0, count: 25),
+            Array(repeating: 110.0, count: 25),
+            Array(repeating: 120.0, count: 25),
+            Array(repeating: 130.0, count: 25)
+        ]
+        
+        let forwardConfig = J2KMCTConfiguration(type: .arrayBased, matrix: forwardMatrix)
+        let forwardMCT = J2KMCT(configuration: forwardConfig)
+        
+        // Forward transform
+        let transformed = try forwardMCT.forwardTransform(components: components, matrix: forwardMatrix)
+        
+        let inverseConfig = J2KMCTConfiguration(type: .arrayBased, matrix: inverseMatrix)
+        let inverseMCT = J2KMCT(configuration: inverseConfig)
+        
+        // Inverse transform
+        let reconstructed = try inverseMCT.forwardTransform(components: transformed, matrix: inverseMatrix)
+        
+        // Verify round-trip reconstruction
+        for compIdx in 0..<6 {
+            for i in 0..<25 {
+                XCTAssertEqual(
+                    reconstructed[compIdx][i],
+                    components[compIdx][i],
+                    accuracy: 0.1,
+                    "Round-trip failed for component \(compIdx) at index \(i)"
+                )
+            }
+        }
+    }
+    
+    func testMultiSpectralCompressionEfficiency() throws {
+        // Test that MCT can decorrelate multi-spectral data
+        
+        // Create a simple 4-component orthogonal decorrelation matrix (Hadamard-like)
+        let mctMatrix = try J2KMCTMatrix(
+            size: 4,
+            coefficients: [
+                0.5, 0.5, 0.5, 0.5,
+                0.5, -0.5, 0.5, -0.5,
+                0.5, 0.5, -0.5, -0.5,
+                0.5, -0.5, -0.5, 0.5
+            ],
+            precision: .floatingPoint
+        )
+        
+        // Create correlated data with small variations
+        let correlatedData: [[Double]] = [
+            Array(repeating: 100.0, count: 64),
+            Array(repeating: 102.0, count: 64),
+            Array(repeating: 98.0, count: 64),
+            Array(repeating: 101.0, count: 64)
+        ]
+        
+        let config = J2KMCTConfiguration(type: .arrayBased, matrix: mctMatrix)
+        let mct = J2KMCT(configuration: config)
+        
+        // Apply MCT
+        let transformed = try mct.forwardTransform(components: correlatedData, matrix: mctMatrix)
+        
+        // After decorrelation, the first component should have most energy (average)
+        // and other components should have less energy (differences)
+        let transformedEnergy = transformed.map { component in
+            component.reduce(0.0) { $0 + abs($1) }
+        }
+        
+        // First component (average) should have the most energy
+        XCTAssertEqual(transformedEnergy[0], transformedEnergy.max() ?? 0.0, accuracy: 0.1)
+        
+        // Other components (differences) should have less energy
+        let avgEnergy = transformedEnergy[0]
+        for i in 1..<4 {
+            XCTAssertLessThan(transformedEnergy[i], avgEnergy * 0.5,
+                "Difference component \(i) should have less energy than average")
+        }
+        
+        // Verify transform was applied correctly
+        XCTAssertEqual(transformed.count, 4)
+        for component in transformed {
+            XCTAssertEqual(component.count, 64)
+        }
+    }
+    
+    func testMultiSpectralMCTDistortionAdjustment() throws {
+        // Test distortion adjustment for multi-spectral images
+        
+        // 8-component multi-spectral configuration
+        let matrix = try J2KMCTMatrix(
+            size: 8,
+            coefficients: Array(repeating: 1.0/8.0, count: 64),  // Simple averaging for test
+            precision: .floatingPoint
+        )
+        
+        let config = J2KMCTEncodingConfiguration(mode: .arrayBased(matrix))
+        let adjustment = J2KMCTDistortionAdjustment(
+            configuration: config,
+            componentCount: 8
+        )
+        
+        let gain = adjustment.compressionEfficiencyGain()
+        
+        // 8 components should have significant gain
+        XCTAssertGreaterThan(gain, 1.15, "8-component MCT should provide >15% gain")
+        XCTAssertLessThan(gain, 1.5, "Gain should be reasonable (<50%)")
+        
+        // Verify distortion adjustment
+        let distortion = 1000.0
+        let adjusted = adjustment.adjustDistortion(distortion)
+        XCTAssertLessThan(adjusted, distortion)
+        XCTAssertEqual(adjusted, distortion / gain, accuracy: 0.001)
+    }
+    
+    func testMultiSpectralVsRGBComparison() throws {
+        // Compare 3-component RGB vs 6-component multi-spectral
+        
+        let rgbMatrix = J2KMCTMatrix.rgbToYCbCr
+        let rgbConfig = J2KMCTEncodingConfiguration(mode: .arrayBased(rgbMatrix))
+        let rgbAdjustment = J2KMCTDistortionAdjustment(
+            configuration: rgbConfig,
+            componentCount: 3
+        )
+        
+        let multiSpectralMatrix = try J2KMCTMatrix(
+            size: 6,
+            coefficients: Array(repeating: 1.0/6.0, count: 36),  // Simple averaging
+            precision: .floatingPoint
+        )
+        let msConfig = J2KMCTEncodingConfiguration(mode: .arrayBased(multiSpectralMatrix))
+        let msAdjustment = J2KMCTDistortionAdjustment(
+            configuration: msConfig,
+            componentCount: 6
+        )
+        
+        let rgbGain = rgbAdjustment.compressionEfficiencyGain()
+        let msGain = msAdjustment.compressionEfficiencyGain()
+        
+        // Multi-spectral should have higher gain due to more components
+        XCTAssertGreaterThan(msGain, rgbGain, "Multi-spectral should provide higher gain than RGB")
+        
+        // Gain increase should scale with component count
+        let gainIncrease = msGain / rgbGain
+        XCTAssertGreaterThan(gainIncrease, 1.1, "6-component should provide at least 10% more gain than 3-component")
+    }
 }
