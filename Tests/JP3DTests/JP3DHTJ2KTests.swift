@@ -124,8 +124,10 @@ final class JP3DHTJ2KTests: XCTestCase {
         let codec = JP3DHTJ2KCodec(configuration: .default)
         let coefficients: [Int32] = [1, 2, 3, 4, 5, 6, 7, 8]
         let encoded = codec.encodeTile(coefficients: coefficients, voxelCount: coefficients.count)
-        // Minimum: 4-byte tile-info prefix + 4-byte ZBP + 4*8 coefficient bytes = 40 bytes
-        XCTAssertGreaterThanOrEqual(encoded.count, 4 + 4 + coefficients.count * 4)
+        // Minimum: 4-byte tile-info prefix + 4-byte ZBP header + raw Int32 coefficients
+        let tileInfoSize = 4
+        let zbpSize = 4
+        XCTAssertGreaterThanOrEqual(encoded.count, tileInfoSize + zbpSize + coefficients.count * 4)
         // Verify tile-info header signals HT
         XCTAssertEqual(encoded[0], 0x01, "First byte should signal HT mode")
     }
@@ -333,7 +335,9 @@ final class JP3DHTJ2KTests: XCTestCase {
 
     func testHTJ2KEncodeDecodeVoxelValues() async throws {
         // Flat volume (all same value) should round-trip exactly
-        let width = 4, height = 4, depth = 2
+        let width = 4
+        let height = 4
+        let depth = 2
         var data = Data(count: width * height * depth)
         for i in 0..<data.count { data[i] = 42 }
         let component = J2KVolumeComponent(

@@ -173,11 +173,11 @@ public actor JP3DDecoder {
         var warnings: [String] = []
         var tilesDecoded = 0
         var isPartial = false
-        // Cache for HTJ2K-decoded all-component coefficients of the current tile
-        var htj2kTileCache: [Float]? = nil
 
         for (tileIdx, parsedTile) in codestream.tiles.enumerated() {
-            htj2kTileCache = nil
+            // Cache for HTJ2K-decoded all-component coefficients of the current tile.
+            // Scoped here so it is naturally reset on each tile iteration.
+            var htj2kTileCache: [Float]? = nil
             let index = parsedTile.tileIndex
             let iz = index / (grid.tilesX * grid.tilesY)
             let rem = index % (grid.tilesX * grid.tilesY)
