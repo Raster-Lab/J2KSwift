@@ -27,6 +27,9 @@ let package = Package(
             name: "J2KFileFormat",
             targets: ["J2KFileFormat"]),
         .library(
+            name: "J2KMetal",
+            targets: ["J2KMetal"]),
+        .library(
             name: "JPIP",
             targets: ["JPIP"]),
         .executable(
@@ -64,6 +67,13 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency")
             ]),
         .target(
+            name: "J2KMetal",
+            dependencies: ["J2KCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency"),
+                .enableExperimentalFeature("StrictConcurrency")
+            ]),
+        .target(
             name: "JPIP",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
             swiftSettings: [
@@ -82,6 +92,9 @@ let package = Package(
         .testTarget(
             name: "J2KFileFormatTests",
             dependencies: ["J2KFileFormat"]),
+        .testTarget(
+            name: "J2KMetalTests",
+            dependencies: ["J2KMetal"]),
         .testTarget(
             name: "JPIPTests",
             dependencies: ["JPIP", "J2KCodec"]),

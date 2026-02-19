@@ -1817,35 +1817,35 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 
 **Goal**: Set up Metal infrastructure for GPU-accelerated operations.
 
-- [ ] Metal foundation
-  - [ ] Metal device initialization and management
-  - [ ] Metal command queue setup
-  - [ ] Metal buffer management and pooling
-  - [ ] Shader library compilation and loading
-  - [ ] Error handling and fallback mechanisms
-- [ ] Memory management
-  - [ ] Shared/managed buffer allocation strategies
-  - [ ] Efficient CPU-GPU data transfer
-  - [ ] Buffer reuse and pooling
-  - [ ] Memory usage tracking and limits
-  - [ ] Automatic fallback for memory pressure
-- [ ] Platform detection
-  - [ ] Metal capability detection
-  - [ ] Feature tier identification (Apple Silicon vs Intel)
-  - [ ] GPU selection for multi-GPU systems
-  - [ ] Graceful degradation for unsupported features
-- [ ] Build system updates
-  - [ ] Conditional Metal compilation (`#if canImport(Metal)`)
-  - [ ] Metal shader compilation in Package.swift
-  - [ ] Platform-specific build targets
-  - [ ] x86-64 isolation: separate `J2KAccelerate_x86` target
+- [x] Metal foundation
+  - [x] Metal device initialization and management
+  - [x] Metal command queue setup
+  - [x] Metal buffer management and pooling
+  - [x] Shader library compilation and loading
+  - [x] Error handling and fallback mechanisms
+- [x] Memory management
+  - [x] Shared/managed buffer allocation strategies
+  - [x] Efficient CPU-GPU data transfer
+  - [x] Buffer reuse and pooling
+  - [x] Memory usage tracking and limits
+  - [x] Automatic fallback for memory pressure
+- [x] Platform detection
+  - [x] Metal capability detection
+  - [x] Feature tier identification (Apple Silicon vs Intel)
+  - [x] GPU selection for multi-GPU systems
+  - [x] Graceful degradation for unsupported features
+- [x] Build system updates
+  - [x] Conditional Metal compilation (`#if canImport(Metal)`)
+  - [x] Metal shader compilation in Package.swift
+  - [x] Platform-specific build targets
+  - [x] x86-64 isolation: separate `J2KAccelerate_x86` target
 
 **Deliverables**:
 - `Sources/J2KMetal/J2KMetalDevice.swift` - Metal device management (actor)
 - `Sources/J2KMetal/J2KMetalBufferPool.swift` - GPU buffer pooling
 - `Sources/J2KMetal/J2KMetalShaderLibrary.swift` - Shader management
 - Package.swift updates for Metal support
-- 15+ tests for Metal infrastructure
+- 36 tests for Metal infrastructure
 
 ### Week 178-179: Metal-Accelerated Wavelet Transforms
 
