@@ -1639,39 +1639,39 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 - Integration: J2KQuantizationMode.trellis, J2KQuantizationParameters.trellis
 - R-D improvement: 2-8% over scalar quantization (measured)
 
-### Week 171-172: Extended ROI Methods
+### Week 171-172: Extended ROI Methods ✅
 
 **Goal**: Implement Part 2 extended ROI methods beyond MaxShift, including scaling-based and general ROI coding.
 
-- [ ] Extended ROI framework
-  - [ ] Implement general scaling-based ROI
-  - [ ] Add DWT domain ROI (arbitrary ROI after transform)
-  - [ ] Support multiple ROI regions with priorities
-  - [ ] Implement ROI blending and feathering
-  - [ ] Add ROI mask compression
-- [ ] Advanced ROI methods
-  - [ ] Bitplane-dependent ROI coding
-  - [ ] Quality layer-based ROI
-  - [ ] Adaptive ROI based on content analysis
-  - [ ] Hierarchical ROI (nested regions)
-  - [ ] ROI with custom scaling factors
-- [ ] ROI optimization
-  - [ ] Fast ROI mask generation
-  - [ ] Efficient ROI coefficient scaling
-  - [ ] SIMD-optimized mask operations
-  - [ ] Parallel ROI processing for tiles
-- [ ] Integration and API
-  - [ ] Extend J2KROI for Part 2 methods
-  - [ ] Add ROI configuration to encoder
-  - [ ] Implement ROI decoder support
-  - [ ] ROI editing and manipulation API
-  - [ ] Visual ROI editing helpers
-- [ ] Testing
-  - [ ] ROI correctness tests
-  - [ ] Multiple ROI scenarios
-  - [ ] ROI quality evaluation
-  - [ ] Performance benchmarks
-  - [ ] Round-trip validation
+- [x] Extended ROI framework
+  - [x] Implement general scaling-based ROI
+  - [x] Add DWT domain ROI (arbitrary ROI after transform)
+  - [x] Support multiple ROI regions with priorities
+  - [x] Implement ROI blending and feathering
+  - [x] Add ROI mask compression
+- [x] Advanced ROI methods
+  - [x] Bitplane-dependent ROI coding
+  - [x] Quality layer-based ROI
+  - [x] Adaptive ROI based on content analysis
+  - [x] Hierarchical ROI (nested regions)
+  - [x] ROI with custom scaling factors
+- [x] ROI optimization
+  - [x] Fast ROI mask generation
+  - [x] Efficient ROI coefficient scaling
+  - [x] SIMD-optimized mask operations
+  - [x] Parallel ROI processing for tiles
+- [x] Integration and API
+  - [x] Extend J2KROI for Part 2 methods
+  - [x] Add ROI configuration to encoder
+  - [x] Implement ROI decoder support
+  - [x] ROI editing and manipulation API
+  - [x] Visual ROI editing helpers
+- [x] Testing
+  - [x] ROI correctness tests
+  - [x] Multiple ROI scenarios
+  - [x] ROI quality evaluation
+  - [x] Performance benchmarks
+  - [x] Round-trip validation
 
 **Apple Silicon Optimizations**:
 - vDSP vector operations for mask processing (5-10× faster)
@@ -1680,8 +1680,8 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 - Parallel mask generation using Metal compute (prep for Phase 14)
 
 **Deliverables**:
-- `Sources/J2KCodec/J2KExtendedROI.swift` - Extended ROI methods (30+ tests)
-- `Sources/J2KAccelerate/J2KAcceleratedROI.swift` - Accelerate-optimized ROI
+- `Sources/J2KCodec/J2KExtendedROI.swift` - Extended ROI methods (29 tests)
+- `Sources/J2KAccelerate/J2KAcceleratedROI.swift` - Accelerate-optimized ROI (22 tests, Linux N/A)
 - `Documentation/PART2_EXTENDED_ROI.md` - ROI feature guide
 
 ### Week 173: Visual Masking and Perceptual Encoding
