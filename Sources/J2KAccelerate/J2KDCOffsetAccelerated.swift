@@ -126,4 +126,54 @@ public struct J2KDCOffsetAccelerated: Sendable {
         )
         #endif
     }
+
+    // MARK: - Accelerated Extended Precision Scaling
+
+    /// Scales wavelet coefficients using vectorized multiplication.
+    ///
+    /// Uses `vDSP_vsmul` on Apple platforms for fast coefficient scaling
+    /// with a single factor. Falls back to scalar operations elsewhere.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients to scale.
+    ///   - factor: The scaling factor.
+    /// - Returns: The scaled coefficients.
+    /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Accelerate is not available.
+    public func scaleCoefficients(_ coefficients: [Int32], by factor: Float) throws -> [Int32] {
+        #if canImport(Accelerate)
+        var floatData = coefficients.map { Float($0) }
+        var scaleFactor = factor
+        var result = [Float](repeating: 0, count: coefficients.count)
+        vDSP_vsmul(&floatData, 1, &scaleFactor, &result, 1, vDSP_Length(coefficients.count))
+        return result.map { Int32($0.rounded()) }
+        #else
+        throw J2KError.unsupportedFeature(
+            "Accelerated coefficient scaling requires Accelerate framework (Apple platforms)"
+        )
+        #endif
+    }
+
+    /// Clamps coefficients to a given magnitude range using vectorized operations.
+    ///
+    /// Uses `vDSP_vclip` on Apple platforms.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The coefficients to clamp.
+    ///   - maxMagnitude: The maximum absolute value.
+    /// - Returns: The clamped coefficients.
+    /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Accelerate is not available.
+    public func clampCoefficients(_ coefficients: [Int32], maxMagnitude: Int32) throws -> [Int32] {
+        #if canImport(Accelerate)
+        var floatData = coefficients.map { Float($0) }
+        var lo = Float(-maxMagnitude)
+        var hi = Float(maxMagnitude)
+        var result = [Float](repeating: 0, count: coefficients.count)
+        vDSP_vclip(&floatData, 1, &lo, &hi, &result, 1, vDSP_Length(coefficients.count))
+        return result.map { Int32($0.rounded()) }
+        #else
+        throw J2KError.unsupportedFeature(
+            "Accelerated coefficient clamping requires Accelerate framework (Apple platforms)"
+        )
+        #endif
+    }
 }

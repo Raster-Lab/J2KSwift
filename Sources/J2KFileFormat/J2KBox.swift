@@ -153,6 +153,9 @@ public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
     /// Compositing layer header box ('cgrp') - Grouping of composition layers
     public static let cgrp = J2KBoxType(string: "cgrp")
 
+    /// DC offset feature box ('dcof') - Part 2 DC offset capabilities
+    public static let dcof = J2KBoxType(string: "dcof")
+
     // MARK: - JPM Box Types (ISO/IEC 15444-6)
 
     /// Page collection box ('pcol') - Container for pages

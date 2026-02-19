@@ -7,6 +7,7 @@
 
 import Foundation
 import J2KCore
+import J2KCodec
 
 // MARK: - Signature Box
 
@@ -2880,5 +2881,97 @@ public struct J2KLayoutBox: J2KBox {
                      UInt32(data[15]) << 16 |
                      UInt32(data[16]) << 8 |
                      UInt32(data[17])
+    }
+}
+
+// MARK: - JPX DC Offset Extension Box (Part 2)
+
+/// JPX extension box for signaling DC offset capabilities.
+///
+/// This box is placed in the JP2 header (jp2h) superbox to indicate
+/// that the codestream uses Part 2 DC offset features. It stores
+/// the DC offset configuration and per-component offset type.
+///
+/// ## Box Structure
+///
+/// - Type: 'dcof' (DC Offset Feature)
+/// - Content:
+///   - Offset type (1 byte): 0 = integer, 1 = floating-point
+///   - Component count (2 bytes): Number of components with DC offset
+///   - Flags (1 byte): Configuration flags
+///
+/// ## Usage
+///
+/// ```swift
+/// let box = J2KDCOffsetExtensionBox(
+///     offsetType: .integer,
+///     componentCount: 3,
+///     enabled: true
+/// )
+/// let data = try box.write()
+/// ```
+public struct J2KDCOffsetExtensionBox: J2KBox {
+    public var boxType: J2KBoxType {
+        .dcof
+    }
+
+    /// The type of DC offset encoding used.
+    public var offsetType: J2KDCOOffsetType
+
+    /// Number of components that use DC offset.
+    public var componentCount: UInt16
+
+    /// Whether DC offset is enabled.
+    public var enabled: Bool
+
+    /// Creates a new DC offset extension box.
+    ///
+    /// - Parameters:
+    ///   - offsetType: The type of offset encoding (default: .integer).
+    ///   - componentCount: Number of components with DC offset (default: 0).
+    ///   - enabled: Whether DC offset is enabled (default: true).
+    public init(
+        offsetType: J2KDCOOffsetType = .integer,
+        componentCount: UInt16 = 0,
+        enabled: Bool = true
+    ) {
+        self.offsetType = offsetType
+        self.componentCount = componentCount
+        self.enabled = enabled
+    }
+
+    public func write() throws -> Data {
+        var data = Data(capacity: 4)
+
+        // Offset type (1 byte)
+        data.append(offsetType.rawValue)
+
+        // Component count (2 bytes)
+        data.append(UInt8((componentCount >> 8) & 0xFF))
+        data.append(UInt8(componentCount & 0xFF))
+
+        // Flags (1 byte): bit 0 = enabled
+        data.append(enabled ? 0x01 : 0x00)
+
+        return data
+    }
+
+    public mutating func read(from data: Data) throws {
+        guard data.count >= 4 else {
+            throw J2KError.fileFormatError(
+                "DC offset extension box too short: \(data.count), expected at least 4"
+            )
+        }
+
+        guard let ot = J2KDCOOffsetType(rawValue: data[0]) else {
+            throw J2KError.fileFormatError(
+                "Invalid DC offset type: \(data[0])"
+            )
+        }
+        self.offsetType = ot
+
+        self.componentCount = UInt16(data[1]) << 8 | UInt16(data[2])
+
+        self.enabled = (data[3] & 0x01) != 0
     }
 }

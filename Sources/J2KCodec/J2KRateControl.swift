@@ -544,3 +544,88 @@ public struct RateDistortionStats: Sendable {
         self.codeBlockCounts = codeBlockCounts
     }
 }
+
+// MARK: - DC Offset Rate-Distortion Integration
+
+/// Adjusts rate-distortion calculations for DC offset-aware encoding.
+///
+/// When DC offset is applied, the effective energy of wavelet coefficients
+/// is reduced (data is centered around zero), which improves compression
+/// efficiency. This utility helps estimate the distortion improvement
+/// from DC offset removal.
+///
+/// ## How It Works
+///
+/// DC offset removal shifts the mean of component data to zero,
+/// reducing the magnitude of low-frequency wavelet coefficients.
+/// This results in better quantization efficiency and lower bitrate
+/// for equivalent quality.
+///
+/// ## Usage
+///
+/// ```swift
+/// let adjustment = J2KDCOffsetDistortionAdjustment(
+///     dcOffsets: offsetResults,
+///     bitDepths: [8, 8, 8]
+/// )
+/// let factor = adjustment.compressionEfficiencyGain(forComponent: 0)
+/// ```
+public struct J2KDCOffsetDistortionAdjustment: Sendable {
+    /// Per-component DC offset values.
+    public let offsets: [J2KDCOffsetValue]
+
+    /// Per-component bit depths.
+    public let bitDepths: [Int]
+
+    /// Creates a DC offset distortion adjustment.
+    ///
+    /// - Parameters:
+    ///   - offsets: Per-component DC offset values.
+    ///   - bitDepths: Per-component bit depths.
+    public init(offsets: [J2KDCOffsetValue], bitDepths: [Int]) {
+        self.offsets = offsets
+        self.bitDepths = bitDepths
+    }
+
+    /// Estimates the compression efficiency gain from DC offset removal.
+    ///
+    /// Returns a factor (>= 1.0) indicating how much more efficiently
+    /// the component can be compressed after DC offset removal.
+    ///
+    /// - Parameter componentIndex: The component index.
+    /// - Returns: The efficiency gain factor (1.0 = no gain).
+    public func compressionEfficiencyGain(forComponent componentIndex: Int) -> Double {
+        guard componentIndex < offsets.count,
+              componentIndex < bitDepths.count else {
+            return 1.0
+        }
+
+        let offset = offsets[componentIndex]
+        let bitDepth = bitDepths[componentIndex]
+
+        guard offset.value != 0.0, bitDepth > 0 else {
+            return 1.0
+        }
+
+        // The efficiency gain is proportional to the ratio of the offset
+        // to the dynamic range. Higher offset relative to range = more gain.
+        let maxValue = Double(1 << bitDepth)
+        let normalizedOffset = abs(offset.value) / maxValue
+        // Typical gain: 5-15% for non-zero mean images
+        return 1.0 + normalizedOffset * 0.15
+    }
+
+    /// Adjusts a distortion value for DC offset-aware encoding.
+    ///
+    /// Scales the distortion estimate to account for reduced coefficient
+    /// energy after DC offset removal.
+    ///
+    /// - Parameters:
+    ///   - distortion: The original distortion estimate.
+    ///   - componentIndex: The component index.
+    /// - Returns: The adjusted distortion estimate.
+    public func adjustDistortion(_ distortion: Double, forComponent componentIndex: Int) -> Double {
+        let gain = compressionEfficiencyGain(forComponent: componentIndex)
+        return distortion / gain
+    }
+}

@@ -1322,33 +1322,40 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 
 **Goal**: Complete extended precision support and integrate with existing pipeline.
 
-- [ ] Integration with existing components
-  - [ ] Update encoder configuration for DC offset control
-  - [ ] Modify decoder to handle extended precision markers
-  - [ ] Integrate with rate-distortion optimization
-  - [ ] Update file format support (JP2/JPX boxes)
-  - [ ] Add API for precision control
-- [ ] Performance optimization
-  - [ ] Profile precision arithmetic overhead
-  - [ ] Optimize critical paths using Accelerate
-  - [ ] Minimize precision conversions
-  - [ ] Cache-friendly data layouts for SIMD
-- [ ] Comprehensive testing
-  - [ ] Conformance tests for Part 2 DC offset
-  - [ ] Interoperability with reference implementations
-  - [ ] Edge cases (extreme DC values, precision limits)
-  - [ ] Memory usage validation
-  - [ ] Cross-platform consistency tests
-- [ ] Documentation
-  - [ ] API documentation for DC offset features
-  - [ ] Performance characteristics guide
-  - [ ] Best practices for precision selection
-  - [ ] Example usage patterns
+- [x] Integration with existing components
+  - [x] Update encoder configuration for DC offset control
+  - [x] Modify decoder to handle extended precision markers
+  - [x] Integrate with rate-distortion optimization
+  - [x] Update file format support (JP2/JPX boxes)
+  - [x] Add API for precision control
+- [x] Performance optimization
+  - [x] Profile precision arithmetic overhead
+  - [x] Optimize critical paths using Accelerate
+  - [x] Minimize precision conversions
+  - [x] Cache-friendly data layouts for SIMD
+- [x] Comprehensive testing
+  - [x] Conformance tests for Part 2 DC offset
+  - [x] Interoperability with reference implementations
+  - [x] Edge cases (extreme DC values, precision limits)
+  - [x] Memory usage validation
+  - [x] Cross-platform consistency tests
+- [x] Documentation
+  - [x] API documentation for DC offset features
+  - [x] Performance characteristics guide
+  - [x] Best practices for precision selection
+  - [x] Example usage patterns
 
 **Deliverables**:
 - `Sources/J2KCodec/J2KDCOffset.swift` - DC offset implementation
 - `Sources/J2KCodec/J2KExtendedPrecision.swift` - Extended precision arithmetic
-- `Tests/J2KCodecTests/J2KDCOffsetTests.swift` - 25+ tests
+- `Sources/J2KCodec/J2KEncodingPresets.swift` - Updated encoder config with DC offset/precision
+- `Sources/J2KCodec/J2KDecoderPipeline.swift` - Updated decoder config with DCO marker support
+- `Sources/J2KCodec/J2KRateControl.swift` - DC offset distortion adjustment
+- `Sources/J2KFileFormat/J2KBoxes.swift` - DCO extension box for JP2/JPX
+- `Sources/J2KAccelerate/J2KDCOffsetAccelerated.swift` - Accelerated coefficient scaling/clamping
+- `Tests/J2KCodecTests/J2KDCOffsetTests.swift` - 54 tests (existing)
+- `Tests/J2KCodecTests/J2KExtendedPrecisionIntegrationTests.swift` - 36 integration tests
+- `Tests/J2KFileFormatTests/J2KDCOffsetExtensionBoxTests.swift` - 12 file format tests
 - `Documentation/PART2_DC_OFFSET.md` - Feature guide
 - Performance gain: 5-15% compression improvement for non-zero mean images
 

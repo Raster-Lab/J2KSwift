@@ -287,6 +287,27 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: empty (no overrides)
     public var tileBlockSizeOverrides: [Int: (width: Int, height: Int)]
 
+    /// Configuration for Part 2 variable DC offset.
+    ///
+    /// When enabled, the encoder computes and removes per-component DC offset
+    /// before wavelet transform and quantization, improving compression
+    /// efficiency for images with non-zero mean values.
+    ///
+    /// The offset values are signaled in DCO marker segments (0xFF5C) in the
+    /// codestream, and restored during decoding.
+    ///
+    /// - Default: `.disabled` (Part 1 compatible behavior)
+    public var dcOffsetConfiguration: J2KDCOffsetConfiguration
+
+    /// Configuration for Part 2 extended precision arithmetic.
+    ///
+    /// Controls the precision, rounding behavior, and guard bit usage
+    /// for Part 2 extended precision operations. Extended precision
+    /// allows higher accuracy for high bit depth and HDR images.
+    ///
+    /// - Default: `.default` (Part 1 compatible: 32-bit, 2 guard bits)
+    public var extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -307,6 +328,8 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - enableMagSgnPacking: Enable efficient magnitude/sign packing for HTJ2K (default: true).
     ///   - blockSizeMode: Block size selection mode (default: .fixed).
     ///   - tileBlockSizeOverrides: Per-tile block size overrides for adaptive mode (default: empty).
+    ///   - dcOffsetConfiguration: Part 2 DC offset configuration (default: .disabled).
+    ///   - extendedPrecisionConfiguration: Part 2 extended precision configuration (default: .default).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -324,7 +347,9 @@ public struct J2KEncodingConfiguration: Sendable {
         enableVLCOptimization: Bool = true,
         enableMagSgnPacking: Bool = true,
         blockSizeMode: J2KBlockSizeMode = .fixed,
-        tileBlockSizeOverrides: [Int: (width: Int, height: Int)] = [:]
+        tileBlockSizeOverrides: [Int: (width: Int, height: Int)] = [:],
+        dcOffsetConfiguration: J2KDCOffsetConfiguration = .disabled,
+        extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -349,6 +374,8 @@ public struct J2KEncodingConfiguration: Sendable {
         self.enableMagSgnPacking = enableMagSgnPacking
         self.blockSizeMode = blockSizeMode
         self.tileBlockSizeOverrides = tileBlockSizeOverrides
+        self.dcOffsetConfiguration = dcOffsetConfiguration
+        self.extendedPrecisionConfiguration = extendedPrecisionConfiguration
     }
 
     /// Validates the configuration parameters.
@@ -499,6 +526,8 @@ extension J2KEncodingConfiguration: Equatable {
             lhs.tileSize.width == rhs.tileSize.width &&
             lhs.tileSize.height == rhs.tileSize.height &&
             lhs.bitrateMode == rhs.bitrateMode &&
-            lhs.maxThreads == rhs.maxThreads
+            lhs.maxThreads == rhs.maxThreads &&
+            lhs.dcOffsetConfiguration == rhs.dcOffsetConfiguration &&
+            lhs.extendedPrecisionConfiguration == rhs.extendedPrecisionConfiguration
     }
 }

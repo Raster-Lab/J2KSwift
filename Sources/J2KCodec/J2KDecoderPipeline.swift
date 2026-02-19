@@ -71,6 +71,17 @@ struct DecoderConfiguration: Sendable {
 
     /// Whether HTJ2K block coding is used (from COD marker bit 6).
     var useHTJ2K: Bool = false
+
+    /// Per-component DC offset values from DCO marker segment (Part 2).
+    ///
+    /// When non-nil, the decoder applies these offsets after inverse wavelet
+    /// transform to restore original component values.
+    var dcOffsets: [J2KDCOffsetValue]?
+
+    /// Extended precision configuration (Part 2).
+    ///
+    /// Controls guard bit count and rounding mode for coefficient processing.
+    var extendedPrecision: J2KExtendedPrecisionConfiguration = .default
 }
 
 // MARK: - Codestream Metadata
@@ -97,6 +108,12 @@ struct CodestreamMetadata: Sendable {
 
     /// Quantization step sizes from QCD marker.
     var quantizationSteps: [String: Double]
+
+    /// DCO marker segment from codestream (Part 2).
+    ///
+    /// Present when the codestream contains a DCO marker segment (0xFF5C)
+    /// signaling per-component DC offset values.
+    var dcoMarkerSegment: J2KDCOMarkerSegment?
 
     struct ComponentInfo: Sendable {
         var bitDepth: Int
