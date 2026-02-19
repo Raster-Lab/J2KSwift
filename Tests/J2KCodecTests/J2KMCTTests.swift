@@ -656,4 +656,126 @@ final class J2KMCTTests: XCTestCase {
     }
     
     #endif
+    
+    // MARK: - MCT Marker Segment Tests
+    
+    func testMCTMarkerCreation() throws {
+        let matrix = J2KMCTMatrix.rgbToYCbCr
+        let marker = try J2KMCTMarkerSegment.from(matrix: matrix, index: 0)
+        
+        XCTAssertEqual(marker.index, 0)
+        XCTAssertEqual(marker.transformType, .decorrelation)
+        XCTAssertEqual(marker.componentType, .irreversible)
+        XCTAssertEqual(marker.outputComponentCount, 3)
+        XCTAssertGreaterThan(marker.coefficients.count, 0)
+    }
+    
+    func testMCTMarkerEncodeDecode() throws {
+        let matrix = J2KMCTMatrix.identity3
+        let original = try J2KMCTMarkerSegment.from(matrix: matrix, index: 1)
+        
+        let encoded = try original.encode()
+        XCTAssertGreaterThan(encoded.count, 0)
+        
+        // Parse back (skip marker and length)
+        let segmentData = encoded.subdata(in: 4..<encoded.count)
+        let decoded = try J2KMCTMarkerSegment.parse(from: segmentData)
+        
+        XCTAssertEqual(decoded.index, original.index)
+        XCTAssertEqual(decoded.transformType, original.transformType)
+        XCTAssertEqual(decoded.componentType, original.componentType)
+        XCTAssertEqual(decoded.outputComponentCount, original.outputComponentCount)
+    }
+    
+    func testMCTMarkerToMatrix() throws {
+        let originalMatrix = try J2KMCTMatrix(
+            size: 2,
+            coefficients: [1.0, 0.5, 0.0, 1.0],
+            precision: .floatingPoint
+        )
+        
+        let marker = try J2KMCTMarkerSegment.from(matrix: originalMatrix, index: 0)
+        let reconstructedMatrix = try marker.toMatrix(inputComponentCount: 2)
+        
+        XCTAssertEqual(reconstructedMatrix.size, 2)
+        XCTAssertEqual(reconstructedMatrix.coefficients.count, 4)
+        
+        // Check approximate equality (floating-point precision)
+        for i in 0..<4 {
+            XCTAssertEqual(
+                reconstructedMatrix.coefficients[i],
+                originalMatrix.coefficients[i],
+                accuracy: 0.01
+            )
+        }
+    }
+    
+    func testMCCMarkerCreation() {
+        let marker = J2KMCCMarkerSegment(
+            index: 0,
+            inputComponents: [0, 1, 2],
+            outputComponents: [0, 1, 2],
+            mctIndex: 0
+        )
+        
+        XCTAssertEqual(marker.index, 0)
+        XCTAssertEqual(marker.inputComponents.count, 3)
+        XCTAssertEqual(marker.outputComponents.count, 3)
+        XCTAssertEqual(marker.mctIndex, 0)
+    }
+    
+    func testMCCMarkerEncodeDecode() throws {
+        let original = J2KMCCMarkerSegment(
+            index: 1,
+            inputComponents: [0, 1, 2],
+            outputComponents: [3, 4, 5],
+            mctIndex: 0
+        )
+        
+        let encoded = try original.encode()
+        XCTAssertGreaterThan(encoded.count, 0)
+        
+        // Parse back (skip marker and length)
+        let segmentData = encoded.subdata(in: 4..<encoded.count)
+        let decoded = try J2KMCCMarkerSegment.parse(from: segmentData)
+        
+        XCTAssertEqual(decoded.index, original.index)
+        XCTAssertEqual(decoded.inputComponents, original.inputComponents)
+        XCTAssertEqual(decoded.outputComponents, original.outputComponents)
+        XCTAssertEqual(decoded.mctIndex, original.mctIndex)
+    }
+    
+    func testMCOMarkerCreation() {
+        let marker = J2KMCOMarkerSegment(mccOrder: [0, 1, 2])
+        XCTAssertEqual(marker.mccOrder.count, 3)
+        XCTAssertEqual(marker.mccOrder[0], 0)
+    }
+    
+    func testMCOMarkerEncodeDecode() throws {
+        let original = J2KMCOMarkerSegment(mccOrder: [0, 1, 2, 3])
+        
+        let encoded = try original.encode()
+        XCTAssertGreaterThan(encoded.count, 0)
+        
+        // Parse back (skip marker and length)
+        let segmentData = encoded.subdata(in: 4..<encoded.count)
+        let decoded = try J2KMCOMarkerSegment.parse(from: segmentData)
+        
+        XCTAssertEqual(decoded.mccOrder, original.mccOrder)
+    }
+    
+    func testMCTMarkerWithReversibleTransform() throws {
+        let matrix = try J2KMCTMatrix(
+            size: 2,
+            coefficients: [1.0, 0.0, 0.0, 1.0],
+            precision: .integer
+        )
+        
+        let marker = try J2KMCTMarkerSegment.from(matrix: matrix, index: 0)
+        
+        XCTAssertEqual(marker.componentType, .reversible)
+        
+        let reconstructed = try marker.toMatrix(inputComponentCount: 2)
+        XCTAssertEqual(reconstructed.precision, .integer)
+    }
 }
