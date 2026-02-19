@@ -220,9 +220,20 @@ struct EncoderPipeline: Sendable {
     // MARK: - Stage 2: Color Transform
     
     /// Applies color space transformation (RCT/ICT or Part 2 MCT).
+    ///
+    /// - Parameters:
+    ///   - components: The component data.
+    ///   - image: The source image.
+    ///   - tileIndex: The tile index (default: 0 for non-tiled images).
+    /// - Returns: Transformed component data.
     private func applyColorTransform(
-        _ components: [[Int32]], image: J2KImage
+        _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
     ) throws -> [[Int32]] {
+        // Check for per-tile MCT override first
+        if let tileMatrix = config.mctConfiguration.perTileMCT[tileIndex] {
+            return try applyArrayBasedMCT(components, matrix: tileMatrix, image: image)
+        }
+        
         // Check if MCT is enabled in configuration
         switch config.mctConfiguration.mode {
         case .disabled:
@@ -239,7 +250,7 @@ struct EncoderPipeline: Sendable {
             
         case .adaptive(let candidates, let criteria):
             // Select best matrix adaptively based on criteria
-            return try applyAdaptiveMCT(components, candidates: candidates, criteria: criteria, image: image)
+            return try applyAdaptiveMCT(components, candidates: candidates, criteria: criteria, image: image, tileIndex: tileIndex)
         }
     }
     
@@ -327,11 +338,17 @@ struct EncoderPipeline: Sendable {
         _ components: [[Int32]],
         candidates: [J2KMCTMatrix],
         criteria: J2KMCTEncodingConfiguration.AdaptiveSelectionCriteria,
-        image: J2KImage
+        image: J2KImage,
+        tileIndex: Int = 0
     ) throws -> [[Int32]] {
         // For now, use a simple heuristic: correlation-based selection
         // In a full implementation, this would evaluate each candidate matrix
         // and select based on the specified criteria
+        
+        // TODO: Implement proper adaptive selection based on:
+        // - correlation: Analyze component correlation
+        // - rateDistortion: Evaluate R-D performance of each candidate
+        // - compressionEfficiency: Compare compression ratios
         
         // Default to first candidate if available
         guard let selectedMatrix = candidates.first else {

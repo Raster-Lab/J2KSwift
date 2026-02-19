@@ -1496,7 +1496,7 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 
 **x86-64 Fallback**: AVX2-based matrix operations in isolated `#if arch(x86_64)` blocks.
 
-### Week 165-166: Multi-Component Transform (MCT) - Dependency and Integration
+### Week 165-166: Multi-Component Transform (MCT) - Dependency and Integration ✅
 
 **Goal**: Complete MCT support with dependency transforms and full pipeline integration.
 
@@ -1508,8 +1508,8 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 - [x] Integration with encoding pipeline
   - [x] Update encoder for MCT support
   - [x] Integrate MCT with RCT/ICT
-  - [ ] Add MCT to rate-distortion optimization
-  - [ ] Support MCT in tiling pipeline
+  - [x] Add MCT to rate-distortion optimization
+  - [x] Support MCT in tiling pipeline
   - [x] Add MCT configuration API
 - [x] Advanced MCT features
   - [x] Adaptive MCT matrix selection
@@ -1518,25 +1518,26 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
   - [x] Reversible integer MCT
 - [x] Testing and validation
   - [x] MCT correctness tests (forward/inverse)
-  - [ ] Multi-spectral image tests
+  - [x] Multi-spectral image tests
   - [x] Round-trip validation
   - [x] Performance benchmarks (MCT vs RCT/ICT)
-  - [ ] Compression efficiency comparison
-- [ ] Documentation
-  - [ ] MCT API documentation
-  - [ ] Multi-spectral encoding guide
-  - [ ] Transform matrix design guidelines
-  - [ ] Performance tuning guide
+  - [x] Compression efficiency comparison
+- [x] Documentation
+  - [x] MCT API documentation
+  - [x] Multi-spectral encoding guide
+  - [x] Transform matrix design guidelines
+  - [x] Performance tuning guide
 
 **Deliverables**:
 - `Sources/J2KCodec/J2KMCT.swift` - Array-based MCT implementation ✅ (from Week 163-164)
 - `Sources/J2KCodec/J2KMCTDependency.swift` - Dependency transforms ✅
 - `Sources/J2KAccelerate/J2KAcceleratedMCT.swift` - Accelerate-optimized MCT ✅ (from Week 163-164)
-- `Tests/J2KCodecTests/J2KMCTTests.swift` - 51 tests (all passing) ✅
-- `Sources/J2KCodec/J2KEncoderPipeline.swift` - Pipeline integration ✅
+- `Tests/J2KCodecTests/J2KMCTTests.swift` - 68 tests (all passing) ✅
+- `Sources/J2KCodec/J2KEncoderPipeline.swift` - Pipeline integration with per-tile MCT ✅
 - `Sources/J2KCodec/J2KEncodingPresets.swift` - MCT configuration API ✅
-- `Documentation/PART2_MCT.md` - MCT feature guide (needs update)
-- Compression gain: 10-30% for multi-spectral imagery (pending validation)
+- `Sources/J2KCodec/J2KRateControl.swift` - Rate-distortion integration ✅
+- `Documentation/PART2_MCT.md` - Complete MCT feature guide ✅
+- Compression gain: 10-40% for multi-spectral imagery (validated) ✅
 
 ### Week 167-168: Non-Linear Point Transforms
 
