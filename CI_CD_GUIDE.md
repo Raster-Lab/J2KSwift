@@ -101,6 +101,13 @@ J2KSwift uses GitHub Actions for automated testing, code quality checks, documen
    - Extracted release notes from `RELEASE_NOTES_v*.md` files
    - Auto-generated release notes as fallback
    - Release assets (if any)
+3. **Create Release Branch**: Automatically creates a `release/vX.Y.Z` branch from the tag, enabling hotfix support for each release
+
+**Release Branches**:
+- A `release/vX.Y.Z` branch is automatically created for every release (e.g., `release/v1.2.0`)
+- If the branch already exists, the step is skipped
+- CI workflows (CI, Code Quality, Swift Build and Test) run on `release/*` branches
+- Hotfixes can be applied to release branches and cherry-picked back to `main`/`develop`
 
 **Creating a Release**:
 ```bash
@@ -119,8 +126,36 @@ git push
 git tag -a v1.2.0 -m "Release v1.2.0"
 git push origin v1.2.0
 
-# The workflow will automatically create the GitHub release
+# The workflow will automatically:
+# - Create the GitHub release
+# - Create a release/v1.2.0 branch
 ```
+
+### 5. Create Release Branches (`create-release-branches.yml`)
+
+**Purpose**: Creates tags and release branches for existing versions. Use this to retroactively create release branches for versions that were released before the automation was added.
+
+**Triggers**:
+- Manual workflow dispatch only
+
+**Inputs**:
+- `version`: A specific version (e.g., `v1.8.0`) or `all` to create branches for every version with a `RELEASE_NOTES_v*.md` file
+
+**What it does**:
+1. Discovers versions from `RELEASE_NOTES_v*.md` files (when `all` is selected)
+2. Creates annotated tags for each version if they don't exist
+3. Creates `release/vX.Y.Z` branches from the tags if they don't exist
+
+**Usage**:
+```bash
+# Via GitHub CLI - create branches for all versions
+gh workflow run create-release-branches.yml -f version=all
+
+# Via GitHub CLI - create branch for a specific version
+gh workflow run create-release-branches.yml -f version=v1.8.0
+```
+
+Or trigger from the GitHub Actions UI: Actions → Create Release Branches → Run workflow.
 
 ## Dependabot Configuration
 

@@ -1,0 +1,89 @@
+name: Create Release Branches
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to create branch for (e.g., v1.8.0), or "all" for all versions'
+        required: true
+        default: 'all'
+
+permissions:
+  contents: write
+
+jobs:
+  create-branches:
+    name: Create Release Branches
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release branches
+        run: |
+          create_release_branch() {
+            local VERSION="$1"
+
+            # Normalize version: ensure it starts with 'v'
+            if [[ ! "$VERSION" =~ ^v ]]; then
+              VERSION="v${VERSION}"
+            fi
+
+            local BRANCH="release/${VERSION}"
+
+            # Create annotated tag if it doesn't exist
+            if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+              echo "Tag ${VERSION} already exists"
+            else
+              git tag -a "${VERSION}" -m "Release ${VERSION}"
+              git push origin "${VERSION}"
+              echo "Created tag ${VERSION}"
+            fi
+
+            # Create branch if it doesn't exist
+            if git ls-remote --heads origin "${BRANCH}" | grep -q "${BRANCH}"; then
+              echo "Branch ${BRANCH} already exists, skipping"
+            else
+              git branch "${BRANCH}" "${VERSION}"
+              git push origin "${BRANCH}"
+              echo "Created branch ${BRANCH}"
+            fi
+          }
+
+          INPUT_VERSION="${{ github.event.inputs.version }}"
+
+          if [ "$INPUT_VERSION" = "all" ]; then
+            # Discover versions from RELEASE_NOTES files
+            for file in RELEASE_NOTES_v*.md; do
+              [ -f "$file" ] || continue
+              VERSION=$(echo "$file" | sed 's/RELEASE_NOTES_v\(.*\)\.md/v\1/')
+
+              # Normalize: add .0 if only major.minor (e.g., v1.0 -> v1.0.0, v1.1 -> v1.1.0)
+              DOTS=$(echo "$VERSION" | tr -cd '.' | wc -c)
+              if [ "$DOTS" -eq 1 ]; then
+                VERSION="${VERSION}.0"
+              fi
+
+              echo "--- Processing ${VERSION} ---"
+              create_release_branch "$VERSION"
+            done
+          else
+            echo "--- Processing ${INPUT_VERSION} ---"
+            create_release_branch "$INPUT_VERSION"
+          fi
+
+      - name: List created branches
+        run: |
+          echo "Release branches on remote:"
+          git ls-remote --heads origin 'refs/heads/release/*' || echo "No release branches found"
+          echo ""
+          echo "Tags on remote:"
+          git ls-remote --tags origin 'refs/tags/v*' || echo "No version tags found"

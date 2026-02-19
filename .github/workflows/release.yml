@@ -11,7 +11,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -82,3 +82,39 @@ jobs:
           generate_release_notes: ${{ steps.release_notes.outputs.notes_file == '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-branch:
+    name: Create Release Branch
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release branch
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          BRANCH="release/${TAG}"
+
+          # Check if branch already exists
+          if git ls-remote --heads origin "${BRANCH}" | grep -q "${BRANCH}"; then
+            echo "Branch ${BRANCH} already exists, skipping creation"
+          else
+            git checkout -b "${BRANCH}" "${TAG}"
+            git push origin "${BRANCH}"
+            echo "Created branch ${BRANCH} from tag ${TAG}"
+          fi
