@@ -1851,34 +1851,34 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 
 **Goal**: Implement GPU-accelerated discrete wavelet transforms using Metal compute shaders.
 
-- [ ] Metal DWT compute shaders
-  - [ ] 1D DWT forward shader (5/3 and 9/7 filters)
-  - [ ] 1D DWT inverse shader
-  - [ ] 2D DWT implementation (separable transforms)
-  - [ ] Multi-level decomposition shaders
-  - [ ] Boundary handling in shaders
-- [ ] Arbitrary wavelet kernel shaders
-  - [ ] Generic convolution shader for arbitrary filters
-  - [ ] Lifting scheme shader implementation
-  - [ ] Configurable filter length and coefficients
-  - [ ] Optimized for common filter sizes (3, 5, 7, 9 taps)
-- [ ] Performance optimization
-  - [ ] Tile-based processing for large images
-  - [ ] Shared memory (threadgroup memory) optimization
-  - [ ] Coalesced memory access patterns
-  - [ ] Async compute for overlapped execution
-  - [ ] SIMD group operations for Apple Silicon
-- [ ] Integration with existing DWT
-  - [ ] Extend J2KDWT for Metal backend
-  - [ ] Automatic CPU/GPU selection based on size
-  - [ ] Hybrid CPU-GPU pipeline for optimal performance
-  - [ ] Fallback to Accelerate when Metal unavailable
-- [ ] Testing and validation
-  - [ ] Numerical accuracy tests (vs CPU reference)
-  - [ ] Performance benchmarks (GPU vs CPU)
-  - [ ] Memory usage validation
-  - [ ] Multi-resolution tests
-  - [ ] Cross-platform consistency
+- [x] Metal DWT compute shaders
+  - [x] 1D DWT forward shader (5/3 and 9/7 filters)
+  - [x] 1D DWT inverse shader
+  - [x] 2D DWT implementation (separable transforms)
+  - [x] Multi-level decomposition shaders
+  - [x] Boundary handling in shaders
+- [x] Arbitrary wavelet kernel shaders
+  - [x] Generic convolution shader for arbitrary filters
+  - [x] Lifting scheme shader implementation
+  - [x] Configurable filter length and coefficients
+  - [x] Optimized for common filter sizes (3, 5, 7, 9 taps)
+- [x] Performance optimization
+  - [x] Tile-based processing for large images
+  - [x] Shared memory (threadgroup memory) optimization
+  - [x] Coalesced memory access patterns
+  - [x] Async compute for overlapped execution
+  - [x] SIMD group operations for Apple Silicon
+- [x] Integration with existing DWT
+  - [x] Extend J2KDWT for Metal backend
+  - [x] Automatic CPU/GPU selection based on size
+  - [x] Hybrid CPU-GPU pipeline for optimal performance
+  - [x] Fallback to Accelerate when Metal unavailable
+- [x] Testing and validation
+  - [x] Numerical accuracy tests (vs CPU reference)
+  - [x] Performance benchmarks (GPU vs CPU)
+  - [x] Memory usage validation
+  - [x] Multi-resolution tests
+  - [x] Cross-platform consistency
 
 **Apple Silicon Optimizations**:
 - Apple GPU architecture-specific optimizations
@@ -1890,10 +1890,11 @@ This phase adds Metal compute shaders for wavelet transforms, color transforms, 
 **Performance Target**: 5-15× speedup vs Accelerate CPU for large images (>2K resolution).
 
 **Deliverables**:
-- `Sources/J2KMetal/Shaders/DWT.metal` - DWT compute shaders
-- `Sources/J2KMetal/J2KMetalDWT.swift` - Metal DWT interface (30+ tests)
+- `Sources/J2KMetal/J2KMetalShaderLibrary.swift` - DWT compute shaders (8 new arbitrary/lifting kernels)
+- `Sources/J2KMetal/J2KMetalDWT.swift` - Metal DWT interface (actor, 47 tests)
 - `Documentation/METAL_DWT.md` - GPU wavelet transform guide
-- Benchmark results: 5-15× speedup on Apple Silicon
+- CPU reference implementation for all filter types
+- Automatic GPU/CPU backend selection
 
 ### Week 180-181: Metal-Accelerated Color and MCT
 
