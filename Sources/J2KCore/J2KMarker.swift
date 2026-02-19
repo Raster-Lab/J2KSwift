@@ -87,6 +87,35 @@ public enum J2KMarker: UInt16, Sendable {
 
     /// Comment (COM).
     case com = 0xFF64
+    
+    // MARK: - Part 2 Extension Marker Segments (ISO/IEC 15444-2)
+    
+    /// Variable DC offset (DCO) — ISO/IEC 15444-2.
+    ///
+    /// Signals per-component DC offset values for improved compression
+    /// of images with non-zero mean values.
+    case dco = 0xFF74
+    
+    /// Arbitrary decomposition styles (ADS) — ISO/IEC 15444-2.
+    ///
+    /// Defines custom wavelet kernels beyond the standard 5/3 and 9/7 filters.
+    case ads = 0xFF73
+    
+    /// Multi-component transform (MCT) — ISO/IEC 15444-2.
+    ///
+    /// Defines array-based multi-component transforms for decorrelating
+    /// image components.
+    case mct = 0xFF75
+    
+    /// Multi-component collection (MCC) — ISO/IEC 15444-2.
+    ///
+    /// Groups components for multi-component transforms.
+    case mcc = 0xFF77
+    
+    /// Multi-component transform ordering (MCO) — ISO/IEC 15444-2.
+    ///
+    /// Specifies the order of multi-component transforms.
+    case mco = 0xFF76
 
     // MARK: - HTJ2K (Part 15) Marker Segments
 
@@ -128,7 +157,7 @@ public enum J2KMarker: UInt16, Sendable {
     public var canAppearInMainHeader: Bool {
         switch self {
         case .siz, .cod, .coc, .qcd, .qcc, .rgn, .poc, .tlm, .plm, .ppm, .crg, .com,
-             .cap, .cpf:
+             .cap, .cpf, .dco, .ads, .mct, .mcc, .mco:
             return true
         default:
             return false
@@ -138,7 +167,7 @@ public enum J2KMarker: UInt16, Sendable {
     /// Returns `true` if this marker can appear in a tile-part header.
     public var canAppearInTileHeader: Bool {
         switch self {
-        case .cod, .coc, .qcd, .qcc, .rgn, .poc, .plt, .ppt, .com:
+        case .cod, .coc, .qcd, .qcc, .rgn, .poc, .plt, .ppt, .com, .dco, .ads, .mct, .mcc, .mco:
             return true
         default:
             return false
@@ -168,6 +197,11 @@ public enum J2KMarker: UInt16, Sendable {
         case .eph: return "EPH (End of packet header)"
         case .crg: return "CRG (Component registration)"
         case .com: return "COM (Comment)"
+        case .dco: return "DCO (Variable DC offset)"
+        case .ads: return "ADS (Arbitrary decomposition styles)"
+        case .mct: return "MCT (Multi-component transform)"
+        case .mcc: return "MCC (Multi-component collection)"
+        case .mco: return "MCO (Multi-component transform ordering)"
         case .cap: return "CAP (Extended capabilities)"
         case .cpf: return "CPF (Corresponding profile)"
         }
