@@ -709,8 +709,8 @@ final class J2KMetalDWTTests: XCTestCase {
     /// Tests that all shader functions are defined.
     func testShaderFunctionCount() {
         let allCases = J2KMetalShaderFunction.allCases
-        // 15 original + 8 new (arbitrary + lifting, horizontal + vertical, forward + inverse)
-        XCTAssertEqual(allCases.count, 23)
+        // 15 original + 8 DWT (arbitrary + lifting) + 7 new (NLT + MCT + fused)
+        XCTAssertEqual(allCases.count, 30)
     }
 
     /// Tests new DWT shader function raw values.
