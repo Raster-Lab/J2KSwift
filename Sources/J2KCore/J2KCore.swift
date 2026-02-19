@@ -769,5 +769,5 @@ public struct J2KConfiguration: Sendable {
 ///
 /// - Returns: A string representing the current version in semver format.
 public func getVersion() -> String {
-    return "1.5.0-dev"
+    return "1.8.0"
 }
