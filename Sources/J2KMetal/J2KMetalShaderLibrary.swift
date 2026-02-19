@@ -78,6 +78,36 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case nltPQ = "j2k_nlt_pq"
     /// Hybrid Log-Gamma (ITU-R BT.2100).
     case nltHLG = "j2k_nlt_hlg"
+    
+    // MARK: - ROI Shaders
+    /// Generate ROI mask from rectangular region.
+    case roiMaskGenerate = "j2k_roi_mask_generate"
+    /// Apply MaxShift coefficient scaling for ROI.
+    case roiCoefficientScale = "j2k_roi_coefficient_scale"
+    /// Blend multiple ROI masks with priority.
+    case roiMaskBlend = "j2k_roi_mask_blend"
+    /// Apply feathering/smooth transitions to ROI boundaries.
+    case roiFeathering = "j2k_roi_feathering"
+    /// Map spatial ROI to wavelet domain coefficients.
+    case roiWaveletMapping = "j2k_roi_wavelet_mapping"
+    
+    // MARK: - Quantization Shaders
+    /// Scalar quantization with uniform step size.
+    case quantizeScalar = "j2k_quantize_scalar"
+    /// Dead-zone quantization with enlarged zero bin.
+    case quantizeDeadzone = "j2k_quantize_deadzone"
+    /// Dequantization (scalar mode).
+    case dequantizeScalar = "j2k_dequantize_scalar"
+    /// Dequantization (dead-zone mode).
+    case dequantizeDeadzone = "j2k_dequantize_deadzone"
+    /// Apply visual frequency weighting to quantization step sizes.
+    case quantizeVisualWeighting = "j2k_quantize_visual_weighting"
+    /// Perceptual quantization based on quality metrics.
+    case quantizePerceptual = "j2k_quantize_perceptual"
+    /// Parallel trellis state evaluation for TCQ.
+    case quantizeTrellisEvaluate = "j2k_quantize_trellis_evaluate"
+    /// Compute distortion metrics for R-D optimization.
+    case quantizeDistortionMetric = "j2k_quantize_distortion_metric"
 }
 
 // MARK: - Shader Library Configuration
@@ -1356,6 +1386,388 @@ enum J2KMetalShaderSource {
             } else {
                 output[gid] = (exp((ep - c) / a) + b) / 12.0f;
             }
+        }
+    }
+
+    // MARK: - Region of Interest (ROI) Shaders
+
+    // Generate ROI mask from rectangular bounds
+    kernel void j2k_roi_mask_generate(
+        device bool* mask [[buffer(0)]],
+        constant uint& width [[buffer(1)]],
+        constant uint& height [[buffer(2)]],
+        constant uint& roiX [[buffer(3)]],
+        constant uint& roiY [[buffer(4)]],
+        constant uint& roiWidth [[buffer(5)]],
+        constant uint& roiHeight [[buffer(6)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width || gid.y >= height) return;
+        
+        uint x = gid.x;
+        uint y = gid.y;
+        
+        // Check if pixel is inside ROI rectangle
+        bool insideX = (x >= roiX) && (x < roiX + roiWidth);
+        bool insideY = (y >= roiY) && (y < roiY + roiHeight);
+        
+        mask[y * width + x] = insideX && insideY;
+    }
+
+    // Apply MaxShift coefficient scaling for ROI
+    kernel void j2k_roi_coefficient_scale(
+        device const int* input [[buffer(0)]],
+        device const bool* mask [[buffer(1)]],
+        device int* output [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        constant uint& shift [[buffer(5)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width || gid.y >= height) return;
+        
+        uint idx = gid.y * width + gid.x;
+        int coeff = input[idx];
+        
+        // Apply bit-shift only if mask is set
+        if (mask[idx]) {
+            // Preserve sign and shift magnitude
+            if (coeff >= 0) {
+                output[idx] = coeff << shift;
+            } else {
+                output[idx] = -((-coeff) << shift);
+            }
+        } else {
+            output[idx] = coeff;
+        }
+    }
+
+    // Blend multiple ROI masks with priority
+    kernel void j2k_roi_mask_blend(
+        device const bool* mask1 [[buffer(0)]],
+        device const bool* mask2 [[buffer(1)]],
+        device const uint* priority1 [[buffer(2)]],
+        device const uint* priority2 [[buffer(3)]],
+        device bool* output [[buffer(4)]],
+        device uint* outputPriority [[buffer(5)]],
+        constant uint& count [[buffer(6)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        bool m1 = mask1[gid];
+        bool m2 = mask2[gid];
+        uint p1 = priority1[0];
+        uint p2 = priority2[0];
+        
+        // Higher priority wins, or combine if equal
+        if (m1 && m2) {
+            if (p1 >= p2) {
+                output[gid] = true;
+                outputPriority[gid] = p1;
+            } else {
+                output[gid] = true;
+                outputPriority[gid] = p2;
+            }
+        } else if (m1) {
+            output[gid] = true;
+            outputPriority[gid] = p1;
+        } else if (m2) {
+            output[gid] = true;
+            outputPriority[gid] = p2;
+        } else {
+            output[gid] = false;
+            outputPriority[gid] = 0;
+        }
+    }
+
+    // Apply feathering/smooth transitions to ROI boundaries
+    kernel void j2k_roi_feathering(
+        device const bool* mask [[buffer(0)]],
+        device float* scalingMap [[buffer(1)]],
+        constant uint& width [[buffer(2)]],
+        constant uint& height [[buffer(3)]],
+        constant float& featherWidth [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width || gid.y >= height) return;
+        
+        uint idx = gid.y * width + gid.x;
+        
+        // If inside ROI, full scaling
+        if (mask[idx]) {
+            scalingMap[idx] = 1.0f;
+            return;
+        }
+        
+        // Find minimum distance to ROI boundary
+        float minDist = featherWidth + 1.0f;
+        int searchRadius = (int)ceil(featherWidth);
+        
+        for (int dy = -searchRadius; dy <= searchRadius; dy++) {
+            for (int dx = -searchRadius; dx <= searchRadius; dx++) {
+                int nx = (int)gid.x + dx;
+                int ny = (int)gid.y + dy;
+                
+                if (nx >= 0 && nx < (int)width && ny >= 0 && ny < (int)height) {
+                    if (mask[ny * width + nx]) {
+                        float dist = sqrt((float)(dx * dx + dy * dy));
+                        minDist = min(minDist, dist);
+                    }
+                }
+            }
+        }
+        
+        // Apply smooth falloff based on distance
+        if (minDist <= featherWidth) {
+            scalingMap[idx] = 1.0f - (minDist / featherWidth);
+        } else {
+            scalingMap[idx] = 0.0f;
+        }
+    }
+
+    // Map spatial ROI to wavelet domain coefficients
+    kernel void j2k_roi_wavelet_mapping(
+        device const bool* spatialMask [[buffer(0)]],
+        device bool* waveletMask [[buffer(1)]],
+        constant uint& spatialWidth [[buffer(2)]],
+        constant uint& spatialHeight [[buffer(3)]],
+        constant uint& waveletWidth [[buffer(4)]],
+        constant uint& waveletHeight [[buffer(5)]],
+        constant uint& decompositionLevel [[buffer(6)]],
+        constant uint& subbandType [[buffer(7)]],  // 0=LL, 1=LH, 2=HL, 3=HH
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= waveletWidth || gid.y >= waveletHeight) return;
+        
+        uint waveletIdx = gid.y * waveletWidth + gid.x;
+        
+        // Scale factor for this decomposition level
+        uint scaleFactor = 1u << decompositionLevel;
+        
+        // Map wavelet coefficient to spatial region
+        uint spatialX = gid.x * scaleFactor;
+        uint spatialY = gid.y * scaleFactor;
+        
+        // Apply subband offset (for LH, HL, HH subbands)
+        if (subbandType == 1 || subbandType == 3) {  // LH or HH
+            spatialX += scaleFactor / 2;
+        }
+        if (subbandType == 2 || subbandType == 3) {  // HL or HH
+            spatialY += scaleFactor / 2;
+        }
+        
+        // Check if any pixel in the corresponding spatial region is in ROI
+        bool inROI = false;
+        for (uint dy = 0; dy < scaleFactor && !inROI; dy++) {
+            for (uint dx = 0; dx < scaleFactor && !inROI; dx++) {
+                uint sx = spatialX + dx;
+                uint sy = spatialY + dy;
+                if (sx < spatialWidth && sy < spatialHeight) {
+                    if (spatialMask[sy * spatialWidth + sx]) {
+                        inROI = true;
+                    }
+                }
+            }
+        }
+        
+        waveletMask[waveletIdx] = inROI;
+    }
+
+    // MARK: - Quantization Shaders
+
+    // Scalar quantization with uniform step size
+    kernel void j2k_quantize_scalar(
+        device const float* coefficients [[buffer(0)]],
+        device int* indices [[buffer(1)]],
+        constant float& stepSize [[buffer(2)]],
+        constant uint& count [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        float c = coefficients[gid];
+        float absC = fabs(c);
+        int sign = (c >= 0.0f) ? 1 : -1;
+        
+        // q = sign(c) × floor(|c| / Δ)
+        int q = (int)floor(absC / stepSize);
+        indices[gid] = sign * q;
+    }
+
+    // Dead-zone quantization with enlarged zero bin
+    kernel void j2k_quantize_deadzone(
+        device const float* coefficients [[buffer(0)]],
+        device int* indices [[buffer(1)]],
+        constant float& stepSize [[buffer(2)]],
+        constant float& deadzoneWidth [[buffer(3)]],
+        constant uint& count [[buffer(4)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        float c = coefficients[gid];
+        float absC = fabs(c);
+        float threshold = stepSize * deadzoneWidth * 0.5f;
+        
+        if (absC <= threshold) {
+            indices[gid] = 0;
+        } else {
+            int sign = (c >= 0.0f) ? 1 : -1;
+            // q = sign(c) × floor((|c| - t) / Δ) + 1
+            int q = (int)floor((absC - threshold) / stepSize) + 1;
+            indices[gid] = sign * q;
+        }
+    }
+
+    // Dequantization (scalar mode)
+    kernel void j2k_dequantize_scalar(
+        device const int* indices [[buffer(0)]],
+        device float* coefficients [[buffer(1)]],
+        constant float& stepSize [[buffer(2)]],
+        constant uint& count [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        int q = indices[gid];
+        if (q == 0) {
+            coefficients[gid] = 0.0f;
+        } else {
+            int sign = (q >= 0) ? 1 : -1;
+            int absQ = abs(q);
+            // c' = (q + 0.5 × sign(q)) × Δ (midpoint reconstruction)
+            coefficients[gid] = (float)(sign * absQ + 0.5f * sign) * stepSize;
+        }
+    }
+
+    // Dequantization (dead-zone mode)
+    kernel void j2k_dequantize_deadzone(
+        device const int* indices [[buffer(0)]],
+        device float* coefficients [[buffer(1)]],
+        constant float& stepSize [[buffer(2)]],
+        constant float& deadzoneWidth [[buffer(3)]],
+        constant uint& count [[buffer(4)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        int q = indices[gid];
+        float threshold = stepSize * deadzoneWidth * 0.5f;
+        
+        if (q == 0) {
+            coefficients[gid] = 0.0f;
+        } else {
+            int sign = (q >= 0) ? 1 : -1;
+            int absQ = abs(q);
+            // c' = sign(q) × ((|q| - 0.5) × Δ + threshold)
+            coefficients[gid] = (float)sign * ((float)(absQ - 0.5f) * stepSize + threshold);
+        }
+    }
+
+    // Apply visual frequency weighting to quantization step sizes
+    kernel void j2k_quantize_visual_weighting(
+        device const float* baseStepSizes [[buffer(0)]],
+        device const float* visualWeights [[buffer(1)]],
+        device float* adjustedStepSizes [[buffer(2)]],
+        constant uint& count [[buffer(3)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        // Apply perceptual weighting: Δ' = Δ × W
+        // Lower weight = higher quality (smaller step size)
+        float weight = max(visualWeights[gid], 0.1f);  // Clamp minimum weight
+        adjustedStepSizes[gid] = baseStepSizes[gid] * weight;
+    }
+
+    // Perceptual quantization based on quality metrics
+    kernel void j2k_quantize_perceptual(
+        device const float* coefficients [[buffer(0)]],
+        device const float* perceptualWeights [[buffer(1)]],
+        device int* indices [[buffer(2)]],
+        constant float& baseStepSize [[buffer(3)]],
+        constant uint& count [[buffer(4)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        float c = coefficients[gid];
+        float weight = perceptualWeights[gid];
+        float stepSize = baseStepSize * weight;
+        
+        float absC = fabs(c);
+        int sign = (c >= 0.0f) ? 1 : -1;
+        int q = (int)floor(absC / stepSize);
+        indices[gid] = sign * q;
+    }
+
+    // Parallel trellis state evaluation for TCQ
+    kernel void j2k_quantize_trellis_evaluate(
+        device const float* coefficients [[buffer(0)]],
+        device const float* pathMetrics [[buffer(1)]],
+        device float* newMetrics [[buffer(2)]],
+        device int* decisions [[buffer(3)]],
+        constant float& stepSize [[buffer(4)]],
+        constant uint& numStates [[buffer(5)]],
+        constant uint& coeffIndex [[buffer(6)]],
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= numStates) return;
+        
+        // Each thread evaluates one state transition
+        float coeff = coefficients[coeffIndex];
+        float bestMetric = INFINITY;
+        int bestDecision = 0;
+        
+        // Evaluate all possible transitions to this state
+        for (uint prevState = 0; prevState < numStates; prevState++) {
+            // Compute reconstruction value for this transition
+            float reconstruction = (float)((int)prevState - (int)numStates / 2) * stepSize;
+            
+            // Compute distortion
+            float distortion = (coeff - reconstruction) * (coeff - reconstruction);
+            
+            // Compute accumulated metric
+            float metric = pathMetrics[prevState] + distortion;
+            
+            if (metric < bestMetric) {
+                bestMetric = metric;
+                bestDecision = (int)prevState;
+            }
+        }
+        
+        newMetrics[gid] = bestMetric;
+        decisions[gid * 256 + coeffIndex] = bestDecision;  // Store decision path
+    }
+
+    // Compute distortion metrics for R-D optimization
+    kernel void j2k_quantize_distortion_metric(
+        device const float* original [[buffer(0)]],
+        device const float* reconstructed [[buffer(1)]],
+        device float* distortions [[buffer(2)]],
+        constant uint& count [[buffer(3)]],
+        constant uint& metric [[buffer(4)]],  // 0=MSE, 1=MAE, 2=PSNR
+        uint gid [[thread_position_in_grid]]
+    ) {
+        if (gid >= count) return;
+        
+        float orig = original[gid];
+        float recon = reconstructed[gid];
+        float diff = orig - recon;
+        
+        switch (metric) {
+            case 0:  // MSE (Mean Squared Error)
+                distortions[gid] = diff * diff;
+                break;
+            case 1:  // MAE (Mean Absolute Error)
+                distortions[gid] = fabs(diff);
+                break;
+            case 2:  // Squared difference for PSNR calculation
+                distortions[gid] = diff * diff;
+                break;
+            default:
+                distortions[gid] = diff * diff;
         }
     }
     """
