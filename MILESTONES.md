@@ -2567,39 +2567,39 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 
 **Goal**: Establish foundational volumetric types and spatial indexing for JP3D.
 
-- [ ] Volume representation
-  - [ ] Implement `J2KVolume` with width, height, depth, componentCount
-  - [ ] Implement `J2KVolumeComponent` with per-component bit depth, signedness, subsampling
-  - [ ] Add voxel spacing and origin metadata for physical space mapping
-  - [ ] Implement `J2KVolumeMetadata` for patient info, acquisition parameters
-  - [ ] Support bit depths from 1 to 38 bits per sample
-  - [ ] Support both signed and unsigned voxel data
-- [ ] 3D spatial types
-  - [ ] Implement `JP3DRegion` with x/y/z ranges for ROI specification
-  - [ ] Implement `JP3DTile` for 3D tile decomposition
-  - [ ] Implement `JP3DPrecinct` with 3D spatial indexing (x, y, z indices)
-  - [ ] Add `JP3DTilingConfiguration` presets (default 256×256×16, streaming 128×128×8, batch 512×512×32)
-  - [ ] Implement tile grid computation and tile-volume intersection
-- [ ] 3D progression and compression types
-  - [ ] Implement `JP3DProgressionOrder` enum (LRCPS, RLCPS, PCRLS, SLRCP, CPRLS)
-  - [ ] Implement `JP3DCompressionMode` enum (lossless, lossy, targetBitrate, visuallyLossless, losslessHTJ2K, lossyHTJ2K)
-  - [ ] Implement `J2K3DCoefficients` for wavelet coefficient storage
-- [ ] Edge case handling: core types
-  - [ ] Empty volume (0×0×0): reject with descriptive `J2KError.invalidParameter`
-  - [ ] Single-voxel volume (1×1×1): encode/decode correctly as degenerate case
-  - [ ] Extremely thin volumes (e.g., 1024×1024×1): treat Z-dimension==1 as degenerate 2D
-  - [ ] Non-uniform dimensions (e.g., 2×2×10000): handle without integer overflow
-  - [ ] Odd and prime dimensions that don't tile evenly: correct boundary tile sizing
-  - [ ] Zero-component volume: reject with `J2KError.invalidParameter`
-  - [ ] Large component count (>100, hyperspectral): validate memory limits
-  - [ ] Negative or zero voxel spacing: reject or treat as unset
-  - [ ] Maximum volume size guard: prevent integer overflow in size calculations (width×height×depth×components×bytesPerSample)
-  - [ ] Non-contiguous subsampling factors per component: validate consistency
-- [ ] Testing
-  - [ ] Unit tests for volume construction, validation, and metadata (30+ tests)
-  - [ ] Edge case tests for all degenerate and boundary conditions
-  - [ ] Sendable conformance verification for all new types
-  - [ ] Memory footprint tests for large volume metadata
+- [x] Volume representation
+  - [x] Implement `J2KVolume` with width, height, depth, componentCount
+  - [x] Implement `J2KVolumeComponent` with per-component bit depth, signedness, subsampling
+  - [x] Add voxel spacing and origin metadata for physical space mapping
+  - [x] Implement `J2KVolumeMetadata` for patient info, acquisition parameters
+  - [x] Support bit depths from 1 to 38 bits per sample
+  - [x] Support both signed and unsigned voxel data
+- [x] 3D spatial types
+  - [x] Implement `JP3DRegion` with x/y/z ranges for ROI specification
+  - [x] Implement `JP3DTile` for 3D tile decomposition
+  - [x] Implement `JP3DPrecinct` with 3D spatial indexing (x, y, z indices)
+  - [x] Add `JP3DTilingConfiguration` presets (default 256×256×16, streaming 128×128×8, batch 512×512×32)
+  - [x] Implement tile grid computation and tile-volume intersection
+- [x] 3D progression and compression types
+  - [x] Implement `JP3DProgressionOrder` enum (LRCPS, RLCPS, PCRLS, SLRCP, CPRLS)
+  - [x] Implement `JP3DCompressionMode` enum (lossless, lossy, targetBitrate, visuallyLossless, losslessHTJ2K, lossyHTJ2K)
+  - [x] Implement `J2K3DCoefficients` for wavelet coefficient storage
+- [x] Edge case handling: core types
+  - [x] Empty volume (0×0×0): reject with descriptive `J2KError.invalidParameter`
+  - [x] Single-voxel volume (1×1×1): encode/decode correctly as degenerate case
+  - [x] Extremely thin volumes (e.g., 1024×1024×1): treat Z-dimension==1 as degenerate 2D
+  - [x] Non-uniform dimensions (e.g., 2×2×10000): handle without integer overflow
+  - [x] Odd and prime dimensions that don't tile evenly: correct boundary tile sizing
+  - [x] Zero-component volume: reject with `J2KError.invalidParameter`
+  - [x] Large component count (>100, hyperspectral): validate memory limits
+  - [x] Negative or zero voxel spacing: reject or treat as unset
+  - [x] Maximum volume size guard: prevent integer overflow in size calculations (width×height×depth×components×bytesPerSample)
+  - [x] Non-contiguous subsampling factors per component: validate consistency
+- [x] Testing
+  - [x] Unit tests for volume construction, validation, and metadata (30+ tests)
+  - [x] Edge case tests for all degenerate and boundary conditions
+  - [x] Sendable conformance verification for all new types
+  - [x] Memory footprint tests for large volume metadata
 
 **Deliverables**:
 - `Sources/J2KCore/J2KVolume.swift` - Volume and component types
@@ -2608,7 +2608,7 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 - `Sources/J2K3D/JP3DConfiguration.swift` - Tiling, progression, compression config
 - `Tests/JP3DTests/JP3DCoreTypeTests.swift` - Core type tests (30+ tests)
 
-**Status**: Planned. Foundation for all subsequent JP3D work.
+**Status**: Complete. J2KVolume and J2KVolumeComponent provide full volumetric data representation with width/height/depth dimensions, per-component bit depth (1-38), signedness, 3D subsampling, voxel spacing, and origin metadata. J2KVolumeMetadata supports medical imaging metadata (modality, patient ID, window center/width, DICOM fields). JP3DRegion provides 3D ROI specification with intersection, containment, and clamping. JP3DTile and JP3DPrecinct provide 3D spatial indexing. JP3DTilingConfiguration provides presets (default/streaming/batch) with tile grid computation and region intersection queries. JP3DProgressionOrder (5 orders) and JP3DCompressionMode (6 modes including HTJ2K) cover all encoding configurations. J2K3DCoefficients provides 3D wavelet coefficient storage with subscript access. JP3DSubband enumerates all 8 three-dimensional subbands. All types are Sendable and Equatable. Comprehensive edge case handling: empty volumes, single-voxel, thin volumes, overflow guards, negative spacing rejection, zero-component rejection. 60 tests passing in JP3DCoreTypeTests.
 
 ### Week 214-217: 3D Wavelet Transforms
 
@@ -3084,8 +3084,8 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 ---
 
 **Last Updated**: 2026-02-19
-**Current Phase**: Phase 15 - Motion JPEG 2000 (v1.8.0) ✅
-**Current Version**: 1.8.0 (Ready for Release)
-**Completed Phases**: Phases 0-15 (Weeks 1-210)
-**Next Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0, Weeks 211-235)
+**Current Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0)
+**Current Version**: 1.8.0
+**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types)
+**Next Phase**: Phase 16 continues - Week 214-217 (3D Wavelet Transforms)
 **Achievement**: Complete JPEG 2000 Part 1, 2 & 3 implementation with world-class Apple Silicon performance
