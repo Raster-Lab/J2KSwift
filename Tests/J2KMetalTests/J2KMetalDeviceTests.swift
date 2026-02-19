@@ -300,7 +300,7 @@ final class J2KMetalDeviceTests: XCTestCase {
     /// Tests shader function enumeration.
     func testShaderFunctionCases() {
         let allCases = J2KMetalShaderFunction.allCases
-        XCTAssertEqual(allCases.count, 23)
+        XCTAssertEqual(allCases.count, 30)
     }
 
     /// Tests shader function raw values.
