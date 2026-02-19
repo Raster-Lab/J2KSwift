@@ -82,6 +82,12 @@ struct DecoderConfiguration: Sendable {
     ///
     /// Controls guard bit count and rounding mode for coefficient processing.
     var extendedPrecision: J2KExtendedPrecisionConfiguration = .default
+
+    /// Wavelet kernel configuration (Part 2).
+    ///
+    /// Specifies which wavelet kernels to use per tile-component.
+    /// When nil, uses the waveletFilter property for all components.
+    var waveletKernelConfiguration: J2KWaveletKernelConfiguration?
 }
 
 // MARK: - Codestream Metadata
@@ -867,6 +873,19 @@ struct DecoderPipeline: Sendable {
         let maxComponent = subbands.map { $0.componentIndex }.max() ?? 0
 
         for compIdx in 0...maxComponent {
+            // Select filter for this component
+            let componentFilter: J2KDWT1D.Filter
+            if let kernelConfig = metadata.configuration.waveletKernelConfiguration {
+                // Use arbitrary wavelet kernel if configured
+                if let kernel = kernelConfig.kernel(forTile: 0, component: compIdx, lossless: metadata.configuration.useReversibleTransform) {
+                    componentFilter = kernel.toDWTFilter()
+                } else {
+                    componentFilter = filter
+                }
+            } else {
+                componentFilter = filter
+            }
+
             let compSubbands = subbands.filter { $0.componentIndex == compIdx }
 
             if compSubbands.isEmpty {
@@ -932,7 +951,7 @@ struct DecoderPipeline: Sendable {
 
                     // Apply single-level inverse transform
                     // Use optimized path for lossless (reversible 5/3 filter)
-                    if case .reversible53 = filter {
+                    if case .reversible53 = componentFilter {
                         let optimizer = J2KDWT2DOptimizer()
                         currentLL = try optimizer.inverseTransform2DOptimized(
                             ll: currentLL,
@@ -942,13 +961,13 @@ struct DecoderPipeline: Sendable {
                             boundaryExtension: .symmetric
                         )
                     } else {
-                        // Use standard transform for lossy modes
+                        // Use standard transform for lossy modes and custom filters
                         currentLL = try J2KDWT2D.inverseTransform(
                             ll: currentLL,
                             lh: lh2D,
                             hl: hl2D,
                             hh: hh2D,
-                            filter: filter
+                            filter: componentFilter
                         )
                     }
                 }

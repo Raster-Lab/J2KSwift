@@ -308,6 +308,17 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: `.default` (Part 1 compatible: 32-bit, 2 guard bits)
     public var extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration
 
+    /// Configuration for Part 2 arbitrary wavelet kernels.
+    ///
+    /// Specifies the wavelet kernel to use for the transform. When set to
+    /// `.standard`, uses the standard Part 1 wavelets (5/3 or 9/7 based on
+    /// the `lossless` setting). When set to `.arbitrary`, allows selection
+    /// of custom wavelet kernels from the kernel library or user-defined
+    /// kernels.
+    ///
+    /// - Default: `.standard` (Part 1 compatible wavelets)
+    public var waveletKernelConfiguration: J2KWaveletKernelConfiguration
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -330,6 +341,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - tileBlockSizeOverrides: Per-tile block size overrides for adaptive mode (default: empty).
     ///   - dcOffsetConfiguration: Part 2 DC offset configuration (default: .disabled).
     ///   - extendedPrecisionConfiguration: Part 2 extended precision configuration (default: .default).
+    ///   - waveletKernelConfiguration: Part 2 wavelet kernel configuration (default: .standard).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -349,7 +361,8 @@ public struct J2KEncodingConfiguration: Sendable {
         blockSizeMode: J2KBlockSizeMode = .fixed,
         tileBlockSizeOverrides: [Int: (width: Int, height: Int)] = [:],
         dcOffsetConfiguration: J2KDCOffsetConfiguration = .disabled,
-        extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default
+        extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
+        waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -376,6 +389,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.tileBlockSizeOverrides = tileBlockSizeOverrides
         self.dcOffsetConfiguration = dcOffsetConfiguration
         self.extendedPrecisionConfiguration = extendedPrecisionConfiguration
+        self.waveletKernelConfiguration = waveletKernelConfiguration
     }
 
     /// Validates the configuration parameters.
@@ -481,6 +495,91 @@ public enum J2KBitrateMode: Sendable, Equatable {
     case lossless
 }
 
+// MARK: - Wavelet Kernel Configuration
+
+/// Configuration for Part 2 arbitrary wavelet kernels.
+///
+/// Controls which wavelet kernel is used for the discrete wavelet transform.
+/// Supports both standard Part 1 wavelets and arbitrary Part 2 kernels.
+public enum J2KWaveletKernelConfiguration: Sendable, Equatable {
+    /// Use standard Part 1 wavelets (5/3 or 9/7).
+    ///
+    /// The encoder automatically selects:
+    /// - 5/3 reversible filter for lossless encoding
+    /// - 9/7 irreversible filter for lossy encoding
+    ///
+    /// This is the default and ensures maximum compatibility with Part 1 decoders.
+    case standard
+
+    /// Use an arbitrary wavelet kernel from the kernel library.
+    ///
+    /// Allows selection of custom wavelet kernels such as Haar, Daubechies,
+    /// or user-defined kernels. Requires Part 2 decoder support.
+    ///
+    /// - Parameter kernel: The wavelet kernel to use for all components.
+    case arbitrary(kernel: J2KWaveletKernel)
+
+    /// Use per-tile-component kernel selection.
+    ///
+    /// Allows different wavelet kernels for different tile-components,
+    /// providing fine-grained control over the transform. Requires Part 2
+    /// decoder support and ADS marker segments in the codestream.
+    ///
+    /// - Parameter kernelMap: Dictionary mapping (tileIndex, componentIndex) to kernel.
+    case perTileComponent(kernelMap: [TileComponentKey: J2KWaveletKernel])
+
+    /// Key for per-tile-component kernel selection.
+    public struct TileComponentKey: Sendable, Equatable, Hashable {
+        /// Tile index in the image.
+        public let tileIndex: Int
+
+        /// Component index within the tile.
+        public let componentIndex: Int
+
+        /// Creates a tile-component key.
+        ///
+        /// - Parameters:
+        ///   - tileIndex: Tile index in the image.
+        ///   - componentIndex: Component index within the tile.
+        public init(tileIndex: Int, componentIndex: Int) {
+            self.tileIndex = tileIndex
+            self.componentIndex = componentIndex
+        }
+    }
+
+    /// Returns the kernel to use for a specific tile-component.
+    ///
+    /// - Parameters:
+    ///   - tileIndex: The tile index.
+    ///   - componentIndex: The component index.
+    ///   - lossless: Whether encoding is lossless (for standard mode).
+    /// - Returns: The wavelet kernel to use, or nil if standard mode is used.
+    public func kernel(forTile tileIndex: Int, component componentIndex: Int, lossless: Bool) -> J2KWaveletKernel? {
+        switch self {
+        case .standard:
+            // Standard mode - use built-in 5/3 or 9/7
+            return nil
+        case .arbitrary(let kernel):
+            // Same kernel for all tile-components
+            return kernel
+        case .perTileComponent(let kernelMap):
+            // Look up kernel for this specific tile-component
+            let key = TileComponentKey(tileIndex: tileIndex, componentIndex: componentIndex)
+            return kernelMap[key]
+        }
+    }
+
+    /// Returns whether this configuration uses Part 2 arbitrary wavelets.
+    public var usesArbitraryWavelets: Bool {
+        switch self {
+        case .standard:
+            return false
+        case .arbitrary, .perTileComponent:
+            return true
+        }
+    }
+}
+
 // MARK: - Preset Extensions
 
 extension J2KEncodingPreset: CustomStringConvertible {
@@ -528,6 +627,7 @@ extension J2KEncodingConfiguration: Equatable {
             lhs.bitrateMode == rhs.bitrateMode &&
             lhs.maxThreads == rhs.maxThreads &&
             lhs.dcOffsetConfiguration == rhs.dcOffsetConfiguration &&
-            lhs.extendedPrecisionConfiguration == rhs.extendedPrecisionConfiguration
+            lhs.extendedPrecisionConfiguration == rhs.extendedPrecisionConfiguration &&
+            lhs.waveletKernelConfiguration == rhs.waveletKernelConfiguration
     }
 }

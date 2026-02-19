@@ -222,6 +222,16 @@ public struct J2KWaveletKernel: Sendable, Equatable {
         )
     }
 
+    /// Converts this kernel to a ``J2KDWT1D/Filter`` enum case for use in DWT operations.
+    ///
+    /// This provides a convenient way to use arbitrary wavelet kernels with the existing
+    /// DWT pipeline infrastructure.
+    ///
+    /// - Returns: A ``J2KDWT1D/Filter`` enum case wrapping the custom filter.
+    public func toDWTFilter() -> J2KDWT1D.Filter {
+        return .custom(toCustomFilter())
+    }
+
     // MARK: - Serialization
 
     /// Serializes the wavelet kernel to binary data for ADS marker segment encoding.

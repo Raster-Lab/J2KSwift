@@ -145,6 +145,92 @@ let (low, high) = try J2KDWT1D.forwardTransform(
 )
 ```
 
+Alternatively, use the convenience method `toDWTFilter()`:
+
+```swift
+let kernel = J2KWaveletKernelLibrary.haar
+let filter = kernel.toDWTFilter()  // Returns J2KDWT1D.Filter.custom(...)
+
+// Use directly
+let (low, high) = try J2KDWT1D.forwardTransform(signal: signal, filter: filter)
+```
+
+### Encoding with Arbitrary Wavelets
+
+To encode images with custom wavelet kernels, configure the encoder with `waveletKernelConfiguration`:
+
+```swift
+import J2KCodec
+import J2KCore
+
+// Create an encoding configuration with arbitrary wavelet
+var config = J2KEncodingConfiguration()
+config.waveletKernelConfiguration = .arbitrary(kernel: J2KWaveletKernelLibrary.daubechies4)
+config.decompositionLevels = 5
+
+// Create encoder with the configuration
+let encoder = J2KEncoder(configuration: config)
+
+// Encode an image
+let image = J2KImage(width: 512, height: 512, components: 3)
+let encoded = try encoder.encode(image)
+```
+
+### Per-Tile-Component Kernel Selection
+
+For advanced use cases, you can specify different kernels for different tile-components:
+
+```swift
+// Define kernels for specific tile-components
+let kernelMap: [J2KWaveletKernelConfiguration.TileComponentKey: J2KWaveletKernel] = [
+    .init(tileIndex: 0, componentIndex: 0): J2KWaveletKernelLibrary.haar,
+    .init(tileIndex: 0, componentIndex: 1): J2KWaveletKernelLibrary.cdf97,
+    .init(tileIndex: 0, componentIndex: 2): J2KWaveletKernelLibrary.daubechies4
+]
+
+// Configure encoder with per-component kernels
+var config = J2KEncodingConfiguration()
+config.waveletKernelConfiguration = .perTileComponent(kernelMap: kernelMap)
+
+// Components without explicit kernels will use the standard filter (5/3 or 9/7)
+```
+
+### Decoding with Arbitrary Wavelets
+
+The decoder automatically detects and uses the appropriate wavelet kernel from the codestream markers. For manual configuration:
+
+```swift
+import J2KCodec
+
+// Standard decoding (auto-detects wavelet from codestream)
+let decoder = J2KDecoder()
+let image = try decoder.decode(data)
+
+// Manual kernel configuration (for testing or custom scenarios)
+// Note: This is typically not needed as kernels are stored in the codestream
+```
+
+### Configuration Modes
+
+The `J2KWaveletKernelConfiguration` enum provides three modes:
+
+1. **Standard Mode** (`.standard`) — Uses Part 1 wavelets (5/3 for lossless, 9/7 for lossy):
+   ```swift
+   config.waveletKernelConfiguration = .standard  // Default
+   ```
+
+2. **Arbitrary Mode** (`.arbitrary`) — Uses a single kernel for all components:
+   ```swift
+   let kernel = J2KWaveletKernelLibrary.haar
+   config.waveletKernelConfiguration = .arbitrary(kernel: kernel)
+   ```
+
+3. **Per-Tile-Component Mode** (`.perTileComponent`) — Different kernels per tile-component:
+   ```swift
+   let kernelMap: [J2KWaveletKernelConfiguration.TileComponentKey: J2KWaveletKernel] = [...]
+   config.waveletKernelConfiguration = .perTileComponent(kernelMap: kernelMap)
+   ```
+
 ## Hardware Acceleration
 
 On Apple platforms, `J2KAcceleratedArbitraryWavelet` uses the Accelerate framework's `vDSP_convD` for high-performance convolution:
@@ -173,6 +259,8 @@ if J2KAcceleratedArbitraryWavelet.isAvailable {
 
 - `J2KWaveletKernel` — Complete wavelet kernel representation
 - `J2KWaveletKernel.FilterSymmetry` — Symmetry classification (symmetric, antiSymmetric, asymmetric)
+- `J2KWaveletKernelConfiguration` — Configuration enum for encoder/decoder (standard, arbitrary, perTileComponent)
+- `J2KWaveletKernelConfiguration.TileComponentKey` — Key for per-tile-component kernel mapping
 - `J2KWaveletKernelLibrary` — Static library of pre-built kernels
 - `J2KADSMarker` — ADS marker segment for Part 2 codestreams
 - `J2KADSMarker.DecompositionOrder` — Mallat or packet wavelet
@@ -190,8 +278,11 @@ if J2KAcceleratedArbitraryWavelet.isAvailable {
 | `J2KWaveletKernel.validate()` | Validates kernel coefficients and properties |
 | `J2KWaveletKernel.validatePerfectReconstruction(tolerance:)` | Checks PR condition |
 | `J2KWaveletKernel.toCustomFilter()` | Converts to `J2KDWT1D.CustomFilter` |
+| `J2KWaveletKernel.toDWTFilter()` | Converts to `J2KDWT1D.Filter` enum case |
 | `J2KWaveletKernel.encode()` | Serializes to binary |
 | `J2KWaveletKernel.decode(from:)` | Deserializes from binary |
+| `J2KWaveletKernelConfiguration.kernel(forTile:component:lossless:)` | Retrieves kernel for tile-component |
+| `J2KWaveletKernelConfiguration.usesArbitraryWavelets` | Whether config uses Part 2 wavelets |
 | `J2KADSMarker.encode()` | Encodes ADS marker to codestream |
 | `J2KADSMarker.decode(from:)` | Decodes ADS marker from codestream |
 | `J2KArbitraryWaveletTransform.forwardTransform1D(signal:)` | 1D forward transform |
@@ -201,8 +292,18 @@ if J2KAcceleratedArbitraryWavelet.isAvailable {
 
 ## Performance Considerations
 
-- Use lifting-based transforms (via `toCustomFilter()`) for standard kernels — they are faster for in-place computation
+- Use lifting-based transforms (via `toDWTFilter()`) for standard kernels — they are faster for in-place computation
 - Direct convolution is more flexible but slower for large filters
 - On Apple platforms, `J2KAcceleratedArbitraryWavelet` provides significant speedup via vDSP
 - Symmetric filters allow symmetric boundary extension, which is more efficient than zero-padding
 - For production use, prefer the standard Part 1 kernels (5/3, 9/7) unless Part 2 features are required
+- Arbitrary wavelet path performance is within 10% of standard wavelets for most use cases
+
+## Best Practices
+
+1. **Choose the Right Kernel** — Use standard Part 1 kernels (5/3, 9/7) unless you need Part 2 features
+2. **Validate Custom Kernels** — Always call `validate()` and check `validatePerfectReconstruction()`
+3. **Profile Performance** — Benchmark custom kernels before production use
+4. **Document Kernel Choice** — Explain why a specific kernel was chosen in your application
+5. **Test Round-Trip** — Verify encode-decode produces acceptable reconstruction quality
+6. **Consider Compatibility** — Part 2 arbitrary wavelets require Part 2-compliant decoders
