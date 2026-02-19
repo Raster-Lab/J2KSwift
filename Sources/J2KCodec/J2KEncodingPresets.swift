@@ -319,6 +319,21 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: `.standard` (Part 1 compatible wavelets)
     public var waveletKernelConfiguration: J2KWaveletKernelConfiguration
 
+    /// Configuration for Part 2 multi-component transform (MCT).
+    ///
+    /// Specifies the multi-component transform to use for decorrelating
+    /// image components. When set to `.disabled`, uses standard Part 1
+    /// RCT/ICT transforms. When enabled, allows array-based or dependency-based
+    /// transforms for improved compression of multi-spectral imagery.
+    ///
+    /// MCT is particularly effective for:
+    /// - Multi-spectral and hyperspectral imagery (>3 components)
+    /// - Medical imaging with multiple modalities
+    /// - Scientific data with correlated channels
+    ///
+    /// - Default: `.disabled` (Part 1 compatible RCT/ICT transforms)
+    public var mctConfiguration: J2KMCTEncodingConfiguration
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -342,6 +357,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - dcOffsetConfiguration: Part 2 DC offset configuration (default: .disabled).
     ///   - extendedPrecisionConfiguration: Part 2 extended precision configuration (default: .default).
     ///   - waveletKernelConfiguration: Part 2 wavelet kernel configuration (default: .standard).
+    ///   - mctConfiguration: Part 2 multi-component transform configuration (default: .disabled).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
@@ -362,7 +378,8 @@ public struct J2KEncodingConfiguration: Sendable {
         tileBlockSizeOverrides: [Int: (width: Int, height: Int)] = [:],
         dcOffsetConfiguration: J2KDCOffsetConfiguration = .disabled,
         extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
-        waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard
+        waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard,
+        mctConfiguration: J2KMCTEncodingConfiguration = .disabled
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -390,6 +407,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.dcOffsetConfiguration = dcOffsetConfiguration
         self.extendedPrecisionConfiguration = extendedPrecisionConfiguration
         self.waveletKernelConfiguration = waveletKernelConfiguration
+        self.mctConfiguration = mctConfiguration
     }
 
     /// Validates the configuration parameters.

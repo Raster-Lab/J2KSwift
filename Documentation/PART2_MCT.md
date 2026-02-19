@@ -513,22 +513,188 @@ struct J2KAcceleratedMCT: Sendable {
    - Measure transform overhead vs. compression gain
    - Consider matrix computation cost vs. reuse
 
+## Dependency Transforms
+
+**New in Week 165-166**: J2KSwift now supports dependency-based multi-component transforms that provide efficient decorrelation using hierarchical prediction relationships.
+
+### Overview
+
+Dependency transforms define relationships between components where each component is predicted from its predecessors. This approach is often more efficient than full matrix transforms for:
+- Large numbers of components (>4)
+- Sparse decorrelation patterns
+- Low-latency streaming applications
+
+### Basic Usage
+
+```swift
+import J2KCodec
+
+// Create a dependency chain
+let chain = try J2KDependencyChain(
+    componentCount: 3,
+    dependencies: [
+        // Component 1 depends on Component 0
+        J2KComponentDependency(
+            outputComponent: 1,
+            dependencies: [(0, 0.5)]  // C1' = C1 - 0.5*C0
+        ),
+        // Component 2 depends on transformed Component 1
+        J2KComponentDependency(
+            outputComponent: 2,
+            dependencies: [(1, 0.5)]  // C2' = C2 - 0.5*C1'
+        )
+    ]
+)
+
+// Apply forward transform
+let transformer = J2KMCTDependencyTransform()
+let transformed = try transformer.forwardTransform(
+    components: inputComponents,
+    chain: chain
+)
+
+// Apply inverse transform (perfect reconstruction)
+let reconstructed = try transformer.inverseTransform(
+    components: transformed,
+    chain: chain
+)
+```
+
+### Predefined Dependency Chains
+
+```swift
+// RGB decorrelation using dependency transform
+let rgb = J2KDependencyChain.rgbDecorrelation
+// - Y₀ = R
+// - Y₁ = G - 0.5·R
+// - Y₂ = B - 0.5·R - 0.5·(G - 0.5·R)
+
+// Simple sequential decorrelation for 4 components
+let avg4 = J2KDependencyChain.averaging4
+// - Y₀ = C₀
+// - Y₁ = C₁ - 0.5·Y₀
+// - Y₂ = C₂ - 0.5·Y₁
+// - Y₃ = C₃ - 0.5·Y₂
+```
+
+### Hierarchical Transforms
+
+For complex multi-stage decorrelation:
+
+```swift
+// Stage 1: Decorrelate first pair
+let stage1 = try J2KDependencyChain(
+    componentCount: 4,
+    dependencies: [
+        J2KComponentDependency(outputComponent: 1, dependencies: [(0, 0.5)])
+    ]
+)
+
+// Stage 2: Decorrelate remaining components
+let stage2 = try J2KDependencyChain(
+    componentCount: 4,
+    dependencies: [
+        J2KComponentDependency(outputComponent: 2, dependencies: [(0, 0.5)]),
+        J2KComponentDependency(outputComponent: 3, dependencies: [(0, 0.5)])
+    ]
+)
+
+let hierarchical = try J2KHierarchicalTransform(
+    stages: [stage1, stage2],
+    totalComponents: 4
+)
+
+// Apply multi-stage transform
+let transformed = try transformer.forwardHierarchicalTransform(
+    components: input,
+    transform: hierarchical
+)
+
+// Inverse applies stages in reverse order
+let reconstructed = try transformer.inverseHierarchicalTransform(
+    components: transformed,
+    transform: hierarchical
+)
+```
+
+### Encoding with Dependency MCT
+
+```swift
+// Configure encoder to use dependency transform
+let chain = J2KDependencyChain.rgbDecorrelation
+let depConfig = J2KMCTDependencyConfiguration(
+    transform: .chain(chain),
+    optimizeEvaluation: true
+)
+
+var config = J2KEncodingPreset.balanced.configuration()
+config.mctConfiguration = J2KMCTEncodingConfiguration(
+    mode: .dependency(depConfig),
+    useExtendedPrecision: false,
+    preferReversible: false
+)
+
+let encoder = J2KEncoder(configuration: config)
+let encoded = try encoder.encode(image)
+```
+
+### Adaptive MCT Selection
+
+For automatic matrix selection based on image content:
+
+```swift
+// Define candidate matrices
+let candidates = [
+    J2KMCTMatrix.identity3,
+    J2KMCTMatrix.rgbToYCbCr,
+    J2KMCTMatrix.averaging3
+]
+
+// Configure adaptive selection
+var config = J2KEncodingPreset.balanced.configuration()
+config.mctConfiguration = J2KMCTEncodingConfiguration(
+    mode: .adaptive(
+        candidates: candidates,
+        selectionCriteria: .compressionEfficiency
+    )
+)
+
+// Encoder will automatically select best matrix per tile
+let encoder = J2KEncoder(configuration: config)
+```
+
+### Per-Tile MCT
+
+For spatially varying content with different decorrelation needs:
+
+```swift
+var config = J2KEncodingPreset.balanced.configuration()
+config.mctConfiguration = J2KMCTEncodingConfiguration(
+    mode: .arrayBased(J2KMCTMatrix.rgbToYCbCr),
+    perTileMCT: [
+        0: J2KMCTMatrix.identity3,      // Tile 0 uses identity
+        1: J2KMCTMatrix.rgbToYCbCr,     // Tile 1 uses RGB→YCbCr
+        5: J2KMCTMatrix.averaging3      // Tile 5 uses averaging
+    ]
+)
+```
+
 ## Limitations
 
-- **Dependency Transforms**: Not yet implemented (coming in Week 165-166)
-- **Tile-Specific MCT**: Per-tile matrices require custom implementation
-- **Adaptive MCT**: Runtime matrix selection not yet supported
+- **Tile-Specific MCT Integration**: Per-tile matrix application in encoder pipeline pending
+- **Rate-Distortion Optimization**: MCT cost not yet integrated into R-D optimization
 - **Non-Linear Transforms**: Limited to linear transformations
+- **GPU Acceleration**: Metal-accelerated MCT planned for Phase 14
 
 ## Future Enhancements
 
 Planned for upcoming phases:
 
 - **KLT/PCA Support**: Automatic decorrelation matrix generation
-- **Adaptive MCT**: Image-content-based matrix selection
-- **Dependency Transforms**: Component relationship modeling
+- **Adaptive MCT R-D**: Rate-distortion optimized matrix selection
 - **Spectral Transform Library**: Pre-computed matrices for common sensor types
 - **Metal GPU Acceleration**: 100-200× speedup for large multi-spectral images (Phase 14)
+- **Encoder/Decoder R-D Integration**: Full pipeline integration with tiling and rate control
 
 ## References
 
@@ -539,10 +705,12 @@ Planned for upcoming phases:
 
 ## Examples
 
-See `Tests/J2KCodecTests/J2KMCTTests.swift` for 33 comprehensive examples covering:
+See `Tests/J2KCodecTests/J2KMCTTests.swift` for 51 comprehensive examples covering:
 - Matrix creation and operations
 - Forward/inverse transforms
+- Dependency transforms and hierarchical transforms
 - Component-based transforms
+- Encoding configuration
 - Marker segment encoding/decoding
 - Hardware acceleration
 - Performance benchmarks
