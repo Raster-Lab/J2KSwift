@@ -175,6 +175,9 @@ public actor JP3DDecoder {
         var isPartial = false
 
         for (tileIdx, parsedTile) in codestream.tiles.enumerated() {
+            // Cache for HTJ2K-decoded all-component coefficients of the current tile.
+            // Scoped here so it is naturally reset on each tile iteration.
+            var htj2kTileCache: [Float]? = nil
             let index = parsedTile.tileIndex
             let iz = index / (grid.tilesX * grid.tilesY)
             let rem = index % (grid.tilesX * grid.tilesY)
@@ -204,11 +207,17 @@ public actor JP3DDecoder {
             let lz = clampLevels(cod.levelsZ, for: td)
             let voxelsPerComp = tw * th * td
 
+            // Detect whether the tile was HTJ2K-encoded by checking for a JP3DHTTileInfo prefix.
+            let tileInfo = JP3DHTTileInfo.deserialise(from: parsedTile.data)
+            let tileIsHTJ2K = tileInfo?.isHT ?? false
+
             // Parse coefficient bytes for each component
             let expectedBytesPerComp = voxelsPerComp * 4 // Int32 = 4 bytes
             let expectedTotal = expectedBytesPerComp * siz.componentCount
 
-            if parsedTile.data.count < expectedTotal {
+            // For HTJ2K tiles the payload includes the 4-byte tile-info prefix plus
+            // a 4-byte ZBP prefix per component.  Skip the length check for those.
+            if !tileIsHTJ2K && parsedTile.data.count < expectedTotal {
                 if configuration.tolerateErrors {
                     warnings.append(
                         "Tile \(index): data truncated (\(parsedTile.data.count) < \(expectedTotal) bytes)"
@@ -222,23 +231,58 @@ public actor JP3DDecoder {
             }
 
             for comp in 0..<siz.componentCount {
-                let compOffset = comp * expectedBytesPerComp
-                let available = max(0, min(expectedBytesPerComp, parsedTile.data.count - compOffset))
-                let actualCount = available / 4
-
                 // Read quantized Int32 coefficients
                 var coefficients = [Float](repeating: 0, count: voxelsPerComp)
-                for i in 0..<actualCount {
-                    let byteOffset = compOffset + i * 4
-                    let b0 = Int32(parsedTile.data[byteOffset])
-                    let b1 = Int32(parsedTile.data[byteOffset + 1])
-                    let b2 = Int32(parsedTile.data[byteOffset + 2])
-                    let b3 = Int32(parsedTile.data[byteOffset + 3])
-                    let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
-                    // Dequantize: lossless = identity, lossy = multiply by step
-                    coefficients[i] = codestream.isLosslessQuantization ? Float(raw) : Float(raw)
-                }
 
+                if tileIsHTJ2K {
+                    // HTJ2K-encoded: the tile payload contains all components interleaved
+                    // after the 4-byte tile-info prefix.  Decode the whole tile for the
+                    // first component and store; subsequent components read from the cache.
+                    if comp == 0 {
+                        let codec = JP3DHTJ2KCodec(configuration: .default)
+                        do {
+                            let allComps = try codec.decodeTile(
+                                tileData: parsedTile.data,
+                                expectedVoxels: voxelsPerComp * siz.componentCount
+                            )
+                            // Cache the full decode for use by remaining components
+                            htj2kTileCache = allComps
+                        } catch {
+                            if configuration.tolerateErrors {
+                                warnings.append(
+                                    "Tile \(index) HTJ2K decode failed: \(error)"
+                                )
+                                isPartial = true
+                                htj2kTileCache = nil
+                                continue
+                            }
+                            throw error
+                        }
+                    }
+                    // Extract the per-component slice from the cache
+                    if let cache = htj2kTileCache {
+                        let start = comp * voxelsPerComp
+                        let end = min(start + voxelsPerComp, cache.count)
+                        if start < end {
+                            coefficients.replaceSubrange(0..<(end - start), with: cache[start..<end])
+                        }
+                    }
+                } else {
+                    let compOffset = comp * expectedBytesPerComp
+                    let available = max(0, min(expectedBytesPerComp, parsedTile.data.count - compOffset))
+                    let actualCount = available / 4
+
+                    for i in 0..<actualCount {
+                        let byteOffset = compOffset + i * 4
+                        let b0 = Int32(parsedTile.data[byteOffset])
+                        let b1 = Int32(parsedTile.data[byteOffset + 1])
+                        let b2 = Int32(parsedTile.data[byteOffset + 2])
+                        let b3 = Int32(parsedTile.data[byteOffset + 3])
+                        let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+                        // Dequantize: lossless = identity, lossy = multiply by step
+                        coefficients[i] = codestream.isLosslessQuantization ? Float(raw) : Float(raw)
+                    }
+                }
                 // Apply inverse 3D wavelet transform
                 let floatCoeffs: [Float]
                 do {

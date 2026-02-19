@@ -138,6 +138,36 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
         levelsY: 2,
         levelsZ: 1
     )
+
+    /// High-throughput lossless configuration using HTJ2K.
+    ///
+    /// Uses the FBCOT block coder for significantly faster encoding and decoding
+    /// while maintaining bit-exact reconstruction.
+    public static let htj2kLossless = JP3DEncoderConfiguration(
+        compressionMode: .losslessHTJ2K,
+        tiling: .default,
+        progressionOrder: .lrcps,
+        qualityLayers: 1,
+        levelsX: 3,
+        levelsY: 3,
+        levelsZ: 1
+    )
+
+    /// High-throughput lossy configuration using HTJ2K.
+    ///
+    /// - Parameter psnr: Target PSNR in dB. Defaults to 40.0.
+    /// - Returns: An HTJ2K lossy encoder configuration.
+    public static func htj2kLossy(psnr: Double = 40.0) -> JP3DEncoderConfiguration {
+        return JP3DEncoderConfiguration(
+            compressionMode: .lossyHTJ2K(psnr: psnr),
+            tiling: .default,
+            progressionOrder: .lrcps,
+            qualityLayers: 3,
+            levelsX: 3,
+            levelsY: 3,
+            levelsZ: 1
+        )
+    }
 }
 
 /// Result of a JP3D encoding operation.
@@ -337,9 +367,25 @@ public actor JP3DEncoder {
                 )
 
                 // Encode quantized coefficients
-                for coeff in quantized.coefficients {
-                    var value = coeff.bigEndian
-                    tileBytes.append(contentsOf: withUnsafeBytes(of: &value) { Array($0) })
+                if configuration.compressionMode.isHTJ2K {
+                    // HTJ2K tile encoding: prepend JP3DHTTileInfo prefix
+                    let htConfig = JP3DHTJ2KConfiguration(
+                        blockMode: .ht,
+                        passCount: 1,
+                        cleanupPassEnabled: true,
+                        allowMixedTiles: false
+                    )
+                    let codec = JP3DHTJ2KCodec(configuration: htConfig)
+                    tileBytes.append(codec.encodeTile(
+                        coefficients: quantized.coefficients,
+                        voxelCount: quantized.coefficients.count,
+                        tileIndex: tileIdx
+                    ))
+                } else {
+                    for coeff in quantized.coefficients {
+                        var value = coeff.bigEndian
+                        tileBytes.append(contentsOf: withUnsafeBytes(of: &value) { Array($0) })
+                    }
                 }
             }
 
@@ -349,6 +395,8 @@ public actor JP3DEncoder {
         // Stage 4: Codestream Generation
         let builder = JP3DCodestreamBuilder()
         let effectiveTiling = decomposer.clampedConfiguration(for: volume)
+        let htj2kConfig: JP3DHTJ2KConfiguration? = configuration.compressionMode.isHTJ2K
+            ? .default : nil
         let codestream = builder.build(
             tileData: encodedTileData,
             width: volume.width,
@@ -362,7 +410,8 @@ public actor JP3DEncoder {
             tileSizeX: effectiveTiling.tileSizeX,
             tileSizeY: effectiveTiling.tileSizeY,
             tileSizeZ: effectiveTiling.tileSizeZ,
-            isLossless: configuration.compressionMode.isLossless
+            isLossless: configuration.compressionMode.isLossless,
+            htj2kConfiguration: htj2kConfig
         )
 
         reportProgress(.codestreamGeneration, stageProgress: 1.0,
