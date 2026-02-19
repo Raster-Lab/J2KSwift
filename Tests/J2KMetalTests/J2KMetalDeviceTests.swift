@@ -300,7 +300,8 @@ final class J2KMetalDeviceTests: XCTestCase {
     /// Tests shader function enumeration.
     func testShaderFunctionCases() {
         let allCases = J2KMetalShaderFunction.allCases
-        XCTAssertEqual(allCases.count, 30)
+        // 30 original + 5 ROI + 8 quantization = 43 total
+        XCTAssertEqual(allCases.count, 43)
     }
 
     /// Tests shader function raw values.
