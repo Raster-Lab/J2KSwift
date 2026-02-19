@@ -1,6 +1,8 @@
 name: Create Release Branches
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       version:
@@ -58,7 +60,7 @@ jobs:
             fi
           }
 
-          INPUT_VERSION="${{ github.event.inputs.version }}"
+          INPUT_VERSION="${{ github.event.inputs.version || 'all' }}"
 
           if [ "$INPUT_VERSION" = "all" ]; then
             # Discover versions from RELEASE_NOTES files
