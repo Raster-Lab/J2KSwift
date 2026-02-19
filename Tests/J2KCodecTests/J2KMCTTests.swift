@@ -1374,4 +1374,92 @@ extension J2KMCTTests {
         // The actual distortion adjustment happens internally during optimization
         // This test verifies the configuration is properly passed through
     }
+    
+    // MARK: - MCT Tiling Integration Tests
+    
+    func testPerTileMCTConfiguration() throws {
+        let matrix1 = J2KMCTMatrix.rgbToYCbCr
+        let matrix2 = J2KMCTMatrix.averaging3
+        
+        let config = J2KMCTEncodingConfiguration(
+            mode: .arrayBased(matrix1),
+            perTileMCT: [
+                0: matrix2,
+                1: matrix1,
+                2: matrix2
+            ]
+        )
+        
+        // Verify per-tile configuration
+        XCTAssertEqual(config.perTileMCT.count, 3)
+        XCTAssertNotNil(config.perTileMCT[0])
+        XCTAssertNotNil(config.perTileMCT[1])
+        XCTAssertNotNil(config.perTileMCT[2])
+        
+        // Verify global matrix
+        if case .arrayBased(let m) = config.mode {
+            XCTAssertEqual(m.size, 3)
+        } else {
+            XCTFail("Expected array-based mode")
+        }
+    }
+    
+    func testPerTileMCTOverridesGlobalMatrix() throws {
+        let globalMatrix = J2KMCTMatrix.rgbToYCbCr
+        let tileMatrix = J2KMCTMatrix.averaging3
+        
+        let config = J2KMCTEncodingConfiguration(
+            mode: .arrayBased(globalMatrix),
+            perTileMCT: [0: tileMatrix]
+        )
+        
+        // Per-tile should override global
+        XCTAssertEqual(config.perTileMCT.count, 1)
+        
+        // When processing tile 0, should use tileMatrix
+        if let matrix = config.perTileMCT[0] {
+            XCTAssertEqual(matrix.size, 3)
+            // Averaging3 has 1/3 coefficients, different from RGB->YCbCr
+            XCTAssertNotEqual(matrix.coefficients, globalMatrix.coefficients)
+        } else {
+            XCTFail("Expected tile 0 to have override")
+        }
+        
+        // Tile 1 should use global (no override)
+        XCTAssertNil(config.perTileMCT[1])
+    }
+    
+    func testAdaptiveMCTWithTiling() throws {
+        let candidates = [
+            J2KMCTMatrix.identity3,
+            J2KMCTMatrix.rgbToYCbCr,
+            J2KMCTMatrix.averaging3
+        ]
+        
+        let config = J2KMCTEncodingConfiguration(
+            mode: .adaptive(candidates: candidates, selectionCriteria: .correlation),
+            perTileMCT: [
+                // Tile 0 uses explicit override
+                0: J2KMCTMatrix.rgbToYCbCr
+            ]
+        )
+        
+        // Tile 0 should use override, ignoring adaptive selection
+        XCTAssertNotNil(config.perTileMCT[0])
+        
+        // Other tiles should use adaptive selection
+        XCTAssertNil(config.perTileMCT[1])
+        
+        // Verify candidates are available for adaptive selection
+        if case .adaptive(let c, let criteria) = config.mode {
+            XCTAssertEqual(c.count, 3)
+            if case .correlation = criteria {
+                // Expected
+            } else {
+                XCTFail("Expected correlation criteria")
+            }
+        } else {
+            XCTFail("Expected adaptive mode")
+        }
+    }
 }
