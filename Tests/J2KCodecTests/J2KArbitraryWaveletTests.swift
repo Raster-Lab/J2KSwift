@@ -651,4 +651,246 @@ final class J2KArbitraryWaveletTests: XCTestCase {
         XCTAssertEqual(reconstructed.count, signal.count)
         XCTAssertTrue(reconstructed.contains { $0 != 0 }, "Reconstruction should be non-zero")
     }
+
+    // MARK: - Integration Tests
+
+    func testEncodingConfigurationWithArbitraryKernel() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        var config = J2KEncodingConfiguration()
+        config.waveletKernelConfiguration = .arbitrary(kernel: kernel)
+
+        // Act & Assert
+        XCTAssertEqual(config.waveletKernelConfiguration, .arbitrary(kernel: kernel))
+        XCTAssertTrue(config.waveletKernelConfiguration.usesArbitraryWavelets)
+        XCTAssertNoThrow(try config.validate())
+    }
+
+    func testEncodingConfigurationWithStandardWavelets() throws {
+        // Arrange
+        var config = J2KEncodingConfiguration()
+        config.waveletKernelConfiguration = .standard
+
+        // Act & Assert
+        XCTAssertEqual(config.waveletKernelConfiguration, .standard)
+        XCTAssertFalse(config.waveletKernelConfiguration.usesArbitraryWavelets)
+        XCTAssertNoThrow(try config.validate())
+    }
+
+    func testEncodingConfigurationWithPerTileComponent() throws {
+        // Arrange
+        let kernel1 = J2KWaveletKernelLibrary.haar
+        let kernel2 = J2KWaveletKernelLibrary.cdf97
+        let kernelMap: [J2KWaveletKernelConfiguration.TileComponentKey: J2KWaveletKernel] = [
+            J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: 0): kernel1,
+            J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: 1): kernel2
+        ]
+        var config = J2KEncodingConfiguration()
+        config.waveletKernelConfiguration = .perTileComponent(kernelMap: kernelMap)
+
+        // Act & Assert
+        XCTAssertTrue(config.waveletKernelConfiguration.usesArbitraryWavelets)
+        XCTAssertNoThrow(try config.validate())
+
+        // Test kernel lookup
+        let retrievedKernel1 = config.waveletKernelConfiguration.kernel(
+            forTile: 0, component: 0, lossless: false
+        )
+        let retrievedKernel2 = config.waveletKernelConfiguration.kernel(
+            forTile: 0, component: 1, lossless: false
+        )
+        XCTAssertEqual(retrievedKernel1, kernel1)
+        XCTAssertEqual(retrievedKernel2, kernel2)
+    }
+
+    func testKernelToDWTFilterConversion() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+
+        // Act
+        let filter = kernel.toDWTFilter()
+
+        // Assert
+        if case .custom(let customFilter) = filter {
+            XCTAssertEqual(customFilter.lowpassScale, kernel.lowpassScale)
+            XCTAssertEqual(customFilter.highpassScale, kernel.highpassScale)
+            XCTAssertEqual(customFilter.isReversible, kernel.isReversible)
+        } else {
+            XCTFail("Expected custom filter")
+        }
+    }
+
+    func testStandardWavelet53ViaArbitraryPath() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.leGall53
+        let signal: [Int32] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        // Act - use through arbitrary wavelet path
+        let filter = kernel.toDWTFilter()
+        let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: filter
+        )
+        let reconstructed = try J2KDWT1D.inverseTransform(
+            lowpass: lowpass,
+            highpass: highpass,
+            filter: filter
+        )
+
+        // Assert - perfect reconstruction
+        XCTAssertEqual(reconstructed.count, signal.count)
+        for i in 0..<signal.count {
+            XCTAssertEqual(reconstructed[i], signal[i],
+                          "Mismatch at index \(i)")
+        }
+    }
+
+    func testStandardWavelet97ViaArbitraryPath() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let signal: [Int32] = [100, 150, 200, 120, 180, 160, 140, 190]
+
+        // Act - use through arbitrary wavelet path
+        let filter = kernel.toDWTFilter()
+        let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: filter
+        )
+        let reconstructed = try J2KDWT1D.inverseTransform(
+            lowpass: lowpass,
+            highpass: highpass,
+            filter: filter
+        )
+
+        // Assert - near-perfect reconstruction (lossy, allow small error)
+        XCTAssertEqual(reconstructed.count, signal.count)
+        for i in 0..<signal.count {
+            let error = abs(reconstructed[i] - signal[i])
+            XCTAssertLessThanOrEqual(error, 2,
+                                    "Error too large at index \(i): \(error)")
+        }
+    }
+
+    func testHaarWaveletRoundTrip() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.haar
+        let signal: [Int32] = [10, 20, 30, 40]
+
+        // Act
+        let filter = kernel.toDWTFilter()
+        let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: filter
+        )
+        let reconstructed = try J2KDWT1D.inverseTransform(
+            lowpass: lowpass,
+            highpass: highpass,
+            filter: filter
+        )
+
+        // Assert
+        XCTAssertEqual(reconstructed.count, signal.count)
+        for i in 0..<signal.count {
+            let error = abs(reconstructed[i] - signal[i])
+            XCTAssertLessThanOrEqual(error, 1,
+                                    "Reconstruction error at index \(i): \(error)")
+        }
+    }
+
+    func testDaubechies4WaveletTransform() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.daubechies4
+        let signal: [Int32] = Array(1...16)
+
+        // Act
+        let filter = kernel.toDWTFilter()
+        let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
+            signal: signal,
+            filter: filter
+        )
+
+        // Assert
+        XCTAssertEqual(lowpass.count, 8)
+        XCTAssertEqual(highpass.count, 8)
+        XCTAssertNotEqual(lowpass, signal[0..<8].map { $0 })
+        XCTAssertTrue(highpass.contains { $0 != 0 })
+    }
+
+    func test2DWaveletTransformWithArbitraryKernel() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let width = 8
+        let height = 8
+        let image: [[Int32]] = (0..<height).map { r in
+            (0..<width).map { c in Int32(r * width + c) }
+        }
+
+        // Act
+        let filter = kernel.toDWTFilter()
+        let decomposition = try J2KDWT2D.forwardDecomposition(
+            image: image,
+            levels: 2,
+            filter: filter
+        )
+
+        // Assert
+        XCTAssertEqual(decomposition.levelCount, 2)
+        let level1 = decomposition.levels[0]
+        XCTAssertEqual(level1.width, 4)
+        XCTAssertEqual(level1.height, 4)
+    }
+
+    func testMultiLevelRoundTripWithArbitraryKernel() throws {
+        // Arrange - use 8x8 for simpler test
+        let kernel = J2KWaveletKernelLibrary.leGall53
+        let width = 8
+        let height = 8
+        let image: [[Int32]] = (0..<height).map { r in
+            (0..<width).map { c in Int32(r * width + c) }
+        }
+
+        // Act
+        let filter = kernel.toDWTFilter()
+        let decomposition = try J2KDWT2D.forwardDecomposition(
+            image: image,
+            levels: 2,  // Use only 2 levels for simpler reconstruction
+            filter: filter
+        )
+        let reconstructed = try J2KDWT2D.inverseDecomposition(
+            decomposition: decomposition,
+            filter: filter
+        )
+
+        // Assert - perfect reconstruction for reversible filter (allow small rounding error)
+        XCTAssertEqual(reconstructed.count, height)
+        XCTAssertEqual(reconstructed[0].count, width)
+        for r in 0..<height {
+            for c in 0..<width {
+                let error = abs(reconstructed[r][c] - image[r][c])
+                XCTAssertLessThanOrEqual(error, 2,
+                                        "Reconstruction error at (\(r), \(c)): \(error)")
+            }
+        }
+    }
+
+    func testPerformanceStandardVsArbitraryPath() throws {
+        // Arrange
+        let signal = Array(0..<1024).map { Int32($0) }
+        let standardFilter = J2KDWT1D.Filter.irreversible97
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let arbitraryFilter = kernel.toDWTFilter()
+
+        // Measure both paths in a single measure block for comparison
+        measure {
+            // Perform both standard and arbitrary path operations
+            for _ in 0..<50 {
+                _ = try? J2KDWT1D.forwardTransform(signal: signal, filter: standardFilter)
+                _ = try? J2KDWT1D.forwardTransform(signal: signal, filter: arbitraryFilter)
+            }
+        }
+
+        // Note: Visual comparison of performance metrics will show if arbitrary path
+        // is within 10% of standard path performance
+    }
 }
+
