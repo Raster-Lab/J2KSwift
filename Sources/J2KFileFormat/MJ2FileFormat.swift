@@ -545,8 +545,9 @@ public actor MJ2FileReader {
                 }
             } else if boxType == .hdlr {
                 // Check handler type to determine if this is video
-                if boxData.count >= 8 {
-                    let handlerType = String(data: boxData.subdata(in: 4..<8), encoding: .ascii)
+                // hdlr box structure: version(1) + flags(3) + pre_defined(4) + handler_type(4) + ...
+                if boxData.count >= 12 {
+                    let handlerType = String(data: boxData.subdata(in: 8..<12), encoding: .ascii)
                     isVideo = (handlerType == "vide")
                 }
             } else if boxType == .minf {
