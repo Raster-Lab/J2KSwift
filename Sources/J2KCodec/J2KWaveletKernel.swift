@@ -325,9 +325,9 @@ public struct J2KWaveletKernel: Sendable, Equatable {
         guard offset + 16 <= data.count else {
             throw J2KError.invalidData("Insufficient data for scaling factors")
         }
-        let lowpassScale = data[offset..<offset + 8].withUnsafeBytes { $0.load(as: Double.self) }
+        let lowpassScale = data[offset..<offset + 8].withUnsafeBytes { $0.loadUnaligned(as: Double.self) }
         offset += 8
-        let highpassScale = data[offset..<offset + 8].withUnsafeBytes { $0.load(as: Double.self) }
+        let highpassScale = data[offset..<offset + 8].withUnsafeBytes { $0.loadUnaligned(as: Double.self) }
 
         return J2KWaveletKernel(
             name: name,
@@ -383,7 +383,7 @@ public struct J2KWaveletKernel: Sendable, Equatable {
         var coefficients = [Double]()
         coefficients.reserveCapacity(count)
         for _ in 0..<count {
-            let value = data[pos..<pos + 8].withUnsafeBytes { $0.load(as: Double.self) }
+            let value = data[pos..<pos + 8].withUnsafeBytes { $0.loadUnaligned(as: Double.self) }
             coefficients.append(value)
             pos += 8
         }
