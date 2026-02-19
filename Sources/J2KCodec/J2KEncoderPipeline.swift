@@ -837,8 +837,10 @@ struct EncoderPipeline: Sendable {
     private func writeSIZMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
         var segment = J2KBitWriter()
 
-        // Rsiz — Capabilities (0 = Part 1 baseline)
-        segment.writeUInt16(0)
+        // Rsiz — Capabilities
+        // Compute Part 2 capabilities from configuration
+        let capabilities = J2KPart2Capabilities(configuration: config)
+        segment.writeUInt16(capabilities.rsizValue)
         // Xsiz — Image width
         segment.writeUInt32(UInt32(image.width))
         // Ysiz — Image height
@@ -1077,12 +1079,12 @@ struct EncoderPipeline: Sendable {
         var segment = J2KBitWriter()
 
         // Sqcd byte layout: guard bits (bits 5-7) | quantization style (bits 0-4)
-        // Guard bits = 2 (standard value)
-        let guardBits: UInt8 = 2
+        // Use extended guard bits from Part 2 configuration if applicable
+        let quantExt = J2KPart2QuantizationExtensions(configuration: config)
 
         if config.lossless {
             // No quantization (style = 0) for reversible transforms
-            let sqcd = (guardBits << 5) | 0x00
+            let sqcd = quantExt.encodeSqcd(quantizationStyle: 0x00)
             segment.writeUInt8(sqcd)
 
             // SPqcd: Exponent values for each subband
@@ -1100,7 +1102,7 @@ struct EncoderPipeline: Sendable {
             }
         } else {
             // Scalar expounded quantization (style = 2) for lossy transforms
-            let sqcd = (guardBits << 5) | 0x02
+            let sqcd = quantExt.encodeSqcd(quantizationStyle: 0x02)
             segment.writeUInt8(sqcd)
 
             // SPqcd: Step size values for each subband (2 bytes each)
