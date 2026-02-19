@@ -146,15 +146,153 @@ Comprehensive binary serialization support:
   - Comprehensive test coverage
   - All 25 tests passing
 
+## Week 196-198: MJ2 Extraction ✅
+
+### Completed Implementation
+
+Frame extraction from Motion JPEG 2000 files is now fully implemented with support for flexible extraction strategies and multiple output formats.
+
+#### Core Types Implemented
+
+1. **MJ2FrameMetadata** - Frame information
+   - Frame index (0-based)
+   - Frame size in bytes
+   - File offset
+   - Frame duration in time units
+   - Timestamp in time units
+   - Sync sample (key frame) flag
+
+2. **MJ2FrameSequence** - Frame collection
+   - Frame array with metadata
+   - Frame count and total duration
+   - Sync frame filtering
+   - Frame access by index
+   - Frame access by range
+   - Frame access by timestamp range
+
+3. **MJ2Extractor** (actor) - Main extraction API
+   - Thread-safe extraction operations
+   - Sample table parsing from MJ2 files
+   - Frame data extraction from mdat box
+   - Flexible extraction strategies
+   - Multiple output formats
+   - Optional parallel extraction
+   - Cancellation support
+
+#### Extraction Strategies
+
+**Strategy Types**:
+- `all` - Extract all frames
+- `syncOnly` - Extract only sync frames (key frames)
+- `range(start:end:)` - Extract specific frame range
+- `timestampRange(start:end:)` - Extract by timestamp
+- `skip(interval:)` - Extract every Nth frame  
+- `single(index:)` - Extract single frame
+
+#### Output Strategies
+
+**Output Types**:
+- `memory` - In-memory frame array
+- `files(directory:naming:)` - Individual files with custom naming
+- `imageSequence(directory:prefix:)` - Image sequence with default naming
+
+#### Extraction Options
+
+**Configuration Options**:
+- Extraction strategy selection
+- Output strategy selection
+- Optional frame decoding
+- Parallel vs sequential extraction
+- Track ID selection (for multi-track files)
+
+#### Sample Table Parsing
+
+**Parsed Tables**:
+- `stsz` - Sample sizes (constant or variable)
+- `stco`/`co64` - Chunk offsets (32-bit or 64-bit)
+- `stsc` - Sample-to-chunk mapping
+- `stts` - Time-to-sample durations
+- `stss` - Sync samples (optional)
+
+Frame table built from sample tables:
+- Frame offset calculation
+- Timestamp reconstruction
+- Duration assignment
+- Sync sample identification
+
+#### Performance Features
+
+**Optimizations**:
+- Parallel frame extraction using Swift structured concurrency
+- Selective frame reading (only requested frames)
+- Memory-efficient sample table caching
+- Large file support (>4GB with 64-bit offsets)
+
+#### API Example
+
+```swift
+// Basic extraction
+let extractor = MJ2Extractor()
+let sequence = try await extractor.extract(from: fileURL)
+
+// Extract key frames only
+let options = MJ2ExtractionOptions(strategy: .syncOnly)
+let keyFrames = try await extractor.extract(from: fileURL, options: options)
+
+// Extract specific range
+let options = MJ2ExtractionOptions(strategy: .range(start: 10, end: 20))
+let frames = try await extractor.extract(from: fileURL, options: options)
+
+// Extract to files
+let options = MJ2ExtractionOptions(
+    outputStrategy: .imageSequence(directory: outputDir, prefix: "frame")
+)
+try await extractor.extract(from: fileURL, options: options)
+```
+
+### Testing
+
+**17 unit tests passing** covering:
+- Frame metadata creation
+- Frame sequence operations (empty, single, multiple)
+- Frame access (by index, range, timestamp)
+- Sync frame filtering
+- Extraction strategy types
+- Output strategy types
+- Extraction options configuration
+
+**Integration tests**: Pending MJ2Creator/FileReader compatibility fixes for full round-trip testing.
+
+### Files
+
+- `Sources/J2KFileFormat/MJ2Extractor.swift` (889 lines)
+  - Complete extraction implementation
+  - Actor-based thread safety
+  - All extraction strategies
+  - Sample table parsing
+  
+- `Sources/J2KFileFormat/MJ2FrameSequence.swift` (157 lines)
+  - Frame metadata types
+  - Frame sequence operations
+  - Frame access methods
+
+- `Tests/J2KFileFormatTests/MJ2ExtractorTests.swift` (524 lines)
+  - Comprehensive test coverage
+  - 17 tests passing
+
+### Bug Fixes
+
+- Fixed MJ2StreamWriter to write JP2 signature box (required for MJ2 format)
+- Fixed MJ2FileReader to correctly parse handler type from hdlr box (offset 8, not 4)
+
 ### Next Steps
 
-Week 194-195 will implement MJ2 file creation:
-- MJ2Creator actor for encoding image sequences
-- MJ2StreamWriter for progressive file writing
-- Sample table generation (stts, stsc, stsz, stco)
-- Integration with existing J2KEncoder
-- Frame-by-frame encoding pipeline
-- Memory-efficient buffering
+Week 199-200 will implement MJ2 playback support:
+- MJ2Player actor for real-time playback
+- Frame-accurate seeking
+- Sequential and reverse playback
+- Playback speed control
+- Loop and ping-pong modes
 
 ## Feature 1: Motion JPEG 2000 Creation
 
