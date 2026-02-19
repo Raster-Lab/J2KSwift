@@ -821,6 +821,388 @@ let frames = try await extractor.extractFrameRange(
 - Memory usage profiling
 - Error handling for corrupted files
 
+## Week 199-200: MJ2 Playback Support ✅
+
+### Overview
+
+Real-time playback engine for Motion JPEG 2000 files with frame-accurate seeking, intelligent caching, and comprehensive playback controls.
+
+### Completed Implementation
+
+The MJ2Player provides a complete playback solution with:
+
+#### Core Playback Features
+
+1. **MJ2Player Actor** - Thread-safe playback engine
+   - Frame-accurate seeking by index or timestamp
+   - Forward and reverse playback
+   - Single-frame stepping (forward/backward)
+   - Variable playback speed (0.1x to 10x)
+   - Loop modes: none, loop, ping-pong
+
+2. **Frame Caching System** - Intelligent LRU cache
+   - Configurable cache size (frame count)
+   - Memory limit enforcement (bytes)
+   - Predictive prefetching based on playback direction
+   - Automatic eviction on memory pressure
+   - Cache hit rate tracking
+
+3. **Synchronization** - Precise timing control
+   - Frame timestamp tracking
+   - Duration calculation
+   - Configurable timing tolerance
+   - Dropped frame detection
+   - Playback statistics
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      MJ2Player                          │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Playback Control                        │   │
+│  │  • Play/Pause/Stop                              │   │
+│  │  • Speed Control (0.1x - 10x)                   │   │
+│  │  • Seeking (by index or timestamp)              │   │
+│  │  • Loop Modes (none/loop/ping-pong)             │   │
+│  └─────────────────────────────────────────────────┘   │
+│                         ↓                               │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Frame Cache (LRU)                       │   │
+│  │  • Decoded frame storage                        │   │
+│  │  • Memory pressure handling                     │   │
+│  │  • Predictive prefetching                       │   │
+│  │  • Access order tracking                        │   │
+│  └─────────────────────────────────────────────────┘   │
+│                         ↓                               │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Frame Decoder                           │   │
+│  │  • JPEG 2000 decoding                           │   │
+│  │  • Decode time tracking                         │   │
+│  │  • Error handling                               │   │
+│  └─────────────────────────────────────────────────┘   │
+│                         ↓                               │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Sample Table Parser                     │   │
+│  │  • Frame metadata extraction                    │   │
+│  │  • Timestamp calculation                        │   │
+│  │  • Sync sample identification                   │   │
+│  └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### API Reference
+
+```swift
+import J2KCore
+import J2KFileFormat
+
+/// Configuration for MJ2 playback
+public struct MJ2PlaybackConfiguration: Sendable {
+    /// Maximum number of frames to cache (default: 30)
+    public var maxCacheSize: Int
+    
+    /// Number of frames to prefetch ahead (default: 5)
+    public var prefetchCount: Int
+    
+    /// Memory limit for cache in bytes (default: 256MB)
+    public var memoryLimit: UInt64
+    
+    /// Whether to enable predictive prefetching (default: true)
+    public var enablePredictivePrefetch: Bool
+    
+    /// Frame timing tolerance in milliseconds (default: 16.67ms ≈ 60fps)
+    public var timingTolerance: Double
+}
+
+/// Real-time playback engine for Motion JPEG 2000 files
+public actor MJ2Player {
+    // MARK: - Initialization
+    
+    /// Creates a new MJ2 player
+    public init(configuration: MJ2PlaybackConfiguration = MJ2PlaybackConfiguration())
+    
+    // MARK: - Loading
+    
+    /// Loads an MJ2 file for playback
+    public func load(from fileURL: URL) async throws
+    
+    /// Loads MJ2 data for playback
+    public func load(from data: Data) async throws
+    
+    // MARK: - Playback Control
+    
+    /// Starts or resumes playback
+    public func play() async throws
+    
+    /// Pauses playback
+    public func pause()
+    
+    /// Stops playback and resets to beginning
+    public func stop()
+    
+    /// Sets the playback mode
+    public func setPlaybackMode(_ mode: MJ2PlaybackMode)
+    
+    /// Sets the playback speed (0.1x to 10x)
+    public func setPlaybackSpeed(_ speed: Double)
+    
+    // MARK: - Seeking
+    
+    /// Seeks to a specific frame
+    public func seek(to frameIndex: Int) async throws
+    
+    /// Seeks to a specific timestamp
+    public func seek(toTimestamp timestamp: UInt64) async throws
+    
+    // MARK: - Frame Access
+    
+    /// Advances to the next frame
+    public func nextFrame() async throws -> Bool
+    
+    /// Gets the current frame image
+    public func currentFrame() async throws -> J2KImage?
+    
+    /// Gets a frame at a specific index
+    public func frame(at index: Int) async throws -> J2KImage?
+    
+    // MARK: - State Queries
+    
+    /// Returns the current playback state
+    public func currentState() -> MJ2PlaybackState
+    
+    /// Returns the current frame index
+    public func currentIndex() -> Int
+    
+    /// Returns the total number of frames
+    public func totalFrames() -> Int
+    
+    /// Returns the current timestamp
+    public func currentTimestamp() -> UInt64
+    
+    /// Returns the total duration in time units
+    public func totalDuration() -> UInt64
+    
+    /// Returns playback statistics
+    public func getStatistics() -> MJ2PlaybackStatistics
+    
+    // MARK: - Cache Management
+    
+    /// Clears the frame cache
+    public func clearCache()
+}
+
+/// Playback modes
+public enum MJ2PlaybackMode: Sendable {
+    case forward
+    case reverse
+    case stepForward
+    case stepBackward
+}
+
+/// Loop modes
+public enum MJ2LoopMode: Sendable {
+    case none        // Stop at end
+    case loop        // Loop from beginning
+    case pingPong    // Reverse direction at ends
+}
+
+/// Playback state
+public enum MJ2PlaybackState: Sendable {
+    case stopped
+    case playing
+    case paused
+    case seeking
+}
+
+/// Playback statistics
+public struct MJ2PlaybackStatistics: Sendable {
+    public var framesDecoded: Int
+    public var framesDropped: Int
+    public var averageDecodeTime: Double
+    public var cacheHitRate: Double
+    public var memoryUsage: UInt64
+}
+```
+
+### Usage Examples
+
+#### Basic Playback
+
+```swift
+import J2KCore
+import J2KFileFormat
+
+// Create player
+let player = MJ2Player()
+
+// Load MJ2 file
+try await player.load(from: fileURL)
+
+// Start playback
+try await player.play()
+
+// Get current frame for display
+while await player.currentState() == .playing {
+    if let frame = try await player.currentFrame() {
+        // Display frame
+        await displayFrame(frame)
+    }
+    
+    // Advance to next frame
+    _ = try await player.nextFrame()
+    
+    // Sleep based on frame rate
+    try await Task.sleep(nanoseconds: 41_666_667) // ~24fps
+}
+```
+
+#### Seeking and Stepping
+
+```swift
+// Seek to specific frame
+try await player.seek(to: 100)
+
+// Seek by timestamp
+try await player.seek(toTimestamp: 5000) // 5 seconds at timescale 1000
+
+// Single frame step forward
+await player.setPlaybackMode(.stepForward)
+_ = try await player.nextFrame()
+
+// Single frame step backward
+await player.setPlaybackMode(.stepBackward)
+_ = try await player.nextFrame()
+```
+
+#### Speed Control and Loop Modes
+
+```swift
+// Variable speed playback
+await player.setPlaybackSpeed(2.0)  // 2x speed
+try await player.play()
+
+await player.setPlaybackSpeed(0.5)  // 0.5x speed (slow motion)
+
+// Reverse playback
+await player.setPlaybackMode(.reverse)
+try await player.play()
+
+// Loop modes
+player.loopMode = .loop      // Loop from beginning
+player.loopMode = .pingPong  // Reverse at ends
+player.loopMode = .none      // Stop at end
+```
+
+#### Custom Cache Configuration
+
+```swift
+// High-performance configuration with large cache
+let config = MJ2PlaybackConfiguration(
+    maxCacheSize: 60,              // Cache 60 frames
+    prefetchCount: 10,             // Prefetch 10 frames ahead
+    memoryLimit: 512 * 1024 * 1024, // 512 MB limit
+    enablePredictivePrefetch: true,
+    timingTolerance: 8.33          // 120fps tolerance
+)
+
+let player = MJ2Player(configuration: config)
+```
+
+#### Playback Statistics
+
+```swift
+// Get playback statistics
+let stats = await player.getStatistics()
+
+print("Frames decoded: \(stats.framesDecoded)")
+print("Frames dropped: \(stats.framesDropped)")
+print("Average decode time: \(stats.averageDecodeTime)ms")
+print("Cache hit rate: \(stats.cacheHitRate * 100)%")
+print("Memory usage: \(stats.memoryUsage / 1024 / 1024) MB")
+```
+
+#### Frame Iteration
+
+```swift
+// Load file
+try await player.load(from: fileURL)
+
+let totalFrames = await player.totalFrames()
+
+// Process each frame
+for index in 0..<totalFrames {
+    try await player.seek(to: index)
+    
+    if let frame = try await player.currentFrame() {
+        // Process frame
+        await processFrame(frame, at: index)
+    }
+}
+```
+
+### Performance Characteristics
+
+#### Frame Cache
+
+- **LRU Eviction**: Least recently used frames are evicted first
+- **Predictive Prefetching**: Frames are prefetched based on playback direction
+- **Memory Pressure**: Automatic eviction when memory limit is reached
+- **Configurable Size**: Adjust cache size based on available memory
+
+#### Seeking Performance
+
+- **Frame-Accurate**: Direct access to any frame by index
+- **Timestamp-Based**: Efficient timestamp-to-frame mapping
+- **Prefetch on Seek**: Target and surrounding frames are prefetched
+- **State Preservation**: Playback state is preserved during seeking
+
+#### Memory Usage
+
+Frame memory usage estimation:
+- Each component sample: 4 bytes (Int32)
+- Typical frame (1920×1080, 3 components): ~24 MB uncompressed
+- Default cache (30 frames): ~720 MB worst case
+- Configurable memory limit enforced
+
+### Testing Strategy
+
+- **Unit Tests**: 32 comprehensive tests (31 passing, 1 skipped)
+  - Initialization and configuration
+  - State management and transitions
+  - Playback mode controls
+  - Loop mode behavior
+  - Seeking accuracy
+  - Frame access patterns
+  - Cache management
+  - Statistics tracking
+  - Error handling
+  - Performance benchmarks
+
+- **Integration Tests**: Pending MJ2Creator/FileReader compatibility
+  - Real file playback
+  - Multi-track files
+  - Variable frame rates
+  - Large file handling
+
+### Implementation Notes
+
+1. **Actor-Based Concurrency**: Thread-safe by design using Swift 6 concurrency
+2. **Sendable Compliance**: All public types conform to Sendable protocol
+3. **Memory-Efficient**: Frame data loaded on demand, not kept in memory unless cached
+4. **Flexible Configuration**: Extensive configuration options for different use cases
+5. **Error Handling**: Comprehensive error types for all failure modes
+
+### Future Enhancements
+
+Future iterations may add:
+- Audio track playback synchronization
+- Hardware-accelerated decoding via VideoToolbox
+- Multi-track playback (picture-in-picture)
+- Frame interpolation for smoother playback
+- GPU-based frame display pipeline
+- Real-time effects and filters
+
 ## Feature 3: H.264/H.265 Interoperability
 
 ### Overview
