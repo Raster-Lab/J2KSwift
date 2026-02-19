@@ -268,21 +268,17 @@ public struct J2KDCOMarkerSegment: Sendable, Equatable {
         for offset in offsets {
             switch offsetType {
             case .integer:
-                let intValue = offset.integerValue
-                data.append(UInt8((intValue >> 24) & 0xFF))
-                data.append(UInt8((intValue >> 16) & 0xFF))
-                data.append(UInt8((intValue >> 8) & 0xFF))
-                data.append(UInt8(intValue & 0xFF))
+                let raw = UInt32(bitPattern: offset.integerValue)
+                data.append(UInt8((raw >> 24) & 0xFF))
+                data.append(UInt8((raw >> 16) & 0xFF))
+                data.append(UInt8((raw >> 8) & 0xFF))
+                data.append(UInt8(raw & 0xFF))
             case .floatingPoint:
-                var floatValue = Float(offset.value)
-                withUnsafeBytes(of: &floatValue) { bytes in
-                    // Big-endian encoding
-                    let raw = bytes.load(as: UInt32.self)
-                    data.append(UInt8((raw >> 24) & 0xFF))
-                    data.append(UInt8((raw >> 16) & 0xFF))
-                    data.append(UInt8((raw >> 8) & 0xFF))
-                    data.append(UInt8(raw & 0xFF))
-                }
+                let raw = Float(offset.value).bitPattern
+                data.append(UInt8((raw >> 24) & 0xFF))
+                data.append(UInt8((raw >> 16) & 0xFF))
+                data.append(UInt8((raw >> 8) & 0xFF))
+                data.append(UInt8(raw & 0xFF))
             }
         }
 
@@ -336,11 +332,11 @@ public struct J2KDCOMarkerSegment: Sendable, Equatable {
             let value: Double
             switch offsetType {
             case .integer:
-                let raw = Int32(data[position]) << 24
-                    | Int32(data[position + 1]) << 16
-                    | Int32(data[position + 2]) << 8
-                    | Int32(data[position + 3])
-                value = Double(raw)
+                let raw = UInt32(data[position]) << 24
+                    | UInt32(data[position + 1]) << 16
+                    | UInt32(data[position + 2]) << 8
+                    | UInt32(data[position + 3])
+                value = Double(Int32(bitPattern: raw))
             case .floatingPoint:
                 let raw = UInt32(data[position]) << 24
                     | UInt32(data[position + 1]) << 16
