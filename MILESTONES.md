@@ -4,7 +4,7 @@ A comprehensive development roadmap for implementing a complete JPEG 2000 framew
 
 ## Overview
 
-This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities, Phase 11 (v1.4.0) adds enhanced JPIP with HTJ2K support, and Phase 12 (v1.5.0, Weeks 131-154) targets performance optimizations, extended JPIP features, enhanced streaming, and broader platform support.
+This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities, Phase 11 (v1.4.0) adds enhanced JPIP with HTJ2K support, Phase 12 (v1.5.0, Weeks 131-154) targets performance optimizations, extended JPIP features, enhanced streaming, and broader platform support, and Phase 16 (v1.9.0, Weeks 211-235) implements JP3D (ISO/IEC 15444-10) volumetric JPEG 2000 encoding/decoding with 3D wavelet transforms, HTJ2K integration, JPIP 3D streaming, and Metal GPU acceleration.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
@@ -751,9 +751,9 @@ This feature allows converting between encoding formats without quality loss or 
 
 ## Conclusion
 
-This comprehensive roadmap provides a clear path from initial development through advanced features. Phases 0-8 (Weeks 1-100) established a production-ready JPEG 2000 framework in Swift 6. Phases 9-10 (Weeks 101-130) extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding capabilities.
+This comprehensive roadmap provides a clear path from initial development through advanced features. Phases 0-8 (Weeks 1-100) established a production-ready JPEG 2000 framework in Swift 6. Phases 9-10 (Weeks 101-130) extend the framework with HTJ2K (ISO/IEC 15444-15) support and lossless transcoding capabilities. Phase 16 (Weeks 211-235) adds JP3D (ISO/IEC 15444-10) volumetric support with comprehensive edge case coverage.
 
-The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust, performant, and feature-complete JPEG 2000 solution. With HTJ2K support, J2KSwift will offer state-of-the-art throughput while maintaining full backward compatibility with legacy JPEG 2000.
+The phased approach ensures that each component is thoroughly implemented and tested before moving to the next, resulting in a robust, performant, and feature-complete JPEG 2000 solution. With HTJ2K support and volumetric JP3D capabilities, J2KSwift offers state-of-the-art throughput for both 2D and 3D imaging while maintaining full backward compatibility with legacy JPEG 2000.
 
 ## Post-1.0 Releases
 
@@ -2555,11 +2555,537 @@ This phase extends J2KSwift to support motion sequences, enabling high-quality v
 - Memory efficiency: Streaming support for large files
 - Power efficiency: Optimized for mobile devices
 
+## Phase 16: JP3D — Volumetric JPEG 2000 (v1.9.0, Weeks 211-235)
+
+**Goal**: Implement ISO/IEC 15444-10 (JP3D) volumetric JPEG 2000 encoding and decoding with 3D wavelet transforms, HTJ2K integration, JPIP 3D streaming, Metal GPU acceleration, and comprehensive edge case coverage.
+
+This phase extends J2KSwift to three-dimensional image data, enabling efficient compression and progressive delivery of volumetric datasets (medical imaging, scientific visualization, geospatial data). The implementation leverages Metal GPU acceleration from Phase 14, Motion JPEG 2000 patterns from Phase 15, and provides full Part 4 conformance testing. All 3D operations are designed for symmetrical client and server use.
+
+**Target Platform**: Apple Silicon (M-series, A-series) with cross-platform fallbacks (Linux x86-64/ARM64, Windows).
+
+### Week 211-213: 3D Data Structures and Core Types
+
+**Goal**: Establish foundational volumetric types and spatial indexing for JP3D.
+
+- [ ] Volume representation
+  - [ ] Implement `J2KVolume` with width, height, depth, componentCount
+  - [ ] Implement `J2KVolumeComponent` with per-component bit depth, signedness, subsampling
+  - [ ] Add voxel spacing and origin metadata for physical space mapping
+  - [ ] Implement `J2KVolumeMetadata` for patient info, acquisition parameters
+  - [ ] Support bit depths from 1 to 38 bits per sample
+  - [ ] Support both signed and unsigned voxel data
+- [ ] 3D spatial types
+  - [ ] Implement `JP3DRegion` with x/y/z ranges for ROI specification
+  - [ ] Implement `JP3DTile` for 3D tile decomposition
+  - [ ] Implement `JP3DPrecinct` with 3D spatial indexing (x, y, z indices)
+  - [ ] Add `JP3DTilingConfiguration` presets (default 256×256×16, streaming 128×128×8, batch 512×512×32)
+  - [ ] Implement tile grid computation and tile-volume intersection
+- [ ] 3D progression and compression types
+  - [ ] Implement `JP3DProgressionOrder` enum (LRCPS, RLCPS, PCRLS, SLRCP, CPRLS)
+  - [ ] Implement `JP3DCompressionMode` enum (lossless, lossy, targetBitrate, visuallyLossless, losslessHTJ2K, lossyHTJ2K)
+  - [ ] Implement `J2K3DCoefficients` for wavelet coefficient storage
+- [ ] Edge case handling: core types
+  - [ ] Empty volume (0×0×0): reject with descriptive `J2KError.invalidParameter`
+  - [ ] Single-voxel volume (1×1×1): encode/decode correctly as degenerate case
+  - [ ] Extremely thin volumes (e.g., 1024×1024×1): treat Z-dimension==1 as degenerate 2D
+  - [ ] Non-uniform dimensions (e.g., 2×2×10000): handle without integer overflow
+  - [ ] Odd and prime dimensions that don't tile evenly: correct boundary tile sizing
+  - [ ] Zero-component volume: reject with `J2KError.invalidParameter`
+  - [ ] Large component count (>100, hyperspectral): validate memory limits
+  - [ ] Negative or zero voxel spacing: reject or treat as unset
+  - [ ] Maximum volume size guard: prevent integer overflow in size calculations (width×height×depth×components×bytesPerSample)
+  - [ ] Non-contiguous subsampling factors per component: validate consistency
+- [ ] Testing
+  - [ ] Unit tests for volume construction, validation, and metadata (30+ tests)
+  - [ ] Edge case tests for all degenerate and boundary conditions
+  - [ ] Sendable conformance verification for all new types
+  - [ ] Memory footprint tests for large volume metadata
+
+**Deliverables**:
+- `Sources/J2KCore/J2KVolume.swift` - Volume and component types
+- `Sources/J2KCore/J2KVolumeMetadata.swift` - Volume metadata
+- `Sources/J2K3D/JP3DTypes.swift` - 3D spatial types (Region, Tile, Precinct)
+- `Sources/J2K3D/JP3DConfiguration.swift` - Tiling, progression, compression config
+- `Tests/JP3DTests/JP3DCoreTypeTests.swift` - Core type tests (30+ tests)
+
+**Status**: Planned. Foundation for all subsequent JP3D work.
+
+### Week 214-217: 3D Wavelet Transforms
+
+**Goal**: Implement forward and inverse 3D discrete wavelet transforms with Metal GPU acceleration and comprehensive boundary handling.
+
+- [ ] 3D DWT implementation
+  - [ ] Implement full 3D forward DWT (simultaneous X/Y/Z filtering)
+  - [ ] Implement full 3D inverse DWT
+  - [ ] Implement separable 2D+1D transform mode (2D spatial XY, then 1D Z-axis)
+  - [ ] Support 5/3 reversible filter for lossless compression
+  - [ ] Support 9/7 irreversible filter for lossy compression
+  - [ ] Support arbitrary wavelet kernels (Part 2 ADS integration)
+  - [ ] Multi-level decomposition with per-axis decomposition levels (x, y, z)
+- [ ] Boundary handling
+  - [ ] Symmetric extension at volume boundaries (all 6 faces)
+  - [ ] Periodic extension mode
+  - [ ] Zero-padding extension mode
+  - [ ] Correct boundary handling for odd-length dimensions
+  - [ ] Handle volumes smaller than filter length in one or more dimensions
+- [ ] Metal GPU acceleration
+  - [ ] Metal compute shaders for 3D forward DWT (`jp3d_dwt_3d_forward`)
+  - [ ] Metal compute shaders for 3D inverse DWT (`jp3d_dwt_3d_inverse`)
+  - [ ] Metal separable 2D+1D transform shader (`jp3d_separable_dwt`)
+  - [ ] Shared memory optimization for 3D tile processing
+  - [ ] Automatic fallback to CPU when Metal is unavailable
+- [ ] Accelerate framework integration
+  - [ ] vDSP-based 1D filtering along each axis
+  - [ ] NEON SIMD optimization for ARM64 (Apple Silicon)
+  - [ ] Cache-friendly data traversal order for Z-axis filtering
+- [ ] Edge case handling: wavelet transforms
+  - [ ] Z-dimension == 1: skip Z-axis transform, behave as 2D DWT
+  - [ ] Single-row or single-column volumes: skip corresponding axis transform
+  - [ ] Asymmetric decomposition (e.g., 5 levels XY, 2 levels Z): handle per-axis level tracking
+  - [ ] Zero decomposition in one axis: pass through that axis unchanged
+  - [ ] Very large number of decomposition levels exceeding dimension log2: clamp to maximum meaningful level
+  - [ ] Integer overflow in coefficient accumulation for high bit-depth data: use extended precision
+  - [ ] Full 3D vs separable consistency: validate identical results for symmetric cases
+  - [ ] Lossless round-trip at volume boundaries: verify bit-exact reconstruction
+  - [ ] Non-power-of-2 dimensions: correct subband size calculation
+  - [ ] Extremely anisotropic volumes (e.g., 1×1×1000000): efficient Z-only transform
+- [ ] Testing
+  - [ ] 3D DWT forward/inverse round-trip tests (lossless bit-exact)
+  - [ ] Separable vs full 3D equivalence tests
+  - [ ] Boundary extension correctness tests
+  - [ ] Metal vs CPU result equivalence tests
+  - [ ] Performance benchmarks: CPU vs Metal vs Accelerate
+  - [ ] Edge dimension tests (all degenerate axis combinations)
+  - [ ] Multi-level decomposition validation (25+ tests)
+
+**Deliverables**:
+- `Sources/J2K3D/JP3DWaveletTransform.swift` - 3D DWT implementation (actor)
+- `Sources/J2KAccelerate/JP3DAcceleratedDWT.swift` - Accelerate-optimized paths
+- `Sources/J2KMetal/JP3DMetalDWT.swift` - Metal compute shader integration
+- `Sources/J2KMetal/Shaders/JP3D.metal` - Metal compute shaders
+- `Tests/JP3DTests/JP3DWaveletTests.swift` - Wavelet transform tests (25+ tests)
+
+**Status**: Planned. Critical path for encoder/decoder pipeline.
+
+### Week 218-221: JP3D Encoder
+
+**Goal**: Implement complete JP3D encoding pipeline with 3D tiling, rate control, and streaming support.
+
+- [ ] Core encoding pipeline
+  - [ ] Implement `JP3DEncoder` actor with async encode API
+  - [ ] 3D tile decomposition and independent tile encoding
+  - [ ] 3D wavelet transform integration (full 3D and separable modes)
+  - [ ] Quantization of 3D wavelet coefficients (scalar and TCQ)
+  - [ ] EBCOT Tier-1 encoding of 3D code-blocks
+  - [ ] Tier-2 packet formation with 3D progression orders
+  - [ ] Codestream generation with JP3D-specific marker segments
+- [ ] 3D tiling
+  - [ ] Configurable tile sizes per axis (tileSizeX, tileSizeY, tileSizeZ)
+  - [ ] Automatic tile grid computation from volume dimensions
+  - [ ] Partial tiles at volume boundaries (right/bottom/back edges)
+  - [ ] Independent tile encoding for parallel processing
+  - [ ] Tile index to spatial position mapping
+- [ ] Rate control
+  - [ ] Lossless mode (reversible 5/3 wavelet, exact bit preservation)
+  - [ ] Lossy mode with target PSNR
+  - [ ] Target bitrate (bits-per-voxel) rate control
+  - [ ] Visually lossless mode (high-quality lossy defaults)
+  - [ ] Quality layer formation for progressive quality
+  - [ ] PCRD-opt (Post-Compression Rate-Distortion Optimization) for 3D
+- [ ] Streaming encoder
+  - [ ] `JP3DStreamWriter` actor for slice-by-slice encoding
+  - [ ] Memory-efficient pipeline: encode and flush tiles as slices arrive
+  - [ ] Out-of-order slice addition with buffering
+  - [ ] Progress reporting callback
+  - [ ] Interruptible encoding with partial output
+  - [ ] Finalization with complete codestream writing
+- [ ] Progression order support
+  - [ ] LRCPS (Layer-Resolution-Component-Position-Slice) — default quality-scalable
+  - [ ] RLCPS (Resolution-Layer-Component-Position-Slice) — resolution-first
+  - [ ] PCRLS (Position-Component-Resolution-Layer-Slice) — spatial-first
+  - [ ] SLRCP (Slice-Layer-Resolution-Component-Position) — Z-axis first
+  - [ ] CPRLS (Component-Position-Resolution-Layer-Slice) — component-first
+- [ ] Edge case handling: encoder
+  - [ ] Single-slice volume (depth==1): encode as standard 2D JPEG 2000 with JP3D wrapper
+  - [ ] Volume with single tile (tile size >= volume): no tiling overhead
+  - [ ] Tiles larger than entire volume: clamp tile size to volume dimensions
+  - [ ] Empty tiles after tiling (zero-size boundary tiles): skip gracefully
+  - [ ] Extreme compression ratios (>1000:1): handle gracefully with quality floor
+  - [ ] Zero quality layers: reject with descriptive error
+  - [ ] Very large tile count (millions of tiles for large volumes): validate memory for tile index
+  - [ ] Rate control with extremely low target (< 0.01 bpv): produce minimal valid codestream
+  - [ ] Rate control with extremely high target (> original size): produce lossless output
+  - [ ] Streaming encoder with interruption before finalization: produce valid partial file or clean error
+  - [ ] Parallel encoding race conditions: actor isolation prevents data races
+  - [ ] Mixed component bit depths: per-component quantization and transform handling
+  - [ ] Maximum codestream size exceeding 4GB: use extended length markers
+  - [ ] Memory-constrained encoding: configurable buffer limits, flush-early strategy
+- [ ] Testing
+  - [ ] Encoder basic functionality tests (multiple volume sizes and configs)
+  - [ ] All compression mode tests (lossless, lossy PSNR, bitrate, visually lossless)
+  - [ ] All progression order tests
+  - [ ] Streaming encoder tests (sequential and out-of-order slices)
+  - [ ] Rate control accuracy tests
+  - [ ] Edge case tests for all boundary and degenerate conditions
+  - [ ] Parallel encoding correctness tests (50+ tests)
+
+**Deliverables**:
+- `Sources/J2K3D/JP3DEncoder.swift` - Core encoder actor
+- `Sources/J2K3D/JP3DStreamWriter.swift` - Streaming encoder actor
+- `Sources/J2K3D/JP3DTiling.swift` - 3D tiling implementation
+- `Sources/J2K3D/JP3DRateControl.swift` - 3D rate control
+- `Sources/J2K3D/JP3DPacketFormation.swift` - Tier-2 packet formation
+- `Tests/JP3DTests/JP3DEncoderTests.swift` - Encoder tests (50+ tests)
+
+**Status**: Planned. Depends on Week 214-217 (3D wavelet transforms).
+
+### Week 222-225: JP3D Decoder
+
+**Goal**: Implement complete JP3D decoding pipeline with ROI decoding, progressive decoding, and multi-resolution support.
+
+- [ ] Core decoding pipeline
+  - [ ] Implement `JP3DDecoder` actor with async decode API
+  - [ ] JP3D codestream parsing with marker segment validation
+  - [ ] Tier-2 packet parsing for 3D progression orders
+  - [ ] EBCOT Tier-1 decoding of 3D code-blocks
+  - [ ] Inverse quantization of 3D wavelet coefficients
+  - [ ] 3D inverse wavelet transform
+  - [ ] Tile reconstruction and compositing into output volume
+- [ ] ROI (Region of Interest) decoding
+  - [ ] Decode only tiles intersecting requested 3D region
+  - [ ] Skip non-intersecting tiles entirely (zero I/O)
+  - [ ] Sub-tile decoding for fine-grained ROI at tile boundaries
+  - [ ] Multiple simultaneous ROI requests
+- [ ] Progressive decoding
+  - [ ] Resolution-progressive: decode from lowest to highest resolution
+  - [ ] Quality-progressive: decode from lowest to highest quality layer
+  - [ ] Slice-progressive: decode Z-slices incrementally
+  - [ ] Progress callback with partial volume and completion percentage
+  - [ ] Interruptible progressive decoding (cancel mid-stream)
+- [ ] Multi-resolution support
+  - [ ] Decode at any resolution level (0 = full, N = 2^N downsampled)
+  - [ ] Resolution-specific output dimensions calculation
+  - [ ] Correct subband reconstruction at reduced resolution
+- [ ] Edge case handling: decoder
+  - [ ] Truncated codestream: decode available data, report partial result
+  - [ ] Corrupted marker segments: skip invalid markers, continue with valid data
+  - [ ] Missing tiles or packets: fill with default value (mid-gray), report warning
+  - [ ] ROI exceeding volume bounds: clamp ROI to valid region, decode intersection
+  - [ ] ROI with zero area (empty intersection): return empty volume with valid metadata
+  - [ ] Zero-quality-layer decode request: return lowest-quality single-layer decode
+  - [ ] Progressive decode interruption: return last complete progressive state
+  - [ ] Incompatible bit depth in codestream vs expected: error with descriptive message
+  - [ ] Unsupported JP3D features in codestream: skip with warning, graceful degradation
+  - [ ] Large ROI in small volume (ROI == entire volume): optimize to full decode path
+  - [ ] Multi-resolution with non-dyadic dimensions: correct rounding of subband sizes
+  - [ ] Single-slice JP3D file (depth==1): decode as 2D and wrap in volume
+  - [ ] Volume with extremely large depth (>10000 slices): streaming decode without full memory allocation
+  - [ ] Malformed tile index: bounds check and error reporting
+  - [ ] Codestream with mixed standard/HTJ2K tiles: detect per-tile and dispatch accordingly
+- [ ] Testing
+  - [ ] Decoder basic functionality tests (round-trip with encoder)
+  - [ ] ROI decoding accuracy tests (various region sizes and positions)
+  - [ ] Progressive decoding state tests
+  - [ ] Multi-resolution decode tests
+  - [ ] Truncated and corrupted input tests
+  - [ ] Edge case tests for all boundary and error conditions (50+ tests)
+
+**Deliverables**:
+- `Sources/J2K3D/JP3DDecoder.swift` - Core decoder actor
+- `Sources/J2K3D/JP3DCodestreamParser.swift` - JP3D codestream parser
+- `Sources/J2K3D/JP3DROIDecoder.swift` - ROI-specific decoding logic
+- `Sources/J2K3D/JP3DProgressiveDecoder.swift` - Progressive decoding support
+- `Tests/JP3DTests/JP3DDecoderTests.swift` - Decoder tests (50+ tests)
+
+**Status**: Planned. Depends on Week 218-221 (JP3D encoder for round-trip testing).
+
+### Week 226-228: HTJ2K Integration for JP3D
+
+**Goal**: Integrate High-Throughput JPEG 2000 (Part 15) encoding within JP3D workflows for dramatically faster encoding/decoding with minimal compression efficiency impact.
+
+- [ ] HTJ2K encoding for JP3D
+  - [ ] `JP3DHTJ2KConfiguration` with block coding mode, pass count, cleanup toggle
+  - [ ] Integrate HT cleanup pass into 3D code-block encoding
+  - [ ] Support HTJ2K-only volumes (all tiles use HTJ2K)
+  - [ ] Support hybrid volumes (some tiles HTJ2K, some standard)
+  - [ ] Presets: default, lowLatency, balanced
+- [ ] HTJ2K decoding for JP3D
+  - [ ] Detect HTJ2K markers (CAP, CPF) in JP3D codestream
+  - [ ] Per-tile HTJ2K vs standard dispatch in decoder
+  - [ ] Fallback error messaging for non-HTJ2K-aware decoders
+- [ ] Transcoding support
+  - [ ] Standard JP3D → HTJ2K JP3D lossless transcoding
+  - [ ] HTJ2K JP3D → Standard JP3D lossless transcoding
+  - [ ] Preserve quality layers and progression order during transcoding
+  - [ ] Streaming transcoding for large volumes
+- [ ] Performance benchmarking
+  - [ ] Standard vs HTJ2K encoding throughput comparison (voxels/sec)
+  - [ ] Standard vs HTJ2K decoding throughput comparison
+  - [ ] Compression ratio comparison (HTJ2K typically 5-15% larger)
+  - [ ] Latency comparison for progressive delivery
+  - [ ] Power consumption comparison on Apple Silicon
+- [ ] Edge case handling: HTJ2K integration
+  - [ ] Mixed standard/HTJ2K tiles in same volume: correct per-tile detection and dispatch
+  - [ ] HTJ2K with lossless 3D wavelet: verify bit-exact round-trip
+  - [ ] Block size mismatch between 2D code-blocks and 3D tile structure: validate alignment
+  - [ ] Decoder encountering HTJ2K tile without Part 15 support: descriptive error
+  - [ ] Transcoding partially HTJ2K volume: handle per-tile conversion
+  - [ ] HTJ2K with zero cleanup passes: validate minimum-viable encoding
+  - [ ] Very small code-blocks (4×4) with HTJ2K: handle sub-optimal but valid configuration
+  - [ ] HTJ2K parallel encoding of 3D tiles: verify thread safety
+- [ ] Testing
+  - [ ] HTJ2K JP3D encode/decode round-trip tests
+  - [ ] Standard vs HTJ2K quality comparison (PSNR/SSIM)
+  - [ ] Hybrid tile encoding tests
+  - [ ] Transcoding round-trip (standard↔HTJ2K) bit-exactness
+  - [ ] Performance benchmark tests (25+ tests)
+
+**Deliverables**:
+- `Sources/J2K3D/JP3DHTJ2K.swift` - HTJ2K integration for JP3D
+- `Sources/J2K3D/JP3DTranscoder.swift` - JP3D transcoding (standard↔HTJ2K)
+- `Tests/JP3DTests/JP3DHTJ2KTests.swift` - HTJ2K integration tests (25+ tests)
+
+**Status**: Planned. Leverages existing HTJ2K implementation from Phase 9.
+
+### Week 229-232: JPIP Extension for JP3D Streaming
+
+**Goal**: Extend JPIP (Part 9) to support 3D-aware progressive delivery, volumetric caching, and view-dependent streaming of JP3D data.
+
+- [ ] JP3D JPIP client
+  - [ ] `JP3DJPIPClient` actor for 3D region requests
+  - [ ] 3D viewport/ROI specification in JPIP view-window requests
+  - [ ] Slice range requests with progressive delivery
+  - [ ] View frustum-based requests for 3D rendering clients
+  - [ ] Integration with WebSocket transport (from Phase 12)
+  - [ ] Session management with 3D-specific metadata
+- [ ] JP3D JPIP server
+  - [ ] `JP3DJPIPServer` actor for 3D data serving
+  - [ ] 3D precinct identification and extraction
+  - [ ] Volume registration with spatial metadata
+  - [ ] 3D-aware predictive prefetching
+  - [ ] Bandwidth-aware 3D delivery scheduling
+  - [ ] Concurrent multi-session support
+- [ ] 3D streaming strategies
+  - [ ] Resolution-first progression (coarse to fine)
+  - [ ] Quality-first progression (low to high quality layers)
+  - [ ] Slice-by-slice delivery (forward-Z, reverse-Z, bidirectional from center)
+  - [ ] View-dependent delivery (camera frustum culling)
+  - [ ] Distance-ordered delivery (near to far from viewpoint)
+  - [ ] Adaptive delivery (bandwidth and view-aware combined)
+- [ ] 3D cache management
+  - [ ] `JP3DCacheManager` actor with 3D-aware eviction policies
+  - [ ] Cache by resolution level
+  - [ ] Cache by spatial proximity (center + radius)
+  - [ ] Cache by access frequency (LRU)
+  - [ ] Cache by view frustum (visible data priority)
+  - [ ] Cache statistics tracking (hit rate, spatial coverage)
+- [ ] Progressive volume delivery
+  - [ ] `JP3DProgressiveDelivery` actor for bandwidth-managed delivery
+  - [ ] Delivery time estimation for requested regions
+  - [ ] Partial volume updates via `JP3DProgressiveUpdate`
+  - [ ] Smooth quality transitions during streaming
+- [ ] Network optimization
+  - [ ] Network.framework integration for QUIC/HTTP3 (Apple platforms)
+  - [ ] Network path monitoring for adaptive streaming
+  - [ ] TLS 1.3 required for all connections
+  - [ ] Rate limiting to prevent DoS
+- [ ] Edge case handling: JPIP streaming
+  - [ ] Very slow networks (<100 Kbps): deliver lowest resolution/quality first, defer high-quality
+  - [ ] Connection loss during streaming: resume from last acknowledged data bin
+  - [ ] Cache overflow with large volumes: LRU eviction with spatial-priority preservation
+  - [ ] Concurrent multi-session 3D streaming (>100 sessions): resource limiting and fair scheduling
+  - [ ] View frustum entirely outside volume: return empty result immediately
+  - [ ] Zero-bandwidth condition: queue requests, deliver when bandwidth available
+  - [ ] Rapid viewport changes (faster than delivery): cancel stale requests, prioritize latest
+  - [ ] Server-side volume update during active streaming: invalidate client cache, re-stream affected tiles
+  - [ ] Network address change during session (mobile handoff): reconnect with session recovery
+  - [ ] Client requesting unsupported progression mode: fallback to default with warning
+  - [ ] Precinct request for non-existent tile: error response with available tile range
+  - [ ] Large number of simultaneous clients on same volume: shared precinct cache on server
+  - [ ] Extremely large volume (1TB+): streaming-only mode, reject full-volume requests
+  - [ ] Partial server response (truncated data bin): client detects and re-requests
+- [ ] Testing
+  - [ ] JPIP 3D client/server round-trip tests
+  - [ ] All progression mode delivery tests
+  - [ ] Cache eviction policy tests
+  - [ ] Progressive delivery accuracy tests
+  - [ ] Network failure and recovery tests
+  - [ ] Concurrent session stress tests
+  - [ ] Edge case tests for all boundary and error conditions (40+ tests)
+
+**Deliverables**:
+- `Sources/JPIP/JP3DJPIPClient.swift` - 3D JPIP client actor
+- `Sources/JPIP/JP3DJPIPServer.swift` - 3D JPIP server actor
+- `Sources/JPIP/JP3DCacheManager.swift` - 3D cache management actor
+- `Sources/JPIP/JP3DProgressiveDelivery.swift` - Progressive delivery actor
+- `Sources/JPIP/JP3DStreamingTypes.swift` - Data bin, precinct, progression types
+- `Tests/JP3DTests/JP3DStreamingTests.swift` - JPIP streaming tests (40+ tests)
+
+**Status**: Planned. Extends existing JPIP module from Phase 6/11/12.
+
+### Week 233-234: Compliance Testing and Part 4 Validation
+
+**Goal**: Comprehensive ISO/IEC 15444-4 conformance testing for JP3D implementation, ensuring standard compliance across all features and edge cases.
+
+- [ ] Part 10 conformance tests
+  - [ ] Codestream structure validation (required marker segments)
+  - [ ] 3D tiling conformance (tile sizes, grid alignment)
+  - [ ] Wavelet transform conformance (5/3 lossless, 9/7 lossy)
+  - [ ] Quantization conformance (scalar, deadzone)
+  - [ ] Progression order conformance (all 5 orders)
+  - [ ] Quality layer conformance
+  - [ ] ROI coding conformance
+  - [ ] Profile and level constraint validation
+- [ ] Part 4 compliance testing
+  - [ ] Validate against ISO/IEC 15444-4 test vectors
+  - [ ] Decoder conformance class validation
+  - [ ] Encoder conformance class validation
+  - [ ] Round-trip conformance (encode → decode → compare)
+- [ ] Interoperability testing
+  - [ ] Cross-validate with reference JP3D implementations
+  - [ ] Validate JP3D files can be read by standard-conformant decoders
+  - [ ] Validate decoder can read standard-conformant JP3D files
+  - [ ] Profile compatibility testing (base, extended)
+- [ ] Error resilience tests
+  - [ ] Graceful handling of non-conformant codestreams
+  - [ ] Recovery from bit errors in codestream
+  - [ ] Handling of unsupported Part 10 features
+  - [ ] Rejection of invalid marker segment values
+- [ ] Edge case handling: compliance
+  - [ ] Minimum valid JP3D codestream (smallest conformant file)
+  - [ ] Maximum complexity JP3D codestream (all optional features enabled)
+  - [ ] Codestream with deprecated/obsolete marker segments: ignore gracefully
+  - [ ] Codestream with future/unknown marker segments: skip with warning
+  - [ ] Profile constraints exceeded: encoder rejects configuration, decoder warns
+  - [ ] Tile-part ordering violations: detect and report
+  - [ ] Duplicate marker segments: use first, warn about duplicates
+  - [ ] Missing required marker segments: descriptive error
+  - [ ] Invalid SIZ marker for 3D volumes: reject with specific error
+  - [ ] Bit-exact round-trip for all supported bit depths (1-38)
+- [ ] Compliance automation
+  - [ ] `Scripts/validate-jp3d-compliance.sh` validation script
+  - [ ] CI/CD integration for automated compliance checks
+  - [ ] Compliance report generation (`Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md`)
+  - [ ] Test vector management and versioning
+- [ ] Testing
+  - [ ] Conformance test suite for all Part 10 required features
+  - [ ] Interoperability tests with reference data
+  - [ ] Error resilience and robustness tests
+  - [ ] Compliance report generation tests (100+ tests)
+
+**Deliverables**:
+- `Tests/J2KComplianceTests/JP3DComplianceTests.swift` - Part 4 compliance tests (100+ tests)
+- `Scripts/validate-jp3d-compliance.sh` - Compliance validation script
+- `Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md` - Conformance report
+- `Documentation/Compliance/JP3D_TEST_VECTORS.md` - Test vector documentation
+- `.github/workflows/jp3d-compliance.yml` - CI compliance workflow
+
+**Status**: Planned. Mandatory gate for v1.9.0 release.
+
+### Week 235: Documentation, Integration, and v1.9.0 Release
+
+**Goal**: Complete all documentation, perform final integration testing across all JP3D features, and prepare v1.9.0 for release.
+
+- [ ] API documentation
+  - [ ] Complete DocC documentation for all JP3D public APIs
+  - [ ] Parameter descriptions, return values, throws documentation
+  - [ ] Usage examples for every major API
+  - [ ] Architecture overview with component diagrams
+- [ ] User documentation
+  - [ ] `Documentation/JP3D_GETTING_STARTED.md` - Quick start guide
+  - [ ] `Documentation/JP3D_ARCHITECTURE.md` - Architecture overview
+  - [ ] `Documentation/JP3D_API_REFERENCE.md` - Complete API reference
+  - [ ] `Documentation/JP3D_STREAMING_GUIDE.md` - JPIP 3D streaming guide
+  - [ ] `Documentation/JP3D_PERFORMANCE.md` - Performance tuning guide
+  - [ ] `Documentation/JP3D_HTJ2K_INTEGRATION.md` - HTJ2K usage guide
+  - [ ] `Documentation/JP3D_MIGRATION.md` - Migration from 2D JPEG 2000
+  - [ ] `Documentation/JP3D_TROUBLESHOOTING.md` - Common issues and solutions
+  - [ ] `Documentation/JP3D_EXAMPLES.md` - Comprehensive usage examples
+- [ ] Integration testing
+  - [ ] End-to-end encode → decode round-trip across all configurations
+  - [ ] Encode → stream via JPIP → decode pipeline
+  - [ ] HTJ2K + JPIP combined workflow
+  - [ ] Metal GPU vs CPU result equivalence
+  - [ ] Cross-platform validation (macOS, Linux, Windows)
+  - [ ] Memory leak detection under sustained load
+  - [ ] Performance regression testing vs v1.8.0 baseline
+- [ ] Release preparation
+  - [ ] `RELEASE_NOTES_v1.9.0.md` with comprehensive feature list
+  - [ ] `RELEASE_CHECKLIST_v1.9.0.md` with compliance sign-off
+  - [ ] Update `VERSION` file to 1.9.0
+  - [ ] Update `J2KCore.getVersion()` to return "1.9.0"
+  - [ ] Update `README.md` with v1.9.0 features and JP3D documentation links
+  - [ ] Update `MILESTONES.md` with completion status
+  - [ ] API stability review (no unintentional breaking changes from v1.8.0)
+  - [ ] SwiftLint clean (zero warnings)
+  - [ ] Full test suite pass (all existing + new JP3D tests)
+- [ ] Edge case handling: release
+  - [ ] Backward compatibility: existing v1.8.0 2D workflows unaffected
+  - [ ] Package.swift: new J2K3D module is optional dependency (not forced on existing users)
+  - [ ] Graceful import: `import J2K3D` only when JP3D features are needed
+  - [ ] Version detection: `J2KCore.getVersion()` correctly reports "1.9.0"
+  - [ ] No regressions in existing test suites (Phases 0-15)
+- [ ] Testing
+  - [ ] Final integration test pass
+  - [ ] Compliance validation pass
+  - [ ] Performance benchmark summary
+  - [ ] Cross-platform CI green
+
+**Deliverables**:
+- `RELEASE_NOTES_v1.9.0.md` - Release notes
+- `RELEASE_CHECKLIST_v1.9.0.md` - Release checklist with compliance gate
+- Updated `VERSION` file (1.9.0)
+- Updated `README.md` with v1.9.0 features
+- Complete documentation suite in `Documentation/`
+- Full test suite (350+ new tests across all JP3D sub-phases)
+
+**Status**: Planned. Final milestone for v1.9.0 release.
+
+#### Phase 16 Summary
+
+**Expected Benefits**:
+- Volumetric (3D) JPEG 2000 encoding and decoding (ISO/IEC 15444-10)
+- 3D wavelet transforms with Metal GPU acceleration (20-50× speedup)
+- HTJ2K integration for high-throughput volumetric encoding (5-10× faster)
+- JPIP 3D streaming with view-dependent progressive delivery
+- ROI decoding for spatial subsets of volumetric data
+- Comprehensive Part 4 conformance testing
+- Cross-platform support with Apple-first optimization
+- Streaming encoder/decoder for memory-efficient large volume processing
+
+**Architecture Principles**:
+- **Apple-First**: Metal GPU and Accelerate framework for maximum performance
+- **ISO Compliance**: Full adherence to ISO/IEC 15444-10 with Part 4 validation
+- **Clean Integration**: Builds on existing J2KSwift Phases 0-15 architecture
+- **Cross-Platform**: CPU fallbacks for Linux and Windows
+- **x86-64 Isolation**: Clear separation for potential removal
+- **Edge Case Coverage**: Every component handles degenerate, boundary, and error conditions
+- **Symmetrical Design**: Works equally well for client and server use cases
+- **Streaming-First**: Memory-efficient processing of arbitrarily large volumes
+
+**Performance Targets**:
+- Encoding (Apple Silicon M3, 256³ volume): 2-4 sec lossless, 0.4-0.8 sec HTJ2K lossless
+- Encoding (Apple Silicon M3, 512³ volume): 15-25 sec lossless, 2-4 sec HTJ2K lossless
+- Decoding (Apple Silicon M3, 256³ volume): 1-2 sec full, 0.2-0.4 sec ROI (1/8 volume)
+- Streaming (1 Gbps): < 100ms initial display for 256³, < 250ms for 1024³
+- Metal GPU acceleration: 20-50× speedup for 3D wavelet transforms
+- HTJ2K: 5-10× faster encoding, 3-7× faster decoding vs standard JP3D
+
+**Test Coverage Goals**:
+- JP3D core type tests: 30+ tests
+- 3D wavelet transform tests: 25+ tests
+- JP3D encoder tests: 50+ tests
+- JP3D decoder tests: 50+ tests
+- HTJ2K integration tests: 25+ tests
+- JPIP streaming tests: 40+ tests
+- Compliance tests: 100+ tests
+- Total new tests: 350+
+
 ---
 
 **Last Updated**: 2026-02-19
 **Current Phase**: Phase 15 - Motion JPEG 2000 (v1.8.0) ✅
 **Current Version**: 1.8.0 (Ready for Release)
 **Completed Phases**: Phases 0-15 (Weeks 1-210)
-**Next Phase**: Phase 15 - Motion JPEG 2000 (v1.8.0, Weeks 191-210)
-**Achievement**: Complete JPEG 2000 Part 1 & 2 implementation with world-class Apple Silicon performance
+**Next Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0, Weeks 211-235)
+**Achievement**: Complete JPEG 2000 Part 1, 2 & 3 implementation with world-class Apple Silicon performance
