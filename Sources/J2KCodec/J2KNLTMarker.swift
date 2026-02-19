@@ -97,10 +97,8 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             
         case .gamma(let gamma):
             data.append(0x01)  // Transform type: gamma
-            // Encode gamma as IEEE 754 double (8 bytes)
-            var gammaValue = gamma
-            let gammaBytes = withUnsafeBytes(of: &gammaValue) { Data($0) }
-            data.append(gammaBytes)
+            // Encode gamma as IEEE 754 double (8 bytes) in big-endian
+            data.append(contentsOf: encodeDouble(gamma))
             
         case .logarithmic:
             data.append(0x02)  // Transform type: logarithmic (base-e)
@@ -130,9 +128,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             
             // Forward LUT data (doubles)
             for value in forwardLUT {
-                var doubleValue = value
-                let bytes = withUnsafeBytes(of: &doubleValue) { Data($0) }
-                data.append(bytes)
+                data.append(contentsOf: encodeDouble(value))
             }
             
             // Inverse LUT size (2 bytes)
@@ -142,9 +138,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             
             // Inverse LUT data (doubles)
             for value in inverseLUT {
-                var doubleValue = value
-                let bytes = withUnsafeBytes(of: &doubleValue) { Data($0) }
-                data.append(bytes)
+                data.append(contentsOf: encodeDouble(value))
             }
             
         case .piecewiseLinear(let breakpoints, let values):
@@ -161,14 +155,8 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             
             // Breakpoint and value pairs
             for i in 0..<breakpoints.count {
-                var breakpoint = breakpoints[i]
-                var value = values[i]
-                
-                let bpBytes = withUnsafeBytes(of: &breakpoint) { Data($0) }
-                let valBytes = withUnsafeBytes(of: &value) { Data($0) }
-                
-                data.append(bpBytes)
-                data.append(valBytes)
+                data.append(contentsOf: encodeDouble(breakpoints[i]))
+                data.append(contentsOf: encodeDouble(values[i]))
             }
             
         case .custom(let parameters, let function):
@@ -191,9 +179,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             
             // Parameter values
             for param in parameters {
-                var paramValue = param
-                let bytes = withUnsafeBytes(of: &paramValue) { Data($0) }
-                data.append(bytes)
+                data.append(contentsOf: encodeDouble(param))
             }
         }
         
@@ -277,8 +263,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             guard offset + 1 + 8 <= data.count else {
                 throw J2KError.decodingError("Cannot read gamma value")
             }
-            let gammaData = data[(offset + 1)..<(offset + 1 + 8)]
-            let gamma = gammaData.withUnsafeBytes { $0.load(as: Double.self) }
+            let gamma = decodeDouble(from: data, at: offset + 1)
             bytesRead += 8
             return (.gamma(gamma), bytesRead)
             
@@ -319,8 +304,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             var forwardLUT = [Double]()
             forwardLUT.reserveCapacity(forwardSize)
             for _ in 0..<forwardSize {
-                let valueData = data[(offset + bytesRead)..<(offset + bytesRead + 8)]
-                let value = valueData.withUnsafeBytes { $0.load(as: Double.self) }
+                let value = decodeDouble(from: data, at: offset + bytesRead)
                 forwardLUT.append(value)
                 bytesRead += 8
             }
@@ -339,8 +323,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             var inverseLUT = [Double]()
             inverseLUT.reserveCapacity(inverseSize)
             for _ in 0..<inverseSize {
-                let valueData = data[(offset + bytesRead)..<(offset + bytesRead + 8)]
-                let value = valueData.withUnsafeBytes { $0.load(as: Double.self) }
+                let value = decodeDouble(from: data, at: offset + bytesRead)
                 inverseLUT.append(value)
                 bytesRead += 8
             }
@@ -365,12 +348,10 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             values.reserveCapacity(segmentCount)
             
             for _ in 0..<segmentCount {
-                let bpData = data[(offset + bytesRead)..<(offset + bytesRead + 8)]
-                let breakpoint = bpData.withUnsafeBytes { $0.load(as: Double.self) }
+                let breakpoint = decodeDouble(from: data, at: offset + bytesRead)
                 bytesRead += 8
                 
-                let valData = data[(offset + bytesRead)..<(offset + bytesRead + 8)]
-                let value = valData.withUnsafeBytes { $0.load(as: Double.self) }
+                let value = decodeDouble(from: data, at: offset + bytesRead)
                 bytesRead += 8
                 
                 breakpoints.append(breakpoint)
@@ -411,8 +392,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
             parameters.reserveCapacity(paramCount)
             
             for _ in 0..<paramCount {
-                let paramData = data[(offset + bytesRead)..<(offset + bytesRead + 8)]
-                let param = paramData.withUnsafeBytes { $0.load(as: Double.self) }
+                let param = decodeDouble(from: data, at: offset + bytesRead)
                 parameters.append(param)
                 bytesRead += 8
             }
@@ -475,4 +455,37 @@ extension J2KNLTMarkerSegment {
         
         return true
     }
+}
+
+// MARK: - Binary Encoding Helpers
+
+/// Encodes a Double value to big-endian IEEE 754 binary representation.
+private func encodeDouble(_ value: Double) -> [UInt8] {
+    let bits = value.bitPattern
+    return [
+        UInt8((bits >> 56) & 0xFF),
+        UInt8((bits >> 48) & 0xFF),
+        UInt8((bits >> 40) & 0xFF),
+        UInt8((bits >> 32) & 0xFF),
+        UInt8((bits >> 24) & 0xFF),
+        UInt8((bits >> 16) & 0xFF),
+        UInt8((bits >> 8) & 0xFF),
+        UInt8(bits & 0xFF)
+    ]
+}
+
+/// Decodes a Double value from big-endian IEEE 754 binary representation.
+private func decodeDouble(from data: Data, at offset: Int) -> Double {
+    guard offset + 8 <= data.count else { return 0.0 }
+    
+    let bits = (UInt64(data[offset]) << 56) |
+               (UInt64(data[offset + 1]) << 48) |
+               (UInt64(data[offset + 2]) << 40) |
+               (UInt64(data[offset + 3]) << 32) |
+               (UInt64(data[offset + 4]) << 24) |
+               (UInt64(data[offset + 5]) << 16) |
+               (UInt64(data[offset + 6]) << 8) |
+               UInt64(data[offset + 7])
+    
+    return Double(bitPattern: bits)
 }

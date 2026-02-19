@@ -719,13 +719,13 @@ public struct J2KNonLinearTransform: Sendable {
 extension Double {
     /// Clamps the value to the specified range.
     fileprivate func clamped(to range: ClosedRange<Double>) -> Double {
-        min(max(self, range.lowerBound), range.upperBound)
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 
 extension Int {
     /// Clamps the value to the specified range.
     fileprivate func clamped(to range: ClosedRange<Int>) -> Int {
-        min(max(self, range.lowerBound), range.upperBound)
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

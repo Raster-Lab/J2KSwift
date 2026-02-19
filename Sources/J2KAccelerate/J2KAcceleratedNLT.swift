@@ -6,7 +6,6 @@
 
 import Foundation
 import J2KCore
-import J2KCodec
 
 #if canImport(Accelerate)
 import Accelerate
@@ -457,108 +456,4 @@ public struct J2KAcceleratedNLT: Sendable {
         #endif
     }
     
-    // MARK: - Parallel Multi-Component Processing
-    
-    /// Applies transforms to multiple components in parallel.
-    ///
-    /// - Parameters:
-    ///   - components: Array of component data arrays.
-    ///   - transforms: Per-component transform specifications.
-    ///   - bitDepth: The bit depth of components.
-    ///   - signed: Whether components use signed representation.
-    /// - Returns: Array of transformed component data.
-    /// - Throws: ``J2KError/invalidParameter(_:)`` if parameters are invalid.
-    public func applyParallel(
-        components: [[Int32]],
-        transforms: [J2KNLTComponentTransform],
-        bitDepth: Int,
-        signed: Bool = false
-    ) throws -> [[Int32]] {
-        guard components.count == transforms.count else {
-            throw J2KError.invalidParameter("Components and transforms count mismatch")
-        }
-        
-        #if canImport(Accelerate)
-        // Process each component (could be parallelized further with DispatchQueue)
-        var results = [[Int32]]()
-        results.reserveCapacity(components.count)
-        
-        for (component, transform) in zip(components, transforms) {
-            let result: [Int32]
-            
-            switch transform.transformType {
-            case .gamma(let gamma):
-                result = try applyGamma(
-                    data: component,
-                    gamma: gamma,
-                    bitDepth: bitDepth,
-                    inverse: false,
-                    signed: signed
-                )
-                
-            case .logarithmic:
-                result = try applyLogarithmic(
-                    data: component,
-                    bitDepth: bitDepth,
-                    base10: false,
-                    inverse: false,
-                    signed: signed
-                )
-                
-            case .logarithmic10:
-                result = try applyLogarithmic(
-                    data: component,
-                    bitDepth: bitDepth,
-                    base10: true,
-                    inverse: false,
-                    signed: signed
-                )
-                
-            case .perceptualQuantizer:
-                result = try applyPQ(
-                    data: component,
-                    bitDepth: bitDepth,
-                    inverse: false,
-                    signed: signed
-                )
-                
-            case .hybridLogGamma:
-                result = try applyHLG(
-                    data: component,
-                    bitDepth: bitDepth,
-                    inverse: false,
-                    signed: signed
-                )
-                
-            case .lookupTable(let forwardLUT, _, let interpolation):
-                result = try applyLUT(
-                    data: component,
-                    lut: forwardLUT,
-                    bitDepth: bitDepth,
-                    interpolation: interpolation,
-                    signed: signed
-                )
-                
-            default:
-                // Fall back to non-accelerated implementation
-                let nlt = J2KNonLinearTransform()
-                let nltResult = try nlt.applyForward(
-                    componentData: component,
-                    transform: transform,
-                    bitDepth: bitDepth,
-                    signed: signed
-                )
-                result = nltResult.transformedData
-            }
-            
-            results.append(result)
-        }
-        
-        return results
-        #else
-        throw J2KError.unsupportedFeature(
-            "Accelerated NLT requires Accelerate framework (Apple platforms)"
-        )
-        #endif
-    }
 }
