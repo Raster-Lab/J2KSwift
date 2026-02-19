@@ -8,37 +8,24 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.4.0 (Released February 18, 2026)  
-**Status**: Complete encoder/decoder with HTJ2K support, lossless transcoding, and enhanced JPIP streaming (1,666 tests, 100% pass rate)  
-**Previous Release**: 1.3.0 (February 17, 2026)
+**Current Version**: 1.8.0 (Released February 19, 2026)  
+**Status**: Complete encoder/decoder with Motion JPEG 2000 support, HTJ2K, and Metal GPU acceleration (1,700+ tests, 100% pass rate)  
+**Previous Release**: 1.7.0 (Metal GPU Acceleration)
 
 ## 📦 Release Status
 
-**v1.4.0** enhances JPIP with HTJ2K support, adding format-aware streaming and on-the-fly transcoding:
-- 🎯 **HTJ2K Format Detection** - Automatic J2K/JPH/JP2 format identification in JPIP
-- 📡 **Capability Signaling** - HTJ2K capability headers in JPIP session responses
-- 🔄 **On-the-fly Transcoding** - Automatic format conversion during JPIP serving
-- 📦 **Data Bin Generation** - Extract and stream data bins from HTJ2K codestreams
-- ✅ **Complete 7-Stage Encoder Pipeline** (preprocessing → color → wavelet → quantization → entropy → rate control → codestream)
-- ✅ **Complete Decoder Pipeline** with progressive decoding (codestream → entropy → dequantization → inverse transform → image)
-- ✅ **Hardware Acceleration** (vDSP integration, SIMD optimizations, parallel DWT)
-- ✅ **Round-Trip Functionality** (encode → decode → verify working)
-- ✅ **Multiple Encoding Presets** (lossless, fast, balanced, quality)
-- ✅ **Advanced Decoding** (ROI, progressive quality/resolution, partial decoding)
-- ✅ **Quality Metrics** (PSNR, SSIM, MS-SSIM)
-- ✅ **JPIP Streaming** (client/server with HTJ2K support)
-- ✅ **HTJ2K Codec** (57-70× speedup, ISO/IEC 15444-15 conformance)
-- ✅ **Lossless Transcoding** (bit-exact Legacy JPEG 2000 ↔ HTJ2K conversion)
-- ✅ **Cross-Platform Validated** (Linux Ubuntu x86_64, macOS)
-- ✅ **100% Test Pass Rate** (1,666 tests including 199 JPIP tests)
+**v1.8.0** delivers comprehensive Motion JPEG 2000 (MJ2) support (ISO/IEC 15444-3):
+- 🎬 **Motion JPEG 2000** - Complete MJ2 file creation, extraction, and playback
+- 📦 **ISO Base Media Format** - Full ftyp/moov/mdat box hierarchy
+- 🎞️ **Frame Extraction** - Flexible extraction strategies (all, range, skip, single)
+- ▶️ **Real-Time Playback** - Actor-based player with LRU caching and prefetching
+- 🎯 **Profile Support** - Simple, General, Broadcast, Cinema profiles
+- ⚡ **Hardware Acceleration** - VideoToolbox H.264/H.265 transcoding (Apple)
+- 🌐 **Cross-Platform** - Software fallbacks for Linux/Windows
+- 🧪 **170+ New Tests** - Comprehensive MJ2 conformance, integration, and performance tests
+- 📚 **MJ2_GUIDE.md** - Complete Motion JPEG 2000 documentation
 
-**v1.4.0 Highlights**:
-- 🎯 **HTJ2K Format Detection** - Automatic format identification for intelligent JPIP streaming
-- 📡 **Capability Signaling** - JPIP-cap and JPIP-pref headers for HTJ2K awareness
-- 🔄 **On-the-fly Transcoding** - Seamless format conversion based on client preferences
-- ✅ **199 JPIP Tests** - 35 new Phase 11 tests, 100% pass rate
-
-See [RELEASE_NOTES_v1.4.0.md](RELEASE_NOTES_v1.4.0.md) for v1.4.0 details, or [RELEASE_NOTES_v1.3.0.md](RELEASE_NOTES_v1.3.0.md) for the previous release.
+See [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md) for v1.8.0 details, or [RELEASE_NOTES_v1.7.0.md](RELEASE_NOTES_v1.7.0.md) for the previous release.
 
 ## 🎯 Project Goals
 
@@ -67,7 +54,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.4.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.8.0")
 ]
 ```
 
@@ -433,7 +420,10 @@ Encoding and decoding functionality for JPEG 2000 images.
 Hardware-accelerated operations using platform-specific frameworks (Accelerate on Apple platforms). On non-Apple platforms, software fallback implementations are used automatically.
 
 ### J2KFileFormat
-File format support for JP2, J2K, JPX, and other JPEG 2000 container formats.
+File format support for JP2, J2K, JPX, and other JPEG 2000 container formats, including Motion JPEG 2000 (MJ2) creation, extraction, and playback.
+
+### J2KMetal
+Metal GPU acceleration for Apple Silicon processors, providing 15-40× performance improvements for wavelet transforms, color transforms, ROI processing, and quantization.
 
 ### JPIP
 JPEG 2000 Interactive Protocol implementation for efficient network streaming.
@@ -591,8 +581,8 @@ This project represents a 100-week development effort following a comprehensive 
 
 ---
 
-**J2KSwift v1.0.0** - A modern Swift implementation of JPEG 2000  
-**Status**: Encoder Complete, Decoder Planned for v1.1  
-**Next Release**: v1.1 (April-May 2026) with full decoder integration
+**J2KSwift v1.8.0** - A modern Swift implementation of JPEG 2000 with Motion JPEG 2000 support  
+**Status**: Complete encoder/decoder with MJ2, HTJ2K, Metal GPU acceleration  
+**Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
-For detailed information, see [RELEASE_NOTES_v1.0.md](RELEASE_NOTES_v1.0.md)
+For detailed information, see [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md)
