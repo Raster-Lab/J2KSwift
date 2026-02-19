@@ -102,6 +102,17 @@ actor MJ2StreamWriter {
         }
         self.fileHandle = handle
         
+        // Write JP2 signature box (required for MJ2)
+        var signatureData = Data()
+        // Length (12 bytes total)
+        signatureData.append(contentsOf: UInt32(12).bigEndianBytes)
+        // Type ('jP  ')
+        signatureData.append(contentsOf: [0x6A, 0x50, 0x20, 0x20])
+        // Content
+        signatureData.append(contentsOf: [0x0D, 0x0A, 0x87, 0x0A])
+        try handle.write(contentsOf: signatureData)
+        currentOffset = UInt64(signatureData.count)
+        
         // Write ftyp box
         var data = Data()
         
