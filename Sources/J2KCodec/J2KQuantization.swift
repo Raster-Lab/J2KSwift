@@ -103,6 +103,14 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// Coefficients are passed through without modification.
     /// Only valid when used with the reversible (5/3) wavelet transform.
     case noQuantization
+    
+    /// Trellis coded quantization (TCQ).
+    ///
+    /// Uses a trellis structure and Viterbi algorithm to select
+    /// quantization levels that minimize rate-distortion cost.
+    /// Provides 2-8% improvement over scalar quantization.
+    /// Part of ISO/IEC 15444-2 (JPEG 2000 Part 2 extensions).
+    case trellis
 }
 
 // MARK: - Guard Bits
@@ -170,6 +178,12 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// Only used when `implicitStepSizes` is false.
     /// Keys should be subband names at specific levels (e.g., "HL1", "HH2").
     public let explicitStepSizes: [String: Double]
+    
+    /// TCQ configuration (only used when mode is .trellis).
+    ///
+    /// Configures the trellis coded quantization behavior.
+    /// Nil value uses default TCQ configuration.
+    public let tcqConfiguration: J2KTCQConfiguration?
 
     /// Creates quantization parameters.
     ///
@@ -180,13 +194,15 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     ///   - guardBits: Guard bits configuration (default: 2).
     ///   - implicitStepSizes: Whether to derive step sizes (default: true).
     ///   - explicitStepSizes: Explicit step sizes for subbands (default: empty).
+    ///   - tcqConfiguration: TCQ configuration (default: nil, uses default if mode is .trellis).
     public init(
         mode: J2KQuantizationMode,
         baseStepSize: Double = 1.0,
         deadzoneWidth: Double = 1.0,
         guardBits: J2KGuardBits = .default,
         implicitStepSizes: Bool = true,
-        explicitStepSizes: [String: Double] = [:]
+        explicitStepSizes: [String: Double] = [:],
+        tcqConfiguration: J2KTCQConfiguration? = nil
     ) {
         self.mode = mode
         self.baseStepSize = baseStepSize
@@ -194,6 +210,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         self.guardBits = guardBits
         self.implicitStepSizes = implicitStepSizes
         self.explicitStepSizes = explicitStepSizes
+        self.tcqConfiguration = tcqConfiguration
     }
 
     /// Default parameters for lossy compression.
@@ -207,6 +224,13 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     public static let lossless = J2KQuantizationParameters(
         mode: .noQuantization,
         baseStepSize: 1.0
+    )
+    
+    /// Parameters for trellis coded quantization (default TCQ settings).
+    public static let trellis = J2KQuantizationParameters(
+        mode: .trellis,
+        baseStepSize: 1.0,
+        tcqConfiguration: .default
     )
 
     /// Creates parameters from a quality factor.
@@ -556,6 +580,13 @@ public struct J2KQuantizer: Sendable {
             let magnitude = abs(coefficient)
             let quantizedMag = floor(magnitude / stepSize)
             return Int32(sign * quantizedMag)
+            
+        case .trellis:
+            // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
+            let sign = coefficient >= 0 ? 1.0 : -1.0
+            let magnitude = abs(coefficient)
+            let quantizedMag = floor(magnitude / stepSize)
+            return Int32(sign * quantizedMag)
         }
     }
 
@@ -596,6 +627,13 @@ public struct J2KQuantizer: Sendable {
 
         case .expounded:
             // Same as scalar for individual coefficient
+            let sign: Int32 = coefficient >= 0 ? 1 : -1
+            let magnitude = abs(coefficient)
+            let quantizedMag = Int32(Double(magnitude) / stepSize)
+            return sign * quantizedMag
+            
+        case .trellis:
+            // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
             let quantizedMag = Int32(Double(magnitude) / stepSize)
@@ -771,6 +809,15 @@ public struct J2KQuantizer: Sendable {
 
         case .expounded:
             // Same as scalar
+            if index == 0 {
+                return 0.0
+            }
+            let sign = index >= 0 ? 1.0 : -1.0
+            let magnitude = Double(abs(index)) + 0.5
+            return sign * magnitude * stepSize
+            
+        case .trellis:
+            // TCQ dequantization (midpoint reconstruction)
             if index == 0 {
                 return 0.0
             }

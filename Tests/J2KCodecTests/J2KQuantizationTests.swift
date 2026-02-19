@@ -15,11 +15,12 @@ final class J2KQuantizationTests: XCTestCase {
     func testQuantizationModeAllCases() throws {
         // Verify all quantization modes are available
         let allModes = J2KQuantizationMode.allCases
-        XCTAssertEqual(allModes.count, 4)
+        XCTAssertEqual(allModes.count, 5)
         XCTAssertTrue(allModes.contains(.scalar))
         XCTAssertTrue(allModes.contains(.deadzone))
         XCTAssertTrue(allModes.contains(.expounded))
         XCTAssertTrue(allModes.contains(.noQuantization))
+        XCTAssertTrue(allModes.contains(.trellis))
     }
 
     // MARK: - Guard Bits Tests
