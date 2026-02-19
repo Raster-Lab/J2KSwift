@@ -131,6 +131,32 @@ git push origin v1.2.0
 # - Create a release/v1.2.0 branch
 ```
 
+### 5. Create Release Branches (`create-release-branches.yml`)
+
+**Purpose**: Creates tags and release branches for existing versions. Use this to retroactively create release branches for versions that were released before the automation was added.
+
+**Triggers**:
+- Manual workflow dispatch only
+
+**Inputs**:
+- `version`: A specific version (e.g., `v1.8.0`) or `all` to create branches for every version with a `RELEASE_NOTES_v*.md` file
+
+**What it does**:
+1. Discovers versions from `RELEASE_NOTES_v*.md` files (when `all` is selected)
+2. Creates annotated tags for each version if they don't exist
+3. Creates `release/vX.Y.Z` branches from the tags if they don't exist
+
+**Usage**:
+```bash
+# Via GitHub CLI - create branches for all versions
+gh workflow run create-release-branches.yml -f version=all
+
+# Via GitHub CLI - create branch for a specific version
+gh workflow run create-release-branches.yml -f version=v1.8.0
+```
+
+Or trigger from the GitHub Actions UI: Actions → Create Release Branches → Run workflow.
+
 ## Dependabot Configuration
 
 **File**: `.github/dependabot.yml`
