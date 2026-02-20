@@ -61,9 +61,8 @@ public actor J2KUnifiedMemoryManager {
     }
 
     private let configuration: Configuration
-    private let lock = NSLock()
-    private nonisolated(unsafe) var allocations: [UInt: Int] = [:]
-    private nonisolated(unsafe) var totalAllocated: Int = 0
+    private var allocations: [UInt: Int] = [:]
+    private var totalAllocated: Int = 0
 
     /// Creates a new unified memory manager.
     ///
@@ -80,7 +79,7 @@ public actor J2KUnifiedMemoryManager {
     /// - Parameter size: The size in bytes to allocate.
     /// - Returns: A pointer to the allocated memory.
     /// - Throws: ``J2KError`` if allocation fails.
-    nonisolated public func allocateShared(size: Int) throws -> UnsafeMutableRawPointer {
+    public func allocateShared(size: Int) throws -> UnsafeMutableRawPointer {
         #if canImport(Darwin)
         let alignedSize = (size + configuration.alignment - 1) & ~(configuration.alignment - 1)
 
@@ -91,10 +90,8 @@ public actor J2KUnifiedMemoryManager {
             throw J2KError.internalError("Failed to allocate aligned memory: errno \(result)")
         }
 
-        lock.lock()
         allocations[UInt(bitPattern: allocatedPtr)] = alignedSize
         totalAllocated += alignedSize
-        lock.unlock()
 
         // Prefault pages to improve first access performance
         memset(allocatedPtr, 0, alignedSize)
@@ -108,14 +105,12 @@ public actor J2KUnifiedMemoryManager {
     /// Deallocates a previously allocated shared memory buffer.
     ///
     /// - Parameter pointer: The pointer to deallocate.
-    nonisolated public func deallocate(_ pointer: UnsafeMutableRawPointer) {
+    public func deallocate(_ pointer: UnsafeMutableRawPointer) {
         #if canImport(Darwin)
         let address = UInt(bitPattern: pointer)
-        lock.lock()
         if let size = allocations.removeValue(forKey: address) {
             totalAllocated -= size
         }
-        lock.unlock()
         free(pointer)
         #endif
     }
@@ -123,14 +118,11 @@ public actor J2KUnifiedMemoryManager {
     /// Returns statistics about memory usage.
     ///
     /// - Returns: A dictionary with memory statistics.
-    nonisolated public func statistics() -> [String: Int] {
-        lock.lock()
-        let stats = [
+    public func statistics() -> [String: Int] {
+        [
             "totalAllocated": totalAllocated,
             "allocationCount": allocations.count
         ]
-        lock.unlock()
-        return stats
     }
 }
 

@@ -270,15 +270,11 @@ public struct BenchmarkComparison: Sendable, CustomStringConvertible {
 
 /// A benchmark runner that collects and reports multiple benchmark results.
 ///
-/// This class uses `@unchecked Sendable` because it manually synchronizes access
-/// to mutable state using `NSLock`. All public methods acquire the lock before
-/// accessing or modifying `results`, ensuring thread-safe operation.
-public final class J2KBenchmarkRunner: @unchecked Sendable {
+/// `J2KBenchmarkRunner` uses actor isolation to provide thread-safe access
+/// to its mutable state without manual locking.
+public actor J2KBenchmarkRunner {
     /// Results collected by the runner.
     private var results: [BenchmarkResult] = []
-
-    /// Lock for thread-safe access to results.
-    private let lock = NSLock()
 
     /// Creates a new benchmark runner.
     public init() {}
@@ -287,8 +283,6 @@ public final class J2KBenchmarkRunner: @unchecked Sendable {
     ///
     /// - Parameter result: The result to add.
     public func add(_ result: BenchmarkResult) {
-        lock.lock()
-        defer { lock.unlock() }
         results.append(result)
     }
 
@@ -296,15 +290,11 @@ public final class J2KBenchmarkRunner: @unchecked Sendable {
     ///
     /// - Returns: Array of benchmark results.
     public func getResults() -> [BenchmarkResult] {
-        lock.lock()
-        defer { lock.unlock() }
-        return results
+        results
     }
 
     /// Clears all collected results.
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
         results.removeAll()
     }
 
@@ -312,9 +302,6 @@ public final class J2KBenchmarkRunner: @unchecked Sendable {
     ///
     /// - Returns: A formatted report string.
     public func report() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-
         guard !results.isEmpty else {
             return "No benchmark results collected."
         }
