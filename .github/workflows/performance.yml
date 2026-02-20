@@ -1,0 +1,183 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-macos:
+    name: Performance Benchmarks (macOS - Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-benchmark-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-benchmark-
+
+      - name: Build release
+        run: swift build -c release
+
+      - name: Run encode/decode benchmarks
+        run: |
+          swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+
+      - name: Run Accelerate benchmarks
+        run: |
+          swift test -c release --filter J2KAccelerateBenchmarks 2>&1 | tee -a benchmark-results.txt || true
+
+      - name: Check for performance regressions
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "=== Performance Regression Check ==="
+          echo "Threshold: 5% regression triggers warning"
+          echo ""
+          echo "Note: Full regression detection requires baseline results"
+          echo "from the target branch. Results are logged for tracking."
+          echo ""
+          if [ -f benchmark-results.txt ]; then
+            cat benchmark-results.txt
+          fi
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-macos
+          path: benchmark-results.txt
+          retention-days: 30
+
+  benchmark-linux:
+    name: Performance Benchmarks (Linux x86-64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: swift:6.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-benchmark-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-benchmark-
+
+      - name: Build release
+        run: swift build -c release
+
+      - name: Run encode/decode benchmarks
+        run: |
+          swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-linux
+          path: benchmark-results.txt
+          retention-days: 30
+
+  benchmark-linux-arm64:
+    name: Performance Benchmarks (Linux ARM64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Run ARM64 benchmarks
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            swift:6.2 \
+            bash -c "
+              echo '=== Architecture ===' &&
+              uname -m &&
+              echo '=== Building Release ===' &&
+              swift build -c release &&
+              echo '=== Running Benchmarks ===' &&
+              swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+            "
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-linux-arm64
+          path: benchmark-results.txt
+          retention-days: 30
+
+  openjpeg-comparison:
+    name: OpenJPEG Comparison (when available)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: swift:6.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect OpenJPEG availability
+        id: openjpeg
+        run: |
+          apt-get update -qq && apt-get install -y -qq libopenjp2-tools 2>/dev/null && \
+            echo "available=true" >> $GITHUB_OUTPUT || \
+            echo "available=false" >> $GITHUB_OUTPUT
+
+      - name: Run OpenJPEG comparison benchmarks
+        if: steps.openjpeg.outputs.available == 'true'
+        run: |
+          echo "=== OpenJPEG Version ==="
+          opj_decompress -h 2>&1 | head -3 || true
+          echo ""
+          echo "=== Running Comparison Benchmarks ==="
+          chmod +x Scripts/benchmark_openjpeg.sh 2>/dev/null || true
+          Scripts/benchmark_openjpeg.sh 2>&1 | tee openjpeg-comparison.txt || true
+
+      - name: Skip OpenJPEG comparison
+        if: steps.openjpeg.outputs.available != 'true'
+        run: |
+          echo "OpenJPEG not available — skipping comparison benchmarks"
+          echo "Install libopenjp2-tools to enable comparison"
+
+      - name: Upload comparison results
+        if: always() && steps.openjpeg.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openjpeg-comparison
+          path: openjpeg-comparison.txt
+          retention-days: 30

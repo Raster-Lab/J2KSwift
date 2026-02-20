@@ -46,7 +46,7 @@ jobs:
             swift package generate-xcodeproj 2>/dev/null || true
             
             # Use xcodebuild docbuild for each target
-            for target in J2KCore J2KCodec J2KAccelerate J2KFileFormat JPIP; do
+            for target in J2KCore J2KCodec J2KAccelerate J2KFileFormat JPIP J2K3D J2KMetal; do
               echo "Generating docs for $target..."
               xcodebuild docbuild \
                 -scheme "$target" \
@@ -78,6 +78,8 @@ jobs:
               <li>J2KAccelerate - Hardware-accelerated operations</li>
               <li>J2KFileFormat - File format support (JP2, J2K, etc.)</li>
               <li>JPIP - Network streaming protocol</li>
+              <li>J2K3D - Volumetric JPEG 2000 (JP3D / ISO 15444-10)</li>
+              <li>J2KMetal - Metal GPU compute acceleration</li>
             </ul>
           </body>
           </html>

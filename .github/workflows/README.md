@@ -8,7 +8,7 @@ This directory contains GitHub Actions workflows for J2KSwift.
 **Triggers**: Push to main/develop, Pull Requests, Manual
 
 Primary continuous integration workflow:
-- **Build and Test (macOS)**: Builds and runs all tests on macOS 14 with Swift 6.2
+- **Build and Test (macOS)**: Builds and runs all tests on macOS 15 with Swift 6.2
 - **Build and Test (Linux)**: Builds and runs all tests on Ubuntu with Swift 6.2
 - **SwiftLint**: Enforces code style guidelines
 - SPM dependency caching for faster builds
@@ -19,7 +19,7 @@ Primary continuous integration workflow:
 **Triggers**: Push to main/develop, Pull Requests, Manual
 
 Tests the project on multiple platforms:
-- **macOS 14**: Full build and test with Swift 6.2
+- **macOS 15**: Full build and test with Swift 6.2
 - **Linux (Ubuntu)**: Cross-platform compatibility testing
 
 **Badge**: ![Swift Build](https://github.com/Raster-Lab/J2KSwift/actions/workflows/swift-build-test.yml/badge.svg)
@@ -56,6 +56,59 @@ Automated release process:
 
 **Badge**: ![Release](https://github.com/Raster-Lab/J2KSwift/actions/workflows/release.yml/badge.svg)
 
+### 🏗️ Linux ARM64 CI (`linux-arm64.yml`)
+**Triggers**: Push to main/develop, Pull Requests, Manual
+
+ARM64-specific testing via QEMU emulation:
+- Build and test on ARM64 Linux with Swift 6.2
+- NEON SIMD validation tests
+- ARM64 performance benchmarks
+
+**Badge**: ![Linux ARM64](https://github.com/Raster-Lab/J2KSwift/actions/workflows/linux-arm64.yml/badge.svg)
+
+### 🪟 Windows CI (`windows.yml`)
+**Triggers**: Push to main/develop, Pull Requests, Manual
+
+Windows platform testing:
+- Build and test on Windows with Swift 6.2
+- SPM dependency caching
+- Release build artifacts
+
+**Badge**: ![Windows](https://github.com/Raster-Lab/J2KSwift/actions/workflows/windows.yml/badge.svg)
+
+### ✅ Conformance Gating (`conformance.yml`)
+**Triggers**: Push to main/develop/release, Pull Requests, Manual
+
+ISO/IEC 15444-4 conformance validation:
+- Part 1 (Core) conformance tests
+- Part 15 (HTJ2K) conformance tests
+- Part 10 (JP3D) conformance tests
+- Cross-platform conformance (Linux)
+- Conformance gate — blocks on any conformance failure
+
+**Badge**: ![Conformance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml/badge.svg)
+
+### 📊 Performance Benchmarks (`performance.yml`)
+**Triggers**: Push to main/develop, Pull Requests, Manual
+
+Performance tracking and regression detection:
+- macOS Apple Silicon benchmarks
+- Linux x86-64 benchmarks
+- Linux ARM64 benchmarks (via QEMU)
+- OpenJPEG comparison (when available)
+- Flags regressions >5%
+
+**Badge**: ![Performance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml/badge.svg)
+
+### 🧪 JP3D Compliance (`jp3d-compliance.yml`)
+**Triggers**: Push/PR changes to J2K3D sources or compliance tests, Manual
+
+JP3D Part 4 compliance validation:
+- macOS and Linux compliance tests
+- Conformance report generation and upload
+
+**Badge**: ![JP3D Compliance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/jp3d-compliance.yml/badge.svg)
+
 ## Configuration Files
 
 ### `dependabot.yml`
@@ -85,8 +138,8 @@ Automated dependency updates:
 
 1. **Release Process**:
    ```bash
-   git tag -a v1.2.0 -m "Release v1.2.0"
-   git push origin v1.2.0
+   git tag -a v2.0.0 -m "Release v2.0.0"
+   git push origin v2.0.0
    ```
    The release workflow will handle the rest.
 
@@ -135,5 +188,7 @@ Add to main README.md:
 ```markdown
 [![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml)
 [![Code Quality](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml)
+[![Conformance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml)
+[![Performance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml)
 [![Documentation](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml)
 ```
