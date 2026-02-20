@@ -526,7 +526,7 @@ final class J2KExtendedROITests: XCTestCase {
     func testAdaptiveROIDetection() throws {
         // Create test image with strong edge at center
         var imageData: [[Int32]] = []
-        for y in 0..<64 {
+        for _ in 0..<64 {
             var row: [Int32] = []
             for x in 0..<64 {
                 // Create vertical edge at x=32 with strong contrast

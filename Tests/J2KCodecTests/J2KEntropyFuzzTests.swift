@@ -117,13 +117,8 @@ final class J2KEntropyFuzzTests: XCTestCase {
                 }
                 // May crash or produce unexpected results with incomplete data
                 // This is acceptable for malformed input
-                do {
-                    _ = decoder.decode(context: &context)
-                    decodedCount += 1
-                } catch {
-                    // Decoder may throw on malformed data
-                    break
-                }
+                _ = decoder.decode(context: &context)
+                decodedCount += 1
             }
 
             // Just verify we didn't crash catastrophically
@@ -322,7 +317,7 @@ final class J2KEntropyFuzzTests: XCTestCase {
             .optimalCompression
         ]
 
-        for option in codingOptions {
+        for _ in codingOptions {
             for iteration in 0..<20 {
                 var rng = SeededRandom(seed: UInt64(6000 + iteration))
                 var encoder = MQEncoder()
