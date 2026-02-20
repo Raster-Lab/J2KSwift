@@ -3403,107 +3403,107 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 #### Week 256-258: Part 1 (Core) Conformance Hardening
 
-- [ ] Standard review
-  - [ ] Audit implementation against latest ISO/IEC 15444-1 (AMD 1-8)
-  - [ ] Verify all required marker segments are correctly handled
-  - [ ] Validate codestream syntax compliance
-  - [ ] Confirm all mandatory decoder capabilities are implemented
-- [ ] Decoder conformance
-  - [ ] Class 0 decoder conformance (baseline)
-  - [ ] Class 1 decoder conformance (full Part 1)
-  - [ ] Exhaustive marker segment parsing validation
-  - [ ] Error resilience for malformed codestreams
-- [ ] Encoder conformance
-  - [ ] Verify all generated codestreams are standard-compliant
-  - [ ] Rate-distortion optimisation compliance
-  - [ ] Progression order correctness
-  - [ ] Tile-part generation compliance
-- [ ] Numerical precision
-  - [ ] Bit-exact lossless round-trip for all bit depths (1-38)
-  - [ ] Lossy encoding within specified PSNR tolerances
-  - [ ] Wavelet transform numerical precision validation
-  - [ ] Quantisation step size accuracy
-- [ ] Testing
-  - [ ] Part 4 conformance test vectors (all classes)
-  - [ ] ITU-T T.803 reference decoder comparison
-  - [ ] Round-trip tests for every encoder configuration
-  - [ ] Boundary condition tests (minimum/maximum image sizes)
+- [x] Standard review
+  - [x] Audit implementation against latest ISO/IEC 15444-1 (AMD 1-8)
+  - [x] Verify all required marker segments are correctly handled
+  - [x] Validate codestream syntax compliance
+  - [x] Confirm all mandatory decoder capabilities are implemented
+- [x] Decoder conformance
+  - [x] Class 0 decoder conformance (baseline)
+  - [x] Class 1 decoder conformance (full Part 1)
+  - [x] Exhaustive marker segment parsing validation
+  - [x] Error resilience for malformed codestreams
+- [x] Encoder conformance
+  - [x] Verify all generated codestreams are standard-compliant
+  - [x] Rate-distortion optimisation compliance
+  - [x] Progression order correctness
+  - [x] Tile-part generation compliance
+- [x] Numerical precision
+  - [x] Bit-exact lossless round-trip for all bit depths (1-38)
+  - [x] Lossy encoding within specified PSNR tolerances
+  - [x] Wavelet transform numerical precision validation
+  - [x] Quantisation step size accuracy
+- [x] Testing
+  - [x] Part 4 conformance test vectors (all classes)
+  - [x] ITU-T T.803 reference decoder comparison
+  - [x] Round-trip tests for every encoder configuration
+  - [x] Boundary condition tests (minimum/maximum image sizes)
 
 **Deliverables**:
-- Part 1 conformance test suite
-- Conformance report (`Documentation/Compliance/PART1_CONFORMANCE.md`)
+- Part 1 conformance test suite ✅ (`Tests/J2KComplianceTests/J2KPart1ConformanceTests.swift`, 49 tests)
+- Conformance report ✅ (`Documentation/Compliance/PART1_CONFORMANCE.md`)
 
 #### Week 259-260: Part 2 (Extensions) Conformance
 
-- [ ] Standard review
-  - [ ] Audit against latest ISO/IEC 15444-2
-  - [ ] Verify DC offset, arbitrary wavelets, MCT, NLT, TCQ, extended ROI
-  - [ ] Validate JPX file format compliance
-- [ ] Extension-specific conformance
-  - [ ] Multi-component transform conformance
-  - [ ] Non-linear transform conformance
-  - [ ] Trellis-coded quantisation conformance
-  - [ ] Extended ROI conformance
-  - [ ] Arbitrary wavelet conformance
-- [ ] Testing
-  - [ ] Part 2 specific test vectors
-  - [ ] Cross-validation with reference implementations
-  - [ ] Extension combination stress tests
+- [x] Standard review
+  - [x] Audit against latest ISO/IEC 15444-2
+  - [x] Verify DC offset, arbitrary wavelets, MCT, NLT, TCQ, extended ROI
+  - [x] Validate JPX file format compliance
+- [x] Extension-specific conformance
+  - [x] Multi-component transform conformance
+  - [x] Non-linear transform conformance
+  - [x] Trellis-coded quantisation conformance
+  - [x] Extended ROI conformance
+  - [x] Arbitrary wavelet conformance
+- [x] Testing
+  - [x] Part 2 specific test vectors
+  - [x] Cross-validation with reference implementations
+  - [x] Extension combination stress tests
 
 **Deliverables**:
-- Part 2 conformance test suite
-- Conformance report (`Documentation/Compliance/PART2_CONFORMANCE.md`)
+- Part 2 conformance test suite ✅ (`Tests/J2KComplianceTests/J2KPart2ConformanceHardeningTests.swift`, 31 tests)
+- Conformance report ✅ (`Documentation/Compliance/PART2_CONFORMANCE.md`)
 
 #### Week 261-262: Part 3 (Motion JPEG 2000) and Part 10 (JP3D) Conformance
 
-- [ ] Part 3 conformance
-  - [ ] Audit against latest ISO/IEC 15444-3
-  - [ ] Validate MJ2 file structure compliance
-  - [ ] Verify frame-level encode/decode conformance
-  - [ ] Temporal metadata accuracy
-- [ ] Part 10 conformance
-  - [ ] Audit against latest ISO/IEC 15444-10
-  - [ ] 3D wavelet transform conformance
-  - [ ] Volumetric codestream structure validation
-  - [ ] 3D tiling conformance
-- [ ] Testing
-  - [ ] Part 3 and Part 10 conformance test suites
-  - [ ] Cross-part interaction tests
+- [x] Part 3 conformance
+  - [x] Audit against latest ISO/IEC 15444-3
+  - [x] Validate MJ2 file structure compliance
+  - [x] Verify frame-level encode/decode conformance
+  - [x] Temporal metadata accuracy
+- [x] Part 10 conformance
+  - [x] Audit against latest ISO/IEC 15444-10
+  - [x] 3D wavelet transform conformance
+  - [x] Volumetric codestream structure validation
+  - [x] 3D tiling conformance
+- [x] Testing
+  - [x] Part 3 and Part 10 conformance test suites
+  - [x] Cross-part interaction tests
 
 **Deliverables**:
-- Part 3 and Part 10 conformance test suites
-- Conformance reports
+- Part 3 and Part 10 conformance test suites ✅ (`Tests/J2KComplianceTests/J2KPart3Part10ConformanceTests.swift`, 31 tests)
+- Conformance reports ✅ (`Documentation/Compliance/PART3_MJ2_CONFORMANCE.md`, `Documentation/Compliance/PART10_JP3D_CONFORMANCE.md`)
 
 #### Week 263-265: Part 15 (HTJ2K) Conformance and Integrated Validation
 
-- [ ] HTJ2K conformance
-  - [ ] Audit against latest ISO/IEC 15444-15
-  - [ ] Verify HT block decoder conformance
-  - [ ] Validate CAP/CPF marker segment handling
-  - [ ] Lossless transcoding conformance (J2K ↔ HTJ2K)
-- [ ] Integrated conformance
-  - [ ] Cross-part conformance: Part 1 + Part 2 combinations
-  - [ ] Cross-part conformance: Part 1 + Part 15 (HTJ2K in JP2)
-  - [ ] Cross-part conformance: Part 3 + Part 15 (HTJ2K in MJ2)
-  - [ ] Cross-part conformance: Part 10 + Part 15 (HTJ2K in JP3D)
-- [ ] Conformance automation
-  - [ ] Automated conformance test runner (`Scripts/run-conformance.sh`)
-  - [ ] CI/CD integration for conformance gating
+- [x] HTJ2K conformance
+  - [x] Audit against latest ISO/IEC 15444-15
+  - [x] Verify HT block decoder conformance
+  - [x] Validate CAP/CPF marker segment handling
+  - [x] Lossless transcoding conformance (J2K ↔ HTJ2K)
+- [x] Integrated conformance
+  - [x] Cross-part conformance: Part 1 + Part 2 combinations
+  - [x] Cross-part conformance: Part 1 + Part 15 (HTJ2K in JP2)
+  - [x] Cross-part conformance: Part 3 + Part 15 (HTJ2K in MJ2)
+  - [x] Cross-part conformance: Part 10 + Part 15 (HTJ2K in JP3D)
+- [x] Conformance automation
+  - [x] Automated conformance test runner (`Scripts/run-conformance.sh`)
+  - [x] CI/CD integration for conformance gating
   - [ ] Conformance badge generation
-  - [ ] Regression detection for conformance failures
-- [ ] Testing
-  - [ ] Comprehensive Part 4 test suite (all parts, all classes)
-  - [ ] Conformance regression tests in CI
-  - [ ] Cross-platform conformance validation
+  - [x] Regression detection for conformance failures
+- [x] Testing
+  - [x] Comprehensive Part 4 test suite (all parts, all classes)
+  - [x] Conformance regression tests in CI
+  - [x] Cross-platform conformance validation
 
 **Deliverables**:
-- HTJ2K conformance test suite
-- Integrated conformance test runner
-- `Documentation/Compliance/CONFORMANCE_MATRIX.md` — full compliance matrix
-- CI/CD conformance gating workflow
-- `.github/workflows/conformance.yml`
+- HTJ2K conformance test suite ✅ (`Tests/J2KComplianceTests/J2KPart15IntegratedConformanceTests.swift`, 31 tests)
+- Integrated conformance test runner ✅ (`Scripts/run-conformance.sh`)
+- `Documentation/Compliance/CONFORMANCE_MATRIX.md` — full compliance matrix ✅
+- CI/CD conformance gating workflow ✅ (`.github/workflows/conformance.yml` updated with Part 2, Part 3/10 jobs)
+- `.github/workflows/conformance.yml` ✅ (Part 2 + Part 3/10 jobs added, gate updated)
 
-**Status**: Pending.
+**Status**: Complete. `J2KPart1Conformance.swift`, `J2KPart2ConformanceHardening.swift`, `J2KPart3Part10Conformance.swift`, and `J2KPart15IntegratedConformance.swift` added to J2KCore. 142 new conformance tests across 4 test suites covering all ISO/IEC 15444 parts. Integrated `J2KConformanceAutomationRunner` and `J2KConformanceMatrix` provide programmatic access to conformance status. `Scripts/run-conformance.sh` automates full suite execution.
 
 ---
 
@@ -3972,9 +3972,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 252-255 completed)
+**Last Updated**: 2026-02-20 (Week 256-265 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255
-**Next Phase**: Phase 17, Sub-phase 17d — ISO/IEC 15444-4 Conformance & Standard Compliance (Week 256-265)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265
+**Next Phase**: Phase 17, Sub-phase 17e — OpenJPEG Interoperability (Weeks 266-271)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 142 new conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow
