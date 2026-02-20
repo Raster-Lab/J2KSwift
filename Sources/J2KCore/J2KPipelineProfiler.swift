@@ -161,25 +161,22 @@ public struct J2KProfileReport: Sendable, CustomStringConvertible {
 /// Profiler for instrumenting the JPEG 2000 encoding/decoding pipeline.
 ///
 /// `J2KPipelineProfiler` collects timing and memory metrics for each stage
-/// of the pipeline. It is designed to be lightweight enough for use in
-/// production builds with minimal overhead.
+/// of the pipeline. It uses actor isolation to provide thread-safe access
+/// to its mutable metrics collection.
 ///
 /// Example:
 /// ```swift
 /// let profiler = J2KPipelineProfiler()
-/// let metrics = profiler.measure(stage: .waveletTransform) {
+/// let metrics = await profiler.measure(stage: .waveletTransform) {
 ///     // Perform DWT...
 /// }
-/// profiler.record(metrics)
-/// let report = profiler.generateReport()
+/// await profiler.record(metrics)
+/// let report = await profiler.generateReport()
 /// print(report)
 /// ```
-public final class J2KPipelineProfiler: @unchecked Sendable {
+public actor J2KPipelineProfiler {
     /// Collected metrics.
     private var metrics: [J2KStageMetrics] = []
-
-    /// Lock for thread-safe access.
-    private let lock = NSLock()
 
     /// Whether profiling is enabled.
     public let enabled: Bool
@@ -266,8 +263,6 @@ public final class J2KPipelineProfiler: @unchecked Sendable {
     ///
     /// - Parameter metric: The metrics to record.
     public func record(_ metric: J2KStageMetrics) {
-        lock.lock()
-        defer { lock.unlock() }
         metrics.append(metric)
     }
 
@@ -292,23 +287,17 @@ public final class J2KPipelineProfiler: @unchecked Sendable {
     ///
     /// - Returns: A profile report summarizing pipeline performance.
     public func generateReport() -> J2KProfileReport {
-        lock.lock()
-        defer { lock.unlock() }
-        return J2KProfileReport(metrics: metrics)
+        J2KProfileReport(metrics: metrics)
     }
 
     /// Clears all collected metrics.
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
         metrics.removeAll()
     }
 
     /// Returns the number of recorded metrics.
     public var metricsCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return metrics.count
+        metrics.count
     }
 
     // MARK: - Private Helpers

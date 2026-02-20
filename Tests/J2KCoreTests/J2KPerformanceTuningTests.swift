@@ -10,10 +10,10 @@ import Foundation
 final class J2KPerformanceTuningTests: XCTestCase {
     // MARK: - J2KPipelineProfiler Tests
 
-    func testProfilerMeasureRecordsTiming() throws {
+    func testProfilerMeasureRecordsTiming() async throws {
         let profiler = J2KPipelineProfiler()
 
-        let metrics = profiler.measure(stage: .waveletTransform) {
+        let metrics = await profiler.measure(stage: .waveletTransform) {
             // Simulate work
             var sum = 0
             for i in 0..<1000 { sum += i }
@@ -26,10 +26,10 @@ final class J2KPerformanceTuningTests: XCTestCase {
         XCTAssertNil(metrics.label)
     }
 
-    func testProfilerMeasureWithLabel() throws {
+    func testProfilerMeasureWithLabel() async throws {
         let profiler = J2KPipelineProfiler()
 
-        let metrics = profiler.measure(
+        let metrics = await profiler.measure(
             stage: .entropyCoding,
             itemsProcessed: 16,
             label: "tile-0"
@@ -42,54 +42,57 @@ final class J2KPerformanceTuningTests: XCTestCase {
         XCTAssertEqual(metrics.label, "tile-0")
     }
 
-    func testProfilerDisabledSkipsTiming() throws {
+    func testProfilerDisabledSkipsTiming() async throws {
         let profiler = J2KPipelineProfiler(enabled: false)
 
-        let metrics = profiler.measure(stage: .quantization) {
+        let metrics = await profiler.measure(stage: .quantization) {
             // work
         }
 
         XCTAssertEqual(metrics.elapsedTime, 0)
     }
 
-    func testProfilerRecordAndReport() throws {
+    func testProfilerRecordAndReport() async throws {
         let profiler = J2KPipelineProfiler()
 
-        profiler.profile(stage: .colorTransform) { /* work */ }
-        profiler.profile(stage: .waveletTransform) { /* work */ }
-        profiler.profile(stage: .quantization) { /* work */ }
+        await profiler.profile(stage: .colorTransform) { /* work */ }
+        await profiler.profile(stage: .waveletTransform) { /* work */ }
+        await profiler.profile(stage: .quantization) { /* work */ }
 
-        XCTAssertEqual(profiler.metricsCount, 3)
+        let count = await profiler.metricsCount
+        XCTAssertEqual(count, 3)
 
-        let report = profiler.generateReport()
+        let report = await profiler.generateReport()
         XCTAssertEqual(report.metrics.count, 3)
         XCTAssertGreaterThanOrEqual(report.totalTime, 0)
         XCTAssertNotNil(report.bottleneck)
     }
 
-    func testProfilerReset() throws {
+    func testProfilerReset() async throws {
         let profiler = J2KPipelineProfiler()
-        profiler.profile(stage: .colorTransform) { /* work */ }
-        XCTAssertEqual(profiler.metricsCount, 1)
+        await profiler.profile(stage: .colorTransform) { /* work */ }
+        let count1 = await profiler.metricsCount
+        XCTAssertEqual(count1, 1)
 
-        profiler.reset()
-        XCTAssertEqual(profiler.metricsCount, 0)
+        await profiler.reset()
+        let count2 = await profiler.metricsCount
+        XCTAssertEqual(count2, 0)
     }
 
-    func testProfileReportDescription() throws {
+    func testProfileReportDescription() async throws {
         let profiler = J2KPipelineProfiler()
-        profiler.profile(stage: .waveletTransform) { /* work */ }
+        await profiler.profile(stage: .waveletTransform) { /* work */ }
 
-        let report = profiler.generateReport()
+        let report = await profiler.generateReport()
         let desc = report.description
         XCTAssertTrue(desc.contains("Pipeline Profile Report"))
         XCTAssertTrue(desc.contains("Wavelet Transform"))
     }
 
-    func testProfilerMeasureThrowing() throws {
+    func testProfilerMeasureThrowing() async throws {
         let profiler = J2KPipelineProfiler()
 
-        let metrics = try profiler.measureThrowing(stage: .fileIO) {
+        let metrics = try await profiler.measureThrowing(stage: .fileIO) {
             // No-throw path
         }
 
@@ -117,20 +120,20 @@ final class J2KPerformanceTuningTests: XCTestCase {
         XCTAssertEqual(metrics.throughput, 0)
     }
 
-    func testReportTimeDistribution() throws {
+    func testReportTimeDistribution() async throws {
         let profiler = J2KPipelineProfiler()
-        profiler.profile(stage: .colorTransform) {
+        await profiler.profile(stage: .colorTransform) {
             var sum = 0
             for i in 0..<10000 { sum += i }
             _ = sum
         }
-        profiler.profile(stage: .waveletTransform) {
+        await profiler.profile(stage: .waveletTransform) {
             var sum = 0
             for i in 0..<10000 { sum += i }
             _ = sum
         }
 
-        let report = profiler.generateReport()
+        let report = await profiler.generateReport()
         let distribution = report.timeDistribution
 
         // All fractions should sum to approximately 1.0

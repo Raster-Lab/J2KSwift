@@ -160,38 +160,40 @@ final class J2KBenchmarkTests: XCTestCase {
 
     // MARK: - J2KBenchmarkRunner Tests
 
-    func testBenchmarkRunner() throws {
+    func testBenchmarkRunner() async throws {
         let runner = J2KBenchmarkRunner()
 
         let result1 = BenchmarkResult(name: "Test1", times: [0.001])
         let result2 = BenchmarkResult(name: "Test2", times: [0.002])
 
-        runner.add(result1)
-        runner.add(result2)
+        await runner.add(result1)
+        await runner.add(result2)
 
-        let results = runner.getResults()
+        let results = await runner.getResults()
         XCTAssertEqual(results.count, 2)
 
-        let report = runner.report()
+        let report = await runner.report()
         XCTAssertTrue(report.contains("Test1"))
         XCTAssertTrue(report.contains("Test2"))
         XCTAssertTrue(report.contains("Benchmark Report"))
     }
 
-    func testBenchmarkRunnerClear() throws {
+    func testBenchmarkRunnerClear() async throws {
         let runner = J2KBenchmarkRunner()
-        runner.add(BenchmarkResult(name: "Test", times: [0.001]))
+        await runner.add(BenchmarkResult(name: "Test", times: [0.001]))
 
-        XCTAssertEqual(runner.getResults().count, 1)
+        let results1 = await runner.getResults()
+        XCTAssertEqual(results1.count, 1)
 
-        runner.clear()
+        await runner.clear()
 
-        XCTAssertEqual(runner.getResults().count, 0)
+        let results2 = await runner.getResults()
+        XCTAssertEqual(results2.count, 0)
     }
 
-    func testBenchmarkRunnerEmptyReport() throws {
+    func testBenchmarkRunnerEmptyReport() async throws {
         let runner = J2KBenchmarkRunner()
-        let report = runner.report()
+        let report = await runner.report()
 
         XCTAssertTrue(report.contains("No benchmark results"))
     }

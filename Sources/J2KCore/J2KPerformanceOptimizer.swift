@@ -200,9 +200,6 @@ public actor J2KPerformanceOptimizer {
     private var metalDevice: MTLDevice?
     #endif
 
-    /// Pipeline profiler.
-    private var profiler: J2KPipelineProfiler
-
     // MARK: - Initialization
 
     /// Creates a new performance optimizer.
@@ -210,7 +207,6 @@ public actor J2KPerformanceOptimizer {
     /// - Parameter mode: Initial optimization mode (default: .balanced).
     public init(mode: OptimizationMode = .balanced) {
         self.mode = mode
-        self.profiler = J2KPipelineProfiler()
 
         switch mode {
         case .balanced:
@@ -279,37 +275,19 @@ public actor J2KPerformanceOptimizer {
         _ operation: () throws -> T
     ) throws -> (result: T, profile: PerformanceProfile) {
         let startTime = Date()
-        var cpuTime: TimeInterval = 0
-        var gpuTime: TimeInterval = 0
-        var memoryAllocated = 0
-        var peakMemory = 0
-        var syncPoints = 0
-
-        // Reset profiler for clean measurements
-        profiler.reset()
+        let cpuTime: TimeInterval
+        let gpuTime: TimeInterval = 0
+        let memoryAllocated = 0
+        let peakMemory = 0
+        let syncPoints = 0
 
         // Execute operation with timing
         let cpuStart = Date()
         let result = try operation()
         cpuTime = Date().timeIntervalSince(cpuStart)
 
-        // Get profiler metrics
-        let report = profiler.generateReport()
-
         // Calculate metrics
         let totalTime = Date().timeIntervalSince(startTime)
-
-        // Extract GPU time from profiler if available
-        gpuTime = report.metrics
-            .filter { $0.label == "GPU" }
-            .reduce(0) { $0 + $1.elapsedTime }
-
-        // Estimate memory usage
-        memoryAllocated = report.totalMemory
-        peakMemory = report.totalMemory
-
-        // Count synchronization points (approximation)
-        syncPoints = report.metrics.count
 
         let profile = PerformanceProfile(
             totalTime: totalTime,
@@ -336,37 +314,19 @@ public actor J2KPerformanceOptimizer {
         _ operation: () throws -> T
     ) throws -> (result: T, profile: PerformanceProfile) {
         let startTime = Date()
-        var cpuTime: TimeInterval = 0
-        var gpuTime: TimeInterval = 0
-        var memoryAllocated = 0
-        var peakMemory = 0
-        var syncPoints = 0
-
-        // Reset profiler for clean measurements
-        profiler.reset()
+        let cpuTime: TimeInterval
+        let gpuTime: TimeInterval = 0
+        let memoryAllocated = 0
+        let peakMemory = 0
+        let syncPoints = 0
 
         // Execute operation with timing
         let cpuStart = Date()
         let result = try operation()
         cpuTime = Date().timeIntervalSince(cpuStart)
 
-        // Get profiler metrics
-        let report = profiler.generateReport()
-
         // Calculate metrics
         let totalTime = Date().timeIntervalSince(startTime)
-
-        // Extract GPU time from profiler if available
-        gpuTime = report.metrics
-            .filter { $0.label == "GPU" }
-            .reduce(0) { $0 + $1.elapsedTime }
-
-        // Estimate memory usage
-        memoryAllocated = report.totalMemory
-        peakMemory = report.totalMemory
-
-        // Count synchronization points
-        syncPoints = report.metrics.count
 
         let profile = PerformanceProfile(
             totalTime: totalTime,
