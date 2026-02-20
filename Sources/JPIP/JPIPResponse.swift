@@ -116,7 +116,7 @@ public enum JPIPDataBinClass: Int, Sendable {
 public struct JPIPDataBin: Sendable {
     /// The data bin class.
     public let binClass: JPIPDataBinClass
-    
+
     /// Class identifier (for compatibility).
     public var classID: JPIPDataBinClass { binClass }
 
@@ -128,10 +128,10 @@ public struct JPIPDataBin: Sendable {
 
     /// Whether this is the complete bin.
     public let isComplete: Bool
-    
+
     /// Quality layer for precinct data bins.
     public var qualityLayer: Int
-    
+
     /// Tile index for tile-based data bins.
     public var tileIndex: Int
 

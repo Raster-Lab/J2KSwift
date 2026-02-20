@@ -367,8 +367,8 @@ final class J2KRateControlTests: XCTestCase {
         for i in 1..<layers.count {
             XCTAssertGreaterThanOrEqual(
                 layers[i].codeBlockContributions.count,
-                layers[i-1].codeBlockContributions.count,
-                "Layer \(i) should have at least as many contributions as layer \(i-1)"
+                layers[i - 1].codeBlockContributions.count,
+                "Layer \(i) should have at least as many contributions as layer \(i - 1)"
             )
         }
     }
@@ -515,7 +515,7 @@ final class J2KRateControlTests: XCTestCase {
 
         // Should be able to pass to async context
         Task {
-            let _ = rateControl
+            _ = rateControl
         }
     }
 
@@ -529,7 +529,7 @@ final class J2KRateControlTests: XCTestCase {
         )
 
         Task {
-            let _ = passInfo
+            _ = passInfo
         }
     }
 
@@ -542,7 +542,7 @@ final class J2KRateControlTests: XCTestCase {
         )
 
         Task {
-            let _ = stats
+            _ = stats
         }
     }
 

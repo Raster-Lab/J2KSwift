@@ -17,22 +17,22 @@ import J2KCore
 public enum MJ2MetalPreprocessingError: Error, Sendable {
     /// Metal is not available.
     case metalNotAvailable
-    
+
     /// Failed to create Metal pipeline.
     case pipelineCreationFailed(String)
-    
+
     /// Invalid input dimensions.
     case invalidDimensions
-    
+
     /// Unsupported pixel format.
     case unsupportedPixelFormat
-    
+
     /// Texture creation failed.
     case textureCreationFailed
-    
+
     /// Buffer creation failed.
     case bufferCreationFailed
-    
+
     /// Command buffer execution failed.
     case executionFailed
 }
@@ -43,22 +43,22 @@ public enum MJ2MetalPreprocessingError: Error, Sendable {
 public enum MJ2MetalPixelFormat: Sendable {
     /// 32-bit ARGB format.
     case argb32
-    
+
     /// 32-bit BGRA format.
     case bgra32
-    
+
     /// 420 YpCbCr bi-planar format (video range).
     case yuv420BiplanarVideoRange
-    
+
     /// 420 YpCbCr bi-planar format (full range).
     case yuv420BiplanarFullRange
-    
+
     /// 422 YpCbCr format.
     case yuv422
-    
+
     /// 444 YpCbCr format.
     case yuv444
-    
+
     var metalPixelFormat: MTLPixelFormat {
         switch self {
         case .argb32, .bgra32:
@@ -67,7 +67,7 @@ public enum MJ2MetalPixelFormat: Sendable {
             return .r8Unorm
         }
     }
-    
+
     var cvPixelFormat: OSType {
         switch self {
         case .argb32:
@@ -92,10 +92,10 @@ public enum MJ2MetalPixelFormat: Sendable {
 public enum MJ2MetalScalingMode: Sendable {
     /// Nearest neighbor (fast, low quality).
     case nearest
-    
+
     /// Bilinear interpolation (balanced).
     case bilinear
-    
+
     /// Lanczos interpolation (high quality, slower).
     case lanczos
 }
@@ -106,16 +106,16 @@ public enum MJ2MetalScalingMode: Sendable {
 public struct MJ2MetalPreprocessingConfiguration: Sendable {
     /// Target pixel format.
     public var pixelFormat: MJ2MetalPixelFormat
-    
+
     /// Scaling mode for resizing.
     public var scalingMode: MJ2MetalScalingMode
-    
+
     /// Enable zero-copy buffer sharing when possible.
     public var enableZeroCopy: Bool
-    
+
     /// Maximum texture size.
     public var maxTextureSize: Int
-    
+
     /// Creates default configuration.
     public static func `default`() -> Self {
         Self(
@@ -136,7 +136,7 @@ public actor MJ2MetalPreprocessing {
     private let configuration: MJ2MetalPreprocessingConfiguration
     private var pipelineStates: [String: MTLComputePipelineState] = [:]
     private var textureCache: CVMetalTextureCache?
-    
+
     /// Creates a new Metal preprocessing engine.
     ///
     /// - Parameters:
@@ -146,12 +146,12 @@ public actor MJ2MetalPreprocessing {
     public init(device: MTLDevice, configuration: MJ2MetalPreprocessingConfiguration = .default()) throws {
         self.device = device
         self.configuration = configuration
-        
+
         guard let queue = device.makeCommandQueue() else {
             throw MJ2MetalPreprocessingError.metalNotAvailable
         }
         self.commandQueue = queue
-        
+
         // Create texture cache for zero-copy operations
         if configuration.enableZeroCopy {
             var cache: CVMetalTextureCache?
@@ -167,7 +167,7 @@ public actor MJ2MetalPreprocessing {
             }
         }
     }
-    
+
     /// Converts a J2KImage to a CVPixelBuffer using Metal acceleration.
     ///
     /// - Parameters:
@@ -180,27 +180,27 @@ public actor MJ2MetalPreprocessing {
         outputFormat: MJ2MetalPixelFormat = .bgra32
     ) async throws -> CVPixelBuffer {
         // Validate dimensions
-        guard image.width > 0 && image.height > 0 && 
+        guard image.width > 0 && image.height > 0 &&
               image.width <= configuration.maxTextureSize &&
               image.height <= configuration.maxTextureSize else {
             throw MJ2MetalPreprocessingError.invalidDimensions
         }
-        
+
         // Create output pixel buffer
         let pixelBuffer = try createPixelBuffer(
             width: image.width,
             height: image.height,
             format: outputFormat
         )
-        
+
         // Create Metal textures from J2KImage components
         let sourceTextures = try createTexturesFromComponents(image.components, width: image.width, height: image.height)
-        
+
         // Create Metal texture from pixel buffer
         guard let outputTexture = try createTextureFromPixelBuffer(pixelBuffer, format: outputFormat) else {
             throw MJ2MetalPreprocessingError.textureCreationFailed
         }
-        
+
         // Perform color conversion on GPU
         try await performColorConversion(
             sourceTextures: sourceTextures,
@@ -208,10 +208,10 @@ public actor MJ2MetalPreprocessing {
             colorSpace: image.colorSpace,
             outputFormat: outputFormat
         )
-        
+
         return pixelBuffer
     }
-    
+
     /// Converts a CVPixelBuffer to a J2KImage using Metal acceleration.
     ///
     /// - Parameters:
@@ -225,12 +225,12 @@ public actor MJ2MetalPreprocessing {
     ) async throws -> J2KImage {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
-        
+
         // Create Metal texture from pixel buffer
         guard let sourceTexture = try createTextureFromPixelBuffer(pixelBuffer, format: .bgra32) else {
             throw MJ2MetalPreprocessingError.textureCreationFailed
         }
-        
+
         // Create output buffers for RGB components
         let componentSize = width * height
         guard let rBuffer = device.makeBuffer(length: componentSize, options: .storageModeShared),
@@ -238,7 +238,7 @@ public actor MJ2MetalPreprocessing {
               let bBuffer = device.makeBuffer(length: componentSize, options: .storageModeShared) else {
             throw MJ2MetalPreprocessingError.bufferCreationFailed
         }
-        
+
         // Extract RGB components on GPU
         try await extractRGBComponents(
             sourceTexture: sourceTexture,
@@ -248,7 +248,7 @@ public actor MJ2MetalPreprocessing {
             width: width,
             height: height
         )
-        
+
         // Create J2KComponents from Metal buffers
         let components = try createComponentsFromBuffers(
             rBuffer: rBuffer,
@@ -257,7 +257,7 @@ public actor MJ2MetalPreprocessing {
             width: width,
             height: height
         )
-        
+
         return J2KImage(
             width: width,
             height: height,
@@ -271,7 +271,7 @@ public actor MJ2MetalPreprocessing {
             tileOffsetY: 0
         )
     }
-    
+
     /// Scales a J2KImage using Metal acceleration.
     ///
     /// - Parameters:
@@ -288,49 +288,49 @@ public actor MJ2MetalPreprocessing {
         scalingMode: MJ2MetalScalingMode? = nil
     ) async throws -> J2KImage {
         let mode = scalingMode ?? configuration.scalingMode
-        
+
         // Validate dimensions
         guard targetWidth > 0 && targetHeight > 0 &&
               targetWidth <= configuration.maxTextureSize &&
               targetHeight <= configuration.maxTextureSize else {
             throw MJ2MetalPreprocessingError.invalidDimensions
         }
-        
+
         // If no scaling needed, return original
         if targetWidth == image.width && targetHeight == image.height {
             return image
         }
-        
+
         // Create Metal textures for each component
         var scaledComponents: [J2KComponent] = []
-        
+
         for component in image.components {
             // Calculate scaled component dimensions (respecting subsampling)
             let scaledWidth = (targetWidth * component.width) / image.width
             let scaledHeight = (targetHeight * component.height) / image.height
-            
+
             // Create source texture
             let sourceTexture = try createTextureFromData(
                 component.data,
                 width: component.width,
                 height: component.height
             )
-            
+
             // Create destination texture
             guard let destTexture = createTexture(width: scaledWidth, height: scaledHeight) else {
                 throw MJ2MetalPreprocessingError.textureCreationFailed
             }
-            
+
             // Perform scaling on GPU
             try await performScaling(
                 sourceTexture: sourceTexture,
                 destTexture: destTexture,
                 mode: mode
             )
-            
+
             // Read back scaled data
             let scaledData = try readTextureData(destTexture)
-            
+
             let scaledComponent = J2KComponent(
                 index: component.index,
                 bitDepth: component.bitDepth,
@@ -341,10 +341,10 @@ public actor MJ2MetalPreprocessing {
                 subsamplingY: component.subsamplingY,
                 data: scaledData
             )
-            
+
             scaledComponents.append(scaledComponent)
         }
-        
+
         return J2KImage(
             width: targetWidth,
             height: targetHeight,
@@ -358,9 +358,9 @@ public actor MJ2MetalPreprocessing {
             tileOffsetY: 0
         )
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     private func createPixelBuffer(width: Int, height: Int, format: MJ2MetalPixelFormat) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [
@@ -370,7 +370,7 @@ public actor MJ2MetalPreprocessing {
             kCVPixelBufferWidthKey: width,
             kCVPixelBufferHeightKey: height
         ]
-        
+
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
             width,
@@ -379,18 +379,18 @@ public actor MJ2MetalPreprocessing {
             attributes as CFDictionary,
             &pixelBuffer
         )
-        
+
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
             throw MJ2MetalPreprocessingError.textureCreationFailed
         }
-        
+
         return buffer
     }
-    
+
     private func createTextureFromPixelBuffer(_ pixelBuffer: CVPixelBuffer, format: MJ2MetalPixelFormat) throws -> MTLTexture? {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
-        
+
         // Try zero-copy path with texture cache
         if let cache = textureCache {
             var cvTexture: CVMetalTexture?
@@ -405,24 +405,24 @@ public actor MJ2MetalPreprocessing {
                 0,
                 &cvTexture
             )
-            
+
             if status == kCVReturnSuccess, let texture = cvTexture {
                 return CVMetalTextureGetTexture(texture)
             }
         }
-        
+
         // Fallback: create texture and copy data
         guard let texture = createTexture(width: width, height: height, format: format.metalPixelFormat) else {
             return nil
         }
-        
+
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        
+
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
             return nil
         }
-        
+
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         texture.replace(
             region: MTLRegionMake2D(0, 0, width, height),
@@ -430,13 +430,13 @@ public actor MJ2MetalPreprocessing {
             withBytes: baseAddress,
             bytesPerRow: bytesPerRow
         )
-        
+
         return texture
     }
-    
+
     private func createTexturesFromComponents(_ components: [J2KComponent], width: Int, height: Int) throws -> [MTLTexture] {
         var textures: [MTLTexture] = []
-        
+
         for component in components {
             let texture = try createTextureFromData(
                 component.data,
@@ -445,15 +445,15 @@ public actor MJ2MetalPreprocessing {
             )
             textures.append(texture)
         }
-        
+
         return textures
     }
-    
+
     private func createTextureFromData(_ data: Data, width: Int, height: Int) throws -> MTLTexture {
         guard let texture = createTexture(width: width, height: height) else {
             throw MJ2MetalPreprocessingError.textureCreationFailed
         }
-        
+
         data.withUnsafeBytes { bytes in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height),
@@ -462,10 +462,10 @@ public actor MJ2MetalPreprocessing {
                 bytesPerRow: width
             )
         }
-        
+
         return texture
     }
-    
+
     private func createTexture(width: Int, height: Int, format: MTLPixelFormat = .r8Unorm) -> MTLTexture? {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: format,
@@ -475,10 +475,10 @@ public actor MJ2MetalPreprocessing {
         )
         descriptor.usage = [.shaderRead, .shaderWrite]
         descriptor.storageMode = .shared
-        
+
         return device.makeTexture(descriptor: descriptor)
     }
-    
+
     private func performColorConversion(
         sourceTextures: [MTLTexture],
         outputTexture: MTLTexture,
@@ -487,25 +487,25 @@ public actor MJ2MetalPreprocessing {
     ) async throws {
         // For now, implement simple RGB to BGRA conversion
         // More sophisticated color space conversions would require additional Metal shaders
-        
+
         guard sourceTextures.count >= 3 else {
             throw MJ2MetalPreprocessingError.unsupportedPixelFormat
         }
-        
+
         // Simple conversion using Metal command buffer
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MJ2MetalPreprocessingError.executionFailed
         }
-        
+
         // TODO: Set up compute pipeline and perform conversion
         // For now, this is a placeholder that would need actual Metal shaders
-        
+
         computeEncoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
     }
-    
+
     private func extractRGBComponents(
         sourceTexture: MTLTexture,
         rBuffer: MTLBuffer,
@@ -518,15 +518,15 @@ public actor MJ2MetalPreprocessing {
               let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
             throw MJ2MetalPreprocessingError.executionFailed
         }
-        
+
         // TODO: Implement actual RGB extraction using compute shaders
         // For now, this is a placeholder
-        
+
         blitEncoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
     }
-    
+
     private func createComponentsFromBuffers(
         rBuffer: MTLBuffer,
         gBuffer: MTLBuffer,
@@ -535,11 +535,11 @@ public actor MJ2MetalPreprocessing {
         height: Int
     ) throws -> [J2KComponent] {
         let componentSize = width * height
-        
+
         let rData = Data(bytes: rBuffer.contents(), count: componentSize)
         let gData = Data(bytes: gBuffer.contents(), count: componentSize)
         let bData = Data(bytes: bBuffer.contents(), count: componentSize)
-        
+
         return [
             J2KComponent(
                 index: 0,
@@ -573,7 +573,7 @@ public actor MJ2MetalPreprocessing {
             )
         ]
     }
-    
+
     private func performScaling(
         sourceTexture: MTLTexture,
         destTexture: MTLTexture,
@@ -583,21 +583,21 @@ public actor MJ2MetalPreprocessing {
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw MJ2MetalPreprocessingError.executionFailed
         }
-        
+
         // TODO: Implement actual scaling with Metal shaders
         // For different scaling modes (nearest, bilinear, lanczos)
-        
+
         computeEncoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
     }
-    
+
     private func readTextureData(_ texture: MTLTexture) throws -> Data {
         let width = texture.width
         let height = texture.height
         let bytesPerRow = width
         let dataSize = bytesPerRow * height
-        
+
         var data = Data(count: dataSize)
         data.withUnsafeMutableBytes { bytes in
             texture.getBytes(
@@ -607,7 +607,7 @@ public actor MJ2MetalPreprocessing {
                 mipmapLevel: 0
             )
         }
-        
+
         return data
     }
 }

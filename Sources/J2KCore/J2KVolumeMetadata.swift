@@ -111,7 +111,7 @@ public struct J2KVolumeMetadata: Sendable, Equatable {
 
     /// An empty metadata instance with no fields set.
     public static var empty: J2KVolumeMetadata {
-        return J2KVolumeMetadata()
+        J2KVolumeMetadata()
     }
 }
 

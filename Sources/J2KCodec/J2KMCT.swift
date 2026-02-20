@@ -14,7 +14,7 @@ import J2KCore
 public enum J2KMCTType: String, Sendable, CaseIterable {
     /// Array-based transform using explicit matrix coefficients
     case arrayBased = "Array-Based"
-    
+
     /// Dependency transform using component relationships
     case dependency = "Dependency"
 }
@@ -23,7 +23,7 @@ public enum J2KMCTType: String, Sendable, CaseIterable {
 public enum J2KMCTPrecision: Sendable {
     /// Integer transform (reversible)
     case integer
-    
+
     /// Floating-point transform (irreversible)
     case floatingPoint
 }
@@ -61,20 +61,20 @@ public enum J2KMCTPrecision: Sendable {
 public struct J2KMCTMatrix: Sendable {
     /// The size of the matrix (N×N for N components).
     public let size: Int
-    
+
     /// The matrix coefficients in row-major order.
     ///
     /// For a 3×3 matrix: [m00, m01, m02, m10, m11, m12, m20, m21, m22]
     public let coefficients: [Double]
-    
+
     /// The precision of the transform.
     public let precision: J2KMCTPrecision
-    
+
     /// Whether this is a reversible integer transform.
     public var isReversible: Bool {
         precision == .integer
     }
-    
+
     /// Creates a new MCT matrix.
     ///
     /// - Parameters:
@@ -86,18 +86,18 @@ public struct J2KMCTMatrix: Sendable {
         guard size > 0 else {
             throw J2KError.invalidParameter("Matrix size must be positive")
         }
-        
+
         guard coefficients.count == size * size else {
             throw J2KError.invalidParameter(
                 "Coefficient count (\(coefficients.count)) must equal size² (\(size * size))"
             )
         }
-        
+
         self.size = size
         self.coefficients = coefficients
         self.precision = precision
     }
-    
+
     /// Creates an identity matrix of the specified size.
     ///
     /// - Parameter size: The matrix size.
@@ -109,7 +109,7 @@ public struct J2KMCTMatrix: Sendable {
         }
         return try! J2KMCTMatrix(size: size, coefficients: coefficients, precision: .floatingPoint)
     }
-    
+
     /// Computes the inverse of this matrix.
     ///
     /// - Returns: The inverse matrix.
@@ -117,14 +117,14 @@ public struct J2KMCTMatrix: Sendable {
     public func inverse() throws -> J2KMCTMatrix {
         // Create augmented matrix [M | I]
         var augmented = [[Double]](repeating: [Double](repeating: 0.0, count: size * 2), count: size)
-        
+
         for i in 0..<size {
             for j in 0..<size {
                 augmented[i][j] = coefficients[i * size + j]
             }
             augmented[i][size + i] = 1.0
         }
-        
+
         // Gaussian elimination with partial pivoting
         for pivot in 0..<size {
             // Find pivot row
@@ -137,22 +137,22 @@ public struct J2KMCTMatrix: Sendable {
                     maxRow = i
                 }
             }
-            
+
             guard maxVal > 1e-10 else {
                 throw J2KError.invalidParameter("Matrix is singular (non-invertible)")
             }
-            
+
             // Swap rows if needed
             if maxRow != pivot {
                 augmented.swapAt(pivot, maxRow)
             }
-            
+
             // Scale pivot row
             let pivotVal = augmented[pivot][pivot]
             for j in 0..<(size * 2) {
                 augmented[pivot][j] /= pivotVal
             }
-            
+
             // Eliminate column
             for i in 0..<size where i != pivot {
                 let factor = augmented[i][pivot]
@@ -161,7 +161,7 @@ public struct J2KMCTMatrix: Sendable {
                 }
             }
         }
-        
+
         // Extract inverse from right half
         var inverseCoeffs = [Double](repeating: 0.0, count: size * size)
         for i in 0..<size {
@@ -169,10 +169,10 @@ public struct J2KMCTMatrix: Sendable {
                 inverseCoeffs[i * size + j] = augmented[i][size + j]
             }
         }
-        
+
         return try J2KMCTMatrix(size: size, coefficients: inverseCoeffs, precision: precision)
     }
-    
+
     /// Returns the transpose of this matrix.
     public func transpose() -> J2KMCTMatrix {
         var transposed = [Double](repeating: 0.0, count: size * size)
@@ -183,7 +183,7 @@ public struct J2KMCTMatrix: Sendable {
         }
         return try! J2KMCTMatrix(size: size, coefficients: transposed, precision: precision)
     }
-    
+
     /// Validates that this matrix can be used for perfect reconstruction.
     ///
     /// - Returns: True if the matrix is invertible with reasonable precision.
@@ -191,27 +191,27 @@ public struct J2KMCTMatrix: Sendable {
         guard let inv = try? inverse() else {
             return false
         }
-        
+
         // Check that M × M⁻¹ ≈ I
         let product = Self.matrixMultiply(self, inv)
         let identity = Self.identity(size: size)
-        
+
         for i in 0..<(size * size) {
             let diff = abs(product.coefficients[i] - identity.coefficients[i])
             if diff > 1e-6 {
                 return false
             }
         }
-        
+
         return true
     }
-    
+
     /// Multiplies two matrices.
     private static func matrixMultiply(_ a: J2KMCTMatrix, _ b: J2KMCTMatrix) -> J2KMCTMatrix {
         assert(a.size == b.size, "Matrix sizes must match")
         let n = a.size
         var result = [Double](repeating: 0.0, count: n * n)
-        
+
         for i in 0..<n {
             for j in 0..<n {
                 var sum = 0.0
@@ -221,7 +221,7 @@ public struct J2KMCTMatrix: Sendable {
                 result[i * n + j] = sum
             }
         }
-        
+
         return try! J2KMCTMatrix(size: n, coefficients: result, precision: a.precision)
     }
 }
@@ -230,13 +230,13 @@ public struct J2KMCTMatrix: Sendable {
 public struct J2KMCTConfiguration: Sendable {
     /// The transform type.
     public let type: J2KMCTType
-    
+
     /// The transform matrix (for array-based transforms).
     public let matrix: J2KMCTMatrix?
-    
+
     /// Whether to validate perfect reconstruction.
     public let validateReconstruction: Bool
-    
+
     /// Creates a new MCT configuration.
     ///
     /// - Parameters:
@@ -258,7 +258,7 @@ public struct J2KMCTConfiguration: Sendable {
         self.matrix = matrix
         self.validateReconstruction = validateReconstruction
     }
-    
+
     /// No transform configuration.
     public static let none = J2KMCTConfiguration(type: .arrayBased, matrix: nil)
 }
@@ -273,44 +273,44 @@ public struct J2KMCTEncodingConfiguration: Sendable {
     public enum Mode: Sendable {
         /// MCT disabled (use Part 1 RCT/ICT)
         case disabled
-        
+
         /// Array-based MCT with fixed matrix
         case arrayBased(J2KMCTMatrix)
-        
+
         /// Dependency-based MCT
         case dependency(J2KMCTDependencyConfiguration)
-        
+
         /// Adaptive MCT selection per tile
         case adaptive(candidates: [J2KMCTMatrix], selectionCriteria: AdaptiveSelectionCriteria)
     }
-    
+
     /// Criteria for adaptive MCT matrix selection
     public enum AdaptiveSelectionCriteria: Sendable {
         /// Select based on component correlation
         case correlation
-        
+
         /// Select based on rate-distortion optimization
         case rateDistortion
-        
+
         /// Select based on compression efficiency
         case compressionEfficiency
     }
-    
+
     /// The MCT mode
     public let mode: Mode
-    
+
     /// Whether to use extended precision for MCT operations
     public let useExtendedPrecision: Bool
-    
+
     /// Whether to use reversible integer MCT (when possible)
     public let preferReversible: Bool
-    
+
     /// Per-tile MCT overrides (tile index -> MCT matrix)
     ///
     /// When non-empty, overrides the global MCT configuration for specific tiles.
     /// Useful for spatially varying content with different decorrelation needs.
     public let perTileMCT: [Int: J2KMCTMatrix]
-    
+
     /// Creates a new MCT encoding configuration.
     ///
     /// - Parameters:
@@ -329,11 +329,10 @@ public struct J2KMCTEncodingConfiguration: Sendable {
         self.preferReversible = preferReversible
         self.perTileMCT = perTileMCT
     }
-    
+
     /// Disabled MCT configuration (Part 1 compatible).
     public static let disabled = J2KMCTEncodingConfiguration(mode: .disabled)
 }
-
 
 /// Performs multi-component transforms for JPEG 2000 Part 2 encoding and decoding.
 ///
@@ -377,16 +376,16 @@ public struct J2KMCTEncodingConfiguration: Sendable {
 public struct J2KMCT: Sendable {
     /// Configuration for the MCT.
     public let configuration: J2KMCTConfiguration
-    
+
     /// Creates a new MCT with the specified configuration.
     ///
     /// - Parameter configuration: The MCT configuration (default: .none).
     public init(configuration: J2KMCTConfiguration = .none) {
         self.configuration = configuration
     }
-    
+
     // MARK: - Forward Transform
-    
+
     /// Applies a forward multi-component transform using the specified matrix.
     ///
     /// Transforms input components using matrix multiplication: Y = M × X
@@ -404,28 +403,28 @@ public struct J2KMCT: Sendable {
         guard !components.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         guard components.count == matrix.size else {
             throw J2KError.invalidParameter(
                 "Component count (\(components.count)) must match matrix size (\(matrix.size))"
             )
         }
-        
+
         let sampleCount = components[0].count
         guard components.allSatisfy({ $0.count == sampleCount }) else {
             throw J2KError.invalidParameter("All components must have the same sample count")
         }
-        
+
         // Validate matrix if requested
         if configuration.validateReconstruction {
             guard matrix.validateReconstructibility() else {
                 throw J2KError.invalidParameter("Transform matrix is not invertible")
             }
         }
-        
+
         let n = matrix.size
         var output = [[Double]](repeating: [Double](repeating: 0.0, count: sampleCount), count: n)
-        
+
         // Apply transform to each sample: Y[i] = M × X[i]
         for sample in 0..<sampleCount {
             for i in 0..<n {
@@ -436,10 +435,10 @@ public struct J2KMCT: Sendable {
                 output[i][sample] = sum
             }
         }
-        
+
         return output
     }
-    
+
     /// Applies a forward multi-component transform to integer components.
     ///
     /// For integer precision, performs fixed-point arithmetic with proper rounding.
@@ -456,20 +455,20 @@ public struct J2KMCT: Sendable {
         guard matrix.isReversible else {
             throw J2KError.invalidParameter("Matrix must have integer precision for integer transform")
         }
-        
+
         // Convert to double, apply transform, round back to integer
         let doubleComponents = components.map { $0.map(Double.init) }
         let transformed = try forwardTransform(components: doubleComponents, matrix: matrix)
-        
+
         return transformed.map { component in
             component.map { value in
                 Int32(value.rounded())
             }
         }
     }
-    
+
     // MARK: - Inverse Transform
-    
+
     /// Applies an inverse multi-component transform using the specified matrix.
     ///
     /// Transforms components back to the original space: X = M⁻¹ × Y
@@ -484,9 +483,9 @@ public struct J2KMCT: Sendable {
         matrix: J2KMCTMatrix
     ) throws -> [[Double]] {
         // Inverse transform uses the same logic as forward transform
-        return try forwardTransform(components: components, matrix: matrix)
+        try forwardTransform(components: components, matrix: matrix)
     }
-    
+
     /// Applies an inverse multi-component transform to integer components.
     ///
     /// - Parameters:
@@ -501,20 +500,20 @@ public struct J2KMCT: Sendable {
         guard matrix.isReversible else {
             throw J2KError.invalidParameter("Matrix must have integer precision for integer transform")
         }
-        
+
         // Convert to double, apply transform, round back to integer
         let doubleComponents = components.map { $0.map(Double.init) }
         let transformed = try inverseTransform(components: doubleComponents, matrix: matrix)
-        
+
         return transformed.map { component in
             component.map { value in
                 Int32(value.rounded())
             }
         }
     }
-    
+
     // MARK: - Component-Based Transform
-    
+
     /// Applies forward MCT to J2KComponent objects.
     ///
     /// - Parameters:
@@ -530,22 +529,22 @@ public struct J2KMCT: Sendable {
         guard !components.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let width = components[0].width
         let height = components[0].height
-        
+
         guard components.allSatisfy({ $0.width == width && $0.height == height }) else {
             throw J2KError.invalidComponentConfiguration("All components must have the same dimensions")
         }
-        
+
         // Convert components to arrays
         let arrays = try components.map { component in
             try convertComponentToDoubleArray(component)
         }
-        
+
         // Apply transform
         let transformed = try forwardTransform(components: arrays, matrix: matrix)
-        
+
         // Convert back to components
         return try transformed.enumerated().map { index, data in
             try createComponentFromDoubleArray(
@@ -555,7 +554,7 @@ public struct J2KMCT: Sendable {
             )
         }
     }
-    
+
     /// Applies inverse MCT to J2KComponent objects.
     ///
     /// - Parameters:
@@ -568,22 +567,22 @@ public struct J2KMCT: Sendable {
         matrix: J2KMCTMatrix
     ) throws -> [J2KComponent] {
         // Use the same logic as forward transform
-        return try forwardTransform(components: components, matrix: matrix)
+        try forwardTransform(components: components, matrix: matrix)
     }
-    
+
     // MARK: - Helper Methods
-    
+
     /// Converts a J2KComponent to a double array.
     private func convertComponentToDoubleArray(_ component: J2KComponent) throws -> [Double] {
         let pixelCount = component.width * component.height
         var result = [Double](repeating: 0.0, count: pixelCount)
-        
+
         let bytesPerSample = (component.bitDepth + 7) / 8
-        
+
         guard component.data.count >= pixelCount * bytesPerSample else {
             throw J2KError.invalidParameter("Component data is too small")
         }
-        
+
         component.data.withUnsafeBytes { ptr in
             if bytesPerSample == 1 {
                 if component.signed {
@@ -612,10 +611,10 @@ public struct J2KMCT: Sendable {
                 }
             }
         }
-        
+
         return result
     }
-    
+
     /// Creates a J2KComponent from a double array.
     private func createComponentFromDoubleArray(
         data: [Double],
@@ -624,7 +623,7 @@ public struct J2KMCT: Sendable {
     ) throws -> J2KComponent {
         let bytesPerSample = (template.bitDepth + 7) / 8
         var componentData = Data(count: data.count * bytesPerSample)
-        
+
         componentData.withUnsafeMutableBytes { ptr in
             if bytesPerSample == 1 {
                 if template.signed {
@@ -653,7 +652,7 @@ public struct J2KMCT: Sendable {
                 }
             }
         }
-        
+
         return J2KComponent(
             index: newIndex,
             bitDepth: template.bitDepth,
@@ -676,30 +675,30 @@ extension J2KMCTMatrix {
     public static let rgbToYCbCr = try! J2KMCTMatrix(
         size: 3,
         coefficients: [
-            0.299,   0.587,   0.114,   // Y
-            -0.169, -0.331,   0.500,   // Cb
-            0.500,  -0.419,  -0.081    // Cr
+            0.299, 0.587, 0.114,   // Y
+            -0.169, -0.331, 0.500,   // Cb
+            0.500, -0.419, -0.081    // Cr
         ],
         precision: .floatingPoint
     )
-    
+
     /// Inverse of RGB to YCbCr matrix.
     public static let yCbCrToRGB = try! rgbToYCbCr.inverse()
-    
+
     /// Simple averaging transform for decorrelation (3 components).
     public static let averaging3 = try! J2KMCTMatrix(
         size: 3,
         coefficients: [
-            1.0,  0.0,  0.0,
-            -0.5, 1.0,  0.0,
+            1.0, 0.0, 0.0,
+            -0.5, 1.0, 0.0,
             -0.5, -0.5, 1.0
         ],
         precision: .floatingPoint
     )
-    
+
     /// Identity transform for 3 components (no transformation).
     public static let identity3 = identity(size: 3)
-    
+
     /// Identity transform for 4 components (no transformation).
     public static let identity4 = identity(size: 4)
 }

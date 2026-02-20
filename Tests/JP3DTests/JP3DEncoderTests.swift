@@ -29,7 +29,6 @@ private final class ThreadSafeCounter: @unchecked Sendable {
 }
 
 final class JP3DEncoderTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Creates a test volume with gradient data.

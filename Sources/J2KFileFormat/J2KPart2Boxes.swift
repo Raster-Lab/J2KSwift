@@ -11,7 +11,6 @@ import J2KCodec
 // MARK: - Part 2 Extended Box Types (ISO/IEC 15444-2)
 
 extension J2KBoxType {
-
     /// Intellectual property rights box ('jp2i').
     public static let jp2i = J2KBoxType(string: "jp2i")
 
@@ -58,7 +57,6 @@ extension J2KBoxType {
 /// let encoded = try ipr.write()
 /// ```
 public struct J2KIPRBox: J2KBox, Sendable {
-
     /// The raw intellectual property rights data.
     public var data: Data
 
@@ -72,7 +70,7 @@ public struct J2KIPRBox: J2KBox, Sendable {
     }
 
     public func write() throws -> Data {
-        return data
+        data
     }
 
     public mutating func read(from data: Data) throws {
@@ -101,7 +99,6 @@ public struct J2KIPRBox: J2KBox, Sendable {
 /// let data = try label.write()
 /// ```
 public struct J2KLabelBox: J2KBox, Sendable {
-
     /// The UTF-8 text label.
     public var label: String
 
@@ -163,7 +160,6 @@ public struct J2KLabelBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KNumberListBox: J2KBox, Sendable {
-
     /// Type of entity referenced by an association.
     public enum EntityType: UInt16, Sendable {
         /// A codestream within the file.
@@ -283,7 +279,6 @@ public struct J2KNumberListBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KAssociationBox: J2KBox, Sendable {
-
     /// The type of content held by an association child.
     public enum AssociatedContent: Sendable {
         /// XML metadata content.
@@ -400,7 +395,6 @@ public struct J2KAssociationBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KCrossReferenceBox: J2KBox, Sendable {
-
     /// The type of external reference.
     public enum ReferenceType: UInt8, Sendable {
         /// A URL reference.
@@ -496,7 +490,6 @@ public struct J2KCrossReferenceBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KDigitalSignatureBox: J2KBox, Sendable {
-
     /// Hash algorithm used for the signature.
     public enum SignatureType: UInt8, Sendable {
         /// MD5 (128-bit digest).
@@ -629,7 +622,6 @@ public struct J2KDigitalSignatureBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KROIDescriptionBox: J2KBox, Sendable {
-
     /// The geometric shape used to describe regions.
     public enum ROIType: UInt8, Sendable {
         /// Axis-aligned rectangle.
@@ -814,7 +806,6 @@ public struct J2KROIDescriptionBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KDataEntryURLBox: J2KBox, Sendable {
-
     /// Box version (typically 0).
     public var version: UInt8
 
@@ -910,7 +901,6 @@ public struct J2KDataEntryURLBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KPart2XMLMetadata: Sendable {
-
     /// Well-known XML schema families used in Part 2 files.
     public enum SchemaType: UInt8, Sendable {
         /// General-purpose or unrecognised XML.
@@ -945,7 +935,7 @@ public struct J2KPart2XMLMetadata: Sendable {
     /// - Throws: ``J2KError/fileFormatError(_:)`` if the content is not
     ///   valid UTF-8.
     public func toXMLBox() throws -> J2KXMLBox {
-        return try J2KXMLBox(xmlString: xmlContent)
+        try J2KXMLBox(xmlString: xmlContent)
     }
 
     /// Attempts to create Part 2 metadata from an existing ``J2KXMLBox``.
@@ -989,7 +979,7 @@ public struct J2KPart2XMLMetadata: Sendable {
     ///   - description: A human-readable description.
     /// - Returns: A well-formed XML string.
     public static func featureXML(featureName: String, description: String) -> String {
-        return """
+        """
         <?xml version="1.0" encoding="UTF-8"?>
         <jpx:Feature xmlns:jpx="http://www.jpeg.org/jpx">
           <jpx:Name>\(featureName)</jpx:Name>

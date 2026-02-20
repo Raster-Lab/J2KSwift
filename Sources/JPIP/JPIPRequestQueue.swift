@@ -117,17 +117,17 @@ public actor JPIPRequestQueue {
 
     /// Gets the current size of the queue.
     public var size: Int {
-        return queue.count
+        queue.count
     }
 
     /// Checks if the queue is empty.
     public var isEmpty: Bool {
-        return queue.isEmpty
+        queue.isEmpty
     }
 
     /// Checks if the queue is full.
     public var isFull: Bool {
-        return queue.count >= maxSize
+        queue.count >= maxSize
     }
 
     /// Clears all requests from the queue.
@@ -140,14 +140,14 @@ public actor JPIPRequestQueue {
     ///
     /// - Returns: Queue statistics.
     public func getStatistics() -> Statistics {
-        return stats
+        stats
     }
 
     /// Gets the priority of the next request without dequeuing.
     ///
     /// - Returns: The priority of the next request, or nil if empty.
     public func peekPriority() -> Int? {
-        return queue.first?.priority
+        queue.first?.priority
     }
 
     /// Gets all requests for a specific target (without removing them).
@@ -155,7 +155,7 @@ public actor JPIPRequestQueue {
     /// - Parameter target: The target image name.
     /// - Returns: Array of requests for the target.
     public func getRequests(for target: String) -> [JPIPRequest] {
-        return queue.filter { $0.request.target == target }.map { $0.request }
+        queue.filter { $0.request.target == target }.map { $0.request }
     }
 
     /// Removes all requests for a specific target.
@@ -174,6 +174,6 @@ public actor JPIPRequestQueue {
 extension J2KError {
     /// Creates a queue full error.
     static func queueFull(_ message: String) -> J2KError {
-        return .internalError("Queue full: \(message)")
+        .internalError("Queue full: \(message)")
     }
 }

@@ -180,7 +180,6 @@ public struct JP3DSubbandDecomposition: Sendable {
 /// remaining quadrants, mirroring the standard JPEG 2000 subband layout extended
 /// to three dimensions.
 public actor JP3DWaveletTransform {
-
     // MARK: - State
 
     private let configuration: JP3DTransformConfiguration
@@ -217,7 +216,7 @@ public actor JP3DWaveletTransform {
         }
         guard data.count == width * height * depth else {
             throw J2KError.invalidParameter(
-                "Data count \(data.count) does not match \(width)×\(height)×\(depth) = \(width*height*depth)"
+                "Data count \(data.count) does not match \(width)×\(height)×\(depth) = \(width * height * depth)"
             )
         }
 
@@ -517,8 +516,8 @@ public actor JP3DWaveletTransform {
         // Update step — need H[−1] for L[0]; use symmetric extension: H[−1] = H[0]
         var l = [Float](repeating: 0, count: nL)
         for i in 0..<nL {
-            let hPrev = (i == 0)    ? h[0]      : h[i - 1]
-            let hCurr = (i < nH)   ? h[i]      : h[nH - 1]
+            let hPrev = (i == 0) ? h[0] : h[i - 1]
+            let hCurr = (i < nH) ? h[i] : h[nH - 1]
             l[i] = ext[off + 2 * i] + floor((hPrev + hCurr + 2) * 0.25)
         }
 
@@ -539,8 +538,8 @@ public actor JP3DWaveletTransform {
         // Undo update: x[2n] = L[n] − ⌊(H[n−1] + H[n] + 2) / 4⌋
         var even = [Float](repeating: 0, count: nL)
         for i in 0..<nL {
-            let hPrev = (i == 0)  ? h[0]      : h[i - 1]
-            let hCurr = (i < nH) ? h[i]      : h[nH - 1]
+            let hPrev = (i == 0) ? h[0] : h[i - 1]
+            let hCurr = (i < nH) ? h[i] : h[nH - 1]
             even[i] = l[i] - floor((hPrev + hCurr + 2) * 0.25)
         }
 
@@ -560,10 +559,10 @@ public actor JP3DWaveletTransform {
 
     // CDF 9/7 lifting constants
     private let alpha97: Float = -1.586134342
-    private let beta97:  Float = -0.052980118
-    private let gamma97: Float =  0.882911075
-    private let delta97: Float =  0.443506852
-    private let K97:     Float =  1.149604398   // scaling factor
+    private let beta97: Float = -0.052980118
+    private let gamma97: Float = 0.882911075
+    private let delta97: Float = 0.443506852
+    private let K97: Float = 1.149604398   // scaling factor
 
     /// Forward CDF 9/7 lifting transform.
     ///

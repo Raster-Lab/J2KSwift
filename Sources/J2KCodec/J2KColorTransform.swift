@@ -645,7 +645,7 @@ public struct J2KColorTransform: Sendable {
     /// - Parameter gray: The grayscale component data.
     /// - Returns: A tuple containing (R, G, B) with replicated gray values.
     public func grayscaleToRGB(gray: [Int32]) -> (red: [Int32], green: [Int32], blue: [Int32]) {
-        return (red: gray, green: gray, blue: gray)
+        (red: gray, green: gray, blue: gray)
     }
 
     /// Converts grayscale to RGB by replicating the gray value across all channels.
@@ -653,7 +653,7 @@ public struct J2KColorTransform: Sendable {
     /// - Parameter gray: The grayscale component data.
     /// - Returns: A tuple containing (R, G, B) with replicated gray values.
     public func grayscaleToRGB(gray: [Double]) -> (red: [Double], green: [Double], blue: [Double]) {
-        return (red: gray, green: gray, blue: gray)
+        (red: gray, green: gray, blue: gray)
     }
 
     /// Converts RGB component to grayscale using standard luminance weights.
@@ -709,7 +709,7 @@ public struct J2KColorTransform: Sendable {
 
         /// The number of entries in the palette.
         public var count: Int {
-            return entries.count
+            entries.count
         }
     }
 
@@ -755,7 +755,7 @@ public struct J2KColorTransform: Sendable {
         let blue: UInt8
 
         func asTuple() -> (red: UInt8, green: UInt8, blue: UInt8) {
-            return (red: red, green: green, blue: blue)
+            (red: red, green: green, blue: blue)
         }
     }
 
@@ -1080,6 +1080,6 @@ public struct J2KColorTransform: Sendable {
 
 extension J2KColorTransformConfiguration: Equatable {
     public static func == (lhs: J2KColorTransformConfiguration, rhs: J2KColorTransformConfiguration) -> Bool {
-        return lhs.mode == rhs.mode && lhs.validateReversibility == rhs.validateReversibility
+        lhs.mode == rhs.mode && lhs.validateReversibility == rhs.validateReversibility
     }
 }

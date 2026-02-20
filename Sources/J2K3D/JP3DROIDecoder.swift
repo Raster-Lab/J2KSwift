@@ -57,7 +57,6 @@ public struct JP3DROIDecoderResult: Sendable {
 /// - If the clamped region has zero area, an empty volume with valid metadata is returned.
 /// - If the ROI equals the entire volume, the decoder follows the full-volume path.
 public actor JP3DROIDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration

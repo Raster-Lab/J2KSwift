@@ -86,7 +86,6 @@ public enum JP3DCacheEvictionStrategy: Sendable {
 /// }
 /// ```
 public actor JP3DCacheManager {
-
     // MARK: - Configuration
 
     /// Maximum memory the cache may use in bytes.

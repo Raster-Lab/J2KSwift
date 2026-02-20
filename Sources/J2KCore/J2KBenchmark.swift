@@ -362,4 +362,3 @@ public struct J2KMemoryBenchmark: Sendable {
         J2KMemoryInfo.currentResidentMemory()
     }
 }
-

@@ -16,7 +16,7 @@ final class MQCoderTerminationTests: XCTestCase {
         // Encode 5 false symbols (which are MPS since mps=false)
         for i in 0..<5 {
             let contextBefore = contexts[.sigPropLL_LH_0]
-            print("Encode #\(i+1): symbol=false, state=\(contextBefore.stateIndex), mps=\(contextBefore.mps)")
+            print("Encode #\(i + 1): symbol=false, state=\(contextBefore.stateIndex), mps=\(contextBefore.mps)")
             encoder.encode(symbol: false, context: &contexts[.sigPropLL_LH_0])
             let contextAfter = contexts[.sigPropLL_LH_0]
             print("         After: state=\(contextAfter.stateIndex), mps=\(contextAfter.mps)")
@@ -36,7 +36,7 @@ final class MQCoderTerminationTests: XCTestCase {
         var allCorrect = true
         for i in 0..<5 {
             let contextBefore = decodeContexts[.sigPropLL_LH_0]
-            print("\nDecode #\(i+1): state=\(contextBefore.stateIndex), mps=\(contextBefore.mps)")
+            print("\nDecode #\(i + 1): state=\(contextBefore.stateIndex), mps=\(contextBefore.mps)")
             let symbol = decoder.decode(context: &decodeContexts[.sigPropLL_LH_0])
             let contextAfter = decodeContexts[.sigPropLL_LH_0]
             print("         Result: symbol=\(symbol), state=\(contextAfter.stateIndex)")

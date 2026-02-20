@@ -9,7 +9,6 @@ import XCTest
 // MARK: - Session State Serialization Tests
 
 final class JPIPSessionStateSerializationTests: XCTestCase {
-
     // MARK: - Data Bin Serialization
 
     func testSerializableDataBinRoundTrip() throws {
@@ -231,7 +230,6 @@ final class JPIPSessionStateSerializationTests: XCTestCase {
 // MARK: - In-Memory Persistence Store Tests
 
 final class JPIPInMemoryPersistenceStoreTests: XCTestCase {
-
     func testSaveAndLoadClientSession() async throws {
         let store = JPIPInMemoryPersistenceStore()
 
@@ -502,7 +500,6 @@ final class JPIPFilePersistenceStoreTests: XCTestCase {
 // MARK: - Session Recovery Tests
 
 final class JPIPSessionRecoveryTests: XCTestCase {
-
     func testFullRecoveryWithDataBins() async throws {
         let store = JPIPInMemoryPersistenceStore()
         let manager = JPIPSessionPersistenceManager(store: store)
@@ -792,7 +789,6 @@ final class JPIPSessionRecoveryTests: XCTestCase {
 // MARK: - Recovery Manager Tests
 
 final class JPIPSessionRecoveryManagerTests: XCTestCase {
-
     func testRecoveryWithRetryLimit() async throws {
         let store = JPIPInMemoryPersistenceStore()
         let persistenceManager = JPIPSessionPersistenceManager(store: store)
@@ -935,7 +931,6 @@ final class JPIPSessionRecoveryManagerTests: XCTestCase {
 // MARK: - Multi-Session Concurrent Persistence Tests
 
 final class JPIPConcurrentPersistenceTests: XCTestCase {
-
     func testConcurrentSessionPersistence() async throws {
         let store = JPIPInMemoryPersistenceStore()
         let manager = JPIPSessionPersistenceManager(store: store)
@@ -976,7 +971,7 @@ final class JPIPConcurrentPersistenceTests: XCTestCase {
         let results = await withTaskGroup(of: JPIPSessionRecoveryResult.self) { group in
             for i in 0..<10 {
                 group.addTask {
-                    return await manager.recoverSession(sessionID: "concurrent-\(i)")
+                    await manager.recoverSession(sessionID: "concurrent-\(i)")
                 }
             }
 
@@ -1048,7 +1043,6 @@ final class JPIPConcurrentPersistenceTests: XCTestCase {
 // MARK: - Backward Compatibility Tests
 
 final class JPIPBackwardCompatibilityTests: XCTestCase {
-
     func testNonPersistentSessionUnaffected() async throws {
         // A session created without persistence should work identically
         let session = JPIPSession(sessionID: "no-persist")
@@ -1204,7 +1198,6 @@ final class JPIPBackwardCompatibilityTests: XCTestCase {
 // MARK: - Recovery Event Tests
 
 final class JPIPRecoveryEventTests: XCTestCase {
-
     func testRecoveryEventCreation() {
         let event = JPIPRecoveryEvent(
             sessionID: "event-test",

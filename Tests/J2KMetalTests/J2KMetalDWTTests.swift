@@ -4,7 +4,6 @@ import XCTest
 
 /// Tests for Metal-accelerated discrete wavelet transforms.
 final class J2KMetalDWTTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal DWT availability can be queried.

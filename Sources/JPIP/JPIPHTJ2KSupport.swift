@@ -41,7 +41,7 @@ public struct JPIPImageInfo: Sendable {
 
     /// The MIME type for JPIP responses serving this image.
     public var mimeType: String {
-        return format.mimeType
+        format.mimeType
     }
 
     /// Creates a new image info.

@@ -21,7 +21,6 @@ private final class ComplianceCounter: @unchecked Sendable {
 // MARK: - JP3DComplianceTests
 
 final class JP3DComplianceTests: XCTestCase {
-
     // MARK: - Test Helpers
 
     /// Creates a test volume with deterministic gradient data.

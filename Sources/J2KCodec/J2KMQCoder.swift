@@ -156,12 +156,12 @@ struct MQContext: Sendable {
 
     /// Returns the current state from the state table.
     var state: MQState {
-        return mqStateTable[stateIndex]
+        mqStateTable[stateIndex]
     }
 
     /// Returns the current Qe value.
     var qe: UInt32 {
-        return state.qe
+        state.qe
     }
 }
 
@@ -227,7 +227,7 @@ struct MQEncoder: Sendable {
                 a = qe
             }
             if state.switchMPS {
-                context.mps = !context.mps
+                context.mps.toggle()
             }
             context.stateIndex = state.nextLPS
             renormalize()
@@ -309,7 +309,7 @@ struct MQEncoder: Sendable {
 
     /// Finishes encoding and returns the compressed data.
     mutating func finish() -> Data {
-        return finish(mode: .default)
+        finish(mode: .default)
     }
 
     /// Finishes encoding with the specified termination mode.
@@ -427,7 +427,7 @@ struct MQEncoder: Sendable {
         // TODO (v1.1 Phase 4): Implement proper near-optimal termination algorithm per JPEG 2000 standard
         // The default termination always produces a valid output,
         // while near-optimal would potentially save 1-2 bytes in some cases.
-        return finishDefault()
+        finishDefault()
     }
 
     /// Resets the encoder to its initial state.
@@ -441,7 +441,7 @@ struct MQEncoder: Sendable {
 
     /// Returns the current size of the encoded data.
     var encodedSize: Int {
-        return output.count + (buffer >= 0 ? 1 : 0)
+        output.count + (buffer >= 0 ? 1 : 0)
     }
 }
 
@@ -526,7 +526,7 @@ struct MQDecoder: Sendable {
                     // Conditional exchange
                     symbol = !mps
                     if state.switchMPS {
-                        context.mps = !context.mps
+                        context.mps.toggle()
                     }
                     context.stateIndex = state.nextLPS
                 } else {
@@ -547,7 +547,7 @@ struct MQDecoder: Sendable {
             } else {
                 symbol = !mps
                 if state.switchMPS {
-                    context.mps = !context.mps
+                    context.mps.toggle()
                 }
                 context.stateIndex = state.nextLPS
             }
@@ -610,12 +610,12 @@ struct MQDecoder: Sendable {
 
     /// Returns true if at end of data.
     var isAtEnd: Bool {
-        return position >= data.count && ct == 0
+        position >= data.count && ct == 0
     }
 
     /// Returns the current position.
     var currentPosition: Int {
-        return position
+        position
     }
 }
 

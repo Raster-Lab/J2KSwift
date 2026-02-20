@@ -107,7 +107,7 @@ public struct J2KROIRegion: Sendable, Equatable {
         height: Int,
         priority: Int = 1
     ) -> J2KROIRegion {
-        return J2KROIRegion(
+        J2KROIRegion(
             shapeType: .rectangle,
             x: x,
             y: y,
@@ -134,7 +134,7 @@ public struct J2KROIRegion: Sendable, Equatable {
         radiusY: Int,
         priority: Int = 1
     ) -> J2KROIRegion {
-        return J2KROIRegion(
+        J2KROIRegion(
             shapeType: .ellipse,
             x: centerX - radiusX,
             y: centerY - radiusY,
@@ -205,22 +205,22 @@ public struct J2KROIRegion: Sendable, Equatable {
 
     /// Checks if this region is valid.
     public var isValid: Bool {
-        return width > 0 && height > 0
+        width > 0 && height > 0
     }
 
     /// Returns the center point of the region.
     public var center: (x: Int, y: Int) {
-        return (x + width / 2, y + height / 2)
+        (x + width / 2, y + height / 2)
     }
 
     /// Returns the area of the region in pixels (for bounding box).
     public var area: Int {
-        return width * height
+        width * height
     }
 
     // Equatable conformance
     public static func == (lhs: J2KROIRegion, rhs: J2KROIRegion) -> Bool {
-        return lhs.shapeType == rhs.shapeType &&
+        lhs.shapeType == rhs.shapeType &&
                lhs.x == rhs.x &&
                lhs.y == rhs.y &&
                lhs.width == rhs.width &&
@@ -419,7 +419,7 @@ public struct J2KROIMaskGenerator: Sendable {
 
             if ((yi > py) != (yj > py)) &&
                (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
-                inside = !inside
+                inside.toggle()
             }
             j = i
         }
@@ -736,7 +736,7 @@ public struct J2KROIProcessor: Sendable {
 
     /// Creates a disabled ROI processor.
     public static func disabled() -> J2KROIProcessor {
-        return J2KROIProcessor(imageWidth: 0, imageHeight: 0, regions: [], shift: 0)
+        J2KROIProcessor(imageWidth: 0, imageHeight: 0, regions: [], shift: 0)
     }
 
     /// Applies ROI scaling to a 2D array of coefficients.
@@ -856,7 +856,7 @@ public struct J2KROIProcessor: Sendable {
 
     /// Returns the spatial domain ROI mask.
     public func getSpatialMask() -> [[Bool]] {
-        return spatialMask
+        spatialMask
     }
 
     /// Returns the ROI mask for a specific subband.

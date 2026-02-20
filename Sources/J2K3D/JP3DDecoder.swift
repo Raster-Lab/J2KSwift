@@ -115,7 +115,6 @@ public enum JP3DDecodingStage: String, Sendable {
 /// 2. **Tile Reconstruction**: Dequantize and apply inverse wavelet transform per tile
 /// 3. **Volume Assembly**: Place reconstructed tiles into the output volume
 public actor JP3DDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration
@@ -177,7 +176,7 @@ public actor JP3DDecoder {
         for (tileIdx, parsedTile) in codestream.tiles.enumerated() {
             // Cache for HTJ2K-decoded all-component coefficients of the current tile.
             // Scoped here so it is naturally reset on each tile iteration.
-            var htj2kTileCache: [Float]? = nil
+            var htj2kTileCache: [Float]?
             let index = parsedTile.tileIndex
             let iz = index / (grid.tilesX * grid.tilesY)
             let rem = index % (grid.tilesX * grid.tilesY)

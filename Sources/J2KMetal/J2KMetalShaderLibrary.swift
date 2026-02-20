@@ -78,7 +78,7 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case nltPQ = "j2k_nlt_pq"
     /// Hybrid Log-Gamma (ITU-R BT.2100).
     case nltHLG = "j2k_nlt_hlg"
-    
+
     // MARK: - ROI Shaders
     /// Generate ROI mask from rectangular region.
     case roiMaskGenerate = "j2k_roi_mask_generate"
@@ -90,7 +90,7 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case roiFeathering = "j2k_roi_feathering"
     /// Map spatial ROI to wavelet domain coefficients.
     case roiWaveletMapping = "j2k_roi_wavelet_mapping"
-    
+
     // MARK: - Quantization Shaders
     /// Scalar quantization with uniform step size.
     case quantizeScalar = "j2k_quantize_scalar"
@@ -1403,14 +1403,14 @@ enum J2KMetalShaderSource {
         uint2 gid [[thread_position_in_grid]]
     ) {
         if (gid.x >= width || gid.y >= height) return;
-        
+
         uint x = gid.x;
         uint y = gid.y;
-        
+
         // Check if pixel is inside ROI rectangle
         bool insideX = (x >= roiX) && (x < roiX + roiWidth);
         bool insideY = (y >= roiY) && (y < roiY + roiHeight);
-        
+
         mask[y * width + x] = insideX && insideY;
     }
 
@@ -1425,10 +1425,10 @@ enum J2KMetalShaderSource {
         uint2 gid [[thread_position_in_grid]]
     ) {
         if (gid.x >= width || gid.y >= height) return;
-        
+
         uint idx = gid.y * width + gid.x;
         int coeff = input[idx];
-        
+
         // Apply bit-shift only if mask is set
         if (mask[idx]) {
             // Preserve sign and shift magnitude
@@ -1454,12 +1454,12 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         bool m1 = mask1[gid];
         bool m2 = mask2[gid];
         uint p1 = priority1[0];
         uint p2 = priority2[0];
-        
+
         // Higher priority wins, or combine if equal
         if (m1 && m2) {
             if (p1 >= p2) {
@@ -1491,24 +1491,24 @@ enum J2KMetalShaderSource {
         uint2 gid [[thread_position_in_grid]]
     ) {
         if (gid.x >= width || gid.y >= height) return;
-        
+
         uint idx = gid.y * width + gid.x;
-        
+
         // If inside ROI, full scaling
         if (mask[idx]) {
             scalingMap[idx] = 1.0f;
             return;
         }
-        
+
         // Find minimum distance to ROI boundary
         float minDist = featherWidth + 1.0f;
         int searchRadius = (int)ceil(featherWidth);
-        
+
         for (int dy = -searchRadius; dy <= searchRadius; dy++) {
             for (int dx = -searchRadius; dx <= searchRadius; dx++) {
                 int nx = (int)gid.x + dx;
                 int ny = (int)gid.y + dy;
-                
+
                 if (nx >= 0 && nx < (int)width && ny >= 0 && ny < (int)height) {
                     if (mask[ny * width + nx]) {
                         float dist = sqrt((float)(dx * dx + dy * dy));
@@ -1517,7 +1517,7 @@ enum J2KMetalShaderSource {
                 }
             }
         }
-        
+
         // Apply smooth falloff based on distance
         if (minDist <= featherWidth) {
             scalingMap[idx] = 1.0f - (minDist / featherWidth);
@@ -1539,16 +1539,16 @@ enum J2KMetalShaderSource {
         uint2 gid [[thread_position_in_grid]]
     ) {
         if (gid.x >= waveletWidth || gid.y >= waveletHeight) return;
-        
+
         uint waveletIdx = gid.y * waveletWidth + gid.x;
-        
+
         // Scale factor for this decomposition level
         uint scaleFactor = 1u << decompositionLevel;
-        
+
         // Map wavelet coefficient to spatial region
         uint spatialX = gid.x * scaleFactor;
         uint spatialY = gid.y * scaleFactor;
-        
+
         // Apply subband offset (for LH, HL, HH subbands)
         if (subbandType == 1 || subbandType == 3) {  // LH or HH
             spatialX += scaleFactor / 2;
@@ -1556,7 +1556,7 @@ enum J2KMetalShaderSource {
         if (subbandType == 2 || subbandType == 3) {  // HL or HH
             spatialY += scaleFactor / 2;
         }
-        
+
         // Check if any pixel in the corresponding spatial region is in ROI
         bool inROI = false;
         for (uint dy = 0; dy < scaleFactor && !inROI; dy++) {
@@ -1570,7 +1570,7 @@ enum J2KMetalShaderSource {
                 }
             }
         }
-        
+
         waveletMask[waveletIdx] = inROI;
     }
 
@@ -1585,11 +1585,11 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         float c = coefficients[gid];
         float absC = fabs(c);
         int sign = (c >= 0.0f) ? 1 : -1;
-        
+
         // q = sign(c) × floor(|c| / Δ)
         int q = (int)floor(absC / stepSize);
         indices[gid] = sign * q;
@@ -1605,11 +1605,11 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         float c = coefficients[gid];
         float absC = fabs(c);
         float threshold = stepSize * deadzoneWidth * 0.5f;
-        
+
         if (absC <= threshold) {
             indices[gid] = 0;
         } else {
@@ -1629,7 +1629,7 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         int q = indices[gid];
         if (q == 0) {
             coefficients[gid] = 0.0f;
@@ -1651,10 +1651,10 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         int q = indices[gid];
         float threshold = stepSize * deadzoneWidth * 0.5f;
-        
+
         if (q == 0) {
             coefficients[gid] = 0.0f;
         } else {
@@ -1674,7 +1674,7 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         // Apply perceptual weighting: Δ' = Δ × W
         // Lower weight = higher quality (smaller step size)
         float weight = max(visualWeights[gid], 0.1f);  // Clamp minimum weight
@@ -1691,11 +1691,11 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         float c = coefficients[gid];
         float weight = perceptualWeights[gid];
         float stepSize = baseStepSize * weight;
-        
+
         float absC = fabs(c);
         int sign = (c >= 0.0f) ? 1 : -1;
         int q = (int)floor(absC / stepSize);
@@ -1714,29 +1714,29 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= numStates) return;
-        
+
         // Each thread evaluates one state transition
         float coeff = coefficients[coeffIndex];
         float bestMetric = INFINITY;
         int bestDecision = 0;
-        
+
         // Evaluate all possible transitions to this state
         for (uint prevState = 0; prevState < numStates; prevState++) {
             // Compute reconstruction value for this transition
             float reconstruction = (float)((int)prevState - (int)numStates / 2) * stepSize;
-            
+
             // Compute distortion
             float distortion = (coeff - reconstruction) * (coeff - reconstruction);
-            
+
             // Compute accumulated metric
             float metric = pathMetrics[prevState] + distortion;
-            
+
             if (metric < bestMetric) {
                 bestMetric = metric;
                 bestDecision = (int)prevState;
             }
         }
-        
+
         newMetrics[gid] = bestMetric;
         decisions[gid * 256 + coeffIndex] = bestDecision;  // Store decision path
     }
@@ -1751,11 +1751,11 @@ enum J2KMetalShaderSource {
         uint gid [[thread_position_in_grid]]
     ) {
         if (gid >= count) return;
-        
+
         float orig = original[gid];
         float recon = reconstructed[gid];
         float diff = orig - recon;
-        
+
         switch (metric) {
             case 0:  // MSE (Mean Squared Error)
                 distortions[gid] = diff * diff;

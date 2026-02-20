@@ -51,19 +51,19 @@ import J2KCore
 public struct J2KNLTConfiguration: Sendable, Equatable {
     /// Whether non-linear point transforms are enabled.
     public let enabled: Bool
-    
+
     /// Per-component transform specifications.
     ///
     /// If nil, no transforms are applied. If specified, must contain
     /// an entry for each component or be empty (no transforms).
     public let componentTransforms: [J2KNLTComponentTransform]?
-    
+
     /// Whether to optimize transform parameters automatically.
     ///
     /// When enabled, the encoder analyzes component statistics and
     /// may adjust transform parameters for better compression.
     public let autoOptimize: Bool
-    
+
     /// Creates an NLT configuration.
     ///
     /// - Parameters:
@@ -79,13 +79,13 @@ public struct J2KNLTConfiguration: Sendable, Equatable {
         self.componentTransforms = componentTransforms
         self.autoOptimize = autoOptimize
     }
-    
+
     /// Default configuration with NLT disabled.
     public static let `default` = J2KNLTConfiguration(enabled: false)
-    
+
     /// Configuration with NLT disabled.
     public static let disabled = J2KNLTConfiguration(enabled: false)
-    
+
     /// Configuration with automatic optimization.
     public static let autoOptimized = J2KNLTConfiguration(
         enabled: true,
@@ -100,10 +100,10 @@ public struct J2KNLTConfiguration: Sendable, Equatable {
 public struct J2KNLTComponentTransform: Sendable, Equatable {
     /// The component index (0-based).
     public let componentIndex: Int
-    
+
     /// The transform type to apply.
     public let transformType: J2KNLTTransformType
-    
+
     /// Creates a component transform.
     ///
     /// - Parameters:
@@ -128,7 +128,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     /// Forward: y = x
     /// Inverse: x = y
     case identity
-    
+
     /// Gamma correction transform.
     ///
     /// Forward (linearization): y = x^gamma
@@ -139,7 +139,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///   - 2.4: Rec.709 gamma
     ///   - 2.6: DCI-P3 gamma
     case gamma(Double)
-    
+
     /// Logarithmic transform (base-e).
     ///
     /// Forward: y = ln(x + 1)
@@ -147,19 +147,19 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///
     /// Useful for logarithmically-scaled scientific data.
     case logarithmic
-    
+
     /// Base-10 logarithmic transform.
     ///
     /// Forward: y = log10(x + 1)
     /// Inverse: x = 10^y - 1
     case logarithmic10
-    
+
     /// Exponential transform (base-e).
     ///
     /// Forward: y = exp(x) - 1
     /// Inverse: x = ln(y + 1)
     case exponential
-    
+
     /// Perceptual Quantizer (PQ) for HDR content (SMPTE ST 2084).
     ///
     /// Forward: Linearize PQ-encoded values
@@ -167,7 +167,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///
     /// Used for HDR10 content.
     case perceptualQuantizer
-    
+
     /// Hybrid Log-Gamma (HLG) for HDR content (ITU-R BT.2100).
     ///
     /// Forward: Linearize HLG-encoded values
@@ -175,7 +175,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///
     /// Used for HDR broadcast content.
     case hybridLogGamma
-    
+
     /// Lookup table (LUT) based transform.
     ///
     /// Forward and inverse: Use provided lookup tables
@@ -185,7 +185,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///   - inverseLUT: Inverse transform lookup table
     ///   - interpolation: Whether to use linear interpolation
     case lookupTable(forwardLUT: [Double], inverseLUT: [Double], interpolation: Bool)
-    
+
     /// Piecewise linear transform.
     ///
     /// Forward and inverse: Use piecewise linear segments
@@ -194,7 +194,7 @@ public enum J2KNLTTransformType: Sendable, Equatable {
     ///   - breakpoints: X-coordinates of breakpoints
     ///   - values: Y-coordinates at breakpoints
     case piecewiseLinear(breakpoints: [Double], values: [Double])
-    
+
     /// Custom parametric transform.
     ///
     /// - Parameters:
@@ -209,10 +209,10 @@ public enum J2KNLTTransformType: Sendable, Equatable {
 public struct J2KNLTResult: Sendable {
     /// The transformed component data.
     public let transformedData: [Int32]
-    
+
     /// The transform that was applied.
     public let transform: J2KNLTComponentTransform
-    
+
     /// Statistics about the transformation.
     public let statistics: J2KNLTStatistics
 }
@@ -221,16 +221,16 @@ public struct J2KNLTResult: Sendable {
 public struct J2KNLTStatistics: Sendable, Equatable {
     /// Input data range (min, max).
     public let inputRange: (min: Double, max: Double)
-    
+
     /// Output data range (min, max).
     public let outputRange: (min: Double, max: Double)
-    
+
     /// Whether any values were clipped during transformation.
     public let clipped: Bool
-    
+
     /// Number of samples processed.
     public let sampleCount: Int
-    
+
     public init(
         inputRange: (min: Double, max: Double),
         outputRange: (min: Double, max: Double),
@@ -264,9 +264,9 @@ extension J2KNLTStatistics {
 public struct J2KNonLinearTransform: Sendable {
     /// Creates a non-linear transform processor.
     public init() {}
-    
+
     // MARK: - Forward Transform
-    
+
     /// Applies forward non-linear transform to component data.
     ///
     /// The forward transform linearizes or decorrelates the data
@@ -288,28 +288,28 @@ public struct J2KNonLinearTransform: Sendable {
         guard bitDepth > 0 && bitDepth <= 32 else {
             throw J2KError.invalidParameter("Invalid bit depth: \(bitDepth)")
         }
-        
+
         guard !componentData.isEmpty else {
             throw J2KError.invalidParameter("Component data is empty")
         }
-        
+
         let maxValue = signed ? (1 << (bitDepth - 1)) - 1 : (1 << bitDepth) - 1
         let minValue = signed ? -(1 << (bitDepth - 1)) : 0
-        
+
         var transformedData = [Int32]()
         transformedData.reserveCapacity(componentData.count)
-        
+
         var inputMin = Double.infinity
         var inputMax = -Double.infinity
         var outputMin = Double.infinity
         var outputMax = -Double.infinity
         var clipped = false
-        
+
         for value in componentData {
             let normalizedInput = Double(value)
             inputMin = min(inputMin, normalizedInput)
             inputMax = max(inputMax, normalizedInput)
-            
+
             // Apply forward transform
             let transformedValue = try applyForwardTransform(
                 value: normalizedInput,
@@ -317,35 +317,35 @@ public struct J2KNonLinearTransform: Sendable {
                 minValue: Double(minValue),
                 maxValue: Double(maxValue)
             )
-            
+
             outputMin = min(outputMin, transformedValue)
             outputMax = max(outputMax, transformedValue)
-            
+
             // Clamp to valid range
             let clampedValue = transformedValue.clamped(to: Double(minValue)...Double(maxValue))
             if abs(clampedValue - transformedValue) > 0.001 {
                 clipped = true
             }
-            
+
             transformedData.append(Int32(clampedValue.rounded()))
         }
-        
+
         let statistics = J2KNLTStatistics(
             inputRange: (min: inputMin, max: inputMax),
             outputRange: (min: outputMin, max: outputMax),
             clipped: clipped,
             sampleCount: componentData.count
         )
-        
+
         return J2KNLTResult(
             transformedData: transformedData,
             transform: transform,
             statistics: statistics
         )
     }
-    
+
     // MARK: - Inverse Transform
-    
+
     /// Applies inverse non-linear transform to component data.
     ///
     /// The inverse transform restores the original non-linear
@@ -367,28 +367,28 @@ public struct J2KNonLinearTransform: Sendable {
         guard bitDepth > 0 && bitDepth <= 32 else {
             throw J2KError.invalidParameter("Invalid bit depth: \(bitDepth)")
         }
-        
+
         guard !componentData.isEmpty else {
             throw J2KError.invalidParameter("Component data is empty")
         }
-        
+
         let maxValue = signed ? (1 << (bitDepth - 1)) - 1 : (1 << bitDepth) - 1
         let minValue = signed ? -(1 << (bitDepth - 1)) : 0
-        
+
         var restoredData = [Int32]()
         restoredData.reserveCapacity(componentData.count)
-        
+
         var inputMin = Double.infinity
         var inputMax = -Double.infinity
         var outputMin = Double.infinity
         var outputMax = -Double.infinity
         var clipped = false
-        
+
         for value in componentData {
             let normalizedInput = Double(value)
             inputMin = min(inputMin, normalizedInput)
             inputMax = max(inputMax, normalizedInput)
-            
+
             // Apply inverse transform
             let restoredValue = try applyInverseTransform(
                 value: normalizedInput,
@@ -396,35 +396,35 @@ public struct J2KNonLinearTransform: Sendable {
                 minValue: Double(minValue),
                 maxValue: Double(maxValue)
             )
-            
+
             outputMin = min(outputMin, restoredValue)
             outputMax = max(outputMax, restoredValue)
-            
+
             // Clamp to valid range
             let clampedValue = restoredValue.clamped(to: Double(minValue)...Double(maxValue))
             if abs(clampedValue - restoredValue) > 0.001 {
                 clipped = true
             }
-            
+
             restoredData.append(Int32(clampedValue.rounded()))
         }
-        
+
         let statistics = J2KNLTStatistics(
             inputRange: (min: inputMin, max: inputMax),
             outputRange: (min: outputMin, max: outputMax),
             clipped: clipped,
             sampleCount: componentData.count
         )
-        
+
         return J2KNLTResult(
             transformedData: restoredData,
             transform: transform,
             statistics: statistics
         )
     }
-    
+
     // MARK: - Transform Implementation
-    
+
     /// Applies forward transform function.
     private func applyForwardTransform(
         value: Double,
@@ -435,7 +435,7 @@ public struct J2KNonLinearTransform: Sendable {
         switch type {
         case .identity:
             return value
-            
+
         case .gamma(let gamma):
             guard gamma > 0 else {
                 throw J2KError.invalidParameter("Gamma must be positive: \(gamma)")
@@ -444,31 +444,31 @@ public struct J2KNonLinearTransform: Sendable {
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(normalized, gamma)
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .logarithmic:
             // ln(x + 1) with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log(normalized + 1.0) / log(2.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .logarithmic10:
             // log10(x + 1) with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log10(normalized + 1.0) / log10(2.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .exponential:
             // exp(x) - 1 with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = (exp(normalized) - 1.0) / (exp(1.0) - 1.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .perceptualQuantizer:
             return try applyPQForward(value: value, minValue: minValue, maxValue: maxValue)
-            
+
         case .hybridLogGamma:
             return try applyHLGForward(value: value, minValue: minValue, maxValue: maxValue)
-            
+
         case .lookupTable(let forwardLUT, _, let interpolation):
             return applyLUT(
                 value: value,
@@ -477,7 +477,7 @@ public struct J2KNonLinearTransform: Sendable {
                 maxValue: maxValue,
                 interpolation: interpolation
             )
-            
+
         case .piecewiseLinear(let breakpoints, let values):
             return applyPiecewiseLinear(
                 value: value,
@@ -486,12 +486,12 @@ public struct J2KNonLinearTransform: Sendable {
                 minValue: minValue,
                 maxValue: maxValue
             )
-            
+
         case .custom:
             throw J2KError.invalidParameter("Custom transforms must be implemented by caller")
         }
     }
-    
+
     /// Applies inverse transform function.
     private func applyInverseTransform(
         value: Double,
@@ -502,7 +502,7 @@ public struct J2KNonLinearTransform: Sendable {
         switch type {
         case .identity:
             return value
-            
+
         case .gamma(let gamma):
             guard gamma > 0 else {
                 throw J2KError.invalidParameter("Gamma must be positive: \(gamma)")
@@ -511,31 +511,31 @@ public struct J2KNonLinearTransform: Sendable {
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(normalized, 1.0 / gamma)
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .logarithmic:
             // exp(y) - 1 with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = exp(normalized * log(2.0)) - 1.0
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .logarithmic10:
             // 10^y - 1 with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(10.0, normalized * log10(2.0)) - 1.0
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .exponential:
             // ln(x + 1) with normalization
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log(normalized * (exp(1.0) - 1.0) + 1.0)
             return transformed * (maxValue - minValue) + minValue
-            
+
         case .perceptualQuantizer:
             return try applyPQInverse(value: value, minValue: minValue, maxValue: maxValue)
-            
+
         case .hybridLogGamma:
             return try applyHLGInverse(value: value, minValue: minValue, maxValue: maxValue)
-            
+
         case .lookupTable(_, let inverseLUT, let interpolation):
             return applyLUT(
                 value: value,
@@ -544,7 +544,7 @@ public struct J2KNonLinearTransform: Sendable {
                 maxValue: maxValue,
                 interpolation: interpolation
             )
-            
+
         case .piecewiseLinear(let breakpoints, let values):
             // For inverse, swap breakpoints and values
             return applyPiecewiseLinear(
@@ -554,66 +554,66 @@ public struct J2KNonLinearTransform: Sendable {
                 minValue: minValue,
                 maxValue: maxValue
             )
-            
+
         case .custom:
             throw J2KError.invalidParameter("Custom transforms must be implemented by caller")
         }
     }
-    
+
     // MARK: - HDR Transform Functions
-    
+
     /// Applies PQ (SMPTE ST 2084) forward transform.
     private func applyPQForward(value: Double, minValue: Double, maxValue: Double) throws -> Double {
         // Normalize to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
-        
+
         // PQ constants
         let m1 = 0.1593017578125  // 2610/16384
         let m2 = 78.84375          // 2523/32 + 128
         let c1 = 0.8359375         // 3424/4096
         let c2 = 18.8515625        // 2413/128 + 2392/128
         let c3 = 18.6875           // 2392/128
-        
+
         // Apply PQ EOTF (forward = linearize)
         let y = pow(normalized, 1.0 / m2)
         let numerator = max(y - c1, 0.0)
         let denominator = c2 - c3 * y
         let linear = pow(numerator / denominator, 1.0 / m1)
-        
+
         return linear * (maxValue - minValue) + minValue
     }
-    
+
     /// Applies PQ (SMPTE ST 2084) inverse transform.
     private func applyPQInverse(value: Double, minValue: Double, maxValue: Double) throws -> Double {
         // Normalize to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
-        
+
         // PQ constants
         let m1 = 0.1593017578125
         let m2 = 78.84375
         let c1 = 0.8359375
         let c2 = 18.8515625
         let c3 = 18.6875
-        
+
         // Apply PQ OETF (inverse = apply encoding)
         let y = pow(normalized, m1)
         let numerator = c1 + c2 * y
         let denominator = 1.0 + c3 * y
         let encoded = pow(numerator / denominator, m2)
-        
+
         return encoded * (maxValue - minValue) + minValue
     }
-    
+
     /// Applies HLG (Hybrid Log-Gamma) forward transform.
     private func applyHLGForward(value: Double, minValue: Double, maxValue: Double) throws -> Double {
         // Normalize to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
-        
+
         // HLG constants
         let a = 0.17883277
         let b = 0.28466892
         let c = 0.55991073
-        
+
         // Apply HLG OETF inverse (forward = linearize)
         let linear: Double
         if normalized <= 0.5 {
@@ -621,20 +621,20 @@ public struct J2KNonLinearTransform: Sendable {
         } else {
             linear = (exp((normalized - c) / a) + b) / 12.0
         }
-        
+
         return linear * (maxValue - minValue) + minValue
     }
-    
+
     /// Applies HLG (Hybrid Log-Gamma) inverse transform.
     private func applyHLGInverse(value: Double, minValue: Double, maxValue: Double) throws -> Double {
         // Normalize to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
-        
+
         // HLG constants
         let a = 0.17883277
         let b = 0.28466892
         let c = 0.55991073
-        
+
         // Apply HLG OETF (inverse = apply encoding)
         let encoded: Double
         if normalized <= 1.0 / 12.0 {
@@ -642,12 +642,12 @@ public struct J2KNonLinearTransform: Sendable {
         } else {
             encoded = a * log(12.0 * normalized - b) + c
         }
-        
+
         return encoded * (maxValue - minValue) + minValue
     }
-    
+
     // MARK: - LUT Application
-    
+
     /// Applies lookup table transform.
     private func applyLUT(
         value: Double,
@@ -659,11 +659,11 @@ public struct J2KNonLinearTransform: Sendable {
         guard !lut.isEmpty else {
             return value
         }
-        
+
         // Normalize value to LUT index range [0, lut.count - 1]
         let normalized = (value - minValue) / (maxValue - minValue)
         let index = normalized * Double(lut.count - 1)
-        
+
         if !interpolation {
             // Nearest neighbor
             let i = Int(index.rounded())
@@ -673,14 +673,14 @@ public struct J2KNonLinearTransform: Sendable {
             let i0 = Int(floor(index))
             let i1 = min(i0 + 1, lut.count - 1)
             let fraction = index - Double(i0)
-            
+
             let v0 = lut[i0.clamped(to: 0...(lut.count - 1))]
             let v1 = lut[i1]
-            
+
             return v0 + fraction * (v1 - v0)
         }
     }
-    
+
     /// Applies piecewise linear transform.
     private func applyPiecewiseLinear(
         value: Double,
@@ -692,14 +692,14 @@ public struct J2KNonLinearTransform: Sendable {
         guard breakpoints.count == values.count, !breakpoints.isEmpty else {
             return value
         }
-        
+
         let normalized = (value - minValue) / (maxValue - minValue)
-        
+
         // Find the segment
         if normalized <= breakpoints[0] {
             return values[0] * (maxValue - minValue) + minValue
         }
-        
+
         for i in 0..<(breakpoints.count - 1) {
             if normalized <= breakpoints[i + 1] {
                 // Linear interpolation within segment
@@ -708,7 +708,7 @@ public struct J2KNonLinearTransform: Sendable {
                 return interpolated * (maxValue - minValue) + minValue
             }
         }
-        
+
         // Beyond last breakpoint
         return values[breakpoints.count - 1] * (maxValue - minValue) + minValue
     }

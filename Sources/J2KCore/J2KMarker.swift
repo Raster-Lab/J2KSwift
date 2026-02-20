@@ -87,31 +87,31 @@ public enum J2KMarker: UInt16, Sendable {
 
     /// Comment (COM).
     case com = 0xFF64
-    
+
     // MARK: - Part 2 Extension Marker Segments (ISO/IEC 15444-2)
-    
+
     /// Variable DC offset (DCO) — ISO/IEC 15444-2.
     ///
     /// Signals per-component DC offset values for improved compression
     /// of images with non-zero mean values.
     case dco = 0xFF74
-    
+
     /// Arbitrary decomposition styles (ADS) — ISO/IEC 15444-2.
     ///
     /// Defines custom wavelet kernels beyond the standard 5/3 and 9/7 filters.
     case ads = 0xFF73
-    
+
     /// Multi-component transform (MCT) — ISO/IEC 15444-2.
     ///
     /// Defines array-based multi-component transforms for decorrelating
     /// image components.
     case mct = 0xFF75
-    
+
     /// Multi-component collection (MCC) — ISO/IEC 15444-2.
     ///
     /// Groups components for multi-component transforms.
     case mcc = 0xFF77
-    
+
     /// Multi-component transform ordering (MCO) — ISO/IEC 15444-2.
     ///
     /// Specifies the order of multi-component transforms.

@@ -104,7 +104,7 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
     /// - Parameter psnr: Target PSNR in dB. Defaults to 40.0.
     /// - Returns: A lossy encoder configuration.
     public static func lossy(psnr: Double = 40.0) -> JP3DEncoderConfiguration {
-        return JP3DEncoderConfiguration(
+        JP3DEncoderConfiguration(
             compressionMode: .lossy(psnr: psnr),
             tiling: .default,
             progressionOrder: .lrcps,
@@ -158,7 +158,7 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
     /// - Parameter psnr: Target PSNR in dB. Defaults to 40.0.
     /// - Returns: An HTJ2K lossy encoder configuration.
     public static func htj2kLossy(psnr: Double = 40.0) -> JP3DEncoderConfiguration {
-        return JP3DEncoderConfiguration(
+        JP3DEncoderConfiguration(
             compressionMode: .lossyHTJ2K(psnr: psnr),
             tiling: .default,
             progressionOrder: .lrcps,
@@ -195,7 +195,7 @@ public struct JP3DEncoderResult: Sendable {
 
     /// Compression ratio (original size / compressed size).
     public var compressionRatio: Double {
-        guard data.count > 0 else { return 0 }
+        guard !data.isEmpty else { return 0 }
         let originalSize = width * height * depth * componentCount * 4 // Float = 4 bytes
         return Double(originalSize) / Double(data.count)
     }
@@ -252,7 +252,6 @@ public enum JP3DEncodingStage: String, Sendable {
 /// 3. **Quantization**: Quantize wavelet coefficients
 /// 4. **Codestream Generation**: Form packets and assemble codestream
 public actor JP3DEncoder {
-
     // MARK: - State
 
     private let configuration: JP3DEncoderConfiguration

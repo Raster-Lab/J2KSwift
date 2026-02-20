@@ -41,7 +41,6 @@ private func makeVolume(
 // MARK: - Round-Trip Tests
 
 final class JP3DRoundTripTests: XCTestCase {
-
     // MARK: 1. Lossless round-trip
 
     func testLosslessRoundTrip() async throws {
@@ -251,7 +250,6 @@ final class JP3DRoundTripTests: XCTestCase {
 // MARK: - Progression Order Tests
 
 final class JP3DProgressionOrderIntegrationTests: XCTestCase {
-
     private func roundTrip(
         volume: J2KVolume,
         order: JP3DProgressionOrder
@@ -298,7 +296,6 @@ final class JP3DProgressionOrderIntegrationTests: XCTestCase {
 // MARK: - Tiling Configuration Tests
 
 final class JP3DTilingIntegrationTests: XCTestCase {
-
     func testStreamingTilingRoundTrip() async throws {
         // Arrange
         let volume = makeVolume(width: 32, height: 32, depth: 8)
@@ -363,7 +360,6 @@ final class JP3DTilingIntegrationTests: XCTestCase {
 // MARK: - HTJ2K + JPIP Combined Workflow
 
 final class JP3DHTj2KJPIPWorkflowTests: XCTestCase {
-
     /// Validates: encode with HTJ2K → build JPIP viewport → request region → verify bins.
     func testHTJ2KEncodeAndJPIPRegionRequest() async throws {
         // Arrange
@@ -453,7 +449,6 @@ final class JP3DHTj2KJPIPWorkflowTests: XCTestCase {
 /// compatible outputs. On Linux (no Metal), both paths fall back to CPU and
 /// results should be identical.
 final class JP3DMetalCPUEquivalenceTests: XCTestCase {
-
     func testMetalAndCPUEncodeProduceSameVolumeShape() async throws {
         // Arrange
         let volume = makeVolume(width: 16, height: 16, depth: 4)
@@ -508,7 +503,6 @@ final class JP3DMetalCPUEquivalenceTests: XCTestCase {
 /// (macOS, Linux, Windows). No platform-specific imports are required here;
 /// these tests rely only on J2KCore and J2K3D APIs.
 final class JP3DCrossPlatformTests: XCTestCase {
-
     func testVersionReportedCorrectly() {
         // Arrange / Act
         let version = getVersion()
@@ -583,7 +577,6 @@ final class JP3DCrossPlatformTests: XCTestCase {
 // MARK: - Memory Usage Under Sustained Load
 
 final class JP3DMemoryUsageTests: XCTestCase {
-
     /// Encodes and decodes a volume repeatedly to detect memory growth.
     /// A catastrophic leak would cause an OOM crash; this test validates
     /// the basic path does not accumulate unbounded data.
@@ -639,7 +632,6 @@ final class JP3DMemoryUsageTests: XCTestCase {
 // MARK: - Performance Regression Tests
 
 final class JP3DPerformanceRegressionTests: XCTestCase {
-
     /// Baseline: encode a 32×32×8 lossless volume within a reasonable wall-clock budget.
     /// This guards against catastrophic algorithmic regressions vs v1.8.0.
     func testLosslessEncoderPerformanceBaseline() throws {
@@ -699,7 +691,6 @@ final class JP3DPerformanceRegressionTests: XCTestCase {
 // MARK: - Encoder/Decoder Configuration Validation
 
 final class JP3DConfigurationValidationTests: XCTestCase {
-
     func testEncoderConfigurationDefaults() {
         let config = JP3DEncoderConfiguration()
         XCTAssertEqual(config.compressionMode, .lossless)
@@ -748,7 +739,6 @@ final class JP3DConfigurationValidationTests: XCTestCase {
 // MARK: - JPIP Streaming API Integration
 
 final class JP3DJPIPAPIIntegrationTests: XCTestCase {
-
     func testJPIPClientInitialization() async {
         // Arrange / Act
         let client = JP3DJPIPClient(

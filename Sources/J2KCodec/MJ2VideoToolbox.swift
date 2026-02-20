@@ -18,31 +18,31 @@ import J2KCore
 public enum MJ2VideoToolboxError: Error, Sendable {
     /// VideoToolbox is not available on this platform.
     case notAvailable
-    
+
     /// Hardware encoder/decoder is not available.
     case hardwareNotAvailable
-    
+
     /// Failed to create compression session.
     case compressionSessionCreationFailed(OSStatus)
-    
+
     /// Failed to create decompression session.
     case decompressionSessionCreationFailed(OSStatus)
-    
+
     /// Encoding failed.
     case encodingFailed(OSStatus)
-    
+
     /// Decoding failed.
     case decodingFailed(OSStatus)
-    
+
     /// Invalid pixel buffer.
     case invalidPixelBuffer
-    
+
     /// Invalid image dimensions.
     case invalidDimensions
-    
+
     /// Unsupported color space.
     case unsupportedColorSpace
-    
+
     /// Configuration error.
     case configurationError(String)
 }
@@ -53,10 +53,10 @@ public enum MJ2VideoToolboxError: Error, Sendable {
 public enum MJ2VideoCodec: Sendable {
     /// H.264 (AVC) codec.
     case h264
-    
+
     /// H.265 (HEVC) codec.
     case h265
-    
+
     var codecType: CMVideoCodecType {
         switch self {
         case .h264:
@@ -65,7 +65,7 @@ public enum MJ2VideoCodec: Sendable {
             return kCMVideoCodecType_HEVC
         }
     }
-    
+
     var description: String {
         switch self {
         case .h264:
@@ -82,31 +82,31 @@ public enum MJ2VideoCodec: Sendable {
 public struct MJ2VideoToolboxEncoderConfiguration: Sendable {
     /// Target codec.
     public var codec: MJ2VideoCodec
-    
+
     /// Target bitrate in bits per second.
     public var bitrate: Int
-    
+
     /// Frame rate (frames per second).
     public var frameRate: Double
-    
+
     /// Enable hardware acceleration if available.
     public var useHardwareAcceleration: Bool
-    
+
     /// Profile level (e.g., "High" for H.264).
     public var profileLevel: String?
-    
+
     /// Maximum keyframe interval.
     public var maxKeyFrameInterval: Int
-    
+
     /// Enable B-frames.
     public var allowBFrames: Bool
-    
+
     /// Target quality (0.0 = low, 1.0 = high). Only used if bitrate is 0.
     public var quality: Double
-    
+
     /// Enable multi-pass encoding.
     public var multiPass: Bool
-    
+
     /// Creates default H.264 configuration.
     public static func defaultH264(bitrate: Int = 5_000_000, frameRate: Double = 24.0) -> Self {
         Self(
@@ -121,7 +121,7 @@ public struct MJ2VideoToolboxEncoderConfiguration: Sendable {
             multiPass: false
         )
     }
-    
+
     /// Creates default H.265 configuration.
     public static func defaultH265(bitrate: Int = 3_000_000, frameRate: Double = 24.0) -> Self {
         Self(
@@ -144,13 +144,13 @@ public struct MJ2VideoToolboxEncoderConfiguration: Sendable {
 public struct MJ2VideoToolboxDecoderConfiguration: Sendable {
     /// Enable hardware acceleration if available.
     public var useHardwareAcceleration: Bool
-    
+
     /// Enable deinterlacing.
     public var deinterlace: Bool
-    
+
     /// Output color space.
     public var outputColorSpace: J2KColorSpace
-    
+
     /// Creates default decoder configuration.
     public static func `default`() -> Self {
         Self(
@@ -167,19 +167,19 @@ public struct MJ2VideoToolboxDecoderConfiguration: Sendable {
 public struct MJ2VideoToolboxCapabilities: Sendable {
     /// Hardware encoder is available for H.264.
     public let h264HardwareEncoderAvailable: Bool
-    
+
     /// Hardware encoder is available for H.265.
     public let h265HardwareEncoderAvailable: Bool
-    
+
     /// Hardware decoder is available for H.264.
     public let h264HardwareDecoderAvailable: Bool
-    
+
     /// Hardware decoder is available for H.265.
     public let h265HardwareDecoderAvailable: Bool
-    
+
     /// Maximum supported resolution (width x height).
     public let maxResolution: (width: Int, height: Int)
-    
+
     /// Supported pixel formats.
     public let supportedPixelFormats: [OSType]
 }
@@ -193,14 +193,14 @@ public actor MJ2VideoToolboxEncoder {
     private var frameCount: Int = 0
     private var encodedFrames: [CMSampleBuffer] = []
     private var isConfigured: Bool = false
-    
+
     /// Creates a new VideoToolbox encoder.
     ///
     /// - Parameter configuration: Encoder configuration.
     public init(configuration: MJ2VideoToolboxEncoderConfiguration) {
         self.configuration = configuration
     }
-    
+
     /// Initializes the compression session.
     ///
     /// - Parameters:
@@ -211,20 +211,20 @@ public actor MJ2VideoToolboxEncoder {
         guard width > 0 && height > 0 else {
             throw MJ2VideoToolboxError.invalidDimensions
         }
-        
+
         var session: VTCompressionSession?
-        
+
         let sourceImageBufferAttributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32ARGB,
             kCVPixelBufferWidthKey: width,
             kCVPixelBufferHeightKey: height,
             kCVPixelBufferMetalCompatibilityKey: true
         ]
-        
+
         let encoderSpecification: [CFString: Any]? = configuration.useHardwareAcceleration ? [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true
         ] : nil
-        
+
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: Int32(width),
@@ -237,25 +237,25 @@ public actor MJ2VideoToolboxEncoder {
             refcon: nil,
             compressionSessionOut: &session
         )
-        
+
         guard status == noErr, let session = session else {
             throw MJ2VideoToolboxError.compressionSessionCreationFailed(status)
         }
-        
+
         self.compressionSession = session
-        
+
         // Configure session properties
         try await configureSession(session)
-        
+
         // Prepare to encode
         let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(session)
         guard prepareStatus == noErr else {
             throw MJ2VideoToolboxError.compressionSessionCreationFailed(prepareStatus)
         }
-        
+
         isConfigured = true
     }
-    
+
     private func configureSession(_ session: VTCompressionSession) async throws {
         // Set bitrate or quality
         if configuration.bitrate > 0 {
@@ -271,21 +271,21 @@ public actor MJ2VideoToolboxEncoder {
                 value: configuration.quality as CFNumber
             )
         }
-        
+
         // Set frame rate
         VTSessionSetProperty(
             session,
             key: kVTCompressionPropertyKey_ExpectedFrameRate,
             value: configuration.frameRate as CFNumber
         )
-        
+
         // Set max keyframe interval
         VTSessionSetProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
             value: configuration.maxKeyFrameInterval as CFNumber
         )
-        
+
         // Set profile level if specified
         if let profileLevel = configuration.profileLevel {
             VTSessionSetProperty(
@@ -294,7 +294,7 @@ public actor MJ2VideoToolboxEncoder {
                 value: profileLevel as CFString
             )
         }
-        
+
         // Enable B-frames if requested
         if configuration.allowBFrames {
             VTSessionSetProperty(
@@ -303,7 +303,7 @@ public actor MJ2VideoToolboxEncoder {
                 value: kCFBooleanTrue
             )
         }
-        
+
         // Enable real-time encoding
         VTSessionSetProperty(
             session,
@@ -311,7 +311,7 @@ public actor MJ2VideoToolboxEncoder {
             value: kCFBooleanTrue
         )
     }
-    
+
     /// Encodes a J2KImage frame.
     ///
     /// - Parameters:
@@ -328,14 +328,14 @@ public actor MJ2VideoToolboxEncoder {
         guard isConfigured, let session = compressionSession else {
             throw MJ2VideoToolboxError.configurationError("Encoder not initialized")
         }
-        
+
         // Convert J2KImage to CVPixelBuffer
         let pixelBuffer = try await convertToPixelBuffer(image)
-        
+
         // Encode frame
         var encodedBuffer: CMSampleBuffer?
         let flags: VTEncodeInfoFlags = []
-        
+
         let status = VTCompressionSessionEncodeFrame(
             session,
             imageBuffer: pixelBuffer,
@@ -345,26 +345,26 @@ public actor MJ2VideoToolboxEncoder {
             sourceFrameRefcon: nil,
             infoFlagsOut: nil
         )
-        
+
         guard status == noErr else {
             throw MJ2VideoToolboxError.encodingFailed(status)
         }
-        
+
         // For synchronous encoding, we need to flush
         VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: presentationTime)
-        
+
         frameCount += 1
-        
+
         // Note: In a real implementation, we would use an output callback to receive encoded frames.
         // For now, we create a placeholder sample buffer.
         // This would need to be updated with actual encoded data from the callback.
         guard let sampleBuffer = try await getEncodedFrame() else {
             throw MJ2VideoToolboxError.encodingFailed(status)
         }
-        
+
         return sampleBuffer
     }
-    
+
     private func convertToPixelBuffer(_ image: J2KImage) async throws -> CVPixelBuffer {
         // Create pixel buffer
         var pixelBuffer: CVPixelBuffer?
@@ -373,7 +373,7 @@ public actor MJ2VideoToolboxEncoder {
             kCVPixelBufferCGBitmapContextCompatibilityKey: true,
             kCVPixelBufferMetalCompatibilityKey: true
         ]
-        
+
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
             image.width,
@@ -382,49 +382,49 @@ public actor MJ2VideoToolboxEncoder {
             attributes as CFDictionary,
             &pixelBuffer
         )
-        
+
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
             throw MJ2VideoToolboxError.invalidPixelBuffer
         }
-        
+
         // Lock pixel buffer for writing
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        
+
         guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
             throw MJ2VideoToolboxError.invalidPixelBuffer
         }
-        
+
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
+
         // Convert J2KImage components to ARGB pixel buffer
         try await fillPixelBuffer(data: data, bytesPerRow: bytesPerRow, image: image)
-        
+
         return buffer
     }
-    
+
     private func fillPixelBuffer(data: UnsafeMutablePointer<UInt8>, bytesPerRow: Int, image: J2KImage) async throws {
         // Get RGB components
         guard image.components.count >= 3 else {
             throw MJ2VideoToolboxError.unsupportedColorSpace
         }
-        
+
         let rComp = image.components[0]
         let gComp = image.components[1]
         let bComp = image.components[2]
-        
+
         // Convert component data to bytes
         for y in 0..<image.height {
             for x in 0..<image.width {
                 let pixelIndex = y * image.width + x
                 let bufferOffset = y * bytesPerRow + x * 4
-                
+
                 // Extract pixel values (assuming 8-bit depth for now)
                 let r = rComp.data[pixelIndex]
                 let g = gComp.data[pixelIndex]
                 let b = bComp.data[pixelIndex]
-                
+
                 // Write ARGB (note: might need to adjust byte order depending on platform)
                 data[bufferOffset + 0] = 255  // A
                 data[bufferOffset + 1] = r    // R
@@ -433,30 +433,30 @@ public actor MJ2VideoToolboxEncoder {
             }
         }
     }
-    
+
     private func getEncodedFrame() async throws -> CMSampleBuffer? {
         // This is a placeholder. In a real implementation, encoded frames would be
         // collected from the VTCompressionSession output callback.
         // For now, return nil to indicate that callback-based collection is needed.
-        return nil
+        nil
     }
-    
+
     /// Finishes encoding and flushes any pending frames.
     ///
     /// - Throws: `MJ2VideoToolboxError` if finishing fails.
     public func finish() async throws {
         guard let session = compressionSession else { return }
-        
+
         let status = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
         guard status == noErr else {
             throw MJ2VideoToolboxError.encodingFailed(status)
         }
-        
+
         VTCompressionSessionInvalidate(session)
         compressionSession = nil
         isConfigured = false
     }
-    
+
     deinit {
         if let session = compressionSession {
             VTCompressionSessionInvalidate(session)
@@ -471,14 +471,14 @@ public actor MJ2VideoToolboxDecoder {
     private let configuration: MJ2VideoToolboxDecoderConfiguration
     private var decompressionSession: VTDecompressionSession?
     private var isConfigured: Bool = false
-    
+
     /// Creates a new VideoToolbox decoder.
     ///
     /// - Parameter configuration: Decoder configuration.
     public init(configuration: MJ2VideoToolboxDecoderConfiguration) {
         self.configuration = configuration
     }
-    
+
     /// Initializes the decompression session.
     ///
     /// - Parameters:
@@ -486,16 +486,16 @@ public actor MJ2VideoToolboxDecoder {
     /// - Throws: `MJ2VideoToolboxError` if session creation fails.
     public func initialize(formatDescription: CMFormatDescription) async throws {
         var session: VTDecompressionSession?
-        
+
         let destinationPixelBufferAttributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32ARGB,
             kCVPixelBufferMetalCompatibilityKey: true
         ]
-        
+
         let decoderSpecification: [CFString: Any]? = configuration.useHardwareAcceleration ? [
             kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true
         ] : nil
-        
+
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: formatDescription,
@@ -504,15 +504,15 @@ public actor MJ2VideoToolboxDecoder {
             outputCallback: nil,
             decompressionSessionOut: &session
         )
-        
+
         guard status == noErr, let session = session else {
             throw MJ2VideoToolboxError.decompressionSessionCreationFailed(status)
         }
-        
+
         self.decompressionSession = session
         isConfigured = true
     }
-    
+
     /// Decodes a CMSampleBuffer to J2KImage.
     ///
     /// - Parameter sampleBuffer: The sample buffer to decode.
@@ -522,10 +522,10 @@ public actor MJ2VideoToolboxDecoder {
         guard isConfigured, let session = decompressionSession else {
             throw MJ2VideoToolboxError.configurationError("Decoder not initialized")
         }
-        
+
         var decodedBuffer: CVImageBuffer?
         let flags: VTDecodeFrameFlags = []
-        
+
         let status = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sampleBuffer,
@@ -533,60 +533,60 @@ public actor MJ2VideoToolboxDecoder {
             frameRefcon: nil,
             infoFlagsOut: nil
         )
-        
+
         guard status == noErr else {
             throw MJ2VideoToolboxError.decodingFailed(status)
         }
-        
+
         // Wait for decoding to complete
         VTDecompressionSessionWaitForAsynchronousFrames(session)
-        
+
         // In a real implementation, decoded frames would be received via output callback
         // For now, this is a placeholder that would need callback integration
         guard let pixelBuffer = try await getDecodedFrame() else {
             throw MJ2VideoToolboxError.decodingFailed(status)
         }
-        
+
         // Convert CVPixelBuffer to J2KImage
         return try await convertToJ2KImage(pixelBuffer)
     }
-    
+
     private func getDecodedFrame() async throws -> CVPixelBuffer? {
         // Placeholder for callback-based frame retrieval
-        return nil
+        nil
     }
-    
+
     private func convertToJ2KImage(_ pixelBuffer: CVPixelBuffer) async throws -> J2KImage {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        
+
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        
+
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
             throw MJ2VideoToolboxError.invalidPixelBuffer
         }
-        
+
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
+
         // Extract RGB components
         var rData = Data(count: width * height)
         var gData = Data(count: width * height)
         var bData = Data(count: width * height)
-        
+
         for y in 0..<height {
             for x in 0..<width {
                 let bufferOffset = y * bytesPerRow + x * 4
                 let pixelIndex = y * width + x
-                
+
                 // Read ARGB
                 rData[pixelIndex] = data[bufferOffset + 1]
                 gData[pixelIndex] = data[bufferOffset + 2]
                 bData[pixelIndex] = data[bufferOffset + 3]
             }
         }
-        
+
         // Create J2KComponents
         let rComponent = J2KComponent(
             index: 0,
@@ -598,7 +598,7 @@ public actor MJ2VideoToolboxDecoder {
             subsamplingY: 1,
             data: rData
         )
-        
+
         let gComponent = J2KComponent(
             index: 1,
             bitDepth: 8,
@@ -609,7 +609,7 @@ public actor MJ2VideoToolboxDecoder {
             subsamplingY: 1,
             data: gData
         )
-        
+
         let bComponent = J2KComponent(
             index: 2,
             bitDepth: 8,
@@ -620,7 +620,7 @@ public actor MJ2VideoToolboxDecoder {
             subsamplingY: 1,
             data: bData
         )
-        
+
         return J2KImage(
             width: width,
             height: height,
@@ -634,7 +634,7 @@ public actor MJ2VideoToolboxDecoder {
             tileOffsetY: 0
         )
     }
-    
+
     /// Finishes decoding and cleans up resources.
     public func finish() async {
         if let session = decompressionSession {
@@ -643,7 +643,7 @@ public actor MJ2VideoToolboxDecoder {
         }
         isConfigured = false
     }
-    
+
     deinit {
         if let session = decompressionSession {
             VTDecompressionSessionInvalidate(session)
@@ -662,17 +662,17 @@ public struct MJ2VideoToolboxCapabilityDetector {
         // Query hardware encoder availability
         let h264HWEnc = isHardwareEncoderAvailable(codec: .h264)
         let h265HWEnc = isHardwareEncoderAvailable(codec: .h265)
-        
+
         // Query hardware decoder availability
         let h264HWDec = isHardwareDecoderAvailable(codec: .h264)
         let h265HWDec = isHardwareDecoderAvailable(codec: .h265)
-        
+
         // Detect maximum resolution (typically 4K on most modern hardware)
         let maxResolution = detectMaxResolution()
-        
+
         // Query supported pixel formats
         let pixelFormats = detectSupportedPixelFormats()
-        
+
         return MJ2VideoToolboxCapabilities(
             h264HardwareEncoderAvailable: h264HWEnc,
             h265HardwareEncoderAvailable: h265HWEnc,
@@ -682,7 +682,7 @@ public struct MJ2VideoToolboxCapabilityDetector {
             supportedPixelFormats: pixelFormats
         )
     }
-    
+
     private static func isHardwareEncoderAvailable(codec: MJ2VideoCodec) -> Bool {
         // Try to create a session with hardware acceleration requirement
         var session: VTCompressionSession?
@@ -690,7 +690,7 @@ public struct MJ2VideoToolboxCapabilityDetector {
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true
         ]
-        
+
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: 1920,
@@ -703,30 +703,30 @@ public struct MJ2VideoToolboxCapabilityDetector {
             refcon: nil,
             compressionSessionOut: &session
         )
-        
+
         if let session = session {
             VTCompressionSessionInvalidate(session)
         }
-        
+
         return status == noErr
     }
-    
+
     private static func isHardwareDecoderAvailable(codec: MJ2VideoCodec) -> Bool {
         // Hardware decoders are generally available on all modern Apple platforms
         // More detailed detection would require actual format descriptions
-        return true
+        true
     }
-    
+
     private static func detectMaxResolution() -> (width: Int, height: Int) {
         // Most modern Apple hardware supports 4K (3840x2160)
         // Some support 8K (7680x4320)
         // For now, return conservative 4K limit
-        return (width: 3840, height: 2160)
+        (width: 3840, height: 2160)
     }
-    
+
     private static func detectSupportedPixelFormats() -> [OSType] {
         // Common pixel formats supported by VideoToolbox
-        return [
+        [
             kCVPixelFormatType_32ARGB,
             kCVPixelFormatType_32BGRA,
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,

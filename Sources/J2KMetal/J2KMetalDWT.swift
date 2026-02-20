@@ -340,7 +340,7 @@ public struct J2KMetalDWTStatistics: Sendable {
 public actor J2KMetalDWT {
     /// Whether Metal DWT is available on this platform.
     public static var isAvailable: Bool {
-        return J2KMetalDevice.isAvailable
+        J2KMetalDevice.isAvailable
     }
 
     /// The DWT configuration.
@@ -404,7 +404,7 @@ public actor J2KMetalDWT {
     ///
     /// - Returns: A snapshot of the DWT processing statistics.
     public func statistics() -> J2KMetalDWTStatistics {
-        return _statistics
+        _statistics
     }
 
     /// Determines the best backend for the given dimensions.
@@ -848,9 +848,9 @@ public actor J2KMetalDWT {
     ) -> (lowpass: [Float], highpass: [Float]) {
         let alpha: Float = -1.586134342
         let beta: Float  = -0.052980118
-        let gamma: Float =  0.882911075
-        let delta: Float =  0.443506852
-        let K: Float     =  1.230174105
+        let gamma: Float = 0.882911075
+        let delta: Float = 0.443506852
+        let K: Float = 1.230174105
 
         var even = [Float](repeating: 0, count: halfN)
         var odd  = [Float](repeating: 0, count: halfH)
@@ -1009,8 +1009,8 @@ public actor J2KMetalDWT {
         let K: Float = 1.230174105
         let alpha: Float = -1.586134342
         let beta: Float  = -0.052980118
-        let gamma: Float =  0.882911075
-        let delta: Float =  0.443506852
+        let gamma: Float = 0.882911075
+        let delta: Float = 0.443506852
 
         var even = lowpass.map { $0 / K }
         var odd  = highpass.map { $0 * K }
@@ -1613,7 +1613,7 @@ public actor J2KMetalDWT {
         // For GPU inverse, delegate to CPU reference (full GPU inverse
         // requires careful reconstruction logic matching the forward path).
         // This maintains correctness while forward transforms get GPU acceleration.
-        return inverse2DCPU(subbands: subbands)
+        inverse2DCPU(subbands: subbands)
     }
 
     private func ensureInitialized() async throws {
@@ -1700,6 +1700,6 @@ public actor J2KMetalDWT {
     #endif
 
     private func currentTime() -> Double {
-        return Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0
+        Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0
     }
 }

@@ -8,7 +8,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DWaveletTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Generates a deterministic test volume with a simple spatial gradient.

@@ -49,66 +49,65 @@ import J2KCore
 /// - Faster encoding presets
 /// - Hardware-accelerated FFmpeg builds
 public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
-    
     // MARK: - Properties
-    
+
     private let configuration: MJ2SoftwareEncoderConfiguration
     private var isActive = false
     private var frameCount = 0
     private var encodedFrames: [Data] = []
-    
+
     // MARK: - Protocol Properties
-    
+
     public nonisolated let encoderType: MJ2EncoderType
     public nonisolated let isHardwareAccelerated = false
     public nonisolated let capabilities: MJ2EncoderCapabilities
-    
+
     // MARK: - Initialization
-    
+
     /// Creates a software encoder with the specified configuration.
     ///
     /// - Parameter configuration: Encoder configuration.
     public init(configuration: MJ2SoftwareEncoderConfiguration) {
         self.configuration = configuration
-        
+
         // Determine encoder type based on available tools
         if MJ2SoftwareEncoder.isFFmpegAvailable() {
             self.encoderType = .ffmpeg
         } else {
             self.encoderType = .software
         }
-        
+
         // Set capabilities based on encoder type
         self.capabilities = MJ2SoftwareEncoder.detectCapabilities(for: encoderType)
     }
-    
+
     // MARK: - Protocol Methods
-    
+
     public func startEncoding() async throws {
         guard !isActive else {
             throw MJ2VideoEncoderError.sessionCreationFailed("Encoder already active")
         }
-        
+
         // Validate configuration
         guard capabilities.supportedCodecs.contains(configuration.codec) else {
             throw MJ2VideoEncoderError.unsupportedCodec(configuration.codec)
         }
-        
+
         isActive = true
         frameCount = 0
         encodedFrames = []
     }
-    
+
     public func encode(_ frame: J2KImage) async throws -> Data {
         guard isActive else {
             throw MJ2VideoEncoderError.encodingFailed("Encoder not started")
         }
-        
+
         // Validate frame dimensions
         guard frame.width > 0, frame.height > 0 else {
             throw MJ2VideoEncoderError.invalidDimensions(width: frame.width, height: frame.height)
         }
-        
+
         // Encode based on available encoder
         let encodedData: Data
         switch encoderType {
@@ -119,37 +118,37 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
         default:
             throw MJ2VideoEncoderError.encodingFailed("Unsupported encoder type: \(encoderType)")
         }
-        
+
         frameCount += 1
         encodedFrames.append(encodedData)
-        
+
         return encodedData
     }
-    
+
     public func finishEncoding() async throws -> Data {
         guard isActive else {
             throw MJ2VideoEncoderError.finalizationFailed("Encoder not started")
         }
-        
+
         isActive = false
-        
+
         // Combine all encoded frames
         var combinedData = Data()
         for frameData in encodedFrames {
             combinedData.append(frameData)
         }
-        
+
         return combinedData
     }
-    
+
     public func cancelEncoding() async {
         isActive = false
         encodedFrames = []
         frameCount = 0
     }
-    
+
     // MARK: - FFmpeg Encoding
-    
+
     private func encodeWithFFmpeg(_ frame: J2KImage) async throws -> Data {
         // Note: This is a placeholder implementation
         // A real implementation would:
@@ -157,22 +156,22 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
         // 2. Invoke FFmpeg with appropriate parameters
         // 3. Read encoded output
         // 4. Clean up temporary files
-        
+
         throw MJ2VideoEncoderError.encodingFailed("FFmpeg integration not yet implemented")
     }
-    
+
     // MARK: - Software Fallback Encoding
-    
+
     private func encodeWithSoftwareFallback(_ frame: J2KImage) async throws -> Data {
         // Basic software fallback - placeholder implementation
         // This would require a complete H.264/H.265 encoder implementation
         // which is beyond the scope of this initial version
-        
+
         throw MJ2VideoEncoderError.encodingFailed("Pure software encoding not yet implemented. Please install FFmpeg.")
     }
-    
+
     // MARK: - Capability Detection
-    
+
     private static func detectCapabilities(for encoderType: MJ2EncoderType) -> MJ2EncoderCapabilities {
         switch encoderType {
         case .ffmpeg:
@@ -204,7 +203,7 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
             )
         }
     }
-    
+
     /// Checks whether FFmpeg is available on the system.
     ///
     /// - Returns: `true` if FFmpeg is found in PATH, `false` otherwise.
@@ -215,11 +214,11 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
         #else
         let command = "which ffmpeg"
         #endif
-        
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["sh", "-c", command]
-        
+
         do {
             try process.run()
             process.waitUntilExit()
@@ -236,19 +235,19 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
 public struct MJ2SoftwareEncoderConfiguration: Sendable {
     /// Target codec.
     public var codec: MJ2VideoCodec
-    
+
     /// Quality configuration.
     public var quality: MJ2TranscodingQuality
-    
+
     /// Performance configuration.
     public var performance: MJ2PerformanceConfiguration
-    
+
     /// Frame rate (frames per second).
     public var frameRate: Double
-    
+
     /// FFmpeg-specific options (only used with FFmpeg encoder).
     public var ffmpegOptions: [String]
-    
+
     /// Creates a software encoder configuration.
     ///
     /// - Parameters:
@@ -270,14 +269,14 @@ public struct MJ2SoftwareEncoderConfiguration: Sendable {
         self.frameRate = frameRate
         self.ffmpegOptions = ffmpegOptions
     }
-    
+
     /// Default configuration for H.264 encoding.
     public static let h264Default = MJ2SoftwareEncoderConfiguration(
         codec: .h264,
         quality: .medium,
         frameRate: 24.0
     )
-    
+
     /// Default configuration for H.265 encoding.
     public static let h265Default = MJ2SoftwareEncoderConfiguration(
         codec: .h265,

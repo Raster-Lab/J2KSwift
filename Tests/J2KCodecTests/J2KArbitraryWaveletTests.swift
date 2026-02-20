@@ -893,4 +893,3 @@ final class J2KArbitraryWaveletTests: XCTestCase {
         // is within 10% of standard path performance
     }
 }
-

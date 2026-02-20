@@ -155,7 +155,6 @@ public struct JP3DRegisteredVolume: Sendable {
 /// try await server.start()
 /// ```
 public actor JP3DJPIPServer {
-
     // MARK: - Configuration
 
     public let configuration: JP3DServerConfiguration

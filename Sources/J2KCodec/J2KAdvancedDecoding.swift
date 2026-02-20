@@ -372,7 +372,7 @@ public final class J2KIncrementalDecoder: Sendable {
     /// Thread-safe state management.
     private final class State: @unchecked Sendable {
         let lock = NSLock()
-        var buffer: Data = Data()
+        var buffer = Data()
         var isComplete: Bool = false
         var lastDecodedLayer: Int = -1
         var lastDecodedLevel: Int = -1

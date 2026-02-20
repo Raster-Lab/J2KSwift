@@ -351,7 +351,7 @@ public struct J2K3DCoefficients: Sendable {
 
     /// The total number of coefficients.
     public var count: Int {
-        return width * height * depth
+        width * height * depth
     }
 
     /// Accesses a coefficient at the given 3D coordinates.
@@ -363,7 +363,7 @@ public struct J2K3DCoefficients: Sendable {
     /// - Returns: The coefficient value.
     public subscript(x: Int, y: Int, z: Int) -> Float {
         get {
-            return data[z * width * height + y * width + x]
+            data[z * width * height + y * width + x]
         }
         set {
             data[z * width * height + y * width + x] = newValue

@@ -11,7 +11,6 @@ import XCTest
 // MARK: - JP3DViewFrustum Tests
 
 final class JP3DViewFrustumTests: XCTestCase {
-
     func testValidFrustumIsValid() {
         let f = JP3DViewFrustum(
             originX: 0, originY: 0, originZ: -100,
@@ -52,7 +51,6 @@ final class JP3DViewFrustumTests: XCTestCase {
 // MARK: - JP3DViewport Tests
 
 final class JP3DViewportTests: XCTestCase {
-
     func testViewportCreation() {
         let vp = JP3DViewport(xRange: 0..<256, yRange: 0..<256, zRange: 0..<64)
         XCTAssertEqual(vp.xRange, 0..<256)
@@ -86,7 +84,6 @@ final class JP3DViewportTests: XCTestCase {
 // MARK: - JP3DStreamingRegion Tests
 
 final class JP3DStreamingRegionTests: XCTestCase {
-
     func testRegionValidation() {
         let r = JP3DStreamingRegion(xRange: 0..<128, yRange: 0..<128, zRange: 0..<32, qualityLayer: 2, resolutionLevel: 1)
         XCTAssertTrue(r.isValid)
@@ -113,7 +110,6 @@ final class JP3DStreamingRegionTests: XCTestCase {
 // MARK: - JP3DDataBin Tests
 
 final class JP3DDataBinTests: XCTestCase {
-
     func testDataBinCreation() {
         let data = Data(repeating: 0xAB, count: 128)
         let bin = JP3DDataBin(
@@ -142,7 +138,6 @@ final class JP3DDataBinTests: XCTestCase {
 // MARK: - JP3DProgressionMode Tests
 
 final class JP3DProgressionModeTests: XCTestCase {
-
     func testAllCasesPresent() {
         let all = JP3DProgressionMode.allCases
         XCTAssertEqual(all.count, 8)
@@ -163,7 +158,6 @@ final class JP3DProgressionModeTests: XCTestCase {
 // MARK: - JP3DCacheManager Tests
 
 final class JP3DCacheManagerTests: XCTestCase {
-
     func makeKey(tx: Int = 0, ty: Int = 0, tz: Int = 0) -> JP3DPrecinct3D {
         JP3DPrecinct3D(tileX: tx, tileY: ty, tileZ: tz, resolutionLevel: 0, subband: 0, precinctIndex: 0)
     }
@@ -322,7 +316,6 @@ final class JP3DCacheManagerTests: XCTestCase {
 // MARK: - JP3DProgressiveDelivery Tests
 
 final class JP3DProgressiveDeliveryTests: XCTestCase {
-
     func makeVolume() -> J2KVolume {
         J2KVolume(width: 256, height: 256, depth: 64, componentCount: 1, bitDepth: 16)
     }
@@ -418,7 +411,6 @@ final class JP3DProgressiveDeliveryTests: XCTestCase {
 // MARK: - JP3DJPIPClient Tests
 
 final class JP3DJPIPClientTests: XCTestCase {
-
     func makeClient() -> JP3DJPIPClient {
         JP3DJPIPClient(serverURL: URL(string: "ws://localhost:8080")!)
     }
@@ -527,7 +519,6 @@ final class JP3DJPIPClientTests: XCTestCase {
 // MARK: - JP3DJPIPServer Tests
 
 final class JP3DJPIPServerTests: XCTestCase {
-
     func makeServer(maxSessions: Int = 10) -> JP3DJPIPServer {
         JP3DJPIPServer(configuration: JP3DServerConfiguration(maxSessions: maxSessions, maxFullVolumeBytes: 1000))
     }

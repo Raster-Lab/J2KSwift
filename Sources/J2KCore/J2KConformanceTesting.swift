@@ -530,7 +530,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
     ///
     /// - Returns: Array of ISO test case descriptors.
     public static func isoTestCaseCatalog() -> [ISOTestCase] {
-        return [
+        [
             // Profile 0 - Baseline Lossless Tests
             ISOTestCase(
                 identifier: "p0_01",
@@ -939,7 +939,7 @@ public struct J2KPlatformInfo: Sendable {
 
     /// The pointer size in bytes on the current platform.
     public static var pointerSize: Int {
-        return MemoryLayout<Int>.size
+        MemoryLayout<Int>.size
     }
 }
 
@@ -1718,7 +1718,6 @@ public struct HTJ2KTestVectorParser: Sendable {
 /// - ``InteroperabilityResult``
 /// - ``MarkerInfo``
 public struct J2KHTInteroperabilityValidator: Sendable {
-
     /// Well-known JPEG 2000 marker codes.
     public enum MarkerCode: UInt16, Sendable, CaseIterable {
         /// Start of Codestream.

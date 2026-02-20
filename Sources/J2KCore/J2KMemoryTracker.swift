@@ -25,14 +25,14 @@ internal actor J2KMemoryTracker {
     /// Configuration for the memory tracker.
     internal struct Configuration: Sendable {
         /// Maximum memory usage in bytes (0 = unlimited).
-        public let limit: Int
+        let limit: Int
 
         /// Whether to track detailed allocation statistics.
-        public let trackStatistics: Bool
+        let trackStatistics: Bool
 
         /// Memory pressure threshold (0.0 - 1.0).
         /// When usage exceeds this threshold, a warning is triggered.
-        public let pressureThreshold: Double
+        let pressureThreshold: Double
 
         /// Creates a new configuration.
         ///
@@ -40,7 +40,7 @@ internal actor J2KMemoryTracker {
         ///   - limit: Maximum memory in bytes (default: 0 = unlimited).
         ///   - trackStatistics: Whether to track detailed stats (default: true).
         ///   - pressureThreshold: Pressure threshold (default: 0.8).
-        public init(
+        init(
             limit: Int = 0,
             trackStatistics: Bool = true,
             pressureThreshold: Double = 0.8
@@ -54,22 +54,22 @@ internal actor J2KMemoryTracker {
     /// Memory usage statistics.
     internal struct Statistics: Sendable {
         /// Current memory usage in bytes.
-        public let currentUsage: Int
+        let currentUsage: Int
 
         /// Peak memory usage in bytes.
-        public let peakUsage: Int
+        let peakUsage: Int
 
         /// Total number of allocations.
-        public let allocationCount: Int
+        let allocationCount: Int
 
         /// Total number of deallocations.
-        public let deallocationCount: Int
+        let deallocationCount: Int
 
         /// Number of failed allocations (due to limit).
-        public let failedAllocations: Int
+        let failedAllocations: Int
 
         /// Current memory pressure (0.0 - 1.0).
-        public let pressure: Double
+        let pressure: Double
     }
 
     private let configuration: Configuration

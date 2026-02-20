@@ -229,7 +229,7 @@ public struct J2KWaveletKernel: Sendable, Equatable {
     ///
     /// - Returns: A ``J2KDWT1D/Filter`` enum case wrapping the custom filter.
     public func toDWTFilter() -> J2KDWT1D.Filter {
-        return .custom(toCustomFilter())
+        .custom(toCustomFilter())
     }
 
     // MARK: - Serialization

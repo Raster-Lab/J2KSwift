@@ -120,7 +120,6 @@ public enum J2KBlockSizeMode: Sendable, Equatable {
 /// let blockSize = analyzer.selectBlockSize(for: metrics, aggressiveness: .balanced)
 /// ```
 public struct J2KContentAnalyzer: Sendable {
-
     /// Creates a new content analyzer.
     public init() {}
 
@@ -143,7 +142,7 @@ public struct J2KContentAnalyzer: Sendable {
 
         var gradientSum: Double = 0.0
         let count = (width - 2) * (height - 2)
-        guard count > 0 else { return 0.0 }
+        guard !isEmpty else { return 0.0 }
 
         for y in 1..<(height - 1) {
             for x in 1..<(width - 1) {
@@ -238,7 +237,7 @@ public struct J2KContentAnalyzer: Sendable {
     ///   - frequencyEnergy: Frequency energy metric (0.0-1.0).
     /// - Returns: Texture complexity score in range [0.0, 1.0].
     public func computeTextureComplexity(edgeDensity: Double, frequencyEnergy: Double) -> Double {
-        return min(1.0, 0.4 * edgeDensity + 0.6 * frequencyEnergy)
+        min(1.0, 0.4 * edgeDensity + 0.6 * frequencyEnergy)
     }
 
     // MARK: - Full Region Analysis

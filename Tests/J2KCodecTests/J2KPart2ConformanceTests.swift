@@ -10,7 +10,6 @@ import XCTest
 
 /// Tests for Part 2 codestream marker extensions.
 final class J2KPart2ConformanceTests: XCTestCase {
-
     // MARK: - Part 2 Rsiz Capability Tests
 
     func testDefaultConfigProducesPart1Rsiz() throws {

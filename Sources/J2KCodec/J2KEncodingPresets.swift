@@ -632,7 +632,7 @@ extension J2KBitrateMode: CustomStringConvertible {
 
 extension J2KEncodingConfiguration: Equatable {
     public static func == (lhs: J2KEncodingConfiguration, rhs: J2KEncodingConfiguration) -> Bool {
-        return lhs.quality == rhs.quality &&
+        lhs.quality == rhs.quality &&
             lhs.lossless == rhs.lossless &&
             lhs.decompositionLevels == rhs.decompositionLevels &&
             lhs.codeBlockSize.width == rhs.codeBlockSize.width &&

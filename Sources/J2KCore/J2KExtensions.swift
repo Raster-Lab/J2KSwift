@@ -84,7 +84,7 @@ extension Array where Element == Int {
     ///
     /// - Returns: The standard deviation value.
     public var standardDeviation: Double {
-        return variance.squareRoot()
+        variance.squareRoot()
     }
 }
 
@@ -111,7 +111,7 @@ extension Array where Element == Double {
     ///
     /// - Returns: The standard deviation value.
     public var standardDeviation: Double {
-        return variance.squareRoot()
+        variance.squareRoot()
     }
 
     /// Normalizes the array values to the range [0, 1].

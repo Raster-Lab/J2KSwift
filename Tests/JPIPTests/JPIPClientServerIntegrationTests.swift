@@ -19,7 +19,7 @@ final class JPIPClientServerIntegrationTests: XCTestCase {
         }
 
         func sendRequest(_ request: JPIPRequest) async throws -> JPIPResponse {
-            return try await server.handleRequest(request)
+            try await server.handleRequest(request)
         }
     }
 

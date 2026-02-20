@@ -42,7 +42,7 @@ import Accelerate
 public struct J2KVImageIntegration: Sendable {
     /// Creates a new vImage processor.
     public init() {}
-    
+
     /// Indicates whether vImage is available.
     public static var isAvailable: Bool {
         #if canImport(Accelerate)
@@ -51,11 +51,11 @@ public struct J2KVImageIntegration: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - Format Conversion
-    
+
     #if canImport(Accelerate)
-    
+
     /// Converts YCbCr to RGB using vImage.
     ///
     /// Uses vImage's optimized color conversion for YCbCr 4:4:4 to RGB.
@@ -82,49 +82,49 @@ public struct J2KVImageIntegration: Sendable {
                 "vImage YCbCr conversion only supports 8-bit, got \(bitDepth)"
             )
         }
-        
+
         let pixelCount = width * height
         guard y.count == pixelCount && cb.count == pixelCount && cr.count == pixelCount else {
             throw J2KError.invalidParameter(
                 "Component sizes must match image dimensions"
             )
         }
-        
+
         // Create vImage buffers
         var yBuffer = vImage_Buffer()
         var cbBuffer = vImage_Buffer()
         var crBuffer = vImage_Buffer()
         var rgbBuffer = vImage_Buffer()
-        
+
         var mutableY = y
         var mutableCb = cb
         var mutableCr = cr
         var rgb = [UInt8](repeating: 0, count: pixelCount * 4) // RGBA
-        
+
         yBuffer.data = UnsafeMutableRawPointer(mutating: &mutableY)
         yBuffer.width = vImagePixelCount(width)
         yBuffer.height = vImagePixelCount(height)
         yBuffer.rowBytes = width
-        
+
         cbBuffer.data = UnsafeMutableRawPointer(mutating: &mutableCb)
         cbBuffer.width = vImagePixelCount(width)
         cbBuffer.height = vImagePixelCount(height)
         cbBuffer.rowBytes = width
-        
+
         crBuffer.data = UnsafeMutableRawPointer(mutating: &mutableCr)
         crBuffer.width = vImagePixelCount(width)
         crBuffer.height = vImagePixelCount(height)
         crBuffer.rowBytes = width
-        
+
         rgbBuffer.data = UnsafeMutableRawPointer(mutating: &rgb)
         rgbBuffer.width = vImagePixelCount(width)
         rgbBuffer.height = vImagePixelCount(height)
         rgbBuffer.rowBytes = width * 4
-        
+
         // ITU-R BT.601 conversion matrix
         var infoYpCbCrToARGB = vImage_YpCbCrToARGB()
         infoYpCbCrToARGB.opaque = 255
-        
+
         let error = vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(
             &yBuffer,
             &cbBuffer,
@@ -135,16 +135,16 @@ public struct J2KVImageIntegration: Sendable {
             255,
             vImage_Flags(kvImageNoFlags)
         )
-        
+
         guard error == kvImageNoError else {
             throw J2KError.internalError(
                 "vImage YCbCr to RGB conversion failed with error \(error)"
             )
         }
-        
+
         return rgb
     }
-    
+
     /// Converts RGB to YCbCr using vImage.
     ///
     /// - Parameters:
@@ -165,47 +165,47 @@ public struct J2KVImageIntegration: Sendable {
                 "vImage RGB conversion only supports 8-bit, got \(bitDepth)"
             )
         }
-        
+
         let pixelCount = width * height
         guard rgb.count >= pixelCount * 4 else {
             throw J2KError.invalidParameter(
                 "RGB data must have at least \(pixelCount * 4) bytes for \(width)×\(height) RGBA"
             )
         }
-        
+
         var rgbBuffer = vImage_Buffer()
         var yBuffer = vImage_Buffer()
         var cbBuffer = vImage_Buffer()
         var crBuffer = vImage_Buffer()
-        
+
         var mutableRGB = rgb
         var y = [UInt8](repeating: 0, count: pixelCount)
         var cb = [UInt8](repeating: 0, count: pixelCount)
         var cr = [UInt8](repeating: 0, count: pixelCount)
-        
+
         rgbBuffer.data = UnsafeMutableRawPointer(mutating: &mutableRGB)
         rgbBuffer.width = vImagePixelCount(width)
         rgbBuffer.height = vImagePixelCount(height)
         rgbBuffer.rowBytes = width * 4
-        
+
         yBuffer.data = UnsafeMutableRawPointer(mutating: &y)
         yBuffer.width = vImagePixelCount(width)
         yBuffer.height = vImagePixelCount(height)
         yBuffer.rowBytes = width
-        
+
         cbBuffer.data = UnsafeMutableRawPointer(mutating: &cb)
         cbBuffer.width = vImagePixelCount(width)
         cbBuffer.height = vImagePixelCount(height)
         cbBuffer.rowBytes = width
-        
+
         crBuffer.data = UnsafeMutableRawPointer(mutating: &cr)
         crBuffer.width = vImagePixelCount(width)
         crBuffer.height = vImagePixelCount(height)
         crBuffer.rowBytes = width
-        
+
         // ITU-R BT.601 conversion matrix
         var infoARGBToYpCbCr = vImage_ARGBToYpCbCr()
-        
+
         let error = vImageConvert_ARGB8888To420Yp8_Cb8_Cr8(
             &rgbBuffer,
             &yBuffer,
@@ -216,18 +216,18 @@ public struct J2KVImageIntegration: Sendable {
             255,
             vImage_Flags(kvImageNoFlags)
         )
-        
+
         guard error == kvImageNoError else {
             throw J2KError.internalError(
                 "vImage RGB to YCbCr conversion failed with error \(error)"
             )
         }
-        
+
         return (y: y, cb: cb, cr: cr)
     }
-    
+
     // MARK: - Resampling and Interpolation
-    
+
     /// Resamples image data using high-quality Lanczos interpolation.
     ///
     /// - Parameters:
@@ -248,48 +248,48 @@ public struct J2KVImageIntegration: Sendable {
                 "Only 1 (grayscale) or 4 (RGBA) channels supported, got \(channels)"
             )
         }
-        
+
         let expectedSize = fromSize.width * fromSize.height * channels
         guard data.count == expectedSize else {
             throw J2KError.invalidParameter(
                 "Data size must be \(expectedSize) for \(fromSize.width)×\(fromSize.height)×\(channels)"
             )
         }
-        
+
         var srcBuffer = vImage_Buffer()
         var dstBuffer = vImage_Buffer()
-        
+
         var mutableData = data
         var output = [UInt8](repeating: 0, count: toSize.width * toSize.height * channels)
-        
+
         srcBuffer.data = UnsafeMutableRawPointer(mutating: &mutableData)
         srcBuffer.width = vImagePixelCount(fromSize.width)
         srcBuffer.height = vImagePixelCount(fromSize.height)
         srcBuffer.rowBytes = fromSize.width * channels
-        
+
         dstBuffer.data = UnsafeMutableRawPointer(mutating: &output)
         dstBuffer.width = vImagePixelCount(toSize.width)
         dstBuffer.height = vImagePixelCount(toSize.height)
         dstBuffer.rowBytes = toSize.width * channels
-        
+
         let error = vImageScale_Planar8(
             &srcBuffer,
             &dstBuffer,
             nil,
             vImage_Flags(kvImageHighQualityResampling)
         )
-        
+
         guard error == kvImageNoError else {
             throw J2KError.internalError(
                 "vImage resampling failed with error \(error)"
             )
         }
-        
+
         return output
     }
-    
+
     // MARK: - Geometric Transforms
-    
+
     /// Rotates image data by 90, 180, or 270 degrees.
     ///
     /// - Parameters:
@@ -312,41 +312,41 @@ public struct J2KVImageIntegration: Sendable {
                 "Rotation must be 90, 180, or 270 degrees, got \(degrees)"
             )
         }
-        
+
         guard channels == 1 || channels == 4 else {
             throw J2KError.invalidParameter(
                 "Only 1 (grayscale) or 4 (RGBA) channels supported, got \(channels)"
             )
         }
-        
+
         let expectedSize = width * height * channels
         guard data.count == expectedSize else {
             throw J2KError.invalidParameter(
                 "Data size must be \(expectedSize) for \(width)×\(height)×\(channels)"
             )
         }
-        
+
         var srcBuffer = vImage_Buffer()
         var dstBuffer = vImage_Buffer()
-        
+
         var mutableData = data
-        
+
         // Determine output dimensions
         let (outWidth, outHeight) = degrees == 180 ?
             (width, height) : (height, width)
-        
+
         var output = [UInt8](repeating: 0, count: outWidth * outHeight * channels)
-        
+
         srcBuffer.data = UnsafeMutableRawPointer(mutating: &mutableData)
         srcBuffer.width = vImagePixelCount(width)
         srcBuffer.height = vImagePixelCount(height)
         srcBuffer.rowBytes = width * channels
-        
+
         dstBuffer.data = UnsafeMutableRawPointer(mutating: &output)
         dstBuffer.width = vImagePixelCount(outWidth)
         dstBuffer.height = vImagePixelCount(outHeight)
         dstBuffer.rowBytes = outWidth * channels
-        
+
         let rotationConstant: UInt8
         switch degrees {
         case 90:
@@ -358,7 +358,7 @@ public struct J2KVImageIntegration: Sendable {
         default:
             throw J2KError.invalidParameter("Invalid rotation: \(degrees)")
         }
-        
+
         let error = vImageRotate90_Planar8(
             &srcBuffer,
             &dstBuffer,
@@ -366,18 +366,18 @@ public struct J2KVImageIntegration: Sendable {
             0, // background fill color
             vImage_Flags(kvImageNoFlags)
         )
-        
+
         guard error == kvImageNoError else {
             throw J2KError.internalError(
                 "vImage rotation failed with error \(error)"
             )
         }
-        
+
         return (data: output, width: outWidth, height: outHeight)
     }
-    
+
     // MARK: - Alpha Blending and Compositing
-    
+
     /// Alpha blends two RGBA images.
     ///
     /// Performs Porter-Duff source-over compositing: result = foreground + background * (1 - alpha)
@@ -401,45 +401,45 @@ public struct J2KVImageIntegration: Sendable {
                 "Foreground and background must be \(expectedSize) bytes for \(width)×\(height) RGBA"
             )
         }
-        
+
         var fgBuffer = vImage_Buffer()
         var bgBuffer = vImage_Buffer()
         var dstBuffer = vImage_Buffer()
-        
+
         var mutableFG = foreground
         var mutableBG = background
         var output = [UInt8](repeating: 0, count: expectedSize)
-        
+
         fgBuffer.data = UnsafeMutableRawPointer(mutating: &mutableFG)
         fgBuffer.width = vImagePixelCount(width)
         fgBuffer.height = vImagePixelCount(height)
         fgBuffer.rowBytes = width * 4
-        
+
         bgBuffer.data = UnsafeMutableRawPointer(mutating: &mutableBG)
         bgBuffer.width = vImagePixelCount(width)
         bgBuffer.height = vImagePixelCount(height)
         bgBuffer.rowBytes = width * 4
-        
+
         dstBuffer.data = UnsafeMutableRawPointer(mutating: &output)
         dstBuffer.width = vImagePixelCount(width)
         dstBuffer.height = vImagePixelCount(height)
         dstBuffer.rowBytes = width * 4
-        
+
         let error = vImagePremultipliedAlphaBlend_ARGB8888(
             &fgBuffer,
             &bgBuffer,
             &dstBuffer,
             vImage_Flags(kvImageNoFlags)
         )
-        
+
         guard error == kvImageNoError else {
             throw J2KError.internalError(
                 "vImage alpha blend failed with error \(error)"
             )
         }
-        
+
         return output
     }
-    
+
     #endif
 }

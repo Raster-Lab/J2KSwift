@@ -103,7 +103,7 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// Coefficients are passed through without modification.
     /// Only valid when used with the reversible (5/3) wavelet transform.
     case noQuantization
-    
+
     /// Trellis coded quantization (TCQ).
     ///
     /// Uses a trellis structure and Viterbi algorithm to select
@@ -178,7 +178,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// Only used when `implicitStepSizes` is false.
     /// Keys should be subband names at specific levels (e.g., "HL1", "HH2").
     public let explicitStepSizes: [String: Double]
-    
+
     /// TCQ configuration (only used when mode is .trellis).
     ///
     /// Configures the trellis coded quantization behavior.
@@ -225,7 +225,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         mode: .noQuantization,
         baseStepSize: 1.0
     )
-    
+
     /// Parameters for trellis coded quantization (default TCQ settings).
     public static let trellis = J2KQuantizationParameters(
         mode: .trellis,
@@ -580,7 +580,7 @@ public struct J2KQuantizer: Sendable {
             let magnitude = abs(coefficient)
             let quantizedMag = floor(magnitude / stepSize)
             return Int32(sign * quantizedMag)
-            
+
         case .trellis:
             // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign = coefficient >= 0 ? 1.0 : -1.0
@@ -631,7 +631,7 @@ public struct J2KQuantizer: Sendable {
             let magnitude = abs(coefficient)
             let quantizedMag = Int32(Double(magnitude) / stepSize)
             return sign * quantizedMag
-            
+
         case .trellis:
             // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
@@ -815,7 +815,7 @@ public struct J2KQuantizer: Sendable {
             let sign = index >= 0 ? 1.0 : -1.0
             let magnitude = Double(abs(index)) + 0.5
             return sign * magnitude * stepSize
-            
+
         case .trellis:
             // TCQ dequantization (midpoint reconstruction)
             if index == 0 {

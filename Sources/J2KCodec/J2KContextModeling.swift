@@ -92,7 +92,7 @@ enum EBCOTContext: UInt8, Sendable, CaseIterable {
     case uniform = 18
 
     /// The initial context state index for this context label.
-    public var initialState: UInt8 {
+    var initialState: UInt8 {
         switch self {
         case .sigPropLL_LH_0, .sigPropLL_LH_1h, .sigPropLL_LH_1v, .sigPropLL_LH_2,
              .sigPropLL_LH_1d, .sigPropHL_h, .sigPropHL_v, .sigPropHH_h, .sigPropHH_v:
@@ -117,24 +117,20 @@ enum EBCOTContext: UInt8, Sendable, CaseIterable {
 struct CoefficientState: OptionSet, Sendable {
     let rawValue: UInt8
 
-    init(rawValue: UInt8) {
-        self.rawValue = rawValue
-    }
-
     /// The coefficient has become significant (non-zero bit found).
-    public static let significant = CoefficientState(rawValue: 1 << 0)
+    static let significant = CoefficientState(rawValue: 1 << 0)
 
     /// The coefficient was coded in the current bit-plane.
-    public static let codedThisPass = CoefficientState(rawValue: 1 << 1)
+    static let codedThisPass = CoefficientState(rawValue: 1 << 1)
 
     /// The sign of the coefficient (if significant): false = positive, true = negative.
-    public static let signBit = CoefficientState(rawValue: 1 << 2)
+    static let signBit = CoefficientState(rawValue: 1 << 2)
 
     /// The coefficient has been visited in a magnitude refinement pass.
-    public static let refinementVisited = CoefficientState(rawValue: 1 << 3)
+    static let refinementVisited = CoefficientState(rawValue: 1 << 3)
 
     /// The coefficient is in the current cleanup pass's stripe.
-    public static let inStripe = CoefficientState(rawValue: 1 << 4)
+    static let inStripe = CoefficientState(rawValue: 1 << 4)
 }
 
 // MARK: - Neighbor Contribution
@@ -177,12 +173,12 @@ struct NeighborContribution: Sendable {
 
     /// Total number of significant neighbors.
     var total: Int {
-        return horizontal + vertical + diagonal
+        horizontal + vertical + diagonal
     }
 
     /// Whether any neighbors are significant.
     var hasAny: Bool {
-        return total > 0
+        total > 0
     }
 }
 
@@ -196,13 +192,6 @@ struct NeighborContribution: Sendable {
 struct ContextModeler: Sendable {
     /// The subband type for context formation.
     let subband: J2KSubband
-
-    /// Creates a context modeler for the specified subband.
-    ///
-    /// - Parameter subband: The wavelet subband type.
-    init(subband: J2KSubband) {
-        self.subband = subband
-    }
 
     /// Computes the significance coding context for a coefficient.
     ///
@@ -412,16 +401,6 @@ struct NeighborCalculator: Sendable {
 
     /// The height of the code-block.
     let height: Int
-
-    /// Creates a neighbor calculator for the specified code-block dimensions.
-    ///
-    /// - Parameters:
-    ///   - width: The width of the code-block.
-    ///   - height: The height of the code-block.
-    init(width: Int, height: Int) {
-        self.width = width
-        self.height = height
-    }
 
     /// Calculates the neighbor contribution for a coefficient.
     ///

@@ -158,7 +158,7 @@ final class J2KParallelCodeBlockTests: XCTestCase {
         // Generate random coefficients of varying sizes
         for _ in 0..<10 {
             let count = Int.random(in: 1...256)
-            let coefficients = (0..<count).map { _ in Int32.random(in: Int32.min/2...Int32.max/2) }
+            let coefficients = (0..<count).map { _ in Int32.random(in: Int32.min / 2...Int32.max / 2) }
 
             let simdResult = EncoderPipeline.maxAbsValue(coefficients)
             let scalarResult = coefficients.reduce(Int32(0)) { max($0, abs($1)) }

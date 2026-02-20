@@ -6,7 +6,6 @@ import XCTest
 /// Validates correctness of SIMD implementations by comparing against
 /// scalar reference computations for all supported operations.
 final class J2KHTSIMDTests: XCTestCase {
-
     let processor = HTSIMDProcessor()
 
     // MARK: - Capability Detection Tests

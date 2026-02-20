@@ -293,7 +293,7 @@ public struct J2KDWT2DTiled: Sendable {
         // Apply standard 2D DWT to the tile
         // Since the tile has already been extracted, boundary extension
         // naturally occurs at tile edges without crossing tile boundaries
-        return try J2KDWT2D.forwardDecomposition(
+        try J2KDWT2D.forwardDecomposition(
             image: tileData,
             levels: levels,
             filter: filter,
@@ -346,7 +346,7 @@ public struct J2KDWT2DTiled: Sendable {
         filter: J2KDWT1D.Filter,
         boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
     ) throws -> [[Int32]] {
-        return try J2KDWT2D.inverseDecomposition(
+        try J2KDWT2D.inverseDecomposition(
             decomposition: decomposition,
             filter: filter,
             boundaryExtension: boundaryExtension

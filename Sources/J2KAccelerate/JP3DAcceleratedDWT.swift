@@ -37,7 +37,6 @@ import Accelerate
 ///     data: volume, width: 64, height: 64, depth: 32, filter: 0)
 /// ```
 public struct JP3DAcceleratedDWT: Sendable {
-
     // MARK: - Availability
 
     /// `true` when the Accelerate framework is available on the current platform.
@@ -75,8 +74,8 @@ public struct JP3DAcceleratedDWT: Sendable {
 
         // Helper: symmetric boundary read
         func x(_ i: Int) -> Float {
-            if i < 0       { return signal[min(-i, n - 1)] }
-            if i >= n      { return signal[max(2 * (n - 1) - i, 0)] }
+            if i < 0 { return signal[min(-i, n - 1)] }
+            if i >= n { return signal[max(2 * (n - 1) - i, 0)] }
             return signal[i]
         }
 
@@ -88,8 +87,8 @@ public struct JP3DAcceleratedDWT: Sendable {
 
         // Update step: L[k] = x[2k] + floor((H[k-1] + H[k] + 2) / 4)
         func h(_ k: Int) -> Float {
-            if k < 0    { return high[0] }
-            if k >= nH  { return high[nH - 1] }
+            if k < 0 { return high[0] }
+            if k >= nH { return high[nH - 1] }
             return high[k]
         }
         for k in 0 ..< nL {
@@ -119,8 +118,8 @@ public struct JP3DAcceleratedDWT: Sendable {
         var out = [Float](repeating: 0, count: n)
 
         func h(_ k: Int) -> Float {
-            if k < 0    { return highpass[0] }
-            if k >= nH  { return highpass[nH - 1] }
+            if k < 0 { return highpass[0] }
+            if k >= nH { return highpass[nH - 1] }
             return highpass[k]
         }
 
@@ -132,8 +131,8 @@ public struct JP3DAcceleratedDWT: Sendable {
 
         // Undo predict: x[2k+1] = H[k] + floor((x[2k] + x[2k+2]) / 2)
         func ev(_ i: Int) -> Float {
-            if i < 0   { return out[0] }
-            if i >= n  { return out[n - 1] }
+            if i < 0 { return out[0] }
+            if i >= n { return out[n - 1] }
             return out[i]
         }
         for k in 0 ..< nH {
@@ -148,10 +147,10 @@ public struct JP3DAcceleratedDWT: Sendable {
 
     // CDF 9/7 lifting constants (Cohen–Daubechies–Feauveau)
     private static let alpha97: Float = -1.586_134_342
-    private static let beta97:  Float = -0.052_980_118
-    private static let gamma97: Float =  0.882_911_075
-    private static let delta97: Float =  0.443_506_852
-    private static let K97:     Float =  1.149_604_398   // subband scaling factor
+    private static let beta97: Float = -0.052_980_118
+    private static let gamma97: Float = 0.882_911_075
+    private static let delta97: Float = 0.443_506_852
+    private static let K97: Float = 1.149_604_398   // subband scaling factor
 
     /// Forward 9/7 CDF lifting transform along a 1-D signal.
     ///
@@ -170,7 +169,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         // Symmetric boundary helper (whole-sample symmetric, JPEG 2000 convention)
         func s(_ i: Int) -> Float {
             var idx = i
-            if idx < 0  { idx = -idx }
+            if idx < 0 { idx = -idx }
             if idx >= n { idx = 2 * (n - 1) - idx }
             idx = max(0, min(n - 1, idx))
             return buf[idx]
@@ -211,10 +210,10 @@ public struct JP3DAcceleratedDWT: Sendable {
         for k in 0 ..< nH { high[k] = buf[2 * k + 1] }
 
         #if canImport(Accelerate)
-        low  = vDSP.multiply(K97,  low)
+        low  = vDSP.multiply(K97, low)
         high = vDSP.multiply(invK, high)
         #else
-        low  = low.map  { $0 * K97  }
+        low  = low.map { $0 * K97   }
         high = high.map { $0 * invK }
         #endif
 
@@ -244,11 +243,11 @@ public struct JP3DAcceleratedDWT: Sendable {
         var scaledHigh = highpass
 
         #if canImport(Accelerate)
-        scaledLow  = vDSP.multiply(invK,  scaledLow)
-        scaledHigh = vDSP.multiply(K97,   scaledHigh)
+        scaledLow  = vDSP.multiply(invK, scaledLow)
+        scaledHigh = vDSP.multiply(K97, scaledHigh)
         #else
-        scaledLow  = scaledLow.map  { $0 * invK }
-        scaledHigh = scaledHigh.map { $0 * K97  }
+        scaledLow  = scaledLow.map { $0 * invK }
+        scaledHigh = scaledHigh.map { $0 * K97   }
         #endif
 
         // Reassemble interleaved buffer
@@ -258,7 +257,7 @@ public struct JP3DAcceleratedDWT: Sendable {
 
         func s(_ i: Int) -> Float {
             var idx = i
-            if idx < 0  { idx = -idx }
+            if idx < 0 { idx = -idx }
             if idx >= n { idx = 2 * (n - 1) - idx }
             idx = max(0, min(n - 1, idx))
             return buf[idx]
@@ -375,7 +374,7 @@ public struct JP3DAcceleratedDWT: Sendable {
                 }
                 let (lCol, hCol) = forward1D(col, filter: filter)
 
-                for y in 0 ..< hL { low[z  * hL * width + y * width + x]  = lCol[y] }
+                for y in 0 ..< hL { low[z * hL * width + y * width + x]  = lCol[y] }
                 for y in 0 ..< hH { high[z * hH * width + y * width + x]  = hCol[y] }
             }
         }
@@ -414,7 +413,7 @@ public struct JP3DAcceleratedDWT: Sendable {
                 }
                 let (lVec, hVec) = forward1D(vec, filter: filter)
 
-                for z in 0 ..< dL { low[z  * height * width + y * width + x]  = lVec[z] }
+                for z in 0 ..< dL { low[z * height * width + y * width + x]  = lVec[z] }
                 for z in 0 ..< dH { high[z * height * width + y * width + x]  = hVec[z] }
             }
         }
@@ -484,7 +483,7 @@ public struct JP3DAcceleratedDWT: Sendable {
             for x in 0 ..< width {
                 var lCol = [Float](repeating: 0, count: hL)
                 var hCol = [Float](repeating: 0, count: hH)
-                for y in 0 ..< hL { lCol[y] = low[z  * hL * width + y * width + x] }
+                for y in 0 ..< hL { lCol[y] = low[z * hL * width + y * width + x] }
                 for y in 0 ..< hH { hCol[y] = high[z * hH * width + y * width + x] }
                 let col = inverse1D(low: lCol, high: hCol, filter: filter)
 
@@ -519,7 +518,7 @@ public struct JP3DAcceleratedDWT: Sendable {
             for x in 0 ..< width {
                 var lVec = [Float](repeating: 0, count: dL)
                 var hVec = [Float](repeating: 0, count: dH)
-                for z in 0 ..< dL { lVec[z] = low[z  * height * width + y * width + x] }
+                for z in 0 ..< dL { lVec[z] = low[z * height * width + y * width + x] }
                 for z in 0 ..< dH { hVec[z] = high[z * height * width + y * width + x] }
                 let vec = inverse1D(low: lVec, high: hVec, filter: filter)
 

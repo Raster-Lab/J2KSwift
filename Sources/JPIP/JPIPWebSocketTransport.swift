@@ -789,4 +789,3 @@ public actor JPIPWebSocketTransport {
         keepaliveInterval
     }
 }
-

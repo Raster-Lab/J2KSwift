@@ -26,13 +26,13 @@ import J2KCore
 public struct J2KComponentDependency: Sendable {
     /// The index of the output (dependent) component.
     public let outputComponent: Int
-    
+
     /// The input components this depends on (index, weight pairs).
     ///
     /// For example: `[(0, 0.5), (1, 0.3)]` means:
     /// `output = input - 0.5*component[0] - 0.3*component[1]`
     public let dependencies: [(component: Int, weight: Double)]
-    
+
     /// Creates a new component dependency.
     ///
     /// - Parameters:
@@ -70,10 +70,10 @@ public struct J2KComponentDependency: Sendable {
 public struct J2KDependencyChain: Sendable {
     /// Total number of components.
     public let componentCount: Int
-    
+
     /// The dependency relationships in evaluation order.
     public let dependencies: [J2KComponentDependency]
-    
+
     /// Creates a new dependency chain.
     ///
     /// - Parameters:
@@ -84,7 +84,7 @@ public struct J2KDependencyChain: Sendable {
         guard componentCount > 0 else {
             throw J2KError.invalidParameter("Component count must be positive")
         }
-        
+
         // Validate dependencies
         for dep in dependencies {
             guard dep.outputComponent >= 0 && dep.outputComponent < componentCount else {
@@ -92,14 +92,14 @@ public struct J2KDependencyChain: Sendable {
                     "Output component \(dep.outputComponent) out of range [0, \(componentCount))"
                 )
             }
-            
+
             for (inputIdx, _) in dep.dependencies {
                 guard inputIdx >= 0 && inputIdx < componentCount else {
                     throw J2KError.invalidParameter(
                         "Input component \(inputIdx) out of range [0, \(componentCount))"
                     )
                 }
-                
+
                 // Ensure no circular dependencies (input must be evaluated before output)
                 guard inputIdx < dep.outputComponent else {
                     throw J2KError.invalidParameter(
@@ -108,7 +108,7 @@ public struct J2KDependencyChain: Sendable {
                 }
             }
         }
-        
+
         self.componentCount = componentCount
         self.dependencies = dependencies
     }
@@ -123,10 +123,10 @@ public struct J2KHierarchicalTransform: Sendable {
     ///
     /// Each stage is a dependency chain that operates on a subset of components.
     public let stages: [J2KDependencyChain]
-    
+
     /// Total number of components across all stages.
     public let totalComponents: Int
-    
+
     /// Creates a new hierarchical transform.
     ///
     /// - Parameters:
@@ -137,7 +137,7 @@ public struct J2KHierarchicalTransform: Sendable {
         guard !stages.isEmpty else {
             throw J2KError.invalidParameter("Must have at least one stage")
         }
-        
+
         self.stages = stages
         self.totalComponents = totalComponents
     }
@@ -178,9 +178,9 @@ public struct J2KHierarchicalTransform: Sendable {
 public struct J2KMCTDependencyTransform: Sendable {
     /// Creates a new dependency transform.
     public init() {}
-    
+
     // MARK: - Forward Transform
-    
+
     /// Applies a forward dependency transform.
     ///
     /// Transforms components according to the dependency chain:
@@ -200,26 +200,26 @@ public struct J2KMCTDependencyTransform: Sendable {
                 "Component count (\(components.count)) must match chain component count (\(chain.componentCount))"
             )
         }
-        
+
         guard !components.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let sampleCount = components[0].count
         guard components.allSatisfy({ $0.count == sampleCount }) else {
             throw J2KError.invalidParameter("All components must have the same sample count")
         }
-        
+
         // Initialize output with input (identity for non-dependent components)
         var output = components
-        
+
         // Apply each dependency in order
         for dependency in chain.dependencies {
             let outputIdx = dependency.outputComponent
-            
+
             // Start with original component values
             var transformedValues = components[outputIdx]
-            
+
             // Subtract weighted predictions from dependent components
             for (inputIdx, weight) in dependency.dependencies {
                 let inputValues = output[inputIdx]
@@ -227,15 +227,15 @@ public struct J2KMCTDependencyTransform: Sendable {
                     transformedValues[i] -= weight * inputValues[i]
                 }
             }
-            
+
             output[outputIdx] = transformedValues
         }
-        
+
         return output
     }
-    
+
     // MARK: - Inverse Transform
-    
+
     /// Applies an inverse dependency transform.
     ///
     /// Reconstructs original components from dependency-transformed data.
@@ -254,27 +254,27 @@ public struct J2KMCTDependencyTransform: Sendable {
                 "Component count (\(components.count)) must match chain component count (\(chain.componentCount))"
             )
         }
-        
+
         guard !components.isEmpty else {
             throw J2KError.invalidParameter("Components cannot be empty")
         }
-        
+
         let sampleCount = components[0].count
         guard components.allSatisfy({ $0.count == sampleCount }) else {
             throw J2KError.invalidParameter("All components must have the same sample count")
         }
-        
+
         // Initialize output with input
         var output = components
-        
+
         // Apply dependencies in order (forward through the chain)
         // Inverse is additive reconstruction, but uses the transformed (input) values for dependencies
         for dependency in chain.dependencies {
             let outputIdx = dependency.outputComponent
-            
+
             // Start with transformed values from output (accumulated state)
             var reconstructedValues = output[outputIdx]
-            
+
             // Add back weighted predictions from dependent components
             // IMPORTANT: Use the original transformed (input) values, not accumulated reconstructions
             for (inputIdx, weight) in dependency.dependencies {
@@ -283,15 +283,15 @@ public struct J2KMCTDependencyTransform: Sendable {
                     reconstructedValues[i] += weight * inputValues[i]
                 }
             }
-            
+
             output[outputIdx] = reconstructedValues
         }
-        
+
         return output
     }
-    
+
     // MARK: - Hierarchical Transform
-    
+
     /// Applies a forward hierarchical transform with multiple stages.
     ///
     /// - Parameters:
@@ -304,15 +304,15 @@ public struct J2KMCTDependencyTransform: Sendable {
         transform: J2KHierarchicalTransform
     ) throws -> [[Double]] {
         var output = components
-        
+
         // Apply each stage in order
         for stage in transform.stages {
             output = try forwardTransform(components: output, chain: stage)
         }
-        
+
         return output
     }
-    
+
     /// Applies an inverse hierarchical transform with multiple stages.
     ///
     /// - Parameters:
@@ -325,12 +325,12 @@ public struct J2KMCTDependencyTransform: Sendable {
         transform: J2KHierarchicalTransform
     ) throws -> [[Double]] {
         var output = components
-        
+
         // Apply stages in reverse order for inverse
         for stage in transform.stages.reversed() {
             output = try inverseTransform(components: output, chain: stage)
         }
-        
+
         return output
     }
 }
@@ -357,7 +357,7 @@ extension J2KDependencyChain {
             )
         ]
     )
-    
+
     /// Simple averaging decorrelation for 4 components.
     ///
     /// Each component is decorrelated from the immediately previous component only:
@@ -390,17 +390,17 @@ public struct J2KMCTDependencyConfiguration: Sendable {
     public enum TransformType: Sendable {
         /// Single-stage dependency chain
         case chain(J2KDependencyChain)
-        
+
         /// Multi-stage hierarchical transform
         case hierarchical(J2KHierarchicalTransform)
     }
-    
+
     /// The transform type.
     public let transform: TransformType
-    
+
     /// Whether to optimize dependency graph evaluation order.
     public let optimizeEvaluation: Bool
-    
+
     /// Creates a new dependency configuration.
     ///
     /// - Parameters:

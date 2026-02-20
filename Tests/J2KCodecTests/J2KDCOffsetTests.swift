@@ -10,7 +10,6 @@ import J2KCore
 
 /// Comprehensive tests for DC offset and extended precision.
 final class J2KDCOffsetTests: XCTestCase {
-
     // MARK: - DC Offset Configuration Tests
 
     func testDefaultConfiguration() {

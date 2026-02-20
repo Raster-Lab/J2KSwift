@@ -27,9 +27,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests forward ICT with a known RGB input.
     func testForwardICTBasic() throws {
         #if canImport(Accelerate)
-        let red =   [0.5, 1.0, 0.0, 0.25]
+        let red = [0.5, 1.0, 0.0, 0.25]
         let green = [0.5, 0.0, 1.0, 0.50]
-        let blue =  [0.5, 0.0, 0.0, 0.75]
+        let blue = [0.5, 0.0, 0.0, 0.75]
 
         let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
 
@@ -49,9 +49,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests forward ICT with pure red input.
     func testForwardICTPureRed() throws {
         #if canImport(Accelerate)
-        let red =   [1.0]
+        let red = [1.0]
         let green = [0.0]
-        let blue =  [0.0]
+        let blue = [0.0]
 
         let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
 
@@ -66,9 +66,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests forward ICT with pure green input.
     func testForwardICTPureGreen() throws {
         #if canImport(Accelerate)
-        let red =   [0.0]
+        let red = [0.0]
         let green = [1.0]
-        let blue =  [0.0]
+        let blue = [0.0]
 
         let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
 
@@ -83,9 +83,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests forward ICT with pure blue input.
     func testForwardICTPureBlue() throws {
         #if canImport(Accelerate)
-        let red =   [0.0]
+        let red = [0.0]
         let green = [0.0]
-        let blue =  [1.0]
+        let blue = [1.0]
 
         let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
 
@@ -100,9 +100,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests forward ICT input validation: mismatched sizes.
     func testForwardICTMismatchedSizes() throws {
         #if canImport(Accelerate)
-        let red =   [1.0, 2.0]
+        let red = [1.0, 2.0]
         let green = [1.0]
-        let blue =  [1.0]
+        let blue = [1.0]
 
         XCTAssertThrowsError(try transform.forwardICT(red: red, green: green, blue: blue)) { error in
             guard case J2KError.invalidParameter = error else {
@@ -135,7 +135,7 @@ final class J2KAccelerateICTTests: XCTestCase {
     func testInverseICTBasic() throws {
         #if canImport(Accelerate)
         // Pure luminance (Y=0.5, Cb=0, Cr=0) should produce gray
-        let y =  [0.5]
+        let y = [0.5]
         let cb = [0.0]
         let cr = [0.0]
 
@@ -182,9 +182,9 @@ final class J2KAccelerateICTTests: XCTestCase {
     /// Tests that forward + inverse ICT produces the original values.
     func testICTRoundTrip() throws {
         #if canImport(Accelerate)
-        let red =   [0.2, 0.8, 0.0, 1.0, 0.5]
+        let red = [0.2, 0.8, 0.0, 1.0, 0.5]
         let green = [0.4, 0.1, 1.0, 0.0, 0.5]
-        let blue =  [0.6, 0.3, 0.5, 0.7, 0.5]
+        let blue = [0.6, 0.3, 0.5, 0.7, 0.5]
 
         let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
         let (rOut, gOut, bOut) = try transform.inverseICT(y: y, cb: cb, cr: cr)

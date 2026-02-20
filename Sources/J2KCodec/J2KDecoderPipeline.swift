@@ -223,13 +223,11 @@ struct DecoderPipeline: Sendable {
             case J2KMarker.qcd.rawValue:
                 // Parse QCD marker
                 quantizationSteps = try parseQCDMarker(&reader, config: configuration)
-
-            case J2KMarker.sot.rawValue:
+                case J2KMarker.sot.rawValue:
                 // Start of tile-part
                 let (_, tilepartData) = try parseSOTMarker(&reader)
                 tileData = tilepartData
                 // Break after first tile for now
-                break
 
             case J2KMarker.eoc.rawValue:
                 // End of codestream

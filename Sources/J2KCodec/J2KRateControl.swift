@@ -120,13 +120,13 @@ public struct RateControlConfiguration: Sendable {
 
     /// The distortion estimation method.
     public let distortionEstimation: DistortionEstimationMethod
-    
+
     /// Optional MCT configuration for distortion adjustment.
     ///
     /// When provided, rate-distortion optimization accounts for
     /// improved compression efficiency from MCT decorrelation.
     public let mctConfiguration: J2KMCTEncodingConfiguration?
-    
+
     /// Number of image components for MCT distortion estimation.
     public let componentCount: Int
 
@@ -381,7 +381,7 @@ public struct J2KRateControl: Sendable {
         let bitPlaneWeight = pow(2.0, Double(codeBlock.zeroBitPlanes * 2))
 
         var distortion = Double(samples) * bitPlaneWeight
-        
+
         // Apply MCT distortion adjustment if configured
         if let mctConfig = configuration.mctConfiguration {
             let mctAdjustment = J2KMCTDistortionAdjustment(
@@ -390,7 +390,7 @@ public struct J2KRateControl: Sendable {
             )
             distortion = mctAdjustment.adjustDistortion(distortion)
         }
-        
+
         return distortion
     }
 
@@ -685,10 +685,10 @@ public struct J2KDCOffsetDistortionAdjustment: Sendable {
 public struct J2KMCTDistortionAdjustment: Sendable {
     /// MCT encoding configuration.
     public let configuration: J2KMCTEncodingConfiguration
-    
+
     /// Number of image components.
     public let componentCount: Int
-    
+
     /// Creates an MCT distortion adjustment.
     ///
     /// - Parameters:
@@ -698,7 +698,7 @@ public struct J2KMCTDistortionAdjustment: Sendable {
         self.configuration = configuration
         self.componentCount = componentCount
     }
-    
+
     /// Estimates the compression efficiency gain from MCT application.
     ///
     /// Returns a factor (>= 1.0) indicating how much more efficiently
@@ -714,7 +714,7 @@ public struct J2KMCTDistortionAdjustment: Sendable {
         switch configuration.mode {
         case .disabled:
             return 1.0
-            
+
         case .arrayBased:
             // Array-based MCT provides decorrelation across all components
             // Typical gain: 10-30% for multi-spectral (4+ components)
@@ -722,14 +722,14 @@ public struct J2KMCTDistortionAdjustment: Sendable {
             let baseGain = componentCount >= 4 ? 0.15 : 0.08
             let componentBonus = Double(max(0, componentCount - 3)) * 0.03
             return 1.0 + baseGain + componentBonus
-            
+
         case .dependency:
             // Dependency transforms are more efficient for sparse correlation
             // Typical gain: 12-35% for multi-spectral imagery
             let baseGain = componentCount >= 4 ? 0.18 : 0.10
             let componentBonus = Double(max(0, componentCount - 3)) * 0.035
             return 1.0 + baseGain + componentBonus
-            
+
         case .adaptive:
             // Adaptive selection provides optimal transform per tile
             // Highest gain: 15-40% through content-aware decorrelation
@@ -738,7 +738,7 @@ public struct J2KMCTDistortionAdjustment: Sendable {
             return 1.0 + baseGain + componentBonus
         }
     }
-    
+
     /// Adjusts a distortion value for MCT-aware encoding.
     ///
     /// Scales the distortion estimate to account for improved decorrelation
@@ -750,7 +750,7 @@ public struct J2KMCTDistortionAdjustment: Sendable {
         let gain = compressionEfficiencyGain()
         return distortion / gain
     }
-    
+
     /// Estimates the distortion improvement for a specific tile.
     ///
     /// When per-tile MCT is configured, different tiles may have
@@ -768,7 +768,7 @@ public struct J2KMCTDistortionAdjustment: Sendable {
             let gain = compressionEfficiencyGain() * 1.05
             return distortion / gain
         }
-        
+
         // Use global MCT efficiency
         return adjustDistortion(distortion)
     }

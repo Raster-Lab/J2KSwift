@@ -10,7 +10,7 @@ import XCTest
 
 // MARK: - Quality Metrics Random Number Generator
 
-fileprivate struct QualityMetricsSeededRandom: RandomNumberGenerator {
+private struct QualityMetricsSeededRandom: RandomNumberGenerator {
     private var state: UInt64
 
     init(seed: UInt64) {

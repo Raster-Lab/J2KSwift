@@ -313,7 +313,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     /// - Parameter layers: Number of quality layers.
     /// - Returns: A quality-progressive encoding strategy.
     public static func qualityProgressive(layers: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .snr(layers: layers),
             snrScalable: true,
             spatialScalable: false
@@ -325,7 +325,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     /// - Parameter levels: Maximum decomposition level.
     /// - Returns: A resolution-progressive encoding strategy.
     public static func resolutionProgressive(levels: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .spatial(maxLevel: levels),
             snrScalable: false,
             spatialScalable: true
@@ -339,7 +339,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     ///   - levels: Maximum decomposition level.
     /// - Returns: A streaming-optimized encoding strategy.
     public static func streaming(layers: Int, levels: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .combined(qualityLayers: layers, decompositionLevels: levels),
             snrScalable: true,
             spatialScalable: true
@@ -410,6 +410,6 @@ extension J2KProgressiveMode: CustomStringConvertible {
 
 extension J2KRegion: CustomStringConvertible {
     public var description: String {
-        return "(\(x), \(y), \(width)×\(height))"
+        "(\(x), \(y), \(width)×\(height))"
     }
 }

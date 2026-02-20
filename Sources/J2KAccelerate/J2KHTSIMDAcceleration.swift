@@ -71,7 +71,7 @@ public struct HTSIMDCapability: Sendable, Equatable {
         // We use SIMD8 when available for wider vectorization.
         // The Swift compiler emits AVX2 instructions when targeting x86_64 with
         // appropriate flags, but SIMD8 operations will still work via two SSE ops.
-        return HTSIMDCapability(family: .sse42, vectorWidth: 4)
+        HTSIMDCapability(family: .sse42, vectorWidth: 4)
     }
     #endif
 }
@@ -146,7 +146,7 @@ public struct HTSIMDProcessor: Sendable {
         bitPlane: Int
     ) -> [Int32] {
         let count = coefficients.count
-        guard count > 0 else { return [] }
+        guard !isEmpty else { return [] }
 
         var result = [Int32](repeating: 0, count: count)
 
@@ -212,7 +212,7 @@ public struct HTSIMDProcessor: Sendable {
         coefficients: [Int32]
     ) -> (magnitudes: [Int32], signs: [Int32]) {
         let count = coefficients.count
-        guard count > 0 else { return ([], []) }
+        guard !isEmpty else { return ([], []) }
 
         var magnitudes = [Int32](repeating: 0, count: count)
         var signs = [Int32](repeating: 0, count: count)
@@ -292,7 +292,7 @@ public struct HTSIMDProcessor: Sendable {
         bitPlane: Int
     ) -> [Int32] {
         let count = coefficients.count
-        guard count > 0, significanceFlags.count == count else { return [] }
+        guard !isEmpty, significanceFlags.count == count else { return [] }
 
         var result = [Int32](repeating: 0, count: count)
 
@@ -450,7 +450,7 @@ public struct HTSIMDProcessor: Sendable {
     /// - Returns: The maximum absolute value.
     public func batchMaxAbsValue(coefficients: [Int32]) -> Int32 {
         let count = coefficients.count
-        guard count > 0 else { return 0 }
+        guard !isEmpty else { return 0 }
 
         let simdCount = count / 4
         let remainder = count - simdCount * 4
@@ -509,7 +509,7 @@ public struct HTSIMDProcessor: Sendable {
         signs: [Int32]
     ) -> [Int32] {
         let count = magnitudes.count
-        guard count > 0, signs.count == count else { return [] }
+        guard !isEmpty, signs.count == count else { return [] }
 
         var result = [Int32](repeating: 0, count: count)
 
@@ -577,7 +577,7 @@ public struct HTSIMDProcessor: Sendable {
         bitPlane: Int
     ) -> Int {
         let count = coefficients.count
-        guard count > 0 else { return 0 }
+        guard !isEmpty else { return 0 }
 
         let shift = Int32(bitPlane)
         let simdCount = count / 4

@@ -99,20 +99,20 @@ struct HTJ2KConfiguration: Sendable {
     }
 
     /// Default HTJ2K configuration for high-throughput encoding.
-    public static let `default` = HTJ2KConfiguration()
+    static let `default` = HTJ2KConfiguration()
 
     /// Lossless HTJ2K configuration using reversible transform.
-    public static let lossless = HTJ2KConfiguration(lossless: true)
+    static let lossless = HTJ2KConfiguration(lossless: true)
 
     /// Configuration for maximum throughput (larger code-blocks, single layer).
-    public static let maxThroughput = HTJ2KConfiguration(
+    static let maxThroughput = HTJ2KConfiguration(
         qualityLayers: 1,
         codeBlockWidth: 64,
         codeBlockHeight: 64
     )
 
     /// Configuration that uses legacy EBCOT for maximum compatibility.
-    public static let legacyCompatible = HTJ2KConfiguration(codingMode: .legacy)
+    static let legacyCompatible = HTJ2KConfiguration(codingMode: .legacy)
 
     /// Clamps a value to the nearest valid code-block size (power of 2, 4–1024).
     private static func clampToValidBlockSize(_ size: Int) -> Int {
@@ -406,9 +406,6 @@ struct HTJ2KEncoder: Sendable {
 ///                                                 subband: .hh)
 /// ```
 struct HTJ2KDecoder: Sendable {
-    /// Creates a new HTJ2K decoder.
-    init() {}
-
     /// Decodes wavelet coefficients from an HTJ2K-encoded result.
     ///
     /// Automatically handles both HT and legacy coded data based on the
@@ -589,31 +586,6 @@ struct HTEncodedResult: Sendable {
 
     /// The total number of coding passes.
     let totalPasses: Int
-
-    /// Creates a new encoded result.
-    ///
-    /// - Parameters:
-    ///   - codingMode: The coding mode used.
-    ///   - cleanupPass: The cleanup pass data.
-    ///   - sigPropPasses: Significance propagation passes.
-    ///   - magRefPasses: Magnitude refinement passes.
-    ///   - zeroBitPlanes: Number of zero bit-planes.
-    ///   - totalPasses: Total number of coding passes.
-    init(
-        codingMode: HTCodingMode,
-        cleanupPass: HTEncodedBlock,
-        sigPropPasses: [Data],
-        magRefPasses: [Data],
-        zeroBitPlanes: Int,
-        totalPasses: Int
-    ) {
-        self.codingMode = codingMode
-        self.cleanupPass = cleanupPass
-        self.sigPropPasses = sigPropPasses
-        self.magRefPasses = magRefPasses
-        self.zeroBitPlanes = zeroBitPlanes
-        self.totalPasses = totalPasses
-    }
 }
 
 // MARK: - Conformance Validator
@@ -623,9 +595,6 @@ struct HTEncodedResult: Sendable {
 /// Checks structural requirements, marker segment validity, and capability
 /// signaling for HTJ2K conformance.
 struct HTJ2KConformanceValidator: Sendable {
-    /// Creates a new conformance validator.
-    init() {}
-
     /// Validates that the codestream properly signals HTJ2K capabilities.
     ///
     /// - Parameter data: The JPEG 2000 codestream data.
@@ -725,16 +694,6 @@ struct ConformanceResult: Sendable {
 
     /// Descriptions of any conformance issues found.
     let issues: [String]
-
-    /// Creates a new conformance result.
-    ///
-    /// - Parameters:
-    ///   - isValid: Whether the validation passed.
-    ///   - issues: Conformance issue descriptions.
-    init(isValid: Bool, issues: [String]) {
-        self.isValid = isValid
-        self.issues = issues
-    }
 }
 
 // MARK: - Benchmarking Support
@@ -744,9 +703,6 @@ struct ConformanceResult: Sendable {
 /// Measures encoding and decoding performance for both HT and legacy modes,
 /// providing a direct comparison of throughput characteristics.
 struct HTJ2KBenchmark: Sendable {
-    /// Creates a new benchmark instance.
-    init() {}
-
     /// Runs a throughput comparison between HT and legacy encoding.
     ///
     /// - Parameters:

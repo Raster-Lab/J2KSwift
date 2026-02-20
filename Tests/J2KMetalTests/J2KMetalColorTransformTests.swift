@@ -4,7 +4,6 @@ import XCTest
 
 /// Tests for Metal-accelerated color space transforms.
 final class J2KMetalColorTransformTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal color transform availability can be queried.

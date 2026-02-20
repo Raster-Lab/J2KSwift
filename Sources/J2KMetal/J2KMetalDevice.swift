@@ -275,7 +275,7 @@ public actor J2KMetalDevice {
     ///
     /// - Returns: The current memory usage in bytes.
     public func memoryUsage() -> UInt64 {
-        return currentMemoryUsage
+        currentMemoryUsage
     }
 
     // MARK: - Private Helpers

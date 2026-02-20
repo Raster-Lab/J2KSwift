@@ -4,7 +4,6 @@ import XCTest
 
 /// Tests for J2KMetal module - Metal GPU Acceleration Infrastructure.
 final class J2KMetalDeviceTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal availability can be queried without crashing.

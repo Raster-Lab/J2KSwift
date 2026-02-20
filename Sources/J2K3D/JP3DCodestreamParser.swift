@@ -71,9 +71,9 @@ public struct JP3DParsedCodestream: Sendable {
 
     /// Compute the tile grid for this codestream.
     public var tileGrid: (tilesX: Int, tilesY: Int, tilesZ: Int) {
-        let tx = max(1, (siz.width  + siz.tileSizeX - 1) / siz.tileSizeX)
+        let tx = max(1, (siz.width + siz.tileSizeX - 1) / siz.tileSizeX)
         let ty = max(1, (siz.height + siz.tileSizeY - 1) / siz.tileSizeY)
-        let tz = max(1, (siz.depth  + siz.tileSizeZ - 1) / siz.tileSizeZ)
+        let tz = max(1, (siz.depth + siz.tileSizeZ - 1) / siz.tileSizeZ)
         return (tx, ty, tz)
     }
 }
@@ -90,7 +90,6 @@ public struct JP3DParsedCodestream: Sendable {
 /// print("Volume: \(codestream.siz.width)×\(codestream.siz.height)×\(codestream.siz.depth)")
 /// ```
 public struct JP3DCodestreamParser: Sendable {
-
     /// Creates a new codestream parser.
     public init() {}
 
@@ -139,10 +138,9 @@ public struct JP3DCodestreamParser: Sendable {
             case 0xFF90: // SOT
                 let tile = try parseSOTAndData(data, at: &offset)
                 parsedTiles.append(tile)
-            case 0xFFD9: // EOC
+                case 0xFFD9: // EOC
                 foundEOC = true
-                break
-            default:
+                default:
                 // Unknown marker: try to skip using length field if present
                 if marker >= 0xFF00 {
                     if offset + 2 <= data.count {
@@ -154,7 +152,6 @@ public struct JP3DCodestreamParser: Sendable {
                     }
                 }
                 // If we can't skip, treat as truncated
-                break
             }
 
             if foundEOC { break }

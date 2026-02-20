@@ -516,7 +516,7 @@ final class J2KTranscoderTests: XCTestCase {
         let result = try transcoder.transcode(
             codestreamData,
             direction: .legacyToHT
-        ) { update in
+        ) { _ in
             progressCallCount += 1
         }
 

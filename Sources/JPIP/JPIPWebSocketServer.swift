@@ -539,7 +539,7 @@ public actor JPIPWebSocketServer {
     private func handlePingFrame(
         _ frame: JPIPWebSocketFrame
     ) -> JPIPWebSocketFrame {
-        return JPIPWebSocketFrame(
+        JPIPWebSocketFrame(
             type: .pong,
             payload: frame.payload,
             requestID: frame.requestID
@@ -695,7 +695,7 @@ public actor JPIPWebSocketServer {
     ///
     /// - Returns: Number of active WebSocket connections.
     public func getActiveConnectionCount() -> Int {
-        return connections.count
+        connections.count
     }
 
     /// Gets information about all active connections.
@@ -713,13 +713,13 @@ public actor JPIPWebSocketServer {
     ///
     /// - Returns: JPIP server statistics.
     public func getJPIPStatistics() async -> JPIPServer.Statistics {
-        return await jpipServer.getStatistics()
+        await jpipServer.getStatistics()
     }
 
     /// Gets the list of registered image names.
     ///
     /// - Returns: Array of registered image names.
     public func listRegisteredImages() async -> [String] {
-        return await jpipServer.listRegisteredImages()
+        await jpipServer.listRegisteredImages()
     }
 }

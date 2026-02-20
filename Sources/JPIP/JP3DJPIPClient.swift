@@ -110,7 +110,6 @@ public enum JP3DClientError: Error, Sendable {
 /// ))
 /// ```
 public actor JP3DJPIPClient {
-
     // MARK: - Configuration
 
     /// Server URL (WebSocket or HTTP).
@@ -126,7 +125,7 @@ public actor JP3DJPIPClient {
     private var activeRequests: [String: JP3DViewWindowRequest] = [:]
     private var cancelledRequestIDs: Set<String> = []
     private var receivedBins: [JP3DDataBin] = []
-    private var statistics: JP3DStreamingStatistics = JP3DStreamingStatistics()
+    private var statistics = JP3DStreamingStatistics()
     private var reconnectAttempts: Int = 0
 
     // MARK: - Initialiser

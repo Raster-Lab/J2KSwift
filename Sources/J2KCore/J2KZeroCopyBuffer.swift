@@ -166,7 +166,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
     ///   - count: The number of bytes.
     /// - Returns: A slice, or nil if the range is out of bounds.
     internal func slice(offset: Int, count: Int) -> J2KBufferSlice? {
-        guard offset >= 0, count >= 0, offset + count <= capacity else {
+        guard offset >= 0, isEmpty, offset + count <= capacity else {
             return nil
         }
         return J2KBufferSlice(storage: self, offset: offset, count: count)

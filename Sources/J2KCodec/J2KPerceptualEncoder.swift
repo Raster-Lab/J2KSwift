@@ -42,13 +42,13 @@ import J2KCore
 public enum J2KQualityTarget: Sendable, Equatable {
     /// Target PSNR in dB.
     case psnr(Double)
-    
+
     /// Target SSIM value (0-1).
     case ssim(Double)
-    
+
     /// Target MS-SSIM value (0-1).
     case msssim(Double)
-    
+
     /// Target bitrate in bits per pixel.
     case bitrate(Double)
 }
@@ -59,25 +59,25 @@ public enum J2KQualityTarget: Sendable, Equatable {
 public struct J2KPerceptualEncodingConfiguration: Sendable, Equatable {
     /// Quality target for encoding.
     public let targetQuality: J2KQualityTarget
-    
+
     /// Enable visual masking.
     public let enableVisualMasking: Bool
-    
+
     /// Enable frequency weighting.
     public let enableFrequencyWeighting: Bool
-    
+
     /// Visual masking configuration.
     public let maskingConfiguration: J2KVisualMaskingConfiguration
-    
+
     /// Visual weighting configuration.
     public let weightingConfiguration: J2KVisualWeightingConfiguration
-    
+
     /// Maximum number of encoding iterations for quality targeting.
     public let maxIterations: Int
-    
+
     /// Quality tolerance for iterative encoding.
     public let qualityTolerance: Double
-    
+
     /// Creates a new perceptual encoding configuration.
     ///
     /// - Parameters:
@@ -105,23 +105,23 @@ public struct J2KPerceptualEncodingConfiguration: Sendable, Equatable {
         self.maxIterations = maxIterations
         self.qualityTolerance = qualityTolerance
     }
-    
+
     /// Default configuration targeting SSIM 0.95.
     public static let `default` = J2KPerceptualEncodingConfiguration(
         targetQuality: .ssim(0.95)
     )
-    
+
     /// High quality configuration targeting SSIM 0.98.
     public static let highQuality = J2KPerceptualEncodingConfiguration(
         targetQuality: .ssim(0.98),
         maskingConfiguration: .conservative
     )
-    
+
     /// Balanced configuration targeting MS-SSIM 0.95.
     public static let balanced = J2KPerceptualEncodingConfiguration(
         targetQuality: .msssim(0.95)
     )
-    
+
     /// High compression configuration targeting SSIM 0.90.
     public static let highCompression = J2KPerceptualEncodingConfiguration(
         targetQuality: .ssim(0.90),
@@ -135,16 +135,16 @@ public struct J2KPerceptualEncodingConfiguration: Sendable, Equatable {
 public struct J2KPerceptualEncodingResult: Sendable {
     /// The encoded data.
     public let data: Data
-    
+
     /// Achieved quality metric.
     public let achievedQuality: J2KQualityMetricResult
-    
+
     /// Number of encoding iterations performed.
     public let iterations: Int
-    
+
     /// Final bitrate in bits per pixel.
     public let bitrate: Double
-    
+
     /// Creates a new perceptual encoding result.
     ///
     /// - Parameters:
@@ -171,16 +171,16 @@ public struct J2KPerceptualEncodingResult: Sendable {
 public struct J2KPerceptualEncoder: Sendable {
     /// Configuration for perceptual encoding.
     public let configuration: J2KPerceptualEncodingConfiguration
-    
+
     /// Visual masking instance.
     private let visualMasking: J2KVisualMasking
-    
+
     /// Visual weighting instance.
     private let visualWeighting: J2KVisualWeighting
-    
+
     /// Quality metrics instance.
     private let qualityMetrics: J2KQualityMetrics
-    
+
     /// Creates a new perceptual encoder.
     ///
     /// - Parameter configuration: The perceptual encoding configuration.
@@ -194,9 +194,9 @@ public struct J2KPerceptualEncoder: Sendable {
         )
         self.qualityMetrics = J2KQualityMetrics()
     }
-    
+
     // MARK: - Quantization Step Calculation
-    
+
     /// Calculates perceptually optimized quantization steps.
     ///
     /// Combines visual masking and frequency weighting to produce quantization
@@ -213,18 +213,18 @@ public struct J2KPerceptualEncoder: Sendable {
         decompositionLevels: Int
     ) -> [[J2KSubband: Double]] {
         var steps: [[J2KSubband: Double]] = []
-        
+
         for level in 0..<decompositionLevels {
             var levelSteps: [J2KSubband: Double] = [:]
-            
+
             // Subbands for this level
             let subbands: [J2KSubband] = (level == decompositionLevels - 1) ?
                 [.ll, .lh, .hl, .hh] : [.lh, .hl, .hh]
-            
+
             for subband in subbands {
                 // Start with base quantization
                 var stepSize = baseQuantization
-                
+
                 // Apply frequency weighting if enabled
                 if configuration.enableFrequencyWeighting {
                     let weight = visualWeighting.weight(
@@ -236,14 +236,14 @@ public struct J2KPerceptualEncoder: Sendable {
                     )
                     stepSize *= weight
                 }
-                
+
                 // Apply visual masking if enabled
                 if configuration.enableVisualMasking {
                     // For simplicity, use average luminance
                     // In a full implementation, this would be per-codeblock
                     let avgLuminance = 128.0  // Placeholder
                     let avgVariance = 100.0   // Placeholder
-                    
+
                     let maskingFactor = visualMasking.calculateMaskingFactor(
                         luminance: avgLuminance,
                         localVariance: avgVariance,
@@ -251,16 +251,16 @@ public struct J2KPerceptualEncoder: Sendable {
                     )
                     stepSize *= maskingFactor
                 }
-                
+
                 levelSteps[subband] = stepSize
             }
-            
+
             steps.append(levelSteps)
         }
-        
+
         return steps
     }
-    
+
     /// Calculates spatially-varying perceptual quantization for a region.
     ///
     /// Produces per-codeblock quantization steps based on local image characteristics.
@@ -287,7 +287,7 @@ public struct J2KPerceptualEncoder: Sendable {
     ) -> [Double] {
         // Calculate frequency weight for this subband
         var steps = [Double](repeating: baseQuantization, count: width * height)
-        
+
         if configuration.enableFrequencyWeighting {
             let weight = visualWeighting.weight(
                 for: subband,
@@ -296,12 +296,12 @@ public struct J2KPerceptualEncoder: Sendable {
                 imageWidth: width,
                 imageHeight: height
             )
-            
+
             for i in 0..<steps.count {
                 steps[i] *= weight
             }
         }
-        
+
         if configuration.enableVisualMasking {
             // Calculate masking factors for the region
             let maskingFactors = visualMasking.calculateRegionMaskingFactors(
@@ -311,18 +311,18 @@ public struct J2KPerceptualEncoder: Sendable {
                 bitDepth: bitDepth,
                 motionField: nil
             )
-            
+
             // Apply masking factors
             for i in 0..<steps.count {
                 steps[i] *= maskingFactors[i]
             }
         }
-        
+
         return steps
     }
-    
+
     // MARK: - Quality Evaluation
-    
+
     /// Evaluates if the current quality meets the target.
     ///
     /// - Parameters:
@@ -335,26 +335,26 @@ public struct J2KPerceptualEncoder: Sendable {
         encoded: J2KImage
     ) throws -> Bool {
         let result: J2KQualityMetricResult
-        
+
         switch configuration.targetQuality {
         case .psnr(let target):
             result = try qualityMetrics.psnr(original: original, compressed: encoded)
             return result.value >= target - configuration.qualityTolerance
-            
+
         case .ssim(let target):
             result = try qualityMetrics.ssim(original: original, compressed: encoded)
             return result.value >= target - configuration.qualityTolerance
-            
+
         case .msssim(let target):
             result = try qualityMetrics.msssim(original: original, compressed: encoded)
             return result.value >= target - configuration.qualityTolerance
-            
+
         case .bitrate:
             // Bitrate target is handled differently (not a quality metric)
             return true
         }
     }
-    
+
     /// Evaluates the quality of an encoded image.
     ///
     /// - Parameters:
@@ -369,10 +369,10 @@ public struct J2KPerceptualEncoder: Sendable {
         switch configuration.targetQuality {
         case .psnr, .bitrate:
             return try qualityMetrics.psnr(original: original, compressed: encoded)
-            
+
         case .ssim:
             return try qualityMetrics.ssim(original: original, compressed: encoded)
-            
+
         case .msssim:
             return try qualityMetrics.msssim(original: original, compressed: encoded)
         }
@@ -397,7 +397,7 @@ extension J2KPerceptualEncoder {
     ) -> Double {
         // Simple heuristic: higher bitrate = lower quantization
         // This is a placeholder for a more sophisticated model
-        
+
         if targetBitrate >= 4.0 {
             return 0.01  // Very high quality
         } else if targetBitrate >= 2.0 {
@@ -410,7 +410,7 @@ extension J2KPerceptualEncoder {
             return 0.5   // Very low quality
         }
     }
-    
+
     /// Adjusts quantization based on quality feedback.
     ///
     /// - Parameters:
@@ -424,14 +424,14 @@ extension J2KPerceptualEncoder {
         achievedQuality: Double
     ) -> Double {
         let error = targetQuality - achievedQuality
-        
+
         // Simple proportional adjustment
         // If achieved quality is too low, decrease quantization (improve quality)
         // If achieved quality is too high, increase quantization (reduce bitrate)
         let adjustment = -error * 0.3  // Damping factor
-        
+
         let newQuantization = currentQuantization * (1.0 + adjustment)
-        
+
         // Clamp to reasonable range
         return min(1.0, max(0.001, newQuantization))
     }
@@ -452,11 +452,11 @@ extension J2KPerceptualEncoder {
         encoded: J2KImage
     ) throws -> [String: J2KQualityMetricResult] {
         var results: [String: J2KQualityMetricResult] = [:]
-        
+
         results["PSNR"] = try qualityMetrics.psnr(original: original, compressed: encoded)
         results["SSIM"] = try qualityMetrics.ssim(original: original, compressed: encoded)
         results["MS-SSIM"] = try qualityMetrics.msssim(original: original, compressed: encoded)
-        
+
         return results
     }
 }

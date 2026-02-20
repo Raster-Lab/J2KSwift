@@ -198,7 +198,7 @@ extension J2KBufferPool {
     /// - Parameter size: Required buffer size.
     /// - Returns: An Int32 array of the specified size.
     internal nonisolated func acquireInt32BufferSync(size: Int) -> [Int32] {
-        return [Int32](repeating: 0, count: size)
+        [Int32](repeating: 0, count: size)
     }
 
     /// Synchronously acquires a Double buffer (for non-async contexts).
@@ -209,7 +209,7 @@ extension J2KBufferPool {
     /// - Parameter size: Required buffer size.
     /// - Returns: A Double array of the specified size.
     internal nonisolated func acquireDoubleBufferSync(size: Int) -> [Double] {
-        return [Double](repeating: 0, count: size)
+        [Double](repeating: 0, count: size)
     }
 
     /// Synchronously acquires a UInt8 buffer (for non-async contexts).
@@ -220,6 +220,6 @@ extension J2KBufferPool {
     /// - Parameter size: Required buffer size.
     /// - Returns: A UInt8 array of the specified size.
     internal nonisolated func acquireUInt8BufferSync(size: Int) -> [UInt8] {
-        return [UInt8](repeating: 0, count: size)
+        [UInt8](repeating: 0, count: size)
     }
 }

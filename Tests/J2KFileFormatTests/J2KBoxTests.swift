@@ -2281,7 +2281,7 @@ final class J2KBoxTests: XCTestCase {
             .replace, .alphaBlend, .preMulAlphaBlend
         ]
 
-        let instructions = modes.enumerated().map { (index, mode) in
+        let instructions = modes.enumerated().map { index, mode in
             J2KCompositionInstruction(
                 width: 100,
                 height: 100,
@@ -2601,4 +2601,3 @@ final class J2KBoxTests: XCTestCase {
         XCTAssertEqual(decoded.pages[2].width, 1754)  // Landscape
     }
 }
-

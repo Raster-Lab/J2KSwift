@@ -9,7 +9,6 @@ import XCTest
 @testable import J2KCore
 
 final class J2KAdaptiveBlockSizeTests: XCTestCase {
-
     // MARK: - Content Analyzer Tests
 
     func testEdgeDensityUniformImage() {

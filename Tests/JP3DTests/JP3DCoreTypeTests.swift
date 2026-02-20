@@ -8,7 +8,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DCoreTypeTests: XCTestCase {
-
     // MARK: - J2KVolume Construction
 
     func testVolumeBasicConstruction() throws {

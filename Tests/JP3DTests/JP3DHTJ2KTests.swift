@@ -9,7 +9,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DHTJ2KTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Creates a test volume with simple gradient data.

@@ -79,7 +79,6 @@ public struct JP3DProgressiveResult: Sendable {
 /// Call `cancel()` at any time to stop progressive decoding. The most recently
 /// delivered partial result is the last complete progressive state.
 public actor JP3DProgressiveDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration

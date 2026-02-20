@@ -45,7 +45,7 @@ import Accelerate
 public struct J2KAccelerateX86: Sendable {
     /// Creates a new x86-64 accelerated processor.
     public init() {}
-    
+
     /// Indicates whether x86-64 acceleration is available.
     ///
     /// Returns `true` only on x86-64 Macs with Accelerate framework.
@@ -56,11 +56,11 @@ public struct J2KAccelerateX86: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - Architecture Information
-    
+
     #if canImport(Accelerate) && arch(x86_64)
-    
+
     /// Returns information about the x86-64 CPU features.
     ///
     /// Detects available SIMD instruction sets (SSE, AVX, AVX2, etc.).
@@ -68,7 +68,7 @@ public struct J2KAccelerateX86: Sendable {
     /// - Returns: Dictionary of feature name to availability.
     public static func cpuFeatures() -> [String: Bool] {
         var features: [String: Bool] = [:]
-        
+
         // All modern x86-64 Macs support these
         features["SSE"] = true
         features["SSE2"] = true
@@ -78,16 +78,16 @@ public struct J2KAccelerateX86: Sendable {
         features["SSE4.2"] = true
         features["AVX"] = true
         features["AVX2"] = true
-        
+
         // Not available on x86-64
         features["NEON"] = false
         features["AMX"] = false
-        
+
         return features
     }
-    
+
     // MARK: - x86-64 Specific Optimizations
-    
+
     /// Performs DWT with x86-64 optimized cache blocking.
     ///
     /// Uses smaller cache blocking sizes optimized for Intel cache hierarchy.
@@ -108,7 +108,7 @@ public struct J2KAccelerateX86: Sendable {
                 "Data size must match dimensions: \(width)×\(height)"
             )
         }
-        
+
         // x86-64 typically has:
         // L1 cache: 32-64 KB (per core)
         // L2 cache: 256-512 KB (per core)
@@ -116,15 +116,15 @@ public struct J2KAccelerateX86: Sendable {
         //
         // Use smaller block size than Apple Silicon
         let blockSize = 32 // vs 64 on ARM64
-        
+
         var output = data
-        
+
         // Process in cache-friendly blocks
         for blockY in stride(from: 0, to: height, by: blockSize) {
             for blockX in stride(from: 0, to: width, by: blockSize) {
                 let endY = min(blockY + blockSize, height)
                 let endX = min(blockX + blockSize, width)
-                
+
                 for y in blockY..<endY {
                     for x in blockX..<endX {
                         let index = y * width + x
@@ -134,10 +134,10 @@ public struct J2KAccelerateX86: Sendable {
                 }
             }
         }
-        
+
         return output
     }
-    
+
     /// Performs matrix multiplication with AVX-optimized blocking.
     ///
     /// Uses block sizes tuned for AVX/AVX2 (256-bit SIMD).
@@ -159,22 +159,22 @@ public struct J2KAccelerateX86: Sendable {
     ) throws -> [Double] {
         guard a.count == m * k else {
             throw J2KError.invalidParameter(
-                "Matrix A size mismatch: expected \(m*k), got \(a.count)"
+                "Matrix A size mismatch: expected \(m * k), got \(a.count)"
             )
         }
-        
+
         guard b.count == k * n else {
             throw J2KError.invalidParameter(
-                "Matrix B size mismatch: expected \(k*n), got \(b.count)"
+                "Matrix B size mismatch: expected \(k * n), got \(b.count)"
             )
         }
-        
+
         var result = [Double](repeating: 0.0, count: m * n)
-        
+
         // Use BLAS which is optimized for x86-64
         var alpha = 1.0
         var beta = 0.0
-        
+
         cblas_dgemm(
             CblasRowMajor,
             CblasNoTrans,
@@ -191,10 +191,10 @@ public struct J2KAccelerateX86: Sendable {
             &result,
             Int32(n)
         )
-        
+
         return result
     }
-    
+
     #endif
 }
 

@@ -286,7 +286,7 @@ public struct J2KFileReader: Sendable {
     /// - Returns: The detected format.
     /// - Throws: ``J2KError`` if format detection fails.
     public func detectFormat(at url: URL) throws -> J2KFormat {
-        return try detector.detect(at: url)
+        try detector.detect(at: url)
     }
 
     /// Detects the format of JPEG 2000 data.
@@ -295,7 +295,7 @@ public struct J2KFileReader: Sendable {
     /// - Returns: The detected format.
     /// - Throws: ``J2KError`` if format detection fails.
     public func detectFormat(data: Data) throws -> J2KFormat {
-        return try detector.detect(data: data)
+        try detector.detect(data: data)
     }
 
     /// Validates that a file appears to be a valid JPEG 2000 file.
@@ -687,13 +687,13 @@ public struct J2KFileWriter: Sendable {
     private func buildJPXFile(image: J2KImage, codestream: Data) throws -> Data {
         // JPX is an extended format, for now use JP2 structure
         // Full JPX support would include reader requirements box, etc.
-        return try buildJP2File(image: image, codestream: codestream)
+        try buildJP2File(image: image, codestream: codestream)
     }
 
     /// Builds a JPM file (multi-page format).
     private func buildJPMFile(image: J2KImage, codestream: Data) throws -> Data {
         // JPM is for multi-page documents, for now use JP2 structure
         // Full JPM support would include page boxes, layout, etc.
-        return try buildJP2File(image: image, codestream: codestream)
+        try buildJP2File(image: image, codestream: codestream)
     }
 }

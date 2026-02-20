@@ -192,7 +192,7 @@ public actor JPIPBandwidthThrottle {
     ///
     /// - Returns: Bandwidth statistics.
     public func getStatistics() -> Statistics {
-        return stats
+        stats
     }
 
     /// Gets the current available bandwidth for a client.

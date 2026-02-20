@@ -108,7 +108,6 @@ public struct JP3DMetalDWTStatistics: Sendable {
 /// All mutable state is protected by the actor. The `isMetalAvailable`
 /// static property is safe to access from any context.
 public actor JP3DMetalDWT {
-
     // MARK: - Static Properties
 
     /// Whether Metal acceleration is available on this device.
@@ -274,7 +273,7 @@ public actor JP3DMetalDWT {
         guard height > 0, depth > 0 else {
             throw J2KError.invalidParameter("JP3DMetalDWT.inverse53X: dimensions must be positive")
         }
-        guard low.count  == lowLen  * height * depth,
+        guard low.count == lowLen * height * depth,
               high.count == highLen * height * depth else {
             throw J2KError.invalidParameter("JP3DMetalDWT.inverse53X: subband size mismatch")
         }
@@ -373,7 +372,7 @@ public actor JP3DMetalDWT {
         guard height > 0, depth > 0 else {
             throw J2KError.invalidParameter("JP3DMetalDWT.inverse97X: dimensions must be positive")
         }
-        guard low.count  == lowLen  * height * depth,
+        guard low.count == lowLen * height * depth,
               high.count == highLen * height * depth else {
             throw J2KError.invalidParameter("JP3DMetalDWT.inverse97X: subband size mismatch")
         }
@@ -429,7 +428,6 @@ public actor JP3DMetalDWT {
 
 #if canImport(Metal)
 extension JP3DMetalDWT {
-
     // MARK: MSL Source
 
     /// Embedded MSL source for all 3D DWT kernels.
@@ -1008,7 +1006,7 @@ kernel void jp3d_separable_dwt_forward(
         let rows    = height * depth
 
         let inputBuf = try makeBuffer(device: device, data: data)
-        let lowBuf   = device.makeBuffer(length: rows * lowLen  * MemoryLayout<Float>.stride,
+        let lowBuf   = device.makeBuffer(length: rows * lowLen * MemoryLayout<Float>.stride,
                                          options: .storageModeShared)!
         let highBuf  = device.makeBuffer(length: rows * highLen * MemoryLayout<Float>.stride,
                                          options: .storageModeShared)!
@@ -1021,8 +1019,8 @@ kernel void jp3d_separable_dwt_forward(
         }
         enc.setComputePipelineState(pipeline)
         enc.setBuffer(inputBuf, offset: 0, index: 0)
-        enc.setBuffer(lowBuf,   offset: 0, index: 1)
-        enc.setBuffer(highBuf,  offset: 0, index: 2)
+        enc.setBuffer(lowBuf, offset: 0, index: 1)
+        enc.setBuffer(highBuf, offset: 0, index: 2)
         enc.setBytes(&w, length: 4, index: 3)
         enc.setBytes(&h, length: 4, index: 4)
         enc.setBytes(&d, length: 4, index: 5)
@@ -1034,7 +1032,7 @@ kernel void jp3d_separable_dwt_forward(
         cb.waitUntilCompleted()
 
         return (
-            low:  readBuffer(lowBuf,  count: rows * lowLen),
+            low: readBuffer(lowBuf, count: rows * lowLen),
             high: readBuffer(highBuf, count: rows * highLen)
         )
     }
@@ -1067,12 +1065,12 @@ kernel void jp3d_separable_dwt_forward(
             throw J2KError.internalError("Failed to create command encoder")
         }
         enc.setComputePipelineState(pipeline)
-        enc.setBuffer(lowBuf,  offset: 0, index: 0)
+        enc.setBuffer(lowBuf, offset: 0, index: 0)
         enc.setBuffer(highBuf, offset: 0, index: 1)
-        enc.setBuffer(outBuf,  offset: 0, index: 2)
+        enc.setBuffer(outBuf, offset: 0, index: 2)
         enc.setBytes(&ow, length: 4, index: 3)
-        enc.setBytes(&h,  length: 4, index: 4)
-        enc.setBytes(&d,  length: 4, index: 5)
+        enc.setBytes(&h, length: 4, index: 4)
+        enc.setBytes(&d, length: 4, index: 5)
         let tg = MTLSize(width: min(rows, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1)
         let g  = MTLSize(width: rows, height: 1, depth: 1)
         enc.dispatchThreads(g, threadsPerThreadgroup: tg)
@@ -1100,7 +1098,7 @@ kernel void jp3d_separable_dwt_forward(
         let rows    = height * depth
 
         let inputBuf = try makeBuffer(device: device, data: data)
-        let lowBuf   = device.makeBuffer(length: rows * lowLen  * MemoryLayout<Float>.stride,
+        let lowBuf   = device.makeBuffer(length: rows * lowLen * MemoryLayout<Float>.stride,
                                          options: .storageModeShared)!
         let highBuf  = device.makeBuffer(length: rows * highLen * MemoryLayout<Float>.stride,
                                          options: .storageModeShared)!
@@ -1113,8 +1111,8 @@ kernel void jp3d_separable_dwt_forward(
         }
         enc.setComputePipelineState(pipeline)
         enc.setBuffer(inputBuf, offset: 0, index: 0)
-        enc.setBuffer(lowBuf,   offset: 0, index: 1)
-        enc.setBuffer(highBuf,  offset: 0, index: 2)
+        enc.setBuffer(lowBuf, offset: 0, index: 1)
+        enc.setBuffer(highBuf, offset: 0, index: 2)
         enc.setBytes(&w, length: 4, index: 3)
         enc.setBytes(&h, length: 4, index: 4)
         enc.setBytes(&d, length: 4, index: 5)
@@ -1126,7 +1124,7 @@ kernel void jp3d_separable_dwt_forward(
         cb.waitUntilCompleted()
 
         return (
-            low:  readBuffer(lowBuf,  count: rows * lowLen),
+            low: readBuffer(lowBuf, count: rows * lowLen),
             high: readBuffer(highBuf, count: rows * highLen)
         )
     }
@@ -1139,7 +1137,7 @@ kernel void jp3d_separable_dwt_forward(
     ) async throws -> [Float] {
         // Full GPU 9/7 inverse is symmetric to the forward; delegate to CPU
         // to guarantee correctness while forward GPU path is active.
-        return cpuInverse97X(
+        cpuInverse97X(
             low: low, high: high,
             origWidth: origWidth, height: height, depth: depth
         )
@@ -1172,7 +1170,6 @@ kernel void jp3d_separable_dwt_forward(
 // MARK: - CPU Fallback
 
 extension JP3DMetalDWT {
-
     // MARK: 5/3 Forward X (CPU)
 
     /// CPU fallback: forward 5/3 lifting along X for every (y, z) row.
@@ -1190,7 +1187,7 @@ extension JP3DMetalDWT {
             let offset = row * width
             let slice  = Array(data[offset..<(offset + width)])
             let (l, h) = forward53Lifting(signal: slice)
-            low.replaceSubrange(  (row * lowLen )..<(row * lowLen  + lowLen),  with: l)
+            low.replaceSubrange(  (row * lowLen )..<(row * lowLen + lowLen), with: l)
             high.replaceSubrange( (row * highLen)..<(row * highLen + highLen), with: h)
         }
         return (low: low, high: high)
@@ -1209,7 +1206,7 @@ extension JP3DMetalDWT {
 
         var output = [Float](repeating: 0, count: rows * origWidth)
         for row in 0..<rows {
-            let l = Array(low [row * lowLen  ..< row * lowLen  + lowLen ])
+            let l = Array(low [row * lowLen..<row * lowLen + lowLen ])
             let h = Array(high[row * highLen ..< row * highLen + highLen])
             let rec = inverse53Lifting(low: l, high: h, origLen: origWidth)
             output.replaceSubrange(
@@ -1236,7 +1233,7 @@ extension JP3DMetalDWT {
             let offset = row * width
             let slice  = Array(data[offset..<(offset + width)])
             let (l, h) = forward97Lifting(signal: slice)
-            low.replaceSubrange(  (row * lowLen )..<(row * lowLen  + lowLen),  with: l)
+            low.replaceSubrange(  (row * lowLen )..<(row * lowLen + lowLen), with: l)
             high.replaceSubrange( (row * highLen)..<(row * highLen + highLen), with: h)
         }
         return (low: low, high: high)
@@ -1255,7 +1252,7 @@ extension JP3DMetalDWT {
 
         var output = [Float](repeating: 0, count: rows * origWidth)
         for row in 0..<rows {
-            let l = Array(low [row * lowLen  ..< row * lowLen  + lowLen ])
+            let l = Array(low [row * lowLen..<row * lowLen + lowLen ])
             let h = Array(high[row * highLen ..< row * highLen + highLen])
             let rec = inverse97Lifting(low: l, high: h, origLen: origWidth)
             output.replaceSubrange(
@@ -1285,7 +1282,7 @@ extension JP3DMetalDWT {
 
         // Predict
         for i in 0..<highLen {
-            let left  = signal[2 * i]
+            let left = signal[2 * i]
             let right: Float = (2 * i + 2 < n) ? signal[2 * i + 2] : signal[n - 2 < 0 ? 0 : n - 2]
             high[i] = signal[2 * i + 1] - floor((left + right) / 2)
         }
@@ -1329,15 +1326,15 @@ extension JP3DMetalDWT {
         let highLen = n / 2
 
         let alpha: Float = -1.586_134_342
-        let beta:  Float = -0.052_980_118
-        let gamma: Float =  0.882_911_075
-        let delta: Float =  0.443_506_852
-        let k:     Float =  1.230_174_105
+        let beta: Float = -0.052_980_118
+        let gamma: Float = 0.882_911_075
+        let delta: Float = 0.443_506_852
+        let k: Float = 1.230_174_105
 
         var l = [Float](repeating: 0, count: lowLen)
         var h = [Float](repeating: 0, count: highLen)
 
-        for i in 0..<lowLen  { l[i] = signal[2 * i] }
+        for i in 0..<lowLen { l[i] = signal[2 * i] }
         for i in 0..<highLen { h[i] = signal[2 * i + 1] }
 
         // Step 1 (alpha)
@@ -1363,8 +1360,8 @@ extension JP3DMetalDWT {
             l[i] += delta * (hP + hC)
         }
         // Scale
-        for i in 0..<lowLen  { l[i] *=  k }
-        for i in 0..<highLen { h[i] /=  k }
+        for i in 0..<lowLen { l[i] *= k }
+        for i in 0..<highLen { h[i] /= k }
         return (low: l, high: h)
     }
 
@@ -1374,16 +1371,16 @@ extension JP3DMetalDWT {
         let highLen = high.count
 
         let alpha: Float = -1.586_134_342
-        let beta:  Float = -0.052_980_118
-        let gamma: Float =  0.882_911_075
-        let delta: Float =  0.443_506_852
-        let k:     Float =  1.230_174_105
+        let beta: Float = -0.052_980_118
+        let gamma: Float = 0.882_911_075
+        let delta: Float = 0.443_506_852
+        let k: Float = 1.230_174_105
 
         var l = low
         var h = high
 
         // Undo scale
-        for i in 0..<lowLen  { l[i] /= k }
+        for i in 0..<lowLen { l[i] /= k }
         for i in 0..<highLen { h[i] *= k }
 
         // Undo step 4 (delta)
@@ -1410,7 +1407,7 @@ extension JP3DMetalDWT {
         }
 
         var out = [Float](repeating: 0, count: origLen)
-        for i in 0..<lowLen  { out[2 * i]     = l[i] }
+        for i in 0..<lowLen { out[2 * i] = l[i] }
         for i in 0..<highLen { out[2 * i + 1] = h[i] }
         return out
     }

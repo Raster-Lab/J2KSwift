@@ -35,18 +35,6 @@ internal struct HTBlockEncoderPooled: Sendable {
     /// The subband this code-block belongs to.
     internal let subband: J2KSubband
 
-    /// Creates a new pool-optimized HT block encoder.
-    ///
-    /// - Parameters:
-    ///   - width: The code-block width in samples.
-    ///   - height: The code-block height in samples.
-    ///   - subband: The wavelet subband.
-    internal init(width: Int, height: Int, subband: J2KSubband) {
-        self.width = width
-        self.height = height
-        self.subband = subband
-    }
-
     /// Encodes wavelet coefficients using the HT cleanup pass with buffer pooling.
     ///
     /// - Parameters:

@@ -66,7 +66,6 @@ public enum JP3DStreamWriterState: Sendable {
 /// let codestream = try await writer.finalize()
 /// ```
 public actor JP3DStreamWriter {
-
     // MARK: - Configuration
 
     /// The encoder configuration.

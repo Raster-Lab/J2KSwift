@@ -11,7 +11,6 @@ import J2KCodec
 // MARK: - JPX Animation Box Types (ISO/IEC 15444-2)
 
 extension J2KBoxType {
-
     /// Compositing layer header box ('jplh') — layer header for JPX.
     public static let jplh = J2KBoxType(string: "jplh")
 
@@ -255,7 +254,6 @@ public struct J2KAnimationFrame: Sendable, Equatable {
 /// let data = try box.write()
 /// ```
 public struct J2KInstructionSetBox: J2KBox, Sendable {
-
     /// Type of rendering instruction.
     public enum InstructionType: UInt8, Sendable {
         /// Static layer composition.
@@ -485,7 +483,6 @@ public struct J2KInstructionSetBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KOpacityBox: J2KBox, Sendable {
-
     /// How opacity is determined for the layer.
     public enum OpacityType: UInt8, Sendable {
         /// Last channel of the codestream is used as alpha.
@@ -576,7 +573,6 @@ public struct J2KOpacityBox: J2KBox, Sendable {
 /// let data = try box.write()
 /// ```
 public struct J2KCodestreamRegistrationBox: J2KBox, Sendable {
-
     /// A single codestream-to-grid registration.
     public struct Registration: Sendable, Equatable {
         /// Index of the codestream.
@@ -748,7 +744,6 @@ public struct J2KCodestreamRegistrationBox: J2KBox, Sendable {
 /// let data = try header.write()
 /// ```
 public struct J2KCompositionLayerHeaderBox: J2KBox, Sendable {
-
     /// Color space specifications for this layer.
     public var colorSpecs: [J2KColorSpecificationBox]
 
@@ -1020,7 +1015,6 @@ public struct J2KJPXAnimationSequence: Sendable {
 /// let headers = compositor.toLayerHeaders()
 /// ```
 public struct J2KMultiLayerCompositor: Sendable {
-
     /// A single layer in the multi-layer composition.
     public struct CompositorLayer: Sendable, Equatable {
         /// Index of the codestream used by this layer.

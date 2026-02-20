@@ -133,7 +133,7 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
 
         // Big-endian byte representation
         func markerBytes(_ marker: UInt16) -> [UInt8] {
-            return [UInt8(marker >> 8), UInt8(marker & 0xFF)]
+            [UInt8(marker >> 8), UInt8(marker & 0xFF)]
         }
 
         XCTAssertEqual(markerBytes(socMarker), [0xFF, 0x4F])
@@ -147,7 +147,7 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
     func testMSEConsistentAcrossPlatforms() throws {
         // Use fixed test data that should produce identical results everywhere
         let reference: [Int32] = [0, 64, 128, 192, 255, 100, 50, 200, 150, 75]
-        let test: [Int32] =      [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
+        let test: [Int32] = [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
 
         let mse = J2KErrorMetrics.meanSquaredError(reference: reference, test: test)
         XCTAssertNotNil(mse)
@@ -159,7 +159,7 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
 
     func testPSNRConsistentAcrossPlatforms() throws {
         let reference: [Int32] = [0, 64, 128, 192, 255, 100, 50, 200, 150, 75]
-        let test: [Int32] =      [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
+        let test: [Int32] = [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
 
         let psnr = J2KErrorMetrics.peakSignalToNoiseRatio(
             reference: reference, test: test, bitDepth: 8
@@ -173,7 +173,7 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
 
     func testMAEConsistentAcrossPlatforms() throws {
         let reference: [Int32] = [0, 64, 128, 192, 255, 100, 50, 200, 150, 75]
-        let test: [Int32] =      [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
+        let test: [Int32] = [1, 63, 130, 190, 254, 102, 48, 198, 152, 73]
 
         let mae = J2KErrorMetrics.maximumAbsoluteError(reference: reference, test: test)
         XCTAssertNotNil(mae)

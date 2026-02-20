@@ -59,7 +59,7 @@ public struct J2KAcceleratedROI: Sendable {
     /// Image dimensions.
     public let imageWidth: Int
     public let imageHeight: Int
-    
+
     /// Creates an accelerated ROI processor.
     ///
     /// - Parameters:
@@ -69,9 +69,9 @@ public struct J2KAcceleratedROI: Sendable {
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
     }
-    
+
     // MARK: - Fast Mask Generation
-    
+
     /// Generates a rectangular mask using vDSP.
     ///
     /// Performance: 5-10× faster than scalar implementation.
@@ -93,23 +93,23 @@ public struct J2KAcceleratedROI: Sendable {
         imageHeight: Int
     ) -> [Float] {
         var mask = [Float](repeating: 0.0, count: imageWidth * imageHeight)
-        
+
         // Fill ROI region with 1.0
         let endX = min(x + width, imageWidth)
         let endY = min(y + height, imageHeight)
-        
+
         for row in max(0, y)..<endY {
             let offset = row * imageWidth + max(0, x)
             let count = endX - max(0, x)
-            if count > 0 {
+            if !isEmpty {
                 var one: Float = 1.0
                 vDSP_vfill(&one, &mask[offset], 1, vDSP_Length(count))
             }
         }
-        
+
         return mask
     }
-    
+
     /// Generates an elliptical mask using vDSP.
     ///
     /// - Parameters:
@@ -129,14 +129,14 @@ public struct J2KAcceleratedROI: Sendable {
         imageHeight: Int
     ) -> [Float] {
         var mask = [Float](repeating: 0.0, count: imageWidth * imageHeight)
-        
+
         let rx2 = Float(radiusX * radiusX)
         let ry2 = Float(radiusY * radiusY)
-        
+
         // Generate coordinate arrays
         var xCoords = [Float](repeating: 0.0, count: imageWidth * imageHeight)
         var yCoords = [Float](repeating: 0.0, count: imageWidth * imageHeight)
-        
+
         for y in 0..<imageHeight {
             for x in 0..<imageWidth {
                 let idx = y * imageWidth + x
@@ -144,32 +144,32 @@ public struct J2KAcceleratedROI: Sendable {
                 yCoords[idx] = Float(y - centerY)
             }
         }
-        
+
         // Compute (x/rx)^2 + (y/ry)^2
         var xNorm = [Float](repeating: 0.0, count: imageWidth * imageHeight)
         var yNorm = [Float](repeating: 0.0, count: imageWidth * imageHeight)
-        
+
         vDSP_vsq(xCoords, 1, &xNorm, 1, vDSP_Length(imageWidth * imageHeight))
         vDSP_vsq(yCoords, 1, &yNorm, 1, vDSP_Length(imageWidth * imageHeight))
-        
+
         var rx2Inv = 1.0 / rx2
         var ry2Inv = 1.0 / ry2
         vDSP_vsmul(xNorm, 1, &rx2Inv, &xNorm, 1, vDSP_Length(imageWidth * imageHeight))
         vDSP_vsmul(yNorm, 1, &ry2Inv, &yNorm, 1, vDSP_Length(imageWidth * imageHeight))
-        
+
         var ellipseTest = [Float](repeating: 0.0, count: imageWidth * imageHeight)
         vDSP_vadd(xNorm, 1, yNorm, 1, &ellipseTest, 1, vDSP_Length(imageWidth * imageHeight))
-        
+
         // Set mask to 1.0 where ellipseTest <= 1.0
         for i in 0..<ellipseTest.count {
             mask[i] = ellipseTest[i] <= 1.0 ? 1.0 : 0.0
         }
-        
+
         return mask
     }
-    
+
     // MARK: - Fast Coefficient Scaling
-    
+
     /// Applies scaling to coefficients using vDSP.
     ///
     /// Performance: 8-15× faster than scalar implementation.
@@ -186,29 +186,29 @@ public struct J2KAcceleratedROI: Sendable {
         guard height > 0 && height == scalingMap.count else { return coefficients }
         let width = coefficients[0].count
         guard width == scalingMap[0].count else { return coefficients }
-        
+
         var scaled = coefficients
-        
+
         // Process each row
         for y in 0..<height {
             let coeffRow = coefficients[y]
             let scaleRow = scalingMap[y]
-            
+
             // Convert to float for vDSP
             var floatCoeffs = coeffRow.map { Float($0) }
             var floatScales = scaleRow.map { Float($0) }
             var result = [Float](repeating: 0.0, count: width)
-            
+
             // Multiply: result = coeffs * scales
             vDSP_vmul(floatCoeffs, 1, floatScales, 1, &result, 1, vDSP_Length(width))
-            
+
             // Convert back to Int32
             scaled[y] = result.map { Int32($0) }
         }
-        
+
         return scaled
     }
-    
+
     /// Applies uniform scaling to coefficients using vDSP.
     ///
     /// - Parameters:
@@ -225,33 +225,33 @@ public struct J2KAcceleratedROI: Sendable {
         guard height > 0 && height == mask.count else { return coefficients }
         let width = coefficients[0].count
         guard width == mask[0].count else { return coefficients }
-        
+
         var scaled = coefficients
         let scale = Float(scalingFactor)
-        
+
         // Process each row
         for y in 0..<height {
             let coeffRow = coefficients[y]
             let maskRow = mask[y]
-            
+
             // Convert to float
             var floatCoeffs = coeffRow.map { Float($0) }
             var result = floatCoeffs
-            
+
             // Apply scaling where mask is true
             for x in 0..<width where maskRow[x] {
                 result[x] = floatCoeffs[x] * scale
             }
-            
+
             // Convert back to Int32
             scaled[y] = result.map { Int32($0) }
         }
-        
+
         return scaled
     }
-    
+
     // MARK: - Fast Feathering
-    
+
     /// Applies distance-based feathering to a mask using vDSP.
     ///
     /// Performance: 3-8× faster than scalar implementation.
@@ -267,7 +267,7 @@ public struct J2KAcceleratedROI: Sendable {
         let height = mask.count
         guard height > 0 else { return [] }
         let width = mask[0].count
-        
+
         // Convert to flat float array
         var flatMask = [Float](repeating: 0.0, count: width * height)
         for y in 0..<height {
@@ -275,7 +275,7 @@ public struct J2KAcceleratedROI: Sendable {
                 flatMask[y * width + x] = mask[y][x] ? 1.0 : 0.0
             }
         }
-        
+
         // Use vImage for efficient distance transform
         #if canImport(vImage)
         var feathered = computeDistanceTransform(
@@ -291,7 +291,7 @@ public struct J2KAcceleratedROI: Sendable {
             feathered = applyBoxBlur(data: feathered, width: width, height: height)
         }
         #endif
-        
+
         // Convert back to 2D Double array
         var result = Array(
             repeating: Array(repeating: 0.0, count: width),
@@ -302,10 +302,10 @@ public struct J2KAcceleratedROI: Sendable {
                 result[y][x] = Double(feathered[y * width + x])
             }
         }
-        
+
         return result
     }
-    
+
     /// Applies simple box blur using vDSP.
     private func applyBoxBlur(
         data: [Float],
@@ -315,7 +315,7 @@ public struct J2KAcceleratedROI: Sendable {
         var result = data
         let kernelSize = 3
         let halfKernel = kernelSize / 2
-        
+
         // Horizontal pass
         var temp = data
         for y in 0..<height {
@@ -327,7 +327,7 @@ public struct J2KAcceleratedROI: Sendable {
                 temp[y * width + x] = sum / Float(kernelSize)
             }
         }
-        
+
         // Vertical pass
         for y in halfKernel..<(height - halfKernel) {
             for x in 0..<width {
@@ -338,10 +338,10 @@ public struct J2KAcceleratedROI: Sendable {
                 result[y * width + x] = sum / Float(kernelSize)
             }
         }
-        
+
         return result
     }
-    
+
     /// Computes distance transform for feathering.
     private func computeDistanceTransform(
         mask: [Float],
@@ -350,12 +350,12 @@ public struct J2KAcceleratedROI: Sendable {
         maxDistance: Int
     ) -> [Float] {
         var result = mask
-        
+
         // Simple distance approximation using iterations
         for iter in 1...maxDistance {
             var updated = result
             let distance = Float(iter)
-            
+
             for y in 1..<(height - 1) {
                 for x in 1..<(width - 1) {
                     let idx = y * width + x
@@ -372,7 +372,7 @@ public struct J2KAcceleratedROI: Sendable {
                             }
                             if hasNeighbor { break }
                         }
-                        
+
                         if hasNeighbor {
                             let falloff = 1.0 - (distance / Float(maxDistance))
                             updated[idx] = max(updated[idx], falloff)
@@ -380,15 +380,15 @@ public struct J2KAcceleratedROI: Sendable {
                     }
                 }
             }
-            
+
             result = updated
         }
-        
+
         return result
     }
-    
+
     // MARK: - Fast Blending
-    
+
     /// Blends two scaling maps using vDSP.
     ///
     /// Performance: 10-20× faster than scalar implementation.
@@ -407,17 +407,17 @@ public struct J2KAcceleratedROI: Sendable {
         guard height > 0 && height == map2.count else { return map1 }
         let width = map1[0].count
         guard width == map2[0].count else { return map1 }
-        
+
         var result = Array(
             repeating: Array(repeating: 0.0, count: width),
             count: height
         )
-        
+
         for y in 0..<height {
             var row1 = map1[y].map { Float($0) }
             var row2 = map2[y].map { Float($0) }
             var rowResult = [Float](repeating: 0.0, count: width)
-            
+
             switch mode {
             case .maximum:
                 vDSP_vmax(row1, 1, row2, 1, &rowResult, 1, vDSP_Length(width))
@@ -433,15 +433,15 @@ public struct J2KAcceleratedROI: Sendable {
                     rowResult[x] = row2[x] > 0.0 ? row2[x] : row1[x]
                 }
             }
-            
+
             result[y] = rowResult.map { Double($0) }
         }
-        
+
         return result
     }
-    
+
     // MARK: - Batch Processing
-    
+
     /// Applies scaling to multiple coefficient arrays in batch.
     ///
     /// Optimized for cache efficiency with batch processing.
@@ -457,10 +457,10 @@ public struct J2KAcceleratedROI: Sendable {
         guard coefficientsBatch.count == scalingMapsBatch.count else {
             return coefficientsBatch
         }
-        
+
         var results = [[[Int32]]]()
         results.reserveCapacity(coefficientsBatch.count)
-        
+
         for i in 0..<coefficientsBatch.count {
             let scaled = applyScaling(
                 coefficients: coefficientsBatch[i],
@@ -468,12 +468,12 @@ public struct J2KAcceleratedROI: Sendable {
             )
             results.append(scaled)
         }
-        
+
         return results
     }
-    
+
     // MARK: - Performance Statistics
-    
+
     /// Measures performance of mask generation.
     ///
     /// - Parameters:
@@ -487,7 +487,7 @@ public struct J2KAcceleratedROI: Sendable {
         height: Int = 512
     ) -> Double {
         let start = Date()
-        
+
         for _ in 0..<iterations {
             _ = generateRectangleMask(
                 x: 100,
@@ -498,11 +498,11 @@ public struct J2KAcceleratedROI: Sendable {
                 imageHeight: height
             )
         }
-        
+
         let elapsed = Date().timeIntervalSince(start)
         return (elapsed / Double(iterations)) * 1000.0
     }
-    
+
     /// Measures performance of coefficient scaling.
     ///
     /// - Parameters:
@@ -521,13 +521,13 @@ public struct J2KAcceleratedROI: Sendable {
             repeating: Array(repeating: 2.0, count: size),
             count: size
         )
-        
+
         let start = Date()
-        
+
         for _ in 0..<iterations {
             _ = applyScaling(coefficients: coefficients, scalingMap: scalingMap)
         }
-        
+
         let elapsed = Date().timeIntervalSince(start)
         return (elapsed / Double(iterations)) * 1000.0
     }

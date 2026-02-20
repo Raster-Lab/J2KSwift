@@ -9,7 +9,6 @@ import XCTest
 @testable import J2KCore
 
 final class J2KWindowsPlatformTests: XCTestCase {
-
     // MARK: - Platform Detection Tests
 
     func testJ2KPlatformCurrentIsNotUnknown() {

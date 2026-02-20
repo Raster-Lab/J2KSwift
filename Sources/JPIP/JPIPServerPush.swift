@@ -483,7 +483,7 @@ public actor JPIPPredictivePrefetchEngine {
     ///
     /// - Returns: Prediction statistics.
     public func getStatistics() -> Statistics {
-        return stats
+        stats
     }
 
     /// Gets the navigation history for a session.
@@ -491,7 +491,7 @@ public actor JPIPPredictivePrefetchEngine {
     /// - Parameter sessionID: The session identifier.
     /// - Returns: The navigation history entries.
     public func getHistory(for sessionID: String) -> [JPIPNavigationEntry] {
-        return sessionHistory[sessionID] ?? []
+        sessionHistory[sessionID] ?? []
     }
 
     /// Resets statistics.
@@ -524,7 +524,7 @@ public actor JPIPPredictivePrefetchEngine {
             count += 1
         }
 
-        guard count > 0 else { return [] }
+        guard !isEmpty else { return [] }
 
         let avgDX = totalDX / Double(count)
         let avgDY = totalDY / Double(count)
@@ -912,7 +912,7 @@ public actor JPIPPushScheduler {
     ///
     /// - Returns: Push scheduling statistics.
     public func getStatistics() -> Statistics {
-        return stats
+        stats
     }
 
     /// Resets statistics.
@@ -1139,14 +1139,14 @@ public actor JPIPClientCacheTracker {
     public func getCacheState(
         for sessionID: String
     ) -> ClientCacheState? {
-        return sessionCaches[sessionID]
+        sessionCaches[sessionID]
     }
 
     /// Gets the tracking statistics.
     ///
     /// - Returns: Cache tracking statistics.
     public func getStatistics() -> Statistics {
-        return stats
+        stats
     }
 
     /// Resets statistics.
@@ -1448,14 +1448,14 @@ public actor JPIPServerPushManager {
     public func getPushState(
         for sessionID: String
     ) -> JPIPPushAcceptance? {
-        return sessionPushState[sessionID]
+        sessionPushState[sessionID]
     }
 
     /// Gets the performance metrics.
     ///
     /// - Returns: Push performance metrics.
     public func getPerformanceMetrics() -> JPIPPushPerformanceMetrics {
-        return metrics
+        metrics
     }
 
     /// Gets comprehensive statistics from all subsystems.

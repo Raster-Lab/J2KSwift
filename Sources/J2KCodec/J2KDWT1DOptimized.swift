@@ -178,7 +178,7 @@ public struct J2KDWT1DOptimizer: Sendable {
         boundaryExtension: J2KDWT1D.BoundaryExtension
     ) throws -> [Int32] {
         // Fall back to standard implementation
-        return try J2KDWT1D.inverseTransform(
+        try J2KDWT1D.inverseTransform(
             lowpass: lowpass,
             highpass: highpass,
             filter: .reversible53,

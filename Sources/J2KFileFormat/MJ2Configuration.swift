@@ -23,12 +23,12 @@ public enum MJ2Profile: String, Sendable {
     /// - Maximum frame rate: 30 fps
     /// - Single video track
     case simple = "mj2s"
-    
+
     /// General Profile - Full MJ2 support
     ///
     /// No specific constraints beyond JPEG 2000 Part 1 limitations.
     case general = "mjp2"
-    
+
     /// Broadcast Profile - Professional broadcast applications
     ///
     /// Optimized for:
@@ -36,7 +36,7 @@ public enum MJ2Profile: String, Sendable {
     /// - Low latency
     /// - Frame-accurate editing
     case broadcast = "broadcast"
-    
+
     /// Cinema Profile - Digital cinema applications
     ///
     /// Optimized for:
@@ -44,7 +44,7 @@ public enum MJ2Profile: String, Sendable {
     /// - High quality
     /// - Color fidelity
     case cinema = "cinema"
-    
+
     /// Returns the brand identifier for this profile.
     public var brandIdentifier: String {
         switch self {
@@ -54,7 +54,7 @@ public enum MJ2Profile: String, Sendable {
         case .cinema: return "mjp2"
         }
     }
-    
+
     /// Returns whether this profile requires specific encoding constraints.
     public var hasConstraints: Bool {
         switch self {
@@ -73,10 +73,10 @@ public enum MJ2Profile: String, Sendable {
 public struct MJ2TimescaleConfiguration: Sendable {
     /// Time units per second.
     public let timescale: UInt32
-    
+
     /// Frame duration in time units.
     public let frameDuration: UInt32
-    
+
     /// Creates a timescale configuration.
     ///
     /// - Parameters:
@@ -86,7 +86,7 @@ public struct MJ2TimescaleConfiguration: Sendable {
         self.timescale = timescale
         self.frameDuration = frameDuration
     }
-    
+
     /// Creates a timescale configuration from a frame rate.
     ///
     /// - Parameter frameRate: Frames per second (e.g., 24.0, 29.97, 30.0, 60.0).
@@ -103,19 +103,19 @@ public struct MJ2TimescaleConfiguration: Sendable {
             (59.94, 60000, 1001),    // 59.94 fps
             (60.0, 60000, 1000),     // 60 fps
         ]
-        
+
         // Find closest match
         let epsilon = 0.01
         if let match = commonTimescales.first(where: { abs($0.rate - frameRate) < epsilon }) {
             return MJ2TimescaleConfiguration(timescale: match.timescale, frameDuration: match.duration)
         }
-        
+
         // Use generic timescale for non-standard frame rates
         let timescale: UInt32 = 90000 // Common for video
         let duration = UInt32(Double(timescale) / frameRate)
         return MJ2TimescaleConfiguration(timescale: timescale, frameDuration: duration)
     }
-    
+
     /// Calculates the frame rate from this timescale configuration.
     public var frameRate: Double {
         guard frameDuration > 0 else { return 0.0 }
@@ -129,22 +129,22 @@ public struct MJ2TimescaleConfiguration: Sendable {
 public struct MJ2Metadata: Sendable {
     /// Movie title.
     public var title: String?
-    
+
     /// Movie author/creator.
     public var author: String?
-    
+
     /// Copyright information.
     public var copyright: String?
-    
+
     /// Movie description.
     public var description: String?
-    
+
     /// Creation date.
     public var creationDate: Date?
-    
+
     /// Modification date.
     public var modificationDate: Date?
-    
+
     /// Creates metadata with optional fields.
     public init(
         title: String? = nil,
@@ -172,13 +172,13 @@ public struct MJ2Metadata: Sendable {
 public struct MJ2AudioTrackConfiguration: Sendable {
     /// Sample rate in Hz (e.g., 44100, 48000).
     public let sampleRate: UInt32
-    
+
     /// Number of audio channels (e.g., 1 for mono, 2 for stereo).
     public let channels: UInt16
-    
+
     /// Bits per sample (e.g., 16, 24).
     public let bitsPerSample: UInt16
-    
+
     /// Creates an audio track configuration.
     ///
     /// - Note: Audio encoding is not yet implemented. This is a placeholder.
@@ -207,31 +207,31 @@ public struct MJ2AudioTrackConfiguration: Sendable {
 public struct MJ2CreationConfiguration: Sendable {
     /// MJ2 profile to use.
     public let profile: MJ2Profile
-    
+
     /// Timescale configuration.
     public let timescale: MJ2TimescaleConfiguration
-    
+
     /// JPEG 2000 encoding configuration.
     public let encodingConfiguration: J2KEncodingConfiguration
-    
+
     /// Metadata to include in the file.
     public let metadata: MJ2Metadata
-    
+
     /// Audio track configuration (if any).
     public let audioTrack: MJ2AudioTrackConfiguration?
-    
+
     /// Whether to use 64-bit chunk offsets (required for files >4GB).
     public let use64BitOffsets: Bool
-    
+
     /// Maximum number of frames to buffer in memory during encoding.
     public let maxFrameBufferCount: Int
-    
+
     /// Whether to enable parallel frame encoding.
     public let enableParallelEncoding: Bool
-    
+
     /// Number of frames to encode in parallel (0 = auto-detect).
     public let parallelEncodingCount: Int
-    
+
     /// Creates a configuration with all parameters.
     ///
     /// - Parameters:
@@ -265,7 +265,7 @@ public struct MJ2CreationConfiguration: Sendable {
         self.enableParallelEncoding = enableParallelEncoding
         self.parallelEncodingCount = max(0, parallelEncodingCount)
     }
-    
+
     /// Creates a configuration from a frame rate and quality.
     ///
     /// - Parameters:
@@ -282,14 +282,14 @@ public struct MJ2CreationConfiguration: Sendable {
     ) -> MJ2CreationConfiguration {
         let timescale = MJ2TimescaleConfiguration.from(frameRate: frameRate)
         let encodingConfig = J2KEncodingConfiguration(quality: quality, lossless: lossless)
-        
+
         return MJ2CreationConfiguration(
             profile: profile,
             timescale: timescale,
             encodingConfiguration: encodingConfig
         )
     }
-    
+
     /// Validates the configuration for the given image dimensions.
     ///
     /// - Parameters:
@@ -304,19 +304,19 @@ public struct MJ2CreationConfiguration: Sendable {
                     "Simple Profile requires resolution ≤ 1920×1080, got \(width)×\(height)"
                 )
             }
-            
+
             if timescale.frameRate > 30.0 {
                 throw J2KError.invalidParameter(
                     "Simple Profile requires frame rate ≤ 30 fps, got \(timescale.frameRate)"
                 )
             }
         }
-        
+
         // Validate timescale
         if timescale.timescale == 0 || timescale.frameDuration == 0 {
             throw J2KError.invalidParameter("Invalid timescale configuration")
         }
-        
+
         // Validate frame buffer
         if maxFrameBufferCount < 1 {
             throw J2KError.invalidParameter("maxFrameBufferCount must be at least 1")
