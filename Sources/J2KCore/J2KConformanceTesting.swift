@@ -1050,7 +1050,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                 for x in 0..<config.width {
                     let checkX = (x / squareSize) % 2
                     let checkY = (y / squareSize) % 2
-                    let value: Int32 = (checkX + checkY) % 2 == 0 ? 0 : maxValue
+                    let value: Int32 = (checkX + checkY).isMultiple(of: 2) ? 0 : maxValue
                     for c in 0..<config.components {
                         let index = (y * config.width + x) * config.components + c
                         pixels[index] = value
@@ -1081,7 +1081,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
         case .edges:
             for y in 0..<config.height {
                 for x in 0..<config.width {
-                    let isEdge = (x % 8 == 0) || (y % 8 == 0)
+                    let isEdge = (x.isMultiple(of: 8)) || (y.isMultiple(of: 8))
                     let value: Int32 = isEdge ? maxValue : 0
                     for c in 0..<config.components {
                         let index = (y * config.width + x) * config.components + c

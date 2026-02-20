@@ -21,7 +21,7 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
             // Dense pattern
             var original = [Int32](repeating: 0, count: size * size)
             for i in 0..<original.count {
-                let sign: Int32 = (i % 5 == 0) ? -1 : 1
+                let sign: Int32 = (i.isMultiple(of: 5)) ? -1 : 1
                 original[i] = sign * Int32((i * 17) % 2048)
             }
 

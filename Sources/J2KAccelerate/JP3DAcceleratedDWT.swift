@@ -179,7 +179,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         for i in stride(from: 1, to: n - 1, by: 2) {
             buf[i] += alpha97 * (s(i - 1) + s(i + 1))
         }
-        if n % 2 == 0 { buf[n - 1] += alpha97 * 2.0 * s(n - 2) }
+        if n.isMultiple(of: 2) { buf[n - 1] += alpha97 * 2.0 * s(n - 2) }
 
         // Step 2 – beta (update even)
         for i in stride(from: 2, to: n - 1, by: 2) {
@@ -191,7 +191,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         for i in stride(from: 1, to: n - 1, by: 2) {
             buf[i] += gamma97 * (s(i - 1) + s(i + 1))
         }
-        if n % 2 == 0 { buf[n - 1] += gamma97 * 2.0 * s(n - 2) }
+        if n.isMultiple(of: 2) { buf[n - 1] += gamma97 * 2.0 * s(n - 2) }
 
         // Step 4 – delta (update even)
         for i in stride(from: 2, to: n - 1, by: 2) {
@@ -273,7 +273,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         for i in stride(from: 1, to: n - 1, by: 2) {
             buf[i] -= gamma97 * (s(i - 1) + s(i + 1))
         }
-        if n % 2 == 0 { buf[n - 1] -= gamma97 * 2.0 * s(n - 2) }
+        if n.isMultiple(of: 2) { buf[n - 1] -= gamma97 * 2.0 * s(n - 2) }
 
         // Undo step 2 – beta
         for i in stride(from: 2, to: n - 1, by: 2) {
@@ -285,7 +285,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         for i in stride(from: 1, to: n - 1, by: 2) {
             buf[i] -= alpha97 * (s(i - 1) + s(i + 1))
         }
-        if n % 2 == 0 { buf[n - 1] -= alpha97 * 2.0 * s(n - 2) }
+        if n.isMultiple(of: 2) { buf[n - 1] -= alpha97 * 2.0 * s(n - 2) }
 
         return buf
     }

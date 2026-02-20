@@ -65,7 +65,7 @@ final class MJ2ExtractorTests: XCTestCase {
                 offset: UInt64(i * 1000),
                 duration: 1000,
                 timestamp: UInt64(i * 1000),
-                isSync: i % 3 == 0 // Every 3rd frame is a sync frame
+                isSync: i.isMultiple(of: 3) // Every 3rd frame is a sync frame
             )
             let frame = MJ2FrameSequence.Frame(metadata: metadata, data: Data(count: 1000))
             frames.append(frame)

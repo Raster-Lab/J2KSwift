@@ -272,7 +272,7 @@ struct HTVLCCoder: Sendable {
     /// - Returns: The VLC-encoded byte stream.
     mutating func flush() -> Data {
         // Pad to byte boundary
-        while bitCount % 8 != 0 {
+        while !bitCount.isMultiple(of: 8) {
             emitBits(0, count: 1)
         }
         while bitCount > 0 {
@@ -378,7 +378,7 @@ struct HTMagSgnCoder: Sendable {
     /// - Returns: The MagSgn-encoded byte stream.
     mutating func flush() -> Data {
         // Pad to byte boundary
-        while bitCount % 8 != 0 {
+        while !bitCount.isMultiple(of: 8) {
             emitBit(0)
         }
         while bitCount > 0 {

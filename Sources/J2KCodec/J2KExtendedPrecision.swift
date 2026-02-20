@@ -223,7 +223,7 @@ public struct J2KExtendedPrecision: Sendable {
         // Only apply special handling for exact 0.5 cases
         if abs(fraction - 0.5) < 1e-10 {
             let intRounded = Int64(rounded)
-            if intRounded % 2 != 0 {
+            if !intRounded.isMultiple(of: 2) {
                 // Round to even: if rounded value is odd, adjust
                 return value >= 0 ? rounded - 1.0 : rounded + 1.0
             }

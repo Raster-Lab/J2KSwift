@@ -44,7 +44,7 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
             var context = MQContext()
 
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 2 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
             }
 
             _ = encoder.finish()
@@ -102,7 +102,7 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
             var context = MQContext()
 
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 10 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 10), context: &context)
             }
 
             _ = encoder.finish()
@@ -129,7 +129,7 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
             var context = MQContext()
 
             for i in 0..<10000 {
-                encoder.encode(symbol: i % 2 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
             }
 
             _ = encoder.finish()
@@ -179,7 +179,7 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
         var encoder = MQEncoder()
         var context = MQContext()
         for i in 0..<1000 {
-            encoder.encode(symbol: i % 2 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
         }
         let encodedData = encoder.finish()
 
@@ -546,9 +546,9 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
                 let symbol: Bool
                 switch testCase {
                 case .uniformPattern1K, .uniformPattern10K:
-                    symbol = i % 2 == 0
+                    symbol = i.isMultiple(of: 2)
                 case .skewedPattern1K:
-                    symbol = i % 10 == 0
+                    symbol = i.isMultiple(of: 10)
                 default:
                     symbol = Bool.random()
                 }
@@ -574,7 +574,7 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
         var encoder = MQEncoder()
         var context = MQContext()
         for i in 0..<symbolCount {
-            encoder.encode(symbol: i % 2 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
         }
         let encodedData = encoder.finish()
 

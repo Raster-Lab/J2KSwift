@@ -369,7 +369,7 @@ final class J2KEntropyFuzzTests: XCTestCase {
             // Encode just 1-3 symbols
             let symbolCount = (iteration % 3) + 1
             for _ in 0..<symbolCount {
-                encoder.encode(symbol: iteration % 2 == 0, context: &context)
+                encoder.encode(symbol: iteration.isMultiple(of: 2), context: &context)
             }
 
             let encodedData = encoder.finish()

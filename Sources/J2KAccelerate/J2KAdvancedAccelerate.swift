@@ -130,7 +130,7 @@ public struct J2KAdvancedAccelerate: Sendable {
             return []
         }
 
-        guard spectrum.count % 2 == 0 else {
+        guard spectrum.count.isMultiple(of: 2) else {
             throw J2KError.invalidParameter(
                 "FFT spectrum must have even length"
             )

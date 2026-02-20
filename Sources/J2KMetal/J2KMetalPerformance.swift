@@ -308,7 +308,7 @@ public actor J2KMetalPerformance {
         let cacheLineSize = 64 // bytes
 
         if configuration.enableMemoryCoalescing {
-            if stride == 0 || stride % cacheLineSize == 0 {
+            if stride == 0 || stride.isMultiple(of: cacheLineSize) {
                 // Already aligned, use sequential access
                 return ("sequential", 4)
             } else if stride < cacheLineSize {

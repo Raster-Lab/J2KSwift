@@ -570,14 +570,14 @@ public enum J2KWaveletKernelLibrary: Sendable {
         // Analysis highpass via alternating flip: g[n] = (-1)^n * h[N-1-n]
         var aHP = [Double](repeating: 0.0, count: n)
         for i in 0..<n {
-            aHP[i] = (i % 2 == 0 ? 1.0 : -1.0) * coeffs[n - 1 - i]
+            aHP[i] = (i.isMultiple(of: 2) ? 1.0 : -1.0) * coeffs[n - 1 - i]
         }
         // Synthesis lowpass is time-reversed analysis lowpass
         let sLP = Array(coeffs.reversed())
         // Synthesis highpass via alternating flip
         var sHP = [Double](repeating: 0.0, count: n)
         for i in 0..<n {
-            sHP[i] = (i % 2 == 0 ? -1.0 : 1.0) * coeffs[i]
+            sHP[i] = (i.isMultiple(of: 2) ? -1.0 : 1.0) * coeffs[i]
         }
         return J2KWaveletKernel(
             name: "Daubechies-6",

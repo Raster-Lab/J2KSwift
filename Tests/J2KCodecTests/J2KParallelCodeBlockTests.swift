@@ -106,7 +106,7 @@ final class J2KParallelCodeBlockTests: XCTestCase {
         for size in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64] {
             let coefficients = (0..<size).map { i -> Int32 in
                 let val = Int32(i * 3 + 1)
-                return i % 3 == 0 ? -val : val
+                return i.isMultiple(of: 3) ? -val : val
             }
 
             let coder = BitPlaneCoder(width: size, height: 1, subband: .hl)

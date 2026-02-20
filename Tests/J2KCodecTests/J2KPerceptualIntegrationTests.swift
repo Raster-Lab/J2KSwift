@@ -425,7 +425,7 @@ final class J2KPerceptualIntegrationTests: XCTestCase {
             case .checkerboard:
                 for y in 0..<height {
                     for x in 0..<width {
-                        let value: Int32 = ((x / 8 + y / 8) % 2 == 0) ? 50 : 200
+                        let value: Int32 = ((x / 8 + y / 8).isMultiple(of: 2)) ? 50 : 200
                         int32Buffer[y * width + x] = value
                     }
                 }

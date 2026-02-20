@@ -329,7 +329,7 @@ final class J2KVisualMaskingTests: XCTestCase {
         for y in 0..<height {
             for x in 0..<width {
                 // Checkerboard pattern creates high variance
-                let value: Int32 = ((x + y) % 2 == 0) ? 50 : 200
+                let value: Int32 = ((x + y).isMultiple(of: 2)) ? 50 : 200
                 samples.append(value)
             }
         }

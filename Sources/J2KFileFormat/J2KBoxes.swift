@@ -203,7 +203,7 @@ public struct J2KFileTypeBox: J2KBox {
         // Read compatible brands
         compatibleBrands = []
         let remainingBytes = data.count - 8
-        guard remainingBytes % 4 == 0 else {
+        guard remainingBytes.isMultiple(of: 4) else {
             throw J2KError.fileFormatError("Invalid compatible brands list length: \(remainingBytes)")
         }
 
@@ -1170,7 +1170,7 @@ public struct J2KComponentMappingBox: J2KBox {
             throw J2KError.fileFormatError("Component mapping box too small: \(data.count) bytes, expected at least 4")
         }
 
-        guard data.count % 4 == 0 else {
+        guard data.count.isMultiple(of: 4) else {
             throw J2KError.fileFormatError("Invalid component mapping box size: \(data.count), must be multiple of 4")
         }
 

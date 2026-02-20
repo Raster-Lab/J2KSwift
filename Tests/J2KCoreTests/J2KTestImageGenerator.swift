@@ -222,7 +222,7 @@ public struct J2KTestImageGenerator: Sendable {
             for x in 0..<width {
                 let blockX = x / blockSize
                 let blockY = y / blockSize
-                let isWhite = (blockX + blockY) % 2 == 0
+                let isWhite = (blockX + blockY).isMultiple(of: 2)
                 let value = isWhite ? maxValue : 0
                 buffer.setPixel(x: x, y: y, value: value)
             }
@@ -235,7 +235,7 @@ public struct J2KTestImageGenerator: Sendable {
 
         for y in 0..<height {
             let stripeIndex = y / stripeHeight
-            let value = stripeIndex % 2 == 0 ? maxValue : 0
+            let value = stripeIndex.isMultiple(of: 2) ? maxValue : 0
             for x in 0..<width {
                 buffer.setPixel(x: x, y: y, value: value)
             }
@@ -249,7 +249,7 @@ public struct J2KTestImageGenerator: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let stripeIndex = x / stripeWidth
-                let value = stripeIndex % 2 == 0 ? maxValue : 0
+                let value = stripeIndex.isMultiple(of: 2) ? maxValue : 0
                 buffer.setPixel(x: x, y: y, value: value)
             }
         }

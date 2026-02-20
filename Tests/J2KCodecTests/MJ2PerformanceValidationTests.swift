@@ -240,7 +240,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
             await builder.addSample(
                 size: UInt32(1024 + i),
                 offset: UInt64(i * 1024),
-                isSync: i % 10 == 0
+                isSync: i.isMultiple(of: 10)
             )
         }
         let count = await builder.sampleCount

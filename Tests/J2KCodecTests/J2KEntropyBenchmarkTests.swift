@@ -27,7 +27,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
 
             // Encode 1000 alternating bits
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 2 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
             }
 
             _ = encoder.finish()
@@ -71,7 +71,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
 
             // Encode mostly zeros (90%)
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 10 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 10), context: &context)
             }
 
             _ = encoder.finish()
@@ -89,7 +89,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
             var encoder = MQEncoder()
 
             for i in 0..<1000 {
-                encoder.encodeBypass(symbol: i % 2 == 0)
+                encoder.encodeBypass(symbol: i.isMultiple(of: 2))
             }
 
             _ = encoder.finish()
@@ -110,7 +110,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
             // Encode with different contexts
             for i in 0..<1000 {
                 let contextIndex = i % 10
-                encoder.encode(symbol: i % 2 == 0, context: &contexts[contextIndex])
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &contexts[contextIndex])
             }
 
             _ = encoder.finish()
@@ -128,7 +128,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
         var encoder = MQEncoder()
         var encodeContext = MQContext()
         for i in 0..<1000 {
-            encoder.encode(symbol: i % 2 == 0, context: &encodeContext)
+            encoder.encode(symbol: i.isMultiple(of: 2), context: &encodeContext)
         }
         let encodedData = encoder.finish()
 
@@ -178,7 +178,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
         // Pre-encode data in bypass mode
         var encoder = MQEncoder()
         for i in 0..<1000 {
-            encoder.encodeBypass(symbol: i % 2 == 0)
+            encoder.encodeBypass(symbol: i.isMultiple(of: 2))
         }
         let encodedData = encoder.finish()
 
@@ -359,7 +359,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
             var context = MQContext()
 
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 2 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
             }
 
             _ = encoder.finish()
@@ -393,7 +393,7 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
             var encoder = MQEncoder()
             var context = MQContext()
             for i in 0..<1000 {
-                encoder.encode(symbol: i % 2 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
             }
             let data = encoder.finish()
             let ratio = 1000.0 / Double(data.count * 8)

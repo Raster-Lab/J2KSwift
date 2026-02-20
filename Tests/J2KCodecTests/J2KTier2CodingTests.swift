@@ -495,7 +495,7 @@ final class J2KTier2CodingTests: XCTestCase {
 
         // Create a realistic packet header with many code-blocks
         let codeBlockCount = 256
-        let inclusions = (0..<codeBlockCount).map { $0 % 3 != 0 } // ~66% included
+        let inclusions = (0..<codeBlockCount).map { !$0.isMultiple(of: 3) } // ~66% included
         let passes = inclusions.compactMap { $0 ? Int.random(in: 1...10) : nil }
         let lengths = inclusions.compactMap { $0 ? Int.random(in: 50...500) : nil }
 

@@ -128,7 +128,7 @@ actor MJ2StreamWriter {
         let brands = [brand, "mjp2", "jp2 "]
         for compatBrand in brands {
             data.append(contentsOf: compatBrand.utf8.prefix(4).map { $0 })
-            while data.count % 4 != 0 { data.append(0x20) }
+            while !data.count.isMultiple(of: 4) { data.append(0x20) }
         }
 
         // Write ftyp box

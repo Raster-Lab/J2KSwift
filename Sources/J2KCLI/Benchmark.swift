@@ -84,7 +84,7 @@ extension J2KCLI {
             let avgTime = totalEncodeTime / Double(runs)
             let minTime = encodeTimes.first!
             let maxTime = encodeTimes.last!
-            let medianTime = runs % 2 == 0
+            let medianTime = runs.isMultiple(of: 2)
                 ? (encodeTimes[runs / 2 - 1] + encodeTimes[runs / 2]) / 2
                 : encodeTimes[runs / 2]
 
@@ -142,7 +142,7 @@ extension J2KCLI {
             let avgTime = totalDecodeTime / Double(runs)
             let minTime = decodeTimes.first!
             let maxTime = decodeTimes.last!
-            let medianTime = runs % 2 == 0
+            let medianTime = runs.isMultiple(of: 2)
                 ? (decodeTimes[runs / 2 - 1] + decodeTimes[runs / 2]) / 2
                 : decodeTimes[runs / 2]
 

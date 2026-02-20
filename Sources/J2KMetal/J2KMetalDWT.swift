@@ -958,7 +958,7 @@ public actor J2KMetalDWT {
         var data = signal
         for step in 0..<scheme.coefficients.count {
             let coeff = scheme.coefficients[step]
-            let updateOdd = (step % 2 == 0)
+            let updateOdd = (step.isMultiple(of: 2))
             if updateOdd {
                 for i in 0..<halfH {
                     let left = data[2 * i]
@@ -1084,7 +1084,7 @@ public actor J2KMetalDWT {
             var sum: Float = 0
             for k in 0..<filter.synthesisLowpass.count {
                 let idx = pos - k
-                if idx >= 0 && idx % 2 == 0 {
+                if idx >= 0 && idx.isMultiple(of: 2) {
                     let j = idx / 2
                     if j < halfN {
                         sum += lowpass[j] * filter.synthesisLowpass[k]
@@ -1121,7 +1121,7 @@ public actor J2KMetalDWT {
         // Reverse lifting steps
         for step in stride(from: scheme.coefficients.count - 1, through: 0, by: -1) {
             let coeff = -scheme.coefficients[step]
-            let updateOdd = (step % 2 == 0)
+            let updateOdd = (step.isMultiple(of: 2))
             if updateOdd {
                 for i in 0..<halfH {
                     let left = data[2 * i]

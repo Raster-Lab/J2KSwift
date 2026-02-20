@@ -318,7 +318,7 @@ public struct J2KDCOMarkerSegment: Sendable, Equatable {
 
         // Calculate number of components
         let offsetDataLength = segmentLength - 3
-        guard offsetDataLength % bytesPerOffset == 0 else {
+        guard offsetDataLength.isMultiple(of: bytesPerOffset) else {
             throw J2KError.decodingError("DCO marker segment has invalid length")
         }
         let componentCount = offsetDataLength / bytesPerOffset

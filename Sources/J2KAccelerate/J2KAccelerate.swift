@@ -1406,7 +1406,7 @@ public struct J2KColorTransform: Sendable {
         guard !rgb.isEmpty else {
             throw J2KError.invalidParameter("RGB data cannot be empty")
         }
-        guard rgb.count % 3 == 0 else {
+        guard rgb.count.isMultiple(of: 3) else {
             throw J2KError.invalidParameter(
                 "RGB data length must be a multiple of 3, got \(rgb.count)"
             )
@@ -1450,7 +1450,7 @@ public struct J2KColorTransform: Sendable {
         guard !ycbcr.isEmpty else {
             throw J2KError.invalidParameter("YCbCr data cannot be empty")
         }
-        guard ycbcr.count % 3 == 0 else {
+        guard ycbcr.count.isMultiple(of: 3) else {
             throw J2KError.invalidParameter(
                 "YCbCr data length must be a multiple of 3, got \(ycbcr.count)"
             )

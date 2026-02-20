@@ -266,7 +266,7 @@ final class J2KPerformanceTuningTests: XCTestCase {
         let result = try await pool.parallelMap(input) { value -> Int in
             // Vary processing time to test ordering
             var sum = 0
-            let iterations = (value % 5 == 0) ? 10000 : 100
+            let iterations = (value.isMultiple(of: 5)) ? 10000 : 100
             for i in 0..<iterations { sum += i }
             _ = sum
             return value

@@ -221,7 +221,7 @@ public struct J2KNumberListBox: J2KBox, Sendable {
     }
 
     public mutating func read(from data: Data) throws {
-        guard data.count % 6 == 0 else {
+        guard data.count.isMultiple(of: 6) else {
             throw J2KError.fileFormatError(
                 "Number list box size \(data.count) is not a multiple of 6")
         }
