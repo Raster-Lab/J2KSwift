@@ -315,10 +315,10 @@ final class J2KCoreTests: XCTestCase {
         let ycbcr = J2KColorSpace.yCbCr
         let unknown = J2KColorSpace.unknown
 
-        if case .sRGB = srgb {} else { XCTFail() }
-        if case .grayscale = gray {} else { XCTFail() }
-        if case .yCbCr = ycbcr {} else { XCTFail() }
-        if case .unknown = unknown {} else { XCTFail() }
+        if case .sRGB = srgb {} else { XCTFail("Expected .sRGB") }
+        if case .grayscale = gray {} else { XCTFail("Expected .grayscale") }
+        if case .yCbCr = ycbcr {} else { XCTFail("Expected .yCbCr") }
+        if case .unknown = unknown {} else { XCTFail("Expected .unknown") }
     }
 
     /// Tests J2KColorSpace with ICC profile.

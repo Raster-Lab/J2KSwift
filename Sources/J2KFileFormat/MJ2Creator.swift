@@ -104,7 +104,7 @@ public actor MJ2Creator {
 
         // Validate all frames have consistent dimensions and components
         let firstFrame = frames[0]
-        for (_, frame) in frames.enumerated() {
+        for frame in frames {
             if frame.width != firstFrame.width || frame.height != firstFrame.height {
                 throw MJ2CreationError.inconsistentDimensions(
                     expected: (firstFrame.width, firstFrame.height),

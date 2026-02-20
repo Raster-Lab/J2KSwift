@@ -423,6 +423,8 @@ final class J2KEntropyBenchmarkTests: XCTestCase {
 
 // MARK: - Helper for String Repetition
 
-private func *(lhs: String, rhs: Int) -> String {
-    String(repeating: lhs, count: rhs)
+private extension String {
+    static func * (lhs: String, rhs: Int) -> String {
+        String(repeating: lhs, count: rhs)
+    }
 }

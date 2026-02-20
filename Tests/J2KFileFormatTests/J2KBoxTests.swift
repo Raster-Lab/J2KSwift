@@ -1750,7 +1750,7 @@ final class J2KBoxTests: XCTestCase {
 
     func testUUIDBox() throws {
         let uuid = UUID()
-        let customData = "Custom metadata".data(using: .utf8)!
+        let customData = Data("Custom metadata".utf8)
 
         let box = J2KUUIDBox(uuid: uuid, data: customData)
 
@@ -2012,9 +2012,9 @@ final class J2KBoxTests: XCTestCase {
     func testUUIDBoxWithinFile() throws {
         // Test UUID box as part of a JP2 file structure
         let uuid = UUID()
-        let metadata = """
+        let metadata = Data("""
         {"format": "JPEG 2000", "version": "1.0"}
-        """.data(using: .utf8)!
+        """.utf8)
 
         let box = J2KUUIDBox(uuid: uuid, data: metadata)
 

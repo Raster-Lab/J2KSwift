@@ -20,13 +20,13 @@ import J2KFileFormat
 /// if the source image supports the requested mode.
 public enum JPIPCodingPreference: String, Sendable {
     /// No preference; use whatever coding mode the image uses natively.
-    case none = "none"
+    case none
 
     /// Prefer HTJ2K (Part 15) high-throughput coding.
-    case htj2k = "htj2k"
+    case htj2k
 
     /// Prefer legacy JPEG 2000 (Part 1) coding.
-    case legacy = "legacy"
+    case legacy
 }
 
 /// Information about a registered image's format and HTJ2K capabilities.

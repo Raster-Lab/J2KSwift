@@ -217,7 +217,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         low  = vDSP.multiply(K97, low)
         high = vDSP.multiply(invK, high)
         #else
-        low  = low.map { $0 * K97   }
+        low  = low.map { $0 * K97 }
         high = high.map { $0 * invK }
         #endif
 
@@ -251,7 +251,7 @@ public struct JP3DAcceleratedDWT: Sendable {
         scaledHigh = vDSP.multiply(K97, scaledHigh)
         #else
         scaledLow  = scaledLow.map { $0 * invK }
-        scaledHigh = scaledHigh.map { $0 * K97   }
+        scaledHigh = scaledHigh.map { $0 * K97 }
         #endif
 
         // Reassemble interleaved buffer
@@ -378,8 +378,8 @@ public struct JP3DAcceleratedDWT: Sendable {
                 }
                 let (lCol, hCol) = forward1D(col, filter: filter)
 
-                for y in 0 ..< hL { low[z * hL * width + y * width + x]  = lCol[y] }
-                for y in 0 ..< hH { high[z * hH * width + y * width + x]  = hCol[y] }
+                for y in 0 ..< hL { low[z * hL * width + y * width + x] = lCol[y] }
+                for y in 0 ..< hH { high[z * hH * width + y * width + x] = hCol[y] }
             }
         }
         return (low: low, high: high)
@@ -417,8 +417,8 @@ public struct JP3DAcceleratedDWT: Sendable {
                 }
                 let (lVec, hVec) = forward1D(vec, filter: filter)
 
-                for z in 0 ..< dL { low[z * height * width + y * width + x]  = lVec[z] }
-                for z in 0 ..< dH { high[z * height * width + y * width + x]  = hVec[z] }
+                for z in 0 ..< dL { low[z * height * width + y * width + x] = lVec[z] }
+                for z in 0 ..< dH { high[z * height * width + y * width + x] = hVec[z] }
             }
         }
         return (low: low, high: high)

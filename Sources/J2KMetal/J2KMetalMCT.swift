@@ -566,9 +566,9 @@ public actor J2KMetalMCT {
 
     /// Standard ICT forward transform matrix (RGB → YCbCr).
     public static let ictForwardMatrix: [Float] = [
-         0.299, 0.587, 0.114,
+        0.299, 0.587, 0.114,
         -0.16875, -0.33126, 0.5,
-         0.5, -0.41869, -0.08131
+        0.5, -0.41869, -0.08131
     ]
 
     /// Standard ICT inverse transform matrix (YCbCr → RGB).

@@ -167,7 +167,7 @@ struct NeighborContribution: Sendable {
 
     /// Creates a neighbor contribution with the specified values.
     init(horizontal: Int, vertical: Int, diagonal: Int,
-                horizontalSign: Int = 0, verticalSign: Int = 0) {
+         horizontalSign: Int = 0, verticalSign: Int = 0) {
         self.horizontal = horizontal
         self.vertical = vertical
         self.diagonal = diagonal

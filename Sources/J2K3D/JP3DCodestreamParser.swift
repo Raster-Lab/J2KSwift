@@ -142,9 +142,9 @@ public struct JP3DCodestreamParser: Sendable {
             case 0xFF90: // SOT
                 let tile = try parseSOTAndData(data, at: &offset)
                 parsedTiles.append(tile)
-                case 0xFFD9: // EOC
+            case 0xFFD9: // EOC
                 foundEOC = true
-                default:
+            default:
                 // Unknown marker: try to skip using length field if present
                 if marker >= 0xFF00 {
                     if offset + 2 <= data.count {

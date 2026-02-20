@@ -359,6 +359,8 @@ public struct ReferenceBenchmarkSuite: Sendable {
 
 // MARK: - Helper
 
-private func * (lhs: String, rhs: Int) -> String {
-    String(repeating: lhs, count: rhs)
+private extension String {
+    static func * (lhs: String, rhs: Int) -> String {
+        String(repeating: lhs, count: rhs)
+    }
 }

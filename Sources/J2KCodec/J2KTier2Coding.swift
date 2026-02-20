@@ -243,41 +243,7 @@ public struct PacketHeaderWriter: Sendable {
 
         // For included code-blocks, encode number of coding passes
         var passIndex = 0
-        for (_, included) in header.codeBlockInclusions.enumerated() {
-            if included {
-                guard passIndex < header.codingPasses.count else {
-                    throw J2KError.invalidData("Missing coding passes information")
-                }
-                let passes = header.codingPasses[passIndex]
-
-                // Encode number of coding passes (typically 1-164)
-                // Using a simple encoding scheme for now
-                if passes == 1 {
-                    encoder.encode(symbol: true, context: &context)
-                } else if passes <= 3 {
-                    encoder.encode(symbol: false, context: &context)
-                    encoder.encode(symbol: true, context: &context)
-                    // Encode the actual value (2 or 3)
-                    encoder.encode(symbol: passes == 3, context: &context)
-                } else {
-                    // For more passes, use a more complex encoding
-                    encoder.encode(symbol: false, context: &context)
-                    encoder.encode(symbol: false, context: &context)
-                    // Encode the remaining value
-                    var remaining = passes - 4
-                    while remaining > 0 {
-                        encoder.encode(symbol: (remaining & 1) != 0, context: &context)
-                        remaining >>= 1
-                    }
-                }
-
-                passIndex += 1
-            }
-        }
-
-        // Encode data lengths
-        passIndex = 0
-        for (_, included) in header.codeBlockInclusions.enumerated() {
+        for included in header.codeBlockInclusions {
             if included {
                 guard passIndex < header.dataLengths.count else {
                     throw J2KError.invalidData("Missing data length information")

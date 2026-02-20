@@ -225,9 +225,11 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         if !mismatches.isEmpty {
             let row = { $0 / width }
             let col = { $0 % width }
-            let details = mismatches.map { idx, expected, got in
-                "Index \(idx) [\(row(idx)),\(col(idx))]: expected \(expected), got \(got)"
-            }.joined(separator: "\n")
+            let details = mismatches
+                .map { idx, expected, got in
+                    "Index \(idx) [\(row(idx)),\(col(idx))]: expected \(expected), got \(got)"
+                }
+                .joined(separator: "\n")
             XCTFail("Round-trip mismatch:\n\(details)")
         }
     }

@@ -348,10 +348,12 @@ public actor JPIPBandwidthEstimator {
         let recentSamples = Array(samples.suffix(recentCount))
 
         let mean = Double(recentSamples.map { $0.throughput }.reduce(0, +)) / Double(recentCount)
-        let variance = recentSamples.map { sample in
-            let diff = Double(sample.throughput) - mean
-            return diff * diff
-        }.reduce(0, +) / Double(recentCount)
+        let variance = recentSamples
+            .map { sample in
+                let diff = Double(sample.throughput) - mean
+                return diff * diff
+            }
+            .reduce(0, +) / Double(recentCount)
 
         let stdDev = variance.squareRoot()
 
