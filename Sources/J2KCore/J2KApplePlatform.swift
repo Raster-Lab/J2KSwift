@@ -613,7 +613,7 @@ public actor J2KAsyncFileIO {
                 type: .random,
                 path: path,
                 oflag: O_WRONLY | O_CREAT | O_TRUNC,
-                mode: S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH,
+                mode: 0o644,
                 queue: queue,
                 cleanupHandler: { _ in }
             ) else {
