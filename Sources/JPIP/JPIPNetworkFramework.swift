@@ -412,7 +412,9 @@ public actor JPIPBackgroundTransferService {
             using: nil
         ) { task in
             Task {
-                await self.handleBackgroundTask(task as! BGProcessingTask)
+                if let processingTask = task as? BGProcessingTask {
+                    await self.handleBackgroundTask(processingTask)
+                }
             }
         }
 

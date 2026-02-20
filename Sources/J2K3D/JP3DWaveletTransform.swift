@@ -562,7 +562,7 @@ public actor JP3DWaveletTransform {
     private let beta97: Float = -0.052980118
     private let gamma97: Float = 0.882911075
     private let delta97: Float = 0.443506852
-    private let K97: Float = 1.149604398   // scaling factor
+    private let k97: Float = 1.149604398   // scaling factor
 
     /// Forward CDF 9/7 lifting transform.
     ///
@@ -601,9 +601,9 @@ public actor JP3DWaveletTransform {
             s[i] += delta97 * (dPrev + dCurr)
         }
         // Scaling
-        let invK = 1.0 / K97
+        let invK = 1.0 / k97
         for i in 0..<nL { s[i] *= invK }
-        for i in 0..<nH { d[i] *= K97  }
+        for i in 0..<nH { d[i] *= k97  }
 
         // Write back: lowpass first, then highpass
         for i in 0..<nL { x[i]      = s[i] }
@@ -620,8 +620,8 @@ public actor JP3DWaveletTransform {
         var d = Array(x[nL..<nL + nH])
 
         // Undo scaling
-        let invK = 1.0 / K97
-        for i in 0..<nL { s[i] *= K97  }
+        let invK = 1.0 / k97
+        for i in 0..<nL { s[i] *= k97  }
         for i in 0..<nH { d[i] *= invK }
 
         // Undo update 2: s[n] -= δ * (d[n-1] + d[n])

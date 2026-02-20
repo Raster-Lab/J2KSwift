@@ -1544,41 +1544,10 @@ public actor J2KMetalDWT {
         cb3.waitUntilCompleted()
 
         // Read results
-        var ll = [Float](repeating: 0, count: halfW * halfH)
-        var lh = [Float](repeating: 0, count: halfW * halfHH)
-        var hl = [Float](repeating: 0, count: halfWH * halfH)
-        var hh = [Float](repeating: 0, count: halfWH * halfHH)
-
-        ll.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: llBuffer.contents(),
-                count: halfW * halfH * MemoryLayout<Float>.stride
-            ))
-        }
-        if halfW * halfHH > 0 {
-            lh.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: lhBuffer.contents(),
-                    count: halfW * halfHH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
-        if halfWH * halfH > 0 {
-            hl.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: hlBuffer.contents(),
-                    count: halfWH * halfH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
-        if halfWH * halfHH > 0 {
-            hh.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: hhBuffer.contents(),
-                    count: halfWH * halfHH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
+        let ll = readFloatArray(from: llBuffer, elementCount: halfW * halfH)
+        let lh = readFloatArray(from: lhBuffer, elementCount: halfW * halfHH)
+        let hl = readFloatArray(from: hlBuffer, elementCount: halfWH * halfH)
+        let hh = readFloatArray(from: hhBuffer, elementCount: halfWH * halfHH)
 
         // Track memory
         let totalMem = UInt64(
@@ -1605,6 +1574,18 @@ public actor J2KMetalDWT {
             llWidth: halfW, llHeight: halfH,
             originalWidth: width, originalHeight: height
         )
+    }
+
+    private func readFloatArray(from buffer: MTLBuffer, elementCount: Int) -> [Float] {
+        guard elementCount > 0 else { return [] }
+        var result = [Float](repeating: 0, count: elementCount)
+        result.withUnsafeMutableBytes { dst in
+            dst.copyBytes(from: UnsafeRawBufferPointer(
+                start: buffer.contents(),
+                count: elementCount * MemoryLayout<Float>.stride
+            ))
+        }
+        return result
     }
 
     private func inverse2DGPU(
