@@ -30,6 +30,9 @@ let package = Package(
             name: "J2KMetal",
             targets: ["J2KMetal"]),
         .library(
+            name: "J2KVulkan",
+            targets: ["J2KVulkan"]),
+        .library(
             name: "JPIP",
             targets: ["JPIP"]),
         .library(
@@ -57,6 +60,9 @@ let package = Package(
             name: "J2KMetal",
             dependencies: ["J2KCore"]),
         .target(
+            name: "J2KVulkan",
+            dependencies: ["J2KCore"]),
+        .target(
             name: "JPIP",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"]),
         .target(
@@ -77,6 +83,9 @@ let package = Package(
         .testTarget(
             name: "J2KMetalTests",
             dependencies: ["J2KMetal"]),
+        .testTarget(
+            name: "J2KVulkanTests",
+            dependencies: ["J2KVulkan"]),
         .testTarget(
             name: "JPIPTests",
             dependencies: ["JPIP", "J2KCodec"]),

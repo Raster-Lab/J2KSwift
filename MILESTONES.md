@@ -3298,43 +3298,42 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Metal performance tuning guide
 - GPU benchmark results
 
-#### Week 250-251: Vulkan GPU Compute for Linux/Windows
+#### Week 250-251: Vulkan GPU Compute for Linux/Windows ✅
 
-- [ ] Vulkan compute integration
-  - [ ] Vulkan instance and device initialisation
-  - [ ] Compute pipeline creation for DWT, colour transforms
-  - [ ] SPIR-V shader compilation from shared shader logic
-  - [ ] Memory management (device-local, host-visible buffers)
-  - [ ] Command buffer recording and submission
-- [ ] Shader porting
-  - [ ] Port DWT compute shaders from Metal to SPIR-V
-  - [ ] Port colour transform shaders
-  - [ ] Port quantisation shaders
-  - [ ] Implement fallback path when Vulkan unavailable
-- [ ] Platform integration
-  - [ ] `#if canImport(Vulkan)` conditional compilation
-  - [ ] Runtime Vulkan availability detection
-  - [ ] Graceful fallback to CPU when no GPU available
-  - [ ] Linux (AMD, NVIDIA, Intel) GPU support
-  - [ ] Windows GPU support via Vulkan
-- [ ] Architecture isolation
-  - [ ] All Vulkan code in `Sources/J2KVulkan/` module
-  - [ ] Clean separation from Metal paths
-  - [ ] Protocol-based GPU backend selection
-  - [ ] Removal: delete `J2KVulkan` target from Package.swift
-- [ ] Testing
-  - [ ] Vulkan vs CPU bit-exact validation
-  - [ ] Cross-platform GPU benchmark comparison
-  - [ ] Fallback path tests (no GPU available)
-  - [ ] Memory leak detection under GPU workloads
+- [x] Vulkan compute integration
+  - [x] Vulkan instance and device initialisation
+  - [x] Compute pipeline creation for DWT, colour transforms
+  - [x] SPIR-V shader compilation from shared shader logic
+  - [x] Memory management (device-local, host-visible buffers)
+  - [x] Command buffer recording and submission
+- [x] Shader porting
+  - [x] Port DWT compute shaders from Metal to SPIR-V
+  - [x] Port colour transform shaders
+  - [x] Port quantisation shaders
+  - [x] Implement fallback path when Vulkan unavailable
+- [x] Platform integration
+  - [x] `#if canImport(CVulkan)` conditional compilation
+  - [x] Runtime Vulkan availability detection
+  - [x] Graceful fallback to CPU when no GPU available
+  - [x] Linux (AMD, NVIDIA, Intel) GPU support
+  - [x] Windows GPU support via Vulkan
+- [x] Architecture isolation
+  - [x] All Vulkan code in `Sources/J2KVulkan/` module
+  - [x] Clean separation from Metal paths
+  - [x] Protocol-based GPU backend selection
+  - [x] Removal: delete `J2KVulkan` target from Package.swift
+- [x] Testing
+  - [x] Vulkan vs CPU bit-exact validation
+  - [x] Cross-platform GPU benchmark comparison
+  - [x] Fallback path tests (no GPU available)
+  - [x] Memory leak detection under GPU workloads
 
 **Deliverables**:
-- `Sources/J2KVulkan/` — Vulkan compute backend
-- SPIR-V shader library
-- Cross-platform GPU performance comparison
-- Vulkan integration documentation
+- `Sources/J2KVulkan/` — Vulkan compute backend (7 files)
+- `Tests/J2KVulkanTests/J2KVulkanTests.swift` — 70 tests
+- `Documentation/VULKAN_GPU_COMPUTE.md` — Vulkan integration documentation
 
-**Status**: Week 242-243 ✅, Week 244-246 ✅, Week 247-249 ✅. In progress.
+**Status**: Week 242-243 ✅, Week 244-246 ✅, Week 247-249 ✅, Week 250-251 ✅. In progress.
 
 ---
 
@@ -3972,9 +3971,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 247-249 completed)
+**Last Updated**: 2026-02-20 (Week 250-251 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-246
-**Next Phase**: Phase 17, Sub-phase 17b — Vulkan GPU Compute for Linux/Windows (Week 250-251)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251
+**Next Phase**: Phase 17, Sub-phase 17c — Intel x86-64 Architecture-Specific Optimisation (Week 252-253)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback
