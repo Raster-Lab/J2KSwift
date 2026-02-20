@@ -3125,41 +3125,45 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Concurrency-clean J2KCore module (3 types migrated to actors, 1 actor fixed)
 - `Documentation/CONCURRENCY_AUDIT.md` — comprehensive concurrency audit report
 
-#### Week 238-239: Module-by-Module Concurrency Migration
+#### Week 238-239: Module-by-Module Concurrency Migration ✅
 
-- [ ] J2KCodec module
-  - [ ] Migrate encoder/decoder to strict concurrency
-  - [ ] Ensure HTJ2K codec is fully concurrent-safe
-  - [ ] Review and update all actor types (encoder, decoder, transcoder)
-  - [ ] Eliminate unsafe buffer pointer escapes
-- [ ] J2KFileFormat module
-  - [ ] Migrate file reader/writer to strict concurrency
-  - [ ] Ensure MJ2 types are concurrent-safe
-  - [ ] Review JP2/JPX/JPM format handlers
-- [ ] J2KAccelerate module
-  - [ ] Ensure Accelerate wrappers are concurrency-safe
-  - [ ] Review vDSP/vImage callback usage
-  - [ ] Verify thread safety of BLAS/LAPACK bindings
-- [ ] JPIP module
-  - [ ] Audit all JPIP actors (client, server, session)
-  - [ ] Verify async/await patterns in network operations
-  - [ ] Ensure session state is properly isolated
-- [ ] J2K3D module
-  - [ ] Migrate all JP3D actors to strict concurrency
-  - [ ] Review volumetric encoder/decoder isolation
-  - [ ] Verify 3D streaming types are `Sendable`
-- [ ] J2KMetal module
-  - [ ] Audit Metal command buffer lifecycle
-  - [ ] Ensure GPU resource management is actor-isolated
-  - [ ] Verify shader dispatch is concurrent-safe
-- [ ] Testing
-  - [ ] Full test suite passes with zero concurrency warnings across all modules
-  - [ ] No regressions from v1.9.0 baseline
-  - [ ] Concurrent stress tests for each module
+- [x] J2KCodec module
+  - [x] Migrate encoder/decoder to strict concurrency
+  - [x] Ensure HTJ2K codec is fully concurrent-safe
+  - [x] Review and update all actor types (encoder, decoder, transcoder)
+  - [x] Eliminate unsafe buffer pointer escapes
+- [x] J2KFileFormat module
+  - [x] Migrate file reader/writer to strict concurrency
+  - [x] Ensure MJ2 types are concurrent-safe
+  - [x] Review JP2/JPX/JPM format handlers
+- [x] J2KAccelerate module
+  - [x] Ensure Accelerate wrappers are concurrency-safe
+  - [x] Review vDSP/vImage callback usage
+  - [x] Verify thread safety of BLAS/LAPACK bindings
+- [x] JPIP module
+  - [x] Audit all JPIP actors (client, server, session)
+  - [x] Verify async/await patterns in network operations
+  - [x] Ensure session state is properly isolated
+- [x] J2K3D module
+  - [x] Migrate all JP3D actors to strict concurrency
+  - [x] Review volumetric encoder/decoder isolation
+  - [x] Verify 3D streaming types are `Sendable`
+- [x] J2KMetal module
+  - [x] Audit Metal command buffer lifecycle
+  - [x] Ensure GPU resource management is actor-isolated
+  - [x] Verify shader dispatch is concurrent-safe
+- [x] Testing
+  - [x] Full test suite passes with zero concurrency warnings across all modules
+  - [x] No regressions from v1.9.0 baseline
+  - [x] Concurrent stress tests for each module
 
 **Deliverables**:
 - All modules concurrency-clean under Swift 6.2 strict mode
-- Zero `@unchecked Sendable` usage (or fully documented justification)
+- Zero `@unchecked Sendable` outside J2KCore (7 justified in J2KCore documented)
+- `ParallelResultCollector<T>` and `J2KIncrementalDecoder` migrated from `NSLock` to `Mutex`
+- 5 justified `nonisolated(unsafe)` usages documented
+- 12 new concurrency stress tests in `J2KModuleConcurrencyTests.swift`
+- Updated `Documentation/CONCURRENCY_AUDIT.md` with module-by-module findings
 - Complete test suite green
 
 #### Week 240-241: Concurrency Performance Tuning
@@ -3189,7 +3193,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Performance benchmark report (v1.9.0 vs v2.0-alpha)
 - Concurrency design documentation
 
-**Status**: Pending.
+**Status**: Week 236-237 ✅, Week 238-239 ✅, Week 240-241 pending.
 
 ---
 
@@ -3968,9 +3972,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (v2.0 plan added)
-**Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (planning)
-**Current Version**: 1.9.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0)
-**Next Phase**: Phase 17, Sub-phase 17a — Swift 6.2 Strict Concurrency Refactoring (Week 236)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; v2.0 roadmap defined targeting hardware-accelerated reference implementation with OpenJPEG-beating performance
+**Last Updated**: 2026-02-20 (Week 238-239 completed)
+**Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
+**Current Version**: 2.0.0
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-239
+**Next Phase**: Phase 17, Sub-phase 17a — Concurrency Performance Tuning (Week 240-241)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore
