@@ -10,6 +10,7 @@
 
 import Foundation
 import J2KCore
+import Synchronization
 
 // MARK: - Encoding Stage
 
@@ -55,43 +56,39 @@ public struct EncoderProgressUpdate: Sendable {
 
 /// Thread-safe result collector for parallel code-block encoding.
 ///
-/// This class uses `@unchecked Sendable` because it manually synchronizes access
-/// to mutable state using `NSLock`. All methods acquire the lock before
-/// accessing or modifying the internal results array.
-final class ParallelResultCollector<T>: @unchecked Sendable {
-    private var _results: [T]
-    private var _firstError: (any Error)?
-    private let lock = NSLock()
+/// Uses `Mutex` from the `Synchronization` module for lock-based
+/// synchronisation, replacing the previous `@unchecked Sendable` + `NSLock`
+/// pattern. The `Mutex` guarantees exclusive access to mutable state
+/// and is unconditionally `Sendable`.
+final class ParallelResultCollector<T: Sendable>: Sendable {
+    private let _results: Mutex<[T]>
+    private let _firstError: Mutex<(any Error)?>
 
     init(capacity: Int = 0) {
-        _results = []
-        _results.reserveCapacity(capacity)
+        var initial: [T] = []
+        initial.reserveCapacity(capacity)
+        _results = Mutex(initial)
+        _firstError = Mutex(nil)
     }
 
     func append(contentsOf elements: [T]) {
-        lock.lock()
-        _results.append(contentsOf: elements)
-        lock.unlock()
+        _results.withLock { $0.append(contentsOf: elements) }
     }
 
     func recordError(_ error: any Error) {
-        lock.lock()
-        if _firstError == nil {
-            _firstError = error
+        _firstError.withLock { state in
+            if state == nil {
+                state = error
+            }
         }
-        lock.unlock()
     }
 
     var results: [T] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _results
+        _results.withLock { Array($0) }
     }
 
     var firstError: (any Error)? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _firstError
+        _firstError.withLock { $0 }
     }
 }
 

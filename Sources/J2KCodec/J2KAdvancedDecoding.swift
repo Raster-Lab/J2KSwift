@@ -10,6 +10,7 @@
 
 import Foundation
 import J2KCore
+import Synchronization
 
 // # JPEG 2000 Advanced Decoding
 //
@@ -369,51 +370,43 @@ public struct J2KQualityDecodingOptions: Sendable, Equatable {
 ///
 /// Maintains decoder state across multiple partial data updates,
 /// enabling progressive decoding as data arrives over a network.
+///
+/// Thread safety is provided by `Mutex` from the `Synchronization` module,
+/// replacing the previous `@unchecked Sendable` + `NSLock` pattern.
 public final class J2KIncrementalDecoder: Sendable {
-    /// The current decoding state.
-    private let state: State
-
-    /// Thread-safe state management.
-    private final class State: @unchecked Sendable {
-        let lock = NSLock()
+    /// Internal mutable state protected by `Mutex`.
+    private struct DecoderState: ~Copyable {
         var buffer = Data()
         var isComplete: Bool = false
         var lastDecodedLayer: Int = -1
         var lastDecodedLevel: Int = -1
     }
 
+    /// Thread-safe state management via `Mutex`.
+    private let state: Mutex<DecoderState>
+
     /// Creates a new incremental decoder.
     public init() {
-        self.state = State()
+        self.state = Mutex(DecoderState())
     }
 
     /// Appends new data to the decoder.
     ///
     /// - Parameter data: New data chunk to append.
     public func append(_ data: Data) {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        state.buffer.append(data)
+        state.withLock { $0.buffer.append(data) }
     }
 
     /// Marks the data stream as complete.
     public func complete() {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        state.isComplete = true
+        state.withLock { $0.isComplete = true }
     }
 
     /// Checks if enough data is available to decode.
     ///
     /// - Returns: True if decoding can proceed.
     public func canDecode() -> Bool {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        // Simple heuristic: need at least header data
-        return state.buffer.count > 100
+        state.withLock { $0.buffer.count > 100 }
     }
 
     /// Attempts to decode with currently available data.
@@ -422,52 +415,44 @@ public final class J2KIncrementalDecoder: Sendable {
     /// - Returns: Decoded image if sufficient data is available, nil otherwise.
     /// - Throws: ``J2KError`` if decoding fails.
     public func tryDecode(options: J2KPartialDecodingOptions = J2KPartialDecodingOptions()) throws -> J2KImage? {
-        state.lock.lock()
-        defer { state.lock.unlock() }
+        try state.withLock { decoderState in
+            guard decoderState.buffer.count > 100 else {
+                return nil
+            }
 
-        guard canDecode() else {
-            return nil
+            // In a real implementation, this would:
+            // 1. Parse what data is available
+            // 2. Decode up to the available quality layers
+            // 3. Track what has been decoded
+            // 4. Return partial results
+
+            // For now, this is a placeholder
+            throw J2KError.notImplemented("Incremental decoding not yet fully implemented")
         }
-
-        // In a real implementation, this would:
-        // 1. Parse what data is available
-        // 2. Decode up to the available quality layers
-        // 3. Track what has been decoded
-        // 4. Return partial results
-
-        // For now, this is a placeholder
-        throw J2KError.notImplemented("Incremental decoding not yet fully implemented")
     }
 
     /// Gets the current buffer size.
     ///
     /// - Returns: Number of bytes currently buffered.
     public func bufferSize() -> Int {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        return state.buffer.count
+        state.withLock { $0.buffer.count }
     }
 
     /// Checks if the data stream is complete.
     ///
     /// - Returns: True if `complete()` has been called.
     public func isComplete() -> Bool {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        return state.isComplete
+        state.withLock { $0.isComplete }
     }
 
     /// Resets the decoder state.
     public func reset() {
-        state.lock.lock()
-        defer { state.lock.unlock() }
-
-        state.buffer.removeAll()
-        state.isComplete = false
-        state.lastDecodedLayer = -1
-        state.lastDecodedLevel = -1
+        state.withLock { decoderState in
+            decoderState.buffer.removeAll()
+            decoderState.isComplete = false
+            decoderState.lastDecodedLayer = -1
+            decoderState.lastDecodedLevel = -1
+        }
     }
 }
 
