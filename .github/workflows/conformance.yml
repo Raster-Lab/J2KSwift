@@ -54,6 +54,82 @@ jobs:
             --skip EndToEnd \
             --skip ClientServer
 
+  part2-conformance:
+    name: Part 2 (Extensions) Conformance
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build
+        run: swift build
+
+      - name: Run Part 2 conformance tests
+        continue-on-error: true
+        run: |
+          swift test --filter J2KPart2ConformanceHardening \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+
+  part3-part10-conformance:
+    name: Part 3 (MJ2) and Part 10 (JP3D) Conformance
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build
+        run: swift build
+
+      - name: Run Part 3 and Part 10 conformance tests
+        continue-on-error: true
+        run: |
+          swift test --filter J2KPart3Part10Conformance \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+
   part15-conformance:
     name: Part 15 (HTJ2K) Conformance
     runs-on: macos-15
@@ -79,10 +155,10 @@ jobs:
       - name: Build
         run: swift build
 
-      - name: Run HTJ2K conformance tests
+      - name: Run Part 15 and integrated conformance tests
         continue-on-error: true
         run: |
-          swift test --filter HTJ2K \
+          swift test --filter "HTJ2K|J2KPart15Integrated|J2KConformanceMatrix|J2KConformanceAutomation|J2KHTConformance|J2KIntegratedConformance" \
             --skip Benchmark \
             --skip Stress \
             --skip Diagnostic \
@@ -172,7 +248,7 @@ jobs:
 
   conformance-gate:
     name: Conformance Gate
-    needs: [part1-conformance, part15-conformance, jp3d-conformance, cross-platform-conformance]
+    needs: [part1-conformance, part2-conformance, part3-part10-conformance, part15-conformance, jp3d-conformance, cross-platform-conformance]
     runs-on: ubuntu-latest
     if: always()
 
@@ -180,12 +256,16 @@ jobs:
       - name: Check conformance results
         run: |
           echo "=== Conformance Gate Results ==="
-          echo "Part 1 (Core):      ${{ needs.part1-conformance.result }}"
-          echo "Part 15 (HTJ2K):    ${{ needs.part15-conformance.result }}"
-          echo "Part 10 (JP3D):     ${{ needs.jp3d-conformance.result }}"
-          echo "Cross-Platform:     ${{ needs.cross-platform-conformance.result }}"
+          echo "Part 1 (Core):        ${{ needs.part1-conformance.result }}"
+          echo "Part 2 (Extensions):  ${{ needs.part2-conformance.result }}"
+          echo "Part 3+10 (MJ2/JP3D): ${{ needs.part3-part10-conformance.result }}"
+          echo "Part 15 (HTJ2K):      ${{ needs.part15-conformance.result }}"
+          echo "Part 10 (JP3D ext):   ${{ needs.jp3d-conformance.result }}"
+          echo "Cross-Platform:       ${{ needs.cross-platform-conformance.result }}"
 
           if [ "${{ needs.part1-conformance.result }}" != "success" ] || \
+             [ "${{ needs.part2-conformance.result }}" != "success" ] || \
+             [ "${{ needs.part3-part10-conformance.result }}" != "success" ] || \
              [ "${{ needs.part15-conformance.result }}" != "success" ] || \
              [ "${{ needs.jp3d-conformance.result }}" != "success" ] || \
              [ "${{ needs.cross-platform-conformance.result }}" != "success" ]; then
