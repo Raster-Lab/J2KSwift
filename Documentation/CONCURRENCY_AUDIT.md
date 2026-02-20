@@ -288,3 +288,41 @@ All types use proper actor isolation. Metal resources managed within actor bound
 | `MJ2VideoToolboxEncoder.compressionSession` | C API handle in actor | ObjC/C type cannot be actor-isolated |
 | `MJ2VideoToolboxDecoder.decompressionSession` | C API handle in actor | ObjC/C type cannot be actor-isolated |
 | `JPIPNetworkTransport.connect()` | Continuation guard | Scoped lifetime, single-resume guarantee |
+
+## Performance Tuning (Week 240-241)
+
+### New Types Added
+
+| Type | Module | Pattern | Sendable |
+|------|--------|---------|----------|
+| `J2KConcurrencyLimits` | J2KCore | Value type (struct) | ✅ |
+| `J2KActorContentionMetrics` | J2KCore | Value type (struct) | ✅ |
+| `J2KActorContentionAnalyzer` | J2KCore | Actor | ✅ |
+| `J2KWorkStealingQueue<T>` | J2KCore | `Mutex<[T]>` | ✅ |
+| `ConcurrentResultCollector<T>` | J2KCore | `Mutex<[T]>` | ✅ |
+| `J2KConcurrentPipeline` | J2KCore | Value type (struct) | ✅ |
+| `J2KConcurrencyBenchmark` | J2KCore | Value type (struct) | ✅ |
+| `J2KConcurrencyMemoryMonitor` | J2KCore | Value type (struct) | ✅ |
+
+**Zero new `@unchecked Sendable` or `nonisolated(unsafe)` usages.**
+
+### Concurrency Performance Tests
+
+26 tests in `J2KConcurrencyPerformanceTests.swift`:
+
+- Concurrency limits configuration and clamping
+- Actor contention analyzer lifecycle and inactive-guard
+- Work-stealing queue basic and concurrent access
+- Concurrent pipeline: empty, single, serial, parallel, work-stealing, order preservation, error propagation
+- Scalability measurement across core counts
+- Memory pressure under high concurrency
+- Sendable conformance for all public types
+
+### Design Documentation
+
+See `Documentation/CONCURRENCY_PERFORMANCE.md` for full design details on:
+
+- Bounded TaskGroup parallel pipelines
+- Work-stealing patterns for uneven tile sizes
+- Actor contention analysis methodology
+- Memory model compliance verification

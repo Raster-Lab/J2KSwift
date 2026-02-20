@@ -3166,34 +3166,34 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Updated `Documentation/CONCURRENCY_AUDIT.md` with module-by-module findings
 - Complete test suite green
 
-#### Week 240-241: Concurrency Performance Tuning
+#### Week 240-241: Concurrency Performance Tuning ✅
 
-- [ ] Actor contention analysis
-  - [ ] Profile actor message-passing overhead
-  - [ ] Identify and eliminate unnecessary actor hops
-  - [ ] Optimise hot paths to minimise isolation crossings
-  - [ ] Benchmark structured concurrency vs manual threading
-- [ ] Parallel pipeline design
-  - [ ] Design optimal task parallelism for encode/decode pipelines
-  - [ ] Implement tile-level parallelism with `TaskGroup`
-  - [ ] Add configurable concurrency limits (respect system resources)
-  - [ ] Implement work-stealing patterns for uneven tile sizes
-- [ ] Memory model compliance
-  - [ ] Verify all data sharing follows Swift 6.2 memory model
-  - [ ] Eliminate any remaining data race potential
-  - [ ] Document concurrency design decisions
-- [ ] Testing
-  - [ ] Performance benchmarks: concurrent vs serial encode/decode
-  - [ ] Scalability tests across core counts (2, 4, 8, 16 cores)
-  - [ ] Memory pressure tests under high concurrency
-  - [ ] ThreadSanitizer clean run
+- [x] Actor contention analysis
+  - [x] Profile actor message-passing overhead
+  - [x] Identify and eliminate unnecessary actor hops
+  - [x] Optimise hot paths to minimise isolation crossings
+  - [x] Benchmark structured concurrency vs manual threading
+- [x] Parallel pipeline design
+  - [x] Design optimal task parallelism for encode/decode pipelines
+  - [x] Implement tile-level parallelism with `TaskGroup`
+  - [x] Add configurable concurrency limits (respect system resources)
+  - [x] Implement work-stealing patterns for uneven tile sizes
+- [x] Memory model compliance
+  - [x] Verify all data sharing follows Swift 6.2 memory model
+  - [x] Eliminate any remaining data race potential
+  - [x] Document concurrency design decisions
+- [x] Testing
+  - [x] Performance benchmarks: concurrent vs serial encode/decode
+  - [x] Scalability tests across core counts (2, 4, 8, 16 cores)
+  - [x] Memory pressure tests under high concurrency
+  - [x] ThreadSanitizer clean run
 
 **Deliverables**:
 - Optimised concurrent encode/decode pipelines
 - Performance benchmark report (v1.9.0 vs v2.0-alpha)
 - Concurrency design documentation
 
-**Status**: Week 236-237 ✅, Week 238-239 ✅, Week 240-241 pending.
+**Status**: Week 236-237 ✅, Week 238-239 ✅, Week 240-241 ✅. Phase 17a complete.
 
 ---
 
