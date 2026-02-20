@@ -42,6 +42,49 @@ This guide documents all x86-64 specific code in J2KSwift and provides instructi
 
 **Note**: VideoToolbox is not available on non-Apple x86-64 platforms, so hardware acceleration is limited to Apple Intel Macs.
 
+#### `Sources/J2KCodec/x86/J2KSSEEntropyCoding.swift`
+**Purpose**: SSE4.2/AVX2-accelerated entropy coding for JPEG 2000
+**Status**: Isolated in dedicated x86/ directory with deprecation notices
+**Dependencies**: Foundation
+
+**Key Components**:
+- `X86EntropyCodingCapability` — CPUID-based SSE4.2/AVX2/FMA feature detection
+- `SSEContextFormation` — AVX2 8-wide context label computation for MQ-coder
+- `AVX2BitPlaneCoder` — AVX2 bit-plane extraction, magnitude refinement, run-length detection
+- `X86MQCoderVectorised` — Batch MQ-coder probability state updates, vectorised leading-zeros
+
+**Conditional Compilation**:
+```swift
+#if arch(x86_64)
+// SIMD8<Float>  → AVX2 ymm registers (256-bit)
+// SIMD8<Int32>  → AVX2 ymm registers (256-bit)
+#endif
+```
+
+**Tests**: `Tests/J2KCodecTests/J2KSSEEntropyTests.swift`
+
+#### `Sources/J2KAccelerate/x86/J2KSSETransforms.swift`
+**Purpose**: SSE4.2/AVX2-accelerated wavelet, colour, quantisation, and cache transforms
+**Status**: Isolated in dedicated x86/ directory with deprecation notices
+**Dependencies**: Foundation, J2KCore
+
+**Key Components**:
+- `X86TransformCapability` — Runtime SIMD capability detection (SSE4.2/AVX2/FMA)
+- `X86WaveletLifting` — AVX2 8-wide 5/3 and 9/7 wavelet lifting with FMA for 9/7 coefficients
+- `X86ColourTransform` — AVX2 8-wide ICT and RCT colour transforms (ISO/IEC 15444-1 Annex G)
+- `X86Quantizer` — AVX2 batch scalar and dead-zone quantisation/dequantisation
+- `X86CacheOptimizer` — Cache-oblivious DWT blocking, 32-byte aligned alloc, streaming stores
+
+**Conditional Compilation**:
+```swift
+#if arch(x86_64)
+// SIMD8<Float>  → 256-bit AVX2 ymm registers
+// SIMD8<Int32>  → 256-bit AVX2 ymm registers
+#endif
+```
+
+**Tests**: `Tests/J2KAccelerateTests/J2KSSETransformTests.swift`
+
 #### `Sources/J2KAccelerate/J2KHTSIMDAcceleration.swift`
 **Purpose**: SIMD acceleration with cross-platform support
 **Status**: Contains x86-64 fallback paths alongside ARM64 optimizations
@@ -86,7 +129,9 @@ rm -rf Sources/J2KCodec/x86/
 
 **Files to Remove**:
 - `Sources/J2KAccelerate/x86/J2KAccelerate_x86.swift`
+- `Sources/J2KAccelerate/x86/J2KSSETransforms.swift`
 - `Sources/J2KCodec/x86/MJ2_x86.swift`
+- `Sources/J2KCodec/x86/J2KSSEEntropyCoding.swift`
 
 #### Step 2: Clean Up Conditional Compilation
 
