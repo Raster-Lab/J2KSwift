@@ -1,3 +1,7 @@
+//
+// J2KSecurityTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCore
 @testable import J2KFileFormat

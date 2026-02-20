@@ -1,3 +1,7 @@
+//
+// MJ2VideoConfiguration.swift
+// J2KSwift
+//
 /// # MJ2VideoConfiguration
 ///
 /// Common configuration types for Motion JPEG 2000 video transcoding.

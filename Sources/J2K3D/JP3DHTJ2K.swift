@@ -1,3 +1,7 @@
+//
+// JP3DHTJ2K.swift
+// J2KSwift
+//
 /// # JP3DHTJ2K
 ///
 /// High-Throughput JPEG 2000 (HTJ2K / ISO 15444-15) integration for JP3D

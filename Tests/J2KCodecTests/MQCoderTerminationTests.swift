@@ -1,3 +1,7 @@
+//
+// MQCoderTerminationTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore

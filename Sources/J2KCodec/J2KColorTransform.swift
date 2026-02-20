@@ -1,3 +1,7 @@
+//
+// J2KColorTransform.swift
+// J2KSwift
+//
 // J2KColorTransform.swift
 // J2KSwift
 //

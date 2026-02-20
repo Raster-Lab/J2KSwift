@@ -1,3 +1,7 @@
+//
+// MJ2Creator.swift
+// J2KSwift
+//
 /// # MJ2Creator
 ///
 /// Motion JPEG 2000 file creation from image sequences.

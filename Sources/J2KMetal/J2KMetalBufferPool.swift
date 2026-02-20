@@ -1,3 +1,7 @@
+//
+// J2KMetalBufferPool.swift
+// J2KSwift
+//
 // J2KMetalBufferPool.swift
 // J2KSwift
 //

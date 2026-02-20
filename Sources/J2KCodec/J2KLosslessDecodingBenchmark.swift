@@ -1,3 +1,7 @@
+//
+// J2KLosslessDecodingBenchmark.swift
+// J2KSwift
+//
 // J2KLosslessDecodingBenchmark.swift
 // J2KSwift
 //

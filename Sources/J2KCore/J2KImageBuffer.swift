@@ -1,3 +1,7 @@
+//
+// J2KImageBuffer.swift
+// J2KSwift
+//
 /// # J2KImageBuffer
 ///
 /// Efficient image buffer with copy-on-write semantics.

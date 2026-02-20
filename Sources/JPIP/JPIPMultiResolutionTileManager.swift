@@ -1,3 +1,7 @@
+//
+// JPIPMultiResolutionTileManager.swift
+// J2KSwift
+//
 /// # JPIPMultiResolutionTileManager
 ///
 /// Manages multi-resolution tiled streaming with adaptive quality.

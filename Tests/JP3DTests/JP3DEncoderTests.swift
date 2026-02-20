@@ -1,3 +1,7 @@
+//
+// JP3DEncoderTests.swift
+// J2KSwift
+//
 /// Tests for JP3D Encoder (Week 218-221).
 ///
 /// Validates the complete JP3D encoding pipeline including tiling,

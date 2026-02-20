@@ -1,3 +1,7 @@
+//
+// J2KRateControlTests.swift
+// J2KSwift
+//
 // J2KRateControlTests.swift
 // J2KSwift
 //

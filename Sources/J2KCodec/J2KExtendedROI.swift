@@ -1,3 +1,7 @@
+//
+// J2KExtendedROI.swift
+// J2KSwift
+//
 // J2KExtendedROI.swift
 // J2KSwift
 //

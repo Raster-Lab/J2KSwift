@@ -1,3 +1,7 @@
+//
+// J2KBoxes.swift
+// J2KSwift
+//
 /// # J2KBoxes
 ///
 /// Implementations of standard JP2 box types.

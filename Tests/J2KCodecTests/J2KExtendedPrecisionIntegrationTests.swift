@@ -1,3 +1,7 @@
+//
+// J2KExtendedPrecisionIntegrationTests.swift
+// J2KSwift
+//
 // J2KExtendedPrecisionIntegrationTests.swift
 // J2KSwift
 //

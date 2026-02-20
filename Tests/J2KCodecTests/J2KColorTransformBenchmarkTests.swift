@@ -1,3 +1,7 @@
+//
+// J2KColorTransformBenchmarkTests.swift
+// J2KSwift
+//
 // J2KColorTransformBenchmarkTests.swift
 // J2KSwift
 //

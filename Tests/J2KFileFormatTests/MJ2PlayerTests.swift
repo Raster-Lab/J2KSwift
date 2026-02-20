@@ -1,3 +1,7 @@
+//
+// MJ2PlayerTests.swift
+// J2KSwift
+//
 /// # MJ2PlayerTests
 ///
 /// Tests for the MJ2Player playback engine.

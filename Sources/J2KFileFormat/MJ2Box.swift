@@ -1,3 +1,7 @@
+//
+// MJ2Box.swift
+// J2KSwift
+//
 /// # MJ2Box
 ///
 /// ISO base media file format (ISO/IEC 14496-12) box structures for Motion JPEG 2000.

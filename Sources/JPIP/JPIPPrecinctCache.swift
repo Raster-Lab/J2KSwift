@@ -1,3 +1,7 @@
+//
+// JPIPPrecinctCache.swift
+// J2KSwift
+//
 /// # JPIPPrecinctCache
 ///
 /// Precinct-based caching for JPIP protocol.

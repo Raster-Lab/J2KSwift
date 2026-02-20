@@ -1,3 +1,7 @@
+//
+// JPIPNetworkFramework.swift
+// J2KSwift
+//
 /// # JPIPNetworkFramework
 ///
 /// Modern Apple networking using Network.framework for JPIP.

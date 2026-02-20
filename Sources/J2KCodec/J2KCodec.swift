@@ -1,3 +1,7 @@
+//
+// J2KCodec.swift
+// J2KSwift
+//
 /// # J2KCodec
 ///
 /// Codec module for JPEG 2000 encoding and decoding.

@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedROI.swift
+// J2KSwift
+//
 // J2KAcceleratedROI.swift
 // J2KSwift
 //

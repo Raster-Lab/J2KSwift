@@ -1,3 +1,7 @@
+//
+// JP3DStreamingTypes.swift
+// J2KSwift
+//
 /// # JP3DStreamingTypes
 ///
 /// Core types for JPIP-based 3D progressive streaming of JP3D volumetric data.

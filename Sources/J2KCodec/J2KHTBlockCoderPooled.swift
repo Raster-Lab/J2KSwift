@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoderPooled.swift
+// J2KSwift
+//
 // J2KHTBlockCoderPooled.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// J2KQualityMetricsTests.swift
+// J2KSwift
+//
 // J2KQualityMetricsTests.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// JP3DAcceleratedDWT.swift
+// J2KSwift
+//
 // JP3DAcceleratedDWT.swift
 // J2KSwift
 //

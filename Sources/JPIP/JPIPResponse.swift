@@ -1,3 +1,7 @@
+//
+// JPIPResponse.swift
+// J2KSwift
+//
 /// # JPIPResponse
 ///
 /// Types for JPIP response parsing.

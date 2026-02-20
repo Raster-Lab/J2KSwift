@@ -1,3 +1,7 @@
+//
+// JPIPSessionPersistenceTests.swift
+// J2KSwift
+//
 /// # JPIPSessionPersistenceTests
 ///
 /// Tests for enhanced session persistence and recovery.

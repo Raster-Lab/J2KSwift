@@ -1,3 +1,7 @@
+//
+// J2KWaveletKernel.swift
+// J2KSwift
+//
 // J2KWaveletKernel.swift
 // J2KSwift
 //

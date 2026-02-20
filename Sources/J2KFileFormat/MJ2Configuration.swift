@@ -1,3 +1,7 @@
+//
+// MJ2Configuration.swift
+// J2KSwift
+//
 /// # MJ2Configuration
 ///
 /// Configuration types for Motion JPEG 2000 file creation.

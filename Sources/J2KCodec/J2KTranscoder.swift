@@ -1,3 +1,7 @@
+//
+// J2KTranscoder.swift
+// J2KSwift
+//
 /// # J2K Transcoder
 ///
 /// Lossless transcoding between legacy JPEG 2000 (Part 1) and HTJ2K (Part 15)

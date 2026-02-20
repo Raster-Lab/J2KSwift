@@ -1,3 +1,7 @@
+//
+// JPIPRequestQueue.swift
+// J2KSwift
+//
 /// # JPIPRequestQueue
 ///
 /// Priority-based request queue for JPIP server.

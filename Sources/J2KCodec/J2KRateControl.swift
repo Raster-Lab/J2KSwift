@@ -1,3 +1,7 @@
+//
+// J2KRateControl.swift
+// J2KSwift
+//
 /// # Rate Control
 ///
 /// Implementation of rate-distortion optimization for JPEG 2000 encoding.

@@ -1,3 +1,7 @@
+//
+// JP3DROIDecoder.swift
+// J2KSwift
+//
 /// # JP3DROIDecoder
 ///
 /// Region-of-Interest (ROI) decoding for JP3D volumetric JPEG 2000.

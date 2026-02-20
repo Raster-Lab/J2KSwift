@@ -1,3 +1,7 @@
+//
+// JPIPSessionPersistence.swift
+// J2KSwift
+//
 /// # JPIPSessionPersistence
 ///
 /// Enhanced session persistence and recovery for JPIP protocol.

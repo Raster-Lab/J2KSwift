@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedTrellis.swift
+// J2KSwift
+//
 // J2KAcceleratedTrellis.swift
 // J2KSwift
 //

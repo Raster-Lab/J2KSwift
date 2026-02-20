@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedPerceptualTests.swift
+// J2KSwift
+//
 // J2KAcceleratedPerceptualTests.swift
 // J2KSwift
 //

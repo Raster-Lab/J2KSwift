@@ -1,3 +1,7 @@
+//
+// J2KQuantization.swift
+// J2KSwift
+//
 // J2KQuantization.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// J2KFileFormatPlaceholderAPITests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KFileFormat
 @testable import J2KCore

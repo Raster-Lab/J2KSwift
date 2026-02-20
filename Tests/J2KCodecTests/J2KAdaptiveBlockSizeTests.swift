@@ -1,3 +1,7 @@
+//
+// J2KAdaptiveBlockSizeTests.swift
+// J2KSwift
+//
 // J2KAdaptiveBlockSizeTests.swift
 // J2KSwift
 //

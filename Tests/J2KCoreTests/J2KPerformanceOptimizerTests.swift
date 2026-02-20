@@ -1,3 +1,7 @@
+//
+// J2KPerformanceOptimizerTests.swift
+// J2KSwift
+//
 /// Tests for J2KPerformanceOptimizer.
 
 import XCTest

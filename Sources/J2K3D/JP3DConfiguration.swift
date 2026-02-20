@@ -1,3 +1,7 @@
+//
+// JP3DConfiguration.swift
+// J2KSwift
+//
 /// # JP3DConfiguration
 ///
 /// Configuration types for JP3D volumetric JPEG 2000 encoding.

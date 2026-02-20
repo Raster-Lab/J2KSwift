@@ -1,3 +1,7 @@
+//
+// MJ2Extractor.swift
+// J2KSwift
+//
 /// # MJ2Extractor
 ///
 /// Frame extraction from Motion JPEG 2000 files.

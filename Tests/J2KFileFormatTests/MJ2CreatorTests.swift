@@ -1,3 +1,7 @@
+//
+// MJ2CreatorTests.swift
+// J2KSwift
+//
 /// # MJ2CreatorTests
 ///
 /// Tests for Motion JPEG 2000 file creation.

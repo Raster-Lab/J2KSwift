@@ -1,3 +1,7 @@
+//
+// J2KPipelineProfiler.swift
+// J2KSwift
+//
 /// # J2KPipelineProfiler
 ///
 /// Profiling infrastructure for the JPEG 2000 encoding/decoding pipeline.

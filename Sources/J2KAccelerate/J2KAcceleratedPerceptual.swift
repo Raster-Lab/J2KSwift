@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedPerceptual.swift
+// J2KSwift
+//
 // J2KAcceleratedPerceptual.swift
 // J2KSwift
 //

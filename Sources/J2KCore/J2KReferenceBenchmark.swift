@@ -1,3 +1,7 @@
+//
+// J2KReferenceBenchmark.swift
+// J2KSwift
+//
 import Foundation
 
 /// A framework for benchmarking J2KSwift components against reference implementations.

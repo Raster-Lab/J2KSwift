@@ -1,3 +1,7 @@
+//
+// JPIPDataBinGeneratorTests.swift
+// J2KSwift
+//
 /// # JPIPDataBinGeneratorTests
 ///
 /// Tests for JPIP data bin generation from JPEG 2000 codestreams.

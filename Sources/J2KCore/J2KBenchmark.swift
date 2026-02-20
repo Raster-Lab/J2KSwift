@@ -1,3 +1,7 @@
+//
+// J2KBenchmark.swift
+// J2KSwift
+//
 import Foundation
 
 /// A benchmarking harness for J2KSwift performance testing.

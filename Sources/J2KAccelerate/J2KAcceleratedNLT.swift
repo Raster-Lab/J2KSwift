@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedNLT.swift
+// J2KSwift
+//
 // J2KAcceleratedNLT.swift
 // J2KSwift
 //

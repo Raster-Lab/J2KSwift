@@ -1,3 +1,7 @@
+//
+// J2KZeroCopyBuffer.swift
+// J2KSwift
+//
 /// # J2KZeroCopyBuffer
 ///
 /// Zero-copy buffer views for efficient data passing between pipeline stages.

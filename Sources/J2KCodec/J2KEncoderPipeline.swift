@@ -1,3 +1,7 @@
+//
+// J2KEncoderPipeline.swift
+// J2KSwift
+//
 // J2KEncoderPipeline.swift
 // J2KSwift
 //

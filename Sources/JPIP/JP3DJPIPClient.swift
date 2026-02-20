@@ -1,3 +1,7 @@
+//
+// JP3DJPIPClient.swift
+// J2KSwift
+//
 /// # JP3DJPIPClient
 ///
 /// JPIP client actor for 3D-aware progressive delivery of JP3D volumetric data.

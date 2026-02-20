@@ -1,3 +1,7 @@
+//
+// J2KVolume.swift
+// J2KSwift
+//
 /// # J2KVolume
 ///
 /// Volumetric data types for ISO/IEC 15444-10 (JP3D) support.

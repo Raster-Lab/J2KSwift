@@ -1,3 +1,7 @@
+//
+// JPIPProgressiveDeliveryScheduler.swift
+// J2KSwift
+//
 /// # JPIPProgressiveDeliveryScheduler
 ///
 /// Progressive delivery scheduler for bandwidth-aware JPIP streaming.

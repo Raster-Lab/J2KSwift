@@ -1,3 +1,7 @@
+//
+// J2KRealWorldBenchmarks.swift
+// J2KSwift
+//
 /// # J2KRealWorldBenchmarks
 ///
 /// Comprehensive real-world benchmarking suite for J2KSwift.

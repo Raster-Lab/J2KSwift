@@ -1,3 +1,7 @@
+//
+// JPIPServer.swift
+// J2KSwift
+//
 /// # JPIPServer
 ///
 /// Server implementation for the JPIP protocol.

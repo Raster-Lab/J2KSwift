@@ -1,3 +1,7 @@
+//
+// MJ2MetalPreprocessing.swift
+// J2KSwift
+//
 /// # MJ2MetalPreprocessing
 ///
 /// Metal-accelerated preprocessing for Motion JPEG 2000 frames.

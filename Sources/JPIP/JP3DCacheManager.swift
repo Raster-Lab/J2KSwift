@@ -1,3 +1,7 @@
+//
+// JP3DCacheManager.swift
+// J2KSwift
+//
 /// # JP3DCacheManager
 ///
 /// 3D-aware cache manager for volumetric JPIP data bins.

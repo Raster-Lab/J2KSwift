@@ -1,3 +1,7 @@
+//
+// J2KAppleMemory.swift
+// J2KSwift
+//
 /// # J2KAppleMemory
 ///
 /// Apple-specific memory optimizations for J2KSwift.

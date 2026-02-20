@@ -1,3 +1,7 @@
+//
+// J2KISOTestSuiteTests.swift
+// J2KSwift
+//
 // J2KISOTestSuiteTests.swift
 // J2KSwift
 //

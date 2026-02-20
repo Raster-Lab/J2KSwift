@@ -1,3 +1,7 @@
+//
+// JPIPDataBinGenerator.swift
+// J2KSwift
+//
 /// # JPIPDataBinGenerator
 ///
 /// Generates JPIP data bins from JPEG 2000 codestreams with HTJ2K support.

@@ -1,3 +1,7 @@
+//
+// JP3DCodestreamParser.swift
+// J2KSwift
+//
 /// # JP3DCodestreamParser
 ///
 /// Parser for JP3D volumetric JPEG 2000 codestreams.

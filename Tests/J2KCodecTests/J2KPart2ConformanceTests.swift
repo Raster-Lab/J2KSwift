@@ -1,3 +1,7 @@
+//
+// J2KPart2ConformanceTests.swift
+// J2KSwift
+//
 // J2KPart2ConformanceTests.swift
 // J2KSwift
 //

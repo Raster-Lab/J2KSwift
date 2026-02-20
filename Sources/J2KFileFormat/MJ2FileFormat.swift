@@ -1,3 +1,7 @@
+//
+// MJ2FileFormat.swift
+// J2KSwift
+//
 /// # MJ2FileFormat
 ///
 /// Motion JPEG 2000 (MJ2) file format support.

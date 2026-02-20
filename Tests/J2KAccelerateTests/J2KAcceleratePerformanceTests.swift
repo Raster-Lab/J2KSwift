@@ -1,3 +1,7 @@
+//
+// J2KAcceleratePerformanceTests.swift
+// J2KSwift
+//
 /// Tests for J2KAcceleratePerformance.
 
 import XCTest

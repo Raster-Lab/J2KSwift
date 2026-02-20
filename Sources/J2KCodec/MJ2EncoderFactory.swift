@@ -1,3 +1,7 @@
+//
+// MJ2EncoderFactory.swift
+// J2KSwift
+//
 /// # MJ2EncoderFactory
 ///
 /// Factory for creating appropriate video encoders based on platform capabilities.

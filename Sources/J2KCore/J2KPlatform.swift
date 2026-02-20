@@ -1,3 +1,7 @@
+//
+// J2KPlatform.swift
+// J2KSwift
+//
 /// # J2KPlatform
 ///
 /// Cross-platform compatibility utilities for J2KSwift.

@@ -1,3 +1,7 @@
+//
+// JP3DDecoder.swift
+// J2KSwift
+//
 /// # JP3DDecoder
 ///
 /// Core JP3D volumetric JPEG 2000 decoder.

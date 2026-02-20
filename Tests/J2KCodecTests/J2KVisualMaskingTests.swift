@@ -1,3 +1,7 @@
+//
+// J2KVisualMaskingTests.swift
+// J2KSwift
+//
 // J2KVisualMaskingTests.swift
 // J2KSwift
 //

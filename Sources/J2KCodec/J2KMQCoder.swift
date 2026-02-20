@@ -1,3 +1,7 @@
+//
+// J2KMQCoder.swift
+// J2KSwift
+//
 /// # MQ-Coder
 ///
 /// Implementation of the MQ arithmetic coder used in JPEG 2000 entropy coding.

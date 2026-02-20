@@ -1,3 +1,7 @@
+//
+// JPIPSessionManager.swift
+// J2KSwift
+//
 /// # JPIPSession
 ///
 /// Session management for JPIP protocol.

@@ -1,3 +1,7 @@
+//
+// JPIPClientServerIntegrationTests.swift
+// J2KSwift
+//
 /// # JPIPClientServerIntegrationTests
 ///
 /// Integration tests for JPIP client-server communication.

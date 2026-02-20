@@ -1,3 +1,7 @@
+//
+// J2KNonLinearTransform.swift
+// J2KSwift
+//
 // J2KNonLinearTransform.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// JP3DTiling.swift
+// J2KSwift
+//
 /// # JP3DTiling
 ///
 /// 3D tiling implementation for JP3D volumetric encoding.

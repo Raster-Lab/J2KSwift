@@ -1,3 +1,7 @@
+//
+// MJ2VideoToolbox.swift
+// J2KSwift
+//
 /// # MJ2VideoToolbox
 ///
 /// VideoToolbox integration for hardware-accelerated transcoding between Motion JPEG 2000 and H.264/H.265.

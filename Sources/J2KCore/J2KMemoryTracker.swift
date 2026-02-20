@@ -1,3 +1,7 @@
+//
+// J2KMemoryTracker.swift
+// J2KSwift
+//
 /// # J2KMemoryTracker
 ///
 /// Memory usage tracking and limit enforcement for JPEG 2000 operations.

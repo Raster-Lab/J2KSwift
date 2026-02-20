@@ -1,3 +1,7 @@
+//
+// J2KPerceptualEncoder.swift
+// J2KSwift
+//
 // J2KPerceptualEncoder.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// J2KPart2FileFormatTests.swift
+// J2KSwift
+//
 // J2KPart2FileFormatTests.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// MJ2VideoEncoderProtocol.swift
+// J2KSwift
+//
 /// # MJ2VideoEncoderProtocol
 ///
 /// Abstract protocol for video encoder implementations.

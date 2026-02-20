@@ -1,3 +1,7 @@
+//
+// Benchmark.swift
+// J2KSwift
+//
 /// Benchmark command implementation
 
 import Foundation

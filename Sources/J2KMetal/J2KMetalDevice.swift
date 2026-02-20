@@ -1,3 +1,7 @@
+//
+// J2KMetalDevice.swift
+// J2KSwift
+//
 // J2KMetalDevice.swift
 // J2KSwift
 //

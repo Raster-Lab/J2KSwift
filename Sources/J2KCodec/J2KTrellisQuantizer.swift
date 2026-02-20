@@ -1,3 +1,7 @@
+//
+// J2KTrellisQuantizer.swift
+// J2KSwift
+//
 // J2KTrellisQuantizer.swift
 // J2KSwift
 //

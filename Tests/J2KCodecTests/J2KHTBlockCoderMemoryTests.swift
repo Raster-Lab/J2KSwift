@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoderMemoryTests.swift
+// J2KSwift
+//
 // J2KHTBlockCoderMemoryTests.swift
 // J2KSwift
 //

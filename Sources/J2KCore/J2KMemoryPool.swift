@@ -1,3 +1,7 @@
+//
+// J2KMemoryPool.swift
+// J2KSwift
+//
 /// # J2KMemoryPool
 ///
 /// Memory pool for efficient temporary buffer allocation and reuse.

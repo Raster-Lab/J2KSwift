@@ -1,3 +1,7 @@
+//
+// JP3DProgressiveDelivery.swift
+// J2KSwift
+//
 /// # JP3DProgressiveDelivery
 ///
 /// Bandwidth-aware progressive delivery actor for JP3D volumetric data.

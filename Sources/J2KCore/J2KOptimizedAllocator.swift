@@ -1,3 +1,7 @@
+//
+// J2KOptimizedAllocator.swift
+// J2KSwift
+//
 /// # J2KOptimizedAllocator
 ///
 /// Optimized memory allocation for JPEG 2000 pipeline stages.

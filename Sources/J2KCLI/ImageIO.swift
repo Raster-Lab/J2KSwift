@@ -1,3 +1,7 @@
+//
+// ImageIO.swift
+// J2KSwift
+//
 /// Image I/O utilities for loading and saving PGM/PPM/RAW files
 
 import Foundation

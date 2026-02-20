@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoder.swift
+// J2KSwift
+//
 /// # HTJ2K Block Coder
 ///
 /// Implementation of the FBCOT (Fast Block Coder with Optimized Truncation) algorithm

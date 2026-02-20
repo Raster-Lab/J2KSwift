@@ -1,3 +1,7 @@
+//
+// JP3DDecoderTests.swift
+// J2KSwift
+//
 /// Tests for JP3D Decoder (Week 222-225).
 ///
 /// Validates the complete JP3D decoding pipeline including codestream parsing,

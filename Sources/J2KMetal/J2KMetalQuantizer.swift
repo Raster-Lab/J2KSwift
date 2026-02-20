@@ -1,3 +1,7 @@
+//
+// J2KMetalQuantizer.swift
+// J2KSwift
+//
 // J2KMetalQuantizer.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// MJ2_x86.swift
+// J2KSwift
+//
 // MJ2_x86.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// MJ2MetalPreprocessingTests.swift
+// J2KSwift
+//
 /// # MJ2MetalPreprocessingTests
 ///
 /// Tests for Metal-accelerated preprocessing of Motion JPEG 2000 frames.

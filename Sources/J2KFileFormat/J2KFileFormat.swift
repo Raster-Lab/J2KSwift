@@ -1,3 +1,7 @@
+//
+// J2KFileFormat.swift
+// J2KSwift
+//
 /// # J2KFileFormat
 ///
 /// File format support for JPEG 2000 and related formats.

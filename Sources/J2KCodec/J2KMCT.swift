@@ -1,3 +1,7 @@
+//
+// J2KMCT.swift
+// J2KSwift
+//
 // J2KMCT.swift
 // J2KSwift
 //

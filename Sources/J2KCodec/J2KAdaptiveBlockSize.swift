@@ -1,3 +1,7 @@
+//
+// J2KAdaptiveBlockSize.swift
+// J2KSwift
+//
 // J2KAdaptiveBlockSize.swift
 // J2KSwift
 //

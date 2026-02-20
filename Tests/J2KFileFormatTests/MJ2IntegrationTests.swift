@@ -1,3 +1,7 @@
+//
+// MJ2IntegrationTests.swift
+// J2KSwift
+//
 /// # MJ2IntegrationTests
 ///
 /// End-to-end integration tests for Motion JPEG 2000 operations.

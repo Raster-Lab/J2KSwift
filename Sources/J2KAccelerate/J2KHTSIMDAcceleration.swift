@@ -1,3 +1,7 @@
+//
+// J2KHTSIMDAcceleration.swift
+// J2KSwift
+//
 /// # HT SIMD Acceleration
 ///
 /// SIMD-accelerated operations for HTJ2K (High-Throughput JPEG 2000) block coding.

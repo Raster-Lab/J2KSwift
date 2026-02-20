@@ -1,3 +1,7 @@
+//
+// J2KInteroperabilityTests.swift
+// J2KSwift
+//
 // J2KInteroperabilityTests.swift
 // J2KSwift
 //

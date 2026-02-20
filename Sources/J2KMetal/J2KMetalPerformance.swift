@@ -1,3 +1,7 @@
+//
+// J2KMetalPerformance.swift
+// J2KSwift
+//
 /// # J2KMetalPerformance
 ///
 /// Metal-specific performance optimization and tuning.

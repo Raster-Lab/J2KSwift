@@ -1,3 +1,7 @@
+//
+// J2KMarker.swift
+// J2KSwift
+//
 /// # J2KMarker
 ///
 /// JPEG 2000 marker definitions and constants.

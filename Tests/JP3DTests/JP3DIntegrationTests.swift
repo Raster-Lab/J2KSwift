@@ -1,3 +1,7 @@
+//
+// JP3DIntegrationTests.swift
+// J2KSwift
+//
 /// Tests for JP3D Integration (Week 235).
 ///
 /// End-to-end integration tests covering encode→decode round-trips across all

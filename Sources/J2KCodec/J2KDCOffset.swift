@@ -1,3 +1,7 @@
+//
+// J2KDCOffset.swift
+// J2KSwift
+//
 // J2KDCOffset.swift
 // J2KSwift
 //

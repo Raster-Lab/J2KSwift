@@ -1,3 +1,7 @@
+//
+// BitStreamDiagnostic.swift
+// J2KSwift
+//
 // BitStreamDiagnostic.swift
 // Comprehensive bit-level logging for debugging encoder/decoder synchronization
 

@@ -1,3 +1,7 @@
+//
+// MJ2SampleTable.swift
+// J2KSwift
+//
 /// # MJ2SampleTable
 ///
 /// Sample table generation for Motion JPEG 2000 files.

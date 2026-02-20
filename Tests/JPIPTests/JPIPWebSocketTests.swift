@@ -1,3 +1,7 @@
+//
+// JPIPWebSocketTests.swift
+// J2KSwift
+//
 /// # JPIPWebSocketTests
 ///
 /// Tests for JPIP WebSocket transport, client, and server implementations.

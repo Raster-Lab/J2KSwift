@@ -1,3 +1,7 @@
+//
+// JPIPHTJ2KSupport.swift
+// J2KSwift
+//
 /// # JPIPHTJ2KSupport
 ///
 /// HTJ2K (High-Throughput JPEG 2000) support for the JPIP protocol.

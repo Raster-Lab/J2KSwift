@@ -1,3 +1,7 @@
+//
+// JPIPTranscodingService.swift
+// J2KSwift
+//
 /// # JPIPTranscodingService
 ///
 /// On-the-fly transcoding service for JPIP protocol.

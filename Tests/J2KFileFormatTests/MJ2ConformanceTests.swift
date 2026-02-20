@@ -1,3 +1,7 @@
+//
+// MJ2ConformanceTests.swift
+// J2KSwift
+//
 /// # MJ2ConformanceTests
 ///
 /// ISO/IEC 15444-3 conformance tests for the Motion JPEG 2000 implementation.

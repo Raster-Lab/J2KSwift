@@ -1,3 +1,7 @@
+//
+// J2KMetalColorTransform.swift
+// J2KSwift
+//
 // J2KMetalColorTransform.swift
 // J2KSwift
 //

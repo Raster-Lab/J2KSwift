@@ -1,3 +1,7 @@
+//
+// JPIPClientCacheManager.swift
+// J2KSwift
+//
 /// # JPIPClientCacheManager
 ///
 /// Client-side cache management improvements for JPIP protocol.

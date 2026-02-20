@@ -1,3 +1,7 @@
+//
+// J2KArbitraryWavelet.swift
+// J2KSwift
+//
 // J2KArbitraryWavelet.swift
 // J2KSwift
 //

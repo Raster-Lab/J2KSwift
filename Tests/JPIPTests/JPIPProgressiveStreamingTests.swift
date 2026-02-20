@@ -1,3 +1,7 @@
+//
+// JPIPProgressiveStreamingTests.swift
+// J2KSwift
+//
 /// Tests for multi-resolution tiled streaming with adaptive quality.
 
 import XCTest

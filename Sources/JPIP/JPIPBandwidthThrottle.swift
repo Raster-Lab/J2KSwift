@@ -1,3 +1,7 @@
+//
+// JPIPBandwidthThrottle.swift
+// J2KSwift
+//
 /// # JPIPBandwidthThrottle
 ///
 /// Bandwidth throttling for JPIP server.

@@ -1,3 +1,7 @@
+//
+// J2KMetalPerformanceTests.swift
+// J2KSwift
+//
 /// Tests for J2KMetalPerformance.
 
 import XCTest

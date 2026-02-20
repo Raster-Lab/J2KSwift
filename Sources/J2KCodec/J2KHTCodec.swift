@@ -1,3 +1,7 @@
+//
+// J2KHTCodec.swift
+// J2KSwift
+//
 /// # HTJ2K Codec
 ///
 /// High-level integration of HTJ2K (High-Throughput JPEG 2000) encoding and

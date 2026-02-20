@@ -1,3 +1,7 @@
+//
+// JPIPBandwidthEstimator.swift
+// J2KSwift
+//
 /// # JPIPBandwidthEstimator
 ///
 /// Real-time bandwidth estimation for JPIP streaming.

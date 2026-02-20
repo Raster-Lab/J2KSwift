@@ -1,3 +1,7 @@
+//
+// JPIPServerSession.swift
+// J2KSwift
+//
 /// # JPIPServerSession
 ///
 /// Server-side session management for JPIP clients.

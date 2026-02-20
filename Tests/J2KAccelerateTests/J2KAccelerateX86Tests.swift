@@ -1,3 +1,7 @@
+//
+// J2KAccelerateX86Tests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KAccelerate
 @testable import J2KCore

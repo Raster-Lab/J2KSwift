@@ -1,3 +1,7 @@
+//
+// J2KBuffer.swift
+// J2KSwift
+//
 /// # J2KBuffer
 ///
 /// Efficient buffer management for JPEG 2000 image data.

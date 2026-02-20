@@ -1,3 +1,7 @@
+//
+// J2KPart2Boxes.swift
+// J2KSwift
+//
 // J2KPart2Boxes.swift
 // Part 2 metadata box implementations for ISO/IEC 15444-2 (JPX extended file format)
 //

@@ -1,3 +1,7 @@
+//
+// J2KExtendedPrecision.swift
+// J2KSwift
+//
 // J2KExtendedPrecision.swift
 // J2KSwift
 //

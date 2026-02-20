@@ -1,3 +1,7 @@
+//
+// J2KBitPlaneCoder.swift
+// J2KSwift
+//
 /// # Bit-Plane Coder
 ///
 /// Implementation of the EBCOT bit-plane coding algorithm for JPEG 2000.

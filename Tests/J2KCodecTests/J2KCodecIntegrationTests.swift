@@ -1,3 +1,7 @@
+//
+// J2KCodecIntegrationTests.swift
+// J2KSwift
+//
 // J2KCodecIntegrationTests.swift
 // J2KSwift
 //

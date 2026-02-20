@@ -1,3 +1,7 @@
+//
+// JP3DWaveletTests.swift
+// J2KSwift
+//
 /// Tests for JP3D 3D wavelet transform (Week 214-217).
 ///
 /// Validates forward/inverse round-trips, boundary modes, edge dimensions,

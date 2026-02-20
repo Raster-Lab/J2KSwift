@@ -1,3 +1,7 @@
+//
+// JPIPWebSocketServer.swift
+// J2KSwift
+//
 /// # JPIPWebSocketServer
 ///
 /// WebSocket server implementation for JPIP protocol.

@@ -1,3 +1,7 @@
+//
+// J2KPerceptualIntegrationTests.swift
+// J2KSwift
+//
 // J2KPerceptualIntegrationTests.swift
 // J2KSwift
 //

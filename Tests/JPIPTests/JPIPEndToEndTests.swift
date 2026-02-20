@@ -1,3 +1,7 @@
+//
+// JPIPEndToEndTests.swift
+// J2KSwift
+//
 /// # JPIPEndToEndTests
 ///
 /// Comprehensive end-to-end tests for JPIP client-server communication.

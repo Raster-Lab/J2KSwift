@@ -1,3 +1,7 @@
+//
+// JPIP.swift
+// J2KSwift
+//
 /// # JPIP
 ///
 /// JPEG 2000 Interactive Protocol (JPIP) implementation.

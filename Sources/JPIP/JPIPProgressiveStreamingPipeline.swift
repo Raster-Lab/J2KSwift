@@ -1,3 +1,7 @@
+//
+// JPIPProgressiveStreamingPipeline.swift
+// J2KSwift
+//
 /// # JPIPProgressiveStreamingPipeline
 ///
 /// Progressive streaming pipeline for multi-resolution tiled JPEG 2000 delivery.

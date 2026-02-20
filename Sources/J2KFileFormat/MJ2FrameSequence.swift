@@ -1,3 +1,7 @@
+//
+// MJ2FrameSequence.swift
+// J2KSwift
+//
 /// # MJ2FrameSequence
 ///
 /// Frame sequence organization for Motion JPEG 2000 extraction.

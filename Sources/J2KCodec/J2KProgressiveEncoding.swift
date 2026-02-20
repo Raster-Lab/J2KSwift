@@ -1,3 +1,7 @@
+//
+// J2KProgressiveEncoding.swift
+// J2KSwift
+//
 // J2KProgressiveEncoding.swift
 // J2KSwift
 //

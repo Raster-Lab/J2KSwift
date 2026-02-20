@@ -1,3 +1,7 @@
+//
+// J2KApplePlatform.swift
+// J2KSwift
+//
 /// # J2KApplePlatform
 ///
 /// Apple platform-specific features and optimizations.

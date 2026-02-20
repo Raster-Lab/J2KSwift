@@ -1,3 +1,7 @@
+//
+// J2KAdvancedDecoding.swift
+// J2KSwift
+//
 // J2KAdvancedDecoding.swift
 // J2KSwift
 //

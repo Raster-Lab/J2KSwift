@@ -1,3 +1,7 @@
+//
+// J2KVolumeMetadata.swift
+// J2KSwift
+//
 /// # J2KVolumeMetadata
 ///
 /// Metadata types for volumetric JPEG 2000 datasets.

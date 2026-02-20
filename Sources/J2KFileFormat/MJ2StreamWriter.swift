@@ -1,3 +1,7 @@
+//
+// MJ2StreamWriter.swift
+// J2KSwift
+//
 /// # MJ2StreamWriter
 ///
 /// Streaming writer for Motion JPEG 2000 files.

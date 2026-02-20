@@ -1,3 +1,7 @@
+//
+// J2KAdvancedAccelerate.swift
+// J2KSwift
+//
 // J2KAdvancedAccelerate.swift
 // J2KSwift
 //

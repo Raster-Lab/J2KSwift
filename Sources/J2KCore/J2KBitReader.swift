@@ -1,3 +1,7 @@
+//
+// J2KBitReader.swift
+// J2KSwift
+//
 /// # J2KBitReader
 ///
 /// Bitstream reading utilities for JPEG 2000 codestream parsing.

@@ -1,3 +1,7 @@
+//
+// J2KEncodingPresets.swift
+// J2KSwift
+//
 // J2KEncodingPresets.swift
 // J2KSwift
 //

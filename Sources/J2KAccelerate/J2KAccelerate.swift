@@ -1,3 +1,7 @@
+//
+// J2KAccelerate.swift
+// J2KSwift
+//
 /// # J2KAccelerate
 ///
 /// Hardware-accelerated operations for JPEG 2000 processing.

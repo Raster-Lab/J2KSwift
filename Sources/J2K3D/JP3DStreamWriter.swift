@@ -1,3 +1,7 @@
+//
+// JP3DStreamWriter.swift
+// J2KSwift
+//
 /// # JP3DStreamWriter
 ///
 /// Streaming encoder actor for JP3D volumetric encoding.

@@ -1,3 +1,7 @@
+//
+// JP3DCoreTypeTests.swift
+// J2KSwift
+//
 /// Tests for JP3D core types (Week 211-213).
 ///
 /// Validates volume construction, component configuration, 3D spatial types,

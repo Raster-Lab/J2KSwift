@@ -1,3 +1,7 @@
+//
+// MJ2PerformanceValidationTests.swift
+// J2KSwift
+//
 /// # MJ2PerformanceValidationTests
 ///
 /// Performance validation tests for Motion JPEG 2000 operations.

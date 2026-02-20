@@ -1,3 +1,7 @@
+//
+// MJ2ExtractorTests.swift
+// J2KSwift
+//
 /// # MJ2ExtractorTests
 ///
 /// Tests for Motion JPEG 2000 frame extraction.

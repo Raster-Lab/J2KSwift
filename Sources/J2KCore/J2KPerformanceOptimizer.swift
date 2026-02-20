@@ -1,3 +1,7 @@
+//
+// J2KPerformanceOptimizer.swift
+// J2KSwift
+//
 /// # J2KPerformanceOptimizer
 ///
 /// Comprehensive performance optimization coordinator for J2KSwift.

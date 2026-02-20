@@ -1,3 +1,7 @@
+//
+// MJ2FileFormatTests.swift
+// J2KSwift
+//
 /// # MJ2FileFormatTests
 ///
 /// Unit tests for Motion JPEG 2000 file format support.

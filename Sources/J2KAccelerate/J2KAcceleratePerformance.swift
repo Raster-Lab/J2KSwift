@@ -1,3 +1,7 @@
+//
+// J2KAcceleratePerformance.swift
+// J2KSwift
+//
 /// # J2KAcceleratePerformance
 ///
 /// Accelerate framework performance optimization and tuning.

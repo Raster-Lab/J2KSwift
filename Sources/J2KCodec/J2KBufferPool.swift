@@ -1,3 +1,7 @@
+//
+// J2KBufferPool.swift
+// J2KSwift
+//
 // J2KBufferPool.swift
 // J2KSwift
 //

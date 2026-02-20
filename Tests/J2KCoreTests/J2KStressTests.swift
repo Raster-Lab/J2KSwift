@@ -1,3 +1,7 @@
+//
+// J2KStressTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCore
 @testable import J2KCodec

@@ -1,3 +1,7 @@
+//
+// MJ2Player.swift
+// J2KSwift
+//
 /// # MJ2Player
 ///
 /// Real-time playback engine for Motion JPEG 2000 files.

@@ -1,3 +1,7 @@
+//
+// JP3DWaveletTransform.swift
+// J2KSwift
+//
 // JP3DWaveletTransform.swift
 // J2KSwift
 //

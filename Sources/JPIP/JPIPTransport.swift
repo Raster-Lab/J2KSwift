@@ -1,3 +1,7 @@
+//
+// JPIPTransport.swift
+// J2KSwift
+//
 /// # JPIPTransport
 ///
 /// HTTP transport layer for JPIP protocol.

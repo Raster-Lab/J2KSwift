@@ -1,3 +1,7 @@
+//
+// J2KContextModeling.swift
+// J2KSwift
+//
 /// # Context Modeling
 ///
 /// Context formation for JPEG 2000 EBCOT bit-plane coding.

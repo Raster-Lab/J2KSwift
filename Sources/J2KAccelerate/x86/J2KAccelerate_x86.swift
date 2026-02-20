@@ -1,3 +1,7 @@
+//
+// J2KAccelerate_x86.swift
+// J2KSwift
+//
 // J2KAccelerate_x86.swift
 // J2KSwift
 //

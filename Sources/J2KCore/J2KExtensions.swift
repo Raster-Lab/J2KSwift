@@ -1,3 +1,7 @@
+//
+// J2KExtensions.swift
+// J2KSwift
+//
 /// # J2KExtensions
 ///
 /// Useful extensions for working with JPEG 2000 data.

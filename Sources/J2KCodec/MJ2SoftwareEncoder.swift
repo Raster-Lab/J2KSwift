@@ -1,3 +1,7 @@
+//
+// MJ2SoftwareEncoder.swift
+// J2KSwift
+//
 /// # MJ2SoftwareEncoder
 ///
 /// Software-based video encoder for cross-platform support.

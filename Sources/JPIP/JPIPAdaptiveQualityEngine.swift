@@ -1,3 +1,7 @@
+//
+// JPIPAdaptiveQualityEngine.swift
+// J2KSwift
+//
 /// # JPIPAdaptiveQualityEngine
 ///
 /// Adaptive quality management for JPIP streaming.

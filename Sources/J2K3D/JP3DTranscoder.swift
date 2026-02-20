@@ -1,3 +1,7 @@
+//
+// JP3DTranscoder.swift
+// J2KSwift
+//
 /// # JP3DTranscoder
 ///
 /// Lossless transcoding between standard JP3D codestreams and their

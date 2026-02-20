@@ -1,3 +1,7 @@
+//
+// J2KVImageIntegration.swift
+// J2KSwift
+//
 // J2KVImageIntegration.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// J2KPart2CodestreamExtensions.swift
+// J2KSwift
+//
 // J2KPart2CodestreamExtensions.swift
 // J2KSwift
 //

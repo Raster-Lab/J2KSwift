@@ -1,3 +1,7 @@
+//
+// JPIPCacheTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import JPIP
 @testable import J2KCore

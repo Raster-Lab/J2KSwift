@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedWavelet.swift
+// J2KSwift
+//
 // J2KAcceleratedWavelet.swift
 // J2KSwift
 //

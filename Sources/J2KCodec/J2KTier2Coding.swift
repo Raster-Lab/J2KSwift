@@ -1,3 +1,7 @@
+//
+// J2KTier2Coding.swift
+// J2KSwift
+//
 /// # Tier-2 Coding
 ///
 /// Implementation of JPEG 2000 Tier-2 coding (packet header encoding/decoding).

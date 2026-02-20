@@ -1,3 +1,7 @@
+//
+// JP3DProgressiveDecoder.swift
+// J2KSwift
+//
 /// # JP3DProgressiveDecoder
 ///
 /// Progressive decoding support for JP3D volumetric JPEG 2000.

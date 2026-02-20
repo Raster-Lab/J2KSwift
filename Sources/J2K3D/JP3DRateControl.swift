@@ -1,3 +1,7 @@
+//
+// JP3DRateControl.swift
+// J2KSwift
+//
 /// # JP3DRateControl
 ///
 /// Rate control for JP3D volumetric JPEG 2000 encoding.

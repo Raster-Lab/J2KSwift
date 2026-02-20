@@ -1,3 +1,7 @@
+//
+// JP3DTypes.swift
+// J2KSwift
+//
 /// # JP3DTypes
 ///
 /// 3D spatial types for ISO/IEC 15444-10 (JP3D) volumetric JPEG 2000.

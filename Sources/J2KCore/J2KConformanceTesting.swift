@@ -1,3 +1,7 @@
+//
+// J2KConformanceTesting.swift
+// J2KSwift
+//
 /// # JPEG 2000 Conformance Testing Framework
 ///
 /// This framework provides tools for validating J2KSwift against the ISO/IEC 15444-4

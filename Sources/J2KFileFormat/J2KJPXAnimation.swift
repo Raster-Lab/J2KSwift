@@ -1,3 +1,7 @@
+//
+// J2KJPXAnimation.swift
+// J2KSwift
+//
 // J2KJPXAnimation.swift
 // JPX animation and multi-layer compositing support per ISO/IEC 15444-2
 //
