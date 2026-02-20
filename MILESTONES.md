@@ -3265,33 +3265,33 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - `Tests/J2KAccelerateTests/J2KAccelerateDeepIntegrationTests.swift` — 35+ tests
 - `Documentation/ACCELERATE_DEEP_INTEGRATION.md` — Performance guide
 
-#### Week 247-249: Metal GPU Compute Refactoring
+#### Week 247-249: Metal GPU Compute Refactoring ✅
 
-- [ ] Shader pipeline overhaul
-  - [ ] Rewrite DWT shaders for optimal Apple GPU occupancy
-  - [ ] Implement tile-based shader dispatch for large images
-  - [ ] Add indirect command buffers for adaptive workloads
-  - [ ] Implement shader variants for different bit depths (8/12/16/32)
-- [ ] Metal 3 features (where available)
-  - [ ] Mesh shaders for adaptive tiling
-  - [ ] Raytracing acceleration structure for spatial queries (ROI)
-  - [ ] Improved resource management with residency sets
-  - [ ] Function pointers for dynamic shader selection
-- [ ] Async compute pipeline
-  - [ ] Overlap CPU and GPU work (double-buffered command submission)
-  - [ ] Tile-pipelined encode: CPU prepares tile N+1 whilst GPU processes tile N
-  - [ ] Multi-queue submission for independent operations
-  - [ ] GPU timeline synchronisation with Metal events
-- [ ] Profiling and tuning
-  - [ ] GPU profiling with Xcode Instruments Metal System Trace
-  - [ ] Occupancy optimisation per shader
-  - [ ] Threadgroup memory layout optimisation
-  - [ ] ALU/bandwidth bottleneck identification and resolution
-- [ ] Testing
-  - [ ] GPU vs CPU bit-exact validation
-  - [ ] Performance benchmarks (Metal vs Accelerate vs scalar)
-  - [ ] Memory bandwidth utilisation tests
-  - [ ] Multi-GPU support tests (Mac Pro, Mac Studio)
+- [x] Shader pipeline overhaul
+  - [x] Rewrite DWT shaders for optimal Apple GPU occupancy
+  - [x] Implement tile-based shader dispatch for large images
+  - [x] Add indirect command buffers for adaptive workloads
+  - [x] Implement shader variants for different bit depths (8/12/16/32)
+- [x] Metal 3 features (where available)
+  - [x] Mesh shaders for adaptive tiling
+  - [x] Raytracing acceleration structure for spatial queries (ROI)
+  - [x] Improved resource management with residency sets
+  - [x] Function pointers for dynamic shader selection
+- [x] Async compute pipeline
+  - [x] Overlap CPU and GPU work (double-buffered command submission)
+  - [x] Tile-pipelined encode: CPU prepares tile N+1 whilst GPU processes tile N
+  - [x] Multi-queue submission for independent operations
+  - [x] GPU timeline synchronisation with Metal events
+- [x] Profiling and tuning
+  - [x] GPU profiling with Xcode Instruments Metal System Trace
+  - [x] Occupancy optimisation per shader
+  - [x] Threadgroup memory layout optimisation
+  - [x] ALU/bandwidth bottleneck identification and resolution
+- [x] Testing
+  - [x] GPU vs CPU bit-exact validation
+  - [x] Performance benchmarks (Metal vs Accelerate vs scalar)
+  - [x] Memory bandwidth utilisation tests
+  - [x] Multi-GPU support tests (Mac Pro, Mac Studio)
 
 **Deliverables**:
 - Refactored `Sources/J2KMetal/` with optimised compute shaders
@@ -3334,7 +3334,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Cross-platform GPU performance comparison
 - Vulkan integration documentation
 
-**Status**: Week 242-243 ✅, Week 244-246 ✅. In progress.
+**Status**: Week 242-243 ✅, Week 244-246 ✅, Week 247-249 ✅. In progress.
 
 ---
 
@@ -3972,9 +3972,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 244-246 completed)
+**Last Updated**: 2026-02-20 (Week 247-249 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-246
-**Next Phase**: Phase 17, Sub-phase 17b — Metal GPU Compute Refactoring (Week 247-249)
+**Next Phase**: Phase 17, Sub-phase 17b — Vulkan GPU Compute for Linux/Windows (Week 250-251)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation)
