@@ -245,7 +245,7 @@ final class J2KAccelerateDeepIntegrationTests: XCTestCase {
 
         XCTAssertEqual(floatData.count, 4)
         XCTAssertEqual(floatData[0], 0.0, accuracy: 0.001)
-        XCTAssertEqual(floatData[1], 0.5, accuracy: 0.001) // 32767/65535 ≈ 0.5
+        XCTAssertEqual(floatData[1], 0.5, accuracy: 0.001) // 32767/65535 ≈ 0.4999
         XCTAssertEqual(floatData[2], 1.0, accuracy: 0.001)
         XCTAssertEqual(floatData[3], 0.25, accuracy: 0.001) // 16384/65535 ≈ 0.25
     }

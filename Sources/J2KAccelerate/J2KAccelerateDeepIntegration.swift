@@ -189,7 +189,7 @@ public struct J2KvDSPDeepIntegration: Sendable {
 
         let n = signal.count
 
-        // For power-of-2 lengths, delegate to FFT for maximum performance
+        // Power-of-2 check: n & (n-1) == 0 only when n has a single bit set
         if n > 1 && (n & (n - 1)) == 0 {
             let advanced = J2KAdvancedAccelerate()
             return try advanced.fft(signal: signal)
@@ -362,6 +362,8 @@ public struct J2KvDSPDeepIntegration: Sendable {
         case .full:
             return fullResult
         case .same:
+            // Centred alignment: for odd-length kernels, the output is exactly
+            // centred. For even-length kernels, integer division floors the offset.
             let offset = (kernel.count - 1) / 2
             let end = offset + signal.count
             return Array(fullResult[offset..<min(end, fullLength)])
@@ -1034,6 +1036,10 @@ public struct J2KMemoryOptimisation: Sendable {
 /// ```
 public struct J2KCOWBuffer<Element: Sendable>: Sendable {
     /// Internal storage class for copy-on-write.
+    ///
+    /// Marked `@unchecked Sendable` because mutations only occur within
+    /// the `modify` method which ensures unique ownership via
+    /// `isKnownUniquelyReferenced` before any write.
     final class Storage: @unchecked Sendable {
         var data: [Element]
 
