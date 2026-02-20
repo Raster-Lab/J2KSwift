@@ -330,7 +330,7 @@ public struct J2KAssociationBox: J2KBox, Sendable {
                 try writer.writeBox(box)
             case .numberList(let box):
                 try writer.writeBox(box)
-            case .rawContent(let type, let content):
+            case let .rawContent(type, content):
                 try writer.writeRawBox(type: type, content: content)
             }
         }

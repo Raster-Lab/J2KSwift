@@ -164,7 +164,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
             if level < 0 || level > 10 {
                 throw J2KError.invalidParameter("Decomposition level must be between 0 and 10, got \(level)")
             }
-        case .combined(let layers, let levels):
+        case let .combined(layers, levels):
             if layers < 1 || layers > 20 {
                 throw J2KError.invalidParameter("Quality layers must be between 1 and 20, got \(layers)")
             }
@@ -401,10 +401,10 @@ extension J2KProgressiveMode: CustomStringConvertible {
             return "SNR Progressive (\(layers) quality layers)"
         case .spatial(let level):
             return "Spatial Progressive (up to \(level) decomposition levels)"
-        case .layerProgressive(let layers, let resFirst):
+        case let .layerProgressive(layers, resFirst):
             let priority = resFirst ? "resolution-first" : "quality-first"
             return "Layer Progressive (\(layers) layers, \(priority))"
-        case .combined(let layers, let levels):
+        case let .combined(layers, levels):
             return "Combined Progressive (\(layers) quality layers, \(levels) decomposition levels)"
         case .none:
             return "Non-progressive"

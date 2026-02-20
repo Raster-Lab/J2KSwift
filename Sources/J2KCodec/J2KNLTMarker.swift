@@ -119,7 +119,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
         case .hybridLogGamma:
             data.append(0x06)  // Transform type: HLG (ITU-R BT.2100)
 
-        case .lookupTable(let forwardLUT, let inverseLUT, let interpolation):
+        case let .lookupTable(forwardLUT, inverseLUT, interpolation):
             data.append(0x10)  // Transform type: LUT
 
             // Interpolation flag (1 byte)
@@ -145,7 +145,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
                 data.append(contentsOf: encodeDouble(value))
             }
 
-        case .piecewiseLinear(let breakpoints, let values):
+        case let .piecewiseLinear(breakpoints, values):
             data.append(0x11)  // Transform type: piecewise linear
 
             guard breakpoints.count == values.count else {
@@ -163,7 +163,7 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
                 data.append(contentsOf: encodeDouble(values[i]))
             }
 
-        case .custom(let parameters, let function):
+        case let .custom(parameters, function):
             data.append(0xFF)  // Transform type: custom
 
             // Function name length (1 byte)
@@ -436,12 +436,12 @@ extension J2KNLTMarkerSegment {
                     return false
                 }
 
-            case .lookupTable(let forwardLUT, let inverseLUT, _):
+            case let .lookupTable(forwardLUT, inverseLUT, _):
                 guard !forwardLUT.isEmpty && !inverseLUT.isEmpty else {
                     return false
                 }
 
-            case .piecewiseLinear(let breakpoints, let values):
+            case let .piecewiseLinear(breakpoints, values):
                 guard breakpoints.count == values.count && !breakpoints.isEmpty else {
                     return false
                 }

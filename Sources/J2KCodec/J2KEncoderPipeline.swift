@@ -248,7 +248,7 @@ struct EncoderPipeline: Sendable {
             // Use dependency-based MCT
             return try applyDependencyMCT(components, configuration: depConfig, image: image)
 
-        case .adaptive(let candidates, let criteria):
+        case let .adaptive(candidates, criteria):
             // Select best matrix adaptively based on criteria
             return try applyAdaptiveMCT(components, candidates: candidates, criteria: criteria, image: image, tileIndex: tileIndex)
         }

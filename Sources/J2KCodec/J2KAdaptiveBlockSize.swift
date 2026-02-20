@@ -100,7 +100,7 @@ public enum J2KBlockSizeMode: Sendable, Equatable {
         switch (lhs, rhs) {
         case (.fixed, .fixed):
             return true
-        case (.adaptive(let a), .adaptive(let b)):
+        case let (.adaptive(a), .adaptive(b)):
             return a == b
         default:
             return false

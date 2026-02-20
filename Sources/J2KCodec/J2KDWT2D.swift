@@ -615,7 +615,7 @@ public struct J2KDWT2D: Sendable {
 
             return MultiLevelDecomposition(levels: levels)
 
-        case .arbitrary(let hLevels, let vLevels):
+        case let .arbitrary(hLevels, vLevels):
             // Arbitrary decomposition with independent H/V levels
             guard hLevels >= 0 && vLevels >= 0 else {
                 throw J2KError.invalidParameter(

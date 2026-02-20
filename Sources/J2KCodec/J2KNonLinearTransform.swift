@@ -473,7 +473,7 @@ public struct J2KNonLinearTransform: Sendable {
         case .hybridLogGamma:
             return try applyHLGForward(value: value, minValue: minValue, maxValue: maxValue)
 
-        case .lookupTable(let forwardLUT, _, let interpolation):
+        case let .lookupTable(forwardLUT, _, interpolation):
             return applyLUT(
                 value: value,
                 lut: forwardLUT,
@@ -482,7 +482,7 @@ public struct J2KNonLinearTransform: Sendable {
                 interpolation: interpolation
             )
 
-        case .piecewiseLinear(let breakpoints, let values):
+        case let .piecewiseLinear(breakpoints, values):
             return applyPiecewiseLinear(
                 value: value,
                 breakpoints: breakpoints,
@@ -540,7 +540,7 @@ public struct J2KNonLinearTransform: Sendable {
         case .hybridLogGamma:
             return try applyHLGInverse(value: value, minValue: minValue, maxValue: maxValue)
 
-        case .lookupTable(_, let inverseLUT, let interpolation):
+        case let .lookupTable(_, inverseLUT, interpolation):
             return applyLUT(
                 value: value,
                 lut: inverseLUT,
@@ -549,7 +549,7 @@ public struct J2KNonLinearTransform: Sendable {
                 interpolation: interpolation
             )
 
-        case .piecewiseLinear(let breakpoints, let values):
+        case let .piecewiseLinear(breakpoints, values):
             // For inverse, swap breakpoints and values
             return applyPiecewiseLinear(
                 value: value,

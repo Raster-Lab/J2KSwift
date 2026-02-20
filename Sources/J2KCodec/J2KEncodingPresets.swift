@@ -624,7 +624,7 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Constant Quality"
         case .constantBitrate(let bpp):
             return "Constant Bitrate (\(String(format: "%.2f", bpp)) bpp)"
-        case .variableBitrate(let minQuality, let maxBpp):
+        case let .variableBitrate(minQuality, maxBpp):
             return "Variable Bitrate (min quality: \(String(format: "%.2f", minQuality)), max: \(String(format: "%.2f", maxBpp)) bpp)"
         case .lossless:
             return "Lossless"

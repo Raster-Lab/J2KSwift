@@ -170,7 +170,7 @@ public actor JP3DCacheManager {
         switch strategy {
         case .lru:
             evictLRU(count: targetCount)
-        case .spatialProximity(let cx, let cy, let cz):
+        case let .spatialProximity(cx, cy, cz):
             evictBySpatialDistance(centerX: cx, centerY: cy, centerZ: cz, count: targetCount)
         case .viewFrustum(let frustum):
             evictOutsideFrustum(frustum: frustum)

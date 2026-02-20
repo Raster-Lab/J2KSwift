@@ -250,11 +250,11 @@ public actor MJ2Extractor {
         case .memory:
             return MJ2FrameSequence(frames: frames)
 
-        case .files(let directory, let naming):
+        case let .files(directory, naming):
             try await writeFramesToFiles(frames: frames, directory: directory, naming: naming)
             return nil
 
-        case .imageSequence(let directory, let prefix):
+        case let .imageSequence(directory, prefix):
             let naming = MJ2OutputStrategy.defaultNaming(prefix: prefix)
             try await writeFramesToFiles(frames: frames, directory: directory, naming: naming)
             return nil
@@ -581,7 +581,7 @@ public actor MJ2Extractor {
                 frame.isSync ? index : nil
             }
 
-        case .range(let start, let end):
+        case let .range(start, end):
             guard start >= 0 && end <= sampleTable.frames.count && start < end else {
                 throw MJ2ExtractionError.invalidFrameRange(
                     start: start,
@@ -591,7 +591,7 @@ public actor MJ2Extractor {
             }
             return Array(start..<end)
 
-        case .timestampRange(let startTime, let endTime):
+        case let .timestampRange(startTime, endTime):
             return sampleTable.frames.enumerated().compactMap { index, frame in
                 let frameStart = frame.timestamp
                 let frameEnd = frameStart + UInt64(frame.duration)

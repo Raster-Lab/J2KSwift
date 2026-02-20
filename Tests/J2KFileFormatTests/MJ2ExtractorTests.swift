@@ -176,7 +176,7 @@ final class MJ2ExtractorTests: XCTestCase {
         let strategy = MJ2ExtractionStrategy.range(start: 10, end: 20)
 
         switch strategy {
-        case .range(let start, let end):
+        case let .range(start, end):
             XCTAssertEqual(start, 10)
             XCTAssertEqual(end, 20)
         default:
@@ -188,7 +188,7 @@ final class MJ2ExtractorTests: XCTestCase {
         let strategy = MJ2ExtractionStrategy.timestampRange(start: 1000, end: 5000)
 
         switch strategy {
-        case .timestampRange(let start, let end):
+        case let .timestampRange(start, end):
             XCTAssertEqual(start, 1000)
             XCTAssertEqual(end, 5000)
         default:

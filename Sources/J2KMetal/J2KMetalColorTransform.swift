@@ -538,14 +538,14 @@ public actor J2KMetalColorTransform {
                 output[i] = sign * pow(abs(val), exponent)
             }
 
-        case .logarithmic(let scale, let coefficient):
+        case let .logarithmic(scale, coefficient):
             for i in 0..<count {
                 let val = data[i]
                 let sign: Float = val >= 0 ? 1.0 : -1.0
                 output[i] = sign * scale * log(1.0 + coefficient * abs(val))
             }
 
-        case .exponential(let scale, let coefficient):
+        case let .exponential(scale, coefficient):
             for i in 0..<count {
                 let val = data[i]
                 let sign: Float = val >= 0 ? 1.0 : -1.0
@@ -577,7 +577,7 @@ public actor J2KMetalColorTransform {
                 }
             }
 
-        case .lut(let table, let inputMin, let inputMax):
+        case let .lut(table, inputMin, inputMax):
             let lutSize = table.count
             guard lutSize >= 2 else {
                 return data
@@ -836,7 +836,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&p1, length: MemoryLayout<Float>.stride, index: 4)
             encoder.setBytes(&p2, length: MemoryLayout<Float>.stride, index: 5)
 
-        case .logarithmic(let scale, let coefficient):
+        case let .logarithmic(scale, coefficient):
             var cnt = UInt32(count)
             var transformType: UInt32 = 1
             var p1 = scale
@@ -846,7 +846,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&p1, length: MemoryLayout<Float>.stride, index: 4)
             encoder.setBytes(&p2, length: MemoryLayout<Float>.stride, index: 5)
 
-        case .exponential(let scale, let coefficient):
+        case let .exponential(scale, coefficient):
             var cnt = UInt32(count)
             var transformType: UInt32 = 2
             var p1 = scale
@@ -868,7 +868,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&cnt, length: MemoryLayout<UInt32>.stride, index: 2)
             encoder.setBytes(&inverse, length: MemoryLayout<UInt32>.stride, index: 3)
 
-        case .lut(let table, let inputMin, let inputMax):
+        case let .lut(table, inputMin, inputMax):
             let lutBufferSize = table.count * MemoryLayout<Float>.stride
             let lutBuffer = try await bufferPool.acquireBuffer(device: device, size: lutBufferSize)
             table.withUnsafeBytes { src in
