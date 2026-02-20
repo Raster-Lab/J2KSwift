@@ -8,24 +8,23 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.8.0 (Released February 19, 2026)  
-**Status**: Complete encoder/decoder with Motion JPEG 2000 support, HTJ2K, and Metal GPU acceleration (1,700+ tests, 100% pass rate)  
-**Previous Release**: 1.7.0 (Metal GPU Acceleration)
+**Current Version**: 1.9.0 (Released February 20, 2026)  
+**Status**: Complete encoder/decoder with JP3D volumetric support, Motion JPEG 2000, HTJ2K, and Metal GPU acceleration (2,100+ tests, 100% pass rate)  
+**Previous Release**: 1.8.0 (Motion JPEG 2000)
 
 ## 📦 Release Status
 
-**v1.8.0** delivers comprehensive Motion JPEG 2000 (MJ2) support (ISO/IEC 15444-3):
-- 🎬 **Motion JPEG 2000** - Complete MJ2 file creation, extraction, and playback
-- 📦 **ISO Base Media Format** - Full ftyp/moov/mdat box hierarchy
-- 🎞️ **Frame Extraction** - Flexible extraction strategies (all, range, skip, single)
-- ▶️ **Real-Time Playback** - Actor-based player with LRU caching and prefetching
-- 🎯 **Profile Support** - Simple, General, Broadcast, Cinema profiles
-- ⚡ **Hardware Acceleration** - VideoToolbox H.264/H.265 transcoding (Apple)
-- 🌐 **Cross-Platform** - Software fallbacks for Linux/Windows
-- 🧪 **170+ New Tests** - Comprehensive MJ2 conformance, integration, and performance tests
-- 📚 **MJ2_GUIDE.md** - Complete Motion JPEG 2000 documentation
+**v1.9.0** delivers comprehensive JP3D volumetric JPEG 2000 support (ISO/IEC 15444-10):
+- 🏥 **JP3D Volumetric JPEG 2000** - Complete 3D encoding, decoding, and streaming (ISO/IEC 15444-10)
+- 🧊 **3D Wavelet Transforms** - 5/3 Le Gall reversible and 9/7 CDF irreversible with Metal GPU 20-50× speedup
+- ⚡ **HTJ2K Integration** - High-throughput 3D encoding (5-10× faster than standard JP3D)
+- 🌊 **JPIP 3D Streaming** - View-dependent progressive delivery with 8 progression modes
+- 🎯 **ROI Decoding** - Efficient spatial subset decoding for large volumes
+- 📐 **Part 4 Compliance** - Full ISO/IEC 15444-10 conformance testing
+- 🧪 **350+ New Tests** - Comprehensive JP3D unit, integration, and compliance tests (2,100+ total)
+- 📚 **9 Documentation Guides** - Complete JP3D documentation suite
 
-See [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md) for v1.8.0 details, or [RELEASE_NOTES_v1.7.0.md](RELEASE_NOTES_v1.7.0.md) for the previous release.
+See [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md) for v1.9.0 details, or [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md) for the previous release.
 
 ## 🎯 Project Goals
 
@@ -38,8 +37,8 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 - **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
 - **Network Streaming**: JPIP protocol support for efficient image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
-- **Well Documented**: 30+ comprehensive guides, tutorials, and API documentation
-- **High Quality**: 100% test pass rate (1,605 tests) with comprehensive test coverage
+- **Well Documented**: 40+ comprehensive guides, tutorials, and API documentation
+- **High Quality**: 100% test pass rate (2,100+ tests) with comprehensive test coverage
 
 ## 🚀 Quick Start
 
@@ -54,7 +53,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.8.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.9.0")
 ]
 ```
 
@@ -67,6 +66,8 @@ Then add the specific modules you need to your target dependencies:
         .product(name: "J2KCore", package: "J2KSwift"),
         .product(name: "J2KCodec", package: "J2KSwift"),
         .product(name: "J2KFileFormat", package: "J2KSwift"),
+        // Optional: add J2K3D for volumetric JP3D support
+        .product(name: "J2K3D", package: "J2KSwift"),
     ]
 )
 ```
@@ -152,6 +153,45 @@ let encoder = J2KEncoder(configuration: config)
 let htj2kData = try encoder.encode(image)
 
 // HTJ2K is 57-70× faster than legacy JPEG 2000!
+```
+
+#### JP3D Volumetric Encoding (v1.9.0 - NEW)
+
+```swift
+import J2KCore
+import J2K3D
+
+// Build a J2KVolume from component data
+let component = J2KVolumeComponent(
+    index: 0, bitDepth: 16, signed: false,
+    width: 256, height: 256, depth: 128,
+    data: rawVoxelData
+)
+let volume = J2KVolume(width: 256, height: 256, depth: 128, components: [component])
+
+// Encode losslessly
+let encoder = JP3DEncoder(configuration: .lossless)
+let result = try await encoder.encode(volume)
+print("Encoded \(result.data.count) bytes, \(result.tileCount) tiles")
+
+// Or use HTJ2K for high throughput
+let htConfig = JP3DEncoderConfiguration(compressionMode: .losslessHTJ2K)
+let htEncoder = JP3DEncoder(configuration: htConfig)
+let htResult = try await htEncoder.encode(volume)
+// ~5-10× faster than standard JP3D
+```
+
+#### JP3D Volumetric Decoding (v1.9.0 - NEW)
+
+```swift
+import J2KCore
+import J2K3D
+
+let decoder = JP3DDecoder(configuration: .default)
+let decoded = try await decoder.decode(encodedData)
+let volume = decoded.volume
+print("Decoded volume: \(volume.width)×\(volume.height)×\(volume.depth)")
+print("Components: \(volume.components.count), voxels: \(volume.voxelCount)")
 ```
 
 #### Lossless Transcoding (v1.3.0 - NEW)
@@ -361,6 +401,17 @@ let encoded = try mqCoder.encode(quantized)
 - **[EXTENDED_FORMATS.md](EXTENDED_FORMATS.md)**: JPX, JPM support
 - **[BYPASS_MODE_ISSUE.md](BYPASS_MODE_ISSUE.md)**: Known bypass mode limitation and workarounds
 
+### JP3D Volumetric JPEG 2000 (v1.9.0)
+- **[Documentation/JP3D_GETTING_STARTED.md](Documentation/JP3D_GETTING_STARTED.md)**: Quick start guide for JP3D
+- **[Documentation/JP3D_ARCHITECTURE.md](Documentation/JP3D_ARCHITECTURE.md)**: Architecture overview (J2K3D, JPIP, Metal, Accelerate)
+- **[Documentation/JP3D_API_REFERENCE.md](Documentation/JP3D_API_REFERENCE.md)**: Complete API reference for all JP3D public types
+- **[Documentation/JP3D_STREAMING_GUIDE.md](Documentation/JP3D_STREAMING_GUIDE.md)**: JPIP 3D streaming guide
+- **[Documentation/JP3D_PERFORMANCE.md](Documentation/JP3D_PERFORMANCE.md)**: Performance tuning guide with benchmark tables
+- **[Documentation/JP3D_HTJ2K_INTEGRATION.md](Documentation/JP3D_HTJ2K_INTEGRATION.md)**: HTJ2K usage guide for volumetric encoding
+- **[Documentation/JP3D_MIGRATION.md](Documentation/JP3D_MIGRATION.md)**: Migration from 2D JPEG 2000 to JP3D
+- **[Documentation/JP3D_TROUBLESHOOTING.md](Documentation/JP3D_TROUBLESHOOTING.md)**: Common issues and solutions
+- **[Documentation/JP3D_EXAMPLES.md](Documentation/JP3D_EXAMPLES.md)**: Comprehensive usage examples
+
 ### Advanced Topics
 - **[ADVANCED_ENCODING.md](ADVANCED_ENCODING.md)**: Encoding techniques
 - **[ADVANCED_DECODING.md](ADVANCED_DECODING.md)**: Decoding optimizations
@@ -426,7 +477,10 @@ File format support for JP2, J2K, JPX, and other JPEG 2000 container formats, in
 Metal GPU acceleration for Apple Silicon processors, providing 15-40× performance improvements for wavelet transforms, color transforms, ROI processing, and quantization.
 
 ### JPIP
-JPEG 2000 Interactive Protocol implementation for efficient network streaming.
+JPEG 2000 Interactive Protocol implementation for efficient network streaming, including JP3D 3D streaming with view-dependent progressive delivery.
+
+### J2K3D
+JP3D volumetric JPEG 2000 (ISO/IEC 15444-10) encoding, decoding, and streaming. Provides `JP3DEncoder`, `JP3DDecoder`, 3D wavelet transforms, HTJ2K integration, and JPIP 3D streaming. This is an optional module — existing 2D workflows are unaffected.
 
 ## 🗓️ Development Roadmap
 
@@ -581,8 +635,8 @@ This project represents a 100-week development effort following a comprehensive 
 
 ---
 
-**J2KSwift v1.8.0** - A modern Swift implementation of JPEG 2000 with Motion JPEG 2000 support  
-**Status**: Complete encoder/decoder with MJ2, HTJ2K, Metal GPU acceleration  
+**J2KSwift v1.9.0** - A modern Swift implementation of JPEG 2000 with JP3D volumetric support  
+**Status**: Complete encoder/decoder with JP3D, MJ2, HTJ2K, Metal GPU acceleration  
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
-For detailed information, see [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md)
+For detailed information, see [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md)
