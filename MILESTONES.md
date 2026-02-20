@@ -3234,36 +3234,36 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - `Documentation/ARM_NEON_OPTIMISATION.md` — Architecture isolation documentation
 - 41 tests (22 entropy + 19 transform) all passing
 
-#### Week 244-246: Accelerate Framework Deep Integration
+#### Week 244-246: Accelerate Framework Deep Integration ✅
 
-- [ ] vDSP optimisation
-  - [ ] Vectorised quantisation with `vDSP_vsmul`/`vDSP_vsdiv`
-  - [ ] Fast DCT/DFT for frequency-domain operations
-  - [ ] Optimised convolution for arbitrary wavelet filters
-  - [ ] In-place operations to minimise memory allocation
-- [ ] vImage optimisation
-  - [ ] Hardware-accelerated colour space conversion
-  - [ ] Optimised image scaling and resampling
-  - [ ] Efficient pixel format conversion (8/16/32-bit)
-  - [ ] Tiled processing for large images
-- [ ] BLAS/LAPACK for multi-component transforms
-  - [ ] Matrix multiplication for MCT (multi-component transform)
-  - [ ] Eigenvalue decomposition for KLT optimisation
-  - [ ] Batch matrix operations for tile processing
-- [ ] Memory optimisation
-  - [ ] Unified memory exploitation (zero-copy CPU↔GPU)
-  - [ ] Memory-mapped I/O for large files
-  - [ ] Custom allocators aligned to cache lines (128 bytes on M-series)
-  - [ ] Copy-on-write buffer optimisation
-- [ ] Testing
-  - [ ] Numerical accuracy validation (vs reference)
-  - [ ] Memory usage profiling and regression tests
-  - [ ] Performance benchmarks for each Accelerate integration point
+- [x] vDSP optimisation
+  - [x] Vectorised quantisation with `vDSP_vsmul`/`vDSP_vsdiv`
+  - [x] Fast DCT/DFT for frequency-domain operations
+  - [x] Optimised convolution for arbitrary wavelet filters
+  - [x] In-place operations to minimise memory allocation
+- [x] vImage optimisation
+  - [x] Hardware-accelerated colour space conversion
+  - [x] Optimised image scaling and resampling
+  - [x] Efficient pixel format conversion (8/16/32-bit)
+  - [x] Tiled processing for large images
+- [x] BLAS/LAPACK for multi-component transforms
+  - [x] Matrix multiplication for MCT (multi-component transform)
+  - [x] Eigenvalue decomposition for KLT optimisation
+  - [x] Batch matrix operations for tile processing
+- [x] Memory optimisation
+  - [x] Unified memory exploitation (zero-copy CPU↔GPU)
+  - [x] Memory-mapped I/O for large files
+  - [x] Custom allocators aligned to cache lines (128 bytes on M-series)
+  - [x] Copy-on-write buffer optimisation
+- [x] Testing
+  - [x] Numerical accuracy validation (vs reference)
+  - [x] Memory usage profiling and regression tests
+  - [x] Performance benchmarks for each Accelerate integration point
 
 **Deliverables**:
-- Enhanced `Sources/J2KAccelerate/` with deep Accelerate integration
-- Memory optimisation guide
-- Accelerate performance benchmark results
+- `Sources/J2KAccelerate/J2KAccelerateDeepIntegration.swift` — Deep Accelerate integration (vDSP, vImage, BLAS/LAPACK, memory)
+- `Tests/J2KAccelerateTests/J2KAccelerateDeepIntegrationTests.swift` — 35+ tests
+- `Documentation/ACCELERATE_DEEP_INTEGRATION.md` — Performance guide
 
 #### Week 247-249: Metal GPU Compute Refactoring
 
@@ -3334,7 +3334,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Cross-platform GPU performance comparison
 - Vulkan integration documentation
 
-**Status**: Week 242-243 ✅. In progress.
+**Status**: Week 242-243 ✅, Week 244-246 ✅. In progress.
 
 ---
 
@@ -3972,9 +3972,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 242-243 completed)
+**Last Updated**: 2026-02-20 (Week 244-246 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Week 242-243
-**Next Phase**: Phase 17, Sub-phase 17b — Accelerate Framework Deep Integration (Week 244-246)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-246
+**Next Phase**: Phase 17, Sub-phase 17b — Metal GPU Compute Refactoring (Week 247-249)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation)
