@@ -14,7 +14,9 @@ import J2KCore
 
 /// Performance benchmarks for JPEG 2000 color transforms.
 final class J2KColorTransformBenchmarkTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KColorTransformBenchmarkTests (Disabled)") }
+    #endif
 
     // MARK: - Image Size Benchmarks
 

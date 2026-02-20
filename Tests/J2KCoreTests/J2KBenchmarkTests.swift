@@ -8,7 +8,9 @@ import Foundation
 
 /// Tests for the benchmarking harness.
 final class J2KBenchmarkTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KBenchmarkTests (Disabled)") }
+    #endif
 
     // MARK: - BenchmarkResult Tests
 

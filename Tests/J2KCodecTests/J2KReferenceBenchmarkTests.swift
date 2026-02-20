@@ -28,7 +28,9 @@ import XCTest
 /// - Memory usage: < 2x compressed file size for decoding
 /// - Thread scaling: > 80% efficiency up to 8 cores
 final class J2KReferenceBenchmarkTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KReferenceBenchmarkTests (Disabled)") }
+    #endif
 
     /// Benchmark iterations for reference tests.
     private let benchmarkIterations = 100

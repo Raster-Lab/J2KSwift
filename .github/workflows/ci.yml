@@ -113,4 +113,10 @@ jobs:
         run: brew install swiftlint
 
       - name: Run SwiftLint
-        run: swiftlint lint
+        run: |
+          OUTPUT=$(swiftlint lint 2>&1) || true
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q ': error:'; then
+            echo "::error::SwiftLint found error-level violations"
+            exit 1
+          fi

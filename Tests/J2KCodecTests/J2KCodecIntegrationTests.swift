@@ -13,7 +13,9 @@ import XCTest
 @testable import J2KCore
 
 final class J2KCodecIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KCodecIntegrationTests (Disabled)") }
+    #endif
 
     // MARK: - Basic Round-Trip Tests
 

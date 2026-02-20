@@ -83,10 +83,12 @@ final class J2KARM64PlatformTests: XCTestCase {
 
         // Test refinement bit extraction at various bit planes
         let magnitudes: [Int32] = [15, 14, 13, 12, 11, 10, 9, 8]
+        let significanceFlags = [Int32](repeating: 1, count: magnitudes.count)
 
         for bitPlane in 0..<4 {
             let result = processor.batchRefinementBitExtraction(
-                magnitudes: magnitudes,
+                coefficients: magnitudes,
+                significanceFlags: significanceFlags,
                 bitPlane: bitPlane
             )
 
@@ -106,11 +108,15 @@ final class J2KARM64PlatformTests: XCTestCase {
         #if arch(arm64)
         let processor = HTSIMDProcessor()
 
-        let significance: [Int32] = [1, 0, 1, 1, 0, 0, 1, 0]
-        let result = processor.batchVLCPatternExtraction(significance: significance)
+        let coefficients: [Int32] = [1, 0, 1, 1, 0, 0, 1, 0]
+        let result = processor.batchVLCPatternExtraction(
+            coefficients: coefficients,
+            bitPlane: 0,
+            pairCount: 4
+        )
 
         // VLC pattern is computed by combining adjacent significance values
-        // Expected: [1, 1, 0, 1] (pairs: [1,0], [1,1], [0,0], [1,0])
+        // Expected: 4 patterns from 4 pairs of coefficients
         XCTAssertEqual(result.count, 4)
         #else
         throw XCTSkip("Test requires ARM64 architecture")

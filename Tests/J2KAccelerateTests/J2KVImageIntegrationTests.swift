@@ -8,7 +8,9 @@ import XCTest
 
 /// Tests for vImage integration.
 final class J2KVImageIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KVImageIntegrationTests (Disabled)") }
+    #endif
 
     let vimage = J2KVImageIntegration()
 

@@ -16,7 +16,9 @@ import J2KCore
 /// Comprehensive integration and validation tests for extended precision
 /// and DC offset integration with the encoding/decoding pipeline.
 final class J2KExtendedPrecisionIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KExtendedPrecisionIntegrationTests (Disabled)") }
+    #endif
 
     // MARK: - Encoder Configuration Integration
 
