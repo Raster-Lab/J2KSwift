@@ -271,13 +271,13 @@ final class MJ2VideoToolboxTests: XCTestCase {
             width: width,
             height: height,
             components: components,
-            colorSpace: .sRGB,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: .sRGB
         )
 
         XCTAssertEqual(image.width, width)
@@ -389,7 +389,9 @@ final class MJ2VideoToolboxTests: XCTestCase {
         let parameterSets = [Data(sps), Data(pps)]
         let nalUnitHeaderLength: Int32 = 4
 
-        var parameterSetPointers = parameterSets.map { $0.withUnsafeBytes { $0.baseAddress! } }
+        var parameterSetPointers = parameterSets.map { data -> UnsafePointer<UInt8> in
+            data.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) }
+        }
         var parameterSetSizes = parameterSets.map { $0.count }
 
         let status = CMVideoFormatDescriptionCreateFromH264ParameterSets(

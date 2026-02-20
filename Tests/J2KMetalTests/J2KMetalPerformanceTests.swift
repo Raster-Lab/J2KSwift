@@ -20,7 +20,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Initialization Tests
 
-    func testInitWithBalancedConfig() async {
+    func testInitWithBalancedConfig() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -33,7 +33,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(config.targetThreadsPerThreadgroup, 256)
     }
 
-    func testInitWithCustomConfig() async {
+    func testInitWithCustomConfig() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -51,7 +51,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Configuration Tests
 
-    func testOptimizeForThroughput() async {
+    func testOptimizeForThroughput() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -64,7 +64,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(config.minBatchSize, 2)
     }
 
-    func testOptimizeForLatency() async {
+    func testOptimizeForLatency() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -79,7 +79,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Threadgroup Optimization Tests
 
-    func testOptimalThreadgroupSizeSmall() async {
+    func testOptimalThreadgroupSizeSmall() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -92,7 +92,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(size % 32, 0) // Should be multiple of 32
     }
 
-    func testOptimalThreadgroupSizeLarge() async {
+    func testOptimalThreadgroupSizeLarge() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -104,7 +104,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(size, device.maxThreadsPerThreadgroup.width)
     }
 
-    func testOptimalThreadgroupSizeWithMemory() async {
+    func testOptimalThreadgroupSizeWithMemory() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -121,7 +121,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(totalMemory, device.maxThreadgroupMemoryLength)
     }
 
-    func testOptimalThreadgroupSize2D() async {
+    func testOptimalThreadgroupSize2D() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -139,7 +139,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(height % 8, 0)
     }
 
-    func testOptimalThreadgroupSize2DWideAspect() async {
+    func testOptimalThreadgroupSize2DWideAspect() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -156,7 +156,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Memory Bandwidth Tests
 
-    func testOptimalMemoryAccessSequential() async {
+    func testOptimalMemoryAccessSequential() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -172,7 +172,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(batchSize, 0)
     }
 
-    func testOptimalMemoryAccessStrided() async {
+    func testOptimalMemoryAccessStrided() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -188,7 +188,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(batchSize, 0)
     }
 
-    func testEstimateBandwidthUtilization() async {
+    func testEstimateBandwidthUtilization() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -204,7 +204,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(utilization, 1.0)
     }
 
-    func testEstimateBandwidthUtilizationZeroDuration() async {
+    func testEstimateBandwidthUtilizationZeroDuration() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -221,7 +221,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Kernel Launch Tests
 
-    func testRecordKernelLaunch() async {
+    func testRecordKernelLaunch() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -240,7 +240,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(metrics.totalGPUTime, 0)
     }
 
-    func testRecordMultipleKernelLaunches() async {
+    func testRecordMultipleKernelLaunches() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -260,7 +260,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(metrics.totalLaunches, 10)
     }
 
-    func testRecordBatchedLaunches() async {
+    func testRecordBatchedLaunches() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -283,7 +283,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(metrics.batchedLaunches, 1)
     }
 
-    func testRecordAsyncLaunches() async {
+    func testRecordAsyncLaunches() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -306,7 +306,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(metrics.asyncComputeUsage, 50.0, accuracy: 1.0)
     }
 
-    func testShouldBatchLaunches() async {
+    func testShouldBatchLaunches() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -320,7 +320,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertTrue(shouldBatch2)
     }
 
-    func testEstimatedLaunchOverhead() async {
+    func testEstimatedLaunchOverhead() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -334,7 +334,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Performance Metrics Tests
 
-    func testPerformanceMetricsEmpty() async {
+    func testPerformanceMetricsEmpty() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -348,7 +348,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertEqual(metrics.batchedLaunches, 0)
     }
 
-    func testPerformanceMetricsWithData() async {
+    func testPerformanceMetricsWithData() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -372,7 +372,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
 
     // MARK: - Device Capabilities Tests
 
-    func testDeviceCharacteristics() async {
+    func testDeviceCharacteristics() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }
@@ -387,7 +387,7 @@ final class J2KMetalPerformanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(recommendedThreadgroups, maxThreadgroups)
     }
 
-    func testSupportsAsyncCompute() async {
+    func testSupportsAsyncCompute() async throws {
         guard device != nil else {
             throw XCTSkip("Metal not available")
         }

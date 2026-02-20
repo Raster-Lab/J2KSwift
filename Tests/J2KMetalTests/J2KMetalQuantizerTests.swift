@@ -102,7 +102,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -121,7 +121,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -159,7 +159,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -193,7 +193,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -229,7 +229,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -265,7 +265,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -301,7 +301,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -338,7 +338,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -378,7 +378,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -411,7 +411,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -451,7 +451,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -492,7 +492,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -531,7 +531,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -569,7 +569,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -620,7 +620,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -670,7 +670,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -701,7 +701,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -734,7 +734,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -762,7 +762,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -799,7 +799,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -826,7 +826,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -856,7 +856,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary
@@ -885,7 +885,7 @@ final class J2KMetalQuantizerTests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let quantizer = try await J2KMetalQuantizer(
             device: device,
             shaderLibrary: shaderLibrary

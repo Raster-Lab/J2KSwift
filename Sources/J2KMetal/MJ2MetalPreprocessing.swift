@@ -12,7 +12,7 @@
 #if canImport(Metal)
 import Foundation
 @preconcurrency import Metal
-import CoreVideo
+@preconcurrency import CoreVideo
 import J2KCore
 
 // MARK: - Preprocessing Error
@@ -182,7 +182,7 @@ public actor MJ2MetalPreprocessing {
     public func convertToPixelBuffer(
         image: J2KImage,
         outputFormat: MJ2MetalPixelFormat = .bgra32
-    ) async throws -> CVPixelBuffer {
+    ) async throws -> sending CVPixelBuffer {
         // Validate dimensions
         guard image.width > 0 && image.height > 0 &&
               image.width <= configuration.maxTextureSize &&
@@ -214,6 +214,7 @@ public actor MJ2MetalPreprocessing {
             outputFormat: outputFormat
         )
 
+        // GPU work is complete — pixel buffer is fully populated
         return pixelBuffer
     }
 
@@ -225,7 +226,7 @@ public actor MJ2MetalPreprocessing {
     /// - Returns: Converted J2KImage.
     /// - Throws: `MJ2MetalPreprocessingError` if conversion fails.
     public func convertToJ2KImage(
-        pixelBuffer: CVPixelBuffer,
+        pixelBuffer: sending CVPixelBuffer,
         targetColorSpace: J2KColorSpace = .sRGB
     ) async throws -> J2KImage {
         let width = CVPixelBufferGetWidth(pixelBuffer)

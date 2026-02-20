@@ -24,8 +24,8 @@ final class J2KAcceleratePerformanceTests: XCTestCase {
 
     func testInitWithCustomConfig() async {
         let customConfig = J2KAcceleratePerformance.Configuration(
-            minAccelerateSize: 128,
-            enableAMX: false
+            enableAMX: false,
+            minAccelerateSize: 128
         )
         let optimizer = J2KAcceleratePerformance(configuration: customConfig)
         let config = await optimizer.currentConfiguration()

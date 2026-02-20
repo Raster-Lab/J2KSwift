@@ -9,7 +9,7 @@
 #if canImport(Metal)
 import XCTest
 import Metal
-import CoreVideo
+@preconcurrency import CoreVideo
 @testable import J2KMetal
 @testable import J2KCore
 
@@ -421,13 +421,13 @@ final class MJ2MetalPreprocessingTests: XCTestCase {
             width: width,
             height: height,
             components: components,
-            colorSpace: .sRGB,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: .sRGB
         )
     }
 
@@ -477,13 +477,13 @@ final class MJ2MetalPreprocessingTests: XCTestCase {
             width: width,
             height: height,
             components: components,
-            colorSpace: .yCbCr,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: .yCbCr
         )
     }
 
@@ -506,13 +506,13 @@ final class MJ2MetalPreprocessingTests: XCTestCase {
             width: width,
             height: height,
             components: [component],
-            colorSpace: .grayscale,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: .grayscale
         )
     }
 

@@ -79,7 +79,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let stats = await roi.getStatistics()
@@ -95,7 +95,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Small image - should use CPU
@@ -139,7 +139,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Force GPU
@@ -178,7 +178,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let mask = try await roi.generateMask(
@@ -206,7 +206,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // ROI outside image bounds
@@ -237,7 +237,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Create test coefficients
@@ -287,7 +287,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Mixed positive and negative coefficients
@@ -327,7 +327,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Larger array for GPU
@@ -374,7 +374,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let coeffs: [[Int32]] = [
@@ -421,7 +421,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Small image with auto backend
@@ -453,7 +453,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Large image with auto backend
@@ -487,7 +487,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         // Perform some operations
@@ -519,7 +519,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let config = J2KMetalROIConfiguration(backend: .cpu)
@@ -552,7 +552,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let mask = try await roi.generateMask(
@@ -577,7 +577,7 @@ final class J2KMetalROITests: XCTestCase {
         }
 
         let device = try await J2KMetalDevice()
-        let shaderLibrary = try await J2KMetalShaderLibrary(device: device)
+        let shaderLibrary = try await J2KMetalShaderLibrary()
         let roi = try await J2KMetalROI(device: device, shaderLibrary: shaderLibrary)
 
         let coeffs: [[Int32]] = [[1]]
