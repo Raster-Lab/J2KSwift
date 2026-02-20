@@ -62,7 +62,7 @@ public actor HTBlockCoderMemoryTracker {
 
         /// Average allocation size.
         public var averageSize: Int {
-            count > 0 ? totalBytes / count : 0
+            count > 0 ? totalBytes / count : 0 // swiftlint:disable:this empty_count
         }
 
         /// Minimum allocation size.
@@ -78,6 +78,8 @@ public actor HTBlockCoderMemoryTracker {
         var totalBytes: Int = 0
         var minSize = Int.max
         var maxSize: Int = 0
+
+        var isEmpty: Bool { count == 0 } // swiftlint:disable:this empty_count
     }
 
     /// Whether tracking is enabled.
@@ -137,7 +139,7 @@ public actor HTBlockCoderMemoryTracker {
     /// - Parameter type: The allocation type to query.
     /// - Returns: Statistics for the allocation type, or nil if no allocations recorded.
     public func statistics(for type: AllocationType) -> AllocationStats? {
-        guard let data = tracking[type], data.count > 0 else { return nil }
+        guard let data = tracking[type], !data.isEmpty else { return nil }
         return AllocationStats(
             count: data.count,
             totalBytes: data.totalBytes,
@@ -151,7 +153,7 @@ public actor HTBlockCoderMemoryTracker {
     /// - Returns: Dictionary mapping allocation types to their statistics.
     public func allStatistics() -> [AllocationType: AllocationStats] {
         var result: [AllocationType: AllocationStats] = [:]
-        for (type, data) in tracking where data.count > 0 {
+        for (type, data) in tracking where !data.isEmpty {
             result[type] = AllocationStats(
                 count: data.count,
                 totalBytes: data.totalBytes,
