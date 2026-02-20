@@ -445,7 +445,14 @@ final class J2KVulkanTests: XCTestCase {
 
         XCTAssertFalse(result.usedGPU)
         XCTAssertEqual(result.coefficients.count, indices.count)
+        // q=0 → 0.0
         XCTAssertEqual(result.coefficients[0], 0.0, accuracy: 0.001)
+        // q=1 → 1*(1+0.5)*0.5 = 0.75
+        XCTAssertEqual(result.coefficients[1], 0.75, accuracy: 0.001)
+        // q=3 → 1*(3+0.5)*0.5 = 1.75
+        XCTAssertEqual(result.coefficients[2], 1.75, accuracy: 0.001)
+        // q=-2 → -1*(2+0.5)*0.5 = -1.25
+        XCTAssertEqual(result.coefficients[3], -1.25, accuracy: 0.001)
     }
 
     /// Tests quantiser statistics tracking.

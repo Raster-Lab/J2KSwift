@@ -420,7 +420,7 @@ public actor J2KVulkanQuantiser {
                 } else {
                     let sign: Float = q >= 0 ? 1.0 : -1.0
                     let absQ = abs(q)
-                    return (Float(absQ) + 0.5 * sign) * stepSize
+                    return sign * (Float(absQ) + 0.5) * stepSize
                 }
             }
 
