@@ -6,10 +6,10 @@ import PackageDescription
 let package = Package(
     name: "J2KSwift",
     platforms: [
-        .macOS(.v13),
-        .iOS(.v16),
-        .tvOS(.v16),
-        .watchOS(.v9),
+        .macOS(.v15),
+        .iOS(.v17),
+        .tvOS(.v17),
+        .watchOS(.v10),
         .visionOS(.v1)
     ],
     products: [
@@ -67,7 +67,7 @@ let package = Package(
             dependencies: ["J2KCore", "J2KFileFormat"]),
         .testTarget(
             name: "J2KCodecTests",
-            dependencies: ["J2KCodec"]),
+            dependencies: ["J2KCodec", "J2KFileFormat", "J2KAccelerate"]),
         .testTarget(
             name: "J2KAccelerateTests",
             dependencies: ["J2KAccelerate"]),
