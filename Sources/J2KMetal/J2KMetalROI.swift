@@ -501,14 +501,12 @@ public actor J2KMetalROI {
         var result = coefficients
 
         for y in 0..<height {
-            for x in 0..<width {
-                if mask[y][x] {
-                    let coeff = coefficients[y][x]
-                    if coeff >= 0 {
-                        result[y][x] = coeff << shift
-                    } else {
-                        result[y][x] = -((-coeff) << shift)
-                    }
+            for x in 0..<width where mask[y][x] {
+                let coeff = coefficients[y][x]
+                if coeff >= 0 {
+                    result[y][x] = coeff << shift
+                } else {
+                    result[y][x] = -((-coeff) << shift)
                 }
             }
         }

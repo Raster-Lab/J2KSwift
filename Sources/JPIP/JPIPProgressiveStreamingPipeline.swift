@@ -428,13 +428,12 @@ public actor JPIPProgressiveStreamingPipeline {
 
         // Deliver progressively by quality layers
         for layer in 1...qualityDecision.targetQualityLayers {
-            for prioritizedTile in targetTiles.prefix(configuration.maxConcurrentDeliveries) {
-                if layer <= prioritizedTile.targetLayers {
-                    bins.append(contentsOf: createDataBinsForTile(
-                        prioritizedTile.tile,
-                        qualityLayers: layer
-                    ))
-                }
+            for prioritizedTile in targetTiles.prefix(configuration.maxConcurrentDeliveries)
+                where layer <= prioritizedTile.targetLayers {
+                bins.append(contentsOf: createDataBinsForTile(
+                    prioritizedTile.tile,
+                    qualityLayers: layer
+                ))
             }
         }
 

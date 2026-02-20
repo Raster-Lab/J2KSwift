@@ -704,13 +704,11 @@ public struct J2KNonLinearTransform: Sendable {
             return values[0] * (maxValue - minValue) + minValue
         }
 
-        for i in 0..<(breakpoints.count - 1) {
-            if normalized <= breakpoints[i + 1] {
-                // Linear interpolation within segment
-                let t = (normalized - breakpoints[i]) / (breakpoints[i + 1] - breakpoints[i])
-                let interpolated = values[i] + t * (values[i + 1] - values[i])
-                return interpolated * (maxValue - minValue) + minValue
-            }
+        for i in 0..<(breakpoints.count - 1) where normalized <= breakpoints[i + 1] {
+            // Linear interpolation within segment
+            let t = (normalized - breakpoints[i]) / (breakpoints[i + 1] - breakpoints[i])
+            let interpolated = values[i] + t * (values[i + 1] - values[i])
+            return interpolated * (maxValue - minValue) + minValue
         }
 
         // Beyond last breakpoint

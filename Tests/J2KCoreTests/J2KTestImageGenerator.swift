@@ -593,10 +593,8 @@ final class J2KTestImageGeneratorTests: XCTestCase {
         )
 
         var differences = 0
-        for i in 0..<100 {
-            if buffer1.getPixel(at: i) != buffer3.getPixel(at: i) {
-                differences += 1
-            }
+        for i in 0..<100 where buffer1.getPixel(at: i) != buffer3.getPixel(at: i) {
+            differences += 1
         }
         XCTAssertGreaterThan(differences, 50) // Should have many differences
     }

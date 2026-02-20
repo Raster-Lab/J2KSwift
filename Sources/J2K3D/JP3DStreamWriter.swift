@@ -286,11 +286,9 @@ public actor JP3DStreamWriter {
 
             // Check if all slices in this Z range are available
             var allAvailable = true
-            for z in zStart..<zEnd {
-                if sliceBuffer[z] == nil {
-                    allAvailable = false
-                    break
-                }
+            for z in zStart..<zEnd where sliceBuffer[z] == nil {
+                allAvailable = false
+                break
             }
 
             guard allAvailable else { continue }

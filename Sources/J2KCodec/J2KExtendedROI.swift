@@ -419,10 +419,8 @@ public struct J2KExtendedROIProcessor: Sendable {
 
         var scaled = coefficients
         for y in 0..<height {
-            for x in 0..<width {
-                if dwtMask[y][x] {
-                    scaled[y][x] = Int32(Double(coefficients[y][x]) * scalingFactor)
-                }
+            for x in 0..<width where dwtMask[y][x] {
+                scaled[y][x] = Int32(Double(coefficients[y][x]) * scalingFactor)
             }
         }
 
@@ -479,10 +477,8 @@ public struct J2KExtendedROIProcessor: Sendable {
 
             // Apply scaling
             for y in 0..<height {
-                for x in 0..<width {
-                    if waveletMask[y][x] {
-                        scaled[y][x] = Int32(Double(coefficients[y][x]) * scale)
-                    }
+                for x in 0..<width where waveletMask[y][x] {
+                    scaled[y][x] = Int32(Double(coefficients[y][x]) * scale)
                 }
             }
         }
@@ -616,12 +612,10 @@ public struct J2KExtendedROIProcessor: Sendable {
         let mask = generateCombinedMask()
 
         for y in 0..<imageHeight {
-            for x in 0..<imageWidth {
-                if mask[y][x] > 0.0 {
-                    roiPixels += 1
-                    totalScaling += mask[y][x]
-                    maxScaling = max(maxScaling, mask[y][x])
-                }
+            for x in 0..<imageWidth where mask[y][x] > 0.0 {
+                roiPixels += 1
+                totalScaling += mask[y][x]
+                maxScaling = max(maxScaling, mask[y][x])
             }
         }
 
@@ -655,10 +649,8 @@ public struct J2KExtendedROIProcessor: Sendable {
             )
 
             for y in 0..<imageHeight {
-                for x in 0..<imageWidth {
-                    if spatialMask[y][x] {
-                        mask[y][x] = max(mask[y][x], region.scalingFactor)
-                    }
+                for x in 0..<imageWidth where spatialMask[y][x] {
+                    mask[y][x] = max(mask[y][x], region.scalingFactor)
                 }
             }
         }

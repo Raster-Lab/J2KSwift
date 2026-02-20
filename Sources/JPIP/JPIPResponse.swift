@@ -86,10 +86,8 @@ public struct JPIPResponseParser: Sendable {
     /// - Returns: The channel ID if present.
     public static func extractChannelID(from headers: [String: String]) -> String? {
         // Look for JPIP-cnew header (case-insensitive)
-        for (key, value) in headers {
-            if key.lowercased() == "jpip-cnew" {
-                return parseChannelID(from: value)
-            }
+        for (key, value) in headers where key.lowercased() == "jpip-cnew" {
+            return parseChannelID(from: value)
         }
         return nil
     }

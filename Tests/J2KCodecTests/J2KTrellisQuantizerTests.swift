@@ -158,14 +158,13 @@ final class J2KTrellisQuantizerTests: XCTestCase {
         XCTAssertEqual(result.quantizedCoefficients.count, 6)
 
         // Verify sign preservation
-        for (coeff, quantized) in zip(coefficients, result.quantizedCoefficients) {
-            if abs(coeff) > stepSize / 2 {
-                XCTAssertEqual(
-                    coeff >= 0,
-                    quantized >= 0,
-                    "Sign should be preserved for coefficient \(coeff)"
-                )
-            }
+        for (coeff, quantized) in zip(coefficients, result.quantizedCoefficients)
+            where abs(coeff) > stepSize / 2 {
+            XCTAssertEqual(
+                coeff >= 0,
+                quantized >= 0,
+                "Sign should be preserved for coefficient \(coeff)"
+            )
         }
     }
 

@@ -216,10 +216,8 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         XCTAssertEqual(decoded.count, coefficients.count, "Array size mismatch")
 
         var mismatches: [(Int, Int32, Int32)] = []
-        for i in 0..<coefficients.count {
-            if decoded[i] != coefficients[i] {
-                mismatches.append((i, coefficients[i], decoded[i]))
-            }
+        for i in 0..<coefficients.count where decoded[i] != coefficients[i] {
+            mismatches.append((i, coefficients[i], decoded[i]))
         }
 
         if !mismatches.isEmpty {

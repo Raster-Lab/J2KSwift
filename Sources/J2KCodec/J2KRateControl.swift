@@ -525,10 +525,8 @@ public struct J2KRateControl: Sendable {
     private func createLosslessLayer(codeBlocks: [J2KCodeBlock]) -> QualityLayer {
         var contributions = [Int: Int]()
 
-        for codeBlock in codeBlocks {
-            if codeBlock.passeCount > 0 {
-                contributions[codeBlock.index] = codeBlock.passeCount
-            }
+        for codeBlock in codeBlocks where codeBlock.passeCount > 0 {
+            contributions[codeBlock.index] = codeBlock.passeCount
         }
 
         return QualityLayer(

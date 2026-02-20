@@ -474,10 +474,8 @@ public struct J2KTrellisQuantizer: Sendable {
                 let minCost = nextStage.map { $0.cost }.min() ?? 0.0
                 let threshold = minCost * configuration.pruningThreshold
 
-                for i in 0..<nextStage.count {
-                    if nextStage[i].cost > threshold {
-                        nextStage[i].cost = .infinity
-                    }
+                for i in 0..<nextStage.count where nextStage[i].cost > threshold {
+                    nextStage[i].cost = .infinity
                 }
             }
 

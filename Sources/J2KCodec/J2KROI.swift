@@ -291,10 +291,8 @@ public struct J2KROIMaskGenerator: Sendable {
         for region in regions {
             let regionMask = generateMask(for: region, width: width, height: height)
             for y in 0..<height {
-                for x in 0..<width {
-                    if regionMask[y][x] {
-                        mask[y][x] = true
-                    }
+                for x in 0..<width where regionMask[y][x] {
+                    mask[y][x] = true
                 }
             }
         }
@@ -324,10 +322,8 @@ public struct J2KROIMaskGenerator: Sendable {
         for region in sortedRegions {
             let regionMask = generateMask(for: region, width: width, height: height)
             for y in 0..<height {
-                for x in 0..<width {
-                    if regionMask[y][x] {
-                        priorityMask[y][x] = region.priority
-                    }
+                for x in 0..<width where regionMask[y][x] {
+                    priorityMask[y][x] = region.priority
                 }
             }
         }
@@ -397,10 +393,8 @@ public struct J2KROIMaskGenerator: Sendable {
         let endX = min(imageWidth, region.x + region.width + 1)
 
         for y in startY..<endY {
-            for x in startX..<endX {
-                if isPointInPolygon(x: x, y: y, vertices: vertices) {
-                    mask[y][x] = true
-                }
+            for x in startX..<endX where isPointInPolygon(x: x, y: y, vertices: vertices) {
+                mask[y][x] = true
             }
         }
     }
@@ -779,14 +773,12 @@ public struct J2KROIProcessor: Sendable {
 
         for y in 0..<height {
             let width = min(coefficients[y].count, subbandMask[y].count)
-            for x in 0..<width {
-                if subbandMask[y][x] {
-                    result[y][x] = J2KROIMaxShift.applyScaling(
-                        coefficient: coefficients[y][x],
-                        isROI: true,
-                        shift: shift
-                    )
-                }
+            for x in 0..<width where subbandMask[y][x] {
+                result[y][x] = J2KROIMaxShift.applyScaling(
+                    coefficient: coefficients[y][x],
+                    isROI: true,
+                    shift: shift
+                )
             }
         }
 

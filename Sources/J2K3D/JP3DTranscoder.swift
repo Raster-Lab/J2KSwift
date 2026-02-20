@@ -343,14 +343,12 @@ public actor JP3DTranscoder {
 
         // Compare
         let count = min(originalCoeffs.count, transcodedCoeffs.count)
-        for i in 0..<count {
-            if originalCoeffs[i] != transcodedCoeffs[i] {
-                throw J2KError.encodingError(
-                    "Round-trip verification failed for tile \(tileIndex): " +
-                    "coefficient \(i) original=\(originalCoeffs[i]) " +
-                    "transcoded=\(transcodedCoeffs[i])"
-                )
-            }
+        for i in 0..<count where originalCoeffs[i] != transcodedCoeffs[i] {
+            throw J2KError.encodingError(
+                "Round-trip verification failed for tile \(tileIndex): " +
+                "coefficient \(i) original=\(originalCoeffs[i]) " +
+                "transcoded=\(transcodedCoeffs[i])"
+            )
         }
     }
 

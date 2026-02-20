@@ -329,10 +329,8 @@ final class J2KContextModelingTests: XCTestCase {
 
         // Create a realistic state pattern with some significant coefficients
         var states = [CoefficientState](repeating: [], count: width * height)
-        for i in 0..<states.count {
-            if i.isMultiple(of: 3) {
-                states[i] = .significant
-            }
+        for i in 0..<states.count where i.isMultiple(of: 3) {
+            states[i] = .significant
         }
 
         // Warm up
@@ -362,11 +360,9 @@ final class J2KContextModelingTests: XCTestCase {
         // Create realistic state and sign patterns
         var states = [CoefficientState](repeating: [], count: width * height)
         var signs = [Bool](repeating: false, count: width * height)
-        for i in 0..<states.count {
-            if i.isMultiple(of: 3) {
-                states[i] = .significant
-                signs[i] = (i.isMultiple(of: 2))
-            }
+        for i in 0..<states.count where i.isMultiple(of: 3) {
+            states[i] = .significant
+            signs[i] = (i.isMultiple(of: 2))
         }
 
         // Warm up

@@ -236,11 +236,9 @@ final class J2KExtendedROITests: XCTestCase {
         // Check that some scaling is applied
         var foundScaling = false
         for row in scalingMap {
-            for value in row {
-                if value > 1.0 {
-                    foundScaling = true
-                    break
-                }
+            for value in row where value > 1.0 {
+                foundScaling = true
+                break
             }
             if foundScaling { break }
         }

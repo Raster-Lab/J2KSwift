@@ -264,10 +264,8 @@ public actor JP3DJPIPClient {
         currentViewport = newViewport
         // Cancel stale requests that fall outside the new viewport
         var toCancel: [String] = []
-        for (id, request) in activeRequests {
-            if request.viewport.intersection(newViewport) == nil {
-                toCancel.append(id)
-            }
+        for (id, request) in activeRequests where request.viewport.intersection(newViewport) == nil {
+            toCancel.append(id)
         }
         for id in toCancel {
             cancelledRequestIDs.insert(id)

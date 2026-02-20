@@ -224,10 +224,8 @@ public struct J2KAcceleratedTrellis: Sendable {
                 let minCost = nextCosts.min() ?? 0.0
                 let threshold = minCost * configuration.pruningThreshold
 
-                for i in 0..<numStates {
-                    if nextCosts[i] > threshold {
-                        nextCosts[i] = .infinity
-                    }
+                for i in 0..<numStates where nextCosts[i] > threshold {
+                    nextCosts[i] = .infinity
                 }
             }
 

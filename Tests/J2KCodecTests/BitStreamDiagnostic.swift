@@ -72,13 +72,11 @@ final class BitStreamDiagnosticTests: XCTestCase {
         print(String(repeating: "-", count: 80))
 
         var hasDifferences = false
-        for i in 0..<original.count {
-            if decoded[i] != original[i] {
-                let x = i % width
-                let y = i / width
-                print("❌ Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
-                hasDifferences = true
-            }
+        for i in 0..<original.count where decoded[i] != original[i] {
+            let x = i % width
+            let y = i / width
+            print("❌ Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
+            hasDifferences = true
         }
 
         if !hasDifferences {
@@ -137,12 +135,10 @@ final class BitStreamDiagnosticTests: XCTestCase {
             print("Result: \(matches ? "✅ PASS" : "❌ FAIL")")
 
             if !matches {
-                for i in 0..<original.count {
-                    if decoded[i] != original[i] {
-                        let x = i % width
-                        let y = i / width
-                        print("  Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
-                    }
+                for i in 0..<original.count where decoded[i] != original[i] {
+                    let x = i % width
+                    let y = i / width
+                    print("  Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
                 }
             }
         }
@@ -194,12 +190,10 @@ final class BitStreamDiagnosticTests: XCTestCase {
         print("\nResult: \(matches ? "✅ PASS" : "❌ FAIL")")
 
         if !matches {
-            for i in 0..<original.count {
-                if decoded[i] != original[i] {
-                    let x = i % width
-                    let y = i / width
-                    print("  Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
-                }
+            for i in 0..<original.count where decoded[i] != original[i] {
+                let x = i % width
+                let y = i / width
+                print("  Pos[\(i)] (\(x),\(y)): expected \(original[i]), got \(decoded[i])")
             }
         }
 

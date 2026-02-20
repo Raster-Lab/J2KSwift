@@ -82,10 +82,8 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
         )
 
         var mismatches = 0
-        for i in 0..<original.count {
-            if decoded[i] != original[i] {
-                mismatches += 1
-            }
+        for i in 0..<original.count where decoded[i] != original[i] {
+            mismatches += 1
         }
 
         XCTAssertEqual(mismatches, 0,

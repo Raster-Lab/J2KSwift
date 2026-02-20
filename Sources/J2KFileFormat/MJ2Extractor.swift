@@ -531,11 +531,9 @@ public actor MJ2Extractor {
 
             // Find samples per chunk for this chunk
             var samplesPerChunk = 1
-            for (firstChunk, samples) in sampleToChunk.reversed() {
-                if chunkIndex + 1 >= firstChunk {
-                    samplesPerChunk = samples
-                    break
-                }
+            for (firstChunk, samples) in sampleToChunk.reversed() where chunkIndex + 1 >= firstChunk {
+                samplesPerChunk = samples
+                break
             }
 
             // Process samples in this chunk

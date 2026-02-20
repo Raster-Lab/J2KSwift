@@ -27,10 +27,8 @@ final class J2KBitPlaneMinimalTest: XCTestCase {
         original[3] = 2048  // Another 2^11
 
         print("Test coefficients:")
-        for (i, val) in original.enumerated() {
-            if val != 0 {
-                print("  [\(i)]: \(val) (0x\(String(val, radix: 16)))")
-            }
+        for (i, val) in original.enumerated() where val != 0 {
+            print("  [\(i)]: \(val) (0x\(String(val, radix: 16)))")
         }
 
         // Encode
@@ -84,10 +82,8 @@ final class J2KBitPlaneMinimalTest: XCTestCase {
         let testValues: [Int32] = [2047, 2048, 2049, 1024]
 
         var original = [Int32](repeating: 0, count: size * size)
-        for (i, val) in testValues.enumerated() {
-            if i < original.count {
-                original[i] = val
-            }
+        for (i, val) in testValues.enumerated() where i < original.count {
+            original[i] = val
         }
 
         print("Test values: \(original)")

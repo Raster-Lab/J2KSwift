@@ -306,10 +306,8 @@ struct HTJ2KEncoder: Sendable {
 
         // Build significance state from cleanup pass
         var significanceState = [Bool](repeating: false, count: width * height)
-        for i in 0..<coefficients.count {
-            if (abs(coefficients[i]) >> topBitPlane) & 1 != 0 {
-                significanceState[i] = true
-            }
+        for i in 0..<coefficients.count where (abs(coefficients[i]) >> topBitPlane) & 1 != 0 {
+            significanceState[i] = true
         }
 
         // Encode refinement passes for lower bit-planes
@@ -332,10 +330,8 @@ struct HTJ2KEncoder: Sendable {
             magRefPasses.append(magRefData)
 
             // Update significance state
-            for i in 0..<coefficients.count {
-                if (abs(coefficients[i]) >> bp) & 1 != 0 {
-                    significanceState[i] = true
-                }
+            for i in 0..<coefficients.count where (abs(coefficients[i]) >> bp) & 1 != 0 {
+                significanceState[i] = true
             }
         }
 

@@ -211,31 +211,29 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
         var lastMismatch: DifferenceAnalysis.Mismatch?
         var errorDistribution: [Int32: Int] = [:]
 
-        for i in 0..<original.count {
-            if decoded[i] != original[i] {
-                mismatchCount += 1
+        for i in 0..<original.count where decoded[i] != original[i] {
+            mismatchCount += 1
 
-                let row = i / size
-                let col = i % size
-                let diff = decoded[i] - original[i]
-                let magnitude = abs(diff)
+            let row = i / size
+            let col = i % size
+            let diff = decoded[i] - original[i]
+            let magnitude = abs(diff)
 
-                let mismatch = DifferenceAnalysis.Mismatch(
-                    index: i,
-                    row: row,
-                    col: col,
-                    expected: original[i],
-                    decoded: decoded[i],
-                    diff: diff
-                )
+            let mismatch = DifferenceAnalysis.Mismatch(
+                index: i,
+                row: row,
+                col: col,
+                expected: original[i],
+                decoded: decoded[i],
+                diff: diff
+            )
 
-                if firstMismatch == nil {
-                    firstMismatch = mismatch
-                }
-                lastMismatch = mismatch
-
-                errorDistribution[magnitude, default: 0] += 1
+            if firstMismatch == nil {
+                firstMismatch = mismatch
             }
+            lastMismatch = mismatch
+
+            errorDistribution[magnitude, default: 0] += 1
         }
 
         let percentage = !original.isEmpty

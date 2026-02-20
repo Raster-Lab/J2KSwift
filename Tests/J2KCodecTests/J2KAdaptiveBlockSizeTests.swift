@@ -47,10 +47,8 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         // Block pattern: 4×4 blocks alternating 0 and 255, producing strong edges
         var samples = [Int32](repeating: 0, count: width * height)
         for y in 0..<height {
-            for x in 0..<width {
-                if ((x / 4) + (y / 4)).isMultiple(of: 2) {
-                    samples[y * width + x] = 255
-                }
+            for x in 0..<width where ((x / 4) + (y / 4)).isMultiple(of: 2) {
+                samples[y * width + x] = 255
             }
         }
         let density = analyzer.estimateEdgeDensity(samples: samples, width: width, height: height)

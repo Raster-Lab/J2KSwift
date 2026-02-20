@@ -304,11 +304,9 @@ public actor JPIPAdaptiveQualityEngine {
         ]
 
         var targetLayers = 1
-        for threshold in thresholds {
-            if bandwidth >= threshold.bandwidth {
-                targetLayers = threshold.layers
-                break
-            }
+        for threshold in thresholds where bandwidth >= threshold.bandwidth {
+            targetLayers = threshold.layers
+            break
         }
 
         // Adjust for latency

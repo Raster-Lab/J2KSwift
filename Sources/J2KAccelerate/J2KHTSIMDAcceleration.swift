@@ -347,12 +347,10 @@ public struct HTSIMDProcessor: Sendable {
 
                     // Scalar remainder
                     let remStart = simdCount * 4
-                    for i in 0..<remainder {
-                        if sig[remStart + i] != 0 {
-                            let c = coeff[remStart + i]
-                            let absVal = c < 0 ? -c : c
-                            dst[remStart + i] = (absVal >> shift) & 1
-                        }
+                    for i in 0..<remainder where sig[remStart + i] != 0 {
+                        let c = coeff[remStart + i]
+                        let absVal = c < 0 ? -c : c
+                        dst[remStart + i] = (absVal >> shift) & 1
                     }
                 }
             }

@@ -363,10 +363,8 @@ public actor JPIPServer {
             // Add HTJ2K capability headers if the image supports it
             if let info = imageInfoCache[request.target] {
                 let capHeaders = htj2kSupport.capabilityHeaders(for: info)
-                for (key, value) in capHeaders {
-                    if key != "Content-Type" { // Don't override Content-Type
-                        headers[key] = value
-                    }
+                for (key, value) in capHeaders where key != "Content-Type" {
+                    headers[key] = value
                 }
             }
 

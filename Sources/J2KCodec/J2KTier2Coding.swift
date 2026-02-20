@@ -243,24 +243,22 @@ public struct PacketHeaderWriter: Sendable {
 
         // For included code-blocks, encode number of coding passes
         var passIndex = 0
-        for included in header.codeBlockInclusions {
-            if included {
-                guard passIndex < header.dataLengths.count else {
-                    throw J2KError.invalidData("Missing data length information")
-                }
-                let length = header.dataLengths[passIndex]
-
-                // Encode length in a simple way (this is simplified)
-                // In real JPEG 2000, this uses a more sophisticated encoding
-                var remaining = length
-                while remaining > 0 {
-                    encoder.encode(symbol: (remaining & 1) != 0, context: &context)
-                    remaining >>= 1
-                }
-                encoder.encode(symbol: false, context: &context) // Terminator
-
-                passIndex += 1
+        for included in header.codeBlockInclusions where included {
+            guard passIndex < header.dataLengths.count else {
+                throw J2KError.invalidData("Missing data length information")
             }
+            let length = header.dataLengths[passIndex]
+
+            // Encode length in a simple way (this is simplified)
+            // In real JPEG 2000, this uses a more sophisticated encoding
+            var remaining = length
+            while remaining > 0 {
+                encoder.encode(symbol: (remaining & 1) != 0, context: &context)
+                remaining >>= 1
+            }
+            encoder.encode(symbol: false, context: &context) // Terminator
+
+            passIndex += 1
         }
 
         // Finish MQ encoding
@@ -370,49 +368,45 @@ public struct PacketHeaderReader: Sendable {
 
         // Decode coding passes for included code-blocks
         var codingPasses = [Int]()
-        for included in inclusions {
-            if included {
-                // Decode number of passes
-                let firstBit = decoder.decode(context: &context)
-                if firstBit {
-                    // Single pass
-                    codingPasses.append(1)
+        for included in inclusions where included {
+            // Decode number of passes
+            let firstBit = decoder.decode(context: &context)
+            if firstBit {
+                // Single pass
+                codingPasses.append(1)
+            } else {
+                let secondBit = decoder.decode(context: &context)
+                if secondBit {
+                    // 2 or 3 passes
+                    let thirdBit = decoder.decode(context: &context)
+                    codingPasses.append(thirdBit ? 3 : 2)
                 } else {
-                    let secondBit = decoder.decode(context: &context)
-                    if secondBit {
-                        // 2 or 3 passes
-                        let thirdBit = decoder.decode(context: &context)
-                        codingPasses.append(thirdBit ? 3 : 2)
-                    } else {
-                        // More than 3 passes
-                        var passes = 4
-                        var bit = decoder.decode(context: &context)
-                        var shift = 0
-                        while bit {
-                            passes += (1 << shift)
-                            shift += 1
-                            bit = decoder.decode(context: &context)
-                        }
-                        codingPasses.append(passes)
+                    // More than 3 passes
+                    var passes = 4
+                    var bit = decoder.decode(context: &context)
+                    var shift = 0
+                    while bit {
+                        passes += (1 << shift)
+                        shift += 1
+                        bit = decoder.decode(context: &context)
                     }
+                    codingPasses.append(passes)
                 }
             }
         }
 
         // Decode data lengths for included code-blocks
         var dataLengths = [Int]()
-        for included in inclusions {
-            if included {
-                var length = 0
-                var shift = 0
-                var bit = decoder.decode(context: &context)
-                while bit {
-                    length += (1 << shift)
-                    shift += 1
-                    bit = decoder.decode(context: &context)
-                }
-                dataLengths.append(length)
+        for included in inclusions where included {
+            var length = 0
+            var shift = 0
+            var bit = decoder.decode(context: &context)
+            while bit {
+                length += (1 << shift)
+                shift += 1
+                bit = decoder.decode(context: &context)
             }
+            dataLengths.append(length)
         }
 
         // Update position (approximate - we advance by the data we've processed)
@@ -515,10 +509,8 @@ public struct LayerFormation: Sendable {
     public func formLosslessLayer(codeBlocks: [J2KCodeBlock]) -> QualityLayer {
         var contributions = [Int: Int]()
 
-        for codeBlock in codeBlocks {
-            if codeBlock.passeCount > 0 {
-                contributions[codeBlock.index] = codeBlock.passeCount
-            }
+        for codeBlock in codeBlocks where codeBlock.passeCount > 0 {
+            contributions[codeBlock.index] = codeBlock.passeCount
         }
 
         return QualityLayer(

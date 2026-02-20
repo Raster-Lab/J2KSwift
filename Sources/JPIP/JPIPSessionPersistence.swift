@@ -908,16 +908,14 @@ public actor JPIPSessionPersistenceManager {
         // Collect data bins that were sent
         var sentBins: [JPIPSerializableDataBin] = []
         for binClass in JPIPDataBinClass.allCases {
-            for binID in 0..<100 {
-                if await session.hasDataBin(binClass: binClass, binID: binID) {
-                    let dataBin = JPIPDataBin(
-                        binClass: binClass,
-                        binID: binID,
-                        data: Data(),
-                        isComplete: true
-                    )
-                    sentBins.append(JPIPSerializableDataBin(from: dataBin))
-                }
+            for binID in 0..<100 where await session.hasDataBin(binClass: binClass, binID: binID) {
+                let dataBin = JPIPDataBin(
+                    binClass: binClass,
+                    binID: binID,
+                    data: Data(),
+                    isComplete: true
+                )
+                sentBins.append(JPIPSerializableDataBin(from: dataBin))
             }
         }
 

@@ -106,10 +106,8 @@ final class J2KAcceleratedPerceptualTests: XCTestCase {
 
         // Mid-gray (127.5) should have minimum masking
         let midIndex = 2
-        for (i, factor) in factors.enumerated() {
-            if i != midIndex {
-                XCTAssertGreaterThanOrEqual(factor, factors[midIndex])
-            }
+        for (i, factor) in factors.enumerated() where i != midIndex {
+            XCTAssertGreaterThanOrEqual(factor, factors[midIndex])
         }
     }
 

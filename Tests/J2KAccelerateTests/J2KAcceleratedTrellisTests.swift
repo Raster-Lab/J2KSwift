@@ -241,10 +241,9 @@ final class J2KAcceleratedTrellisTests: XCTestCase {
         XCTAssertEqual(result.quantizedCoefficients.count, 10)
 
         // Verify sign preservation for large magnitudes
-        for (coeff, quantized) in zip(coefficients, result.quantizedCoefficients) {
-            if abs(coeff) > 2.0 {
-                XCTAssertEqual(coeff >= 0, quantized >= 0, "Sign not preserved")
-            }
+        for (coeff, quantized) in zip(coefficients, result.quantizedCoefficients)
+            where abs(coeff) > 2.0 {
+            XCTAssertEqual(coeff >= 0, quantized >= 0, "Sign not preserved")
         }
     }
 
