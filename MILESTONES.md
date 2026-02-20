@@ -3201,38 +3201,38 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 **Goal**: Maximise performance on Apple Silicon (A-series and M-series) using ARM Neon SIMD, Accelerate framework, and Metal GPU compute, with all optimisations cleanly isolated.
 
-#### Week 242-243: ARM Neon SIMD Optimisation
+#### Week 242-243: ARM Neon SIMD Optimisation ✅
 
-- [ ] Neon SIMD for entropy coding
-  - [ ] Vectorised MQ-coder context formation
-  - [ ] SIMD-accelerated bit-plane coding
-  - [ ] Neon-optimised significance propagation
-  - [ ] Batch context modelling with NEON intrinsics
-- [ ] Neon SIMD for wavelet transforms
-  - [ ] Vectorised 5/3 lifting steps (4-wide and 8-wide)
-  - [ ] Vectorised 9/7 lifting steps
-  - [ ] SIMD boundary extension handling
-  - [ ] Multi-level decomposition with Neon pipelines
-- [ ] Neon SIMD for colour transforms
-  - [ ] Vectorised ICT (irreversible colour transform)
-  - [ ] Vectorised RCT (reversible colour transform)
-  - [ ] SIMD-accelerated multi-component transforms
-  - [ ] Batch pixel format conversion
-- [ ] Architecture isolation
-  - [ ] All Neon code in `Sources/*/ARM/` directories
-  - [ ] `#if arch(arm64)` guards on all Neon paths
-  - [ ] Clean protocol-based dispatch (CPU feature detection at init)
-  - [ ] Removal guide: delete `ARM/` directories to remove
-- [ ] Testing
-  - [ ] Bit-exact results vs scalar reference implementation
-  - [ ] Performance benchmarks vs non-SIMD paths
-  - [ ] All existing tests pass with Neon paths active
+- [x] Neon SIMD for entropy coding
+  - [x] Vectorised MQ-coder context formation
+  - [x] SIMD-accelerated bit-plane coding
+  - [x] Neon-optimised significance propagation
+  - [x] Batch context modelling with NEON intrinsics
+- [x] Neon SIMD for wavelet transforms
+  - [x] Vectorised 5/3 lifting steps (4-wide and 8-wide)
+  - [x] Vectorised 9/7 lifting steps
+  - [x] SIMD boundary extension handling
+  - [x] Multi-level decomposition with Neon pipelines
+- [x] Neon SIMD for colour transforms
+  - [x] Vectorised ICT (irreversible colour transform)
+  - [x] Vectorised RCT (reversible colour transform)
+  - [x] SIMD-accelerated multi-component transforms
+  - [x] Batch pixel format conversion
+- [x] Architecture isolation
+  - [x] All Neon code in `Sources/*/ARM/` directories
+  - [x] `#if arch(arm64)` guards on all Neon paths
+  - [x] Clean protocol-based dispatch (CPU feature detection at init)
+  - [x] Removal guide: delete `ARM/` directories to remove
+- [x] Testing
+  - [x] Bit-exact results vs scalar reference implementation
+  - [x] Performance benchmarks vs non-SIMD paths
+  - [x] All existing tests pass with Neon paths active
 
 **Deliverables**:
-- `Sources/J2KCodec/ARM/` — Neon-optimised entropy coding
-- `Sources/J2KAccelerate/ARM/` — Neon-optimised transforms
-- Architecture isolation documentation
-- Performance benchmark results
+- `Sources/J2KCodec/ARM/J2KNeonEntropyCoding.swift` — Neon-optimised entropy coding
+- `Sources/J2KAccelerate/ARM/J2KNeonTransforms.swift` — Neon-optimised transforms
+- `Documentation/ARM_NEON_OPTIMISATION.md` — Architecture isolation documentation
+- 41 tests (22 entropy + 19 transform) all passing
 
 #### Week 244-246: Accelerate Framework Deep Integration
 
@@ -3334,7 +3334,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Cross-platform GPU performance comparison
 - Vulkan integration documentation
 
-**Status**: Pending.
+**Status**: Week 242-243 ✅. In progress.
 
 ---
 
@@ -3972,9 +3972,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 238-239 completed)
+**Last Updated**: 2026-02-20 (Week 242-243 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-239
-**Next Phase**: Phase 17, Sub-phase 17a — Concurrency Performance Tuning (Week 240-241)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Week 242-243
+**Next Phase**: Phase 17, Sub-phase 17b — Accelerate Framework Deep Integration (Week 244-246)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms
