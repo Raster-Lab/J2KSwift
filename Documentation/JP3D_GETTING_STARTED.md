@@ -110,7 +110,7 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/anthropics/J2KSwift.git",
+            url: "https://github.com/Raster-Lab/J2KSwift.git",
             from: "1.9.0"
         )
     ],

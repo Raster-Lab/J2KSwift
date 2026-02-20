@@ -35,7 +35,7 @@ error: no module named 'J2K3D'
 
 2. Wrong Swift package version — `J2K3D` requires J2KSwift 1.9.0+:
 ```swift
-.package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.9.0")
+.package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.9.0")
 ```
 
 3. Package cache stale — run `swift package resolve` or in Xcode: **File → Packages → Reset Package Caches**.

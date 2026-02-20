@@ -133,7 +133,7 @@ J2KImageComponent:
 
 ```diff
  dependencies: [
-     .package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.9.0")
+     .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.9.0")
  ],
  targets: [
      .target(

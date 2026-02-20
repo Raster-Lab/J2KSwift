@@ -439,7 +439,11 @@ final class JP3DHTj2KJPIPWorkflowTests: XCTestCase {
 
         // Assert — verify state is disconnected
         let state = await client.state
-        XCTAssertEqual(state, .disconnected)
+        if case .disconnected = state {
+            // success
+        } else {
+            XCTFail("Expected .disconnected state, got \(state)")
+        }
     }
 }
 
@@ -745,7 +749,7 @@ final class JP3DConfigurationValidationTests: XCTestCase {
 
 final class JP3DJPIPAPIIntegrationTests: XCTestCase {
 
-    func testJPIPClientInitialization() {
+    func testJPIPClientInitialization() async {
         // Arrange / Act
         let client = JP3DJPIPClient(
             serverURL: URL(string: "ws://localhost:8080/jp3d")!,
@@ -753,7 +757,8 @@ final class JP3DJPIPAPIIntegrationTests: XCTestCase {
         )
 
         // Assert
-        XCTAssertEqual(client.serverURL.absoluteString, "ws://localhost:8080/jp3d")
+        let url = await client.serverURL
+        XCTAssertEqual(url.absoluteString, "ws://localhost:8080/jp3d")
     }
 
     func testJPIPViewportCreation() {
@@ -793,6 +798,10 @@ final class JP3DJPIPAPIIntegrationTests: XCTestCase {
 
         // Assert — state should be connected after reconnect
         let state = await client.state
-        XCTAssertEqual(state, .connected)
+        if case .connected = state {
+            // success
+        } else {
+            XCTFail("Expected .connected state after reconnect, got \(state)")
+        }
     }
 }
