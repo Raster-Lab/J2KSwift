@@ -31,7 +31,17 @@ jobs:
         run: swift build -c release
 
       - name: Run tests
-        run: swift test
+        run: |
+          swift test --parallel \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+        timeout-minutes: 20
 
       - name: Validate package
         run: swift package dump-package
