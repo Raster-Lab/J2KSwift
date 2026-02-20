@@ -150,9 +150,9 @@ public struct J2KActorContentionMetrics: Sendable, CustomStringConvertible {
     }
 }
 
-// MARK: - Actor Contention Analyser
+// MARK: - Actor Contention Analyzer
 
-/// Analyses actor contention to identify message-passing overhead and hot paths.
+/// Analyzes actor contention to identify message-passing overhead and hot paths.
 ///
 /// `J2KActorContentionAnalyzer` instruments concurrent operations to measure
 /// isolation crossings and identify bottlenecks in actor-based pipelines.
@@ -174,7 +174,7 @@ public actor J2KActorContentionAnalyzer {
     private var hotPathLabels: [String] = []
     private var isAnalysing: Bool = false
 
-    /// Creates a new contention analyser.
+    /// Creates a new contention analyzer.
     public init() {}
 
     /// Begins a new contention analysis session.
