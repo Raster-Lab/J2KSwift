@@ -146,7 +146,7 @@ public struct J2KContentAnalyzer: Sendable {
 
         var gradientSum: Double = 0.0
         let count = (width - 2) * (height - 2)
-        guard !isEmpty else { return 0.0 }
+        guard count > 0 else { return 0.0 }
 
         for y in 1..<(height - 1) {
             for x in 1..<(width - 1) {

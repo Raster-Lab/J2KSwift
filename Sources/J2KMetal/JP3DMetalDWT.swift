@@ -13,7 +13,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - JP3D Metal DWT Backend
@@ -953,7 +953,7 @@ kernel void jp3d_separable_dwt_forward(
 
     // MARK: Metal Initialisation
 
-    private mutating func initializeMetal() throws {
+    private func initializeMetal() throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw J2KError.unsupportedFeature("No Metal device available")
         }
@@ -1033,7 +1033,7 @@ kernel void jp3d_separable_dwt_forward(
         enc.dispatchThreads(g, threadsPerThreadgroup: tg)
         enc.endEncoding()
         cb.commit()
-        cb.waitUntilCompleted()
+        await cb.completed()
 
         return (
             low: readBuffer(lowBuf, count: rows * lowLen),
@@ -1080,7 +1080,7 @@ kernel void jp3d_separable_dwt_forward(
         enc.dispatchThreads(g, threadsPerThreadgroup: tg)
         enc.endEncoding()
         cb.commit()
-        cb.waitUntilCompleted()
+        await cb.completed()
 
         _ = lowLen; _ = highLen
         return readBuffer(outBuf, count: rows * origWidth)
@@ -1125,7 +1125,7 @@ kernel void jp3d_separable_dwt_forward(
         enc.dispatchThreads(g, threadsPerThreadgroup: tg)
         enc.endEncoding()
         cb.commit()
-        cb.waitUntilCompleted()
+        await cb.completed()
 
         return (
             low: readBuffer(lowBuf, count: rows * lowLen),

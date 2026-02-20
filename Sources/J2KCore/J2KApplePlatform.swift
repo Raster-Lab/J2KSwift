@@ -602,7 +602,7 @@ public actor J2KAsyncFileIO {
         to url: URL,
         options: ReadOptions = ReadOptions()
     ) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let path = url.path
             let queue = DispatchQueue(
                 label: "com.j2kswift.asyncio.write",

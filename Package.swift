@@ -57,7 +57,7 @@ let package = Package(
             ]),
         .target(
             name: "J2KAccelerate",
-            dependencies: ["J2KCore"],
+            dependencies: ["J2KCore", "J2KCodec"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency"),
                 .enableExperimentalFeature("StrictConcurrency")

@@ -105,7 +105,7 @@ public struct J2KAcceleratedROI: Sendable {
         for row in max(0, y)..<endY {
             let offset = row * imageWidth + max(0, x)
             let count = endX - max(0, x)
-            if !isEmpty {
+            if count > 0 {
                 var one: Float = 1.0
                 vDSP_vfill(&one, &mask[offset], 1, vDSP_Length(count))
             }

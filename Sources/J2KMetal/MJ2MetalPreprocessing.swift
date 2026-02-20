@@ -11,7 +11,7 @@
 
 #if canImport(Metal)
 import Foundation
-import Metal
+@preconcurrency import Metal
 import CoreVideo
 import J2KCore
 
@@ -267,13 +267,13 @@ public actor MJ2MetalPreprocessing {
             width: width,
             height: height,
             components: components,
-            colorSpace: targetColorSpace,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: targetColorSpace
         )
     }
 
@@ -354,13 +354,13 @@ public actor MJ2MetalPreprocessing {
             width: targetWidth,
             height: targetHeight,
             components: scaledComponents,
-            colorSpace: image.colorSpace,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: image.colorSpace
         )
     }
 
@@ -514,7 +514,7 @@ public actor MJ2MetalPreprocessing {
 
         computeEncoder.endEncoding()
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
     }
 
     private func extractRGBComponents(
@@ -535,7 +535,7 @@ public actor MJ2MetalPreprocessing {
 
         blitEncoder.endEncoding()
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
     }
 
     private func createComponentsFromBuffers(
@@ -600,7 +600,7 @@ public actor MJ2MetalPreprocessing {
 
         computeEncoder.endEncoding()
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
     }
 
     private func readTextureData(_ texture: MTLTexture) throws -> Data {

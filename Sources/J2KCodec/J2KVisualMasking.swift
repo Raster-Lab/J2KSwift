@@ -372,7 +372,7 @@ public struct J2KVisualMasking: Sendable {
             }
         }
 
-        guard !isEmpty else {
+        guard count > 0 else {
             return (0.0, 0.0)
         }
 

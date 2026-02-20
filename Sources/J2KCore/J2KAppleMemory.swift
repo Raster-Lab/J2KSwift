@@ -90,8 +90,9 @@ public actor J2KUnifiedMemoryManager {
             throw J2KError.internalError("Failed to allocate aligned memory: errno \(result)")
         }
 
-        Task { @MainActor in
-            await self._trackAllocation(allocatedPtr, size: alignedSize)
+        let address = UInt(bitPattern: allocatedPtr)
+        Task {
+            await self._trackAllocation(address: address, size: alignedSize)
         }
 
         // Prefault pages to improve first access performance
@@ -108,23 +109,22 @@ public actor J2KUnifiedMemoryManager {
     /// - Parameter pointer: The pointer to deallocate.
     nonisolated public func deallocate(_ pointer: UnsafeMutableRawPointer) {
         #if canImport(Darwin)
-        Task { @MainActor in
-            await self._untrackAllocation(pointer)
+        let address = UInt(bitPattern: pointer)
+        Task {
+            await self._untrackAllocation(address: address)
         }
         free(pointer)
         #endif
     }
 
     /// Internal method to track allocation (actor-isolated).
-    private func _trackAllocation(_ pointer: UnsafeMutableRawPointer, size: Int) {
-        let address = UInt(bitPattern: pointer)
+    private func _trackAllocation(address: UInt, size: Int) {
         allocations[address] = size
         totalAllocated += size
     }
 
     /// Internal method to untrack allocation (actor-isolated).
-    private func _untrackAllocation(_ pointer: UnsafeMutableRawPointer) {
-        let address = UInt(bitPattern: pointer)
+    private func _untrackAllocation(address: UInt) {
         if let size = allocations.removeValue(forKey: address) {
             totalAllocated -= size
         }
@@ -205,7 +205,7 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
 
         // Set F_NOCACHE flag if requested
         if useNoCache {
-            fcntl(fd, F_NOCACHE, 1)
+            _ = fcntl(fd, F_NOCACHE, 1)
         }
 
         // Map the file

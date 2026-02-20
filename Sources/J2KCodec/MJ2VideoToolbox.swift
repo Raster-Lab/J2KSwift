@@ -51,31 +51,17 @@ public enum MJ2VideoToolboxError: Error, Sendable {
     case configurationError(String)
 }
 
-// MARK: - Video Codec Type
+// MARK: - Video Codec Extension for VideoToolbox
 
-/// Supported video codec types for transcoding.
-public enum MJ2VideoCodec: Sendable {
-    /// H.264 (AVC) codec.
-    case h264
-
-    /// H.265 (HEVC) codec.
-    case h265
-
+extension MJ2VideoCodec {
     var codecType: CMVideoCodecType {
         switch self {
         case .h264:
             return kCMVideoCodecType_H264
         case .h265:
             return kCMVideoCodecType_HEVC
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .h264:
-            return "H.264 (AVC)"
-        case .h265:
-            return "H.265 (HEVC)"
+        case .mj2:
+            return kCMVideoCodecType_JPEG_OpenDML
         }
     }
 }
@@ -193,7 +179,7 @@ public struct MJ2VideoToolboxCapabilities: Sendable {
 /// VideoToolbox-based encoder for converting J2KImage frames to H.264/H.265.
 public actor MJ2VideoToolboxEncoder {
     private let configuration: MJ2VideoToolboxEncoderConfiguration
-    private var compressionSession: VTCompressionSession?
+    private nonisolated(unsafe) var compressionSession: VTCompressionSession?
     private var frameCount: Int = 0
     private var encodedFrames: [CMSampleBuffer] = []
     private var isConfigured: Bool = false
@@ -473,7 +459,7 @@ public actor MJ2VideoToolboxEncoder {
 /// VideoToolbox-based decoder for converting H.264/H.265 to J2KImage frames.
 public actor MJ2VideoToolboxDecoder {
     private let configuration: MJ2VideoToolboxDecoderConfiguration
-    private var decompressionSession: VTDecompressionSession?
+    private nonisolated(unsafe) var decompressionSession: VTDecompressionSession?
     private var isConfigured: Bool = false
 
     /// Creates a new VideoToolbox decoder.
@@ -629,13 +615,13 @@ public actor MJ2VideoToolboxDecoder {
             width: width,
             height: height,
             components: [rComponent, gComponent, bComponent],
-            colorSpace: configuration.outputColorSpace,
             offsetX: 0,
             offsetY: 0,
             tileWidth: 0,
             tileHeight: 0,
             tileOffsetX: 0,
-            tileOffsetY: 0
+            tileOffsetY: 0,
+            colorSpace: configuration.outputColorSpace
         )
     }
 

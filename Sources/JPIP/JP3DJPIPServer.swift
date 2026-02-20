@@ -344,13 +344,16 @@ public actor JP3DJPIPServer {
         // Expand viewport by one tile in each direction
         let vp = session.viewport
         let vol = registered.volume
+        let xLo = max(0, vp.xRange.lowerBound - registered.tileWidth)
+        let xHi = min(vol.width, vp.xRange.upperBound + registered.tileWidth)
+        let yLo = max(0, vp.yRange.lowerBound - registered.tileHeight)
+        let yHi = min(vol.height, vp.yRange.upperBound + registered.tileHeight)
+        let zLo = max(0, vp.zRange.lowerBound - registered.tileDepth)
+        let zHi = min(vol.depth, vp.zRange.upperBound + registered.tileDepth)
         let expanded = JP3DStreamingRegion(
-            xRange: max(0, vp.xRange.lowerBound - registered.tileWidth)
-                ..<min(vol.width, vp.xRange.upperBound + registered.tileWidth),
-            yRange: max(0, vp.yRange.lowerBound - registered.tileHeight)
-                ..<min(vol.height, vp.yRange.upperBound + registered.tileHeight),
-            zRange: max(0, vp.zRange.lowerBound - registered.tileDepth)
-                ..<min(vol.depth, vp.zRange.upperBound + registered.tileDepth)
+            xRange: xLo..<xHi,
+            yRange: yLo..<yHi,
+            zRange: zLo..<zHi
         )
         guard expanded.isValid else { return }
         _ = extractPrecincts(

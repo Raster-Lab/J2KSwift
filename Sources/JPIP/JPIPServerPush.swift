@@ -528,7 +528,7 @@ public actor JPIPPredictivePrefetchEngine {
             count += 1
         }
 
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         let avgDX = totalDX / Double(count)
         let avgDY = totalDY / Double(count)

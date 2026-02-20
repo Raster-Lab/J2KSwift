@@ -12,7 +12,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - Quantization Mode
@@ -241,7 +241,7 @@ public actor J2KMetalQuantizer {
     ) async throws {
         self.device = device
         self.shaderLibrary = shaderLibrary
-        self.bufferPool = try await J2KMetalBufferPool(device: device)
+        self.bufferPool = J2KMetalBufferPool()
         self.statistics = J2KMetalQuantizationStatistics()
     }
 
@@ -425,12 +425,12 @@ public actor J2KMetalQuantizer {
         coefficients: [Float],
         configuration: J2KMetalQuantizationConfiguration
     ) async throws -> [Int32] {
-        let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
+        let mtlDevice = commandQueue.device
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
+            throw J2KError.internalError("Failed to create command buffer/encoder")
         }
 
         // Get pipeline state based on mode
@@ -447,13 +447,11 @@ public actor J2KMetalQuantizer {
 
         // Allocate buffers
         let coeffCount = coefficients.count
-        let inputBuffer = try await bufferPool.allocateBuffer(
-            size: coeffCount * MemoryLayout<Float>.size,
-            storageMode: .shared
+        let inputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: coeffCount * MemoryLayout<Float>.size
         )
-        let outputBuffer = try await bufferPool.allocateBuffer(
-            size: coeffCount * MemoryLayout<Int32>.size,
-            storageMode: .shared
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: coeffCount * MemoryLayout<Int32>.size
         )
 
         // Copy data
@@ -487,7 +485,7 @@ public actor J2KMetalQuantizer {
 
         computeEncoder.endEncoding()
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Int32.self, capacity: coeffCount)
@@ -498,12 +496,12 @@ public actor J2KMetalQuantizer {
         indices: [Int32],
         configuration: J2KMetalQuantizationConfiguration
     ) async throws -> [Float] {
-        let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
+        let mtlDevice = commandQueue.device
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
+            throw J2KError.internalError("Failed to create command buffer/encoder")
         }
 
         // Get pipeline state based on mode
@@ -520,13 +518,11 @@ public actor J2KMetalQuantizer {
 
         // Allocate buffers
         let coeffCount = indices.count
-        let inputBuffer = try await bufferPool.allocateBuffer(
-            size: coeffCount * MemoryLayout<Int32>.size,
-            storageMode: .shared
+        let inputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: coeffCount * MemoryLayout<Int32>.size
         )
-        let outputBuffer = try await bufferPool.allocateBuffer(
-            size: coeffCount * MemoryLayout<Float>.size,
-            storageMode: .shared
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: coeffCount * MemoryLayout<Float>.size
         )
 
         // Copy data
@@ -560,7 +556,7 @@ public actor J2KMetalQuantizer {
 
         computeEncoder.endEncoding()
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: coeffCount)

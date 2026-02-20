@@ -12,7 +12,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - DWT Filter Type
@@ -1309,7 +1309,7 @@ public actor J2KMetalDWT {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         var lowpass = [Float](repeating: 0, count: halfWidth)
@@ -1402,7 +1402,7 @@ public actor J2KMetalDWT {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         var result = [Float](repeating: 0, count: outputLength)
         result.withUnsafeMutableBytes { dst in
@@ -1479,7 +1479,7 @@ public actor J2KMetalDWT {
         enc1.dispatchThreads(hThreads, threadsPerThreadgroup: hThreadgroup)
         enc1.endEncoding()
         cb1.commit()
-        cb1.waitUntilCompleted()
+        await cb1.completed()
 
         // Step 2: Vertical DWT on lowpass → LL, LH
         let llBuffer = try await bufferPool.acquireBuffer(
@@ -1513,7 +1513,7 @@ public actor J2KMetalDWT {
         enc2.dispatchThreads(vThreads1, threadsPerThreadgroup: vThreadgroup1)
         enc2.endEncoding()
         cb2.commit()
-        cb2.waitUntilCompleted()
+        await cb2.completed()
 
         // Step 3: Vertical DWT on highpass → HL, HH
         let hlBuffer = try await bufferPool.acquireBuffer(
@@ -1545,7 +1545,7 @@ public actor J2KMetalDWT {
         }
         enc3.endEncoding()
         cb3.commit()
-        cb3.waitUntilCompleted()
+        await cb3.completed()
 
         // Read results
         let ll = readFloatArray(from: llBuffer, elementCount: halfW * halfH)

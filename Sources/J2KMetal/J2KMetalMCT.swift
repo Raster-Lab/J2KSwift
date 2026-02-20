@@ -12,7 +12,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - MCT Backend
@@ -780,7 +780,7 @@ public actor J2KMetalMCT {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         var output = [[Float]](
@@ -890,7 +890,7 @@ public actor J2KMetalMCT {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         var output = [[Float]](

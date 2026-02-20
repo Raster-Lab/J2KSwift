@@ -192,7 +192,8 @@ public struct J2KAcceleratedTrellis: Sendable {
             let coefficient = coefficients[stage]
 
             // Reset next costs to infinity
-            vDSP_vfillD(.infinity, &nextCosts, 1, vDSP_Length(numStates))
+            var inf = Double.infinity
+            vDSP_vfillD(&inf, &nextCosts, 1, vDSP_Length(numStates))
 
             // Try all state transitions
             for fromState in 0..<numStates {

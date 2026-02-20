@@ -12,7 +12,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - Color Transform Type
@@ -320,7 +320,7 @@ public actor J2KMetalColorTransform {
         backend: J2KMetalColorTransformBackend = .auto
     ) async throws -> J2KMetalColorTransformResult {
         let count = red.count
-        guard !isEmpty else {
+        guard !red.isEmpty else {
             throw J2KError.invalidParameter("Input components must not be empty")
         }
         guard green.count == count, blue.count == count else {
@@ -373,7 +373,7 @@ public actor J2KMetalColorTransform {
         backend: J2KMetalColorTransformBackend = .auto
     ) async throws -> J2KMetalColorTransformResult {
         let count = component0.count
-        guard !isEmpty else {
+        guard !component0.isEmpty else {
             throw J2KError.invalidParameter("Input components must not be empty")
         }
         guard component1.count == count, component2.count == count else {
@@ -666,7 +666,7 @@ public actor J2KMetalColorTransform {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         var c0 = [Float](repeating: 0, count: count)
         var c1 = [Float](repeating: 0, count: count)
@@ -753,7 +753,7 @@ public actor J2KMetalColorTransform {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         var r = [Float](repeating: 0, count: count)
         var g = [Float](repeating: 0, count: count)
@@ -892,7 +892,7 @@ public actor J2KMetalColorTransform {
         encoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         var result = [Float](repeating: 0, count: count)
         result.withUnsafeMutableBytes { dst in

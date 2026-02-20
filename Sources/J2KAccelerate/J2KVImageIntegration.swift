@@ -127,7 +127,6 @@ public struct J2KVImageIntegration: Sendable {
 
         // ITU-R BT.601 conversion matrix
         var infoYpCbCrToARGB = vImage_YpCbCrToARGB()
-        infoYpCbCrToARGB.opaque = 255
 
         let error = vImageConvert_420Yp8_Cb8_Cr8ToARGB8888(
             &yBuffer,
@@ -217,7 +216,6 @@ public struct J2KVImageIntegration: Sendable {
             &crBuffer,
             &infoARGBToYpCbCr,
             nil,
-            255,
             vImage_Flags(kvImageNoFlags)
         )
 

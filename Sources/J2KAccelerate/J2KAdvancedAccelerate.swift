@@ -394,22 +394,27 @@ public struct J2KAdvancedAccelerate: Sendable {
         var work = [Double](repeating: 0.0, count: 1)
         var lwork = Int32(-1)
         var info = Int32(0)
-        var mInt = Int32(m)
-        var nInt = Int32(n)
+
+        // Use separate copies for each parameter position to avoid overlapping inout access
+        var mInt1 = Int32(m)
+        var nInt1 = Int32(n)
+        var mInt2 = Int32(m)
+        var nInt2 = Int32(n)
+        var mInt3 = Int32(m)
 
         // Query optimal workspace size
         dgesvd_(
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
-            &mInt,
-            &nInt,
+            &mInt1,
+            &nInt1,
             &a,
-            &mInt,
+            &mInt2,
             &s,
             &u,
-            &mInt,
+            &mInt3,
             &vt,
-            &nInt,
+            &nInt2,
             &work,
             &lwork,
             &info
@@ -418,19 +423,26 @@ public struct J2KAdvancedAccelerate: Sendable {
         lwork = Int32(work[0])
         work = [Double](repeating: 0.0, count: Int(lwork))
 
+        // Reset for second call
+        var mInt4 = Int32(m)
+        var nInt3 = Int32(n)
+        var mInt5 = Int32(m)
+        var nInt4 = Int32(n)
+        var mInt6 = Int32(m)
+
         // Compute SVD
         dgesvd_(
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
-            &mInt,
-            &nInt,
+            &mInt4,
+            &nInt3,
             &a,
-            &mInt,
+            &mInt5,
             &s,
             &u,
-            &mInt,
+            &mInt6,
             &vt,
-            &nInt,
+            &nInt4,
             &work,
             &lwork,
             &info

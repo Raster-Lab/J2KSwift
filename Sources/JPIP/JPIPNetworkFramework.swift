@@ -139,7 +139,7 @@ public actor JPIPNetworkTransport {
 
         // Start connection
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            var resumed = false
+            nonisolated(unsafe) var resumed = false
 
             conn.stateUpdateHandler = { state in
                 switch state {

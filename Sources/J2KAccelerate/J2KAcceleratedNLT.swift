@@ -110,7 +110,8 @@ public struct J2KAcceleratedNLT: Sendable {
         // Denormalize back to original range
         var scale = maxValue - minValue
         var offset = minValue
-        vDSP_vsmsa(&result, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
+        var resultIn = result
+        vDSP_vsmsa(&resultIn, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
 
         return result.map { Int32($0.rounded()) }
         #else
@@ -153,32 +154,37 @@ public struct J2KAcceleratedNLT: Sendable {
         // Convert to float and normalize to [0, 1]
         var floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
+        var temp = [Float](repeating: 0, count: data.count)
         var count = Int32(data.count)
 
         if !inverse {
             // Forward: log(x + 1)
             // Add 1 to normalized values
             var one: Float = 1.0
-            vDSP_vsadd(&floatData, 1, &one, &floatData, 1, vDSP_Length(data.count))
+            var floatIn = floatData
+            vDSP_vsadd(&floatIn, 1, &one, &floatData, 1, vDSP_Length(data.count))
 
             // Apply log
             if base10 {
                 vvlog10f(&result, &floatData, &count)
                 // Normalize to [0, 1] using log10(2)
                 var scale = Float(1.0 / log10(2.0))
-                vDSP_vsmul(&result, 1, &scale, &result, 1, vDSP_Length(data.count))
+                temp = result
+                vDSP_vsmul(&temp, 1, &scale, &result, 1, vDSP_Length(data.count))
             } else {
                 vvlogf(&result, &floatData, &count)
                 // Normalize to [0, 1] using ln(2)
                 var scale = Float(1.0 / log(2.0))
-                vDSP_vsmul(&result, 1, &scale, &result, 1, vDSP_Length(data.count))
+                temp = result
+                vDSP_vsmul(&temp, 1, &scale, &result, 1, vDSP_Length(data.count))
             }
         } else {
             // Inverse: exp(x) - 1
             if base10 {
                 // Scale by log10(2)
                 var scale = Float(log10(2.0))
-                vDSP_vsmul(&floatData, 1, &scale, &floatData, 1, vDSP_Length(data.count))
+                var floatIn2 = floatData
+                vDSP_vsmul(&floatIn2, 1, &scale, &floatData, 1, vDSP_Length(data.count))
 
                 // Apply 10^x
                 var base = [Float](repeating: 10.0, count: data.count)
@@ -186,7 +192,8 @@ public struct J2KAcceleratedNLT: Sendable {
             } else {
                 // Scale by ln(2)
                 var scale = Float(log(2.0))
-                vDSP_vsmul(&floatData, 1, &scale, &floatData, 1, vDSP_Length(data.count))
+                var floatIn3 = floatData
+                vDSP_vsmul(&floatIn3, 1, &scale, &floatData, 1, vDSP_Length(data.count))
 
                 // Apply exp
                 vvexpf(&result, &floatData, &count)
@@ -194,13 +201,15 @@ public struct J2KAcceleratedNLT: Sendable {
 
             // Subtract 1
             var negOne: Float = -1.0
-            vDSP_vsadd(&result, 1, &negOne, &result, 1, vDSP_Length(data.count))
+            temp = result
+            vDSP_vsadd(&temp, 1, &negOne, &result, 1, vDSP_Length(data.count))
         }
 
         // Denormalize back to original range
         var scale = maxValue - minValue
         var offset = minValue
-        vDSP_vsmsa(&result, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
+        temp = result
+        vDSP_vsmsa(&temp, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
 
         return result.map { Int32($0.rounded()) }
         #else
@@ -253,22 +262,24 @@ public struct J2KAcceleratedNLT: Sendable {
         var lutMaxIndex = Float(lut.count - 1)
 
         // Normalize: (x - min) / (max - min) * (lut.count - 1)
-        vDSP_vsadd(&floatData, 1, &normMin, &floatData, 1, vDSP_Length(data.count))
+        var floatIn1 = floatData
+        vDSP_vsadd(&floatIn1, 1, &normMin, &floatData, 1, vDSP_Length(data.count))
         var scale = lutMaxIndex / (normMax - normMin)
-        vDSP_vsmul(&floatData, 1, &scale, &floatData, 1, vDSP_Length(data.count))
+        var floatIn2 = floatData
+        vDSP_vsmul(&floatIn2, 1, &scale, &floatData, 1, vDSP_Length(data.count))
 
         var result = [Float](repeating: 0, count: data.count)
 
         if !interpolation {
             // Nearest neighbor using vDSP_vindex
             // Round to nearest integer index
-            var roundedIndices = [UInt](repeating: 0, count: data.count)
+            var floatIndices = [Float](repeating: 0, count: data.count)
             for i in 0..<data.count {
                 let index = Int(floatData[i].rounded())
-                roundedIndices[i] = UInt(max(0, min(lut.count - 1, index)))
+                floatIndices[i] = Float(max(0, min(lut.count - 1, index)))
             }
 
-            vDSP_vindex(&floatLUT, &roundedIndices, 1, &result, 1, vDSP_Length(data.count))
+            vDSP_vindex(&floatLUT, &floatIndices, 1, &result, 1, vDSP_Length(data.count))
         } else {
             // Linear interpolation
             for i in 0..<data.count {
@@ -329,6 +340,7 @@ public struct J2KAcceleratedNLT: Sendable {
         // Convert to float and normalize to [0, 1]
         var floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
+        var temp = [Float](repeating: 0, count: data.count)
         var count = Int32(data.count)
 
         if !inverse {
@@ -339,7 +351,8 @@ public struct J2KAcceleratedNLT: Sendable {
 
             // numerator = max(y - c1, 0)
             var negC1 = -c1
-            vDSP_vsadd(&result, 1, &negC1, &result, 1, vDSP_Length(data.count))
+            temp = result
+            vDSP_vsadd(&temp, 1, &negC1, &result, 1, vDSP_Length(data.count))
             for i in 0..<data.count {
                 result[i] = max(result[i], 0)
             }
@@ -352,12 +365,16 @@ public struct J2KAcceleratedNLT: Sendable {
 
             // denominator = c2 - c3 * y
             var negC3 = -c3
-            vDSP_vsmsa(&result, 1, &negC3, &c2, &result, 1, vDSP_Length(data.count))
+            var mutableC2 = c2
+            temp = result
+            vDSP_vsmsa(&temp, 1, &negC3, &mutableC2, &result, 1, vDSP_Length(data.count))
 
             // linear = pow(numerator / denominator, 1/m1)
-            vDSP_vdiv(&result, 1, &numerator, 1, &result, 1, vDSP_Length(data.count))
+            temp = result
+            vDSP_vdiv(&temp, 1, &numerator, 1, &result, 1, vDSP_Length(data.count))
             var invM1Array = [Float](repeating: 1.0 / m1, count: data.count)
-            vvpowf(&result, &invM1Array, &result, &count)
+            temp = result
+            vvpowf(&result, &invM1Array, &temp, &count)
         } else {
             // Inverse: PQ OETF (apply encoding)
             // y = pow(x, m1)
@@ -365,22 +382,30 @@ public struct J2KAcceleratedNLT: Sendable {
             vvpowf(&result, &m1Array, &floatData, &count)
 
             // numerator = c1 + c2 * y
-            vDSP_vsmsa(&result, 1, &c2, &c1, &floatData, 1, vDSP_Length(data.count))
+            var mutableC2b = c2
+            var mutableC1 = c1
+            temp = result
+            vDSP_vsmsa(&temp, 1, &mutableC2b, &mutableC1, &floatData, 1, vDSP_Length(data.count))
 
             // denominator = 1 + c3 * y
             var one: Float = 1.0
-            vDSP_vsmsa(&result, 1, &c3, &one, &result, 1, vDSP_Length(data.count))
+            var mutableC3 = c3
+            temp = result
+            vDSP_vsmsa(&temp, 1, &mutableC3, &one, &result, 1, vDSP_Length(data.count))
 
             // encoded = pow(numerator / denominator, m2)
-            vDSP_vdiv(&result, 1, &floatData, 1, &result, 1, vDSP_Length(data.count))
+            temp = result
+            vDSP_vdiv(&temp, 1, &floatData, 1, &result, 1, vDSP_Length(data.count))
             var m2Array = [Float](repeating: m2, count: data.count)
-            vvpowf(&result, &m2Array, &result, &count)
+            temp = result
+            vvpowf(&result, &m2Array, &temp, &count)
         }
 
         // Denormalize back to original range
         var scale = maxValue - minValue
         var offset = minValue
-        vDSP_vsmsa(&result, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
+        temp = result
+        vDSP_vsmsa(&temp, 1, &scale, &offset, &result, 1, vDSP_Length(data.count))
 
         return result.map { Int32($0.rounded()) }
         #else

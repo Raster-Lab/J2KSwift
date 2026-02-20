@@ -12,7 +12,7 @@ import Foundation
 import J2KCore
 
 #if canImport(Metal)
-import Metal
+@preconcurrency import Metal
 #endif
 
 // MARK: - ROI Backend Selection
@@ -173,7 +173,7 @@ public actor J2KMetalROI {
     ) async throws {
         self.device = device
         self.shaderLibrary = shaderLibrary
-        self.bufferPool = try await J2KMetalBufferPool(device: device)
+        self.bufferPool = J2KMetalBufferPool()
         self.statistics = J2KMetalROIStatistics()
     }
 
@@ -325,12 +325,12 @@ public actor J2KMetalROI {
         roiWidth: Int,
         roiHeight: Int
     ) async throws -> [[Bool]] {
-        let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
+        let mtlDevice = commandQueue.device
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
+            throw J2KError.internalError("Failed to create command buffer/encoder")
         }
 
         // Get pipeline state
@@ -339,9 +339,8 @@ public actor J2KMetalROI {
 
         // Allocate buffers
         let pixelCount = width * height
-        let maskBuffer = try await bufferPool.allocateBuffer(
-            size: pixelCount * MemoryLayout<Bool>.size,
-            storageMode: .shared
+        let maskBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: pixelCount * MemoryLayout<Bool>.size
         )
 
         // Set buffers
@@ -373,7 +372,7 @@ public actor J2KMetalROI {
         computeEncoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         let maskPtr = maskBuffer.contents().bindMemory(to: Bool.self, capacity: pixelCount)
@@ -394,12 +393,12 @@ public actor J2KMetalROI {
         width: Int,
         height: Int
     ) async throws -> [[Int32]] {
-        let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
+        let mtlDevice = commandQueue.device
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
-            throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
+            throw J2KError.internalError("Failed to create command buffer/encoder")
         }
 
         // Get pipeline state
@@ -412,17 +411,14 @@ public actor J2KMetalROI {
         let pixelCount = width * height
 
         // Allocate buffers
-        let inputBuffer = try await bufferPool.allocateBuffer(
-            size: pixelCount * MemoryLayout<Int32>.size,
-            storageMode: .shared
+        let inputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: pixelCount * MemoryLayout<Int32>.size
         )
-        let maskBuffer = try await bufferPool.allocateBuffer(
-            size: pixelCount * MemoryLayout<Bool>.size,
-            storageMode: .shared
+        let maskBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: pixelCount * MemoryLayout<Bool>.size
         )
-        let outputBuffer = try await bufferPool.allocateBuffer(
-            size: pixelCount * MemoryLayout<Int32>.size,
-            storageMode: .shared
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: mtlDevice, size: pixelCount * MemoryLayout<Int32>.size
         )
 
         // Copy data
@@ -458,7 +454,7 @@ public actor J2KMetalROI {
         computeEncoder.endEncoding()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        await commandBuffer.completed()
 
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Int32.self, capacity: pixelCount)

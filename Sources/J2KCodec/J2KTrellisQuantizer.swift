@@ -262,7 +262,29 @@ public struct J2KTCQResult: Sendable {
     public let rdCost: Double
 
     /// State sequence through the trellis.
-    let stateSequence: [Int]
+    public let stateSequence: [Int]
+
+    /// Creates a TCQ result.
+    ///
+    /// - Parameters:
+    ///   - quantizedCoefficients: Quantized coefficients.
+    ///   - totalDistortion: Total distortion.
+    ///   - estimatedRate: Estimated rate (bits).
+    ///   - rdCost: Rate-distortion cost.
+    ///   - stateSequence: State sequence through the trellis.
+    public init(
+        quantizedCoefficients: [Int32],
+        totalDistortion: Double,
+        estimatedRate: Double,
+        rdCost: Double,
+        stateSequence: [Int]
+    ) {
+        self.quantizedCoefficients = quantizedCoefficients
+        self.totalDistortion = totalDistortion
+        self.estimatedRate = estimatedRate
+        self.rdCost = rdCost
+        self.stateSequence = stateSequence
+    }
 }
 
 // MARK: - Trellis Quantizer

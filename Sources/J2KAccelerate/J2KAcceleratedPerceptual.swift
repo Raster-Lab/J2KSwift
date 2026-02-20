@@ -75,7 +75,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         decayRate: Double
     ) -> [Double] {
         let count = frequencies.count
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         var result = [Double](repeating: 0.0, count: count)
         var normalized = [Double](repeating: 0.0, count: count)
@@ -89,7 +89,10 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var decay = decayRate
         var one = 1.0
         vDSP_vsdivD(normalized, 1, &decay, &temp, 1, vDSP_Length(count))
-        vDSP_vsubD(temp, 1, &one, &one, 0, &temp, 1, vDSP_Length(count))
+        // Compute: 1 - temp => negate temp then add 1
+        var negOne = -1.0
+        vDSP_vsmulD(temp, 1, &negOne, &temp, 1, vDSP_Length(count))
+        vDSP_vsaddD(temp, 1, &one, &temp, 1, vDSP_Length(count))
 
         // Compute: exp(temp)
         var tempCount = Int32(count)
@@ -122,7 +125,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         maximumWeight: Double
     ) -> [Double] {
         let count = sensitivities.count
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         var result = [Double](repeating: 0.0, count: count)
         var normalized = [Double](repeating: 0.0, count: count)
@@ -140,7 +143,9 @@ public struct J2KAcceleratedPerceptual: Sendable {
         vDSP_svdivD(&one, normalized, 1, &result, 1, vDSP_Length(count))
 
         // Clamp to [minimumWeight, maximumWeight]
-        vDSP_vclipD(result, 1, &minimumWeight, &maximumWeight, &result, 1, vDSP_Length(count))
+        var minW = minimumWeight
+        var maxW = maximumWeight
+        vDSP_vclipD(result, 1, &minW, &maxW, &result, 1, vDSP_Length(count))
 
         return result
     }
@@ -158,7 +163,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
     /// - Returns: Array of masking factors.
     public func batchLuminanceMasking(luminances: [Double]) -> [Double] {
         let count = luminances.count
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         var result = [Double](repeating: 0.0, count: count)
         var normalized = [Double](repeating: 0.0, count: count)
@@ -169,8 +174,8 @@ public struct J2KAcceleratedPerceptual: Sendable {
         vDSP_vsdivD(luminances, 1, &divisor, &normalized, 1, vDSP_Length(count))
 
         // Compute deviation: |norm - 0.5|
-        var midGray = 0.5
-        vDSP_vsubD(&midGray, 0, normalized, 1, &deviation, 1, vDSP_Length(count))
+        var negMidGray = -0.5
+        vDSP_vsaddD(normalized, 1, &negMidGray, &deviation, 1, vDSP_Length(count))
         vDSP_vabsD(deviation, 1, &deviation, 1, vDSP_Length(count))
 
         // Square: deviation²
@@ -179,7 +184,8 @@ public struct J2KAcceleratedPerceptual: Sendable {
         // Compute: 1 + 2 * deviation²
         var two = 2.0
         var one = 1.0
-        vDSP_vsmaD(result, 1, &two, &one, &result, 1, vDSP_Length(count))
+        vDSP_vsmulD(result, 1, &two, &result, 1, vDSP_Length(count))
+        vDSP_vsaddD(result, 1, &one, &result, 1, vDSP_Length(count))
 
         return result
     }
@@ -196,7 +202,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
     /// - Returns: Array of masking factors.
     public func batchTextureMasking(variances: [Double]) -> [Double] {
         let count = variances.count
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         var result = [Double](repeating: 0.0, count: count)
         var normalized = [Double](repeating: 0.0, count: count)
@@ -226,7 +232,8 @@ public struct J2KAcceleratedPerceptual: Sendable {
 
         // Scale and offset: 1.5 * result + 1.0
         var scale = 1.5
-        vDSP_vsmaD(result, 1, &scale, &one, &result, 1, vDSP_Length(count))
+        vDSP_vsmulD(result, 1, &scale, &result, 1, vDSP_Length(count))
+        vDSP_vsaddD(result, 1, &one, &result, 1, vDSP_Length(count))
 
         return result
     }
@@ -254,7 +261,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         maximumFactor: Double
     ) -> [Double] {
         let count = min(luminances.count, variances.count)
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         // Compute individual masking factors
         let lumFactors = batchLuminanceMasking(luminances: luminances)
@@ -265,20 +272,23 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var one = 1.0
 
         // Apply luminance masking: 1 + lumStrength * (lumFactors - 1)
-        vDSP_vsubD(&one, 0, lumFactors, 1, &temp, 1, vDSP_Length(count))
+        var negOne = -1.0
+        vDSP_vsaddD(lumFactors, 1, &negOne, &temp, 1, vDSP_Length(count))
         var lumStr = luminanceStrength
         vDSP_vsmulD(temp, 1, &lumStr, &temp, 1, vDSP_Length(count))
-        vDSP_vaddD(&one, 0, temp, 1, &result, 1, vDSP_Length(count))
+        vDSP_vsaddD(temp, 1, &one, &result, 1, vDSP_Length(count))
 
         // Apply texture masking: result * (1 + texStrength * (texFactors - 1))
-        vDSP_vsubD(&one, 0, texFactors, 1, &temp, 1, vDSP_Length(count))
+        vDSP_vsaddD(texFactors, 1, &negOne, &temp, 1, vDSP_Length(count))
         var texStr = textureStrength
         vDSP_vsmulD(temp, 1, &texStr, &temp, 1, vDSP_Length(count))
-        vDSP_vaddD(&one, 0, temp, 1, &temp, 1, vDSP_Length(count))
+        vDSP_vsaddD(temp, 1, &one, &temp, 1, vDSP_Length(count))
         vDSP_vmulD(result, 1, temp, 1, &result, 1, vDSP_Length(count))
 
         // Clamp to [minimumFactor, maximumFactor]
-        vDSP_vclipD(result, 1, &minimumFactor, &maximumFactor, &result, 1, vDSP_Length(count))
+        var minF = minimumFactor
+        var maxF = maximumFactor
+        vDSP_vclipD(result, 1, &minF, &maxF, &result, 1, vDSP_Length(count))
 
         return result
     }
@@ -299,7 +309,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         weights: [Double]
     ) -> [Double] {
         let count = weights.count
-        guard !isEmpty else { return [] }
+        guard count > 0 else { return [] }
 
         var result = [Double](repeating: 0.0, count: count)
         var base = baseQuantization
@@ -318,7 +328,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
     /// - Returns: Tuple of (mean, variance).
     public func regionStatistics(samples: [Int32]) -> (mean: Double, variance: Double) {
         let count = samples.count
-        guard !isEmpty else { return (0.0, 0.0) }
+        guard count > 0 else { return (0.0, 0.0) }
 
         // Convert to Double
         var doubles = samples.map { Double($0) }
