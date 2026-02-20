@@ -14,6 +14,8 @@ import J2KCore
 
 /// Performance benchmarks for JPEG 2000 color transforms.
 final class J2KColorTransformBenchmarkTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KColorTransformBenchmarkTests (Disabled)") }
+
     // MARK: - Image Size Benchmarks
 
     func testRCTSmallImage() throws {

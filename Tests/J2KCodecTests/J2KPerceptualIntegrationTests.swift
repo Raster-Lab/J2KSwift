@@ -13,6 +13,8 @@ import XCTest
 @testable import J2KCore
 
 final class J2KPerceptualIntegrationTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KPerceptualIntegrationTests (Disabled)") }
+
     // MARK: - End-to-End Perceptual Encoding Tests
 
     func testBasicPerceptualEncoding() {

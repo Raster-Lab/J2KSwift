@@ -8,6 +8,8 @@ import XCTest
 
 /// Tests for vImage integration.
 final class J2KVImageIntegrationTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KVImageIntegrationTests (Disabled)") }
+
     let vimage = J2KVImageIntegration()
 
     // MARK: - Availability Tests

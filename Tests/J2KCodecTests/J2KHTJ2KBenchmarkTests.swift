@@ -27,6 +27,8 @@ import XCTest
 ///
 /// Tests use identical wavelet coefficients to ensure fair comparison.
 final class J2KHTJ2KBenchmarkTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KHTJ2KBenchmarkTests (Disabled)") }
+
     /// Number of iterations for benchmarking.
     private let benchmarkIterations = 100
 

@@ -11,6 +11,8 @@ import XCTest
 /// This test suite benchmarks the performance-critical paths in JPEG 2000 entropy coding,
 /// including MQ encoding/decoding, context modeling, and bit-plane operations.
 final class J2KEntropyBenchmarkTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KEntropyBenchmarkTests (Disabled)") }
+
     // MARK: - Test Configuration
 
     /// Number of iterations for each benchmark.

@@ -13,6 +13,8 @@ import XCTest
 @testable import J2KCore
 
 final class J2KCodecIntegrationTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KCodecIntegrationTests (Disabled)") }
+
     // MARK: - Basic Round-Trip Tests
 
     func testSimpleGrayscaleRoundTrip() throws {

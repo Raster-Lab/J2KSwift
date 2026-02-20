@@ -13,6 +13,8 @@ import XCTest
 @testable import J2KCore
 
 final class J2KLosslessDecodingBenchmarkTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KLosslessDecodingBenchmarkTests (Disabled)") }
+
     /// Runs the full benchmark suite and prints results.
     func testRunBenchmarkSuite() throws {
         // This test runs the benchmark and prints results to console

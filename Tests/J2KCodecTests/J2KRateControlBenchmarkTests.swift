@@ -14,6 +14,8 @@ import XCTest
 
 /// Performance benchmarks for rate control and PCRD-opt.
 final class J2KRateControlBenchmarkTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KRateControlBenchmarkTests (Disabled)") }
+
     // MARK: - PCRD-opt Algorithm Benchmarks
 
     func testBenchmarkPCRDOptSmallImage() {

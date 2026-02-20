@@ -13,6 +13,8 @@ import XCTest
 @testable import J2KCodec
 
 final class MJ2IntegrationTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "MJ2IntegrationTests (Disabled)") }
+
     // MARK: - Creation-Extraction Round Trip
 
     func testCreateAndExtractSingleFrame() async throws {

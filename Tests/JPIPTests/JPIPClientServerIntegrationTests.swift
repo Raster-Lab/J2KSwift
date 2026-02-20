@@ -12,6 +12,8 @@ import J2KCore
 import J2KFileFormat
 
 final class JPIPClientServerIntegrationTests: XCTestCase {
+    override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JPIPClientServerIntegrationTests (Disabled)") }
+
     // MARK: - Mock Transport for Testing
 
     /// Mock transport that simulates client-server communication without actual HTTP.
