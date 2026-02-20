@@ -1,0 +1,192 @@
+name: Conformance Gating
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+  pull_request:
+    branches: [ main, develop, 'release/*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  part1-conformance:
+    name: Part 1 (Core) Conformance
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build
+        run: swift build
+
+      - name: Run Part 1 conformance tests
+        run: |
+          swift test --filter Conformance \
+            --skip JP3DComplianceTests \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+
+  part15-conformance:
+    name: Part 15 (HTJ2K) Conformance
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build
+        run: swift build
+
+      - name: Run HTJ2K conformance tests
+        run: |
+          swift test --filter HTJ2K \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+
+  jp3d-conformance:
+    name: Part 10 (JP3D) Conformance
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build J2K3D target
+        run: swift build --target J2K3D
+
+      - name: Run JP3D compliance tests
+        run: swift test --filter JP3DComplianceTests
+
+      - name: Generate conformance report
+        if: always()
+        run: |
+          chmod +x Scripts/validate-jp3d-compliance.sh
+          Scripts/validate-jp3d-compliance.sh --report-only || true
+
+      - name: Upload conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jp3d-conformance-report
+          path: Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md
+          retention-days: 90
+
+  cross-platform-conformance:
+    name: Cross-Platform Conformance (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: swift:6.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-conformance-
+
+      - name: Build
+        run: swift build
+
+      - name: Run conformance tests on Linux
+        run: |
+          swift test --parallel --filter Conformance \
+            --skip Benchmark \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip PerformanceTuning \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer
+
+  conformance-gate:
+    name: Conformance Gate
+    needs: [part1-conformance, part15-conformance, jp3d-conformance, cross-platform-conformance]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check conformance results
+        run: |
+          echo "=== Conformance Gate Results ==="
+          echo "Part 1 (Core):      ${{ needs.part1-conformance.result }}"
+          echo "Part 15 (HTJ2K):    ${{ needs.part15-conformance.result }}"
+          echo "Part 10 (JP3D):     ${{ needs.jp3d-conformance.result }}"
+          echo "Cross-Platform:     ${{ needs.cross-platform-conformance.result }}"
+
+          if [ "${{ needs.part1-conformance.result }}" != "success" ] || \
+             [ "${{ needs.part15-conformance.result }}" != "success" ] || \
+             [ "${{ needs.jp3d-conformance.result }}" != "success" ] || \
+             [ "${{ needs.cross-platform-conformance.result }}" != "success" ]; then
+            echo "::error::Conformance gate failed — one or more conformance jobs did not succeed."
+            exit 1
+          fi
+
+          echo "All conformance checks passed."

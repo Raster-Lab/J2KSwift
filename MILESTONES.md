@@ -4,7 +4,7 @@ A comprehensive development roadmap for implementing a complete JPEG 2000 framew
 
 ## Overview
 
-This document outlines the phased development approach for J2KSwift, organized into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities, Phase 11 (v1.4.0) adds enhanced JPIP with HTJ2K support, Phase 12 (v1.5.0, Weeks 131-154) targets performance optimizations, extended JPIP features, enhanced streaming, and broader platform support, and Phase 16 (v1.9.0, Weeks 211-235) implements JP3D (ISO/IEC 15444-10) volumetric JPEG 2000 encoding/decoding with 3D wavelet transforms, HTJ2K integration, JPIP 3D streaming, and Metal GPU acceleration.
+This document outlines the phased development approach for J2KSwift, organised into major phases with specific weekly milestones. Each phase builds upon the previous ones, ensuring a solid foundation before adding complexity. Phases 0-8 (Weeks 1-100) establish the core JPEG 2000 framework, Phases 9-10 (Weeks 101-130) add High Throughput JPEG 2000 (HTJ2K) support and lossless transcoding capabilities, Phase 11 (v1.4.0) adds enhanced JPIP with HTJ2K support, Phase 12 (v1.5.0, Weeks 131-154) targets performance optimisations, extended JPIP features, enhanced streaming, and broader platform support, Phase 16 (v1.9.0, Weeks 211-235) implements JP3D (ISO/IEC 15444-10) volumetric JPEG 2000 encoding/decoding with 3D wavelet transforms, HTJ2K integration, JPIP 3D streaming, and Metal GPU acceleration, and Phase 17 (v2.0.0, Weeks 236-295) is the major refactoring release targeting hardware-accelerated performance (ARM Neon, Accelerate, Metal, Vulkan), full ISO/IEC 15444-4 conformance, OpenJPEG interoperability, Swift 6.2 strict concurrency, and comprehensive CLI tooling.
 
 ## Phase 0: Foundation (Weeks 1-10)
 
@@ -3069,11 +3069,908 @@ This phase extends J2KSwift to three-dimensional image data, enabling efficient 
 - Compliance tests: 100+ tests
 - Total new tests: 350+
 
+## Phase 17: v2.0 — Performance Refactoring, Part 4 Conformance & OpenJPEG Interoperability (Weeks 236-295)
+
+**Goal**: Major refactoring release delivering a hardware-accelerated, 100% Swift-native JPEG 2000 reference implementation that surpasses OpenJPEG in performance. Full ISO/IEC 15444-4 conformance, seamless unit testing at every stage, comprehensive OpenJPEG interoperability, and production-quality documentation in British English.
+
+This is the **v2.0 release** — a ground-up refactoring of the entire codebase for Swift 6.2 strict concurrency, maximum performance on Apple Silicon (primary) and Intel x86-64 (secondary), with architecture-specific optimisation paths cleanly separated for independent removal. The library remains DICOM-aware but DICOM-independent, suitable for any project.
+
+**Target Platforms**:
+- **Primary**: Apple Silicon (A-series, M-series) — ARM Neon, Accelerate, Metal GPU
+- **Secondary**: Intel x86-64 — SSE4.2, AVX, AVX2 (cleanly separable)
+- **Tertiary**: Linux ARM64/x86-64, Windows x86-64
+
+**Key Principles**:
+- Swift 6.2 with strict concurrency throughout
+- ISO/IEC 15444 latest standard compliance for all parts
+- Speed is paramount — target better-than-OpenJPEG performance
+- Architecture optimisations are cleanly isolated for removal
+- Seamless unit testing at all refactoring stages (no regressions)
+- British English for all comments, help text, and documentation
+- Options and parameters support both British and American spellings (e.g., `colour`/`color`)
+- DICOM-aware but DICOM-independent
+
 ---
 
-**Last Updated**: 2026-02-20 (Week 235 complete)
-**Current Phase**: Phase 16 - JP3D Volumetric JPEG 2000 (v1.9.0)
+### Sub-phase 17a: Swift 6.2 Strict Concurrency Refactoring (Weeks 236-241)
+
+**Goal**: Migrate the entire codebase to Swift 6.2 with full strict concurrency compliance, eliminating all data races and concurrency warnings.
+
+#### Week 236-237: Concurrency Audit and Foundation Types
+
+- [ ] Concurrency audit
+  - [ ] Audit all public types for `Sendable` conformance
+  - [ ] Identify and document all mutable shared state
+  - [ ] Map actor boundaries and isolation domains
+  - [ ] Catalogue all `@unchecked Sendable` usages for elimination
+  - [ ] Review all `Task` and `TaskGroup` usage for correctness
+- [ ] Foundation type migration
+  - [ ] Ensure all value types (structs, enums) are `Sendable`
+  - [ ] Convert shared mutable state holders to actors
+  - [ ] Replace manual locking with actor isolation where appropriate
+  - [ ] Add `sending` parameter annotations where needed
+  - [ ] Eliminate all compiler concurrency warnings in J2KCore
+- [ ] Package.swift updates
+  - [ ] Set Swift tools version to 6.2
+  - [ ] Enable strict concurrency checking for all targets
+  - [ ] Update platform deployment targets as needed
+  - [ ] Verify all dependencies are Swift 6.2 compatible
+- [ ] Testing
+  - [ ] Existing test suite passes with zero concurrency warnings
+  - [ ] Add concurrent access stress tests for all actor types
+  - [ ] Verify `Sendable` conformance for all public API types
+
+**Deliverables**:
+- Updated `Package.swift` with Swift 6.2 toolchain
+- Concurrency-clean J2KCore module
+- Concurrency audit report
+
+#### Week 238-239: Module-by-Module Concurrency Migration
+
+- [ ] J2KCodec module
+  - [ ] Migrate encoder/decoder to strict concurrency
+  - [ ] Ensure HTJ2K codec is fully concurrent-safe
+  - [ ] Review and update all actor types (encoder, decoder, transcoder)
+  - [ ] Eliminate unsafe buffer pointer escapes
+- [ ] J2KFileFormat module
+  - [ ] Migrate file reader/writer to strict concurrency
+  - [ ] Ensure MJ2 types are concurrent-safe
+  - [ ] Review JP2/JPX/JPM format handlers
+- [ ] J2KAccelerate module
+  - [ ] Ensure Accelerate wrappers are concurrency-safe
+  - [ ] Review vDSP/vImage callback usage
+  - [ ] Verify thread safety of BLAS/LAPACK bindings
+- [ ] JPIP module
+  - [ ] Audit all JPIP actors (client, server, session)
+  - [ ] Verify async/await patterns in network operations
+  - [ ] Ensure session state is properly isolated
+- [ ] J2K3D module
+  - [ ] Migrate all JP3D actors to strict concurrency
+  - [ ] Review volumetric encoder/decoder isolation
+  - [ ] Verify 3D streaming types are `Sendable`
+- [ ] J2KMetal module
+  - [ ] Audit Metal command buffer lifecycle
+  - [ ] Ensure GPU resource management is actor-isolated
+  - [ ] Verify shader dispatch is concurrent-safe
+- [ ] Testing
+  - [ ] Full test suite passes with zero concurrency warnings across all modules
+  - [ ] No regressions from v1.9.0 baseline
+  - [ ] Concurrent stress tests for each module
+
+**Deliverables**:
+- All modules concurrency-clean under Swift 6.2 strict mode
+- Zero `@unchecked Sendable` usage (or fully documented justification)
+- Complete test suite green
+
+#### Week 240-241: Concurrency Performance Tuning
+
+- [ ] Actor contention analysis
+  - [ ] Profile actor message-passing overhead
+  - [ ] Identify and eliminate unnecessary actor hops
+  - [ ] Optimise hot paths to minimise isolation crossings
+  - [ ] Benchmark structured concurrency vs manual threading
+- [ ] Parallel pipeline design
+  - [ ] Design optimal task parallelism for encode/decode pipelines
+  - [ ] Implement tile-level parallelism with `TaskGroup`
+  - [ ] Add configurable concurrency limits (respect system resources)
+  - [ ] Implement work-stealing patterns for uneven tile sizes
+- [ ] Memory model compliance
+  - [ ] Verify all data sharing follows Swift 6.2 memory model
+  - [ ] Eliminate any remaining data race potential
+  - [ ] Document concurrency design decisions
+- [ ] Testing
+  - [ ] Performance benchmarks: concurrent vs serial encode/decode
+  - [ ] Scalability tests across core counts (2, 4, 8, 16 cores)
+  - [ ] Memory pressure tests under high concurrency
+  - [ ] ThreadSanitizer clean run
+
+**Deliverables**:
+- Optimised concurrent encode/decode pipelines
+- Performance benchmark report (v1.9.0 vs v2.0-alpha)
+- Concurrency design documentation
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17b: Architecture-Specific Optimisation — Apple Silicon (Weeks 242-251)
+
+**Goal**: Maximise performance on Apple Silicon (A-series and M-series) using ARM Neon SIMD, Accelerate framework, and Metal GPU compute, with all optimisations cleanly isolated.
+
+#### Week 242-243: ARM Neon SIMD Optimisation
+
+- [ ] Neon SIMD for entropy coding
+  - [ ] Vectorised MQ-coder context formation
+  - [ ] SIMD-accelerated bit-plane coding
+  - [ ] Neon-optimised significance propagation
+  - [ ] Batch context modelling with NEON intrinsics
+- [ ] Neon SIMD for wavelet transforms
+  - [ ] Vectorised 5/3 lifting steps (4-wide and 8-wide)
+  - [ ] Vectorised 9/7 lifting steps
+  - [ ] SIMD boundary extension handling
+  - [ ] Multi-level decomposition with Neon pipelines
+- [ ] Neon SIMD for colour transforms
+  - [ ] Vectorised ICT (irreversible colour transform)
+  - [ ] Vectorised RCT (reversible colour transform)
+  - [ ] SIMD-accelerated multi-component transforms
+  - [ ] Batch pixel format conversion
+- [ ] Architecture isolation
+  - [ ] All Neon code in `Sources/*/ARM/` directories
+  - [ ] `#if arch(arm64)` guards on all Neon paths
+  - [ ] Clean protocol-based dispatch (CPU feature detection at init)
+  - [ ] Removal guide: delete `ARM/` directories to remove
+- [ ] Testing
+  - [ ] Bit-exact results vs scalar reference implementation
+  - [ ] Performance benchmarks vs non-SIMD paths
+  - [ ] All existing tests pass with Neon paths active
+
+**Deliverables**:
+- `Sources/J2KCodec/ARM/` — Neon-optimised entropy coding
+- `Sources/J2KAccelerate/ARM/` — Neon-optimised transforms
+- Architecture isolation documentation
+- Performance benchmark results
+
+#### Week 244-246: Accelerate Framework Deep Integration
+
+- [ ] vDSP optimisation
+  - [ ] Vectorised quantisation with `vDSP_vsmul`/`vDSP_vsdiv`
+  - [ ] Fast DCT/DFT for frequency-domain operations
+  - [ ] Optimised convolution for arbitrary wavelet filters
+  - [ ] In-place operations to minimise memory allocation
+- [ ] vImage optimisation
+  - [ ] Hardware-accelerated colour space conversion
+  - [ ] Optimised image scaling and resampling
+  - [ ] Efficient pixel format conversion (8/16/32-bit)
+  - [ ] Tiled processing for large images
+- [ ] BLAS/LAPACK for multi-component transforms
+  - [ ] Matrix multiplication for MCT (multi-component transform)
+  - [ ] Eigenvalue decomposition for KLT optimisation
+  - [ ] Batch matrix operations for tile processing
+- [ ] Memory optimisation
+  - [ ] Unified memory exploitation (zero-copy CPU↔GPU)
+  - [ ] Memory-mapped I/O for large files
+  - [ ] Custom allocators aligned to cache lines (128 bytes on M-series)
+  - [ ] Copy-on-write buffer optimisation
+- [ ] Testing
+  - [ ] Numerical accuracy validation (vs reference)
+  - [ ] Memory usage profiling and regression tests
+  - [ ] Performance benchmarks for each Accelerate integration point
+
+**Deliverables**:
+- Enhanced `Sources/J2KAccelerate/` with deep Accelerate integration
+- Memory optimisation guide
+- Accelerate performance benchmark results
+
+#### Week 247-249: Metal GPU Compute Refactoring
+
+- [ ] Shader pipeline overhaul
+  - [ ] Rewrite DWT shaders for optimal Apple GPU occupancy
+  - [ ] Implement tile-based shader dispatch for large images
+  - [ ] Add indirect command buffers for adaptive workloads
+  - [ ] Implement shader variants for different bit depths (8/12/16/32)
+- [ ] Metal 3 features (where available)
+  - [ ] Mesh shaders for adaptive tiling
+  - [ ] Raytracing acceleration structure for spatial queries (ROI)
+  - [ ] Improved resource management with residency sets
+  - [ ] Function pointers for dynamic shader selection
+- [ ] Async compute pipeline
+  - [ ] Overlap CPU and GPU work (double-buffered command submission)
+  - [ ] Tile-pipelined encode: CPU prepares tile N+1 whilst GPU processes tile N
+  - [ ] Multi-queue submission for independent operations
+  - [ ] GPU timeline synchronisation with Metal events
+- [ ] Profiling and tuning
+  - [ ] GPU profiling with Xcode Instruments Metal System Trace
+  - [ ] Occupancy optimisation per shader
+  - [ ] Threadgroup memory layout optimisation
+  - [ ] ALU/bandwidth bottleneck identification and resolution
+- [ ] Testing
+  - [ ] GPU vs CPU bit-exact validation
+  - [ ] Performance benchmarks (Metal vs Accelerate vs scalar)
+  - [ ] Memory bandwidth utilisation tests
+  - [ ] Multi-GPU support tests (Mac Pro, Mac Studio)
+
+**Deliverables**:
+- Refactored `Sources/J2KMetal/` with optimised compute shaders
+- Metal performance tuning guide
+- GPU benchmark results
+
+#### Week 250-251: Vulkan GPU Compute for Linux/Windows
+
+- [ ] Vulkan compute integration
+  - [ ] Vulkan instance and device initialisation
+  - [ ] Compute pipeline creation for DWT, colour transforms
+  - [ ] SPIR-V shader compilation from shared shader logic
+  - [ ] Memory management (device-local, host-visible buffers)
+  - [ ] Command buffer recording and submission
+- [ ] Shader porting
+  - [ ] Port DWT compute shaders from Metal to SPIR-V
+  - [ ] Port colour transform shaders
+  - [ ] Port quantisation shaders
+  - [ ] Implement fallback path when Vulkan unavailable
+- [ ] Platform integration
+  - [ ] `#if canImport(Vulkan)` conditional compilation
+  - [ ] Runtime Vulkan availability detection
+  - [ ] Graceful fallback to CPU when no GPU available
+  - [ ] Linux (AMD, NVIDIA, Intel) GPU support
+  - [ ] Windows GPU support via Vulkan
+- [ ] Architecture isolation
+  - [ ] All Vulkan code in `Sources/J2KVulkan/` module
+  - [ ] Clean separation from Metal paths
+  - [ ] Protocol-based GPU backend selection
+  - [ ] Removal: delete `J2KVulkan` target from Package.swift
+- [ ] Testing
+  - [ ] Vulkan vs CPU bit-exact validation
+  - [ ] Cross-platform GPU benchmark comparison
+  - [ ] Fallback path tests (no GPU available)
+  - [ ] Memory leak detection under GPU workloads
+
+**Deliverables**:
+- `Sources/J2KVulkan/` — Vulkan compute backend
+- SPIR-V shader library
+- Cross-platform GPU performance comparison
+- Vulkan integration documentation
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17c: Architecture-Specific Optimisation — Intel x86-64 (Weeks 252-255)
+
+**Goal**: Optimise for Intel x86-64 using SSE4.2, AVX, and AVX2 intrinsics, with all code cleanly separated for potential removal.
+
+#### Week 252-253: SSE/AVX SIMD Optimisation
+
+- [ ] SSE4.2 optimisation
+  - [ ] Vectorised MQ-coder operations (128-bit)
+  - [ ] SSE-accelerated wavelet lifting steps
+  - [ ] SSE colour transform operations
+  - [ ] Optimised bit manipulation for entropy coding
+- [ ] AVX/AVX2 optimisation
+  - [ ] 256-bit vectorised DWT operations
+  - [ ] AVX2 batch quantisation
+  - [ ] Vectorised colour space conversion (256-bit lanes)
+  - [ ] FMA (fused multiply-add) for 9/7 filter coefficients
+- [ ] Runtime feature detection
+  - [ ] CPUID-based feature detection (SSE4.2, AVX, AVX2, FMA)
+  - [ ] Dynamic dispatch to best available SIMD path
+  - [ ] Fallback to scalar for unsupported features
+  - [ ] Cache size detection for blocking optimisation
+- [ ] Architecture isolation
+  - [ ] All x86-64 code in `Sources/*/x86/` directories
+  - [ ] `#if arch(x86_64)` guards on all Intel paths
+  - [ ] Deprecation warnings for x86-64 paths (removal planned for v3.0)
+  - [ ] Removal guide: delete `x86/` directories and update Package.swift
+- [ ] Testing
+  - [ ] Bit-exact results vs scalar reference
+  - [ ] Performance benchmarks vs non-SIMD paths
+  - [ ] Feature detection correctness tests
+  - [ ] All existing tests pass on x86-64
+
+#### Week 254-255: Intel-Specific Memory and Cache Optimisation
+
+- [ ] Cache optimisation
+  - [ ] Cache-oblivious DWT algorithms for Intel cache hierarchy
+  - [ ] Prefetch hints for sequential data access patterns
+  - [ ] NUMA-aware allocation for multi-socket systems
+  - [ ] L1/L2/L3 cache blocking for tile processing
+- [ ] Memory access patterns
+  - [ ] Non-temporal stores for write-only buffers
+  - [ ] Aligned memory allocation (32-byte for AVX)
+  - [ ] Streaming stores for large output buffers
+  - [ ] Cache line padding to prevent false sharing
+- [ ] Testing
+  - [ ] Cache miss profiling (via `perf` or Instruments)
+  - [ ] Memory bandwidth utilisation tests
+  - [ ] Comparison vs Apple Silicon performance
+
+**Deliverables**:
+- `Sources/J2KCodec/x86/` — SSE/AVX optimised entropy coding
+- `Sources/J2KAccelerate/x86/` — SSE/AVX optimised transforms
+- x86-64 performance benchmark results
+- Architecture removal guide (`Documentation/X86_REMOVAL_GUIDE.md` updated)
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17d: ISO/IEC 15444-4 Conformance & Standard Compliance (Weeks 256-265)
+
+**Goal**: Achieve full ISO/IEC 15444-4 (Conformance Testing) compliance across all implemented parts, ensuring adherence to the latest version of each standard.
+
+#### Week 256-258: Part 1 (Core) Conformance Hardening
+
+- [ ] Standard review
+  - [ ] Audit implementation against latest ISO/IEC 15444-1 (AMD 1-8)
+  - [ ] Verify all required marker segments are correctly handled
+  - [ ] Validate codestream syntax compliance
+  - [ ] Confirm all mandatory decoder capabilities are implemented
+- [ ] Decoder conformance
+  - [ ] Class 0 decoder conformance (baseline)
+  - [ ] Class 1 decoder conformance (full Part 1)
+  - [ ] Exhaustive marker segment parsing validation
+  - [ ] Error resilience for malformed codestreams
+- [ ] Encoder conformance
+  - [ ] Verify all generated codestreams are standard-compliant
+  - [ ] Rate-distortion optimisation compliance
+  - [ ] Progression order correctness
+  - [ ] Tile-part generation compliance
+- [ ] Numerical precision
+  - [ ] Bit-exact lossless round-trip for all bit depths (1-38)
+  - [ ] Lossy encoding within specified PSNR tolerances
+  - [ ] Wavelet transform numerical precision validation
+  - [ ] Quantisation step size accuracy
+- [ ] Testing
+  - [ ] Part 4 conformance test vectors (all classes)
+  - [ ] ITU-T T.803 reference decoder comparison
+  - [ ] Round-trip tests for every encoder configuration
+  - [ ] Boundary condition tests (minimum/maximum image sizes)
+
+**Deliverables**:
+- Part 1 conformance test suite
+- Conformance report (`Documentation/Compliance/PART1_CONFORMANCE.md`)
+
+#### Week 259-260: Part 2 (Extensions) Conformance
+
+- [ ] Standard review
+  - [ ] Audit against latest ISO/IEC 15444-2
+  - [ ] Verify DC offset, arbitrary wavelets, MCT, NLT, TCQ, extended ROI
+  - [ ] Validate JPX file format compliance
+- [ ] Extension-specific conformance
+  - [ ] Multi-component transform conformance
+  - [ ] Non-linear transform conformance
+  - [ ] Trellis-coded quantisation conformance
+  - [ ] Extended ROI conformance
+  - [ ] Arbitrary wavelet conformance
+- [ ] Testing
+  - [ ] Part 2 specific test vectors
+  - [ ] Cross-validation with reference implementations
+  - [ ] Extension combination stress tests
+
+**Deliverables**:
+- Part 2 conformance test suite
+- Conformance report (`Documentation/Compliance/PART2_CONFORMANCE.md`)
+
+#### Week 261-262: Part 3 (Motion JPEG 2000) and Part 10 (JP3D) Conformance
+
+- [ ] Part 3 conformance
+  - [ ] Audit against latest ISO/IEC 15444-3
+  - [ ] Validate MJ2 file structure compliance
+  - [ ] Verify frame-level encode/decode conformance
+  - [ ] Temporal metadata accuracy
+- [ ] Part 10 conformance
+  - [ ] Audit against latest ISO/IEC 15444-10
+  - [ ] 3D wavelet transform conformance
+  - [ ] Volumetric codestream structure validation
+  - [ ] 3D tiling conformance
+- [ ] Testing
+  - [ ] Part 3 and Part 10 conformance test suites
+  - [ ] Cross-part interaction tests
+
+**Deliverables**:
+- Part 3 and Part 10 conformance test suites
+- Conformance reports
+
+#### Week 263-265: Part 15 (HTJ2K) Conformance and Integrated Validation
+
+- [ ] HTJ2K conformance
+  - [ ] Audit against latest ISO/IEC 15444-15
+  - [ ] Verify HT block decoder conformance
+  - [ ] Validate CAP/CPF marker segment handling
+  - [ ] Lossless transcoding conformance (J2K ↔ HTJ2K)
+- [ ] Integrated conformance
+  - [ ] Cross-part conformance: Part 1 + Part 2 combinations
+  - [ ] Cross-part conformance: Part 1 + Part 15 (HTJ2K in JP2)
+  - [ ] Cross-part conformance: Part 3 + Part 15 (HTJ2K in MJ2)
+  - [ ] Cross-part conformance: Part 10 + Part 15 (HTJ2K in JP3D)
+- [ ] Conformance automation
+  - [ ] Automated conformance test runner (`Scripts/run-conformance.sh`)
+  - [ ] CI/CD integration for conformance gating
+  - [ ] Conformance badge generation
+  - [ ] Regression detection for conformance failures
+- [ ] Testing
+  - [ ] Comprehensive Part 4 test suite (all parts, all classes)
+  - [ ] Conformance regression tests in CI
+  - [ ] Cross-platform conformance validation
+
+**Deliverables**:
+- HTJ2K conformance test suite
+- Integrated conformance test runner
+- `Documentation/Compliance/CONFORMANCE_MATRIX.md` — full compliance matrix
+- CI/CD conformance gating workflow
+- `.github/workflows/conformance.yml`
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17e: OpenJPEG Interoperability (Weeks 266-271)
+
+**Goal**: Comprehensive bidirectional interoperability testing with OpenJPEG, ensuring J2KSwift can read OpenJPEG output and OpenJPEG can read J2KSwift output, with performance comparison.
+
+#### Week 266-268: OpenJPEG Integration Test Infrastructure
+
+- [ ] OpenJPEG test harness
+  - [ ] Build OpenJPEG from source as test dependency (conditional)
+  - [ ] Create Swift wrapper for OpenJPEG CLI (`opj_compress`, `opj_decompress`)
+  - [ ] Implement automated encode-with-one/decode-with-other pipeline
+  - [ ] Test image corpus: synthetic + real-world (medical, satellite, photography)
+- [ ] J2KSwift → OpenJPEG direction
+  - [ ] Encode with J2KSwift, decode with OpenJPEG
+  - [ ] Validate all progression orders
+  - [ ] Validate all quality layer configurations
+  - [ ] Test lossless round-trip through OpenJPEG decoder
+  - [ ] Test lossy encoding within PSNR tolerance
+  - [ ] Validate JP2, J2K, JPX file format compatibility
+- [ ] OpenJPEG → J2KSwift direction
+  - [ ] Encode with OpenJPEG, decode with J2KSwift
+  - [ ] Validate all OpenJPEG encoder configurations
+  - [ ] Test multi-tile, multi-component images
+  - [ ] Validate ROI decoding of OpenJPEG-encoded files
+  - [ ] Test progressive decoding of OpenJPEG codestreams
+  - [ ] Validate HTJ2K interoperability (OpenJPEG 2.5+)
+- [ ] Edge cases
+  - [ ] Single-pixel images
+  - [ ] Maximum-dimension images
+  - [ ] Unusual bit depths (1, 12, 16, 24, 32)
+  - [ ] Signed vs unsigned component data
+  - [ ] Non-standard tile sizes
+  - [ ] Corrupt/truncated codestreams from each encoder
+- [ ] Testing
+  - [ ] Automated interoperability test suite (100+ test cases)
+  - [ ] CI integration with OpenJPEG availability detection
+  - [ ] Interoperability report generation
+
+**Deliverables**:
+- `Tests/InteroperabilityTests/OpenJPEGInteropTests.swift` — bidirectional tests
+- `Scripts/setup-openjpeg.sh` — OpenJPEG build/install script
+- Interoperability test image corpus
+- Interoperability report
+
+#### Week 269-271: Performance Benchmarking vs OpenJPEG
+
+- [ ] Benchmark framework
+  - [ ] Standardised benchmark suite (encode, decode, transcode)
+  - [ ] Multiple image sizes: 256², 512², 1024², 2048², 4096², 8192²
+  - [ ] Multiple configurations: lossless, lossy (various rates), HTJ2K
+  - [ ] Wall-clock time, CPU time, peak memory, throughput (MP/s)
+- [ ] Encode performance comparison
+  - [ ] J2KSwift vs OpenJPEG encode: all configurations
+  - [ ] Single-threaded comparison (apples to apples)
+  - [ ] Multi-threaded comparison
+  - [ ] GPU-accelerated vs CPU-only comparison
+- [ ] Decode performance comparison
+  - [ ] J2KSwift vs OpenJPEG decode: all configurations
+  - [ ] Progressive decode comparison
+  - [ ] ROI decode comparison
+  - [ ] HTJ2K decode comparison
+- [ ] Performance analysis
+  - [ ] Identify areas where J2KSwift trails OpenJPEG
+  - [ ] Profile and optimise bottlenecks until parity or better
+  - [ ] Document performance characteristics and trade-offs
+  - [ ] Generate performance comparison report with graphs
+- [ ] Performance targets (vs OpenJPEG)
+  - [ ] Lossless encode: ≥1.5× faster on Apple Silicon, ≥1.0× on x86-64
+  - [ ] Lossy encode: ≥2.0× faster on Apple Silicon, ≥1.2× on x86-64
+  - [ ] HTJ2K encode: ≥3.0× faster on Apple Silicon
+  - [ ] Decode (all modes): ≥1.5× faster on Apple Silicon
+  - [ ] GPU-accelerated: ≥10× faster on Apple Silicon with Metal
+- [ ] Testing
+  - [ ] Automated benchmark suite with regression detection
+  - [ ] CI performance tracking (flag regressions >5%)
+  - [ ] Cross-platform benchmark results
+
+**Deliverables**:
+- `Tests/PerformanceTests/OpenJPEGBenchmark.swift` — benchmark suite
+- `Documentation/PERFORMANCE_COMPARISON.md` — OpenJPEG comparison report
+- Performance regression CI workflow
+- Benchmark result archive
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17f: Command Line Tools (Weeks 272-277)
+
+**Goal**: Update and complete all command line tools with full functionality, comprehensive help text, usage documentation, and support for both British and American English spellings in options and parameters.
+
+#### Week 272-274: Core CLI Tool Updates
+
+- [ ] `j2k-encode` tool
+  - [ ] Support all Part 1, 2, 15 encoding options
+  - [ ] Input formats: PNG, TIFF, BMP, RAW, PGM/PPM/PNM
+  - [ ] Output formats: J2K, JP2, JPX
+  - [ ] Quality modes: lossless, target bitrate, target PSNR, visually lossless
+  - [ ] Progression order selection (all 5 orders)
+  - [ ] Tile size configuration
+  - [ ] ROI encoding with shape specification
+  - [ ] HTJ2K mode selection
+  - [ ] Multi-component transform selection
+  - [ ] GPU acceleration toggle (`--gpu`/`--no-gpu`)
+  - [ ] Verbose/quiet output modes
+  - [ ] Progress bar for large images
+- [ ] `j2k-decode` tool
+  - [ ] Support all Part 1, 2, 15 decoding options
+  - [ ] Output formats: PNG, TIFF, BMP, RAW, PGM/PPM/PNM
+  - [ ] Partial decoding: resolution level, quality layer, ROI
+  - [ ] Progressive decoding with intermediate output
+  - [ ] Component selection
+  - [ ] Colour space conversion options
+  - [ ] GPU acceleration toggle
+- [ ] `j2k-info` tool
+  - [ ] Display comprehensive codestream information
+  - [ ] Marker segment listing and details
+  - [ ] Tile and component summary
+  - [ ] Quality layer information
+  - [ ] File format (JP2/JPX/MJ2) box listing
+  - [ ] JSON output mode for scripting
+  - [ ] Validation mode (check conformance)
+- [ ] Dual-spelling support
+  - [ ] `--colour`/`--color` for colour space options
+  - [ ] `--optimise`/`--optimize` for optimisation toggles
+  - [ ] `--summarise`/`--summarize` for summary options
+  - [ ] `--analyse`/`--analyze` for analysis modes
+  - [ ] `--organisation`/`--organization` for metadata fields
+  - [ ] All dual spellings documented in help text
+- [ ] Testing
+  - [ ] CLI integration tests for all tools
+  - [ ] Help text validation tests
+  - [ ] Dual-spelling equivalence tests
+  - [ ] Error message clarity tests
+
+**Deliverables**:
+- Updated `Sources/j2k-encode/` — full encoding CLI
+- Updated `Sources/j2k-decode/` — full decoding CLI
+- Updated `Sources/j2k-info/` — codestream inspection CLI
+- CLI integration test suite
+
+#### Week 275-277: Advanced CLI Tools and Documentation
+
+- [ ] `j2k-transcode` tool
+  - [ ] J2K ↔ HTJ2K lossless transcoding
+  - [ ] JP2 ↔ JPX format conversion
+  - [ ] Quality layer manipulation (add/remove/re-order)
+  - [ ] Progression order transcoding
+  - [ ] Batch processing mode (directory of files)
+  - [ ] Pipe support (stdin/stdout)
+- [ ] `j2k-benchmark` tool
+  - [ ] Built-in performance benchmarking
+  - [ ] Compare against OpenJPEG (when available)
+  - [ ] Generate performance reports (text, JSON, CSV)
+  - [ ] Configurable test matrix (sizes, configurations)
+  - [ ] Memory profiling mode
+- [ ] `j2k-validate` tool
+  - [ ] ISO/IEC 15444-4 conformance validation
+  - [ ] Codestream syntax checking
+  - [ ] File format validation (JP2/JPX/MJ2)
+  - [ ] Detailed error/warning reporting
+  - [ ] JSON output for CI integration
+- [ ] CLI help and documentation
+  - [ ] `--help` with comprehensive usage examples for every tool
+  - [ ] `--version` with build information
+  - [ ] Man page generation (roff format)
+  - [ ] `Documentation/CLI_GUIDE.md` — complete CLI reference
+  - [ ] `Documentation/CLI_EXAMPLES.md` — cookbook with common workflows
+  - [ ] Shell completion scripts (bash, zsh, fish)
+- [ ] Testing
+  - [ ] End-to-end CLI workflow tests
+  - [ ] Batch processing tests
+  - [ ] Error handling and exit code tests
+  - [ ] Help text completeness validation
+
+**Deliverables**:
+- `Sources/j2k-transcode/` — transcoding CLI
+- `Sources/j2k-benchmark/` — benchmarking CLI
+- `Sources/j2k-validate/` — validation CLI
+- `Documentation/CLI_GUIDE.md` — CLI reference
+- `Documentation/CLI_EXAMPLES.md` — usage examples
+- Shell completion scripts
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17g: Documentation Overhaul (Weeks 278-283)
+
+**Goal**: Comprehensive documentation revision in British English with examples, sample code, and consistent terminology throughout.
+
+#### Week 278-279: API Documentation
+
+- [ ] DocC documentation overhaul
+  - [ ] Complete DocC for all public APIs (every module)
+  - [ ] Consistent British English throughout
+  - [ ] Usage examples for every major API
+  - [ ] Cross-references between related APIs
+  - [ ] Architecture overview articles
+  - [ ] Migration guide from v1.9.0 to v2.0
+- [ ] Code comment review
+  - [ ] Consistent British English in all source comments
+  - [ ] Update terminology: colour, optimise, serialise, etc.
+  - [ ] Remove outdated or misleading comments
+  - [ ] Add explanatory comments for complex algorithms
+- [ ] Testing
+  - [ ] DocC build succeeds with zero warnings
+  - [ ] All code examples compile and run
+
+**Deliverables**:
+- Complete DocC documentation for all modules
+- Updated source comments (British English)
+
+#### Week 280-281: Library Usage Documentation
+
+- [ ] Getting started guide
+  - [ ] `Documentation/GETTING_STARTED.md` — quick start (5-minute guide)
+  - [ ] Installation via SPM, CocoaPods, manual
+  - [ ] First encode/decode example
+  - [ ] Platform-specific setup notes
+- [ ] Feature guides
+  - [ ] `Documentation/ENCODING_GUIDE.md` — comprehensive encoding guide
+  - [ ] `Documentation/DECODING_GUIDE.md` — comprehensive decoding guide
+  - [ ] `Documentation/HTJ2K_GUIDE.md` — HTJ2K usage guide
+  - [ ] `Documentation/METAL_GPU_GUIDE.md` — GPU acceleration guide
+  - [ ] `Documentation/JPIP_GUIDE.md` — JPIP streaming guide
+  - [ ] `Documentation/JP3D_GUIDE.md` — volumetric imaging guide
+  - [ ] `Documentation/MJ2_GUIDE.md` — motion JPEG 2000 guide (updated)
+  - [ ] `Documentation/DICOM_INTEGRATION.md` — DICOM usage patterns (library-independent)
+- [ ] Sample code
+  - [ ] `Examples/BasicEncoding.swift` — simple encode/decode
+  - [ ] `Examples/HTJ2KTranscoding.swift` — HTJ2K workflows
+  - [ ] `Examples/ProgressiveDecoding.swift` — progressive decode
+  - [ ] `Examples/GPUAcceleration.swift` — Metal GPU usage
+  - [ ] `Examples/JPIPStreaming.swift` — JPIP client/server
+  - [ ] `Examples/VolumetricImaging.swift` — JP3D workflows
+  - [ ] `Examples/BatchProcessing.swift` — batch file processing
+  - [ ] `Examples/DICOMWorkflow.swift` — DICOM-aware workflow (independent)
+- [ ] Testing
+  - [ ] All example code compiles and runs
+  - [ ] Documentation link validation (no broken links)
+
+**Deliverables**:
+- Complete documentation suite in `Documentation/`
+- Example code in `Examples/`
+- Updated `README.md` with v2.0 features
+
+#### Week 282-283: Architecture and Contributor Documentation
+
+- [ ] Architecture documentation
+  - [ ] `Documentation/ARCHITECTURE.md` — system architecture overview
+  - [ ] Module dependency diagram
+  - [ ] Concurrency model documentation
+  - [ ] Performance architecture (SIMD, GPU, Accelerate)
+  - [ ] Platform abstraction layer documentation
+- [ ] Contributor documentation
+  - [ ] `CONTRIBUTING.md` — contribution guidelines (British English)
+  - [ ] Code style guide
+  - [ ] Testing guidelines
+  - [ ] Performance testing guidelines
+  - [ ] Architecture decision records (ADR)
+- [ ] DICOM integration notes
+  - [ ] Document DICOM-aware design decisions
+  - [ ] Transfer syntax support matrix
+  - [ ] Pixel data handling patterns
+  - [ ] Photometric interpretation support
+  - [ ] No DICOM dependencies — clean separation documented
+- [ ] Testing
+  - [ ] Documentation build and link validation
+  - [ ] British English spell check pass
+
+**Deliverables**:
+- Architecture documentation
+- Contributor guidelines
+- DICOM integration documentation
+- British English glossary/style guide
+
+**Status**: Pending.
+
+---
+
+### Sub-phase 17h: Integration Testing, Performance Validation & v2.0 Release (Weeks 284-295)
+
+**Goal**: Comprehensive integration testing, performance validation against targets, and v2.0 release preparation.
+
+#### Week 284-286: Integration Testing
+
+- [ ] End-to-end pipeline tests
+  - [ ] Encode → decode round-trip: all configurations, all parts
+  - [ ] Encode → stream (JPIP) → decode pipeline
+  - [ ] Encode → transcode (HTJ2K) → decode pipeline
+  - [ ] GPU encode → CPU decode and vice versa
+  - [ ] Cross-platform encode/decode (macOS ↔ Linux)
+- [ ] Regression testing
+  - [ ] Full v1.9.0 test suite passes without modification
+  - [ ] No public API breaking changes without documentation
+  - [ ] Performance regression tests vs v1.9.0 baseline
+  - [ ] Memory usage regression tests
+- [ ] Stress testing
+  - [ ] High-concurrency encode/decode (100+ simultaneous operations)
+  - [ ] Large image handling (16K × 16K, 32-bit, multi-component)
+  - [ ] Memory pressure testing (low-memory conditions)
+  - [ ] Sustained load testing (1000+ sequential operations)
+  - [ ] Fuzzing with malformed input data
+- [ ] Testing
+  - [ ] Integration test suite (200+ tests)
+  - [ ] Stress test suite
+  - [ ] Cross-platform CI validation
+
+**Deliverables**:
+- Integration test suite
+- Stress test suite
+- Regression test results
+
+#### Week 287-289: Performance Validation
+
+- [ ] Apple Silicon benchmarks
+  - [ ] M-series (M1, M2, M3, M4) benchmark sweep
+  - [ ] A-series (A14, A15, A16, A17) benchmark sweep
+  - [ ] Comparison: scalar vs Neon vs Accelerate vs Metal
+  - [ ] Memory bandwidth utilisation analysis
+  - [ ] Power efficiency measurements (encode/decode per watt)
+- [ ] Intel benchmarks
+  - [ ] SSE4.2 vs AVX vs AVX2 comparison
+  - [ ] Single-thread vs multi-thread scaling
+  - [ ] Cache performance analysis
+- [ ] OpenJPEG comparison
+  - [ ] Final performance comparison: all configurations
+  - [ ] Verify performance targets met (≥1.5× encode, ≥2.0× lossy, etc.)
+  - [ ] Identify and document any remaining gaps
+  - [ ] Generate final performance report with graphs
+- [ ] Optimisation pass
+  - [ ] Profile-guided optimisation of remaining bottlenecks
+  - [ ] Final memory allocation audit
+  - [ ] Cache-friendly data layout verification
+  - [ ] SIMD utilisation maximisation
+- [ ] Testing
+  - [ ] Performance benchmark CI (flag regressions)
+  - [ ] Cross-platform performance validation
+  - [ ] Performance documentation updated
+
+**Deliverables**:
+- Final performance benchmark report
+- Performance comparison vs OpenJPEG
+- Optimisation audit results
+
+#### Week 290-292: Part 4 Conformance Final Validation
+
+- [ ] Conformance certification
+  - [ ] Complete Part 4 conformance test suite execution
+  - [ ] All decoder conformance classes validated
+  - [ ] All encoder conformance classes validated
+  - [ ] Cross-part conformance validated
+  - [ ] OpenJPEG cross-validation complete
+- [ ] Conformance documentation
+  - [ ] `Documentation/Compliance/CONFORMANCE_MATRIX.md` — final compliance matrix
+  - [ ] Individual part conformance reports
+  - [ ] Known limitations and deviations documented
+  - [ ] Conformance test result archive
+- [ ] Testing
+  - [ ] Full conformance suite green
+  - [ ] CI conformance gating active
+  - [ ] Cross-platform conformance validation
+
+**Deliverables**:
+- Final conformance reports (all parts)
+- Conformance matrix
+- CI conformance workflow
+
+#### Week 293-295: v2.0 Release Preparation
+
+- [ ] Release preparation
+  - [ ] Update `VERSION` file to 2.0.0
+  - [ ] Update `J2KCore.getVersion()` to return "2.0.0"
+  - [ ] `RELEASE_NOTES_v2.0.0.md` — comprehensive feature list and changelog
+  - [ ] `RELEASE_CHECKLIST_v2.0.0.md` — release sign-off checklist
+  - [ ] `MIGRATION_GUIDE_v2.0.md` — v1.9.0 → v2.0 migration guide
+  - [ ] API stability review (document breaking changes)
+  - [ ] Semantic versioning compliance check
+- [ ] Final quality gates
+  - [ ] Full test suite pass (all modules, all platforms)
+  - [ ] Zero concurrency warnings (Swift 6.2 strict mode)
+  - [ ] SwiftLint clean (zero warnings)
+  - [ ] Part 4 conformance suite green
+  - [ ] OpenJPEG interoperability suite green
+  - [ ] Performance targets met (documented exceptions)
+  - [ ] Documentation complete and reviewed
+  - [ ] British English consistency verified
+- [ ] README and public documentation
+  - [ ] Updated `README.md` with v2.0 features, badges, and examples
+  - [ ] Updated `MILESTONES.md` with completion status
+  - [ ] Package.swift finalised for distribution
+  - [ ] Release branch created and tagged
+- [ ] Post-release
+  - [ ] GitHub release with release notes
+  - [ ] Documentation site deployment
+  - [ ] Performance comparison blog post/article
+  - [ ] Community announcement
+- [ ] Testing
+  - [ ] Final integration test pass
+  - [ ] Cross-platform CI green (macOS, Linux, Windows)
+  - [ ] Clean install test (fresh SPM resolution)
+  - [ ] Backward compatibility verification (v1.x projects)
+
+**Deliverables**:
+- `RELEASE_NOTES_v2.0.0.md` — release notes
+- `RELEASE_CHECKLIST_v2.0.0.md` — release checklist
+- `MIGRATION_GUIDE_v2.0.md` — migration guide
+- Updated `VERSION` file (2.0.0)
+- Updated `README.md`
+- Tagged release
+
+**Status**: Pending.
+
+---
+
+#### Phase 17 Summary
+
+**Expected Benefits**:
+- Hardware-accelerated, 100% Swift-native JPEG 2000 reference implementation
+- Better-than-OpenJPEG performance on Apple Silicon (≥1.5-3× faster)
+- Full ISO/IEC 15444-4 conformance across Parts 1, 2, 3, 10, and 15
+- Bidirectional OpenJPEG interoperability (verified)
+- Swift 6.2 strict concurrency throughout (zero data races)
+- Comprehensive GPU acceleration (Metal on Apple, Vulkan on Linux/Windows)
+- ARM Neon and Intel SSE/AVX SIMD optimisation (cleanly separable)
+- Production-quality documentation in British English
+- Complete CLI toolset with dual-spelling support
+- DICOM-aware but DICOM-independent design
+
+**Architecture Principles**:
+- **Apple-First**: ARM Neon, Accelerate, Metal for maximum Apple Silicon performance
+- **Intel-Ready**: SSE/AVX cleanly isolated for x86-64 support (removable)
+- **GPU Everywhere**: Metal (Apple) and Vulkan (Linux/Windows) compute
+- **ISO Compliant**: Full Part 4 conformance, latest standard versions
+- **Speed Demon**: Profile-guided optimisation, SIMD, GPU, cache-aware algorithms
+- **Swift 6.2**: Strict concurrency, actors, structured concurrency throughout
+- **DICOM-Aware**: Understands DICOM transfer syntaxes but has no DICOM dependency
+- **British English**: Consistent terminology in code, docs, and help text
+- **Dual Spelling**: CLI options accept both British and American spellings
+- **Cleanly Separable**: Architecture-specific code in isolated directories/modules
+
+**Performance Targets (vs OpenJPEG)**:
+- Lossless encode (Apple Silicon): ≥1.5× faster
+- Lossy encode (Apple Silicon): ≥2.0× faster
+- HTJ2K encode (Apple Silicon): ≥3.0× faster
+- Decode — all modes (Apple Silicon): ≥1.5× faster
+- GPU-accelerated (Apple Silicon + Metal): ≥10× faster
+- Lossless encode (Intel x86-64): ≥1.0× (parity or better)
+- Lossy encode (Intel x86-64): ≥1.2× faster
+
+**Test Coverage Goals**:
+- Concurrency stress tests: 50+
+- ARM Neon SIMD tests: 40+
+- Intel SSE/AVX tests: 40+
+- Metal GPU tests: 40+
+- Vulkan GPU tests: 30+
+- Part 4 conformance tests: 200+
+- OpenJPEG interoperability tests: 100+
+- CLI integration tests: 80+
+- Documentation/example tests: 30+
+- Integration and stress tests: 200+
+- Total new/updated tests: 800+
+
+---
+
+**Last Updated**: 2026-02-20 (v2.0 plan added)
+**Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (planning)
 **Current Version**: 1.9.0
-**Completed Phases**: Phases 0-15 (Weeks 1-210), Week 211-213 (JP3D Core Types), Week 214-217 (3D Wavelet Transforms), Week 218-221 (JP3D Encoder), Week 222-225 (JP3D Decoder), Week 226-228 (HTJ2K Integration for JP3D), Week 229-232 (JPIP Extension for JP3D Streaming), Week 233-234 (Compliance Testing and Part 4 Validation), Week 235 (Documentation, Integration, and v1.9.0 Release)
-**Next Phase**: Phase 16 complete. All phases (0-16) finished.
-**Achievement**: Complete JPEG 2000 Part 1, 2, 3 & 10 (JP3D) implementation with world-class Apple Silicon performance
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0)
+**Next Phase**: Phase 17, Sub-phase 17a — Swift 6.2 Strict Concurrency Refactoring (Week 236)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; v2.0 roadmap defined targeting hardware-accelerated reference implementation with OpenJPEG-beating performance
