@@ -1,10 +1,13 @@
+//
+// J2KMetalDWTTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KMetal
 @testable import J2KCore
 
 /// Tests for Metal-accelerated discrete wavelet transforms.
 final class J2KMetalDWTTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal DWT availability can be queried.

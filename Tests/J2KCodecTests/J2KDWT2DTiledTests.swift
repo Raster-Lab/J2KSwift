@@ -1,3 +1,7 @@
+//
+// J2KDWT2DTiledTests.swift
+// J2KSwift
+//
 // J2KDWT2DTiledTests.swift
 // J2KSwift Tests
 //

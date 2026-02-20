@@ -1,3 +1,7 @@
+//
+// Benchmark.swift
+// J2KSwift
+//
 /// Benchmark command implementation
 
 import Foundation
@@ -84,9 +88,9 @@ extension J2KCLI {
             let avgTime = totalEncodeTime / Double(runs)
             let minTime = encodeTimes.first!
             let maxTime = encodeTimes.last!
-            let medianTime = runs % 2 == 0
-                ? (encodeTimes[runs/2 - 1] + encodeTimes[runs/2]) / 2
-                : encodeTimes[runs/2]
+            let medianTime = runs.isMultiple(of: 2)
+                ? (encodeTimes[runs / 2 - 1] + encodeTimes[runs / 2]) / 2
+                : encodeTimes[runs / 2]
 
             let megapixels = Double(image.width * image.height) / 1_000_000
             let throughput = megapixels / avgTime
@@ -142,9 +146,9 @@ extension J2KCLI {
             let avgTime = totalDecodeTime / Double(runs)
             let minTime = decodeTimes.first!
             let maxTime = decodeTimes.last!
-            let medianTime = runs % 2 == 0
-                ? (decodeTimes[runs/2 - 1] + decodeTimes[runs/2]) / 2
-                : decodeTimes[runs/2]
+            let medianTime = runs.isMultiple(of: 2)
+                ? (decodeTimes[runs / 2 - 1] + decodeTimes[runs / 2]) / 2
+                : decodeTimes[runs / 2]
 
             let megapixels = Double(image.width * image.height) / 1_000_000
             let throughput = megapixels / avgTime

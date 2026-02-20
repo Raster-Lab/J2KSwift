@@ -1,3 +1,7 @@
+//
+// J2KStressTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCore
 @testable import J2KCodec
@@ -179,7 +183,7 @@ final class J2KStressTests: XCTestCase {
         for i in 0..<size {
             // Make sure even indices get positive values (add 1 to avoid zero at index 0)
             // and odd indices get negative values
-            coefficients[i] = i % 2 == 0 ? Int32(i + 1) : -Int32(i + 1)
+            coefficients[i] = i.isMultiple(of: 2) ? Int32(i + 1) : -Int32(i + 1)
         }
 
         // Verify pattern: index 0 -> 1 (positive), index 1 -> -2 (negative), index 2 -> 3 (positive)
@@ -279,7 +283,7 @@ final class J2KStressTests: XCTestCase {
             let image = J2KImage(width: size, height: size, components: 3, bitDepth: 8)
 
             // Verify occasionally
-            if i % 100 == 0 {
+            if i.isMultiple(of: 100) {
                 XCTAssertEqual(image.width, size)
             }
         }

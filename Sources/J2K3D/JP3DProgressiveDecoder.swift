@@ -1,3 +1,7 @@
+//
+// JP3DProgressiveDecoder.swift
+// J2KSwift
+//
 /// # JP3DProgressiveDecoder
 ///
 /// Progressive decoding support for JP3D volumetric JPEG 2000.
@@ -79,7 +83,6 @@ public struct JP3DProgressiveResult: Sendable {
 /// Call `cancel()` at any time to stop progressive decoding. The most recently
 /// delivered partial result is the last complete progressive state.
 public actor JP3DProgressiveDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration

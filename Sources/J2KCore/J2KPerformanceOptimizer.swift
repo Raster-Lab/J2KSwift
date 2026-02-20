@@ -1,3 +1,7 @@
+//
+// J2KPerformanceOptimizer.swift
+// J2KSwift
+//
 /// # J2KPerformanceOptimizer
 ///
 /// Comprehensive performance optimization coordinator for J2KSwift.
@@ -41,43 +45,43 @@ public actor J2KPerformanceOptimizer {
     public enum OptimizationMode: Sendable {
         /// Balanced performance and power consumption (default).
         case balanced
-        
+
         /// Maximum performance regardless of power consumption.
         case highPerformance
-        
+
         /// Minimize power consumption while maintaining acceptable performance.
         case lowPower
-        
+
         /// Optimize for thermal constraints (mobile devices).
         case thermalConstrained
-        
+
         /// Custom optimization parameters.
         case custom(OptimizationParameters)
     }
-    
+
     /// Optimization parameters for fine-tuning performance.
     public struct OptimizationParameters: Sendable {
         /// Maximum CPU threads to use (0 = automatic).
         public var maxCPUThreads: Int
-        
+
         /// Preferred Metal GPU family (nil = automatic).
         public var preferredGPUFamily: Int?
-        
+
         /// Enable aggressive batch processing.
         public var enableBatching: Bool
-        
+
         /// Enable CPU/GPU work overlap.
         public var enableOverlap: Bool
-        
+
         /// Maximum memory usage in bytes (0 = unlimited).
         public var maxMemoryUsage: Int
-        
+
         /// Minimum batch size for GPU operations.
         public var minGPUBatchSize: Int
-        
+
         /// Enable cache optimization hints.
         public var enableCacheOptimization: Bool
-        
+
         /// Creates default optimization parameters.
         public init(
             maxCPUThreads: Int = 0,
@@ -96,7 +100,7 @@ public actor J2KPerformanceOptimizer {
             self.minGPUBatchSize = minGPUBatchSize
             self.enableCacheOptimization = enableCacheOptimization
         }
-        
+
         /// High-performance preset.
         public static var highPerformance: OptimizationParameters {
             OptimizationParameters(
@@ -108,7 +112,7 @@ public actor J2KPerformanceOptimizer {
                 enableCacheOptimization: true
             )
         }
-        
+
         /// Low-power preset.
         public static var lowPower: OptimizationParameters {
             OptimizationParameters(
@@ -120,7 +124,7 @@ public actor J2KPerformanceOptimizer {
                 enableCacheOptimization: true
             )
         }
-        
+
         /// Balanced preset.
         public static var balanced: OptimizationParameters {
             OptimizationParameters(
@@ -133,48 +137,48 @@ public actor J2KPerformanceOptimizer {
             )
         }
     }
-    
+
     /// Performance profile result.
     public struct PerformanceProfile: Sendable {
         /// Total execution time in seconds.
         public let totalTime: TimeInterval
-        
+
         /// CPU time in seconds.
         public let cpuTime: TimeInterval
-        
+
         /// GPU time in seconds (0 if no GPU work).
         public let gpuTime: TimeInterval
-        
+
         /// Memory allocated in bytes.
         public let memoryAllocated: Int
-        
+
         /// Peak memory usage in bytes.
         public let peakMemoryUsage: Int
-        
+
         /// Number of synchronization points.
         public let syncPoints: Int
-        
+
         /// Data processed in bytes.
         public let dataProcessed: Int
-        
+
         /// Throughput in MB/s.
         public var throughputMBps: Double {
             guard totalTime > 0 else { return 0 }
             return Double(dataProcessed) / (1024 * 1024) / totalTime
         }
-        
+
         /// CPU utilization percentage (0-100).
         public var cpuUtilization: Double {
             guard totalTime > 0 else { return 0 }
             return min(100, (cpuTime / totalTime) * 100)
         }
-        
+
         /// GPU utilization percentage (0-100).
         public var gpuUtilization: Double {
             guard totalTime > 0 else { return 0 }
             return min(100, (gpuTime / totalTime) * 100)
         }
-        
+
         /// Pipeline efficiency (percentage of time doing useful work).
         public var pipelineEfficiency: Double {
             guard totalTime > 0 else { return 0 }
@@ -182,32 +186,32 @@ public actor J2KPerformanceOptimizer {
             return min(100, (activeTime / totalTime) * 100)
         }
     }
-    
+
     // MARK: - State
-    
+
     /// Current optimization mode.
     private var mode: OptimizationMode = .balanced
-    
+
     /// Current optimization parameters.
     private var parameters: OptimizationParameters = .balanced
-    
+
     /// Metal device (if available).
     #if canImport(Metal)
     private var metalDevice: MTLDevice?
     #endif
-    
+
     /// Pipeline profiler.
     private var profiler: J2KPipelineProfiler
-    
+
     // MARK: - Initialization
-    
+
     /// Creates a new performance optimizer.
     ///
     /// - Parameter mode: Initial optimization mode (default: .balanced).
     public init(mode: OptimizationMode = .balanced) {
         self.mode = mode
         self.profiler = J2KPipelineProfiler()
-        
+
         switch mode {
         case .balanced:
             self.parameters = .balanced
@@ -220,14 +224,14 @@ public actor J2KPerformanceOptimizer {
         case .custom(let params):
             self.parameters = params
         }
-        
+
         #if canImport(Metal)
         self.metalDevice = MTLCreateSystemDefaultDevice()
         #endif
     }
-    
+
     // MARK: - Configuration
-    
+
     /// Configures the optimizer for high-performance operation.
     ///
     /// This sets up optimal parameters for maximum throughput,
@@ -237,7 +241,7 @@ public actor J2KPerformanceOptimizer {
         mode = .highPerformance
         parameters = .highPerformance
     }
-    
+
     /// Configures the optimizer for low-power operation.
     ///
     /// This sets up parameters to minimize power consumption,
@@ -247,7 +251,7 @@ public actor J2KPerformanceOptimizer {
         mode = .lowPower
         parameters = .lowPower
     }
-    
+
     /// Configures the optimizer with custom parameters.
     ///
     /// - Parameter parameters: Custom optimization parameters.
@@ -255,14 +259,14 @@ public actor J2KPerformanceOptimizer {
         self.mode = .custom(parameters)
         self.parameters = parameters
     }
-    
+
     /// Returns the current optimization parameters.
     public func currentParameters() -> OptimizationParameters {
         parameters
     }
-    
+
     // MARK: - Pipeline Optimization
-    
+
     /// Optimizes an encoding pipeline operation.
     ///
     /// This method profiles and optimizes the execution of an encoding
@@ -280,33 +284,33 @@ public actor J2KPerformanceOptimizer {
         var memoryAllocated = 0
         var peakMemory = 0
         var syncPoints = 0
-        
+
         // Reset profiler for clean measurements
         profiler.reset()
-        
+
         // Execute operation with timing
         let cpuStart = Date()
         let result = try operation()
         cpuTime = Date().timeIntervalSince(cpuStart)
-        
+
         // Get profiler metrics
         let report = profiler.generateReport()
-        
+
         // Calculate metrics
         let totalTime = Date().timeIntervalSince(startTime)
-        
+
         // Extract GPU time from profiler if available
         gpuTime = report.metrics
             .filter { $0.label == "GPU" }
             .reduce(0) { $0 + $1.elapsedTime }
-        
+
         // Estimate memory usage
         memoryAllocated = report.totalMemory
         peakMemory = report.totalMemory
-        
+
         // Count synchronization points (approximation)
         syncPoints = report.metrics.count
-        
+
         let profile = PerformanceProfile(
             totalTime: totalTime,
             cpuTime: cpuTime,
@@ -316,10 +320,10 @@ public actor J2KPerformanceOptimizer {
             syncPoints: syncPoints,
             dataProcessed: 0 // Would need to be passed in
         )
-        
+
         return (result, profile)
     }
-    
+
     /// Optimizes a decoding pipeline operation.
     ///
     /// This method profiles and optimizes the execution of a decoding
@@ -337,33 +341,33 @@ public actor J2KPerformanceOptimizer {
         var memoryAllocated = 0
         var peakMemory = 0
         var syncPoints = 0
-        
+
         // Reset profiler for clean measurements
         profiler.reset()
-        
+
         // Execute operation with timing
         let cpuStart = Date()
         let result = try operation()
         cpuTime = Date().timeIntervalSince(cpuStart)
-        
+
         // Get profiler metrics
         let report = profiler.generateReport()
-        
+
         // Calculate metrics
         let totalTime = Date().timeIntervalSince(startTime)
-        
+
         // Extract GPU time from profiler if available
         gpuTime = report.metrics
             .filter { $0.label == "GPU" }
             .reduce(0) { $0 + $1.elapsedTime }
-        
+
         // Estimate memory usage
         memoryAllocated = report.totalMemory
         peakMemory = report.totalMemory
-        
+
         // Count synchronization points
         syncPoints = report.metrics.count
-        
+
         let profile = PerformanceProfile(
             totalTime: totalTime,
             cpuTime: cpuTime,
@@ -373,12 +377,12 @@ public actor J2KPerformanceOptimizer {
             syncPoints: syncPoints,
             dataProcessed: 0
         )
-        
+
         return (result, profile)
     }
-    
+
     // MARK: - Optimization Strategies
-    
+
     /// Determines if GPU acceleration should be used for the given workload.
     ///
     /// - Parameters:
@@ -388,10 +392,10 @@ public actor J2KPerformanceOptimizer {
     public func shouldUseGPU(dataSize: Int, operationType: String) -> Bool {
         #if canImport(Metal)
         guard metalDevice != nil else { return false }
-        
+
         // GPU is beneficial for large datasets
         let minSizeForGPU = 1024 * 1024 // 1 MB
-        
+
         switch mode {
         case .highPerformance:
             return dataSize >= minSizeForGPU / 2
@@ -406,7 +410,7 @@ public actor J2KPerformanceOptimizer {
         return false
         #endif
     }
-    
+
     /// Determines optimal batch size for the given operation.
     ///
     /// - Parameters:
@@ -415,24 +419,24 @@ public actor J2KPerformanceOptimizer {
     /// - Returns: Optimal batch size.
     public func optimalBatchSize(itemCount: Int, itemSize: Int) -> Int {
         guard parameters.enableBatching else { return 1 }
-        
+
         let targetBatchMemory = 16 * 1024 * 1024 // 16 MB per batch
-        
+
         let batchSize = max(1, targetBatchMemory / max(1, itemSize))
         return min(itemCount, batchSize)
     }
-    
+
     /// Determines optimal CPU thread count for the given operation.
     ///
     /// - Parameter operationType: Type of operation.
     /// - Returns: Optimal number of CPU threads.
     public func optimalThreadCount(operationType: String) -> Int {
         let systemCores = ProcessInfo.processInfo.activeProcessorCount
-        
+
         if parameters.maxCPUThreads > 0 {
             return min(systemCores, parameters.maxCPUThreads)
         }
-        
+
         switch mode {
         case .highPerformance:
             return systemCores
@@ -444,9 +448,9 @@ public actor J2KPerformanceOptimizer {
             return systemCores
         }
     }
-    
+
     // MARK: - Resource Management
-    
+
     /// Checks if there's sufficient memory for the given operation.
     ///
     /// - Parameter requiredMemory: Required memory in bytes.
@@ -455,7 +459,7 @@ public actor J2KPerformanceOptimizer {
         guard parameters.maxMemoryUsage > 0 else { return true }
         return requiredMemory <= parameters.maxMemoryUsage
     }
-    
+
     /// Returns recommended memory allocation strategy.
     ///
     /// - Parameter dataSize: Size of data to process.

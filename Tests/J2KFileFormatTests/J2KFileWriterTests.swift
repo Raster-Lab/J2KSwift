@@ -1,3 +1,7 @@
+//
+// J2KFileWriterTests.swift
+// J2KSwift
+//
 // J2KFileWriterTests.swift
 // J2KSwift
 //

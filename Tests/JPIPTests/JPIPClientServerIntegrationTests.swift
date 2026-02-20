@@ -1,3 +1,7 @@
+//
+// JPIPClientServerIntegrationTests.swift
+// J2KSwift
+//
 /// # JPIPClientServerIntegrationTests
 ///
 /// Integration tests for JPIP client-server communication.
@@ -19,7 +23,7 @@ final class JPIPClientServerIntegrationTests: XCTestCase {
         }
 
         func sendRequest(_ request: JPIPRequest) async throws -> JPIPResponse {
-            return try await server.handleRequest(request)
+            try await server.handleRequest(request)
         }
     }
 

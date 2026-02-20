@@ -1,3 +1,7 @@
+//
+// J2KEntropyTestVectors.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -85,7 +89,7 @@ final class J2KEntropyTestVectorTests: XCTestCase {
         var pattern: [Bool] = []
         for _ in 0..<50 {
             seed = seed &* 1103515245 &+ 12345 // Linear congruential generator
-            pattern.append((seed / 65536) % 2 == 0)
+            pattern.append((seed / 65536).isMultiple(of: 2))
         }
 
         for symbol in pattern {
@@ -220,7 +224,7 @@ final class J2KEntropyTestVectorTests: XCTestCase {
         var seed: UInt32 = 54321
         for _ in 0..<10_000 {
             seed = seed &* 1103515245 &+ 12345
-            let symbol = (seed / 65536) % 2 == 0
+            let symbol = (seed / 65536).isMultiple(of: 2)
             encoder.encode(symbol: symbol, context: &context)
         }
 
@@ -329,7 +333,7 @@ final class J2KEntropyTestVectorTests: XCTestCase {
         let testCases = [
             TestCase("All zeros", [Bool](repeating: false, count: 1000), maxSize: 20),
             TestCase("All ones", [Bool](repeating: true, count: 1000), maxSize: 20),
-            TestCase("Alternating", (0..<1000).map { $0 % 2 == 0 }, maxSize: 200)
+            TestCase("Alternating", (0..<1000).map { $0.isMultiple(of: 2) }, maxSize: 200)
         ]
 
         for testCase in testCases {

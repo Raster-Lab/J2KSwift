@@ -1,3 +1,7 @@
+//
+// JP3DHTJ2KTests.swift
+// J2KSwift
+//
 /// Tests for JP3D HTJ2K Integration (Week 226-228).
 ///
 /// Validates HTJ2K configuration, per-tile encoding/decoding, CAP/CPF marker
@@ -9,7 +13,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DHTJ2KTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Creates a test volume with simple gradient data.

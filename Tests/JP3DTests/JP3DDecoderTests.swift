@@ -1,3 +1,7 @@
+//
+// JP3DDecoderTests.swift
+// J2KSwift
+//
 /// Tests for JP3D Decoder (Week 222-225).
 ///
 /// Validates the complete JP3D decoding pipeline including codestream parsing,
@@ -27,7 +31,6 @@ private final class SendableStorage<T: Sendable>: @unchecked Sendable {
 // MARK: - Test Class
 
 final class JP3DDecoderTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Creates a test volume with deterministic gradient data.
@@ -399,7 +402,7 @@ final class JP3DDecoderTests: XCTestCase {
 
         XCTAssertFalse(result.isPartial)
         // Spot-check corners from different tiles
-        for (x, y, z) in [(0,0,0), (15,0,0), (0,15,0), (0,0,7), (15,15,7)] {
+        for (x, y, z) in [(0, 0, 0), (15, 0, 0), (0, 15, 0), (0, 0, 7), (15, 15, 7)] {
             XCTAssertEqual(
                 voxelValue(in: volume, x: x, y: y, z: z, comp: 0),
                 voxelValue(in: result.volume, x: x, y: y, z: z, comp: 0),
@@ -609,7 +612,7 @@ final class JP3DDecoderTests: XCTestCase {
         let progressDecoder = JP3DProgressiveDecoder()
         let stepCount = SendableStorage(0)
 
-        try await progressDecoder.decode(data, mode: .resolution) { result in
+        try await progressDecoder.decode(data, mode: .resolution) { _ in
             stepCount.set(stepCount.value + 1)
             return false // cancel after first step
         }
@@ -682,7 +685,7 @@ final class JP3DDecoderTests: XCTestCase {
 
         let progressDecoder = JP3DProgressiveDecoder()
         // First decode, cancel early
-        try await progressDecoder.decode(data, mode: .resolution) { _ in return false }
+        try await progressDecoder.decode(data, mode: .resolution) { _ in false }
         // Reset and decode again
         await progressDecoder.reset()
         let stepCount = SendableStorage(0)

@@ -1,3 +1,7 @@
+//
+// J2KReferenceBenchmark.swift
+// J2KSwift
+//
 import Foundation
 
 /// A framework for benchmarking J2KSwift components against reference implementations.
@@ -154,7 +158,9 @@ public struct J2KReferenceBenchmark: Sendable {
     ///
     /// - Parameter operation: The async operation to measure.
     /// - Returns: A result containing timing statistics.
-    public func measureJ2KSwiftAsync(operation: @escaping @Sendable () async -> Void) async -> ReferenceBenchmarkResult {
+    public func measureJ2KSwiftAsync(
+        operation: @escaping @Sendable () async -> Void
+    ) async -> ReferenceBenchmarkResult {
         let benchmark = J2KBenchmark(name: "\(component.rawValue) - \(testCase.rawValue)")
         let result = await benchmark.measureAsync(
             iterations: iterations,
@@ -355,6 +361,8 @@ public struct ReferenceBenchmarkSuite: Sendable {
 
 // MARK: - Helper
 
-private func * (lhs: String, rhs: Int) -> String {
-    String(repeating: lhs, count: rhs)
+private extension String {
+    static func * (lhs: String, rhs: Int) -> String {
+        String(repeating: lhs, count: rhs)
+    }
 }

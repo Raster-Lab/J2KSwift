@@ -1,3 +1,7 @@
+//
+// J2KColorTransformBenchmarkTests.swift
+// J2KSwift
+//
 // J2KColorTransformBenchmarkTests.swift
 // J2KSwift
 //
@@ -733,9 +737,9 @@ final class J2KColorTransformBenchmarkTests: XCTestCase {
         var blue = [Double](repeating: 0, count: size)
 
         for i in 0..<size {
-            red[i] = Double((i % 2 == 0) ? 4095 : -4095)
-            green[i] = Double((i % 3 == 0) ? 4095 : -4095)
-            blue[i] = Double((i % 5 == 0) ? 4095 : -4095)
+            red[i] = Double((i.isMultiple(of: 2)) ? 4095 : -4095)
+            green[i] = Double((i.isMultiple(of: 3)) ? 4095 : -4095)
+            blue[i] = Double((i.isMultiple(of: 5)) ? 4095 : -4095)
         }
 
         measure {

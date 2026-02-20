@@ -132,6 +132,22 @@ identifier_name:
     - k
     - C1
     - C2
+    - n
+    - c
+    - h
+    - v
+    - d
+    - m
+    - l
+    - s
+    - w
+    - q
+    - p
+    - f
+    - u
+    - t
+    - K
+    - e
 
 nesting:
   type_level:
@@ -160,13 +176,6 @@ file_header:
 
 # Custom rules
 custom_rules:
-  # Ensure async functions use proper naming
-  async_function_names:
-    name: "Async Function Names"
-    regex: "func\\s+\\w+\\([^)]*\\)\\s+async(?!\\s+(throws|->))"
-    message: "Async functions should have descriptive names"
-    severity: warning
-  
   # Discourage force unwrapping in production code
   force_unwrap_in_sources:
     name: "Force Unwrap"

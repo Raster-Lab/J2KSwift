@@ -1,3 +1,7 @@
+//
+// JPIPServerComponentTests.swift
+// J2KSwift
+//
 /// # JPIPServerComponentTests
 ///
 /// Tests for JPIP server components (session, queue, throttle).

@@ -1,3 +1,7 @@
+//
+// J2KBitWriter.swift
+// J2KSwift
+//
 /// # J2KBitWriter
 ///
 /// Bitstream writing utilities for JPEG 2000 codestream generation.

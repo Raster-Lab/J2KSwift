@@ -1,3 +1,7 @@
+//
+// J2KArbitraryWavelet.swift
+// J2KSwift
+//
 // J2KArbitraryWavelet.swift
 // J2KSwift
 //
@@ -248,7 +252,7 @@ public struct J2KADSMarker: Sendable, Equatable {
 
         // Read nodes (remaining bytes in the segment, 2 bytes per node)
         let remainingBytes = segmentLength - 2 - 3 // subtract length field size and header fields
-        guard remainingBytes >= 0 && remainingBytes % 2 == 0 else {
+        guard remainingBytes >= 0 && remainingBytes.isMultiple(of: 2) else {
             throw J2KError.invalidData("Invalid ADS node data length: \(remainingBytes)")
         }
         let nodeCount = remainingBytes / 2

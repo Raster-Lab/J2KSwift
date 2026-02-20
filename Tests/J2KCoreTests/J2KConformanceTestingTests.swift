@@ -1,3 +1,7 @@
+//
+// J2KConformanceTestingTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCore
 

@@ -1,3 +1,7 @@
+//
+// JP3DProgressiveDelivery.swift
+// J2KSwift
+//
 /// # JP3DProgressiveDelivery
 ///
 /// Bandwidth-aware progressive delivery actor for JP3D volumetric data.
@@ -94,7 +98,6 @@ public struct JP3DProgressiveUpdate: Sendable {
 /// }
 /// ```
 public actor JP3DProgressiveDelivery {
-
     // MARK: - Configuration
 
     /// Maximum bandwidth to use for delivery, in bytes per second.
@@ -112,7 +115,7 @@ public actor JP3DProgressiveDelivery {
     private var deliveredBytes: Int = 0
     private var deliveredBins: Int = 0
     private var startTime: Date?
-    private var qualityCap: Int = Int.max
+    private var qualityCap = Int.max
 
     // MARK: - Initialiser
 

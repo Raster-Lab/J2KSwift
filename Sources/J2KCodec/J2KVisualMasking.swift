@@ -1,3 +1,7 @@
+//
+// J2KVisualMasking.swift
+// J2KSwift
+//
 // J2KVisualMasking.swift
 // J2KSwift
 //
@@ -7,35 +11,35 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Visual Masking
-///
-/// Implementation of advanced visual masking models for perceptual JPEG 2000 encoding.
-///
-/// Visual masking describes how the visibility of distortions depends on local image
-/// characteristics. This module implements luminance-dependent masking, texture-based
-/// masking, and motion-adaptive masking to improve perceptual compression quality.
-///
-/// ## Masking Models
-///
-/// - **Luminance Masking**: Distortions are less visible in very dark or very bright regions
-/// - **Texture Masking**: Distortions are less visible in high-detail/textured regions
-/// - **Motion Masking**: Distortions are less visible in motion areas (for video)
-///
-/// ## Usage
-///
-/// ```swift
-/// let masking = J2KVisualMasking()
-///
-/// // Calculate masking factor for a region
-/// let factor = masking.calculateMaskingFactor(
-///     luminance: 128.0,
-///     localVariance: 100.0,
-///     motionVector: nil
-/// )
-///
-/// // Apply to quantization step size
-/// let maskedStepSize = baseStepSize * factor
-/// ```
+// # JPEG 2000 Visual Masking
+//
+// Implementation of advanced visual masking models for perceptual JPEG 2000 encoding.
+//
+// Visual masking describes how the visibility of distortions depends on local image
+// characteristics. This module implements luminance-dependent masking, texture-based
+// masking, and motion-adaptive masking to improve perceptual compression quality.
+//
+// ## Masking Models
+//
+// - **Luminance Masking**: Distortions are less visible in very dark or very bright regions
+// - **Texture Masking**: Distortions are less visible in high-detail/textured regions
+// - **Motion Masking**: Distortions are less visible in motion areas (for video)
+//
+// ## Usage
+//
+// ```swift
+// let masking = J2KVisualMasking()
+//
+// // Calculate masking factor for a region
+// let factor = masking.calculateMaskingFactor(
+//     luminance: 128.0,
+//     localVariance: 100.0,
+//     motionVector: nil
+// )
+//
+// // Apply to quantization step size
+// let maskedStepSize = baseStepSize * factor
+// ```
 
 // MARK: - Visual Masking Configuration
 
@@ -43,28 +47,28 @@ import J2KCore
 public struct J2KVisualMaskingConfiguration: Sendable, Equatable {
     /// Enable luminance-dependent masking.
     public let enableLuminanceMasking: Bool
-    
+
     /// Enable texture-based masking.
     public let enableTextureMasking: Bool
-    
+
     /// Enable motion-adaptive masking (for video).
     public let enableMotionMasking: Bool
-    
+
     /// Luminance masking strength (0.0 = none, 1.0 = full).
     public let luminanceStrength: Double
-    
+
     /// Texture masking strength (0.0 = none, 1.0 = full).
     public let textureStrength: Double
-    
+
     /// Motion masking strength (0.0 = none, 1.0 = full).
     public let motionStrength: Double
-    
+
     /// Minimum masking factor to apply (prevents over-quantization).
     public let minimumFactor: Double
-    
+
     /// Maximum masking factor to apply (prevents under-quantization).
     public let maximumFactor: Double
-    
+
     /// Creates a new visual masking configuration.
     ///
     /// - Parameters:
@@ -95,10 +99,10 @@ public struct J2KVisualMaskingConfiguration: Sendable, Equatable {
         self.minimumFactor = minimumFactor
         self.maximumFactor = maximumFactor
     }
-    
+
     /// Default configuration with balanced settings.
     public static let `default` = J2KVisualMaskingConfiguration()
-    
+
     /// Aggressive masking for high compression.
     public static let aggressive = J2KVisualMaskingConfiguration(
         luminanceStrength: 0.8,
@@ -106,7 +110,7 @@ public struct J2KVisualMaskingConfiguration: Sendable, Equatable {
         minimumFactor: 0.3,
         maximumFactor: 4.0
     )
-    
+
     /// Conservative masking for high quality.
     public static let conservative = J2KVisualMaskingConfiguration(
         luminanceStrength: 0.3,
@@ -122,10 +126,10 @@ public struct J2KVisualMaskingConfiguration: Sendable, Equatable {
 public struct J2KMotionVector: Sendable, Equatable {
     /// Horizontal component of motion in pixels.
     public let dx: Double
-    
+
     /// Vertical component of motion in pixels.
     public let dy: Double
-    
+
     /// Creates a new motion vector.
     ///
     /// - Parameters:
@@ -135,12 +139,12 @@ public struct J2KMotionVector: Sendable, Equatable {
         self.dx = dx
         self.dy = dy
     }
-    
+
     /// Magnitude of the motion vector.
     public var magnitude: Double {
         sqrt(dx * dx + dy * dy)
     }
-    
+
     /// Zero motion vector.
     public static let zero = J2KMotionVector(dx: 0, dy: 0)
 }
@@ -151,16 +155,16 @@ public struct J2KMotionVector: Sendable, Equatable {
 public struct J2KVisualMasking: Sendable {
     /// Configuration parameters.
     public let configuration: J2KVisualMaskingConfiguration
-    
+
     /// Creates a new visual masking instance.
     ///
     /// - Parameter configuration: The masking configuration parameters.
     public init(configuration: J2KVisualMaskingConfiguration = .default) {
         self.configuration = configuration
     }
-    
+
     // MARK: - Main Masking Methods
-    
+
     /// Calculates the overall masking factor for a region.
     ///
     /// Combines luminance, texture, and motion masking to produce a single
@@ -180,32 +184,32 @@ public struct J2KVisualMasking: Sendable {
         motionVector: J2KMotionVector? = nil
     ) -> Double {
         var maskingFactor = 1.0
-        
+
         // Apply luminance masking
         if configuration.enableLuminanceMasking {
             let lumFactor = luminanceMaskingFactor(luminance: luminance)
             maskingFactor *= (1.0 + configuration.luminanceStrength * (lumFactor - 1.0))
         }
-        
+
         // Apply texture masking
         if configuration.enableTextureMasking {
             let texFactor = textureMaskingFactor(variance: localVariance)
             maskingFactor *= (1.0 + configuration.textureStrength * (texFactor - 1.0))
         }
-        
+
         // Apply motion masking
         if configuration.enableMotionMasking, let motion = motionVector {
             let motFactor = motionMaskingFactor(motionVector: motion)
             maskingFactor *= (1.0 + configuration.motionStrength * (motFactor - 1.0))
         }
-        
+
         // Clamp to configured bounds
         return min(
             configuration.maximumFactor,
             max(configuration.minimumFactor, maskingFactor)
         )
     }
-    
+
     /// Calculates masking factors for an image region.
     ///
     /// Analyzes an image region to compute masking factors for each position.
@@ -227,17 +231,17 @@ public struct J2KVisualMasking: Sendable {
         guard samples.count == width * height else {
             return Array(repeating: 1.0, count: width * height)
         }
-        
+
         var maskingFactors = [Double](repeating: 1.0, count: width * height)
-        
+
         // Window size for local statistics
         let windowSize = 8
         let halfWindow = windowSize / 2
-        
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 // Calculate local statistics
                 let (meanLum, variance) = localStatistics(
                     samples: samples,
@@ -247,7 +251,7 @@ public struct J2KVisualMasking: Sendable {
                     y: y,
                     windowSize: windowSize
                 )
-                
+
                 // Get motion vector if available
                 let motion: J2KMotionVector?
                 if let field = motionField, y < field.count, x < field[y].count {
@@ -255,7 +259,7 @@ public struct J2KVisualMasking: Sendable {
                 } else {
                     motion = nil
                 }
-                
+
                 // Calculate masking factor
                 maskingFactors[idx] = calculateMaskingFactor(
                     luminance: meanLum,
@@ -264,12 +268,12 @@ public struct J2KVisualMasking: Sendable {
                 )
             }
         }
-        
+
         return maskingFactors
     }
-    
+
     // MARK: - Individual Masking Components
-    
+
     /// Calculates luminance-dependent masking factor.
     ///
     /// Based on the Weber-Fechner law: distortions are less visible in very dark
@@ -280,18 +284,18 @@ public struct J2KVisualMasking: Sendable {
     public func luminanceMaskingFactor(luminance: Double) -> Double {
         // Normalize to 0-1 range
         let normLum = luminance / 255.0
-        
+
         // U-shaped curve: masking is strongest at extremes
         // Minimum masking around mid-gray (0.5)
         let deviation = abs(normLum - 0.5)
-        
+
         // Luminance masking increases in dark and bright regions
         // Using a quadratic function for smooth behavior
         let maskingEffect = 1.0 + 2.0 * deviation * deviation
-        
+
         return maskingEffect
     }
-    
+
     /// Calculates texture-based masking factor.
     ///
     /// Distortions are less visible in highly textured regions with high variance.
@@ -304,14 +308,14 @@ public struct J2KVisualMasking: Sendable {
         // Normalize variance to a reasonable range
         // Typical variance in natural images: 0-5000
         let normVariance = min(variance / 5000.0, 1.0)
-        
+
         // Texture masking increases with variance
         // Using logarithmic curve for natural behavior
         let maskingEffect = 1.0 + 1.5 * log1p(normVariance * 10.0) / log1p(10.0)
-        
+
         return maskingEffect
     }
-    
+
     /// Calculates motion-adaptive masking factor.
     ///
     /// Distortions are less visible in regions with motion due to temporal masking.
@@ -321,19 +325,19 @@ public struct J2KVisualMasking: Sendable {
     /// - Returns: Masking factor (>1.0 = more masking, <1.0 = less masking).
     public func motionMaskingFactor(motionVector: J2KMotionVector) -> Double {
         let motionMagnitude = motionVector.magnitude
-        
+
         // Motion masking increases with motion magnitude
         // Saturates at high motion to prevent excessive masking
         let normMotion = min(motionMagnitude / 20.0, 1.0)
-        
+
         // Using tanh for smooth saturation
         let maskingEffect = 1.0 + 1.0 * tanh(normMotion * 2.0)
-        
+
         return maskingEffect
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     /// Calculates local statistics for a region.
     private func localStatistics(
         samples: [Int32],
@@ -347,34 +351,34 @@ public struct J2KVisualMasking: Sendable {
         var sum = 0.0
         var sumSquared = 0.0
         var count = 0
-        
+
         for dy in -halfWindow..<halfWindow {
             for dx in -halfWindow..<halfWindow {
                 let nx = x + dx
                 let ny = y + dy
-                
+
                 // Check bounds
                 guard nx >= 0 && nx < width && ny >= 0 && ny < height else {
                     continue
                 }
-                
+
                 let idx = ny * width + nx
                 guard idx < samples.count else { continue }
-                
+
                 let value = Double(samples[idx])
                 sum += value
                 sumSquared += value * value
                 count += 1
             }
         }
-        
-        guard count > 0 else {
+
+        guard !isEmpty else {
             return (0.0, 0.0)
         }
-        
+
         let mean = sum / Double(count)
         let variance = (sumSquared / Double(count)) - (mean * mean)
-        
+
         return (mean, max(0.0, variance))
     }
 }
@@ -400,26 +404,26 @@ public struct J2KJNDModel: Sendable {
     ) -> Double {
         // Base JND from luminance adaptation
         let lumJND = luminanceJND(luminance: luminance)
-        
+
         // Texture masking component
         let textureFactor = 1.0 + sqrt(localVariance / 100.0)
-        
+
         // Viewing distance factor (closer viewing = lower JND threshold)
         let distanceFactor = sqrt(viewingDistance / 60.0)
-        
+
         return lumJND * textureFactor * distanceFactor
     }
-    
+
     /// Calculates luminance-dependent JND.
     private func luminanceJND(luminance: Double) -> Double {
         // Weber-Fechner law approximation
         // JND increases with luminance but with decreasing sensitivity
         let normLum = max(1.0, luminance)
-        
+
         // Base threshold plus luminance-dependent component
         let baseThreshold = 2.0
         let lumComponent = 0.05 * sqrt(normLum)
-        
+
         return baseThreshold + lumComponent
     }
 }
@@ -449,7 +453,7 @@ extension J2KVisualMasking {
             localVariance: localVariance,
             motionVector: motionVector
         )
-        
+
         return baseStepSize * maskingFactor
     }
 }

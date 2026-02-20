@@ -1,3 +1,7 @@
+//
+// J2KBitPlaneCoder.swift
+// J2KSwift
+//
 /// # Bit-Plane Coder
 ///
 /// Implementation of the EBCOT bit-plane coding algorithm for JPEG 2000.
@@ -64,7 +68,7 @@ struct CodingOptions: Sendable {
     /// allowing independent decoding of each pass. This is automatically
     /// enabled when `terminationMode` is `.predictable`.
     var resetOnEachPass: Bool {
-        return terminationMode == .predictable
+        terminationMode == .predictable
     }
 
     /// Creates new coding options.
@@ -84,23 +88,23 @@ struct CodingOptions: Sendable {
     }
 
     /// Default coding options (no bypass, default termination).
-    public static let `default` = CodingOptions()
+    static let `default` = CodingOptions()
 
     /// Typical bypass configuration for improved speed.
     ///
     /// Enables bypass mode for magnitude refinement passes in the lower 4 bit-planes.
-    public static let fastEncoding = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
+    static let fastEncoding = CodingOptions(bypassEnabled: true, bypassThreshold: 4)
 
     /// Predictable termination for error resilience.
     ///
     /// Each coding pass can be independently decoded, enabling error resilience
     /// and parallel decoding at the cost of compression efficiency.
-    public static let errorResilient = CodingOptions(terminationMode: .predictable)
+    static let errorResilient = CodingOptions(terminationMode: .predictable)
 
     /// Near-optimal termination for better compression.
     ///
     /// Uses a tighter termination sequence to minimize wasted bits.
-    public static let optimalCompression = CodingOptions(terminationMode: .nearOptimal)
+    static let optimalCompression = CodingOptions(terminationMode: .nearOptimal)
 }
 
 // MARK: - Bit-Plane Coder
@@ -698,8 +702,13 @@ struct BitPlaneCoder: Sendable {
         magnitudes: [UInt32],
         bitMask: UInt32
     ) -> Bool {
-        return isEligibleForRunLengthCoding(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, states: states) &&
-               !anyBecomeSignificant(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, magnitudes: magnitudes, bitMask: bitMask)
+        isEligibleForRunLengthCoding(
+            x: x, stripeStart: stripeStart,
+            stripeEnd: stripeEnd, states: states) &&
+        !anyBecomeSignificant(
+            x: x, stripeStart: stripeStart,
+            stripeEnd: stripeEnd,
+            magnitudes: magnitudes, bitMask: bitMask)
     }
 }
 
@@ -1210,19 +1219,16 @@ struct BitPlaneDecoder: Sendable {
 /// the complete encoding of a JPEG 2000 code-block.
 struct CodeBlockEncoder: Sendable {
     /// The maximum code-block width.
-    public static let maxWidth = 64
+    static let maxWidth = 64
 
     /// The maximum code-block height.
-    public static let maxHeight = 64
+    static let maxHeight = 64
 
     /// The default code-block width.
-    public static let defaultWidth = 64
+    static let defaultWidth = 64
 
     /// The default code-block height.
-    public static let defaultHeight = 64
-
-    /// Creates a new code-block encoder.
-    init() {}
+    static let defaultHeight = 64
 
     /// Encodes a code-block with default options.
     ///
@@ -1241,7 +1247,7 @@ struct CodeBlockEncoder: Sendable {
         subband: J2KSubband,
         bitDepth: Int
     ) throws -> J2KCodeBlock {
-        return try encode(
+        try encode(
             coefficients: coefficients,
             width: width,
             height: height,
@@ -1298,9 +1304,6 @@ struct CodeBlockEncoder: Sendable {
 /// This is a high-level wrapper around the bit-plane decoder that handles
 /// the complete decoding of a JPEG 2000 code-block.
 struct CodeBlockDecoder: Sendable {
-    /// Creates a new code-block decoder.
-    init() {}
-
     /// Decodes a code-block with default options.
     ///
     /// - Parameters:
@@ -1312,7 +1315,7 @@ struct CodeBlockDecoder: Sendable {
         codeBlock: J2KCodeBlock,
         bitDepth: Int
     ) throws -> [Int32] {
-        return try decode(codeBlock: codeBlock, bitDepth: bitDepth, options: .default)
+        try decode(codeBlock: codeBlock, bitDepth: bitDepth, options: .default)
     }
 
     /// Decodes a code-block with custom coding options.

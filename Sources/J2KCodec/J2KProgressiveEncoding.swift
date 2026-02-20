@@ -1,3 +1,7 @@
+//
+// J2KProgressiveEncoding.swift
+// J2KSwift
+//
 // J2KProgressiveEncoding.swift
 // J2KSwift
 //
@@ -7,36 +11,36 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Progressive Encoding
-///
-/// Support for progressive encoding modes in JPEG 2000.
-///
-/// Progressive encoding allows images to be decoded at different levels of quality,
-/// resolution, or detail, enabling efficient streaming and adaptive delivery.
-///
-/// ## Progressive Modes
-///
-/// - **SNR Progressive**: Quality layers provide increasing quality
-/// - **Spatial Progressive**: Resolution levels provide increasing resolution
-/// - **Layer Progressive**: Individual layers can be decoded independently
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create a progressive encoding configuration
-/// let progressive = J2KProgressiveMode.snr(layers: 8)
-/// var config = J2KEncodingConfiguration()
-/// config.progressiveMode = progressive
-///
-/// // Encode with progressive mode
-/// let encoder = J2KEncoder(configuration: config)
-/// let data = try encoder.encode(image)
-///
-/// // The encoded data can be decoded progressively
-/// let decoder = J2KDecoder()
-/// let preview = try decoder.decodeProgressive(data, upToLayer: 2)
-/// let full = try decoder.decodeProgressive(data, upToLayer: 8)
-/// ```
+// # JPEG 2000 Progressive Encoding
+//
+// Support for progressive encoding modes in JPEG 2000.
+//
+// Progressive encoding allows images to be decoded at different levels of quality,
+// resolution, or detail, enabling efficient streaming and adaptive delivery.
+//
+// ## Progressive Modes
+//
+// - **SNR Progressive**: Quality layers provide increasing quality
+// - **Spatial Progressive**: Resolution levels provide increasing resolution
+// - **Layer Progressive**: Individual layers can be decoded independently
+//
+// ## Usage
+//
+// ```swift
+// // Create a progressive encoding configuration
+// let progressive = J2KProgressiveMode.snr(layers: 8)
+// var config = J2KEncodingConfiguration()
+// config.progressiveMode = progressive
+//
+// // Encode with progressive mode
+// let encoder = J2KEncoder(configuration: config)
+// let data = try encoder.encode(image)
+//
+// // The encoded data can be decoded progressively
+// let decoder = J2KDecoder()
+// let preview = try decoder.decodeProgressive(data, upToLayer: 2)
+// let full = try decoder.decodeProgressive(data, upToLayer: 8)
+// ```
 
 // MARK: - Progressive Mode
 
@@ -160,7 +164,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
             if level < 0 || level > 10 {
                 throw J2KError.invalidParameter("Decomposition level must be between 0 and 10, got \(level)")
             }
-        case .combined(let layers, let levels):
+        case let .combined(layers, levels):
             if layers < 1 || layers > 20 {
                 throw J2KError.invalidParameter("Quality layers must be between 1 and 20, got \(layers)")
             }
@@ -313,7 +317,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     /// - Parameter layers: Number of quality layers.
     /// - Returns: A quality-progressive encoding strategy.
     public static func qualityProgressive(layers: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .snr(layers: layers),
             snrScalable: true,
             spatialScalable: false
@@ -325,7 +329,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     /// - Parameter levels: Maximum decomposition level.
     /// - Returns: A resolution-progressive encoding strategy.
     public static func resolutionProgressive(levels: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .spatial(maxLevel: levels),
             snrScalable: false,
             spatialScalable: true
@@ -339,7 +343,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
     ///   - levels: Maximum decomposition level.
     /// - Returns: A streaming-optimized encoding strategy.
     public static func streaming(layers: Int, levels: Int) -> J2KProgressiveEncodingStrategy {
-        return J2KProgressiveEncodingStrategy(
+        J2KProgressiveEncodingStrategy(
             mode: .combined(qualityLayers: layers, decompositionLevels: levels),
             snrScalable: true,
             spatialScalable: true
@@ -397,10 +401,10 @@ extension J2KProgressiveMode: CustomStringConvertible {
             return "SNR Progressive (\(layers) quality layers)"
         case .spatial(let level):
             return "Spatial Progressive (up to \(level) decomposition levels)"
-        case .layerProgressive(let layers, let resFirst):
+        case let .layerProgressive(layers, resFirst):
             let priority = resFirst ? "resolution-first" : "quality-first"
             return "Layer Progressive (\(layers) layers, \(priority))"
-        case .combined(let layers, let levels):
+        case let .combined(layers, levels):
             return "Combined Progressive (\(layers) quality layers, \(levels) decomposition levels)"
         case .none:
             return "Non-progressive"
@@ -410,6 +414,6 @@ extension J2KProgressiveMode: CustomStringConvertible {
 
 extension J2KRegion: CustomStringConvertible {
     public var description: String {
-        return "(\(x), \(y), \(width)×\(height))"
+        "(\(x), \(y), \(width)×\(height))"
     }
 }

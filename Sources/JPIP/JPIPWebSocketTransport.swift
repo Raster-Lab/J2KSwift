@@ -1,3 +1,7 @@
+//
+// JPIPWebSocketTransport.swift
+// J2KSwift
+//
 /// # JPIPWebSocketTransport
 ///
 /// WebSocket transport layer for JPIP protocol.
@@ -789,4 +793,3 @@ public actor JPIPWebSocketTransport {
         keepaliveInterval
     }
 }
-

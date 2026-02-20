@@ -1,3 +1,7 @@
+//
+// J2KVolume.swift
+// J2KSwift
+//
 /// # J2KVolume
 ///
 /// Volumetric data types for ISO/IEC 15444-10 (JP3D) support.
@@ -145,22 +149,22 @@ public struct J2KVolume: Sendable, Equatable {
 
     /// The total number of voxels in the volume.
     public var voxelCount: Int {
-        return width * height * depth
+        width * height * depth
     }
 
     /// The number of components in the volume.
     public var componentCount: Int {
-        return components.count
+        components.count
     }
 
     /// Returns true if the volume is a single slice (depth == 1), making it effectively 2D.
     public var isSingleSlice: Bool {
-        return depth == 1
+        depth == 1
     }
 
     /// Returns true if voxel spacing has been set for all axes.
     public var hasSpacing: Bool {
-        return spacingX > 0 && spacingY > 0 && spacingZ > 0
+        spacingX > 0 && spacingY > 0 && spacingZ > 0
     }
 
     /// The estimated memory size in bytes for the entire volume data across all components.
@@ -320,12 +324,12 @@ public struct J2KVolumeComponent: Sendable, Equatable {
 
     /// The total number of voxels in this component.
     public var voxelCount: Int {
-        return width * height * depth
+        width * height * depth
     }
 
     /// Returns true if this component is subsampled in any axis.
     public var isSubsampled: Bool {
-        return subsamplingX > 1 || subsamplingY > 1 || subsamplingZ > 1
+        subsamplingX > 1 || subsamplingY > 1 || subsamplingZ > 1
     }
 
     /// The maximum representable value for this component's bit depth.
@@ -346,6 +350,6 @@ public struct J2KVolumeComponent: Sendable, Equatable {
 
     /// The number of bytes per sample for this component.
     public var bytesPerSample: Int {
-        return (bitDepth + 7) / 8
+        (bitDepth + 7) / 8
     }
 }

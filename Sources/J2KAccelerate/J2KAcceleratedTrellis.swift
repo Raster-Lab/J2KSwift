@@ -1,3 +1,7 @@
+//
+// J2KAcceleratedTrellis.swift
+// J2KSwift
+//
 // J2KAcceleratedTrellis.swift
 // J2KSwift
 //
@@ -39,10 +43,10 @@ import J2KCodec
 public struct J2KAcceleratedTrellis: Sendable {
     /// TCQ configuration.
     public let configuration: J2KTCQConfiguration
-    
+
     /// Fallback non-accelerated quantizer.
     private let fallbackQuantizer: J2KTrellisQuantizer
-    
+
     /// Creates an accelerated trellis quantizer.
     ///
     /// - Parameter configuration: TCQ configuration.
@@ -50,9 +54,9 @@ public struct J2KAcceleratedTrellis: Sendable {
         self.configuration = configuration
         self.fallbackQuantizer = J2KTrellisQuantizer(configuration: configuration)
     }
-    
+
     // MARK: - Quantization
-    
+
     /// Quantizes coefficients using accelerated TCQ.
     ///
     /// - Parameters:
@@ -70,23 +74,23 @@ public struct J2KAcceleratedTrellis: Sendable {
         guard stepSize > 0 else {
             throw J2KError.invalidParameter("Step size must be positive")
         }
-        
+
         // For very short sequences, use fallback (overhead not worth it)
         if coefficients.count < 16 {
             return try fallbackQuantizer.quantize(coefficients: coefficients, stepSize: stepSize)
         }
-        
+
         // Use vectorized Viterbi algorithm
         let path = try findOptimalPathVectorized(
             coefficients: coefficients,
             stepSize: stepSize
         )
-        
+
         let quantized = path.quantLevels
         let distortion = path.totalDistortion
         let rate = path.totalRate
         let rdCost = distortion + configuration.lambdaRD * rate
-        
+
         return J2KTCQResult(
             quantizedCoefficients: quantized,
             totalDistortion: distortion,
@@ -95,7 +99,7 @@ public struct J2KAcceleratedTrellis: Sendable {
             stateSequence: path.states
         )
     }
-    
+
     /// Quantizes coefficients for a specific subband.
     ///
     /// - Parameters:
@@ -120,12 +124,12 @@ public struct J2KAcceleratedTrellis: Sendable {
             totalLevels: totalLevels,
             reversible: reversible
         )
-        
+
         return try quantize(coefficients: coefficients, stepSize: stepSize)
     }
-    
+
     // MARK: - Dequantization
-    
+
     /// Dequantizes coefficients (delegates to fallback).
     ///
     /// - Parameters:
@@ -136,12 +140,12 @@ public struct J2KAcceleratedTrellis: Sendable {
         quantizedCoefficients: [Int32],
         stepSize: Double
     ) -> [Double] {
-        return fallbackQuantizer.dequantize(
+        fallbackQuantizer.dequantize(
             quantizedCoefficients: quantizedCoefficients,
             stepSize: stepSize
         )
     }
-    
+
     /// Dequantizes coefficients for a specific subband.
     public func dequantize(
         quantizedCoefficients: [Int32],
@@ -150,7 +154,7 @@ public struct J2KAcceleratedTrellis: Sendable {
         totalLevels: Int = 5,
         reversible: Bool = false
     ) -> [Double] {
-        return fallbackQuantizer.dequantize(
+        fallbackQuantizer.dequantize(
             quantizedCoefficients: quantizedCoefficients,
             subband: subband,
             decompositionLevel: decompositionLevel,
@@ -158,9 +162,9 @@ public struct J2KAcceleratedTrellis: Sendable {
             reversible: reversible
         )
     }
-    
+
     // MARK: - Vectorized Viterbi Algorithm
-    
+
     /// Finds optimal path using vectorized operations.
     private func findOptimalPathVectorized(
         coefficients: [Double],
@@ -168,11 +172,11 @@ public struct J2KAcceleratedTrellis: Sendable {
     ) throws -> OptimalPath {
         let numStages = coefficients.count
         let numStates = configuration.numStates
-        
+
         // Pre-allocate buffers for vectorized operations
         var currentCosts = [Double](repeating: 0.0, count: numStates)
         var nextCosts = [Double](repeating: .infinity, count: numStates)
-        
+
         // Backtracking information
         var backtrack = [[Int]](
             repeating: [Int](repeating: 0, count: numStates),
@@ -182,23 +186,23 @@ public struct J2KAcceleratedTrellis: Sendable {
             repeating: [Int32](repeating: 0, count: numStates),
             count: numStages
         )
-        
+
         // Process each stage
         for stage in 0..<numStages {
             let coefficient = coefficients[stage]
-            
+
             // Reset next costs to infinity
             vDSP_vfillD(.infinity, &nextCosts, 1, vDSP_Length(numStates))
-            
+
             // Try all state transitions
             for fromState in 0..<numStates {
                 let currentCost = currentCosts[fromState]
-                
+
                 // Skip if path already pruned
                 if configuration.usePrunedSearch && currentCost == .infinity {
                     continue
                 }
-                
+
                 // Compute costs for all destination states using vectorization
                 let (bestToState, bestLevel, bestCost) = computeBestTransitionVectorized(
                     coefficient: coefficient,
@@ -206,7 +210,7 @@ public struct J2KAcceleratedTrellis: Sendable {
                     fromState: fromState,
                     currentCost: currentCost
                 )
-                
+
                 // Update if this path is better
                 if bestCost < nextCosts[bestToState] {
                     nextCosts[bestToState] = bestCost
@@ -214,53 +218,51 @@ public struct J2KAcceleratedTrellis: Sendable {
                     backtrackLevels[stage][bestToState] = bestLevel
                 }
             }
-            
+
             // Apply pruning if enabled
             if configuration.usePrunedSearch && stage < numStages - 1 {
                 let minCost = nextCosts.min() ?? 0.0
                 let threshold = minCost * configuration.pruningThreshold
-                
-                for i in 0..<numStates {
-                    if nextCosts[i] > threshold {
-                        nextCosts[i] = .infinity
-                    }
+
+                for i in 0..<numStates where nextCosts[i] > threshold {
+                    nextCosts[i] = .infinity
                 }
             }
-            
+
             // Swap buffers
             swap(&currentCosts, &nextCosts)
         }
-        
+
         // Find best final state
         guard let bestFinalState = currentCosts.enumerated()
             .min(by: { $0.element < $1.element })?.offset else {
             throw J2KError.internalError("Failed to find optimal path")
         }
-        
+
         // Trace back optimal path
         var path: [(state: Int, quantLevel: Int32)] = []
         var currentState = bestFinalState
-        
+
         for stage in (0..<numStages).reversed() {
             let prevState = backtrack[stage][currentState]
             let quantLevel = backtrackLevels[stage][currentState]
             path.append((state: currentState, quantLevel: quantLevel))
             currentState = prevState
         }
-        
+
         path.reverse()
-        
+
         // Extract results
         let quantLevels = path.map { $0.quantLevel }
         let states = path.map { $0.state }
-        
+
         // Compute final statistics using vectorized operations
         let (totalDistortion, totalRate) = computePathCostVectorized(
             coefficients: coefficients,
             quantLevels: quantLevels,
             stepSize: stepSize
         )
-        
+
         return OptimalPath(
             quantLevels: quantLevels,
             states: states,
@@ -268,7 +270,7 @@ public struct J2KAcceleratedTrellis: Sendable {
             totalRate: totalRate
         )
     }
-    
+
     /// Computes best transition using vectorized operations.
     private func computeBestTransitionVectorized(
         coefficient: Double,
@@ -277,42 +279,42 @@ public struct J2KAcceleratedTrellis: Sendable {
         currentCost: Double
     ) -> (toState: Int, quantLevel: Int32, cost: Double) {
         let numStates = configuration.numStates
-        
+
         // Compute base quantization level
         let absCoeff = abs(coefficient)
         let baseLevel = Int32(floor(absCoeff / stepSize))
         let sign: Int32 = coefficient >= 0 ? 1 : -1
-        
+
         var bestCost = Double.infinity
         var bestState = 0
         var bestLevel: Int32 = 0
-        
+
         // Try each destination state
         for toState in 0..<numStates {
             // State-dependent level offset
             let levelOffset = toState % 2
             let quantLevel = sign * (baseLevel + Int32(levelOffset))
-            
+
             // Compute distortion (squared error)
             let reconstructed = Double(quantLevel) * stepSize
             let distortion = pow(coefficient - reconstructed, 2)
-            
+
             // Estimate rate
             let rate = estimateRate(for: quantLevel)
-            
+
             // Total cost
             let cost = currentCost + distortion + configuration.lambdaRD * rate
-            
+
             if cost < bestCost {
                 bestCost = cost
                 bestState = toState
                 bestLevel = quantLevel
             }
         }
-        
+
         return (bestState, bestLevel, bestCost)
     }
-    
+
     /// Computes path cost using vectorized operations.
     private func computePathCostVectorized(
         coefficients: [Double],
@@ -320,30 +322,30 @@ public struct J2KAcceleratedTrellis: Sendable {
         stepSize: Double
     ) -> (distortion: Double, rate: Double) {
         let count = coefficients.count
-        
+
         // Vectorized distortion computation
         var reconstructed = quantLevels.map { Double($0) * stepSize }
         var errors = [Double](repeating: 0.0, count: count)
-        
+
         // errors = coefficients - reconstructed
         vDSP_vsubD(reconstructed, 1, coefficients, 1, &errors, 1, vDSP_Length(count))
-        
+
         // Square the errors
         vDSP_vsqD(errors, 1, &errors, 1, vDSP_Length(count))
-        
+
         // Sum up distortion
         var totalDistortion = 0.0
         vDSP_sveD(errors, 1, &totalDistortion, vDSP_Length(count))
-        
+
         // Compute rate (not easily vectorizable, use scalar)
         var totalRate = 0.0
         for quantLevel in quantLevels {
             totalRate += estimateRate(for: quantLevel)
         }
-        
+
         return (totalDistortion, totalRate)
     }
-    
+
     /// Estimates rate for a quantization level.
     private func estimateRate(for quantLevel: Int32) -> Double {
         if quantLevel == 0 {
@@ -361,13 +363,13 @@ public struct J2KAcceleratedTrellis: Sendable {
 private struct OptimalPath {
     /// Quantization levels along the path.
     let quantLevels: [Int32]
-    
+
     /// States along the path.
     let states: [Int]
-    
+
     /// Total distortion.
     let totalDistortion: Double
-    
+
     /// Total rate (bits).
     let totalRate: Double
 }
@@ -388,19 +390,19 @@ extension J2KAcceleratedTrellis {
         stepSize: Double
     ) async throws -> [J2KTCQResult] {
         // Process in parallel using structured concurrency
-        return try await withThrowingTaskGroup(of: (Int, J2KTCQResult).self) { group in
+        try await withThrowingTaskGroup(of: (Int, J2KTCQResult).self) { group in
             for (index, coefficients) in coefficientArrays.enumerated() {
                 group.addTask {
                     let result = try self.quantize(coefficients: coefficients, stepSize: stepSize)
                     return (index, result)
                 }
             }
-            
+
             var results = [(Int, J2KTCQResult)]()
             for try await result in group {
                 results.append(result)
             }
-            
+
             // Sort by original index
             results.sort { $0.0 < $1.0 }
             return results.map { $0.1 }

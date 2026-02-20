@@ -1,3 +1,7 @@
+//
+// J2KDCOffsetExtensionBoxTests.swift
+// J2KSwift
+//
 // J2KDCOffsetExtensionBoxTests.swift
 // J2KSwift
 //
@@ -11,7 +15,6 @@ import XCTest
 
 /// Tests for the DC offset extension box in JP2/JPX file format.
 final class J2KDCOffsetExtensionBoxTests: XCTestCase {
-
     // MARK: - Box Type Tests
 
     func testDCOffsetBoxType() {

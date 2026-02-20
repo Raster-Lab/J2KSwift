@@ -1,3 +1,7 @@
+//
+// JP3DStreamWriter.swift
+// J2KSwift
+//
 /// # JP3DStreamWriter
 ///
 /// Streaming encoder actor for JP3D volumetric encoding.
@@ -66,7 +70,6 @@ public enum JP3DStreamWriterState: Sendable {
 /// let codestream = try await writer.finalize()
 /// ```
 public actor JP3DStreamWriter {
-
     // MARK: - Configuration
 
     /// The encoder configuration.
@@ -283,11 +286,9 @@ public actor JP3DStreamWriter {
 
             // Check if all slices in this Z range are available
             var allAvailable = true
-            for z in zStart..<zEnd {
-                if sliceBuffer[z] == nil {
-                    allAvailable = false
-                    break
-                }
+            for z in zStart..<zEnd where sliceBuffer[z] == nil {
+                allAvailable = false
+                break
             }
 
             guard allAvailable else { continue }

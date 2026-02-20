@@ -1,3 +1,7 @@
+//
+// MJ2Extractor.swift
+// J2KSwift
+//
 /// # MJ2Extractor
 ///
 /// Frame extraction from Motion JPEG 2000 files.
@@ -15,22 +19,22 @@ import J2KCodec
 public enum MJ2ExtractionError: Error, Sendable {
     /// The file is not a valid MJ2 file.
     case invalidFile
-    
+
     /// No video tracks found in the file.
     case noVideoTracks
-    
+
     /// The specified track was not found.
     case trackNotFound(trackID: UInt32)
-    
+
     /// The specified frame range is invalid.
     case invalidFrameRange(start: Int, end: Int, available: Int)
-    
+
     /// The specified timestamp range is invalid.
     case invalidTimestampRange
-    
+
     /// Frame extraction failed.
     case extractionFailed(frameIndex: Int, error: Error)
-    
+
     /// Extraction was cancelled.
     case cancelled
 }
@@ -41,19 +45,19 @@ public enum MJ2ExtractionError: Error, Sendable {
 public enum MJ2ExtractionStrategy: Sendable {
     /// Extract all frames.
     case all
-    
+
     /// Extract only sync frames (key frames).
     case syncOnly
-    
+
     /// Extract a specific frame range.
     case range(start: Int, end: Int)
-    
+
     /// Extract frames by timestamp range (in time units).
     case timestampRange(start: UInt64, end: UInt64)
-    
+
     /// Extract every Nth frame.
     case skip(interval: Int)
-    
+
     /// Extract a single frame.
     case single(index: Int)
 }
@@ -64,13 +68,13 @@ public enum MJ2ExtractionStrategy: Sendable {
 public enum MJ2OutputStrategy: Sendable {
     /// In-memory frame array.
     case memory
-    
+
     /// Individual JPEG 2000 files with custom naming.
     case files(directory: URL, naming: @Sendable (Int) -> String)
-    
+
     /// Image sequence with default naming.
     case imageSequence(directory: URL, prefix: String)
-    
+
     /// Default naming function for image sequences.
     public static func defaultNaming(prefix: String) -> @Sendable (Int) -> String {
         { index in "\(prefix)_\(String(format: "%06d", index)).j2k" }
@@ -83,19 +87,19 @@ public enum MJ2OutputStrategy: Sendable {
 public struct MJ2ExtractionOptions: Sendable {
     /// The extraction strategy.
     public var strategy: MJ2ExtractionStrategy
-    
+
     /// The output strategy.
     public var outputStrategy: MJ2OutputStrategy
-    
+
     /// Whether to decode frames to images.
     public var decodeFrames: Bool
-    
+
     /// Whether to extract in parallel.
     public var parallel: Bool
-    
+
     /// Track ID to extract (nil for first video track).
     public var trackID: UInt32?
-    
+
     /// Creates extraction options.
     ///
     /// - Parameters:
@@ -164,20 +168,20 @@ public struct MJ2ExtractionOptions: Sendable {
 public actor MJ2Extractor {
     /// The JPEG 2000 decoder.
     private let decoder: J2KDecoder
-    
+
     /// Whether extraction should be cancelled.
     private var shouldCancel = false
-    
+
     /// Creates a new MJ2 extractor.
     public init() {
         self.decoder = J2KDecoder()
     }
-    
+
     /// Cancels the current extraction.
     public func cancel() {
         shouldCancel = true
     }
-    
+
     /// Extracts frames from an MJ2 file.
     ///
     /// - Parameters:
@@ -193,13 +197,13 @@ public actor MJ2Extractor {
     ) async throws -> MJ2FrameSequence? {
         // Reset cancellation flag
         shouldCancel = false
-        
+
         // Load file data
         let fileData = try Data(contentsOf: fileURL)
-        
+
         return try await extract(from: fileData, options: options, progress: progress)
     }
-    
+
     /// Extracts frames from MJ2 data.
     ///
     /// - Parameters:
@@ -216,22 +220,22 @@ public actor MJ2Extractor {
         // Parse file structure
         let reader = MJ2FileReader()
         let fileInfo = try await reader.readFileInfo(from: data)
-        
+
         // Find video track
         guard let trackInfo = findTrack(in: fileInfo, trackID: options.trackID) else {
             throw MJ2ExtractionError.noVideoTracks
         }
-        
+
         // Parse sample tables
         let sampleTable = try parseSampleTable(from: data, fileInfo: fileInfo)
-        
+
         // Determine which frames to extract
         let frameIndices = try selectFrames(
             strategy: options.strategy,
             sampleTable: sampleTable,
             trackInfo: trackInfo
         )
-        
+
         // Extract frames
         let frames = try await extractFrames(
             data: data,
@@ -240,25 +244,25 @@ public actor MJ2Extractor {
             options: options,
             progress: progress
         )
-        
+
         // Handle output strategy
         switch options.outputStrategy {
         case .memory:
             return MJ2FrameSequence(frames: frames)
-            
-        case .files(let directory, let naming):
+
+        case let .files(directory, naming):
             try await writeFramesToFiles(frames: frames, directory: directory, naming: naming)
             return nil
-            
-        case .imageSequence(let directory, let prefix):
+
+        case let .imageSequence(directory, prefix):
             let naming = MJ2OutputStrategy.defaultNaming(prefix: prefix)
             try await writeFramesToFiles(frames: frames, directory: directory, naming: naming)
             return nil
         }
     }
-    
+
     // MARK: - Private Methods
-    
+
     /// Finds the appropriate video track.
     private func findTrack(in fileInfo: MJ2FileInfo, trackID: UInt32?) -> MJ2TrackInfo? {
         if let trackID = trackID {
@@ -267,40 +271,40 @@ public actor MJ2Extractor {
             return fileInfo.videoTracks.first
         }
     }
-    
+
     /// Parses sample table from file data.
     private func parseSampleTable(from data: Data, fileInfo: MJ2FileInfo) throws -> SampleTable {
         // Find moov box
         guard let moovData = findBox(type: .moov, in: data) else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Find first video track
         guard let trakData = findBox(type: .trak, in: moovData) else {
             throw MJ2ExtractionError.noVideoTracks
         }
-        
+
         // Find media box
         guard let mdiaData = findBox(type: .mdia, in: trakData) else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Find media information box
         guard let minfData = findBox(type: .minf, in: mdiaData) else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Find sample table box
         guard let stblData = findBox(type: .stbl, in: minfData) else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Parse sample sizes
         guard let stszData = findBox(type: .stsz, in: stblData) else {
             throw MJ2ExtractionError.invalidFile
         }
         let sizes = try parseSampleSizes(from: stszData)
-        
+
         // Parse chunk offsets
         var offsets: [UInt64] = []
         if let stcoData = findBox(type: .stco, in: stblData) {
@@ -310,19 +314,19 @@ public actor MJ2Extractor {
         } else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Parse sample-to-chunk
         guard let stscData = findBox(type: .stsc, in: stblData) else {
             throw MJ2ExtractionError.invalidFile
         }
         let sampleToChunk = try parseSampleToChunk(from: stscData)
-        
+
         // Parse time-to-sample
         guard let sttsData = findBox(type: .stts, in: stblData) else {
             throw MJ2ExtractionError.invalidFile
         }
         let durations = try parseTimeToSample(from: sttsData, sampleCount: sizes.count)
-        
+
         // Parse sync samples (optional)
         var syncSamples = Set<Int>()
         if let stssData = findBox(type: .stss, in: stblData) {
@@ -331,7 +335,7 @@ public actor MJ2Extractor {
             // All samples are sync samples if stss is not present
             syncSamples = Set(0..<sizes.count)
         }
-        
+
         // Build frame table
         let frames = try buildFrameTable(
             sizes: sizes,
@@ -340,10 +344,10 @@ public actor MJ2Extractor {
             durations: durations,
             syncSamples: syncSamples
         )
-        
+
         return SampleTable(frames: frames)
     }
-    
+
     /// Finds a box of the specified type in data.
     private func findBox(type: J2KBoxType, in data: Data) -> Data? {
         var offset = 0
@@ -351,34 +355,34 @@ public actor MJ2Extractor {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             if boxType == type {
                 return data.subdata(in: (offset + 8)..<(offset + boxLength))
             }
-            
+
             offset += boxLength
         }
-        
+
         return nil
     }
-    
+
     /// Parses sample sizes from stsz box.
     private func parseSampleSizes(from data: Data) throws -> [UInt32] {
         guard data.count >= 12 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let sampleSize = data.readUInt32(at: 4)
         let sampleCount = Int(data.readUInt32(at: 8))
-        
+
         if sampleSize != 0 {
             // All samples have the same size
             return Array(repeating: sampleSize, count: sampleCount)
@@ -387,7 +391,7 @@ public actor MJ2Extractor {
             guard data.count >= 12 + sampleCount * 4 else {
                 throw MJ2ExtractionError.invalidFile
             }
-            
+
             var sizes: [UInt32] = []
             for i in 0..<sampleCount {
                 let size = data.readUInt32(at: 12 + i * 4)
@@ -396,20 +400,20 @@ public actor MJ2Extractor {
             return sizes
         }
     }
-    
+
     /// Parses 32-bit chunk offsets from stco box.
     private func parseChunkOffsets32(from data: Data) throws -> [UInt64] {
         guard data.count >= 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let entryCount = Int(data.readUInt32(at: 4))
-        
+
         guard data.count >= 8 + entryCount * 4 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         var offsets: [UInt64] = []
         for i in 0..<entryCount {
             let offset = UInt64(data.readUInt32(at: 8 + i * 4))
@@ -417,20 +421,20 @@ public actor MJ2Extractor {
         }
         return offsets
     }
-    
+
     /// Parses 64-bit chunk offsets from co64 box.
     private func parseChunkOffsets64(from data: Data) throws -> [UInt64] {
         guard data.count >= 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let entryCount = Int(data.readUInt32(at: 4))
-        
+
         guard data.count >= 8 + entryCount * 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         var offsets: [UInt64] = []
         for i in 0..<entryCount {
             let offset = data.readUInt64(at: 8 + i * 8)
@@ -438,20 +442,20 @@ public actor MJ2Extractor {
         }
         return offsets
     }
-    
+
     /// Parses sample-to-chunk mapping from stsc box.
     private func parseSampleToChunk(from data: Data) throws -> [(firstChunk: Int, samplesPerChunk: Int)] {
         guard data.count >= 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let entryCount = Int(data.readUInt32(at: 4))
-        
+
         guard data.count >= 8 + entryCount * 12 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         var entries: [(Int, Int)] = []
         for i in 0..<entryCount {
             let firstChunk = Int(data.readUInt32(at: 8 + i * 12))
@@ -461,46 +465,46 @@ public actor MJ2Extractor {
         }
         return entries
     }
-    
+
     /// Parses time-to-sample from stts box.
     private func parseTimeToSample(from data: Data, sampleCount: Int) throws -> [UInt32] {
         guard data.count >= 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let entryCount = Int(data.readUInt32(at: 4))
-        
+
         guard data.count >= 8 + entryCount * 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         var durations: [UInt32] = []
         for i in 0..<entryCount {
             let count = Int(data.readUInt32(at: 8 + i * 8))
             let duration = data.readUInt32(at: 12 + i * 8)
-            
+
             for _ in 0..<count {
                 durations.append(duration)
             }
         }
-        
+
         return durations
     }
-    
+
     /// Parses sync samples from stss box.
     private func parseSyncSamples(from data: Data) throws -> Set<Int> {
         guard data.count >= 8 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         // Skip version/flags
         let entryCount = Int(data.readUInt32(at: 4))
-        
+
         guard data.count >= 8 + entryCount * 4 else {
             throw MJ2ExtractionError.invalidFile
         }
-        
+
         var syncSamples = Set<Int>()
         for i in 0..<entryCount {
             let sampleNumber = Int(data.readUInt32(at: 8 + i * 4)) - 1 // Convert to 0-based
@@ -508,7 +512,7 @@ public actor MJ2Extractor {
         }
         return syncSamples
     }
-    
+
     /// Builds frame table from sample table data.
     private func buildFrameTable(
         sizes: [UInt32],
@@ -520,31 +524,29 @@ public actor MJ2Extractor {
         var frames: [MJ2FrameMetadata] = []
         var currentSample = 0
         var timestamp: UInt64 = 0
-        
+
         // Iterate through chunks
         for chunkIndex in 0..<chunkOffsets.count {
             let chunkOffset = chunkOffsets[chunkIndex]
-            
+
             // Find samples per chunk for this chunk
             var samplesPerChunk = 1
-            for (firstChunk, samples) in sampleToChunk.reversed() {
-                if chunkIndex + 1 >= firstChunk {
-                    samplesPerChunk = samples
-                    break
-                }
+            for (firstChunk, samples) in sampleToChunk.reversed() where chunkIndex + 1 >= firstChunk {
+                samplesPerChunk = samples
+                break
             }
-            
+
             // Process samples in this chunk
             var sampleOffset = chunkOffset
             for _ in 0..<samplesPerChunk {
                 guard currentSample < sizes.count else {
                     break
                 }
-                
+
                 let size = sizes[currentSample]
                 let duration = currentSample < durations.count ? durations[currentSample] : 0
                 let isSync = syncSamples.contains(currentSample)
-                
+
                 let metadata = MJ2FrameMetadata(
                     index: currentSample,
                     size: size,
@@ -554,16 +556,16 @@ public actor MJ2Extractor {
                     isSync: isSync
                 )
                 frames.append(metadata)
-                
+
                 sampleOffset += UInt64(size)
                 timestamp += UInt64(duration)
                 currentSample += 1
             }
         }
-        
+
         return frames
     }
-    
+
     /// Selects which frames to extract based on strategy.
     private func selectFrames(
         strategy: MJ2ExtractionStrategy,
@@ -573,13 +575,13 @@ public actor MJ2Extractor {
         switch strategy {
         case .all:
             return Array(0..<sampleTable.frames.count)
-            
+
         case .syncOnly:
             return sampleTable.frames.enumerated().compactMap { index, frame in
                 frame.isSync ? index : nil
             }
-            
-        case .range(let start, let end):
+
+        case let .range(start, end):
             guard start >= 0 && end <= sampleTable.frames.count && start < end else {
                 throw MJ2ExtractionError.invalidFrameRange(
                     start: start,
@@ -588,20 +590,20 @@ public actor MJ2Extractor {
                 )
             }
             return Array(start..<end)
-            
-        case .timestampRange(let startTime, let endTime):
+
+        case let .timestampRange(startTime, endTime):
             return sampleTable.frames.enumerated().compactMap { index, frame in
                 let frameStart = frame.timestamp
                 let frameEnd = frameStart + UInt64(frame.duration)
                 return (frameStart < endTime && frameEnd > startTime) ? index : nil
             }
-            
+
         case .skip(let interval):
             guard interval > 0 else {
                 return []
             }
             return stride(from: 0, to: sampleTable.frames.count, by: interval).map { $0 }
-            
+
         case .single(let index):
             guard index >= 0 && index < sampleTable.frames.count else {
                 throw MJ2ExtractionError.invalidFrameRange(
@@ -613,7 +615,7 @@ public actor MJ2Extractor {
             return [index]
         }
     }
-    
+
     /// Extracts frames from file data.
     private func extractFrames(
         data: Data,
@@ -623,7 +625,7 @@ public actor MJ2Extractor {
         progress: ((Int, Int) -> Void)?
     ) async throws -> [MJ2FrameSequence.Frame] {
         var frames: [MJ2FrameSequence.Frame] = []
-        
+
         if options.parallel {
             // Parallel extraction
             frames = try await withThrowingTaskGroup(of: (Int, MJ2FrameSequence.Frame).self) { group in
@@ -637,17 +639,17 @@ public actor MJ2Extractor {
                         return (index, frame)
                     }
                 }
-                
+
                 var result: [(Int, MJ2FrameSequence.Frame)] = []
                 for try await item in group {
                     result.append(item)
                     progress?(result.count, indices.count)
-                    
+
                     if shouldCancel {
                         throw MJ2ExtractionError.cancelled
                     }
                 }
-                
+
                 // Sort by original index
                 return result.sorted { $0.0 < $1.0 }.map { $0.1 }
             }
@@ -661,16 +663,16 @@ public actor MJ2Extractor {
                 )
                 frames.append(frame)
                 progress?(index + 1, indices.count)
-                
+
                 if shouldCancel {
                     throw MJ2ExtractionError.cancelled
                 }
             }
         }
-        
+
         return frames
     }
-    
+
     /// Extracts a single frame.
     private func extractFrame(
         data: Data,
@@ -680,19 +682,19 @@ public actor MJ2Extractor {
         // Extract frame data
         let start = Int(metadata.offset)
         let end = start + Int(metadata.size)
-        
+
         guard end <= data.count else {
             throw MJ2ExtractionError.extractionFailed(
                 frameIndex: metadata.index,
                 error: J2KError.fileFormatError("Frame data out of bounds")
             )
         }
-        
+
         let frameData = data.subdata(in: start..<end)
-        
+
         // Optionally decode
         var frame = MJ2FrameSequence.Frame(metadata: metadata, data: frameData)
-        
+
         if decode {
             do {
                 let image = try decoder.decode(frameData)
@@ -704,10 +706,10 @@ public actor MJ2Extractor {
                 )
             }
         }
-        
+
         return frame
     }
-    
+
     /// Writes frames to individual files.
     private func writeFramesToFiles(
         frames: [MJ2FrameSequence.Frame],
@@ -716,7 +718,7 @@ public actor MJ2Extractor {
     ) async throws {
         // Create directory if needed
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        
+
         // Write each frame
         for frame in frames {
             let filename = naming(frame.metadata.index)

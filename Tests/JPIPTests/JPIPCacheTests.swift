@@ -1,3 +1,7 @@
+//
+// JPIPCacheTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import JPIP
 @testable import J2KCore
@@ -470,8 +474,12 @@ final class JPIPCacheTests: XCTestCase {
         cache.invalidate(tile: 0)
 
         XCTAssertEqual(cache.statistics.totalPrecincts, 1)
-        XCTAssertFalse(cache.hasPrecinct(JPIPPrecinctID(tile: 0, component: 0, resolution: 0, precinctX: 0, precinctY: 0)))
-        XCTAssertTrue(cache.hasPrecinct(JPIPPrecinctID(tile: 1, component: 0, resolution: 0, precinctX: 0, precinctY: 0)))
+        XCTAssertFalse(cache.hasPrecinct(JPIPPrecinctID(
+            tile: 0, component: 0, resolution: 0,
+            precinctX: 0, precinctY: 0)))
+        XCTAssertTrue(cache.hasPrecinct(JPIPPrecinctID(
+            tile: 1, component: 0, resolution: 0,
+            precinctX: 0, precinctY: 0)))
     }
 
     func testInvalidatePrecinctsByResolution() {
@@ -496,8 +504,12 @@ final class JPIPCacheTests: XCTestCase {
         cache.invalidate(resolution: 0)
 
         XCTAssertEqual(cache.statistics.totalPrecincts, 1)
-        XCTAssertFalse(cache.hasPrecinct(JPIPPrecinctID(tile: 0, component: 0, resolution: 0, precinctX: 0, precinctY: 0)))
-        XCTAssertTrue(cache.hasPrecinct(JPIPPrecinctID(tile: 0, component: 0, resolution: 1, precinctX: 0, precinctY: 0)))
+        XCTAssertFalse(cache.hasPrecinct(JPIPPrecinctID(
+            tile: 0, component: 0, resolution: 0,
+            precinctX: 0, precinctY: 0)))
+        XCTAssertTrue(cache.hasPrecinct(JPIPPrecinctID(
+            tile: 0, component: 0, resolution: 1,
+            precinctX: 0, precinctY: 0)))
     }
 
     func testPrecinctCacheSizeLimit() {
@@ -641,7 +653,9 @@ final class JPIPCacheTests: XCTestCase {
     func testSessionClose() async throws {
         let session = JPIPSession(sessionID: "test-close")
 
-        await session.recordDataBin(JPIPDataBin(binClass: .mainHeader, binID: 1, data: Data([1, 2, 3]), isComplete: true))
+        await session.recordDataBin(JPIPDataBin(
+            binClass: .mainHeader, binID: 1,
+            data: Data([1, 2, 3]), isComplete: true))
         await session.addPrecinct(JPIPPrecinctData(
             precinctID: JPIPPrecinctID(tile: 0, component: 0, resolution: 0, precinctX: 0, precinctY: 0),
             data: Data([4, 5, 6]),

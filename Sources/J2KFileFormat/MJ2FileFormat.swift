@@ -1,3 +1,7 @@
+//
+// MJ2FileFormat.swift
+// J2KSwift
+//
 /// # MJ2FileFormat
 ///
 /// Motion JPEG 2000 (MJ2) file format support.
@@ -33,10 +37,10 @@ import J2KCore
 public enum MJ2Format: String, Sendable {
     /// Motion JPEG 2000 Simple Profile
     case mj2s
-    
+
     /// Motion JPEG 2000 General Profile
     case mj2
-    
+
     /// Returns the brand identifier for this format.
     public var brandIdentifier: String {
         switch self {
@@ -44,15 +48,15 @@ public enum MJ2Format: String, Sendable {
         case .mj2: return "mjp2"
         }
     }
-    
+
     /// Returns the file extension for this format.
     public var fileExtension: String {
-        return "mj2"
+        "mj2"
     }
-    
+
     /// Returns the MIME type for this format.
     public var mimeType: String {
-        return "video/mj2"
+        "video/mj2"
     }
 }
 
@@ -77,7 +81,7 @@ public enum MJ2Format: String, Sendable {
 public struct MJ2FormatDetector: Sendable {
     /// Creates a new MJ2 format detector.
     public init() {}
-    
+
     /// Determines if the given data represents a valid MJ2 file.
     ///
     /// - Parameter data: The file data to examine.
@@ -87,49 +91,49 @@ public struct MJ2FormatDetector: Sendable {
         guard data.count >= 20 else {
             return false
         }
-        
+
         // Check JP2 signature (first 12 bytes)
         guard data.count >= 12 else {
             return false
         }
-        
+
         let signatureLength = data.readUInt32(at: 0)
         guard signatureLength == 12 else {
             return false
         }
-        
+
         let signatureType = String(data: data.subdata(in: 4..<8), encoding: .ascii)
         guard signatureType == "jP  " else {
             return false
         }
-        
+
         let signatureContent: [UInt8] = [0x0D, 0x0A, 0x87, 0x0A]
         guard data[8..<12].elementsEqual(signatureContent) else {
             return false
         }
-        
+
         // Check file type box for MJ2 brand
         var offset = 12
         guard offset + 8 <= data.count else {
             return false
         }
-        
+
         _ = data.readUInt32(at: offset) // ftypLength not used
         let ftypType = String(data: data.subdata(in: (offset + 4)..<(offset + 8)), encoding: .ascii)
-        
+
         guard ftypType == "ftyp" else {
             return false
         }
-        
+
         offset += 8
         guard offset + 4 <= data.count else {
             return false
         }
-        
+
         let brand = String(data: data.subdata(in: offset..<(offset + 4)), encoding: .ascii)
         return brand == "mjp2" || brand == "mj2s"
     }
-    
+
     /// Detects the specific MJ2 format variant.
     ///
     /// - Parameter data: The file data to examine.
@@ -139,14 +143,14 @@ public struct MJ2FormatDetector: Sendable {
         guard try isMJ2File(data: data) else {
             throw J2KError.fileFormatError("Not a valid MJ2 file")
         }
-        
+
         // Read brand from ftyp box (at offset 20)
         guard data.count >= 24 else {
             throw J2KError.fileFormatError("MJ2 file too small")
         }
-        
+
         let brand = String(data: data.subdata(in: 20..<24), encoding: .ascii)
-        
+
         if brand == "mj2s" {
             return .mj2s
         } else {
@@ -163,32 +167,32 @@ public struct MJ2FormatDetector: Sendable {
 public struct MJ2FileInfo: Sendable {
     /// MJ2 format variant
     public var format: MJ2Format
-    
+
     /// Movie creation time (seconds since Jan. 1, 1904 UTC)
     public var creationTime: UInt64
-    
+
     /// Movie modification time (seconds since Jan. 1, 1904 UTC)
     public var modificationTime: UInt64
-    
+
     /// Movie timescale (time units per second)
     public var timescale: UInt32
-    
+
     /// Movie duration (in timescale units)
     public var duration: UInt64
-    
+
     /// Duration in seconds
     public var durationSeconds: Double {
         Double(duration) / Double(timescale)
     }
-    
+
     /// List of tracks in the file
     public var tracks: [MJ2TrackInfo]
-    
+
     /// Video tracks only
     public var videoTracks: [MJ2TrackInfo] {
         tracks.filter { $0.isVideo }
     }
-    
+
     /// Creates file information with the given parameters.
     ///
     /// - Parameters:
@@ -221,43 +225,43 @@ public struct MJ2FileInfo: Sendable {
 public struct MJ2TrackInfo: Sendable {
     /// Track ID (unique identifier)
     public var trackID: UInt32
-    
+
     /// Track creation time
     public var creationTime: UInt64
-    
+
     /// Track modification time
     public var modificationTime: UInt64
-    
+
     /// Track duration (in movie timescale units)
     public var duration: UInt64
-    
+
     /// Track width (pixels)
     public var width: UInt32
-    
+
     /// Track height (pixels)
     public var height: UInt32
-    
+
     /// Media timescale (time units per second)
     public var mediaTimescale: UInt32
-    
+
     /// Media duration (in media timescale units)
     public var mediaDuration: UInt64
-    
+
     /// Number of samples (frames) in the track
     public var sampleCount: Int
-    
+
     /// Language code
     public var language: String
-    
+
     /// Whether this is a video track
     public var isVideo: Bool
-    
+
     /// Frame rate (frames per second)
     public var frameRate: Double {
         guard mediaDuration > 0 else { return 0 }
         return Double(sampleCount) * Double(mediaTimescale) / Double(mediaDuration)
     }
-    
+
     /// Creates track information with the given parameters.
     ///
     /// - Parameters:
@@ -316,7 +320,7 @@ public struct MJ2TrackInfo: Sendable {
 public actor MJ2FileReader {
     /// Creates a new MJ2 file reader.
     public init() {}
-    
+
     /// Reads file information from MJ2 data.
     ///
     /// This method parses the file structure and extracts metadata without
@@ -329,30 +333,30 @@ public actor MJ2FileReader {
         // Detect format
         let detector = MJ2FormatDetector()
         let format = try detector.detectFormat(data: data)
-        
+
         // Find and parse movie box
         var creationTime: UInt64 = 0
         var modificationTime: UInt64 = 0
         var timescale: UInt32 = 1
         var duration: UInt64 = 0
         var tracks: [MJ2TrackInfo] = []
-        
+
         // Iterate through top-level boxes
         var offset = 0
         while offset < data.count {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .moov {
                 // Parse movie box
                 let movieInfo = try parseMovieBox(data: boxData)
@@ -363,10 +367,10 @@ public actor MJ2FileReader {
                 tracks = movieInfo.tracks
                 break
             }
-            
+
             offset += boxLength
         }
-        
+
         return MJ2FileInfo(
             format: format,
             creationTime: creationTime,
@@ -376,7 +380,7 @@ public actor MJ2FileReader {
             tracks: tracks
         )
     }
-    
+
     /// Parses a movie box (moov).
     private func parseMovieBox(data: Data) throws -> (
         creationTime: UInt64,
@@ -390,22 +394,22 @@ public actor MJ2FileReader {
         var timescale: UInt32 = 1
         var duration: UInt64 = 0
         var tracks: [MJ2TrackInfo] = []
-        
+
         var offset = 0
         while offset < data.count {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .mvhd {
                 // Parse movie header
                 var mvhd = MJ2MovieHeaderBox(timescale: 1, duration: 0, nextTrackID: 1)
@@ -420,13 +424,13 @@ public actor MJ2FileReader {
                     tracks.append(trackInfo)
                 }
             }
-            
+
             offset += boxLength
         }
-        
+
         return (creationTime, modificationTime, timescale, duration, tracks)
     }
-    
+
     /// Parses a track box (trak).
     private func parseTrackBox(data: Data, movieTimescale: UInt32) throws -> MJ2TrackInfo? {
         var trackID: UInt32 = 0
@@ -440,22 +444,22 @@ public actor MJ2FileReader {
         var sampleCount = 0
         var language = "und"
         var isVideo = false
-        
+
         var offset = 0
         while offset < data.count {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .tkhd {
                 // Parse track header
                 var tkhd = MJ2TrackHeaderBox(
@@ -480,10 +484,10 @@ public actor MJ2FileReader {
                 language = mediaInfo.language
                 isVideo = mediaInfo.isVideo
             }
-            
+
             offset += boxLength
         }
-        
+
         return MJ2TrackInfo(
             trackID: trackID,
             creationTime: creationTime,
@@ -498,7 +502,7 @@ public actor MJ2FileReader {
             isVideo: isVideo
         )
     }
-    
+
     /// Parses a media box (mdia).
     private func parseMediaBox(data: Data) throws -> (
         timescale: UInt32,
@@ -512,29 +516,29 @@ public actor MJ2FileReader {
         var sampleCount = 0
         var language = "und"
         var isVideo = false
-        
+
         var offset = 0
         while offset < data.count {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .mdhd {
                 // Parse media header
                 var mdhd = MJ2MediaHeaderBox(timescale: 1, duration: 0)
                 try mdhd.read(from: boxData)
                 timescale = mdhd.timescale
                 duration = mdhd.duration
-                
+
                 // Decode language code
                 let code = mdhd.language
                 if code > 0 {
@@ -556,13 +560,13 @@ public actor MJ2FileReader {
                     sampleCount = count
                 }
             }
-            
+
             offset += boxLength
         }
-        
+
         return (timescale, duration, sampleCount, language, isVideo)
     }
-    
+
     /// Parses sample count from media information box.
     private func parseSampleCount(from data: Data) throws -> Int? {
         var offset = 0
@@ -570,27 +574,27 @@ public actor MJ2FileReader {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .stbl {
                 // Look for stsz (sample size) box
                 return try parseSampleCountFromSampleTable(data: boxData)
             }
-            
+
             offset += boxLength
         }
-        
+
         return nil
     }
-    
+
     /// Parses sample count from sample table box.
     private func parseSampleCountFromSampleTable(data: Data) throws -> Int? {
         var offset = 0
@@ -598,16 +602,16 @@ public actor MJ2FileReader {
             guard offset + 8 <= data.count else {
                 break
             }
-            
+
             let boxLength = Int(data.readUInt32(at: offset))
             let boxType = J2KBoxType(rawValue: data.readUInt32(at: offset + 4))
-            
+
             guard boxLength >= 8 && offset + boxLength <= data.count else {
                 break
             }
-            
+
             let boxData = data.subdata(in: (offset + 8)..<(offset + boxLength))
-            
+
             if boxType == .stsz {
                 // Parse sample size box to get sample count
                 guard boxData.count >= 12 else {
@@ -617,10 +621,10 @@ public actor MJ2FileReader {
                 let count = Int(boxData.readUInt32(at: 8))
                 return count
             }
-            
+
             offset += boxLength
         }
-        
+
         return nil
     }
 }

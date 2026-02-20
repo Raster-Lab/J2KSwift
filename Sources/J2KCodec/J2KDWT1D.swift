@@ -1,3 +1,7 @@
+//
+// J2KDWT1D.swift
+// J2KSwift
+//
 // J2KDWT1D.swift
 // J2KSwift
 //
@@ -206,7 +210,9 @@ public struct J2KDWT1D: Sendable {
         case .irreversible97:
             // Convert Int32 to Double, apply 9/7 filter, then round back to Int32
             let doubleSignal = signal.map { Double($0) }
-            let (lowDouble, highDouble) = try forwardTransform97(signal: doubleSignal, boundaryExtension: boundaryExtension)
+            let (lowDouble, highDouble) = try forwardTransform97(
+                signal: doubleSignal,
+                boundaryExtension: boundaryExtension)
             let lowpass = lowDouble.map { Int32($0.rounded()) }
             let highpass = highDouble.map { Int32($0.rounded()) }
             return (lowpass: lowpass, highpass: highpass)
@@ -270,7 +276,9 @@ public struct J2KDWT1D: Sendable {
             // Convert Int32 to Double, apply inverse 9/7 filter, then round back to Int32
             let lowDouble = lowpass.map { Double($0) }
             let highDouble = highpass.map { Double($0) }
-            let resultDouble = try inverseTransform97(lowpass: lowDouble, highpass: highDouble, boundaryExtension: boundaryExtension)
+            let resultDouble = try inverseTransform97(
+                lowpass: lowDouble, highpass: highDouble,
+                boundaryExtension: boundaryExtension)
             return resultDouble.map { Int32($0.rounded()) }
         case .custom(let customFilter):
             // Convert Int32 to Double, apply inverse custom filter, then round back to Int32
@@ -329,7 +337,9 @@ public struct J2KDWT1D: Sendable {
         // Update step: s[n] = even[n] + floor((d[n-1] + d[n]) / 4)
         for i in 0..<lowpassSize {
             let left = getExtendedValue(highpass, index: i - 1, extension: boundaryExtension)
-            let right = i < highpassSize ? highpass[i] : getExtendedValue(highpass, index: i, extension: boundaryExtension)
+            let right = i < highpassSize
+                ? highpass[i]
+                : getExtendedValue(highpass, index: i, extension: boundaryExtension)
 
             // Addition for rounding: (a + b + 2) / 4 for floor((a + b) / 4)
             lowpass[i] = even[i] + ((left + right + 2) >> 2) // >> 2 is floor division by 4
@@ -359,7 +369,9 @@ public struct J2KDWT1D: Sendable {
         // Undo update step: even[n] = s[n] - floor((d[n-1] + d[n]) / 4)
         for i in 0..<lowpassSize {
             let left = getExtendedValue(highpass, index: i - 1, extension: boundaryExtension)
-            let right = i < highpassSize ? highpass[i] : getExtendedValue(highpass, index: i, extension: boundaryExtension)
+            let right = i < highpassSize
+                ? highpass[i]
+                : getExtendedValue(highpass, index: i, extension: boundaryExtension)
 
             even[i] = lowpass[i] - ((left + right + 2) >> 2)
         }

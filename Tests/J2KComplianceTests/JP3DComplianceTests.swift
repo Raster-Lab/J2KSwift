@@ -1,3 +1,7 @@
+//
+// JP3DComplianceTests.swift
+// J2KSwift
+//
 /// # JP3DComplianceTests
 ///
 /// Week 233-234 compliance testing milestone for JP3D volumetric JPEG 2000.
@@ -21,7 +25,6 @@ private final class ComplianceCounter: @unchecked Sendable {
 // MARK: - JP3DComplianceTests
 
 final class JP3DComplianceTests: XCTestCase {
-
     // MARK: - Test Helpers
 
     /// Creates a test volume with deterministic gradient data.

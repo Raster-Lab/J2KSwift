@@ -1,3 +1,7 @@
+//
+// JPIPRequest.swift
+// J2KSwift
+//
 /// # JPIPRequest
 ///
 /// Types for JPIP request construction.

@@ -1,3 +1,7 @@
+//
+// J2KTranscoder.swift
+// J2KSwift
+//
 /// # J2K Transcoder
 ///
 /// Lossless transcoding between legacy JPEG 2000 (Part 1) and HTJ2K (Part 15)
@@ -743,7 +747,10 @@ public struct J2KTranscoder: Sendable {
 
         Task { @Sendable in
             do {
-                capturedResult = .success(try await encodeFromCoefficientsAsync(coefficients, targetMode: targetMode, progress: progress))
+                capturedResult = .success(
+                    try await encodeFromCoefficientsAsync(
+                        coefficients, targetMode: targetMode,
+                        progress: progress))
             } catch {
                 capturedResult = .failure(error)
             }
@@ -874,7 +881,7 @@ public struct J2KTranscoder: Sendable {
             }
         } else {
             // Sequential tile processing
-            encodedTiles = try coefficients.tiles.enumerated().map { (tileIdx, tile) in
+            encodedTiles = try coefficients.tiles.enumerated().map { tileIdx, tile in
                 let tileData = try self.encodeTile(
                     tile,
                     targetMode: targetMode,
@@ -934,7 +941,7 @@ public struct J2KTranscoder: Sendable {
     /// - Returns: `true` if the codestream uses HTJ2K encoding, `false` for legacy.
     /// - Throws: ``J2KError/decodingError(_:)`` if the codestream is invalid.
     public func isHTJ2K(_ data: Data) throws -> Bool {
-        return try detectCodingMode(in: data) == .ht
+        try detectCodingMode(in: data) == .ht
     }
 
     /// Detects the coding mode of a JPEG 2000 codestream.

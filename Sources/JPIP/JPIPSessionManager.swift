@@ -1,3 +1,7 @@
+//
+// JPIPSessionManager.swift
+// J2KSwift
+//
 /// # JPIPSession
 ///
 /// Session management for JPIP protocol.
@@ -79,7 +83,7 @@ public actor JPIPSession {
     ///   - binID: The data bin ID.
     /// - Returns: True if the bin is cached.
     public func hasDataBin(binClass: JPIPDataBinClass, binID: Int) -> Bool {
-        return cacheModel.hasDataBin(binClass: binClass, binID: binID)
+        cacheModel.hasDataBin(binClass: binClass, binID: binID)
     }
 
     /// Retrieves a cached data bin.
@@ -89,14 +93,14 @@ public actor JPIPSession {
     ///   - binID: The data bin ID.
     /// - Returns: The cached data bin, or nil if not found.
     public func getDataBin(binClass: JPIPDataBinClass, binID: Int) -> JPIPDataBin? {
-        return cacheModel.getDataBin(binClass: binClass, binID: binID)
+        cacheModel.getDataBin(binClass: binClass, binID: binID)
     }
 
     /// Gets the current cache statistics.
     ///
     /// - Returns: Cache statistics including hits, misses, and size.
     public func getCacheStatistics() -> JPIPCacheModel.Statistics {
-        return cacheModel.statistics
+        cacheModel.statistics
     }
 
     /// Invalidates cached entries by bin class.
@@ -125,7 +129,7 @@ public actor JPIPSession {
     /// - Parameter precinctID: The precinct identifier.
     /// - Returns: The cached precinct data, or nil if not found.
     public func getPrecinct(_ precinctID: JPIPPrecinctID) -> JPIPPrecinctData? {
-        return precinctCache.getPrecinct(precinctID)
+        precinctCache.getPrecinct(precinctID)
     }
 
     /// Checks if a precinct is in the cache.
@@ -133,14 +137,14 @@ public actor JPIPSession {
     /// - Parameter precinctID: The precinct identifier.
     /// - Returns: True if the precinct is cached.
     public func hasPrecinct(_ precinctID: JPIPPrecinctID) -> Bool {
-        return precinctCache.hasPrecinct(precinctID)
+        precinctCache.hasPrecinct(precinctID)
     }
 
     /// Gets precinct cache statistics.
     ///
     /// - Returns: Precinct cache statistics.
     public func getPrecinctStatistics() -> JPIPPrecinctCache.Statistics {
-        return precinctCache.statistics
+        precinctCache.statistics
     }
 
     /// Merges partial precinct data with existing cached data.
@@ -157,7 +161,7 @@ public actor JPIPSession {
         layers: Set<Int>,
         isComplete: Bool
     ) -> JPIPPrecinctData {
-        return precinctCache.mergePrecinct(precinctID, data: data, layers: layers, isComplete: isComplete)
+        precinctCache.mergePrecinct(precinctID, data: data, layers: layers, isComplete: isComplete)
     }
 
     /// Invalidates precincts for a specific tile.
@@ -256,7 +260,7 @@ public struct JPIPCacheModel: Sendable {
 
     /// Creates a cache key for a data bin.
     private func cacheKey(binClass: JPIPDataBinClass, binID: Int) -> String {
-        return "\(binClass.rawValue):\(binID)"
+        "\(binClass.rawValue):\(binID)"
     }
 
     /// Adds a data bin to the cache.

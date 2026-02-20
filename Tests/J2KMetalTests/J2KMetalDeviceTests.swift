@@ -1,10 +1,13 @@
+//
+// J2KMetalDeviceTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KMetal
 @testable import J2KCore
 
 /// Tests for J2KMetal module - Metal GPU Acceleration Infrastructure.
 final class J2KMetalDeviceTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal availability can be queried without crashing.

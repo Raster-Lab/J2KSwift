@@ -1,3 +1,7 @@
+//
+// J2KAdvancedAccelerate.swift
+// J2KSwift
+//
 // J2KAdvancedAccelerate.swift
 // J2KSwift
 //
@@ -42,7 +46,7 @@ import Accelerate
 public struct J2KAdvancedAccelerate: Sendable {
     /// Creates a new advanced accelerated processor.
     public init() {}
-    
+
     /// Indicates whether hardware acceleration is available.
     public static var isAvailable: Bool {
         #if canImport(Accelerate)
@@ -51,11 +55,11 @@ public struct J2KAdvancedAccelerate: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - FFT Operations
-    
+
     #if canImport(Accelerate)
-    
+
     /// Performs forward FFT on real input data.
     ///
     /// Uses vDSP's FFT implementation for high-performance spectral analysis.
@@ -68,7 +72,7 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !signal.isEmpty else {
             return []
         }
-        
+
         // Verify power of 2
         let n = signal.count
         guard n > 0 && (n & (n - 1)) == 0 else {
@@ -76,13 +80,13 @@ public struct J2KAdvancedAccelerate: Sendable {
                 "FFT requires power-of-2 length, got \(n)"
             )
         }
-        
+
         let log2n = vDSP_Length(log2(Double(n)))
         guard let setup = vDSP_create_fftsetupD(log2n, FFTRadix(kFFTRadix2)) else {
             throw J2KError.internalError("Failed to create FFT setup")
         }
         defer { vDSP_destroy_fftsetupD(setup) }
-        
+
         // Prepare split complex buffer
         var realPart = [Double](repeating: 0.0, count: n / 2)
         var imagPart = [Double](repeating: 0.0, count: n / 2)
@@ -90,7 +94,7 @@ public struct J2KAdvancedAccelerate: Sendable {
             realp: &realPart,
             imagp: &imagPart
         )
-        
+
         // Convert input to split complex format
         signal.withUnsafeBufferPointer { signalPtr in
             signalPtr.baseAddress!.withMemoryRebound(
@@ -100,25 +104,25 @@ public struct J2KAdvancedAccelerate: Sendable {
                 vDSP_ctozD(complexPtr, 2, &splitComplex, 1, vDSP_Length(n / 2))
             }
         }
-        
+
         // Perform FFT
         vDSP_fft_zripD(setup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
-        
+
         // Scale output
         var scale = 0.5
         vDSP_vsmulD(realPart, 1, &scale, &realPart, 1, vDSP_Length(n / 2))
         vDSP_vsmulD(imagPart, 1, &scale, &imagPart, 1, vDSP_Length(n / 2))
-        
+
         // Convert to interleaved format
         var output = [Double](repeating: 0.0, count: n)
         for i in 0..<(n / 2) {
             output[2 * i] = realPart[i]
             output[2 * i + 1] = imagPart[i]
         }
-        
+
         return output
     }
-    
+
     /// Performs inverse FFT on complex input data.
     ///
     /// - Parameters:
@@ -129,44 +133,44 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !spectrum.isEmpty else {
             return []
         }
-        
-        guard spectrum.count % 2 == 0 else {
+
+        guard spectrum.count.isMultiple(of: 2) else {
             throw J2KError.invalidParameter(
                 "FFT spectrum must have even length"
             )
         }
-        
+
         let n = spectrum.count
         let log2n = vDSP_Length(log2(Double(n)))
-        
+
         guard let setup = vDSP_create_fftsetupD(log2n, FFTRadix(kFFTRadix2)) else {
             throw J2KError.internalError("Failed to create FFT setup")
         }
         defer { vDSP_destroy_fftsetupD(setup) }
-        
+
         // Prepare split complex buffer
         var realPart = [Double](repeating: 0.0, count: n / 2)
         var imagPart = [Double](repeating: 0.0, count: n / 2)
-        
+
         // Convert interleaved to split complex
         for i in 0..<(n / 2) {
             realPart[i] = spectrum[2 * i]
             imagPart[i] = spectrum[2 * i + 1]
         }
-        
+
         var splitComplex = DSPDoubleSplitComplex(
             realp: &realPart,
             imagp: &imagPart
         )
-        
+
         // Perform inverse FFT
         vDSP_fft_zripD(setup, &splitComplex, 1, log2n, FFTDirection(FFT_INVERSE))
-        
+
         // Scale output
         var scale = 2.0
         vDSP_vsmulD(realPart, 1, &scale, &realPart, 1, vDSP_Length(n / 2))
         vDSP_vsmulD(imagPart, 1, &scale, &imagPart, 1, vDSP_Length(n / 2))
-        
+
         // Convert to real output
         var output = [Double](repeating: 0.0, count: n)
         output.withUnsafeMutableBufferPointer { outputPtr in
@@ -177,12 +181,12 @@ public struct J2KAdvancedAccelerate: Sendable {
                 vDSP_ztocD(&splitComplex, 1, complexPtr, 2, vDSP_Length(n / 2))
             }
         }
-        
+
         return output
     }
-    
+
     // MARK: - Correlation and Convolution
-    
+
     /// Computes cross-correlation between two signals using vDSP.
     ///
     /// - Parameters:
@@ -194,10 +198,10 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !signal.isEmpty && !kernel.isEmpty else {
             throw J2KError.invalidParameter("Signal and kernel cannot be empty")
         }
-        
+
         let resultLength = signal.count + kernel.count - 1
         var result = [Double](repeating: 0.0, count: resultLength)
-        
+
         vDSP_convD(
             signal,
             1,
@@ -208,10 +212,10 @@ public struct J2KAdvancedAccelerate: Sendable {
             vDSP_Length(resultLength),
             vDSP_Length(kernel.count)
         )
-        
+
         return result
     }
-    
+
     /// Computes convolution between two signals using vDSP.
     ///
     /// - Parameters:
@@ -223,10 +227,10 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !signal.isEmpty && !kernel.isEmpty else {
             throw J2KError.invalidParameter("Signal and kernel cannot be empty")
         }
-        
+
         let resultLength = signal.count + kernel.count - 1
         var result = [Double](repeating: 0.0, count: resultLength)
-        
+
         vDSP_convD(
             signal,
             1,
@@ -237,12 +241,12 @@ public struct J2KAdvancedAccelerate: Sendable {
             vDSP_Length(resultLength),
             vDSP_Length(kernel.count)
         )
-        
+
         return result
     }
-    
+
     // MARK: - Vector Math (vForce)
-    
+
     /// Computes element-wise square root using vForce.
     ///
     /// - Parameters:
@@ -252,16 +256,16 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !data.isEmpty else {
             return []
         }
-        
+
         var input = data
         var output = [Double](repeating: 0.0, count: data.count)
         var count = Int32(data.count)
-        
+
         vvsqrt(&output, &input, &count)
-        
+
         return output
     }
-    
+
     /// Computes element-wise sine using vForce.
     ///
     /// - Parameters:
@@ -271,16 +275,16 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !data.isEmpty else {
             return []
         }
-        
+
         var input = data
         var output = [Double](repeating: 0.0, count: data.count)
         var count = Int32(data.count)
-        
+
         vvsin(&output, &input, &count)
-        
+
         return output
     }
-    
+
     /// Computes element-wise cosine using vForce.
     ///
     /// - Parameters:
@@ -290,18 +294,18 @@ public struct J2KAdvancedAccelerate: Sendable {
         guard !data.isEmpty else {
             return []
         }
-        
+
         var input = data
         var output = [Double](repeating: 0.0, count: data.count)
         var count = Int32(data.count)
-        
+
         vvcos(&output, &input, &count)
-        
+
         return output
     }
-    
+
     // MARK: - Matrix Operations (BLAS/LAPACK)
-    
+
     /// Computes matrix-matrix multiplication using BLAS.
     ///
     /// Computes C = alpha * A * B + beta * C
@@ -327,20 +331,20 @@ public struct J2KAdvancedAccelerate: Sendable {
     ) throws -> [Double] {
         guard a.count == m * k else {
             throw J2KError.invalidParameter(
-                "Matrix A must have size m*k = \(m)*\(k) = \(m*k), got \(a.count)"
+                "Matrix A must have size m*k = \(m)*\(k) = \(m * k), got \(a.count)"
             )
         }
-        
+
         guard b.count == k * n else {
             throw J2KError.invalidParameter(
-                "Matrix B must have size k*n = \(k)*\(n) = \(k*n), got \(b.count)"
+                "Matrix B must have size k*n = \(k)*\(n) = \(k * n), got \(b.count)"
             )
         }
-        
+
         var result = [Double](repeating: 0.0, count: m * n)
         var mutableAlpha = alpha
         var mutableBeta = beta
-        
+
         // cblas_dgemm: General matrix-matrix multiply
         cblas_dgemm(
             CblasRowMajor,
@@ -358,10 +362,10 @@ public struct J2KAdvancedAccelerate: Sendable {
             &result,
             Int32(n)
         )
-        
+
         return result
     }
-    
+
     /// Computes Singular Value Decomposition using LAPACK.
     ///
     /// Decomposes matrix A into U * Σ * V^T
@@ -379,10 +383,10 @@ public struct J2KAdvancedAccelerate: Sendable {
     ) throws -> (u: [Double], s: [Double], vt: [Double]) {
         guard matrix.count == m * n else {
             throw J2KError.invalidParameter(
-                "Matrix must have size m*n = \(m)*\(n) = \(m*n), got \(matrix.count)"
+                "Matrix must have size m*n = \(m)*\(n) = \(m * n), got \(matrix.count)"
             )
         }
-        
+
         var a = matrix // LAPACK modifies input
         var s = [Double](repeating: 0.0, count: min(m, n))
         var u = [Double](repeating: 0.0, count: m * m)
@@ -392,7 +396,7 @@ public struct J2KAdvancedAccelerate: Sendable {
         var info = Int32(0)
         var mInt = Int32(m)
         var nInt = Int32(n)
-        
+
         // Query optimal workspace size
         dgesvd_(
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
@@ -410,10 +414,10 @@ public struct J2KAdvancedAccelerate: Sendable {
             &lwork,
             &info
         )
-        
+
         lwork = Int32(work[0])
         work = [Double](repeating: 0.0, count: Int(lwork))
-        
+
         // Compute SVD
         dgesvd_(
             UnsafeMutablePointer<Int8>(mutating: ("A" as NSString).utf8String),
@@ -431,13 +435,13 @@ public struct J2KAdvancedAccelerate: Sendable {
             &lwork,
             &info
         )
-        
+
         guard info == 0 else {
             throw J2KError.internalError("SVD failed with info = \(info)")
         }
-        
+
         return (u: u, s: s, vt: vt)
     }
-    
+
     #endif
 }

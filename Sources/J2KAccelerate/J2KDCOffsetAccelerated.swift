@@ -1,3 +1,7 @@
+//
+// J2KDCOffsetAccelerated.swift
+// J2KSwift
+//
 // J2KDCOffsetAccelerated.swift
 // J2KSwift
 //

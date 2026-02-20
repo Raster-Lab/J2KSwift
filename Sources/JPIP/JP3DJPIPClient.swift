@@ -1,3 +1,7 @@
+//
+// JP3DJPIPClient.swift
+// J2KSwift
+//
 /// # JP3DJPIPClient
 ///
 /// JPIP client actor for 3D-aware progressive delivery of JP3D volumetric data.
@@ -110,7 +114,6 @@ public enum JP3DClientError: Error, Sendable {
 /// ))
 /// ```
 public actor JP3DJPIPClient {
-
     // MARK: - Configuration
 
     /// Server URL (WebSocket or HTTP).
@@ -126,7 +129,7 @@ public actor JP3DJPIPClient {
     private var activeRequests: [String: JP3DViewWindowRequest] = [:]
     private var cancelledRequestIDs: Set<String> = []
     private var receivedBins: [JP3DDataBin] = []
-    private var statistics: JP3DStreamingStatistics = JP3DStreamingStatistics()
+    private var statistics = JP3DStreamingStatistics()
     private var reconnectAttempts: Int = 0
 
     // MARK: - Initialiser
@@ -261,10 +264,8 @@ public actor JP3DJPIPClient {
         currentViewport = newViewport
         // Cancel stale requests that fall outside the new viewport
         var toCancel: [String] = []
-        for (id, request) in activeRequests {
-            if request.viewport.intersection(newViewport) == nil {
-                toCancel.append(id)
-            }
+        for (id, request) in activeRequests where request.viewport.intersection(newViewport) == nil {
+            toCancel.append(id)
         }
         for id in toCancel {
             cancelledRequestIDs.insert(id)

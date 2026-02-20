@@ -1,3 +1,7 @@
+//
+// JP3DTiling.swift
+// J2KSwift
+//
 /// # JP3DTiling
 ///
 /// 3D tiling implementation for JP3D volumetric encoding.
@@ -163,7 +167,7 @@ public struct JP3DTileDecomposer: Sendable {
     /// - Parameter volume: The volume.
     /// - Returns: A clamped tiling configuration.
     public func clampedConfiguration(for volume: J2KVolume) -> JP3DTilingConfiguration {
-        return JP3DTilingConfiguration(
+        JP3DTilingConfiguration(
             tileSizeX: min(configuration.tileSizeX, max(1, volume.width)),
             tileSizeY: min(configuration.tileSizeY, max(1, volume.height)),
             tileSizeZ: min(configuration.tileSizeZ, max(1, volume.depth))
@@ -175,7 +179,7 @@ public struct JP3DTileDecomposer: Sendable {
     /// - Parameter volume: The volume.
     /// - Returns: (tilesX, tilesY, tilesZ).
     public func tileGrid(for volume: J2KVolume) -> (tilesX: Int, tilesY: Int, tilesZ: Int) {
-        return configuration.tileGrid(
+        configuration.tileGrid(
             volumeWidth: volume.width,
             volumeHeight: volume.height,
             volumeDepth: volume.depth

@@ -1,10 +1,13 @@
+//
+// J2KMetalMCTTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KMetal
 @testable import J2KCore
 
 /// Tests for Metal-accelerated multi-component transforms.
 final class J2KMetalMCTTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal MCT availability can be queried.

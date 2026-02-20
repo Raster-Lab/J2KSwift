@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoderOptimizations.swift
+// J2KSwift
+//
 // J2KHTBlockCoderOptimizations.swift
 // J2KSwift
 //

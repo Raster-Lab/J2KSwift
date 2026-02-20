@@ -1,10 +1,13 @@
+//
+// JPIPClientCacheManagerTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import JPIP
 @testable import J2KCore
 
 /// Tests for JPIP client-side cache management improvements.
 final class JPIPClientCacheManagerTests: XCTestCase {
-
     // MARK: - Basic Cache Operations
 
     func testCacheManagerInitialization() async {

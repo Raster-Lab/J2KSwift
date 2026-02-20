@@ -1,3 +1,7 @@
+//
+// J2KMetalPerformance.swift
+// J2KSwift
+//
 /// # J2KMetalPerformance
 ///
 /// Metal-specific performance optimization and tuning.
@@ -32,30 +36,30 @@ import Foundation
 public actor J2KMetalPerformance {
     /// Metal device.
     private let device: MTLDevice
-    
+
     /// Performance optimization configuration.
     public struct Configuration: Sendable {
         /// Maximum threadgroup size for kernels.
         public var maxThreadgroupSize: Int
-        
+
         /// Target threads per threadgroup.
         public var targetThreadsPerThreadgroup: Int
-        
+
         /// Enable async compute for parallelism.
         public var enableAsyncCompute: Bool
-        
+
         /// Batch kernel launches when possible.
         public var batchKernelLaunches: Bool
-        
+
         /// Minimum batch size for kernel launches.
         public var minBatchSize: Int
-        
+
         /// Maximum memory bandwidth utilization (0.0-1.0).
         public var maxBandwidthUtilization: Double
-        
+
         /// Enable memory access coalescing hints.
         public var enableMemoryCoalescing: Bool
-        
+
         /// Creates default configuration.
         public init(
             maxThreadgroupSize: Int = 1024,
@@ -74,7 +78,7 @@ public actor J2KMetalPerformance {
             self.maxBandwidthUtilization = maxBandwidthUtilization
             self.enableMemoryCoalescing = enableMemoryCoalescing
         }
-        
+
         /// High-throughput configuration.
         public static var highThroughput: Configuration {
             Configuration(
@@ -87,7 +91,7 @@ public actor J2KMetalPerformance {
                 enableMemoryCoalescing: true
             )
         }
-        
+
         /// Low-latency configuration.
         public static var lowLatency: Configuration {
             Configuration(
@@ -100,37 +104,37 @@ public actor J2KMetalPerformance {
                 enableMemoryCoalescing: true
             )
         }
-        
+
         /// Balanced configuration.
         public static var balanced: Configuration {
             Configuration()
         }
     }
-    
+
     /// Performance metrics.
     public struct Metrics: Sendable {
         /// Total kernel launches.
         public let totalLaunches: Int
-        
+
         /// Total GPU time in seconds.
         public let totalGPUTime: TimeInterval
-        
+
         /// Average kernel launch overhead in seconds.
         public let averageLaunchOverhead: TimeInterval
-        
+
         /// Estimated GPU utilization (0.0-1.0).
         public let gpuUtilization: Double
-        
+
         /// Memory bandwidth utilization (0.0-1.0).
         public let bandwidthUtilization: Double
-        
+
         /// Number of batched launches.
         public let batchedLaunches: Int
-        
+
         /// Async compute usage percentage (0.0-100.0).
         public let asyncComputeUsage: Double
     }
-    
+
     /// Kernel launch record.
     private struct KernelLaunch {
         let name: String
@@ -140,20 +144,20 @@ public actor J2KMetalPerformance {
         let batched: Bool
         let async: Bool
     }
-    
+
     // MARK: - State
-    
+
     /// Current configuration.
     private var configuration: Configuration = .balanced
-    
+
     /// Recorded kernel launches.
     private var kernelLaunches: [KernelLaunch] = []
-    
+
     /// Session start time.
     private var sessionStart: Date?
-    
+
     // MARK: - Initialization
-    
+
     /// Creates a Metal performance optimizer.
     ///
     /// - Parameters:
@@ -163,9 +167,9 @@ public actor J2KMetalPerformance {
         self.device = device
         self.configuration = configuration
     }
-    
+
     // MARK: - Configuration
-    
+
     /// Optimizes configuration for maximum throughput.
     ///
     /// - Returns: Optimized configuration.
@@ -173,7 +177,7 @@ public actor J2KMetalPerformance {
         configuration = .highThroughput
         return configuration
     }
-    
+
     /// Optimizes configuration for minimum latency.
     ///
     /// - Returns: Optimized configuration.
@@ -181,21 +185,21 @@ public actor J2KMetalPerformance {
         configuration = .lowLatency
         return configuration
     }
-    
+
     /// Sets custom configuration.
     ///
     /// - Parameter config: Custom configuration.
     public func setConfiguration(_ config: Configuration) {
         configuration = config
     }
-    
+
     /// Returns current configuration.
     public func currentConfiguration() -> Configuration {
         configuration
     }
-    
+
     // MARK: - Threadgroup Optimization
-    
+
     /// Calculates optimal threadgroup size for the given workload.
     ///
     /// This method considers:
@@ -216,35 +220,35 @@ public actor J2KMetalPerformance {
             device.maxThreadsPerThreadgroup.width,
             configuration.maxThreadgroupSize
         )
-        
+
         // Start with target size
         var size = configuration.targetThreadsPerThreadgroup
-        
+
         // Adjust for workload size
         if workloadSize < size {
             size = max(32, (workloadSize + 31) / 32 * 32) // Round up to multiple of 32
         }
-        
+
         // Adjust for memory constraints
         if memoryPerThread > 0 {
             let threadgroupMemory = device.maxThreadgroupMemoryLength
             let maxThreadsByMemory = threadgroupMemory / max(1, memoryPerThread)
             size = min(size, maxThreadsByMemory)
         }
-        
+
         // Ensure power of 2 and within limits
         size = min(size, maxThreads)
         size = max(32, size)
-        
+
         // Round down to nearest power of 2
         var powerOfTwo = 32
         while powerOfTwo * 2 <= size {
             powerOfTwo *= 2
         }
-        
+
         return powerOfTwo
     }
-    
+
     /// Calculates optimal 2D threadgroup size for 2D workloads.
     ///
     /// - Parameters:
@@ -260,12 +264,12 @@ public actor J2KMetalPerformance {
             configuration.maxThreadgroupSize
         )
         let targetThreads = configuration.targetThreadsPerThreadgroup
-        
+
         // Start with square threadgroup
         let side = Int(sqrt(Double(targetThreads)))
         var tgWidth = max(8, (side + 7) / 8 * 8) // Multiple of 8
         var tgHeight = max(8, (side + 7) / 8 * 8)
-        
+
         // Adjust for aspect ratio
         let aspectRatio = Double(width) / Double(max(1, height))
         if aspectRatio > 2.0 {
@@ -275,7 +279,7 @@ public actor J2KMetalPerformance {
             tgWidth /= 2
             tgHeight *= 2
         }
-        
+
         // Ensure within limits
         while tgWidth * tgHeight > maxThreads {
             if tgWidth > tgHeight {
@@ -284,15 +288,15 @@ public actor J2KMetalPerformance {
                 tgHeight /= 2
             }
         }
-        
+
         tgWidth = max(8, min(32, tgWidth))
         tgHeight = max(8, min(32, tgHeight))
-        
+
         return (tgWidth, tgHeight)
     }
-    
+
     // MARK: - Memory Bandwidth Optimization
-    
+
     /// Calculates optimal memory access pattern for the given data layout.
     ///
     /// - Parameters:
@@ -306,9 +310,9 @@ public actor J2KMetalPerformance {
         accessPattern: String
     ) -> (pattern: String, batchSize: Int) {
         let cacheLineSize = 64 // bytes
-        
+
         if configuration.enableMemoryCoalescing {
-            if stride == 0 || stride % cacheLineSize == 0 {
+            if stride == 0 || stride.isMultiple(of: cacheLineSize) {
                 // Already aligned, use sequential access
                 return ("sequential", 4)
             } else if stride < cacheLineSize {
@@ -320,10 +324,10 @@ public actor J2KMetalPerformance {
                 return ("scattered", 1)
             }
         }
-        
+
         return (accessPattern, 1)
     }
-    
+
     /// Estimates memory bandwidth utilization for the given operation.
     ///
     /// - Parameters:
@@ -337,18 +341,18 @@ public actor J2KMetalPerformance {
         duration: TimeInterval
     ) -> Double {
         guard duration > 0 else { return 0 }
-        
+
         // Typical Apple Silicon bandwidth: ~400 GB/s (M1 Max)
         let estimatedPeakBandwidth = 400_000_000_000.0 // bytes/s
-        
+
         let totalBytes = Double(bytesRead + bytesWritten)
         let actualBandwidth = totalBytes / duration
-        
+
         return min(1.0, actualBandwidth / estimatedPeakBandwidth)
     }
-    
+
     // MARK: - Kernel Launch Optimization
-    
+
     /// Records a kernel launch for performance tracking.
     ///
     /// - Parameters:
@@ -372,15 +376,15 @@ public actor J2KMetalPerformance {
             batched: batched,
             async: async
         )
-        
+
         kernelLaunches.append(launch)
-        
+
         // Keep only recent launches (last 1000)
         if kernelLaunches.count > 1000 {
             kernelLaunches.removeFirst(kernelLaunches.count - 1000)
         }
     }
-    
+
     /// Determines if kernel launches should be batched.
     ///
     /// - Parameter launchCount: Number of pending launches.
@@ -389,23 +393,23 @@ public actor J2KMetalPerformance {
         guard configuration.batchKernelLaunches else { return false }
         return launchCount >= configuration.minBatchSize
     }
-    
+
     /// Estimates kernel launch overhead.
     ///
     /// - Returns: Estimated overhead per launch in seconds.
     public func estimatedLaunchOverhead() -> TimeInterval {
         // Typical Metal kernel launch overhead: 5-20 microseconds
-        return 0.000010 // 10 microseconds
+        0.000010 // 10 microseconds
     }
-    
+
     // MARK: - Performance Metrics
-    
+
     /// Starts a performance monitoring session.
     public func startSession() {
         sessionStart = Date()
         kernelLaunches.removeAll()
     }
-    
+
     /// Ends the performance monitoring session and returns metrics.
     ///
     /// - Returns: Performance metrics for the session.
@@ -414,22 +418,22 @@ public actor J2KMetalPerformance {
         let totalGPUTime = kernelLaunches.reduce(0) { $0 + $1.duration }
         let batchedCount = kernelLaunches.filter { $0.batched }.count
         let asyncCount = kernelLaunches.filter { $0.async }.count
-        
+
         let averageLaunchOverhead = totalLaunches > 0
             ? estimatedLaunchOverhead()
             : 0
-        
+
         // Estimate GPU utilization
         let sessionDuration = sessionStart.map { Date().timeIntervalSince($0) } ?? 1.0
         let gpuUtilization = min(1.0, totalGPUTime / sessionDuration)
-        
+
         // Estimate bandwidth (placeholder - would need actual measurements)
         let bandwidthUtilization = gpuUtilization * configuration.maxBandwidthUtilization
-        
+
         let asyncUsage = totalLaunches > 0
             ? Double(asyncCount) / Double(totalLaunches) * 100.0
             : 0.0
-        
+
         return Metrics(
             totalLaunches: totalLaunches,
             totalGPUTime: totalGPUTime,
@@ -440,14 +444,14 @@ public actor J2KMetalPerformance {
             asyncComputeUsage: asyncUsage
         )
     }
-    
+
     /// Returns current performance metrics.
     public func performanceMetrics() -> Metrics {
         endSession()
     }
-    
+
     // MARK: - Device Capabilities
-    
+
     /// Returns device-specific performance characteristics.
     public func deviceCharacteristics() -> (
         maxThreadgroups: Int,
@@ -456,17 +460,17 @@ public actor J2KMetalPerformance {
     ) {
         let maxThreadgroups = 1024 // Typical for Apple GPUs
         let maxThreadsPerThreadgroup = device.maxThreadsPerThreadgroup.width
-        
+
         // Recommend moderate number of threadgroups for good occupancy
         let recommendedThreadgroups = 256
-        
+
         return (
             maxThreadgroups,
             maxThreadsPerThreadgroup,
             recommendedThreadgroups
         )
     }
-    
+
     /// Checks if the device supports async compute.
     public func supportsAsyncCompute() -> Bool {
         // Apple GPUs support async compute on A11 and later

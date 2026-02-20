@@ -1,3 +1,7 @@
+//
+// J2KBoxTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KFileFormat
 @testable import J2KCore
@@ -1746,7 +1750,7 @@ final class J2KBoxTests: XCTestCase {
 
     func testUUIDBox() throws {
         let uuid = UUID()
-        let customData = "Custom metadata".data(using: .utf8)!
+        let customData = Data("Custom metadata".utf8)
 
         let box = J2KUUIDBox(uuid: uuid, data: customData)
 
@@ -2008,9 +2012,9 @@ final class J2KBoxTests: XCTestCase {
     func testUUIDBoxWithinFile() throws {
         // Test UUID box as part of a JP2 file structure
         let uuid = UUID()
-        let metadata = """
+        let metadata = Data("""
         {"format": "JPEG 2000", "version": "1.0"}
-        """.data(using: .utf8)!
+        """.utf8)
 
         let box = J2KUUIDBox(uuid: uuid, data: metadata)
 
@@ -2281,7 +2285,7 @@ final class J2KBoxTests: XCTestCase {
             .replace, .alphaBlend, .preMulAlphaBlend
         ]
 
-        let instructions = modes.enumerated().map { (index, mode) in
+        let instructions = modes.enumerated().map { index, mode in
             J2KCompositionInstruction(
                 width: 100,
                 height: 100,
@@ -2601,4 +2605,3 @@ final class J2KBoxTests: XCTestCase {
         XCTAssertEqual(decoded.pages[2].width, 1754)  // Landscape
     }
 }
-

@@ -1,3 +1,7 @@
+//
+// J2KBitPlaneDiagnosticTest.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -71,19 +75,19 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
             switch self {
             case .dense2048:
                 return (0..<count).map { i in
-                    let sign: Int32 = (i % 5 == 0) ? -1 : 1
+                    let sign: Int32 = (i.isMultiple(of: 5)) ? -1 : 1
                     return sign * Int32((i * 17) % 2048)
                 }
             case .sparse1999:
                 return (0..<count).map { i in
-                    let sign: Int32 = (i % 7 == 0) ? -1 : 1
+                    let sign: Int32 = (i.isMultiple(of: 7)) ? -1 : 1
                     return sign * Int32((i * 13) % 2000)
                 }
             case .sequential:
                 return (0..<count).map { Int32($0 % 256) }
             case .alternating:
                 return (0..<count).map { i in
-                    i % 2 == 0 ? Int32(i) : 0
+                    i.isMultiple(of: 2) ? Int32(i) : 0
                 }
             case .powerOfTwo:
                 return (0..<count).map { i in
@@ -207,31 +211,29 @@ final class J2KBitPlaneDiagnosticTest: XCTestCase {
         var lastMismatch: DifferenceAnalysis.Mismatch?
         var errorDistribution: [Int32: Int] = [:]
 
-        for i in 0..<original.count {
-            if decoded[i] != original[i] {
-                mismatchCount += 1
+        for i in 0..<original.count where decoded[i] != original[i] {
+            mismatchCount += 1
 
-                let row = i / size
-                let col = i % size
-                let diff = decoded[i] - original[i]
-                let magnitude = abs(diff)
+            let row = i / size
+            let col = i % size
+            let diff = decoded[i] - original[i]
+            let magnitude = abs(diff)
 
-                let mismatch = DifferenceAnalysis.Mismatch(
-                    index: i,
-                    row: row,
-                    col: col,
-                    expected: original[i],
-                    decoded: decoded[i],
-                    diff: diff
-                )
+            let mismatch = DifferenceAnalysis.Mismatch(
+                index: i,
+                row: row,
+                col: col,
+                expected: original[i],
+                decoded: decoded[i],
+                diff: diff
+            )
 
-                if firstMismatch == nil {
-                    firstMismatch = mismatch
-                }
-                lastMismatch = mismatch
-
-                errorDistribution[magnitude, default: 0] += 1
+            if firstMismatch == nil {
+                firstMismatch = mismatch
             }
+            lastMismatch = mismatch
+
+            errorDistribution[magnitude, default: 0] += 1
         }
 
         let percentage = !original.isEmpty

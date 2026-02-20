@@ -1,3 +1,7 @@
+//
+// JPIPTranscodingService.swift
+// J2KSwift
+//
 /// # JPIPTranscodingService
 ///
 /// On-the-fly transcoding service for JPIP protocol.
@@ -107,7 +111,7 @@ public struct JPIPTranscodingService: Sendable {
         preference: JPIPCodingPreference,
         sourceIsHTJ2K: Bool
     ) -> Bool {
-        return determineDirection(preference: preference, sourceIsHTJ2K: sourceIsHTJ2K) != nil
+        determineDirection(preference: preference, sourceIsHTJ2K: sourceIsHTJ2K) != nil
     }
 }
 
@@ -235,12 +239,12 @@ public actor JPIPTranscodingCache {
 
     /// Gets the number of cached entries.
     public var count: Int {
-        return cache.count
+        cache.count
     }
 
     /// Gets the current cache size in bytes.
     public var size: Int {
-        return currentSize
+        currentSize
     }
 
     /// Evicts the oldest cache entry.
@@ -254,6 +258,6 @@ public actor JPIPTranscodingCache {
 
     /// Constructs a cache key from source hash and direction.
     private func cacheKey(sourceHash: String, direction: TranscodingDirection) -> String {
-        return "\(sourceHash):\(direction.rawValue)"
+        "\(sourceHash):\(direction.rawValue)"
     }
 }

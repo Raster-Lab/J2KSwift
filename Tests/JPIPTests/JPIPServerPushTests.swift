@@ -1,3 +1,7 @@
+//
+// JPIPServerPushTests.swift
+// J2KSwift
+//
 /// # JPIPServerPushTests
 ///
 /// Tests for JPIP server-initiated push and predictive prefetching.
@@ -9,7 +13,6 @@ import XCTest
 // MARK: - Prefetch Configuration Tests
 
 final class JPIPPrefetchConfigurationTests: XCTestCase {
-
     func testDefaultConfiguration() {
         let config = JPIPPrefetchConfiguration.default
         XCTAssertEqual(config.maxPrefetchDepth, 64)
@@ -68,7 +71,6 @@ final class JPIPPrefetchConfigurationTests: XCTestCase {
 // MARK: - Viewport Tests
 
 final class JPIPViewportTests: XCTestCase {
-
     func testViewportCreation() {
         let viewport = JPIPViewport(
             x: 100, y: 200, width: 800, height: 600, resolutionLevel: 3
@@ -100,7 +102,6 @@ final class JPIPViewportTests: XCTestCase {
 // MARK: - Push Priority Tests
 
 final class JPIPPushPriorityTests: XCTestCase {
-
     func testPriorityOrdering() {
         XCTAssertTrue(JPIPPushPriority.quality < .spatial)
         XCTAssertTrue(JPIPPushPriority.spatial < .resolution)
@@ -139,7 +140,6 @@ final class JPIPPushPriorityTests: XCTestCase {
 // MARK: - Predictive Prefetch Engine Tests
 
 final class JPIPPredictivePrefetchEngineTests: XCTestCase {
-
     let testImageInfo = JPIPPredictivePrefetchEngine.ImageInfo(
         width: 2048,
         height: 2048,
@@ -441,7 +441,6 @@ final class JPIPPredictivePrefetchEngineTests: XCTestCase {
 // MARK: - Push Scheduler Tests
 
 final class JPIPPushSchedulerTests: XCTestCase {
-
     func testEnqueueDequeue() async {
         let scheduler = JPIPPushScheduler()
 
@@ -604,7 +603,6 @@ final class JPIPPushSchedulerTests: XCTestCase {
 // MARK: - Client Cache Tracker Tests
 
 final class JPIPClientCacheTrackerTests: XCTestCase {
-
     func testRegisterAndRemoveSession() async {
         let tracker = JPIPClientCacheTracker()
 
@@ -818,7 +816,6 @@ final class JPIPClientCacheTrackerTests: XCTestCase {
 // MARK: - Server Push Manager Tests
 
 final class JPIPServerPushManagerTests: XCTestCase {
-
     let testImageInfo = JPIPPredictivePrefetchEngine.ImageInfo(
         width: 1024,
         height: 1024,
@@ -1049,7 +1046,6 @@ final class JPIPServerPushManagerTests: XCTestCase {
 // MARK: - Performance Metrics Tests
 
 final class JPIPPushPerformanceMetricsTests: XCTestCase {
-
     func testInitialMetrics() {
         let metrics = JPIPPushPerformanceMetrics()
         XCTAssertEqual(metrics.predictionCycles, 0)
@@ -1137,7 +1133,6 @@ final class JPIPPushPerformanceMetricsTests: XCTestCase {
 // MARK: - Prediction Confidence Tests
 
 final class JPIPPredictionConfidenceTests: XCTestCase {
-
     func testPredictionConfidenceClamping() {
         let prediction1 = PrefetchPrediction(
             tileIndex: 0,
@@ -1168,7 +1163,6 @@ final class JPIPPredictionConfidenceTests: XCTestCase {
 // MARK: - Integration Tests
 
 final class JPIPServerPushIntegrationTests: XCTestCase {
-
     func testFullPushWorkflow() async {
         let imageInfo = JPIPPredictivePrefetchEngine.ImageInfo(
             width: 1024,

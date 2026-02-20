@@ -1,3 +1,7 @@
+//
+// J2KMetalBufferPool.swift
+// J2KSwift
+//
 // J2KMetalBufferPool.swift
 // J2KSwift
 //
@@ -261,7 +265,7 @@ public actor J2KMetalBufferPool {
     ///
     /// - Returns: The count of pooled buffers.
     public func count() -> Int {
-        return pooledCount
+        pooledCount
     }
 
     // MARK: - Private Helpers

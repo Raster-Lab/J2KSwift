@@ -1,3 +1,7 @@
+//
+// J2KReaderRequirements.swift
+// J2KSwift
+//
 /// # J2KReaderRequirements
 ///
 /// Reader Requirements box (rreq) and Part 2 feature signaling

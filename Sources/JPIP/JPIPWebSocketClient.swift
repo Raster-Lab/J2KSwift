@@ -1,3 +1,7 @@
+//
+// JPIPWebSocketClient.swift
+// J2KSwift
+//
 /// # JPIPWebSocketClient
 ///
 /// WebSocket-based JPIP client implementation.
@@ -280,7 +284,7 @@ public actor JPIPWebSocketClient {
     ///
     /// - Returns: The measured round-trip latency, or nil if not measured.
     public func getLatency() async -> TimeInterval? {
-        return await webSocketTransport.measuredLatency
+        await webSocketTransport.measuredLatency
     }
 
     /// Gets the current connection state.
@@ -297,14 +301,14 @@ public actor JPIPWebSocketClient {
     ///
     /// - Returns: The active session, or nil.
     public func getSession() -> JPIPSession? {
-        return session
+        session
     }
 
     /// Gets the number of in-flight requests.
     ///
     /// - Returns: Number of currently in-flight requests.
     public func getInFlightRequestCount() -> Int {
-        return inFlightRequests
+        inFlightRequests
     }
 
     /// Disconnects from the server and cleans up resources.

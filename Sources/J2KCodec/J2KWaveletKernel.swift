@@ -1,3 +1,7 @@
+//
+// J2KWaveletKernel.swift
+// J2KSwift
+//
 // J2KWaveletKernel.swift
 // J2KSwift
 //
@@ -229,7 +233,7 @@ public struct J2KWaveletKernel: Sendable, Equatable {
     ///
     /// - Returns: A ``J2KDWT1D/Filter`` enum case wrapping the custom filter.
     public func toDWTFilter() -> J2KDWT1D.Filter {
-        return .custom(toCustomFilter())
+        .custom(toCustomFilter())
     }
 
     // MARK: - Serialization
@@ -570,14 +574,14 @@ public enum J2KWaveletKernelLibrary: Sendable {
         // Analysis highpass via alternating flip: g[n] = (-1)^n * h[N-1-n]
         var aHP = [Double](repeating: 0.0, count: n)
         for i in 0..<n {
-            aHP[i] = (i % 2 == 0 ? 1.0 : -1.0) * coeffs[n - 1 - i]
+            aHP[i] = (i.isMultiple(of: 2) ? 1.0 : -1.0) * coeffs[n - 1 - i]
         }
         // Synthesis lowpass is time-reversed analysis lowpass
         let sLP = Array(coeffs.reversed())
         // Synthesis highpass via alternating flip
         var sHP = [Double](repeating: 0.0, count: n)
         for i in 0..<n {
-            sHP[i] = (i % 2 == 0 ? -1.0 : 1.0) * coeffs[i]
+            sHP[i] = (i.isMultiple(of: 2) ? -1.0 : 1.0) * coeffs[i]
         }
         return J2KWaveletKernel(
             name: "Daubechies-6",

@@ -1,3 +1,7 @@
+//
+// JP3DWaveletTests.swift
+// J2KSwift
+//
 /// Tests for JP3D 3D wavelet transform (Week 214-217).
 ///
 /// Validates forward/inverse round-trips, boundary modes, edge dimensions,
@@ -8,7 +12,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DWaveletTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Generates a deterministic test volume with a simple spatial gradient.

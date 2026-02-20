@@ -1,3 +1,7 @@
+//
+// J2KCore.swift
+// J2KSwift
+//
 /// # J2KCore
 ///
 /// Core module for JPEG 2000 encoding and decoding functionality.
@@ -149,29 +153,29 @@ public struct J2KImage: Sendable {
 
     /// Returns the total number of tiles in the image.
     public var tileCount: Int {
-        return tilesX * tilesY
+        tilesX * tilesY
     }
 
     // MARK: - Convenience Properties
 
     /// Returns true if the image uses tiling.
     public var isTiled: Bool {
-        return tileWidth > 0 && tileHeight > 0
+        tileWidth > 0 && tileHeight > 0
     }
 
     /// Returns the total number of pixels in the image.
     public var pixelCount: Int {
-        return width * height
+        width * height
     }
 
     /// Returns the number of components in the image.
     public var componentCount: Int {
-        return components.count
+        components.count
     }
 
     /// Returns true if the image is grayscale (single component).
     public var isGrayscale: Bool {
-        return components.count == 1
+        components.count == 1
     }
 
     /// Returns true if the image has an alpha channel.
@@ -179,7 +183,7 @@ public struct J2KImage: Sendable {
     /// An alpha channel is assumed to be present if there are 2 components (grayscale + alpha)
     /// or 4 components (RGB + alpha).
     public var hasAlpha: Bool {
-        return components.count == 2 || components.count == 4
+        components.count == 2 || components.count == 4
     }
 
     /// Returns the aspect ratio of the image (width / height).
@@ -281,22 +285,22 @@ public struct J2KComponent: Sendable {
 
     /// Returns the total number of pixels in the component.
     public var pixelCount: Int {
-        return width * height
+        width * height
     }
 
     /// Returns true if the component is subsampled.
     public var isSubsampled: Bool {
-        return subsamplingX > 1 || subsamplingY > 1
+        subsamplingX > 1 || subsamplingY > 1
     }
 
     /// Returns the maximum value for this component's bit depth.
     public var maxValue: Int {
-        return (1 << bitDepth) - 1
+        (1 << bitDepth) - 1
     }
 
     /// Returns the minimum value for this component (0 for unsigned, negative for signed).
     public var minValue: Int {
-        return signed ? -(1 << (bitDepth - 1)) : 0
+        signed ? -(1 << (bitDepth - 1)) : 0
     }
 }
 
@@ -680,7 +684,7 @@ extension J2KError: LocalizedError {
 extension J2KError: CustomStringConvertible {
     /// A textual representation of the error.
     public var description: String {
-        return errorDescription ?? "Unknown J2K error"
+        errorDescription ?? "Unknown J2K error"
     }
 }
 
@@ -712,7 +716,7 @@ public struct J2KConfiguration: Sendable {
     ///
     /// - Returns: A configuration for lossless compression.
     public static var lossless: J2KConfiguration {
-        return J2KConfiguration(quality: 1.0, lossless: true)
+        J2KConfiguration(quality: 1.0, lossless: true)
     }
 
     /// Creates a configuration for high-quality lossy compression.
@@ -722,7 +726,7 @@ public struct J2KConfiguration: Sendable {
     ///
     /// - Returns: A configuration for high-quality compression (quality: 0.95).
     public static var highQuality: J2KConfiguration {
-        return J2KConfiguration(quality: 0.95, lossless: false)
+        J2KConfiguration(quality: 0.95, lossless: false)
     }
 
     /// Creates a configuration for balanced compression.
@@ -732,7 +736,7 @@ public struct J2KConfiguration: Sendable {
     ///
     /// - Returns: A configuration for balanced compression (quality: 0.85).
     public static var balanced: J2KConfiguration {
-        return J2KConfiguration(quality: 0.85, lossless: false)
+        J2KConfiguration(quality: 0.85, lossless: false)
     }
 
     /// Creates a configuration for fast compression with smaller file sizes.
@@ -742,7 +746,7 @@ public struct J2KConfiguration: Sendable {
     ///
     /// - Returns: A configuration for fast compression (quality: 0.70).
     public static var fast: J2KConfiguration {
-        return J2KConfiguration(quality: 0.70, lossless: false)
+        J2KConfiguration(quality: 0.70, lossless: false)
     }
 
     /// Creates a configuration for maximum compression.
@@ -752,7 +756,7 @@ public struct J2KConfiguration: Sendable {
     ///
     /// - Returns: A configuration for maximum compression (quality: 0.50).
     public static var maxCompression: J2KConfiguration {
-        return J2KConfiguration(quality: 0.50, lossless: false)
+        J2KConfiguration(quality: 0.50, lossless: false)
     }
 }
 
@@ -769,5 +773,5 @@ public struct J2KConfiguration: Sendable {
 ///
 /// - Returns: A string representing the current version in semver format.
 public func getVersion() -> String {
-    return "1.9.0"
+    "1.9.0"
 }

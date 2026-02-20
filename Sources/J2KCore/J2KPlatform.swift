@@ -1,3 +1,7 @@
+//
+// J2KPlatform.swift
+// J2KSwift
+//
 /// # J2KPlatform
 ///
 /// Cross-platform compatibility utilities for J2KSwift.
@@ -114,7 +118,7 @@ public enum J2KMemoryInfo: Sendable {
         // Use Windows Process Status API (PSAPI) to get working set size.
         // GetProcessMemoryInfo fills PROCESS_MEMORY_COUNTERS with WorkingSetSize.
         // This requires importing WinSDK on Windows.
-        return 0 // Placeholder: requires WinSDK import for full implementation
+        0 // Placeholder: requires WinSDK import for full implementation
     }
     #endif
 }

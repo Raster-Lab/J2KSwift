@@ -1,3 +1,7 @@
+//
+// J2KVisualWeightingTests.swift
+// J2KSwift
+//
 // J2KVisualWeightingTests.swift
 // J2KSwift
 //

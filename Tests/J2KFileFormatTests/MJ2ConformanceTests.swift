@@ -1,3 +1,7 @@
+//
+// MJ2ConformanceTests.swift
+// J2KSwift
+//
 /// # MJ2ConformanceTests
 ///
 /// ISO/IEC 15444-3 conformance tests for the Motion JPEG 2000 implementation.
@@ -12,7 +16,6 @@ import XCTest
 @testable import J2KCodec
 
 final class MJ2ConformanceTests: XCTestCase {
-
     // MARK: - Helpers
 
     /// Creates a test image with the given dimensions.
@@ -204,8 +207,8 @@ final class MJ2ConformanceTests: XCTestCase {
         let target = [UInt8](fourCC.utf8)
         guard target.count == 4, bytes.count >= 4 else { return false }
         for i in 0...(bytes.count - 4) {
-            if bytes[i] == target[0] && bytes[i+1] == target[1]
-                && bytes[i+2] == target[2] && bytes[i+3] == target[3] {
+            if bytes[i] == target[0] && bytes[i + 1] == target[1]
+                && bytes[i + 2] == target[2] && bytes[i + 3] == target[3] {
                 return true
             }
         }
@@ -599,5 +602,3 @@ final class MJ2ConformanceTests: XCTestCase {
         }
     }
 }
-
-

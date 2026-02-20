@@ -1,3 +1,7 @@
+//
+// J2KMCTMarker.swift
+// J2KSwift
+//
 // J2KMCTMarker.swift
 // J2KSwift
 //
@@ -32,37 +36,37 @@ import J2KCore
 public struct J2KMCTMarkerSegment: Sendable {
     /// The index of this MCT (allows multiple MCT definitions).
     public let index: UInt16
-    
+
     /// The type of MCT.
     public let transformType: TransformType
-    
+
     /// The component transform type (reversible or irreversible).
     public let componentType: ComponentType
-    
+
     /// The number of output components.
     public let outputComponentCount: UInt16
-    
+
     /// The transform coefficients (interpretation depends on transformType).
     public let coefficients: Data
-    
+
     /// Transform type for MCT.
     public enum TransformType: UInt8, Sendable {
         /// Decorrelation transform (array-based).
         case decorrelation = 0
-        
+
         /// Dependency transform.
         case dependency = 1
     }
-    
+
     /// Component transform type.
     public enum ComponentType: UInt8, Sendable {
         /// Irreversible (floating-point) transform.
         case irreversible = 0
-        
+
         /// Reversible (integer) transform.
         case reversible = 1
     }
-    
+
     /// Creates a new MCT marker segment.
     ///
     /// - Parameters:
@@ -84,7 +88,7 @@ public struct J2KMCTMarkerSegment: Sendable {
         self.outputComponentCount = outputComponentCount
         self.coefficients = coefficients
     }
-    
+
     /// Parses an MCT marker segment from data.
     ///
     /// - Parameter data: The marker segment data (excluding marker and length).
@@ -94,25 +98,25 @@ public struct J2KMCTMarkerSegment: Sendable {
         guard data.count >= 6 else {
             throw J2KError.invalidData("MCT marker segment too short: \(data.count) bytes")
         }
-        
+
         var reader = J2KBitReader(data: data)
-        
+
         let index = try reader.readUInt16()
         let transformTypeRaw = try reader.readUInt8()
         let componentTypeRaw = try reader.readUInt8()
         let outputComponentCount = try reader.readUInt16()
-        
+
         guard let transformType = TransformType(rawValue: transformTypeRaw) else {
             throw J2KError.invalidData("Invalid MCT transform type: \(transformTypeRaw)")
         }
-        
+
         guard let componentType = ComponentType(rawValue: componentTypeRaw) else {
             throw J2KError.invalidData("Invalid MCT component type: \(componentTypeRaw)")
         }
-        
+
         // Read remaining data as coefficients
         let coefficients = data.subdata(in: 6..<data.count)
-        
+
         return J2KMCTMarkerSegment(
             index: index,
             transformType: transformType,
@@ -121,31 +125,31 @@ public struct J2KMCTMarkerSegment: Sendable {
             coefficients: coefficients
         )
     }
-    
+
     /// Encodes this MCT marker segment to data.
     ///
     /// - Returns: The encoded marker segment data (including marker and length).
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     public func encode() throws -> Data {
         var writer = J2KBitWriter()
-        
+
         // Write marker
         try writer.writeUInt16(J2KMarker.mct.rawValue)
-        
+
         // Calculate and write length (2 bytes for length field + 6 bytes fixed + coefficients)
         let length = UInt16(2 + 6 + coefficients.count)
         try writer.writeUInt16(length)
-        
+
         // Write MCT data
         try writer.writeUInt16(index)
         try writer.writeUInt8(transformType.rawValue)
         try writer.writeUInt8(componentType.rawValue)
         try writer.writeUInt16(outputComponentCount)
         writer.writeBytes(coefficients)
-        
+
         return writer.data
     }
-    
+
     /// Converts this MCT marker to a J2KMCTMatrix.
     ///
     /// - Parameter inputComponentCount: The number of input components.
@@ -154,20 +158,20 @@ public struct J2KMCTMarkerSegment: Sendable {
     public func toMatrix(inputComponentCount: Int) throws -> J2KMCTMatrix {
         let size = inputComponentCount
         let expectedSize = size * Int(outputComponentCount)
-        
+
         // For decorrelation transforms, coefficients should be floating-point values
         if transformType == .decorrelation {
             let bytesPerValue = componentType == .irreversible ? 4 : 2
             let expectedBytes = expectedSize * bytesPerValue
-            
+
             guard coefficients.count == expectedBytes else {
                 throw J2KError.invalidData(
                     "MCT coefficient size mismatch: expected \(expectedBytes), got \(coefficients.count)"
                 )
             }
-            
+
             var matrixCoeffs = [Double](repeating: 0.0, count: expectedSize)
-            
+
             coefficients.withUnsafeBytes { ptr in
                 if componentType == .irreversible {
                     // Floating-point coefficients
@@ -183,14 +187,14 @@ public struct J2KMCTMarkerSegment: Sendable {
                     }
                 }
             }
-            
+
             let precision: J2KMCTPrecision = componentType == .irreversible ? .floatingPoint : .integer
             return try J2KMCTMatrix(size: size, coefficients: matrixCoeffs, precision: precision)
         } else {
             throw J2KError.unsupportedFeature("Dependency transforms not yet implemented")
         }
     }
-    
+
     /// Creates an MCT marker segment from a matrix.
     ///
     /// - Parameters:
@@ -201,9 +205,9 @@ public struct J2KMCTMarkerSegment: Sendable {
     public static func from(matrix: J2KMCTMatrix, index: UInt16 = 0) throws -> J2KMCTMarkerSegment {
         let componentType: ComponentType = matrix.isReversible ? .reversible : .irreversible
         let outputComponentCount = UInt16(matrix.size)
-        
+
         var coefficients = Data()
-        
+
         if matrix.isReversible {
             // Integer coefficients (fixed-point with scale 2048)
             for coeff in matrix.coefficients {
@@ -218,7 +222,7 @@ public struct J2KMCTMarkerSegment: Sendable {
                 coefficients.append(Data(bytes: &floatVal, count: 4))
             }
         }
-        
+
         return J2KMCTMarkerSegment(
             index: index,
             transformType: .decorrelation,
@@ -241,16 +245,16 @@ public struct J2KMCTMarkerSegment: Sendable {
 public struct J2KMCCMarkerSegment: Sendable {
     /// The index of this MCC.
     public let index: UInt16
-    
+
     /// The indices of input components.
     public let inputComponents: [UInt16]
-    
+
     /// The indices of output components.
     public let outputComponents: [UInt16]
-    
+
     /// The index of the MCT to apply.
     public let mctIndex: UInt16
-    
+
     /// Creates a new MCC marker segment.
     public init(
         index: UInt16,
@@ -263,7 +267,7 @@ public struct J2KMCCMarkerSegment: Sendable {
         self.outputComponents = outputComponents
         self.mctIndex = mctIndex
     }
-    
+
     /// Parses an MCC marker segment from data.
     ///
     /// - Parameter data: The marker segment data (excluding marker and length).
@@ -273,24 +277,24 @@ public struct J2KMCCMarkerSegment: Sendable {
         guard data.count >= 8 else {
             throw J2KError.invalidData("MCC marker segment too short")
         }
-        
+
         var reader = J2KBitReader(data: data)
-        
+
         let index = try reader.readUInt16()
         let inputCount = try reader.readUInt16()
         let outputCount = try reader.readUInt16()
         let mctIndex = try reader.readUInt16()
-        
+
         var inputComponents: [UInt16] = []
         for _ in 0..<inputCount {
             inputComponents.append(try reader.readUInt16())
         }
-        
+
         var outputComponents: [UInt16] = []
         for _ in 0..<outputCount {
             outputComponents.append(try reader.readUInt16())
         }
-        
+
         return J2KMCCMarkerSegment(
             index: index,
             inputComponents: inputComponents,
@@ -298,31 +302,31 @@ public struct J2KMCCMarkerSegment: Sendable {
             mctIndex: mctIndex
         )
     }
-    
+
     /// Encodes this MCC marker segment to data.
     ///
     /// - Returns: The encoded marker segment data (including marker and length).
     public func encode() throws -> Data {
         var writer = J2KBitWriter()
-        
+
         try writer.writeUInt16(J2KMarker.mcc.rawValue)
-        
+
         let length = UInt16(2 + 8 + inputComponents.count * 2 + outputComponents.count * 2)
         try writer.writeUInt16(length)
-        
+
         try writer.writeUInt16(index)
         try writer.writeUInt16(UInt16(inputComponents.count))
         try writer.writeUInt16(UInt16(outputComponents.count))
         try writer.writeUInt16(mctIndex)
-        
+
         for comp in inputComponents {
             try writer.writeUInt16(comp)
         }
-        
+
         for comp in outputComponents {
             try writer.writeUInt16(comp)
         }
-        
+
         return writer.data
     }
 }
@@ -339,12 +343,12 @@ public struct J2KMCCMarkerSegment: Sendable {
 public struct J2KMCOMarkerSegment: Sendable {
     /// The ordered list of MCC indices to apply.
     public let mccOrder: [UInt16]
-    
+
     /// Creates a new MCO marker segment.
     public init(mccOrder: [UInt16]) {
         self.mccOrder = mccOrder
     }
-    
+
     /// Parses an MCO marker segment from data.
     ///
     /// - Parameter data: The marker segment data (excluding marker and length).
@@ -354,35 +358,35 @@ public struct J2KMCOMarkerSegment: Sendable {
         guard data.count >= 2 else {
             throw J2KError.invalidData("MCO marker segment too short")
         }
-        
+
         var reader = J2KBitReader(data: data)
         let count = try reader.readUInt16()
-        
+
         var mccOrder: [UInt16] = []
         for _ in 0..<count {
             mccOrder.append(try reader.readUInt16())
         }
-        
+
         return J2KMCOMarkerSegment(mccOrder: mccOrder)
     }
-    
+
     /// Encodes this MCO marker segment to data.
     ///
     /// - Returns: The encoded marker segment data (including marker and length).
     public func encode() throws -> Data {
         var writer = J2KBitWriter()
-        
+
         try writer.writeUInt16(J2KMarker.mco.rawValue)
-        
+
         let length = UInt16(2 + 2 + mccOrder.count * 2)
         try writer.writeUInt16(length)
-        
+
         try writer.writeUInt16(UInt16(mccOrder.count))
-        
+
         for index in mccOrder {
             try writer.writeUInt16(index)
         }
-        
+
         return writer.data
     }
 }

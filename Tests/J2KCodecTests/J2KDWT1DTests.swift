@@ -1,3 +1,7 @@
+//
+// J2KDWT1DTests.swift
+// J2KSwift
+//
 // J2KDWT1DTests.swift
 // J2KSwift
 //
@@ -519,7 +523,7 @@ final class J2KDWT1DTests: XCTestCase {
 
     func testHighpassContainsDetails53() throws {
         // High-frequency signal should have significant energy in highpass
-        let signal: [Int32] = (0..<32).map { Int32($0 % 2 == 0 ? 10 : -10) }
+        let signal: [Int32] = (0..<32).map { Int32($0.isMultiple(of: 2) ? 10 : -10) }
 
         let (lowpass, highpass) = try J2KDWT1D.forwardTransform(
             signal: signal,

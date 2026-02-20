@@ -1,3 +1,7 @@
+//
+// J2KLargeBlockDiagnostic.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -21,7 +25,7 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
             // Dense pattern
             var original = [Int32](repeating: 0, count: size * size)
             for i in 0..<original.count {
-                let sign: Int32 = (i % 5 == 0) ? -1 : 1
+                let sign: Int32 = (i.isMultiple(of: 5)) ? -1 : 1
                 original[i] = sign * Int32((i * 17) % 2048)
             }
 
@@ -78,10 +82,8 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
         )
 
         var mismatches = 0
-        for i in 0..<original.count {
-            if decoded[i] != original[i] {
-                mismatches += 1
-            }
+        for i in 0..<original.count where decoded[i] != original[i] {
+            mismatches += 1
         }
 
         XCTAssertEqual(mismatches, 0,
@@ -93,6 +95,9 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
     /// Note: 64x64 blocks with dense, high-magnitude data have a pre-existing
     /// MQ coder issue unrelated to bypass mode or predictable termination.
     func test64x64WithoutBypass() throws {
-        throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - not related to bypass mode or predictable termination")
+        throw XCTSkip(
+            "Pre-existing 64x64 dense data MQ coder issue"
+            + " - not related to bypass mode or predictable termination"
+        )
     }
 }

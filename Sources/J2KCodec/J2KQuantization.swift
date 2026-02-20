@@ -1,3 +1,7 @@
+//
+// J2KQuantization.swift
+// J2KSwift
+//
 // J2KQuantization.swift
 // J2KSwift
 //
@@ -7,62 +11,62 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Quantization
-///
-/// Implementation of quantization and dequantization for JPEG 2000 encoding.
-///
-/// This module implements the quantization stage of the JPEG 2000 encoding pipeline,
-/// which converts wavelet coefficients to integer indices for entropy coding.
-/// Quantization is the primary source of lossy compression in JPEG 2000.
-///
-/// ## Quantization Modes
-///
-/// JPEG 2000 supports several quantization modes:
-///
-/// - **Scalar Quantization**: Standard uniform quantization with a single step size
-/// - **Deadzone Quantization**: Scalar quantization with an enlarged zero bin
-/// - **Expounded Quantization**: Explicit step size for each subband
-/// - **No Quantization**: Used for lossless mode (reversible transform only)
-///
-/// ## Step Size Calculation
-///
-/// The quantization step size is derived from the base step size and subband gain:
-/// ```
-/// Δ_b = Δ_base × 2^(R-r) × G_b
-/// ```
-/// where:
-/// - Δ_base is the base step size derived from quality settings
-/// - R is the number of decomposition levels
-/// - r is the current resolution level
-/// - G_b is the subband gain (1 for LL, √2 for LH/HL, 2 for HH)
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create quantizer with specific parameters
-/// let params = J2KQuantizationParameters(
-///     mode: .deadzone,
-///     baseStepSize: 0.1,
-///     deadzoneWidth: 1.5
-/// )
-/// let quantizer = J2KQuantizer(parameters: params)
-///
-/// // Quantize wavelet coefficients
-/// let quantized = try quantizer.quantize(
-///     coefficients: coefficients,
-///     subband: .hl,
-///     decompositionLevel: 2,
-///     totalLevels: 3
-/// )
-///
-/// // Dequantize for reconstruction
-/// let reconstructed = try quantizer.dequantize(
-///     indices: quantized,
-///     subband: .hl,
-///     decompositionLevel: 2,
-///     totalLevels: 3
-/// )
-/// ```
+// # JPEG 2000 Quantization
+//
+// Implementation of quantization and dequantization for JPEG 2000 encoding.
+//
+// This module implements the quantization stage of the JPEG 2000 encoding pipeline,
+// which converts wavelet coefficients to integer indices for entropy coding.
+// Quantization is the primary source of lossy compression in JPEG 2000.
+//
+// ## Quantization Modes
+//
+// JPEG 2000 supports several quantization modes:
+//
+// - **Scalar Quantization**: Standard uniform quantization with a single step size
+// - **Deadzone Quantization**: Scalar quantization with an enlarged zero bin
+// - **Expounded Quantization**: Explicit step size for each subband
+// - **No Quantization**: Used for lossless mode (reversible transform only)
+//
+// ## Step Size Calculation
+//
+// The quantization step size is derived from the base step size and subband gain:
+// ```
+// Δ_b = Δ_base × 2^(R-r) × G_b
+// ```
+// where:
+// - Δ_base is the base step size derived from quality settings
+// - R is the number of decomposition levels
+// - r is the current resolution level
+// - G_b is the subband gain (1 for LL, √2 for LH/HL, 2 for HH)
+//
+// ## Usage
+//
+// ```swift
+// // Create quantizer with specific parameters
+// let params = J2KQuantizationParameters(
+//     mode: .deadzone,
+//     baseStepSize: 0.1,
+//     deadzoneWidth: 1.5
+// )
+// let quantizer = J2KQuantizer(parameters: params)
+//
+// // Quantize wavelet coefficients
+// let quantized = try quantizer.quantize(
+//     coefficients: coefficients,
+//     subband: .hl,
+//     decompositionLevel: 2,
+//     totalLevels: 3
+// )
+//
+// // Dequantize for reconstruction
+// let reconstructed = try quantizer.dequantize(
+//     indices: quantized,
+//     subband: .hl,
+//     decompositionLevel: 2,
+//     totalLevels: 3
+// )
+// ```
 
 // MARK: - Quantization Mode
 
@@ -103,7 +107,7 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// Coefficients are passed through without modification.
     /// Only valid when used with the reversible (5/3) wavelet transform.
     case noQuantization
-    
+
     /// Trellis coded quantization (TCQ).
     ///
     /// Uses a trellis structure and Viterbi algorithm to select
@@ -178,7 +182,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// Only used when `implicitStepSizes` is false.
     /// Keys should be subband names at specific levels (e.g., "HL1", "HH2").
     public let explicitStepSizes: [String: Double]
-    
+
     /// TCQ configuration (only used when mode is .trellis).
     ///
     /// Configures the trellis coded quantization behavior.
@@ -225,7 +229,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         mode: .noQuantization,
         baseStepSize: 1.0
     )
-    
+
     /// Parameters for trellis coded quantization (default TCQ settings).
     public static let trellis = J2KQuantizationParameters(
         mode: .trellis,
@@ -580,7 +584,7 @@ public struct J2KQuantizer: Sendable {
             let magnitude = abs(coefficient)
             let quantizedMag = floor(magnitude / stepSize)
             return Int32(sign * quantizedMag)
-            
+
         case .trellis:
             // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign = coefficient >= 0 ? 1.0 : -1.0
@@ -631,7 +635,7 @@ public struct J2KQuantizer: Sendable {
             let magnitude = abs(coefficient)
             let quantizedMag = Int32(Double(magnitude) / stepSize)
             return sign * quantizedMag
-            
+
         case .trellis:
             // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
@@ -815,7 +819,7 @@ public struct J2KQuantizer: Sendable {
             let sign = index >= 0 ? 1.0 : -1.0
             let magnitude = Double(abs(index)) + 0.5
             return sign * magnitude * stepSize
-            
+
         case .trellis:
             // TCQ dequantization (midpoint reconstruction)
             if index == 0 {

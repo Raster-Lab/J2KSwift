@@ -1,3 +1,7 @@
+//
+// J2KCLITests.swift
+// J2KSwift
+//
 import XCTest
 import Foundation
 @testable import J2KCore
@@ -26,10 +30,8 @@ final class J2KCLITests: XCTestCase {
         ]
 
         // Return the first path that exists
-        for path in possiblePaths {
-            if fileManager.fileExists(atPath: path) {
-                return path
-            }
+        for path in possiblePaths where fileManager.fileExists(atPath: path) {
+            return path
         }
 
         // Fall back to standard debug path (will fail if not found, but gives clear error)

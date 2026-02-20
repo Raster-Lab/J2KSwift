@@ -1,3 +1,7 @@
+//
+// JP3DHTJ2K.swift
+// J2KSwift
+//
 /// # JP3DHTJ2K
 ///
 /// High-Throughput JPEG 2000 (HTJ2K / ISO 15444-15) integration for JP3D
@@ -53,7 +57,6 @@ public enum JP3DHTJ2KBlockMode: Sendable, Equatable {
 /// let middle = JP3DHTJ2KConfiguration.balanced
 /// ```
 public struct JP3DHTJ2KConfiguration: Sendable, Equatable {
-
     // MARK: - Properties
 
     /// The block coding mode for all tiles in the volume.
@@ -181,7 +184,6 @@ struct JP3DHTTileInfo: Sendable {
 /// These markers appear in the main JP3D codestream header between the QCD
 /// and the first SOT markers when HTJ2K encoding is used.
 public struct JP3DHTMarkers: Sendable {
-
     // Marker codes (ISO 15444-15)
     static let capMarkerCode: UInt16 = 0xFF50
     static let cpfMarkerCode: UInt16 = 0xFF59
@@ -261,7 +263,7 @@ public struct JP3DHTMarkers: Sendable {
     /// - Returns: `true` if HT block coding is signalled.
     public static func isHTJ2KSignalled(codingStyleByte: UInt8) -> Bool {
         // Bit 6: 1 = HTJ2K (FBCOT) block coding
-        return (codingStyleByte & 0x40) != 0
+        (codingStyleByte & 0x40) != 0
     }
 
     // MARK: - Private helpers
@@ -301,7 +303,6 @@ public struct JP3DHTMarkers: Sendable {
 /// let decoded = try codec.decodeTile(tileData: encoded, expectedVoxels: 64*64*32)
 /// ```
 public struct JP3DHTJ2KCodec: Sendable {
-
     // MARK: - Properties
 
     /// The HTJ2K configuration used for this codec instance.

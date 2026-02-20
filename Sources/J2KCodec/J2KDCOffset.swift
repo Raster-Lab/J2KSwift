@@ -1,3 +1,7 @@
+//
+// J2KDCOffset.swift
+// J2KSwift
+//
 // J2KDCOffset.swift
 // J2KSwift
 //
@@ -7,43 +11,43 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Part 2 Variable DC Offset
-///
-/// Implementation of variable DC offset as defined in ISO/IEC 15444-2.
-///
-/// DC offset improves compression efficiency for images with non-zero mean
-/// component values by removing the DC bias before wavelet transform and
-/// quantization. This is particularly effective for medical imaging,
-/// satellite imagery, and scientific data where the mean pixel value
-/// may be significantly different from zero.
-///
-/// ## How It Works
-///
-/// The DC offset process consists of:
-/// 1. **Analysis**: Compute per-component mean values
-/// 2. **Removal**: Subtract the DC offset before encoding (centers data around zero)
-/// 3. **Signaling**: Store the offset in DCO marker segments in the codestream
-/// 4. **Restoration**: Add the offset back during decoding
-///
-/// ## Usage
-///
-/// ```swift
-/// // Encoder path: remove DC offset
-/// let dcOffset = J2KDCOffset()
-/// let result = try dcOffset.computeAndRemove(
-///     componentData: componentData,
-///     bitDepth: 8,
-///     signed: false
-/// )
-/// // result.adjustedData has the offset removed
-/// // result.offset contains the computed offset value
-///
-/// // Decoder path: restore DC offset
-/// let restored = dcOffset.apply(
-///     offset: result.offset,
-///     to: result.adjustedData
-/// )
-/// ```
+// # JPEG 2000 Part 2 Variable DC Offset
+//
+// Implementation of variable DC offset as defined in ISO/IEC 15444-2.
+//
+// DC offset improves compression efficiency for images with non-zero mean
+// component values by removing the DC bias before wavelet transform and
+// quantization. This is particularly effective for medical imaging,
+// satellite imagery, and scientific data where the mean pixel value
+// may be significantly different from zero.
+//
+// ## How It Works
+//
+// The DC offset process consists of:
+// 1. **Analysis**: Compute per-component mean values
+// 2. **Removal**: Subtract the DC offset before encoding (centers data around zero)
+// 3. **Signaling**: Store the offset in DCO marker segments in the codestream
+// 4. **Restoration**: Add the offset back during decoding
+//
+// ## Usage
+//
+// ```swift
+// // Encoder path: remove DC offset
+// let dcOffset = J2KDCOffset()
+// let result = try dcOffset.computeAndRemove(
+//     componentData: componentData,
+//     bitDepth: 8,
+//     signed: false
+// )
+// // result.adjustedData has the offset removed
+// // result.offset contains the computed offset value
+//
+// // Decoder path: restore DC offset
+// let restored = dcOffset.apply(
+//     offset: result.offset,
+//     to: result.adjustedData
+// )
+// ```
 
 // MARK: - DC Offset Configuration
 
@@ -318,7 +322,7 @@ public struct J2KDCOMarkerSegment: Sendable, Equatable {
 
         // Calculate number of components
         let offsetDataLength = segmentLength - 3
-        guard offsetDataLength % bytesPerOffset == 0 else {
+        guard offsetDataLength.isMultiple(of: bytesPerOffset) else {
             throw J2KError.decodingError("DCO marker segment has invalid length")
         }
         let componentCount = offsetDataLength / bytesPerOffset

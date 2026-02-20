@@ -1,3 +1,7 @@
+//
+// JPIPClientCacheManager.swift
+// J2KSwift
+//
 /// # JPIPClientCacheManager
 ///
 /// Client-side cache management improvements for JPIP protocol.
@@ -360,7 +364,7 @@ public actor JPIPInMemoryCacheStore: JPIPPersistentCacheStore {
     }
 
     public func load(key: String) async throws -> (data: Data, metadata: JPIPCacheEntryMetadata)? {
-        return storage[key]
+        storage[key]
     }
 
     public func remove(key: String) async throws {
@@ -368,11 +372,11 @@ public actor JPIPInMemoryCacheStore: JPIPPersistentCacheStore {
     }
 
     public func allKeys() async throws -> [String] {
-        return Array(storage.keys)
+        Array(storage.keys)
     }
 
     public func totalDiskUsage() async throws -> Int {
-        return storage.values.reduce(0) { $0 + $1.data.count }
+        storage.values.reduce(0) { $0 + $1.data.count }
     }
 
     public func clear() async throws {
@@ -625,7 +629,7 @@ public actor JPIPClientCacheManager {
     /// - Parameter imageID: The image identifier.
     /// - Returns: The image cache policy, or nil if no custom policy is set.
     public func getImagePolicy(imageID: String) -> JPIPImageCachePolicy? {
-        return imagePolicies[imageID]
+        imagePolicies[imageID]
     }
 
     /// Removes the cache policy for an image.
@@ -715,7 +719,7 @@ public actor JPIPClientCacheManager {
     ///
     /// - Returns: Array of image identifiers with cached data.
     public func getCachedImageIDs() -> [String] {
-        return Array(partitions.keys)
+        Array(partitions.keys)
     }
 
     /// Gets the resolution levels cached for a specific image.
@@ -1003,19 +1007,19 @@ public actor JPIPClientCacheManager {
 
     /// Gets total memory usage.
     public func getMemoryUsage() -> Int {
-        return totalMemoryUsage
+        totalMemoryUsage
     }
 
     /// Gets total entry count.
     public func getTotalEntries() -> Int {
-        return totalEntries
+        totalEntries
     }
 
     // MARK: - Private Helpers
 
     /// Creates a cache key.
     private func cacheKey(binClass: JPIPDataBinClass, binID: Int, imageID: String) -> String {
-        return "\(imageID):\(binClass.rawValue):\(binID)"
+        "\(imageID):\(binClass.rawValue):\(binID)"
     }
 
     /// Evicts the least valuable entry using resolution-aware LRU.

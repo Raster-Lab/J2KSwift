@@ -1,3 +1,7 @@
+//
+// J2KROI.swift
+// J2KSwift
+//
 // J2KROI.swift
 // J2KSwift
 //
@@ -7,45 +11,45 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Region of Interest (ROI)
-///
-/// Implementation of Region of Interest coding for JPEG 2000.
-///
-/// ROI coding allows specific areas of an image to be encoded at higher quality
-/// than the background. In JPEG 2000, this is achieved through the MaxShift method,
-/// which shifts the coefficients of ROI regions to higher bit planes, ensuring
-/// they are decoded before non-ROI regions.
-///
-/// ## MaxShift Method
-///
-/// The MaxShift method works by:
-/// 1. Identifying ROI regions in the spatial domain
-/// 2. Mapping those regions to the wavelet domain
-/// 3. Scaling ROI coefficients by shifting them up by `s` bit positions
-/// 4. During decoding, non-ROI coefficients are identified by their lower magnitude
-///
-/// ## Usage
-///
-/// ```swift
-/// // Define a rectangular ROI
-/// let roi = J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200)
-///
-/// // Create ROI processor
-/// let roiProcessor = J2KROIProcessor(
-///     imageWidth: 512,
-///     imageHeight: 512,
-///     regions: [roi],
-///     shift: 5
-/// )
-///
-/// // Apply ROI scaling to wavelet coefficients
-/// let scaledCoeffs = roiProcessor.applyROIScaling(
-///     coefficients: dwtCoeffs,
-///     subband: .ll,
-///     decompositionLevel: 0,
-///     totalLevels: 3
-/// )
-/// ```
+// # JPEG 2000 Region of Interest (ROI)
+//
+// Implementation of Region of Interest coding for JPEG 2000.
+//
+// ROI coding allows specific areas of an image to be encoded at higher quality
+// than the background. In JPEG 2000, this is achieved through the MaxShift method,
+// which shifts the coefficients of ROI regions to higher bit planes, ensuring
+// they are decoded before non-ROI regions.
+//
+// ## MaxShift Method
+//
+// The MaxShift method works by:
+// 1. Identifying ROI regions in the spatial domain
+// 2. Mapping those regions to the wavelet domain
+// 3. Scaling ROI coefficients by shifting them up by `s` bit positions
+// 4. During decoding, non-ROI coefficients are identified by their lower magnitude
+//
+// ## Usage
+//
+// ```swift
+// // Define a rectangular ROI
+// let roi = J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200)
+//
+// // Create ROI processor
+// let roiProcessor = J2KROIProcessor(
+//     imageWidth: 512,
+//     imageHeight: 512,
+//     regions: [roi],
+//     shift: 5
+// )
+//
+// // Apply ROI scaling to wavelet coefficients
+// let scaledCoeffs = roiProcessor.applyROIScaling(
+//     coefficients: dwtCoeffs,
+//     subband: .ll,
+//     decompositionLevel: 0,
+//     totalLevels: 3
+// )
+// ```
 
 // MARK: - ROI Shape
 
@@ -107,7 +111,7 @@ public struct J2KROIRegion: Sendable, Equatable {
         height: Int,
         priority: Int = 1
     ) -> J2KROIRegion {
-        return J2KROIRegion(
+        J2KROIRegion(
             shapeType: .rectangle,
             x: x,
             y: y,
@@ -134,7 +138,7 @@ public struct J2KROIRegion: Sendable, Equatable {
         radiusY: Int,
         priority: Int = 1
     ) -> J2KROIRegion {
-        return J2KROIRegion(
+        J2KROIRegion(
             shapeType: .ellipse,
             x: centerX - radiusX,
             y: centerY - radiusY,
@@ -205,22 +209,22 @@ public struct J2KROIRegion: Sendable, Equatable {
 
     /// Checks if this region is valid.
     public var isValid: Bool {
-        return width > 0 && height > 0
+        width > 0 && height > 0
     }
 
     /// Returns the center point of the region.
     public var center: (x: Int, y: Int) {
-        return (x + width / 2, y + height / 2)
+        (x + width / 2, y + height / 2)
     }
 
     /// Returns the area of the region in pixels (for bounding box).
     public var area: Int {
-        return width * height
+        width * height
     }
 
     // Equatable conformance
     public static func == (lhs: J2KROIRegion, rhs: J2KROIRegion) -> Bool {
-        return lhs.shapeType == rhs.shapeType &&
+        lhs.shapeType == rhs.shapeType &&
                lhs.x == rhs.x &&
                lhs.y == rhs.y &&
                lhs.width == rhs.width &&
@@ -287,10 +291,8 @@ public struct J2KROIMaskGenerator: Sendable {
         for region in regions {
             let regionMask = generateMask(for: region, width: width, height: height)
             for y in 0..<height {
-                for x in 0..<width {
-                    if regionMask[y][x] {
-                        mask[y][x] = true
-                    }
+                for x in 0..<width where regionMask[y][x] {
+                    mask[y][x] = true
                 }
             }
         }
@@ -320,10 +322,8 @@ public struct J2KROIMaskGenerator: Sendable {
         for region in sortedRegions {
             let regionMask = generateMask(for: region, width: width, height: height)
             for y in 0..<height {
-                for x in 0..<width {
-                    if regionMask[y][x] {
-                        priorityMask[y][x] = region.priority
-                    }
+                for x in 0..<width where regionMask[y][x] {
+                    priorityMask[y][x] = region.priority
                 }
             }
         }
@@ -393,10 +393,8 @@ public struct J2KROIMaskGenerator: Sendable {
         let endX = min(imageWidth, region.x + region.width + 1)
 
         for y in startY..<endY {
-            for x in startX..<endX {
-                if isPointInPolygon(x: x, y: y, vertices: vertices) {
-                    mask[y][x] = true
-                }
+            for x in startX..<endX where isPointInPolygon(x: x, y: y, vertices: vertices) {
+                mask[y][x] = true
             }
         }
     }
@@ -419,7 +417,7 @@ public struct J2KROIMaskGenerator: Sendable {
 
             if ((yi > py) != (yj > py)) &&
                (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
-                inside = !inside
+                inside.toggle()
             }
             j = i
         }
@@ -736,7 +734,7 @@ public struct J2KROIProcessor: Sendable {
 
     /// Creates a disabled ROI processor.
     public static func disabled() -> J2KROIProcessor {
-        return J2KROIProcessor(imageWidth: 0, imageHeight: 0, regions: [], shift: 0)
+        J2KROIProcessor(imageWidth: 0, imageHeight: 0, regions: [], shift: 0)
     }
 
     /// Applies ROI scaling to a 2D array of coefficients.
@@ -775,14 +773,12 @@ public struct J2KROIProcessor: Sendable {
 
         for y in 0..<height {
             let width = min(coefficients[y].count, subbandMask[y].count)
-            for x in 0..<width {
-                if subbandMask[y][x] {
-                    result[y][x] = J2KROIMaxShift.applyScaling(
-                        coefficient: coefficients[y][x],
-                        isROI: true,
-                        shift: shift
-                    )
-                }
+            for x in 0..<width where subbandMask[y][x] {
+                result[y][x] = J2KROIMaxShift.applyScaling(
+                    coefficient: coefficients[y][x],
+                    isROI: true,
+                    shift: shift
+                )
             }
         }
 
@@ -856,7 +852,7 @@ public struct J2KROIProcessor: Sendable {
 
     /// Returns the spatial domain ROI mask.
     public func getSpatialMask() -> [[Bool]] {
-        return spatialMask
+        spatialMask
     }
 
     /// Returns the ROI mask for a specific subband.

@@ -1,3 +1,7 @@
+//
+// JP3DTypes.swift
+// J2KSwift
+//
 /// # JP3DTypes
 ///
 /// 3D spatial types for ISO/IEC 15444-10 (JP3D) volumetric JPEG 2000.
@@ -107,7 +111,7 @@ public struct JP3DRegion: Sendable, Equatable {
     ///   - pz: The Z coordinate.
     /// - Returns: True if the point is within this region.
     public func contains(x px: Int, y py: Int, z pz: Int) -> Bool {
-        return x.contains(px) && y.contains(py) && z.contains(pz)
+        x.contains(px) && y.contains(py) && z.contains(pz)
     }
 
     /// Returns a region clamped to the given volume dimensions.
@@ -163,7 +167,7 @@ public struct JP3DTile: Sendable, Equatable {
     ///   - tilesY: Total tiles along Y.
     /// - Returns: The linear tile index.
     public func linearIndex(tilesX: Int, tilesY: Int) -> Int {
-        return indexZ * tilesX * tilesY + indexY * tilesX + indexX
+        indexZ * tilesX * tilesY + indexY * tilesX + indexX
     }
 
     /// The width of this tile in voxels.
@@ -232,6 +236,6 @@ public struct JP3DPrecinct: Sendable, Equatable {
     ///   - precinctsY: Total precincts along Y.
     /// - Returns: The linear precinct index.
     public func linearIndex(precinctsX: Int, precinctsY: Int) -> Int {
-        return indexZ * precinctsX * precinctsY + indexY * precinctsX + indexX
+        indexZ * precinctsX * precinctsY + indexY * precinctsX + indexX
     }
 }

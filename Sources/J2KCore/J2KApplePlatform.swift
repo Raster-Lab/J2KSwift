@@ -1,3 +1,7 @@
+//
+// J2KApplePlatform.swift
+// J2KSwift
+//
 /// # J2KApplePlatform
 ///
 /// Apple platform-specific features and optimizations.
@@ -40,13 +44,13 @@ public actor J2KGCDDispatcher {
     public struct Configuration: Sendable {
         /// Quality of Service for processing.
         public let qos: J2KQualityOfService
-        
+
         /// Maximum concurrent operations (nil = automatic).
         public let maxConcurrency: Int?
-        
+
         /// Whether to use adaptive concurrency based on system load.
         public let adaptiveConcurrency: Bool
-        
+
         /// Creates a new configuration.
         ///
         /// - Parameters:
@@ -63,16 +67,16 @@ public actor J2KGCDDispatcher {
             self.adaptiveConcurrency = adaptiveConcurrency
         }
     }
-    
+
     private let configuration: Configuration
-    
+
     /// Creates a new GCD dispatcher.
     ///
     /// - Parameter configuration: The dispatcher configuration.
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
-    
+
     /// Processes items in parallel using optimized GCD.
     ///
     /// - Parameters:
@@ -84,43 +88,43 @@ public actor J2KGCDDispatcher {
         operation: @Sendable @escaping (T) async throws -> R
     ) async throws -> [R] {
         let concurrency = effectiveConcurrency()
-        
+
         return try await withThrowingTaskGroup(of: (Int, R).self) { group in
             var results: [R?] = Array(repeating: nil, count: items.count)
-            
+
             for (index, item) in items.enumerated() {
                 // Limit concurrency
                 if index >= concurrency {
                     let (completedIndex, result) = try await group.next()!
                     results[completedIndex] = result
                 }
-                
+
                 group.addTask(priority: configuration.qos.taskPriority) {
                     let result = try await operation(item)
                     return (index, result)
                 }
             }
-            
+
             // Collect remaining results
             for try await (index, result) in group {
                 results[index] = result
             }
-            
+
             return results.compactMap { $0 }
         }
     }
-    
+
     /// Determines effective concurrency level.
     private func effectiveConcurrency() -> Int {
         if let max = configuration.maxConcurrency {
             return max
         }
-        
+
         if configuration.adaptiveConcurrency {
             // Use ProcessInfo to get active processor count
             return ProcessInfo.processInfo.activeProcessorCount
         }
-        
+
         return ProcessInfo.processInfo.processorCount
     }
 }
@@ -139,19 +143,19 @@ public actor J2KGCDDispatcher {
 public enum J2KQualityOfService: Sendable {
     /// User-interactive work (UI updates, animations).
     case userInteractive
-    
+
     /// User-initiated work (responding to user actions).
     case userInitiated
-    
+
     /// Utility work (downloads, imports).
     case utility
-    
+
     /// Background work (maintenance, cleanup).
     case background
-    
+
     /// Default QoS level.
     case `default`
-    
+
     /// Converts to Foundation DispatchQoS.
     public var dispatchQoS: DispatchQoS {
         switch self {
@@ -167,7 +171,7 @@ public enum J2KQualityOfService: Sendable {
             return .default
         }
     }
-    
+
     /// Converts to TaskPriority for Swift Concurrency.
     public var taskPriority: TaskPriority {
         switch self {
@@ -204,54 +208,54 @@ public actor J2KPowerEfficiencyManager {
     public enum PowerMode: Sendable {
         /// Maximum performance (plugged in or high battery).
         case performance
-        
+
         /// Balanced performance and efficiency.
         case balanced
-        
+
         /// Power-saving mode (low battery).
         case powerSaver
     }
-    
+
     /// Power state information.
     public struct PowerState: Sendable {
         /// Whether the device is plugged into power.
         public let isPluggedIn: Bool
-        
+
         /// Battery level (0.0 - 1.0), nil if not available.
         public let batteryLevel: Double?
-        
+
         /// Whether low power mode is enabled.
         public let isLowPowerModeEnabled: Bool
-        
+
         /// Current thermal state.
         public let thermalState: J2KThermalState
     }
-    
+
     private var currentState: PowerState?
     private var isMonitoring: Bool = false
-    
+
     /// Creates a new power efficiency manager.
     public init() {}
-    
+
     /// Starts monitoring power state.
     public func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
         updatePowerState()
     }
-    
+
     /// Stops monitoring power state.
     public func stopMonitoring() {
         isMonitoring = false
     }
-    
+
     /// Returns the current power state.
     ///
     /// - Returns: The current power state, or nil if not available.
     public func powerState() -> PowerState? {
-        return currentState
+        currentState
     }
-    
+
     /// Returns the recommended processing mode based on power state.
     ///
     /// - Returns: The recommended power mode.
@@ -259,40 +263,40 @@ public actor J2KPowerEfficiencyManager {
         guard let state = currentState else {
             return .balanced
         }
-        
+
         // If plugged in and not overheating, use performance mode
         if state.isPluggedIn && state.thermalState.rawValue < 2 {
             return .performance
         }
-        
+
         // If low power mode enabled or battery low, use power saver
         if state.isLowPowerModeEnabled {
             return .powerSaver
         }
-        
+
         if let level = state.batteryLevel, level < 0.2 {
             return .powerSaver
         }
-        
+
         // If thermal state is concerning, reduce performance
         if state.thermalState.rawValue >= 2 {
             return .powerSaver
         }
-        
+
         return .balanced
     }
-    
+
     /// Updates the current power state.
     private func updatePowerState() {
         #if os(iOS) || os(tvOS)
         let device = UIDevice.current
         device.isBatteryMonitoringEnabled = true
-        
+
         let isPluggedIn = device.batteryState == .charging || device.batteryState == .full
         let batteryLevel = device.batteryLevel >= 0 ? Double(device.batteryLevel) : nil
         let isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         let thermalState = J2KThermalState.from(processInfo: ProcessInfo.processInfo)
-        
+
         currentState = PowerState(
             isPluggedIn: isPluggedIn,
             batteryLevel: batteryLevel,
@@ -303,7 +307,7 @@ public actor J2KPowerEfficiencyManager {
         // On macOS, use IOKit to check power source
         let isPluggedIn = isConnectedToPower()
         let thermalState = J2KThermalState.from(processInfo: ProcessInfo.processInfo)
-        
+
         currentState = PowerState(
             isPluggedIn: isPluggedIn,
             batteryLevel: nil,
@@ -314,21 +318,23 @@ public actor J2KPowerEfficiencyManager {
         currentState = nil
         #endif
     }
-    
+
     #if os(macOS)
     /// Checks if the Mac is connected to power.
     private func isConnectedToPower() -> Bool {
         let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
-        
+
         for source in sources {
-            if let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] {
+            if let description = IOPSGetPowerSourceDescription(
+                snapshot, source
+            ).takeUnretainedValue() as? [String: Any] {
                 if let powerSourceState = description[kIOPSPowerSourceStateKey] as? String {
                     return powerSourceState == kIOPSACPowerValue
                 }
             }
         }
-        
+
         return false
     }
     #endif
@@ -342,16 +348,16 @@ public actor J2KPowerEfficiencyManager {
 public enum J2KThermalState: Int, Sendable {
     /// Nominal thermal state.
     case nominal = 0
-    
+
     /// Fair thermal state (some throttling may occur).
     case fair = 1
-    
+
     /// Serious thermal state (significant throttling).
     case serious = 2
-    
+
     /// Critical thermal state (heavy throttling required).
     case critical = 3
-    
+
     /// Converts from ProcessInfo.ThermalState.
     public static func from(processInfo: ProcessInfo) -> J2KThermalState {
         #if os(iOS) || os(tvOS) || os(watchOS) || os(macOS)
@@ -390,26 +396,26 @@ public actor J2KThermalStateMonitor {
     public struct ThrottlingRecommendation: Sendable {
         /// Current thermal state.
         public let thermalState: J2KThermalState
-        
+
         /// Whether to throttle processing.
         public let shouldThrottle: Bool
-        
+
         /// Recommended reduction factor (0.0 - 1.0).
         public let reductionFactor: Double
     }
-    
+
     private var currentThermalState: J2KThermalState = .nominal
     private var isMonitoring: Bool = false
-    
+
     /// Creates a new thermal state monitor.
     public init() {}
-    
+
     /// Starts monitoring thermal state.
     public func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
         updateThermalState()
-        
+
         // Register for thermal state change notifications
         #if !os(Linux) && !os(Windows)
         NotificationCenter.default.addObserver(
@@ -423,11 +429,11 @@ public actor J2KThermalStateMonitor {
         }
         #endif
     }
-    
+
     /// Stops monitoring thermal state.
     public func stopMonitoring() {
         isMonitoring = false
-        
+
         #if !os(Linux) && !os(Windows)
         NotificationCenter.default.removeObserver(
             self,
@@ -436,27 +442,27 @@ public actor J2KThermalStateMonitor {
         )
         #endif
     }
-    
+
     /// Returns the current thermal state.
     ///
     /// - Returns: The current thermal state.
     public func currentState() -> J2KThermalState {
-        return currentThermalState
+        currentThermalState
     }
-    
+
     /// Returns whether processing should be throttled.
     ///
     /// - Returns: True if throttling is recommended.
     public func shouldThrottleProcessing() -> Bool {
-        return currentThermalState.rawValue >= J2KThermalState.serious.rawValue
+        currentThermalState.rawValue >= J2KThermalState.serious.rawValue
     }
-    
+
     /// Returns detailed throttling recommendation.
     ///
     /// - Returns: Throttling recommendation with reduction factor.
     public func throttlingRecommendation() -> ThrottlingRecommendation {
         let reductionFactor: Double
-        
+
         switch currentThermalState {
         case .nominal:
             reductionFactor = 1.0 // No reduction
@@ -467,14 +473,14 @@ public actor J2KThermalStateMonitor {
         case .critical:
             reductionFactor = 0.25 // 75% reduction
         }
-        
+
         return ThrottlingRecommendation(
             thermalState: currentThermalState,
             shouldThrottle: shouldThrottleProcessing(),
             reductionFactor: reductionFactor
         )
     }
-    
+
     /// Updates the current thermal state.
     private func updateThermalState() {
         #if os(iOS) || os(tvOS) || os(watchOS) || os(macOS)
@@ -504,10 +510,10 @@ public actor J2KAsyncFileIO {
     public struct ReadOptions: Sendable {
         /// Quality of Service for the operation.
         public let qos: J2KQualityOfService
-        
+
         /// Buffer size for reading (default: 64 KB).
         public let bufferSize: Int
-        
+
         /// Creates new read options.
         ///
         /// - Parameters:
@@ -518,10 +524,10 @@ public actor J2KAsyncFileIO {
             self.bufferSize = bufferSize
         }
     }
-    
+
     /// Creates a new async file I/O handler.
     public init() {}
-    
+
     /// Reads data from a file asynchronously.
     ///
     /// - Parameters:
@@ -537,13 +543,13 @@ public actor J2KAsyncFileIO {
         length: Int,
         options: ReadOptions = ReadOptions()
     ) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { continuation in
             let path = url.path
             let queue = DispatchQueue(
                 label: "com.j2kswift.asyncio",
                 qos: options.qos.dispatchQoS
             )
-            
+
             guard let channel = DispatchIO(
                 type: .random,
                 path: path,
@@ -555,10 +561,10 @@ public actor J2KAsyncFileIO {
                 continuation.resume(throwing: J2KError.internalError("Failed to open file for reading"))
                 return
             }
-            
+
             var data = Data()
             var readError: Error?
-            
+
             channel.read(
                 offset: off_t(offset),
                 length: length,
@@ -567,11 +573,11 @@ public actor J2KAsyncFileIO {
                 if error != 0 {
                     readError = J2KError.internalError("Read error: errno \(error)")
                 }
-                
+
                 if let chunk = chunk, !chunk.isEmpty {
                     data.append(contentsOf: chunk)
                 }
-                
+
                 if done {
                     channel.close()
                     if let error = readError {
@@ -583,7 +589,7 @@ public actor J2KAsyncFileIO {
             }
         }
     }
-    
+
     /// Writes data to a file asynchronously.
     ///
     /// - Parameters:
@@ -596,13 +602,13 @@ public actor J2KAsyncFileIO {
         to url: URL,
         options: ReadOptions = ReadOptions()
     ) async throws {
-        return try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { continuation in
             let path = url.path
             let queue = DispatchQueue(
                 label: "com.j2kswift.asyncio.write",
                 qos: options.qos.dispatchQoS
             )
-            
+
             guard let channel = DispatchIO(
                 type: .random,
                 path: path,
@@ -614,12 +620,12 @@ public actor J2KAsyncFileIO {
                 continuation.resume(throwing: J2KError.internalError("Failed to open file for writing"))
                 return
             }
-            
+
             var writeError: Error?
-            
+
             data.withUnsafeBytes { buffer in
                 let dispatchData = DispatchData(bytes: buffer)
-                
+
                 channel.write(
                     offset: 0,
                     data: dispatchData,
@@ -628,7 +634,7 @@ public actor J2KAsyncFileIO {
                     if error != 0 {
                         writeError = J2KError.internalError("Write error: errno \(error)")
                     }
-                    
+
                     if done {
                         channel.close()
                         if let error = writeError {

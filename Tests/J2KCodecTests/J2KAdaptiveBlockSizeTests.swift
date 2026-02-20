@@ -1,3 +1,7 @@
+//
+// J2KAdaptiveBlockSizeTests.swift
+// J2KSwift
+//
 // J2KAdaptiveBlockSizeTests.swift
 // J2KSwift
 //
@@ -9,7 +13,6 @@ import XCTest
 @testable import J2KCore
 
 final class J2KAdaptiveBlockSizeTests: XCTestCase {
-
     // MARK: - Content Analyzer Tests
 
     func testEdgeDensityUniformImage() {
@@ -44,10 +47,8 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         // Block pattern: 4×4 blocks alternating 0 and 255, producing strong edges
         var samples = [Int32](repeating: 0, count: width * height)
         for y in 0..<height {
-            for x in 0..<width {
-                if ((x / 4) + (y / 4)) % 2 == 0 {
-                    samples[y * width + x] = 255
-                }
+            for x in 0..<width where ((x / 4) + (y / 4)).isMultiple(of: 2) {
+                samples[y * width + x] = 255
             }
         }
         let density = analyzer.estimateEdgeDensity(samples: samples, width: width, height: height)
@@ -79,7 +80,7 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         var samples = [Int32](repeating: 0, count: width * height)
         for y in 0..<height {
             for x in 0..<width {
-                samples[y * width + x] = ((x + y) % 2 == 0) ? 0 : 255
+                samples[y * width + x] = ((x + y).isMultiple(of: 2)) ? 0 : 255
             }
         }
         let energy = analyzer.analyzeFrequencyContent(samples: samples, width: width, height: height)
@@ -129,7 +130,7 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         var samples = [Int32](repeating: 0, count: width * height)
         for y in 0..<height {
             for x in 0..<width {
-                samples[y * width + x] = ((x + y) % 2 == 0) ? 0 : 200
+                samples[y * width + x] = ((x + y).isMultiple(of: 2)) ? 0 : 200
             }
         }
         let metrics = analyzer.analyzeRegion(samples: samples, width: width, height: height)
@@ -330,7 +331,7 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         var bytes = [UInt8](repeating: 0, count: width * height)
         for y in 0..<height {
             for x in 0..<width {
-                bytes[y * width + x] = ((x + y) % 2 == 0) ? 0 : 255
+                bytes[y * width + x] = ((x + y).isMultiple(of: 2)) ? 0 : 255
             }
         }
         let component = J2KComponent(
@@ -446,7 +447,7 @@ final class J2KAdaptiveBlockSizeTests: XCTestCase {
         // High-frequency region → small blocks
         var hfSamples = [Int32](repeating: 0, count: 64 * 64)
         for i in 0..<(64 * 64) {
-            hfSamples[i] = Int32((i % 2 == 0) ? 0 : 255)
+            hfSamples[i] = Int32((i.isMultiple(of: 2)) ? 0 : 255)
         }
         let hfMetrics = analyzer.analyzeRegion(
             samples: hfSamples, width: 64, height: 64

@@ -1,3 +1,7 @@
+//
+// main.swift
+// J2KSwift
+//
 import Foundation
 import J2KCore
 import J2KCodec

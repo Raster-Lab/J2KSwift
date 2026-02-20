@@ -1,3 +1,7 @@
+//
+// J2KCODCOCMarkerTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -255,7 +259,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
 
     private func createTestImage(width: Int, height: Int, components: Int) throws -> J2KImage {
         // Use the convenience initializer which creates components automatically
-        return J2KImage(width: width, height: height, components: components, bitDepth: 8, signed: false)
+        J2KImage(width: width, height: height, components: components, bitDepth: 8, signed: false)
     }
 
     private func extractMarkerData(from data: Data, marker: J2KMarker) throws -> Data {

@@ -1,3 +1,7 @@
+//
+// J2KHTCodecTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -760,7 +764,7 @@ final class J2KHTCodecTests: XCTestCase {
         let size = 64
         var coefficients = [Int](repeating: 0, count: size)
         for i in 0..<size {
-            coefficients[i] = (i % 7 == 0) ? (i * 3 - 100) : 0
+            coefficients[i] = (i.isMultiple(of: 7)) ? (i * 3 - 100) : 0
         }
 
         let result = try encoder.encodeCodeBlocks(
@@ -933,7 +937,7 @@ final class J2KHTCodecTests: XCTestCase {
             ([Int](repeating: 0, count: size), "all zeros"),
             ([Int](repeating: 127, count: size), "max positive"),
             ([Int](repeating: -128, count: size), "max negative"),
-            ([Int]((0..<size).map { $0 % 2 == 0 ? 100 : -100 }), "alternating")
+            ([Int]((0..<size).map { $0.isMultiple(of: 2) ? 100 : -100 }), "alternating")
         ]
 
         for testCase in testCases {
@@ -969,7 +973,7 @@ final class J2KHTCodecTests: XCTestCase {
         for testCase in testCases {
             var coefficients = [Int](repeating: 0, count: size)
             for i in 0..<size {
-                coefficients[i] = (i % testCase.maxValue) * (i % 2 == 0 ? 1 : -1)
+                coefficients[i] = (i % testCase.maxValue) * (i.isMultiple(of: 2) ? 1 : -1)
             }
 
             let result = try encoder.encodeCodeBlocks(
@@ -1045,7 +1049,7 @@ final class J2KHTCodecTests: XCTestCase {
 
         // Create varied data to exercise all three coders
         for i in 0..<coefficients.count {
-            if i % 3 == 0 {
+            if i.isMultiple(of: 3) {
                 coefficients[i] = 50
             } else if i % 3 == 1 {
                 coefficients[i] = -30
@@ -1124,7 +1128,7 @@ final class J2KHTCodecTests: XCTestCase {
             case "dense":
                 coefficients = (0..<size).map { ($0 * 7) % 128 - 64 }
             case "alternating":
-                coefficients = (0..<size).map { $0 % 2 == 0 ? 50 : -50 }
+                coefficients = (0..<size).map { $0.isMultiple(of: 2) ? 50 : -50 }
             case "gradient":
                 coefficients = (0..<size).map { ($0 * 256 / size) - 128 }
             default:

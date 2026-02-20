@@ -1,3 +1,7 @@
+//
+// JPIPTranscodingServiceTests.swift
+// J2KSwift
+//
 /// # JPIPTranscodingServiceTests
 ///
 /// Tests for JPIP on-the-fly transcoding service and transcoding cache.

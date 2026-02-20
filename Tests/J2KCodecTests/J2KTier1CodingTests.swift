@@ -1,3 +1,7 @@
+//
+// J2KTier1CodingTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -77,7 +81,7 @@ final class J2KMQCoderTests: XCTestCase {
 
         // Encode a sequence of symbols
         for i in 0..<100 {
-            encoder.encode(symbol: i % 2 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 2), context: &context)
         }
 
         let data = encoder.finish()
@@ -195,7 +199,9 @@ final class J2KContextModelingTests: XCTestCase {
         XCTAssertEqual(ctx0, .sigPropLL_LH_0)
 
         // One horizontal neighbor
-        let ctx1h = modeler.significanceContext(neighbors: NeighborContribution(horizontal: 1, vertical: 0, diagonal: 0))
+        let ctx1h = modeler.significanceContext(
+            neighbors: NeighborContribution(
+                horizontal: 1, vertical: 0, diagonal: 0))
         XCTAssertEqual(ctx1h, .sigPropLL_LH_1h)
     }
 
@@ -325,10 +331,8 @@ final class J2KContextModelingTests: XCTestCase {
 
         // Create a realistic state pattern with some significant coefficients
         var states = [CoefficientState](repeating: [], count: width * height)
-        for i in 0..<states.count {
-            if i % 3 == 0 {
-                states[i] = .significant
-            }
+        for i in 0..<states.count where i.isMultiple(of: 3) {
+            states[i] = .significant
         }
 
         // Warm up
@@ -358,11 +362,9 @@ final class J2KContextModelingTests: XCTestCase {
         // Create realistic state and sign patterns
         var states = [CoefficientState](repeating: [], count: width * height)
         var signs = [Bool](repeating: false, count: width * height)
-        for i in 0..<states.count {
-            if i % 3 == 0 {
-                states[i] = .significant
-                signs[i] = (i % 2 == 0)
-            }
+        for i in 0..<states.count where i.isMultiple(of: 3) {
+            states[i] = .significant
+            signs[i] = (i.isMultiple(of: 2))
         }
 
         // Warm up
@@ -464,9 +466,9 @@ final class J2KContextModelingTests: XCTestCase {
                 let idx = y * width + x
                 // More coefficients become significant near the DC coefficient
                 let distSquared = Double(x * x + y * y)
-                if distSquared < thresholdSquared || (x + y) % 5 == 0 {
+                if distSquared < thresholdSquared || (x + y).isMultiple(of: 5) {
                     states[idx] = .significant
-                    signs[idx] = ((x + y) % 2 == 0)
+                    signs[idx] = ((x + y).isMultiple(of: 2))
                 }
             }
         }
@@ -568,7 +570,9 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         // For all zeros, we should have all zero bit-planes
-        XCTAssertGreaterThanOrEqual(zeroBitPlanes, bitDepth, "All zero coefficients should have maximum zero bit-planes")
+        XCTAssertGreaterThanOrEqual(
+            zeroBitPlanes, bitDepth,
+            "All zero coefficients should have maximum zero bit-planes")
         XCTAssertEqual(passCount, 0, "No passes needed for all-zero coefficients")
     }
 
@@ -621,7 +625,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         // Create a pattern of coefficients
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 3 == 0) ? -1 : 1
+            let sign: Int32 = (i.isMultiple(of: 3)) ? -1 : 1
             original[i] = sign * Int32((i * 17) % 2000)
         }
 
@@ -790,7 +794,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i % 127) + 1)
         }
 
@@ -823,7 +827,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         for subband in subbands {
             var original = [Int32](repeating: 0, count: width * height)
             for i in 0..<original.count {
-                let sign: Int32 = (i % 3 == 0) ? -1 : 1
+                let sign: Int32 = (i.isMultiple(of: 3)) ? -1 : 1
                 original[i] = sign * Int32((i * 7) % 1000)
             }
 
@@ -854,7 +858,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 5 == 0) ? -1 : 1
+            let sign: Int32 = (i.isMultiple(of: 5)) ? -1 : 1
             original[i] = sign * Int32((i * 13) % 2048)
         }
 
@@ -884,7 +888,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i * 257) % 32768)
         }
 
@@ -1021,7 +1025,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
 
             var original = [Int32](repeating: 0, count: width * height)
             for i in 0..<original.count {
-                let sign: Int32 = (i % 2 == 0) ? 1 : -1
+                let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
                 original[i] = sign * Int32((i * 11) % 512)
             }
 
@@ -1100,7 +1104,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         var coefficients = [Int32](repeating: 0, count: 16 * 16)
         for i in 0..<coefficients.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             coefficients[i] = sign * Int32((i % 100) + 1)
         }
 
@@ -1120,7 +1124,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         var coefficients = [Int32](repeating: 0, count: width * height)
         for i in 0..<coefficients.count {
-            let sign: Int32 = (i % 3 == 0) ? -1 : 1
+            let sign: Int32 = (i.isMultiple(of: 3)) ? -1 : 1
             coefficients[i] = sign * Int32((i * 7) % 512)
         }
 
@@ -1166,7 +1170,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i * 13) % 2000)
         }
 
@@ -1207,7 +1211,7 @@ final class J2KBypassModeTests: XCTestCase {
         for subband in subbands {
             var original = [Int32](repeating: 0, count: width * height)
             for i in 0..<original.count {
-                let sign: Int32 = (i % 3 == 0) ? -1 : 1
+                let sign: Int32 = (i.isMultiple(of: 3)) ? -1 : 1
                 original[i] = sign * Int32((i * 11) % 512)
             }
 
@@ -1313,7 +1317,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i * 257) % 32768)
         }
 
@@ -1395,7 +1399,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 5 == 0) ? -1 : 1
+            let sign: Int32 = (i.isMultiple(of: 5)) ? -1 : 1
             original[i] = sign * Int32((i * 17) % 2048)
         }
 
@@ -1568,7 +1572,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         // Encode some symbols
         for i in 0..<20 {
-            encoder.encode(symbol: i % 3 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 3), context: &context)
         }
 
         let data = encoder.finish()
@@ -1581,7 +1585,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         // Encode some symbols
         for i in 0..<20 {
-            encoder.encode(symbol: i % 3 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 3), context: &context)
         }
 
         let data = encoder.finish(mode: .predictable)
@@ -1594,7 +1598,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         // Encode some symbols
         for i in 0..<20 {
-            encoder.encode(symbol: i % 3 == 0, context: &context)
+            encoder.encode(symbol: i.isMultiple(of: 3), context: &context)
         }
 
         let data = encoder.finish(mode: .nearOptimal)
@@ -1610,7 +1614,7 @@ final class J2KTerminationModeTests: XCTestCase {
             var context = MQContext()
 
             for i in 0..<50 {
-                encoder.encode(symbol: i % 4 == 0, context: &context)
+                encoder.encode(symbol: i.isMultiple(of: 4), context: &context)
             }
 
             return encoder.finish(mode: mode)
@@ -1690,7 +1694,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         var coefficients = [Int32](repeating: 0, count: width * height)
         for i in 0..<coefficients.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             coefficients[i] = sign * Int32((i % 100) + 1)
         }
 
@@ -1777,7 +1781,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i % 127) + 1)
         }
 
@@ -1806,7 +1810,7 @@ final class J2KTerminationModeTests: XCTestCase {
 
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i % 127) + 1)
         }
 
@@ -1836,7 +1840,7 @@ final class J2KTerminationModeTests: XCTestCase {
         // Use LL subband which is known to work well
         var original = [Int32](repeating: 0, count: width * height)
         for i in 0..<original.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             original[i] = sign * Int32((i % 127) + 1)
         }
 
@@ -1923,7 +1927,7 @@ final class J2KTerminationModeTests: XCTestCase {
         // Use a data pattern that the existing codec handles well
         var coefficients = [Int32](repeating: 0, count: width * height)
         for i in 0..<coefficients.count {
-            let sign: Int32 = (i % 2 == 0) ? 1 : -1
+            let sign: Int32 = (i.isMultiple(of: 2)) ? 1 : -1
             coefficients[i] = sign * Int32((i % 127) + 1)
         }
 

@@ -1,3 +1,7 @@
+//
+// J2KArbitraryWaveletTests.swift
+// J2KSwift
+//
 // J2KArbitraryWaveletTests.swift
 // J2KSwift
 //
@@ -893,4 +897,3 @@ final class J2KArbitraryWaveletTests: XCTestCase {
         // is within 10% of standard path performance
     }
 }
-

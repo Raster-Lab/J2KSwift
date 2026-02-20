@@ -1,3 +1,7 @@
+//
+// MJ2_x86.swift
+// J2KSwift
+//
 // MJ2_x86.swift
 // J2KSwift
 //
@@ -42,7 +46,7 @@ import J2KCore
 public struct MJ2X86: Sendable {
     /// Creates a new x86-64 specific MJ2 processor.
     public init() {}
-    
+
     /// Indicates whether x86-64 MJ2 optimizations are available.
     ///
     /// Returns `true` only on x86-64 platforms.
@@ -53,9 +57,9 @@ public struct MJ2X86: Sendable {
         return false
         #endif
     }
-    
+
     // MARK: - Architecture Information
-    
+
     /// Returns information about the x86-64 CPU features.
     ///
     /// Detects available SIMD instruction sets relevant to video processing.
@@ -63,34 +67,34 @@ public struct MJ2X86: Sendable {
     /// - Returns: Dictionary of feature name to availability.
     public static func cpuFeatures() -> [String: Bool] {
         var features: [String: Bool] = [:]
-        
+
         // All modern x86-64 Macs support these
         features["SSE4.2"] = true
         features["AVX"] = true
         features["AVX2"] = true
-        
+
         // Not available on x86-64
         features["NEON"] = false
         features["AMX"] = false
         features["VideoToolbox"] = false  // Not available on non-Apple x86-64
-        
+
         return features
     }
-    
+
     /// Returns a warning message about x86-64 deprecation.
     ///
     /// - Returns: Deprecation warning text.
     public static func deprecationWarning() -> String {
         """
         ⚠️ Running on x86-64 (Intel) architecture
-        
+
         This architecture will be removed in a future major version.
-        
+
         For best performance, consider:
         1. Using Apple Silicon (M1/M2/M3) hardware
         2. Running ARM64 builds via Rosetta 2 on Intel Macs
         3. Using FFmpeg for software encoding on non-Apple platforms
-        
+
         x86-64 support will be maintained through v1.x.x releases but
         may be removed in v2.0.0 or later.
         """
@@ -102,11 +106,11 @@ public struct MJ2X86: Sendable {
 /// Placeholder for x86-64 optimizations on non-x86-64 platforms.
 public struct MJ2X86: Sendable {
     public init() {}
-    
+
     public static var isAvailable: Bool { false }
-    
+
     public static func cpuFeatures() -> [String: Bool] { [:] }
-    
+
     public static func deprecationWarning() -> String { "" }
 }
 

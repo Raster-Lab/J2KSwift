@@ -1,3 +1,7 @@
+//
+// JPIPEndToEndTests.swift
+// J2KSwift
+//
 /// # JPIPEndToEndTests
 ///
 /// Comprehensive end-to-end tests for JPIP client-server communication.
@@ -249,10 +253,8 @@ final class JPIPEndToEndTests: XCTestCase {
             }
 
             var successCount = 0
-            for await success in group {
-                if success {
-                    successCount += 1
-                }
+            for await success in group where success {
+                successCount += 1
             }
 
             // All requests should succeed

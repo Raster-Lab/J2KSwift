@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoder.swift
+// J2KSwift
+//
 /// # HTJ2K Block Coder
 ///
 /// Implementation of the FBCOT (Fast Block Coder with Optimized Truncation) algorithm
@@ -272,7 +276,7 @@ struct HTVLCCoder: Sendable {
     /// - Returns: The VLC-encoded byte stream.
     mutating func flush() -> Data {
         // Pad to byte boundary
-        while bitCount % 8 != 0 {
+        while !bitCount.isMultiple(of: 8) {
             emitBits(0, count: 1)
         }
         while bitCount > 0 {
@@ -378,7 +382,7 @@ struct HTMagSgnCoder: Sendable {
     /// - Returns: The MagSgn-encoded byte stream.
     mutating func flush() -> Data {
         // Pad to byte boundary
-        while bitCount % 8 != 0 {
+        while !bitCount.isMultiple(of: 8) {
             emitBit(0)
         }
         while bitCount > 0 {
@@ -450,18 +454,6 @@ struct HTBlockEncoder: Sendable {
 
     /// The subband this code-block belongs to.
     let subband: J2KSubband
-
-    /// Creates a new HT block encoder.
-    ///
-    /// - Parameters:
-    ///   - width: The code-block width in samples.
-    ///   - height: The code-block height in samples.
-    ///   - subband: The wavelet subband.
-    init(width: Int, height: Int, subband: J2KSubband) {
-        self.width = width
-        self.height = height
-        self.subband = subband
-    }
 
     /// Encodes wavelet coefficients using the HT cleanup pass.
     ///
@@ -688,8 +680,8 @@ struct HTBlockEncoder: Sendable {
     /// Checks whether any neighbor of the given sample is significant.
     private func hasSignificantNeighbor(x: Int, y: Int, state: [Bool]) -> Bool {
         let offsets = [(-1, -1), (0, -1), (1, -1),
-                       (-1, 0),           (1, 0),
-                       (-1, 1),  (0, 1),  (1, 1)]
+                       (-1, 0), (1, 0),
+                       (-1, 1), (0, 1), (1, 1)]
         for (dx, dy) in offsets {
             let nx = x + dx
             let ny = y + dy
@@ -725,18 +717,6 @@ struct HTBlockDecoder: Sendable {
 
     /// The subband this code-block belongs to.
     let subband: J2KSubband
-
-    /// Creates a new HT block decoder.
-    ///
-    /// - Parameters:
-    ///   - width: The code-block width in samples.
-    ///   - height: The code-block height in samples.
-    ///   - subband: The wavelet subband.
-    init(width: Int, height: Int, subband: J2KSubband) {
-        self.width = width
-        self.height = height
-        self.subband = subband
-    }
 
     /// Decodes the HT cleanup pass.
     ///
@@ -914,8 +894,8 @@ struct HTBlockDecoder: Sendable {
     /// Checks whether any neighbor of the given sample is significant.
     private func hasSignificantNeighbor(x: Int, y: Int, state: [Bool]) -> Bool {
         let offsets = [(-1, -1), (0, -1), (1, -1),
-                       (-1, 0),           (1, 0),
-                       (-1, 1),  (0, 1),  (1, 1)]
+                       (-1, 0), (1, 0),
+                       (-1, 1), (0, 1), (1, 1)]
         for (dx, dy) in offsets {
             let nx = x + dx
             let ny = y + dy
@@ -959,35 +939,4 @@ struct HTEncodedBlock: Sendable {
 
     /// The code-block height.
     let height: Int
-
-    /// Creates a new HT encoded block.
-    ///
-    /// - Parameters:
-    ///   - codedData: The combined coded data.
-    ///   - passType: The coding pass type.
-    ///   - melLength: Length of the MEL stream.
-    ///   - vlcLength: Length of the VLC stream.
-    ///   - magsgnLength: Length of the MagSgn stream.
-    ///   - bitPlane: The encoded bit-plane.
-    ///   - width: The code-block width.
-    ///   - height: The code-block height.
-    init(
-        codedData: Data,
-        passType: HTCodingPassType,
-        melLength: Int,
-        vlcLength: Int,
-        magsgnLength: Int,
-        bitPlane: Int,
-        width: Int,
-        height: Int
-    ) {
-        self.codedData = codedData
-        self.passType = passType
-        self.melLength = melLength
-        self.vlcLength = vlcLength
-        self.magsgnLength = magsgnLength
-        self.bitPlane = bitPlane
-        self.width = width
-        self.height = height
-    }
 }

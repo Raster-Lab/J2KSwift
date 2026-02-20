@@ -1,3 +1,7 @@
+//
+// J2KBitReader.swift
+// J2KSwift
+//
 /// # J2KBitReader
 ///
 /// Bitstream reading utilities for JPEG 2000 codestream parsing.
@@ -265,7 +269,7 @@ public struct J2KBitReader: Sendable {
     /// - Parameter count: The number of bits to skip.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if there is insufficient data.
     public mutating func skipBits(_ count: Int) throws {
-        guard count >= 0 else {
+        guard isEmpty else {
             throw J2KError.invalidParameter("Cannot skip negative number of bits: \(count)")
         }
 

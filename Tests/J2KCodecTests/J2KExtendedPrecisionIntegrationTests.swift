@@ -1,3 +1,7 @@
+//
+// J2KExtendedPrecisionIntegrationTests.swift
+// J2KSwift
+//
 // J2KExtendedPrecisionIntegrationTests.swift
 // J2KSwift
 //
@@ -12,7 +16,6 @@ import J2KCore
 /// Comprehensive integration and validation tests for extended precision
 /// and DC offset integration with the encoding/decoding pipeline.
 final class J2KExtendedPrecisionIntegrationTests: XCTestCase {
-
     // MARK: - Encoder Configuration Integration
 
     func testEncoderConfigDefaultDCOffsetDisabled() {

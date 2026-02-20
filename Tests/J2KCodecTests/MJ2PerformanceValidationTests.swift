@@ -1,3 +1,7 @@
+//
+// MJ2PerformanceValidationTests.swift
+// J2KSwift
+//
 /// # MJ2PerformanceValidationTests
 ///
 /// Performance validation tests for Motion JPEG 2000 operations.
@@ -12,7 +16,6 @@ import XCTest
 @testable import J2KFileFormat
 
 final class MJ2PerformanceValidationTests: XCTestCase {
-
     // MARK: - Encoding Benchmarks
 
     func testSingleFrameEncodingTime() async throws {
@@ -130,7 +133,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
 
     func testPlayerInitializationTime() async throws {
         let startTime = Date()
-        let _ = MJ2Player()
+        _ = MJ2Player()
         let elapsed = Date().timeIntervalSince(startTime)
 
         print("Player initialization time: \(String(format: "%.4f", elapsed * 1000)) ms")
@@ -140,7 +143,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
     func testPlayerConfigurationCreation() async throws {
         let startTime = Date()
         for _ in 0..<100 {
-            let _ = MJ2PlaybackConfiguration(
+            _ = MJ2PlaybackConfiguration(
                 maxCacheSize: 30,
                 prefetchCount: 5,
                 memoryLimit: 256_000_000,
@@ -169,7 +172,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
         let cacheSizes = [5, 10, 30, 60, 120]
         let startTime = Date()
         for size in cacheSizes {
-            let _ = MJ2PlaybackConfiguration(
+            _ = MJ2PlaybackConfiguration(
                 maxCacheSize: size,
                 prefetchCount: size / 5,
                 memoryLimit: UInt64(size) * 1_000_000
@@ -186,7 +189,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
     func testCreationMemoryBaseline() async throws {
         let initialMemory = getMemoryUsage()
         let config = MJ2CreationConfiguration.from(frameRate: 24.0, profile: .simple)
-        let _ = MJ2Creator(configuration: config)
+        _ = MJ2Creator(configuration: config)
         let finalMemory = getMemoryUsage()
 
         let memoryDelta = finalMemory > initialMemory ? finalMemory - initialMemory : 0
@@ -241,7 +244,7 @@ final class MJ2PerformanceValidationTests: XCTestCase {
             await builder.addSample(
                 size: UInt32(1024 + i),
                 offset: UInt64(i * 1024),
-                isSync: i % 10 == 0
+                isSync: i.isMultiple(of: 10)
             )
         }
         let count = await builder.sampleCount

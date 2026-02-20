@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoderMemoryTracker.swift
+// J2KSwift
+//
 // J2KHTBlockCoderMemoryTracker.swift
 // J2KSwift
 //
@@ -58,7 +62,7 @@ public actor HTBlockCoderMemoryTracker {
 
         /// Average allocation size.
         public var averageSize: Int {
-            count > 0 ? totalBytes / count : 0
+            !isEmpty ? totalBytes / count : 0
         }
 
         /// Minimum allocation size.
@@ -72,7 +76,7 @@ public actor HTBlockCoderMemoryTracker {
     private struct TrackingData {
         var count: Int = 0
         var totalBytes: Int = 0
-        var minSize: Int = Int.max
+        var minSize = Int.max
         var maxSize: Int = 0
     }
 
@@ -133,7 +137,7 @@ public actor HTBlockCoderMemoryTracker {
     /// - Parameter type: The allocation type to query.
     /// - Returns: Statistics for the allocation type, or nil if no allocations recorded.
     public func statistics(for type: AllocationType) -> AllocationStats? {
-        guard let data = tracking[type], data.count > 0 else { return nil }
+        guard let data = tracking[type], !data.isEmpty else { return nil }
         return AllocationStats(
             count: data.count,
             totalBytes: data.totalBytes,
@@ -147,7 +151,7 @@ public actor HTBlockCoderMemoryTracker {
     /// - Returns: Dictionary mapping allocation types to their statistics.
     public func allStatistics() -> [AllocationType: AllocationStats] {
         var result: [AllocationType: AllocationStats] = [:]
-        for (type, data) in tracking where data.count > 0 {
+        for (type, data) in tracking where !data.isEmpty {
             result[type] = AllocationStats(
                 count: data.count,
                 totalBytes: data.totalBytes,
@@ -162,14 +166,14 @@ public actor HTBlockCoderMemoryTracker {
     ///
     /// - Returns: Peak memory in bytes.
     public func peakMemoryUsage() -> Int {
-        return peakMemory
+        peakMemory
     }
 
     /// Returns current active memory (not yet released).
     ///
     /// - Returns: Current memory in bytes.
     public func currentMemoryUsage() -> Int {
-        return currentMemory
+        currentMemory
     }
 
     /// Resets all tracking data.

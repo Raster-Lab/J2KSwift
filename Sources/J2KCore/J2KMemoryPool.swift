@@ -1,3 +1,7 @@
+//
+// J2KMemoryPool.swift
+// J2KSwift
+//
 /// # J2KMemoryPool
 ///
 /// Memory pool for efficient temporary buffer allocation and reuse.
@@ -26,17 +30,17 @@ internal actor J2KMemoryPool {
     /// Configuration for the memory pool.
     internal struct Configuration: Sendable {
         /// Maximum number of buffers to keep in the pool.
-        public let maxBuffers: Int
+        let maxBuffers: Int
 
         /// Maximum total memory to keep in the pool (in bytes).
-        public let maxTotalSize: Int
+        let maxTotalSize: Int
 
         /// Creates a new configuration.
         ///
         /// - Parameters:
         ///   - maxBuffers: Maximum number of buffers (default: 32).
         ///   - maxTotalSize: Maximum total size in bytes (default: 64MB).
-        public init(maxBuffers: Int = 32, maxTotalSize: Int = 64 * 1024 * 1024) {
+        init(maxBuffers: Int = 32, maxTotalSize: Int = 64 * 1024 * 1024) {
             self.maxBuffers = maxBuffers
             self.maxTotalSize = maxTotalSize
         }

@@ -1,3 +1,7 @@
+//
+// JP3DCoreTypeTests.swift
+// J2KSwift
+//
 /// Tests for JP3D core types (Week 211-213).
 ///
 /// Validates volume construction, component configuration, 3D spatial types,
@@ -8,7 +12,6 @@ import XCTest
 @testable import J2K3D
 
 final class JP3DCoreTypeTests: XCTestCase {
-
     // MARK: - J2KVolume Construction
 
     func testVolumeBasicConstruction() throws {

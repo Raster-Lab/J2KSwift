@@ -1,3 +1,7 @@
+//
+// J2KConformanceTesting.swift
+// J2KSwift
+//
 /// # JPEG 2000 Conformance Testing Framework
 ///
 /// This framework provides tools for validating J2KSwift against the ISO/IEC 15444-4
@@ -530,7 +534,7 @@ public struct J2KISOTestSuiteLoader: Sendable {
     ///
     /// - Returns: Array of ISO test case descriptors.
     public static func isoTestCaseCatalog() -> [ISOTestCase] {
-        return [
+        [
             // Profile 0 - Baseline Lossless Tests
             ISOTestCase(
                 identifier: "p0_01",
@@ -762,7 +766,10 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 if bytes[offset] == 0x23 { // '#'
                     while offset < bytes.count && bytes[offset] != 0x0A { offset += 1 }
                 }
-                if offset < bytes.count && (bytes[offset] == 0x20 || bytes[offset] == 0x0A || bytes[offset] == 0x0D || bytes[offset] == 0x09) {
+                if offset < bytes.count && (bytes[offset] == 0x20
+                    || bytes[offset] == 0x0A
+                    || bytes[offset] == 0x0D
+                    || bytes[offset] == 0x09) {
                     offset += 1
                 } else {
                     break
@@ -939,7 +946,7 @@ public struct J2KPlatformInfo: Sendable {
 
     /// The pointer size in bytes on the current platform.
     public static var pointerSize: Int {
-        return MemoryLayout<Int>.size
+        MemoryLayout<Int>.size
     }
 }
 
@@ -1050,7 +1057,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
                 for x in 0..<config.width {
                     let checkX = (x / squareSize) % 2
                     let checkY = (y / squareSize) % 2
-                    let value: Int32 = (checkX + checkY) % 2 == 0 ? 0 : maxValue
+                    let value: Int32 = (checkX + checkY).isMultiple(of: 2) ? 0 : maxValue
                     for c in 0..<config.components {
                         let index = (y * config.width + x) * config.components + c
                         pixels[index] = value
@@ -1081,7 +1088,7 @@ public struct HTJ2KTestVectorGenerator: Sendable {
         case .edges:
             for y in 0..<config.height {
                 for x in 0..<config.width {
-                    let isEdge = (x % 8 == 0) || (y % 8 == 0)
+                    let isEdge = (x.isMultiple(of: 8)) || (y.isMultiple(of: 8))
                     let value: Int32 = isEdge ? maxValue : 0
                     for c in 0..<config.components {
                         let index = (y * config.width + x) * config.components + c
@@ -1718,7 +1725,6 @@ public struct HTJ2KTestVectorParser: Sendable {
 /// - ``InteroperabilityResult``
 /// - ``MarkerInfo``
 public struct J2KHTInteroperabilityValidator: Sendable {
-
     /// Well-known JPEG 2000 marker codes.
     public enum MarkerCode: UInt16, Sendable, CaseIterable {
         /// Start of Codestream.

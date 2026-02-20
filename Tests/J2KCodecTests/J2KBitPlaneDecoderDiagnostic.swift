@@ -1,3 +1,7 @@
+//
+// J2KBitPlaneDecoderDiagnostic.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -46,13 +50,11 @@ final class J2KBitPlaneDecoderDiagnostic: XCTestCase {
 
         print("\nDifferences:")
         var hasDifferences = false
-        for i in 0..<original.count {
-            if original[i] != decoded[i] {
-                let row = i / width
-                let col = i % width
-                print("  Index \(i) [row \(row), col \(col)]: expected \(original[i]), got \(decoded[i])")
-                hasDifferences = true
-            }
+        for i in 0..<original.count where original[i] != decoded[i] {
+            let row = i / width
+            let col = i % width
+            print("  Index \(i) [row \(row), col \(col)]: expected \(original[i]), got \(decoded[i])")
+            hasDifferences = true
         }
         if !hasDifferences {
             print("  None - round-trip is exact!")

@@ -1,3 +1,7 @@
+//
+// J2KAcceleratePerformance.swift
+// J2KSwift
+//
 /// # J2KAcceleratePerformance
 ///
 /// Accelerate framework performance optimization and tuning.
@@ -33,25 +37,25 @@ public actor J2KAcceleratePerformance {
     public struct Configuration: Sendable {
         /// Enable aggressive vDSP optimization.
         public var enableVDSPOptimization: Bool
-        
+
         /// Use NEON-specific code paths when available.
         public var useNEONPaths: Bool
-        
+
         /// Enable AMX operations when available (Apple Silicon).
         public var enableAMX: Bool
-        
+
         /// Minimum array size for Accelerate operations.
         public var minAccelerateSize: Int
-        
+
         /// Batch size for vectorized operations.
         public var vectorBatchSize: Int
-        
+
         /// Enable in-place operations to reduce allocations.
         public var enableInPlaceOperations: Bool
-        
+
         /// Minimize data type conversions.
         public var minimizeConversions: Bool
-        
+
         /// Creates default configuration.
         public init(
             enableVDSPOptimization: Bool = true,
@@ -70,7 +74,7 @@ public actor J2KAcceleratePerformance {
             self.enableInPlaceOperations = enableInPlaceOperations
             self.minimizeConversions = minimizeConversions
         }
-        
+
         /// High-throughput configuration.
         public static var highThroughput: Configuration {
             Configuration(
@@ -83,7 +87,7 @@ public actor J2KAcceleratePerformance {
                 minimizeConversions: true
             )
         }
-        
+
         /// Low-power configuration.
         public static var lowPower: Configuration {
             Configuration(
@@ -96,40 +100,40 @@ public actor J2KAcceleratePerformance {
                 minimizeConversions: true
             )
         }
-        
+
         /// Balanced configuration.
         public static var balanced: Configuration {
             Configuration()
         }
     }
-    
+
     /// Performance metrics.
     public struct Metrics: Sendable {
         /// Total vDSP operations performed.
         public let totalVDSPOperations: Int
-        
+
         /// Total NEON operations performed.
         public let totalNEONOperations: Int
-        
+
         /// Total AMX operations performed.
         public let totalAMXOperations: Int
-        
+
         /// Total data conversions.
         public let totalConversions: Int
-        
+
         /// Total in-place operations.
         public let totalInPlaceOperations: Int
-        
+
         /// Total time in vDSP operations (seconds).
         public let vdspTime: TimeInterval
-        
+
         /// Average speedup vs scalar operations.
         public let averageSpeedup: Double
-        
+
         /// Memory saved by in-place operations (bytes).
         public let memorySaved: Int
     }
-    
+
     /// Operation record.
     private struct OperationRecord {
         let type: String
@@ -138,36 +142,36 @@ public actor J2KAcceleratePerformance {
         let inPlace: Bool
         let timestamp: Date
     }
-    
+
     // MARK: - State
-    
+
     /// Current configuration.
     private var configuration: Configuration = .balanced
-    
+
     /// Recorded operations.
     private var operations: [OperationRecord] = []
-    
+
     /// Session start time.
     private var sessionStart: Date?
-    
+
     /// Detected capabilities.
     private var capabilities: Capabilities
-    
+
     /// Platform capabilities.
     private struct Capabilities: Sendable {
         let hasNEON: Bool
         let hasAMX: Bool
         let vectorWidth: Int
-        
+
         static func detect() -> Capabilities {
             var hasNEON = false
             var hasAMX = false
             var vectorWidth = 128 // bits
-            
+
             #if arch(arm64)
             hasNEON = true
             vectorWidth = 128
-            
+
             // Check for Apple Silicon AMX
             #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS)
             // AMX is available on A14 and later (M1 and later on macOS)
@@ -179,7 +183,7 @@ public actor J2KAcceleratePerformance {
             // x86_64 typically has AVX/AVX2
             vectorWidth = 256 // AVX
             #endif
-            
+
             return Capabilities(
                 hasNEON: hasNEON,
                 hasAMX: hasAMX,
@@ -187,9 +191,9 @@ public actor J2KAcceleratePerformance {
             )
         }
     }
-    
+
     // MARK: - Initialization
-    
+
     /// Creates an Accelerate performance optimizer.
     ///
     /// - Parameter configuration: Initial configuration (default: .balanced).
@@ -197,9 +201,9 @@ public actor J2KAcceleratePerformance {
         self.configuration = configuration
         self.capabilities = Capabilities.detect()
     }
-    
+
     // MARK: - Configuration
-    
+
     /// Optimizes configuration for maximum throughput.
     ///
     /// - Returns: Optimized configuration.
@@ -207,7 +211,7 @@ public actor J2KAcceleratePerformance {
         configuration = .highThroughput
         return configuration
     }
-    
+
     /// Optimizes configuration for low power consumption.
     ///
     /// - Returns: Optimized configuration.
@@ -215,21 +219,21 @@ public actor J2KAcceleratePerformance {
         configuration = .lowPower
         return configuration
     }
-    
+
     /// Sets custom configuration.
     ///
     /// - Parameter config: Custom configuration.
     public func setConfiguration(_ config: Configuration) {
         configuration = config
     }
-    
+
     /// Returns current configuration.
     public func currentConfiguration() -> Configuration {
         configuration
     }
-    
+
     // MARK: - Operation Selection
-    
+
     /// Determines if Accelerate should be used for the given array size.
     ///
     /// - Parameter arraySize: Size of array to process.
@@ -238,7 +242,7 @@ public actor J2KAcceleratePerformance {
         guard configuration.enableVDSPOptimization else { return false }
         return arraySize >= configuration.minAccelerateSize
     }
-    
+
     /// Determines optimal batch size for vectorized operations.
     ///
     /// - Parameters:
@@ -248,12 +252,12 @@ public actor J2KAcceleratePerformance {
     public func optimalBatchSize(totalSize: Int, elementSize: Int) -> Int {
         let targetBytes = configuration.vectorBatchSize * elementSize
         let batchSize = min(totalSize, targetBytes / elementSize)
-        
+
         // Align to vector width for efficiency
         let alignment = capabilities.vectorWidth / (elementSize * 8)
         return (batchSize / alignment) * alignment
     }
-    
+
     /// Recommends vDSP function for the given operation.
     ///
     /// - Parameters:
@@ -268,7 +272,7 @@ public actor J2KAcceleratePerformance {
     ) -> String {
         let prefix = dataType == "double" ? "vDSP_" : "vDSP_"
         let suffix = dataType == "double" ? "D" : ""
-        
+
         switch operation {
         case "add":
             return "\(prefix)vadd\(suffix)"
@@ -292,9 +296,9 @@ public actor J2KAcceleratePerformance {
             return "\(prefix)\(operation)\(suffix)"
         }
     }
-    
+
     // MARK: - NEON Optimization
-    
+
     /// Checks if NEON paths should be used.
     ///
     /// - Returns: True if NEON is available and enabled.
@@ -302,15 +306,15 @@ public actor J2KAcceleratePerformance {
         guard configuration.useNEONPaths else { return false }
         return capabilities.hasNEON
     }
-    
+
     /// Returns optimal NEON vector width in bytes.
     public func neonVectorWidth() -> Int {
         guard capabilities.hasNEON else { return 16 }
         return 16 // 128-bit NEON vectors
     }
-    
+
     // MARK: - AMX Optimization
-    
+
     /// Checks if AMX should be used for matrix operations.
     ///
     /// - Parameters:
@@ -320,26 +324,26 @@ public actor J2KAcceleratePerformance {
     public func shouldUseAMX(rows: Int, cols: Int) -> Bool {
         guard configuration.enableAMX else { return false }
         guard capabilities.hasAMX else { return false }
-        
+
         // AMX is beneficial for larger matrices
         let minSize = 16
         return rows >= minSize && cols >= minSize
     }
-    
+
     /// Returns optimal tile size for AMX operations.
     ///
     /// - Returns: Tile size (width, height) for AMX.
     public func amxTileSize() -> (width: Int, height: Int) {
         guard capabilities.hasAMX else { return (16, 16) }
-        
+
         // AMX typically uses 64-byte tiles
         // For FP32: 16x16 = 256 elements = 1024 bytes
         // For FP16: 32x32 = 1024 elements = 2048 bytes
         return (16, 16)
     }
-    
+
     // MARK: - Data Conversion Optimization
-    
+
     /// Determines if data conversion can be avoided.
     ///
     /// - Parameters:
@@ -350,7 +354,7 @@ public actor J2KAcceleratePerformance {
         guard configuration.minimizeConversions else { return true }
         return sourceType != targetType
     }
-    
+
     /// Recommends optimal data type for operations.
     ///
     /// - Parameters:
@@ -369,9 +373,9 @@ public actor J2KAcceleratePerformance {
             return "float"
         }
     }
-    
+
     // MARK: - In-Place Operations
-    
+
     /// Checks if in-place operation should be used.
     ///
     /// - Parameters:
@@ -380,12 +384,12 @@ public actor J2KAcceleratePerformance {
     /// - Returns: True if in-place is recommended.
     public func shouldUseInPlace(dataSize: Int, operation: String) -> Bool {
         guard configuration.enableInPlaceOperations else { return false }
-        
+
         // In-place is beneficial for large data to save memory
         let threshold = 1024 * 1024 // 1 MB
         return dataSize >= threshold
     }
-    
+
     /// Estimates memory saved by using in-place operations.
     ///
     /// - Parameter dataSize: Size of data in bytes.
@@ -393,9 +397,9 @@ public actor J2KAcceleratePerformance {
     public func memorySavedByInPlace(dataSize: Int) -> Int {
         dataSize // Full data size is saved
     }
-    
+
     // MARK: - Performance Tracking
-    
+
     /// Records an Accelerate operation for performance tracking.
     ///
     /// - Parameters:
@@ -416,21 +420,21 @@ public actor J2KAcceleratePerformance {
             inPlace: inPlace,
             timestamp: Date()
         )
-        
+
         operations.append(record)
-        
+
         // Keep only recent operations (last 1000)
         if operations.count > 1000 {
             operations.removeFirst(operations.count - 1000)
         }
     }
-    
+
     /// Starts a performance monitoring session.
     public func startSession() {
         sessionStart = Date()
         operations.removeAll()
     }
-    
+
     /// Ends the performance monitoring session and returns metrics.
     ///
     /// - Returns: Performance metrics for the session.
@@ -440,18 +444,18 @@ public actor J2KAcceleratePerformance {
         let amxOps = operations.filter { $0.type == "AMX" }.count
         let conversions = operations.filter { $0.type == "conversion" }.count
         let inPlaceOps = operations.filter { $0.inPlace }.count
-        
+
         let vdspTime = operations
             .filter { $0.type == "vDSP" }
             .reduce(0) { $0 + $1.duration }
-        
+
         // Estimate speedup (typical 5-15× for vDSP operations)
         let averageSpeedup = vdspOps > 0 ? 10.0 : 1.0
-        
+
         let memorySaved = operations
             .filter { $0.inPlace }
             .reduce(0) { $0 + $1.dataSize }
-        
+
         return Metrics(
             totalVDSPOperations: vdspOps,
             totalNEONOperations: neonOps,
@@ -463,14 +467,14 @@ public actor J2KAcceleratePerformance {
             memorySaved: memorySaved
         )
     }
-    
+
     /// Returns current performance metrics.
     public func performanceMetrics() -> Metrics {
         endSession()
     }
-    
+
     // MARK: - Platform Capabilities
-    
+
     /// Returns platform capabilities.
     public func platformCapabilities() -> (
         hasNEON: Bool,

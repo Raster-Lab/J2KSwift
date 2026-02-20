@@ -1,3 +1,7 @@
+//
+// J2KBitPlaneDecoderFixTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -212,18 +216,18 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         XCTAssertEqual(decoded.count, coefficients.count, "Array size mismatch")
 
         var mismatches: [(Int, Int32, Int32)] = []
-        for i in 0..<coefficients.count {
-            if decoded[i] != coefficients[i] {
-                mismatches.append((i, coefficients[i], decoded[i]))
-            }
+        for i in 0..<coefficients.count where decoded[i] != coefficients[i] {
+            mismatches.append((i, coefficients[i], decoded[i]))
         }
 
         if !mismatches.isEmpty {
             let row = { $0 / width }
             let col = { $0 % width }
-            let details = mismatches.map { idx, expected, got in
-                "Index \(idx) [\(row(idx)),\(col(idx))]: expected \(expected), got \(got)"
-            }.joined(separator: "\n")
+            let details = mismatches
+                .map { idx, expected, got in
+                    "Index \(idx) [\(row(idx)),\(col(idx))]: expected \(expected), got \(got)"
+                }
+                .joined(separator: "\n")
             XCTFail("Round-trip mismatch:\n\(details)")
         }
     }

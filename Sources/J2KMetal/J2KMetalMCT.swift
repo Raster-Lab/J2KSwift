@@ -1,3 +1,7 @@
+//
+// J2KMetalMCT.swift
+// J2KSwift
+//
 // J2KMetalMCT.swift
 // J2KSwift
 //
@@ -174,7 +178,7 @@ public struct J2KMetalMCTStatistics: Sendable {
 public actor J2KMetalMCT {
     /// Whether Metal MCT is available on this platform.
     public static var isAvailable: Bool {
-        return J2KMetalDevice.isAvailable
+        J2KMetalDevice.isAvailable
     }
 
     /// The MCT configuration.
@@ -232,7 +236,7 @@ public actor J2KMetalMCT {
 
     /// Returns the current processing statistics.
     public func statistics() -> J2KMetalMCTStatistics {
-        return _statistics
+        _statistics
     }
 
     /// Resets the processing statistics.
@@ -374,7 +378,7 @@ public actor J2KMetalMCT {
     ) async throws -> J2KMetalMCTResult {
         // Inverse transform uses the same matrix-vector multiply,
         // the caller provides the inverse matrix.
-        return try await forwardTransform(
+        try await forwardTransform(
             components: components,
             matrix: matrix,
             componentCount: componentCount,
@@ -562,23 +566,23 @@ public actor J2KMetalMCT {
 
     /// Standard ICT forward transform matrix (RGB → YCbCr).
     public static let ictForwardMatrix: [Float] = [
-         0.299,    0.587,    0.114,
-        -0.16875, -0.33126,  0.5,
-         0.5,     -0.41869, -0.08131
+        0.299, 0.587, 0.114,
+        -0.16875, -0.33126, 0.5,
+        0.5, -0.41869, -0.08131
     ]
 
     /// Standard ICT inverse transform matrix (YCbCr → RGB).
     public static let ictInverseMatrix: [Float] = [
-        1.0,  0.0,      1.402,
+        1.0, 0.0, 1.402,
         1.0, -0.34413, -0.71414,
-        1.0,  1.772,    0.0
+        1.0, 1.772, 0.0
     ]
 
     /// Simple averaging decorrelation matrix for 3 components.
     public static let averaging3Matrix: [Float] = [
         1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0,
-        1.0,      -1.0,        0.0,
-        0.0,       1.0,       -1.0
+        1.0, -1.0, 0.0,
+        0.0, 1.0, -1.0
     ]
 
     // MARK: - CPU Reference Implementation
@@ -609,9 +613,9 @@ public actor J2KMetalMCT {
                 let c1 = components[1][i]
                 let c2 = components[2][i]
                 let c3 = components[3][i]
-                output[0][i] = matrix[0]  * c0 + matrix[1]  * c1 + matrix[2]  * c2 + matrix[3]  * c3
-                output[1][i] = matrix[4]  * c0 + matrix[5]  * c1 + matrix[6]  * c2 + matrix[7]  * c3
-                output[2][i] = matrix[8]  * c0 + matrix[9]  * c1 + matrix[10] * c2 + matrix[11] * c3
+                output[0][i] = matrix[0] * c0 + matrix[1] * c1 + matrix[2] * c2 + matrix[3] * c3
+                output[1][i] = matrix[4] * c0 + matrix[5] * c1 + matrix[6] * c2 + matrix[7] * c3
+                output[2][i] = matrix[8] * c0 + matrix[9] * c1 + matrix[10] * c2 + matrix[11] * c3
                 output[3][i] = matrix[12] * c0 + matrix[13] * c1 + matrix[14] * c2 + matrix[15] * c3
             }
         } else {
@@ -938,6 +942,6 @@ public actor J2KMetalMCT {
     // MARK: - Utility
 
     private func currentTime() -> Double {
-        return ProcessInfo.processInfo.systemUptime
+        ProcessInfo.processInfo.systemUptime
     }
 }

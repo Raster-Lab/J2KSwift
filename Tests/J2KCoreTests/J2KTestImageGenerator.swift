@@ -1,3 +1,7 @@
+//
+// J2KTestImageGenerator.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCore
 import Foundation
@@ -222,7 +226,7 @@ public struct J2KTestImageGenerator: Sendable {
             for x in 0..<width {
                 let blockX = x / blockSize
                 let blockY = y / blockSize
-                let isWhite = (blockX + blockY) % 2 == 0
+                let isWhite = (blockX + blockY).isMultiple(of: 2)
                 let value = isWhite ? maxValue : 0
                 buffer.setPixel(x: x, y: y, value: value)
             }
@@ -235,7 +239,7 @@ public struct J2KTestImageGenerator: Sendable {
 
         for y in 0..<height {
             let stripeIndex = y / stripeHeight
-            let value = stripeIndex % 2 == 0 ? maxValue : 0
+            let value = stripeIndex.isMultiple(of: 2) ? maxValue : 0
             for x in 0..<width {
                 buffer.setPixel(x: x, y: y, value: value)
             }
@@ -249,7 +253,7 @@ public struct J2KTestImageGenerator: Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let stripeIndex = x / stripeWidth
-                let value = stripeIndex % 2 == 0 ? maxValue : 0
+                let value = stripeIndex.isMultiple(of: 2) ? maxValue : 0
                 buffer.setPixel(x: x, y: y, value: value)
             }
         }
@@ -589,10 +593,8 @@ final class J2KTestImageGeneratorTests: XCTestCase {
         )
 
         var differences = 0
-        for i in 0..<100 {
-            if buffer1.getPixel(at: i) != buffer3.getPixel(at: i) {
-                differences += 1
-            }
+        for i in 0..<100 where buffer1.getPixel(at: i) != buffer3.getPixel(at: i) {
+            differences += 1
         }
         XCTAssertGreaterThan(differences, 50) // Should have many differences
     }

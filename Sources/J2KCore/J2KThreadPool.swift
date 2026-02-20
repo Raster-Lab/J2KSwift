@@ -1,3 +1,7 @@
+//
+// J2KThreadPool.swift
+// J2KSwift
+//
 /// # J2KThreadPool
 ///
 /// Thread pool for parallelizing JPEG 2000 encoding and decoding operations.

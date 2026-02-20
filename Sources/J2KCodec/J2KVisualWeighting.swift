@@ -1,3 +1,7 @@
+//
+// J2KVisualWeighting.swift
+// J2KSwift
+//
 // J2KVisualWeighting.swift
 // J2KSwift
 //
@@ -7,39 +11,39 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Visual Frequency Weighting
-///
-/// Implementation of perceptual visual frequency weighting for JPEG 2000 encoding.
-///
-/// Visual frequency weighting applies frequency-dependent scaling to quantization
-/// step sizes based on the human visual system's contrast sensitivity function (CSF).
-/// This allows for perceptually optimized compression by allocating more bits to
-/// frequency bands that are more visible to human observers.
-///
-/// ## Contrast Sensitivity Function (CSF)
-///
-/// The CSF describes the human eye's sensitivity to spatial frequencies. Humans are
-/// most sensitive to frequencies around 4-8 cycles per degree and less sensitive to
-/// very low and very high frequencies. The implementation uses the Mannos-Sakrison CSF
-/// model, which is well-suited for JPEG 2000 wavelet subbands.
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create visual weighting with default CSF parameters
-/// let weighting = J2KVisualWeighting()
-///
-/// // Calculate weight for a specific subband
-/// let weight = weighting.weight(
-///     for: .hh,
-///     decompositionLevel: 2,
-///     totalLevels: 5,
-///     viewingDistance: 60.0  // cm
-/// )
-///
-/// // Apply to quantization step size
-/// let perceptualStepSize = baseStepSize * weight
-/// ```
+// # JPEG 2000 Visual Frequency Weighting
+//
+// Implementation of perceptual visual frequency weighting for JPEG 2000 encoding.
+//
+// Visual frequency weighting applies frequency-dependent scaling to quantization
+// step sizes based on the human visual system's contrast sensitivity function (CSF).
+// This allows for perceptually optimized compression by allocating more bits to
+// frequency bands that are more visible to human observers.
+//
+// ## Contrast Sensitivity Function (CSF)
+//
+// The CSF describes the human eye's sensitivity to spatial frequencies. Humans are
+// most sensitive to frequencies around 4-8 cycles per degree and less sensitive to
+// very low and very high frequencies. The implementation uses the Mannos-Sakrison CSF
+// model, which is well-suited for JPEG 2000 wavelet subbands.
+//
+// ## Usage
+//
+// ```swift
+// // Create visual weighting with default CSF parameters
+// let weighting = J2KVisualWeighting()
+//
+// // Calculate weight for a specific subband
+// let weight = weighting.weight(
+//     for: .hh,
+//     decompositionLevel: 2,
+//     totalLevels: 5,
+//     viewingDistance: 60.0  // cm
+// )
+//
+// // Apply to quantization step size
+// let perceptualStepSize = baseStepSize * weight
+// ```
 
 // MARK: - Visual Weighting Configuration
 

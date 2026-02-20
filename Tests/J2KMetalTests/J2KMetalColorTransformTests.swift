@@ -1,10 +1,13 @@
+//
+// J2KMetalColorTransformTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KMetal
 @testable import J2KCore
 
 /// Tests for Metal-accelerated color space transforms.
 final class J2KMetalColorTransformTests: XCTestCase {
-
     // MARK: - Platform Availability Tests
 
     /// Tests that Metal color transform availability can be queried.

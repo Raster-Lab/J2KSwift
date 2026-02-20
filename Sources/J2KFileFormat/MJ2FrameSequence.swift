@@ -1,3 +1,7 @@
+//
+// MJ2FrameSequence.swift
+// J2KSwift
+//
 /// # MJ2FrameSequence
 ///
 /// Frame sequence organization for Motion JPEG 2000 extraction.
@@ -14,22 +18,22 @@ import J2KCore
 public struct MJ2FrameMetadata: Sendable {
     /// Frame index (0-based).
     public let index: Int
-    
+
     /// Frame size in bytes.
     public let size: UInt32
-    
+
     /// Frame offset in the file.
     public let offset: UInt64
-    
+
     /// Frame duration in time units.
     public let duration: UInt32
-    
+
     /// Frame timestamp in time units.
     public let timestamp: UInt64
-    
+
     /// Whether this is a sync sample (key frame).
     public let isSync: Bool
-    
+
     /// Creates frame metadata.
     ///
     /// - Parameters:
@@ -75,13 +79,13 @@ public struct MJ2FrameSequence: Sendable {
     public struct Frame: Sendable {
         /// Frame metadata.
         public let metadata: MJ2FrameMetadata
-        
+
         /// Frame codestream data.
         public let data: Data
-        
+
         /// Decoded image (lazily decoded).
-        public var image: J2KImage? = nil
-        
+        public var image: J2KImage?
+
         /// Creates a frame.
         ///
         /// - Parameters:
@@ -92,33 +96,33 @@ public struct MJ2FrameSequence: Sendable {
             self.data = data
         }
     }
-    
+
     /// All frames in the sequence.
     public let frames: [Frame]
-    
+
     /// Total number of frames.
     public var count: Int {
         frames.count
     }
-    
+
     /// Duration in time units.
     public var totalDuration: UInt64 {
         guard let last = frames.last else { return 0 }
         return last.metadata.timestamp + UInt64(last.metadata.duration)
     }
-    
+
     /// Sync frames only.
     public var syncFrames: [Frame] {
         frames.filter { $0.metadata.isSync }
     }
-    
+
     /// Creates a frame sequence.
     ///
     /// - Parameter frames: The frames in the sequence.
     public init(frames: [Frame]) {
         self.frames = frames
     }
-    
+
     /// Gets a frame by index.
     ///
     /// - Parameter index: The frame index.
@@ -129,7 +133,7 @@ public struct MJ2FrameSequence: Sendable {
         }
         return frames[index]
     }
-    
+
     /// Gets frames in a range.
     ///
     /// - Parameter range: The index range.
@@ -140,7 +144,7 @@ public struct MJ2FrameSequence: Sendable {
         guard start < end else { return [] }
         return Array(frames[start..<end])
     }
-    
+
     /// Gets frames within a timestamp range.
     ///
     /// - Parameter range: The timestamp range (in time units).

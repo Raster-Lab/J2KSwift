@@ -1,3 +1,7 @@
+//
+// J2KHTBlockCoderMemoryTests.swift
+// J2KSwift
+//
 // J2KHTBlockCoderMemoryTests.swift
 // J2KSwift
 //
@@ -271,7 +275,9 @@ final class J2KHTBlockCoderMemoryTests: XCTestCase {
                     let coefficients = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
                     let encoder = HTBlockEncoder(width: width, height: height, subband: .hh)
 
-                    await tracker.recordAllocation(size: width * height * MemoryLayout<Int>.size, type: .coefficientArray)
+                    await tracker.recordAllocation(
+                        size: width * height * MemoryLayout<Int>.size,
+                        type: .coefficientArray)
                     _ = try? encoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
                 }
             }

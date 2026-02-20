@@ -1,3 +1,7 @@
+//
+// JPIPSessionPersistence.swift
+// J2KSwift
+//
 /// # JPIPSessionPersistence
 ///
 /// Enhanced session persistence and recovery for JPIP protocol.
@@ -356,7 +360,7 @@ public actor JPIPInMemoryPersistenceStore: JPIPSessionPersistenceStore {
     }
 
     public func listSessions() async throws -> [String] {
-        return Array(clientSessions.keys)
+        Array(clientSessions.keys)
     }
 
     public func saveServerSession(_ snapshot: JPIPServerSessionStateSnapshot) async throws {
@@ -373,12 +377,12 @@ public actor JPIPInMemoryPersistenceStore: JPIPSessionPersistenceStore {
 
     /// Returns the number of stored client sessions.
     public func clientSessionCount() -> Int {
-        return clientSessions.count
+        clientSessions.count
     }
 
     /// Returns the number of stored server sessions.
     public func serverSessionCount() -> Int {
-        return serverSessions.count
+        serverSessions.count
     }
 }
 
@@ -478,12 +482,12 @@ public actor JPIPFilePersistenceStore: JPIPSessionPersistenceStore {
 
     /// File URL for a client session.
     private func clientSessionURL(for sessionID: String) -> URL {
-        return directory.appendingPathComponent("client_\(sessionID).jpipsession")
+        directory.appendingPathComponent("client_\(sessionID).jpipsession")
     }
 
     /// File URL for a server session.
     private func serverSessionURL(for sessionID: String) -> URL {
-        return directory.appendingPathComponent("server_\(sessionID).jpipsession")
+        directory.appendingPathComponent("server_\(sessionID).jpipsession")
     }
 }
 
@@ -851,7 +855,7 @@ public actor JPIPSessionPersistenceManager {
     ///
     /// - Returns: Array of session IDs that have been persisted.
     public func listPersistedSessions() async throws -> [String] {
-        return try await store.listSessions()
+        try await store.listSessions()
     }
 
     /// Checks if a session has persisted state.
@@ -859,7 +863,7 @@ public actor JPIPSessionPersistenceManager {
     /// - Parameter sessionID: The session identifier to check.
     /// - Returns: True if persisted state exists.
     public func hasPersistedState(sessionID: String) async -> Bool {
-        return (try? await store.load(sessionID: sessionID)) != nil
+        (try? await store.load(sessionID: sessionID)) != nil
     }
 
     // MARK: - Snapshot Creation
@@ -904,16 +908,14 @@ public actor JPIPSessionPersistenceManager {
         // Collect data bins that were sent
         var sentBins: [JPIPSerializableDataBin] = []
         for binClass in JPIPDataBinClass.allCases {
-            for binID in 0..<100 {
-                if await session.hasDataBin(binClass: binClass, binID: binID) {
-                    let dataBin = JPIPDataBin(
-                        binClass: binClass,
-                        binID: binID,
-                        data: Data(),
-                        isComplete: true
-                    )
-                    sentBins.append(JPIPSerializableDataBin(from: dataBin))
-                }
+            for binID in 0..<100 where await session.hasDataBin(binClass: binClass, binID: binID) {
+                let dataBin = JPIPDataBin(
+                    binClass: binClass,
+                    binID: binID,
+                    data: Data(),
+                    isComplete: true
+                )
+                sentBins.append(JPIPSerializableDataBin(from: dataBin))
             }
         }
 
@@ -959,7 +961,7 @@ public struct JPIPPersistenceMetrics: Sendable {
 extension JPIPDataBinClass: CaseIterable {
     /// All data bin class cases.
     public static var allCases: [JPIPDataBinClass] {
-        return [.mainHeader, .tileHeader, .precinct, .tile, .extendedPrecinct, .metadata]
+        [.mainHeader, .tileHeader, .precinct, .tile, .extendedPrecinct, .metadata]
     }
 }
 
@@ -1059,7 +1061,7 @@ public actor JPIPSessionRecoveryManager {
     ///
     /// - Returns: Array of recovery events.
     public func getRecoveryHistory() -> [JPIPRecoveryEvent] {
-        return recoveryHistory
+        recoveryHistory
     }
 
     /// Gets recovery history for a specific session.
@@ -1067,7 +1069,7 @@ public actor JPIPSessionRecoveryManager {
     /// - Parameter sessionID: The session identifier.
     /// - Returns: Array of recovery events for the session.
     public func getRecoveryHistory(sessionID: String) -> [JPIPRecoveryEvent] {
-        return recoveryHistory.filter { $0.sessionID == sessionID }
+        recoveryHistory.filter { $0.sessionID == sessionID }
     }
 
     /// Clears recovery history.

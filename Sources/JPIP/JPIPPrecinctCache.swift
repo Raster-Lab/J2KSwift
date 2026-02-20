@@ -1,3 +1,7 @@
+//
+// JPIPPrecinctCache.swift
+// J2KSwift
+//
 /// # JPIPPrecinctCache
 ///
 /// Precinct-based caching for JPIP protocol.
@@ -103,7 +107,7 @@ public struct JPIPPrecinctCache: Sendable {
 
         /// Completion rate (0.0 to 1.0).
         public var completionRate: Double {
-            return totalPrecincts > 0 ? Double(completePrecincts) / Double(totalPrecincts) : 0.0
+            totalPrecincts > 0 ? Double(completePrecincts) / Double(totalPrecincts) : 0.0
         }
 
         /// Hit rate (0.0 to 1.0).
@@ -191,7 +195,7 @@ public struct JPIPPrecinctCache: Sendable {
     /// - Parameter precinctID: The precinct identifier.
     /// - Returns: True if the precinct is cached.
     public func hasPrecinct(_ precinctID: JPIPPrecinctID) -> Bool {
-        return precincts[precinctID] != nil
+        precincts[precinctID] != nil
     }
 
     /// Checks if a precinct is complete.
@@ -199,7 +203,7 @@ public struct JPIPPrecinctCache: Sendable {
     /// - Parameter precinctID: The precinct identifier.
     /// - Returns: True if the precinct is complete, false if partial or not cached.
     public func isPrecinctComplete(_ precinctID: JPIPPrecinctID) -> Bool {
-        return precincts[precinctID]?.isComplete ?? false
+        precincts[precinctID]?.isComplete ?? false
     }
 
     /// Gets all precincts for a given tile.
@@ -207,7 +211,7 @@ public struct JPIPPrecinctCache: Sendable {
     /// - Parameter tile: The tile index.
     /// - Returns: Array of precinct data for the tile.
     public func getPrecincts(forTile tile: Int) -> [JPIPPrecinctData] {
-        return precincts.values.filter { $0.precinctID.tile == tile }
+        precincts.values.filter { $0.precinctID.tile == tile }
     }
 
     /// Gets all precincts for a given resolution level.
@@ -215,7 +219,7 @@ public struct JPIPPrecinctCache: Sendable {
     /// - Parameter resolution: The resolution level.
     /// - Returns: Array of precinct data for the resolution.
     public func getPrecincts(forResolution resolution: Int) -> [JPIPPrecinctData] {
-        return precincts.values.filter { $0.precinctID.resolution == resolution }
+        precincts.values.filter { $0.precinctID.resolution == resolution }
     }
 
     /// Invalidates all precincts for a tile.

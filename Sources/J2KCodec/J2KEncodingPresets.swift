@@ -1,3 +1,7 @@
+//
+// J2KEncodingPresets.swift
+// J2KSwift
+//
 // J2KEncodingPresets.swift
 // J2KSwift
 //
@@ -7,30 +11,30 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Encoding Presets
-///
-/// Predefined encoding configurations optimized for different use cases.
-///
-/// Encoding presets provide a simple way to choose between encoding speed,
-/// file size, and quality without manually configuring all parameters.
-///
-/// ## Preset Types
-///
-/// - **Fast**: Optimized for encoding speed with acceptable quality
-/// - **Balanced**: Default balanced settings for general use
-/// - **Quality**: Optimized for maximum quality with slower encoding
-///
-/// ## Usage
-///
-/// ```swift
-/// // Use a preset directly
-/// let config = J2KEncodingPreset.fast.configuration(quality: 0.8)
-/// let encoder = J2KEncoder(configuration: config)
-///
-/// // Or customize a preset
-/// var customConfig = J2KEncodingPreset.balanced.configuration()
-/// customConfig.decompositionLevels = 3
-/// ```
+// # JPEG 2000 Encoding Presets
+//
+// Predefined encoding configurations optimized for different use cases.
+//
+// Encoding presets provide a simple way to choose between encoding speed,
+// file size, and quality without manually configuring all parameters.
+//
+// ## Preset Types
+//
+// - **Fast**: Optimized for encoding speed with acceptable quality
+// - **Balanced**: Default balanced settings for general use
+// - **Quality**: Optimized for maximum quality with slower encoding
+//
+// ## Usage
+//
+// ```swift
+// // Use a preset directly
+// let config = J2KEncodingPreset.fast.configuration(quality: 0.8)
+// let encoder = J2KEncoder(configuration: config)
+//
+// // Or customize a preset
+// var customConfig = J2KEncodingPreset.balanced.configuration()
+// customConfig.decompositionLevels = 3
+// ```
 
 // MARK: - Encoding Preset
 
@@ -620,7 +624,7 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Constant Quality"
         case .constantBitrate(let bpp):
             return "Constant Bitrate (\(String(format: "%.2f", bpp)) bpp)"
-        case .variableBitrate(let minQuality, let maxBpp):
+        case let .variableBitrate(minQuality, maxBpp):
             return "Variable Bitrate (min quality: \(String(format: "%.2f", minQuality)), max: \(String(format: "%.2f", maxBpp)) bpp)"
         case .lossless:
             return "Lossless"
@@ -632,7 +636,7 @@ extension J2KBitrateMode: CustomStringConvertible {
 
 extension J2KEncodingConfiguration: Equatable {
     public static func == (lhs: J2KEncodingConfiguration, rhs: J2KEncodingConfiguration) -> Bool {
-        return lhs.quality == rhs.quality &&
+        lhs.quality == rhs.quality &&
             lhs.lossless == rhs.lossless &&
             lhs.decompositionLevels == rhs.decompositionLevels &&
             lhs.codeBlockSize.width == rhs.codeBlockSize.width &&

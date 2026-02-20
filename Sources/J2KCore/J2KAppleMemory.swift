@@ -1,3 +1,7 @@
+//
+// J2KAppleMemory.swift
+// J2KSwift
+//
 /// # J2KAppleMemory
 ///
 /// Apple-specific memory optimizations for J2KSwift.
@@ -32,13 +36,13 @@ public actor J2KUnifiedMemoryManager {
     public struct Configuration: Sendable {
         /// Whether to prefer shared memory allocation.
         public let preferShared: Bool
-        
+
         /// Whether to enable large page support.
         public let enableLargePages: Bool
-        
+
         /// Alignment requirement for SIMD operations (must be power of 2).
         public let alignment: Int
-        
+
         /// Creates a new configuration.
         ///
         /// - Parameters:
@@ -55,18 +59,18 @@ public actor J2KUnifiedMemoryManager {
             self.alignment = alignment
         }
     }
-    
+
     private let configuration: Configuration
     private var allocations: [UInt: Int] = [:] // Use address as UInt for key
     private var totalAllocated: Int = 0
-    
+
     /// Creates a new unified memory manager.
     ///
     /// - Parameter configuration: The memory management configuration.
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
     }
-    
+
     /// Allocates a shared memory buffer optimized for unified memory access.
     ///
     /// On Apple Silicon, this allocates memory that can be efficiently shared
@@ -78,27 +82,27 @@ public actor J2KUnifiedMemoryManager {
     nonisolated public func allocateShared(size: Int) throws -> UnsafeMutableRawPointer {
         #if canImport(Darwin)
         let alignedSize = (size + configuration.alignment - 1) & ~(configuration.alignment - 1)
-        
+
         var ptr: UnsafeMutableRawPointer?
         let result = posix_memalign(&ptr, configuration.alignment, alignedSize)
-        
+
         guard result == 0, let allocatedPtr = ptr else {
             throw J2KError.internalError("Failed to allocate aligned memory: errno \(result)")
         }
-        
+
         Task { @MainActor in
             await self._trackAllocation(allocatedPtr, size: alignedSize)
         }
-        
+
         // Prefault pages to improve first access performance
         memset(allocatedPtr, 0, alignedSize)
-        
+
         return allocatedPtr
         #else
         throw J2KError.internalError("Unified memory allocation is only available on Apple platforms")
         #endif
     }
-    
+
     /// Deallocates a previously allocated shared memory buffer.
     ///
     /// - Parameter pointer: The pointer to deallocate.
@@ -110,14 +114,14 @@ public actor J2KUnifiedMemoryManager {
         free(pointer)
         #endif
     }
-    
+
     /// Internal method to track allocation (actor-isolated).
     private func _trackAllocation(_ pointer: UnsafeMutableRawPointer, size: Int) {
         let address = UInt(bitPattern: pointer)
         allocations[address] = size
         totalAllocated += size
     }
-    
+
     /// Internal method to untrack allocation (actor-isolated).
     private func _untrackAllocation(_ pointer: UnsafeMutableRawPointer) {
         let address = UInt(bitPattern: pointer)
@@ -125,12 +129,12 @@ public actor J2KUnifiedMemoryManager {
             totalAllocated -= size
         }
     }
-    
+
     /// Returns statistics about memory usage.
     ///
     /// - Returns: A dictionary with memory statistics.
     public func statistics() -> [String: Int] {
-        return [
+        [
             "totalAllocated": totalAllocated,
             "allocationCount": allocations.count
         ]
@@ -157,15 +161,15 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
         case readOnly
         case readWrite
     }
-    
+
     private var fileDescriptor: Int32?
     private var mappedAddress: UnsafeMutableRawPointer?
     private var mappedSize: Int = 0
     private var useNoCacheFlag: Bool = true
-    
+
     /// Creates a new memory-mapped file manager.
     public init() {}
-    
+
     /// Maps a file into memory with Apple-specific optimizations.
     ///
     /// - Parameters:
@@ -178,52 +182,52 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
         guard fileDescriptor == nil else {
             throw J2KError.internalError("File already mapped")
         }
-        
+
         let path = url.path
         let openMode: Int32 = mode == .readOnly ? O_RDONLY : O_RDWR
-        
+
         let fd = open(path, openMode)
         guard fd >= 0 else {
             throw J2KError.internalError("Failed to open file: errno \(errno)")
         }
-        
+
         self.fileDescriptor = fd
         self.useNoCacheFlag = useNoCache
-        
+
         // Get file size
         var fileStat = stat()
         guard fstat(fd, &fileStat) == 0 else {
             close(fd)
             throw J2KError.internalError("Failed to stat file: errno \(errno)")
         }
-        
+
         let fileSize = Int(fileStat.st_size)
-        
+
         // Set F_NOCACHE flag if requested
         if useNoCache {
             fcntl(fd, F_NOCACHE, 1)
         }
-        
+
         // Map the file
         let prot: Int32 = mode == .readOnly ? PROT_READ : (PROT_READ | PROT_WRITE)
         let flags: Int32 = MAP_SHARED
-        
+
         let addr = mmap(nil, fileSize, prot, flags, fd, 0)
         guard addr != MAP_FAILED else {
             close(fd)
             throw J2KError.internalError("Failed to mmap file: errno \(errno)")
         }
-        
+
         self.mappedAddress = addr
         self.mappedSize = fileSize
-        
+
         // Advise kernel about access pattern (sequential)
         madvise(addr, fileSize, MADV_SEQUENTIAL)
         #else
         throw J2KError.internalError("Memory-mapped I/O is only fully optimized on Apple platforms")
         #endif
     }
-    
+
     /// Reads data from the mapped file.
     ///
     /// - Parameters:
@@ -235,15 +239,15 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
         guard let addr = mappedAddress else {
             throw J2KError.internalError("No file mapped")
         }
-        
+
         guard offset + length <= mappedSize else {
             throw J2KError.internalError("Read beyond file size")
         }
-        
+
         let ptr = addr.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
         return Data(bytes: ptr, count: length)
     }
-    
+
     /// Writes data to the mapped file (if opened in read-write mode).
     ///
     /// - Parameters:
@@ -254,15 +258,15 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
         guard let addr = mappedAddress else {
             throw J2KError.internalError("No file mapped")
         }
-        
+
         guard offset + data.count <= mappedSize else {
             throw J2KError.internalError("Write beyond file size")
         }
-        
+
         let ptr = addr.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
         _ = data.copyBytes(to: UnsafeMutableBufferPointer(start: ptr, count: data.count))
     }
-    
+
     /// Unmaps the file and closes the file descriptor.
     ///
     /// - Throws: ``J2KError`` if unmapping fails.
@@ -275,14 +279,14 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
             mappedAddress = nil
             mappedSize = 0
         }
-        
+
         if let fd = fileDescriptor {
             close(fd)
             fileDescriptor = nil
         }
         #endif
     }
-    
+
     deinit {
         try? unmapFile()
     }
@@ -306,26 +310,26 @@ public struct J2KSIMDAlignedBuffer: @unchecked Sendable {
     public enum Alignment: Int, Sendable {
         /// 16-byte alignment for basic SIMD (128-bit vectors).
         case simd16 = 16
-        
+
         /// 32-byte alignment for AVX-style operations.
         case simd32 = 32
-        
+
         /// 64-byte alignment for cache line optimization.
         case cache64 = 64
-        
+
         /// 128-byte alignment for large SIMD operations.
         case simd128 = 128
     }
-    
+
     /// The raw pointer to the allocated memory.
     public let pointer: UnsafeMutableRawPointer
-    
+
     /// The size of the allocated memory in bytes.
     public let size: Int
-    
+
     /// The alignment of the allocated memory.
     public let alignment: Alignment
-    
+
     /// Allocates a SIMD-aligned buffer.
     ///
     /// - Parameters:
@@ -337,29 +341,32 @@ public struct J2KSIMDAlignedBuffer: @unchecked Sendable {
         #if canImport(Darwin)
         var ptr: UnsafeMutableRawPointer?
         let result = posix_memalign(&ptr, alignment.rawValue, size)
-        
+
         guard result == 0, let allocatedPtr = ptr else {
             throw J2KError.internalError("Failed to allocate SIMD-aligned buffer: errno \(result)")
         }
-        
+
         return J2KSIMDAlignedBuffer(pointer: allocatedPtr, size: size, alignment: alignment)
         #else
         throw J2KError.internalError("SIMD-aligned allocation is optimized for Apple platforms")
         #endif
     }
-    
+
     /// Deallocates the buffer.
     public func deallocate() {
         #if canImport(Darwin)
         free(pointer)
         #endif
     }
-    
+
     /// Accesses the buffer as typed memory.
     ///
     /// - Parameter body: A closure that takes a typed buffer pointer.
     /// - Returns: The result of the closure.
-    public func withMemoryRebound<T, R>(to type: T.Type, _ body: (UnsafeMutableBufferPointer<T>) throws -> R) rethrows -> R {
+    public func withMemoryRebound<T, R>(
+        to type: T.Type,
+        _ body: (UnsafeMutableBufferPointer<T>) throws -> R
+    ) rethrows -> R {
         let typedPtr = pointer.assumingMemoryBound(to: type)
         let count = size / MemoryLayout<T>.stride
         return try body(UnsafeMutableBufferPointer(start: typedPtr, count: count))
@@ -387,53 +394,53 @@ public actor J2KCompressedMemoryMonitor {
         case warning
         case critical
     }
-    
+
     /// Compressed memory status.
     public struct Status: Sendable {
         /// Current memory pressure level.
         public let pressure: MemoryPressure
-        
+
         /// Whether compressed memory is active.
         public let compressionActive: Bool
-        
+
         /// Estimated compression ratio (if available).
         public let compressionRatio: Double?
     }
-    
+
     private var currentPressure: MemoryPressure = .normal
     private var isMonitoring: Bool = false
-    
+
     /// Creates a new compressed memory monitor.
     public init() {}
-    
+
     /// Starts monitoring memory pressure.
     public func startMonitoring() {
         guard !isMonitoring else { return }
         isMonitoring = true
-        
+
         #if canImport(Darwin)
         // Set up dispatch source for memory pressure events
         // This is a simplified implementation; full implementation would use
         // dispatch_source_create with DISPATCH_SOURCE_TYPE_MEMORYPRESSURE
         #endif
     }
-    
+
     /// Stops monitoring memory pressure.
     public func stopMonitoring() {
         isMonitoring = false
     }
-    
+
     /// Returns the current memory status.
     ///
     /// - Returns: The current compressed memory status.
     public func currentStatus() -> Status {
-        return Status(
+        Status(
             pressure: currentPressure,
             compressionActive: currentPressure != .normal,
             compressionRatio: currentPressure != .normal ? 0.6 : nil
         )
     }
-    
+
     /// Updates the memory pressure level.
     ///
     /// - Parameter pressure: The new pressure level.
@@ -467,7 +474,7 @@ public enum J2KLargePageAllocator {
         return false
         #endif
     }
-    
+
     /// The size of a large page on this system.
     public static var largePageSize: Int {
         #if canImport(Darwin) && arch(arm64)
@@ -476,7 +483,7 @@ public enum J2KLargePageAllocator {
         return 4096 // Fall back to standard page size
         #endif
     }
-    
+
     /// Allocates memory using large pages if available.
     ///
     /// - Parameter size: The size in bytes to allocate (will be rounded up).
@@ -487,7 +494,7 @@ public enum J2KLargePageAllocator {
         // Round up to large page boundary
         let pageSize = largePageSize
         let alignedSize = ((size + pageSize - 1) / pageSize) * pageSize
-        
+
         // Use vm_allocate with VM_FLAGS_SUPERPAGE_SIZE_2MB
         var address: vm_address_t = 0
         let kr = vm_allocate(
@@ -496,7 +503,7 @@ public enum J2KLargePageAllocator {
             vm_size_t(alignedSize),
             VM_FLAGS_ANYWHERE | VM_FLAGS_SUPERPAGE_SIZE_2MB
         )
-        
+
         guard kr == KERN_SUCCESS else {
             // Fall back to regular allocation
             let ptr = malloc(alignedSize)
@@ -505,7 +512,7 @@ public enum J2KLargePageAllocator {
             }
             return allocatedPtr
         }
-        
+
         return UnsafeMutableRawPointer(bitPattern: Int(address))!
         #else
         // Fall back to standard allocation
@@ -516,7 +523,7 @@ public enum J2KLargePageAllocator {
         return allocatedPtr
         #endif
     }
-    
+
     /// Deallocates memory allocated with large pages.
     ///
     /// - Parameters:

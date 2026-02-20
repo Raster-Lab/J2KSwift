@@ -1,3 +1,7 @@
+//
+// JPIPTransport.swift
+// J2KSwift
+//
 /// # JPIPTransport
 ///
 /// HTTP transport layer for JPIP protocol.
@@ -95,6 +99,6 @@ extension J2KError {
     /// - Parameter message: The error message.
     /// - Returns: A network error.
     static func networkError(_ message: String) -> J2KError {
-        return .internalError("Network error: \(message)")
+        .internalError("Network error: \(message)")
     }
 }

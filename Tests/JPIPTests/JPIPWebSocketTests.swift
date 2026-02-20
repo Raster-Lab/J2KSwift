@@ -1,3 +1,7 @@
+//
+// JPIPWebSocketTests.swift
+// J2KSwift
+//
 /// # JPIPWebSocketTests
 ///
 /// Tests for JPIP WebSocket transport, client, and server implementations.
@@ -9,7 +13,6 @@ import XCTest
 // MARK: - WebSocket Frame Tests
 
 final class JPIPWebSocketFrameTests: XCTestCase {
-
     // MARK: - Frame Serialization
 
     func testFrameSerializationRoundTrip() {
@@ -269,7 +272,6 @@ final class JPIPWebSocketMessageEncoderTests: XCTestCase {
 // MARK: - Reconnection Config Tests
 
 final class JPIPWebSocketReconnectionTests: XCTestCase {
-
     func testDefaultConfiguration() {
         let config = JPIPWebSocketReconnectionConfig.default
         XCTAssertTrue(config.enabled)
@@ -330,7 +332,6 @@ final class JPIPWebSocketReconnectionTests: XCTestCase {
 // MARK: - WebSocket Transport Tests
 
 final class JPIPWebSocketTransportTests: XCTestCase {
-
     func testTransportInitialization() async {
         let url = URL(string: "ws://localhost:8080/jpip")!
         let transport = JPIPWebSocketTransport(url: url)
@@ -525,7 +526,6 @@ final class JPIPWebSocketTransportTests: XCTestCase {
 // MARK: - WebSocket Client Tests
 
 final class JPIPWebSocketClientTests: XCTestCase {
-
     func testClientInitialization() async {
         let url = URL(string: "ws://localhost:8080/jpip")!
         let client = JPIPWebSocketClient(serverURL: url)
@@ -616,7 +616,6 @@ final class JPIPWebSocketClientTests: XCTestCase {
 // MARK: - WebSocket Server Tests
 
 final class JPIPWebSocketServerTests: XCTestCase {
-
     func testServerInitialization() async {
         let server = JPIPWebSocketServer(port: 9090)
         let count = await server.getActiveConnectionCount()
@@ -991,7 +990,6 @@ final class JPIPWebSocketServerTests: XCTestCase {
 // MARK: - WebSocket Connection Tests
 
 final class JPIPWebSocketConnectionTests: XCTestCase {
-
     func testConnectionInitialization() async {
         let conn = JPIPWebSocketConnection(connectionID: "test-conn")
         let state = await conn.state
@@ -1077,7 +1075,6 @@ final class JPIPWebSocketConnectionTests: XCTestCase {
 // MARK: - Channel Type Extension Tests
 
 final class JPIPChannelTypeWebSocketTests: XCTestCase {
-
     func testWebSocketChannelType() {
         XCTAssertEqual(JPIPChannelType.webSocket.rawValue, "ws")
     }
@@ -1092,7 +1089,6 @@ final class JPIPChannelTypeWebSocketTests: XCTestCase {
 // MARK: - Connection State Tests
 
 final class JPIPWebSocketConnectionStateTests: XCTestCase {
-
     func testAllStates() {
         let states: [JPIPWebSocketConnectionState] = [
             .disconnected, .connecting, .connected,

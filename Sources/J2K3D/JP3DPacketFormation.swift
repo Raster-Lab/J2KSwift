@@ -1,3 +1,7 @@
+//
+// JP3DPacketFormation.swift
+// J2KSwift
+//
 /// # JP3DPacketFormation
 ///
 /// Tier-2 packet formation for JP3D volumetric JPEG 2000 codestreams.
@@ -268,7 +272,6 @@ public struct JP3DPacketSequencer: Sendable {
 /// `JP3DCodestreamBuilder` assembles packets with proper marker segments
 /// into a complete JP3D codestream conforming to ISO/IEC 15444-10.
 public struct JP3DCodestreamBuilder: Sendable {
-
     /// JP3D marker segment identifiers.
     public enum Marker: UInt16, Sendable {
         /// Start of codestream.
@@ -291,6 +294,8 @@ public struct JP3DCodestreamBuilder: Sendable {
 
     /// Creates a new codestream builder.
     public init() {}
+
+    // swiftlint:disable function_parameter_count
 
     /// Builds a JP3D codestream from encoded tile data.
     ///
@@ -354,6 +359,7 @@ public struct JP3DCodestreamBuilder: Sendable {
         return stream
     }
 
+    // swiftlint:enable function_parameter_count
     // MARK: - Private Helpers
 
     private func appendMarker(_ stream: inout Data, _ marker: Marker) {
@@ -379,7 +385,7 @@ public struct JP3DCodestreamBuilder: Sendable {
     ) {
         appendMarker(&stream, .siz)
         // Length: base(38) + 3*components + 8 (JP3D: tileSizeZ + extra depth fields)
-        let segmentLength: UInt16 = UInt16(38 + 3 * components + 8)
+        let segmentLength = UInt16(38 + 3 * components + 8)
         appendUInt16BE(&stream, segmentLength)
         // Profile: 0 (no restrictions)
         appendUInt16BE(&stream, 0)
@@ -437,7 +443,7 @@ public struct JP3DCodestreamBuilder: Sendable {
     private func appendQCD(_ stream: inout Data, bitDepth: Int, levels: Int, isLossless: Bool) {
         appendMarker(&stream, .qcd)
         let numSubbands = 3 * levels + 1
-        let segmentLength: UInt16 = UInt16(3 + numSubbands * (isLossless ? 1 : 2))
+        let segmentLength = UInt16(3 + numSubbands * (isLossless ? 1 : 2))
         appendUInt16BE(&stream, segmentLength)
         // Quantization style
         if isLossless {

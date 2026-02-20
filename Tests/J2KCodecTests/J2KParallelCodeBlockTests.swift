@@ -1,3 +1,7 @@
+//
+// J2KParallelCodeBlockTests.swift
+// J2KSwift
+//
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -106,7 +110,7 @@ final class J2KParallelCodeBlockTests: XCTestCase {
         for size in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64] {
             let coefficients = (0..<size).map { i -> Int32 in
                 let val = Int32(i * 3 + 1)
-                return i % 3 == 0 ? -val : val
+                return i.isMultiple(of: 3) ? -val : val
             }
 
             let coder = BitPlaneCoder(width: size, height: 1, subband: .hl)
@@ -158,7 +162,7 @@ final class J2KParallelCodeBlockTests: XCTestCase {
         // Generate random coefficients of varying sizes
         for _ in 0..<10 {
             let count = Int.random(in: 1...256)
-            let coefficients = (0..<count).map { _ in Int32.random(in: Int32.min/2...Int32.max/2) }
+            let coefficients = (0..<count).map { _ in Int32.random(in: Int32.min / 2...Int32.max / 2) }
 
             let simdResult = EncoderPipeline.maxAbsValue(coefficients)
             let scalarResult = coefficients.reduce(Int32(0)) { max($0, abs($1)) }

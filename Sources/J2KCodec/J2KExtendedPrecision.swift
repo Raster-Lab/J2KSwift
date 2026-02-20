@@ -1,3 +1,7 @@
+//
+// J2KExtendedPrecision.swift
+// J2KSwift
+//
 // J2KExtendedPrecision.swift
 // J2KSwift
 //
@@ -7,48 +11,48 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Part 2 Extended Precision Arithmetic
-///
-/// Implementation of extended precision support as defined in ISO/IEC 15444-2.
-///
-/// Extended precision allows JPEG 2000 Part 2 encoders and decoders to
-/// process wavelet coefficients with higher accuracy than the standard
-/// Part 1 specification. This is essential for:
-///
-/// - High dynamic range (HDR) imaging with bit depths > 16
-/// - Medical and scientific imaging requiring high fidelity
-/// - Lossless compression with large dynamic ranges
-/// - Precision preservation through multi-stage pipelines
-///
-/// ## Guard Bits Extension
-///
-/// Standard JPEG 2000 (Part 1) supports 0-7 guard bits. Part 2
-/// extends this to 0-15 guard bits, providing greater overflow
-/// protection for high bit depth images.
-///
-/// ## Rounding Modes
-///
-/// Extended precision supports configurable rounding modes:
-/// - **Truncate**: Round toward zero (fastest)
-/// - **Round-to-nearest**: Standard rounding (best accuracy)
-/// - **Round-to-even**: Banker's rounding (minimal bias)
-///
-/// ## Usage
-///
-/// ```swift
-/// // Configure extended precision
-/// let config = J2KExtendedPrecisionConfiguration(
-///     internalBitDepth: 32,
-///     guardBits: try J2KExtendedGuardBits(count: 10),
-///     roundingMode: .roundToNearest
-/// )
-///
-/// let precision = J2KExtendedPrecision(configuration: config)
-///
-/// // Apply precision-preserving operations
-/// let result = precision.multiply(a, by: b)
-/// let rounded = precision.round(value)
-/// ```
+// # JPEG 2000 Part 2 Extended Precision Arithmetic
+//
+// Implementation of extended precision support as defined in ISO/IEC 15444-2.
+//
+// Extended precision allows JPEG 2000 Part 2 encoders and decoders to
+// process wavelet coefficients with higher accuracy than the standard
+// Part 1 specification. This is essential for:
+//
+// - High dynamic range (HDR) imaging with bit depths > 16
+// - Medical and scientific imaging requiring high fidelity
+// - Lossless compression with large dynamic ranges
+// - Precision preservation through multi-stage pipelines
+//
+// ## Guard Bits Extension
+//
+// Standard JPEG 2000 (Part 1) supports 0-7 guard bits. Part 2
+// extends this to 0-15 guard bits, providing greater overflow
+// protection for high bit depth images.
+//
+// ## Rounding Modes
+//
+// Extended precision supports configurable rounding modes:
+// - **Truncate**: Round toward zero (fastest)
+// - **Round-to-nearest**: Standard rounding (best accuracy)
+// - **Round-to-even**: Banker's rounding (minimal bias)
+//
+// ## Usage
+//
+// ```swift
+// // Configure extended precision
+// let config = J2KExtendedPrecisionConfiguration(
+//     internalBitDepth: 32,
+//     guardBits: try J2KExtendedGuardBits(count: 10),
+//     roundingMode: .roundToNearest
+// )
+//
+// let precision = J2KExtendedPrecision(configuration: config)
+//
+// // Apply precision-preserving operations
+// let result = precision.multiply(a, by: b)
+// let rounded = precision.round(value)
+// ```
 
 // MARK: - Extended Guard Bits
 
@@ -223,7 +227,7 @@ public struct J2KExtendedPrecision: Sendable {
         // Only apply special handling for exact 0.5 cases
         if abs(fraction - 0.5) < 1e-10 {
             let intRounded = Int64(rounded)
-            if intRounded % 2 != 0 {
+            if !intRounded.isMultiple(of: 2) {
                 // Round to even: if rounded value is odd, adjust
                 return value >= 0 ? rounded - 1.0 : rounded + 1.0
             }

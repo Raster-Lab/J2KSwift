@@ -1,3 +1,7 @@
+//
+// MJ2EncoderFactory.swift
+// J2KSwift
+//
 /// # MJ2EncoderFactory
 ///
 /// Factory for creating appropriate video encoders based on platform capabilities.
@@ -32,9 +36,8 @@ import J2KCore
 /// print("Hardware accelerated: \(encoder.isHardwareAccelerated)")
 /// ```
 public struct MJ2EncoderFactory {
-    
     // MARK: - Encoder Creation
-    
+
     /// Creates the best available encoder for the current platform.
     ///
     /// Selection priority:
@@ -55,7 +58,6 @@ public struct MJ2EncoderFactory {
         performance: MJ2PerformanceConfiguration = .balanced,
         preferHardware: Bool = true
     ) async throws -> any MJ2VideoEncoderProtocol {
-        
         // Try VideoToolbox on Apple platforms (hardware acceleration)
         #if canImport(VideoToolbox)
         if preferHardware && performance.allowHardwareAcceleration {
@@ -67,17 +69,17 @@ public struct MJ2EncoderFactory {
             )
         }
         #endif
-        
+
         // Try software encoder (FFmpeg or fallback)
         let softwareConfig = MJ2SoftwareEncoderConfiguration(
             codec: codec,
             quality: quality,
             performance: performance
         )
-        
+
         return MJ2SoftwareEncoder(configuration: softwareConfig)
     }
-    
+
     #if canImport(VideoToolbox)
     /// Creates a VideoToolbox encoder (Apple platforms only).
     private static func createVideoToolboxEncoder(
@@ -90,39 +92,39 @@ public struct MJ2EncoderFactory {
         throw MJ2VideoEncoderError.hardwareNotAvailable
     }
     #endif
-    
+
     // MARK: - Capability Detection
-    
+
     /// Detects all available encoders on the current platform.
     ///
     /// - Returns: Array of available encoder types.
     public static func detectAvailableEncoders() -> [MJ2EncoderType] {
         var encoders: [MJ2EncoderType] = []
-        
+
         // Check VideoToolbox
         #if canImport(VideoToolbox)
         encoders.append(.videoToolbox)
         #endif
-        
+
         // Check FFmpeg
         if MJ2SoftwareEncoder.isFFmpegAvailable() {
             encoders.append(.ffmpeg)
         }
-        
+
         // Software fallback always available
         encoders.append(.software)
-        
+
         return encoders
     }
-    
+
     /// Gets detailed capabilities for all available encoders.
     ///
     /// - Returns: Dictionary mapping encoder type to capabilities.
     public static func detectCapabilities() -> [MJ2EncoderType: MJ2EncoderCapabilities] {
         var capabilities: [MJ2EncoderType: MJ2EncoderCapabilities] = [:]
-        
+
         let availableEncoders = detectAvailableEncoders()
-        
+
         for encoderType in availableEncoders {
             switch encoderType {
             #if canImport(VideoToolbox)
@@ -161,10 +163,10 @@ public struct MJ2EncoderFactory {
                 break
             }
         }
-        
+
         return capabilities
     }
-    
+
     /// Prints a platform capability report.
     ///
     /// Useful for debugging and understanding what features are available.
@@ -176,11 +178,11 @@ public struct MJ2EncoderFactory {
         print("VideoToolbox: \(MJ2PlatformCapabilities.hasVideoToolbox)")
         print("Metal: \(MJ2PlatformCapabilities.hasMetal)")
         print()
-        
+
         let encoders = detectAvailableEncoders()
         print("Available Encoders: \(encoders.map { $0.rawValue }.joined(separator: ", "))")
         print()
-        
+
         let capabilities = detectCapabilities()
         for (encoderType, capability) in capabilities.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             print("\(encoderType.rawValue):")
@@ -193,7 +195,7 @@ public struct MJ2EncoderFactory {
             print("  - Multi-Pass: \(capability.supportsMultiPass)")
             print()
         }
-        
+
         // x86-64 warning
         if MJ2PlatformCapabilities.isX86_64 {
             print("⚠️  WARNING: Running on x86-64 architecture")
@@ -201,7 +203,7 @@ public struct MJ2EncoderFactory {
             print("   Consider using Apple Silicon or ARM64 for best performance.")
             print()
         }
-        
+
         print("=== End of Report ===")
     }
 }

@@ -1,3 +1,7 @@
+//
+// J2KLosslessDecodingOptimizationTests.swift
+// J2KSwift
+//
 // J2KLosslessDecodingOptimizationTests.swift
 // J2KSwift
 //

@@ -1,3 +1,7 @@
+//
+// J2KBox.swift
+// J2KSwift
+//
 /// # J2KBox
 ///
 /// JP2 box (atom) structure for JPEG 2000 file format.

@@ -1,3 +1,7 @@
+//
+// J2KDecoderPipeline.swift
+// J2KSwift
+//
 // J2KDecoderPipeline.swift
 // J2KSwift
 //
@@ -223,13 +227,11 @@ struct DecoderPipeline: Sendable {
             case J2KMarker.qcd.rawValue:
                 // Parse QCD marker
                 quantizationSteps = try parseQCDMarker(&reader, config: configuration)
-
             case J2KMarker.sot.rawValue:
                 // Start of tile-part
                 let (_, tilepartData) = try parseSOTMarker(&reader)
                 tileData = tilepartData
                 // Break after first tile for now
-                break
 
             case J2KMarker.eoc.rawValue:
                 // End of codestream
@@ -877,7 +879,10 @@ struct DecoderPipeline: Sendable {
             let componentFilter: J2KDWT1D.Filter
             if let kernelConfig = metadata.configuration.waveletKernelConfiguration {
                 // Use arbitrary wavelet kernel if configured
-                if let kernel = kernelConfig.kernel(forTile: 0, component: compIdx, lossless: metadata.configuration.useReversibleTransform) {
+                if let kernel = kernelConfig.kernel(
+                    forTile: 0, component: compIdx,
+                    lossless: metadata.configuration.useReversibleTransform
+                ) {
                     componentFilter = kernel.toDWTFilter()
                 } else {
                     componentFilter = filter

@@ -1,3 +1,7 @@
+//
+// J2KMetalQuantizer.swift
+// J2KSwift
+//
 // J2KMetalQuantizer.swift
 // J2KSwift
 //
@@ -39,19 +43,19 @@ public enum J2KMetalQuantizationBackend: Sendable {
 public struct J2KMetalQuantizationConfiguration: Sendable {
     /// Quantization mode.
     public var mode: J2KMetalQuantizationMode
-    
+
     /// Base quantization step size.
     public var stepSize: Float
-    
+
     /// Deadzone width multiplier (for deadzone mode).
     public var deadzoneWidth: Float
-    
+
     /// Minimum coefficient count to prefer GPU over CPU.
     public var gpuThreshold: Int
-    
+
     /// Backend selection strategy.
     public var backend: J2KMetalQuantizationBackend
-    
+
     /// Creates a Metal quantization configuration.
     ///
     /// - Parameters:
@@ -73,13 +77,13 @@ public struct J2KMetalQuantizationConfiguration: Sendable {
         self.gpuThreshold = gpuThreshold
         self.backend = backend
     }
-    
+
     /// Default configuration for lossy compression.
     public static let lossy = J2KMetalQuantizationConfiguration(
         mode: .deadzone,
         stepSize: 0.1
     )
-    
+
     /// Default configuration for high quality.
     public static let highQuality = J2KMetalQuantizationConfiguration(
         mode: .deadzone,
@@ -99,7 +103,7 @@ public struct J2KMetalQuantizationResult: Sendable {
     public let usedGPU: Bool
     /// Processing time in seconds.
     public let processingTime: Double
-    
+
     /// Creates a quantization result.
     public init(
         indices: [Int32],
@@ -126,7 +130,7 @@ public struct J2KMetalDequantizationResult: Sendable {
     public let usedGPU: Bool
     /// Processing time in seconds.
     public let processingTime: Double
-    
+
     /// Creates a dequantization result.
     public init(
         coefficients: [Float],
@@ -161,7 +165,7 @@ public struct J2KMetalQuantizationStatistics: Sendable {
     public var totalProcessingTime: Double
     /// Total coefficients processed.
     public var totalCoefficientsProcessed: Int
-    
+
     /// Creates initial (zero) statistics.
     public init() {
         self.totalQuantizations = 0
@@ -173,7 +177,7 @@ public struct J2KMetalQuantizationStatistics: Sendable {
         self.totalProcessingTime = 0.0
         self.totalCoefficientsProcessed = 0
     }
-    
+
     /// GPU utilization rate (0.0 to 1.0).
     public var gpuUtilization: Double {
         let totalOps = totalQuantizations + totalDequantizations
@@ -181,7 +185,7 @@ public struct J2KMetalQuantizationStatistics: Sendable {
         let gpuOps = gpuQuantizations + gpuDequantizations
         return Double(gpuOps) / Double(totalOps)
     }
-    
+
     /// Average coefficients processed per second.
     public var coefficientsPerSecond: Double {
         guard totalProcessingTime > 0.0 else { return 0.0 }
@@ -217,14 +221,14 @@ public struct J2KMetalQuantizationStatistics: Sendable {
 /// ```
 public actor J2KMetalQuantizer {
     // MARK: Properties
-    
+
     private let device: J2KMetalDevice
     private let shaderLibrary: J2KMetalShaderLibrary
     private let bufferPool: J2KMetalBufferPool
     private var statistics: J2KMetalQuantizationStatistics
-    
+
     // MARK: Initialization
-    
+
     /// Creates a new Metal quantizer.
     ///
     /// - Parameters:
@@ -240,9 +244,9 @@ public actor J2KMetalQuantizer {
         self.bufferPool = try await J2KMetalBufferPool(device: device)
         self.statistics = J2KMetalQuantizationStatistics()
     }
-    
+
     // MARK: - Quantization
-    
+
     /// Quantizes floating-point coefficients to integer indices.
     ///
     /// - Parameters:
@@ -256,12 +260,12 @@ public actor J2KMetalQuantizer {
     ) async throws -> J2KMetalQuantizationResult {
         let startTime = Date()
         let coeffCount = coefficients.count
-        
+
         // Determine backend
         let useGPU = shouldUseGPU(coeffCount: coeffCount, configuration: configuration)
-        
+
         let indices: [Int32]
-        
+
         if useGPU {
             indices = try await quantizeGPU(
                 coefficients: coefficients,
@@ -273,16 +277,16 @@ public actor J2KMetalQuantizer {
                 configuration: configuration
             )
         }
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        
+
         updateStatistics(
             isQuantization: true,
             usedGPU: useGPU,
             processingTime: processingTime,
             coeffCount: coeffCount
         )
-        
+
         return J2KMetalQuantizationResult(
             indices: indices,
             mode: configuration.mode,
@@ -290,7 +294,7 @@ public actor J2KMetalQuantizer {
             processingTime: processingTime
         )
     }
-    
+
     /// Quantizes 2D coefficient array.
     ///
     /// - Parameters:
@@ -305,12 +309,12 @@ public actor J2KMetalQuantizer {
         let flatCoeffs = coefficients.flatMap { $0 }
         let height = coefficients.count
         let width = height > 0 ? coefficients[0].count : 0
-        
+
         let result = try await quantize(
             coefficients: flatCoeffs,
             configuration: configuration
         )
-        
+
         // Reshape to 2D
         var output = Array(repeating: Array(repeating: Int32(0), count: width), count: height)
         for y in 0..<height {
@@ -318,12 +322,12 @@ public actor J2KMetalQuantizer {
                 output[y][x] = result.indices[y * width + x]
             }
         }
-        
+
         return output
     }
-    
+
     // MARK: - Dequantization
-    
+
     /// Dequantizes integer indices to floating-point coefficients.
     ///
     /// - Parameters:
@@ -337,12 +341,12 @@ public actor J2KMetalQuantizer {
     ) async throws -> J2KMetalDequantizationResult {
         let startTime = Date()
         let coeffCount = indices.count
-        
+
         // Determine backend
         let useGPU = shouldUseGPU(coeffCount: coeffCount, configuration: configuration)
-        
+
         let coefficients: [Float]
-        
+
         if useGPU {
             coefficients = try await dequantizeGPU(
                 indices: indices,
@@ -354,16 +358,16 @@ public actor J2KMetalQuantizer {
                 configuration: configuration
             )
         }
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        
+
         updateStatistics(
             isQuantization: false,
             usedGPU: useGPU,
             processingTime: processingTime,
             coeffCount: coeffCount
         )
-        
+
         return J2KMetalDequantizationResult(
             coefficients: coefficients,
             mode: configuration.mode,
@@ -371,7 +375,7 @@ public actor J2KMetalQuantizer {
             processingTime: processingTime
         )
     }
-    
+
     /// Dequantizes 2D index array.
     ///
     /// - Parameters:
@@ -386,12 +390,12 @@ public actor J2KMetalQuantizer {
         let flatIndices = indices.flatMap { $0 }
         let height = indices.count
         let width = height > 0 ? indices[0].count : 0
-        
+
         let result = try await dequantize(
             indices: flatIndices,
             configuration: configuration
         )
-        
+
         // Reshape to 2D
         var output = Array(repeating: Array(repeating: Float(0), count: width), count: height)
         for y in 0..<height {
@@ -399,36 +403,36 @@ public actor J2KMetalQuantizer {
                 output[y][x] = result.coefficients[y * width + x]
             }
         }
-        
+
         return output
     }
-    
+
     // MARK: - Statistics
-    
+
     /// Returns current performance statistics.
     public func getStatistics() -> J2KMetalQuantizationStatistics {
-        return statistics
+        statistics
     }
-    
+
     /// Resets performance statistics.
     public func resetStatistics() {
         statistics = J2KMetalQuantizationStatistics()
     }
-    
+
     // MARK: - Private Methods (GPU)
-    
+
     private func quantizeGPU(
         coefficients: [Float],
         configuration: J2KMetalQuantizationConfiguration
     ) async throws -> [Int32] {
         let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
         }
-        
+
         // Get pipeline state based on mode
         let shaderFunction: J2KMetalShaderFunction
         switch configuration.mode {
@@ -437,10 +441,10 @@ public actor J2KMetalQuantizer {
         case .deadzone:
             shaderFunction = .quantizeDeadzone
         }
-        
+
         let pipeline = try await shaderLibrary.computePipeline(for: shaderFunction)
         computeEncoder.setComputePipelineState(pipeline)
-        
+
         // Allocate buffers
         let coeffCount = coefficients.count
         let inputBuffer = try await bufferPool.allocateBuffer(
@@ -451,28 +455,28 @@ public actor J2KMetalQuantizer {
             size: coeffCount * MemoryLayout<Int32>.size,
             storageMode: .shared
         )
-        
+
         // Copy data
         memcpy(inputBuffer.contents(), coefficients, coeffCount * MemoryLayout<Float>.size)
-        
+
         // Set buffers
         computeEncoder.setBuffer(inputBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(outputBuffer, offset: 0, index: 1)
-        
+
         // Set parameters
         var stepSize = configuration.stepSize
         var deadzoneWidth = configuration.deadzoneWidth
         var count = UInt32(coeffCount)
-        
+
         computeEncoder.setBytes(&stepSize, length: MemoryLayout<Float>.size, index: 2)
-        
+
         if configuration.mode == .deadzone {
             computeEncoder.setBytes(&deadzoneWidth, length: MemoryLayout<Float>.size, index: 3)
             computeEncoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 4)
         } else {
             computeEncoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 3)
         }
-        
+
         // Dispatch
         let threadgroupSize = 256
         let threadgroups = (coeffCount + threadgroupSize - 1) / threadgroupSize
@@ -480,28 +484,28 @@ public actor J2KMetalQuantizer {
             MTLSize(width: threadgroups, height: 1, depth: 1),
             threadsPerThreadgroup: MTLSize(width: threadgroupSize, height: 1, depth: 1)
         )
-        
+
         computeEncoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
+
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Int32.self, capacity: coeffCount)
         return Array(UnsafeBufferPointer(start: outputPtr, count: coeffCount))
     }
-    
+
     private func dequantizeGPU(
         indices: [Int32],
         configuration: J2KMetalQuantizationConfiguration
     ) async throws -> [Float] {
         let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
         }
-        
+
         // Get pipeline state based on mode
         let shaderFunction: J2KMetalShaderFunction
         switch configuration.mode {
@@ -510,10 +514,10 @@ public actor J2KMetalQuantizer {
         case .deadzone:
             shaderFunction = .dequantizeDeadzone
         }
-        
+
         let pipeline = try await shaderLibrary.computePipeline(for: shaderFunction)
         computeEncoder.setComputePipelineState(pipeline)
-        
+
         // Allocate buffers
         let coeffCount = indices.count
         let inputBuffer = try await bufferPool.allocateBuffer(
@@ -524,28 +528,28 @@ public actor J2KMetalQuantizer {
             size: coeffCount * MemoryLayout<Float>.size,
             storageMode: .shared
         )
-        
+
         // Copy data
         memcpy(inputBuffer.contents(), indices, coeffCount * MemoryLayout<Int32>.size)
-        
+
         // Set buffers
         computeEncoder.setBuffer(inputBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(outputBuffer, offset: 0, index: 1)
-        
+
         // Set parameters
         var stepSize = configuration.stepSize
         var deadzoneWidth = configuration.deadzoneWidth
         var count = UInt32(coeffCount)
-        
+
         computeEncoder.setBytes(&stepSize, length: MemoryLayout<Float>.size, index: 2)
-        
+
         if configuration.mode == .deadzone {
             computeEncoder.setBytes(&deadzoneWidth, length: MemoryLayout<Float>.size, index: 3)
             computeEncoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 4)
         } else {
             computeEncoder.setBytes(&count, length: MemoryLayout<UInt32>.size, index: 3)
         }
-        
+
         // Dispatch
         let threadgroupSize = 256
         let threadgroups = (coeffCount + threadgroupSize - 1) / threadgroupSize
@@ -553,24 +557,24 @@ public actor J2KMetalQuantizer {
             MTLSize(width: threadgroups, height: 1, depth: 1),
             threadsPerThreadgroup: MTLSize(width: threadgroupSize, height: 1, depth: 1)
         )
-        
+
         computeEncoder.endEncoding()
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
+
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Float.self, capacity: coeffCount)
         return Array(UnsafeBufferPointer(start: outputPtr, count: coeffCount))
     }
-    
+
     // MARK: - Private Methods (CPU Fallback)
-    
+
     private func quantizeCPU(
         coefficients: [Float],
         configuration: J2KMetalQuantizationConfiguration
     ) -> [Int32] {
         let stepSize = configuration.stepSize
-        
+
         switch configuration.mode {
         case .scalar:
             return coefficients.map { c in
@@ -579,7 +583,7 @@ public actor J2KMetalQuantizer {
                 let q = Int32(floor(absC / stepSize))
                 return sign * q
             }
-            
+
         case .deadzone:
             let threshold = stepSize * configuration.deadzoneWidth * 0.5
             return coefficients.map { c in
@@ -594,13 +598,13 @@ public actor J2KMetalQuantizer {
             }
         }
     }
-    
+
     private func dequantizeCPU(
         indices: [Int32],
         configuration: J2KMetalQuantizationConfiguration
     ) -> [Float] {
         let stepSize = configuration.stepSize
-        
+
         switch configuration.mode {
         case .scalar:
             return indices.map { q in
@@ -612,7 +616,7 @@ public actor J2KMetalQuantizer {
                     return (Float(absQ) + 0.5 * sign) * stepSize
                 }
             }
-            
+
         case .deadzone:
             let threshold = stepSize * configuration.deadzoneWidth * 0.5
             return indices.map { q in
@@ -626,9 +630,9 @@ public actor J2KMetalQuantizer {
             }
         }
     }
-    
+
     // MARK: - Utility
-    
+
     private func shouldUseGPU(
         coeffCount: Int,
         configuration: J2KMetalQuantizationConfiguration
@@ -642,7 +646,7 @@ public actor J2KMetalQuantizer {
             return coeffCount >= configuration.gpuThreshold
         }
     }
-    
+
     private func updateStatistics(
         isQuantization: Bool,
         usedGPU: Bool,

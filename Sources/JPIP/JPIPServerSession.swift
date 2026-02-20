@@ -1,3 +1,7 @@
+//
+// JPIPServerSession.swift
+// J2KSwift
+//
 /// # JPIPServerSession
 ///
 /// Server-side session management for JPIP clients.
@@ -76,7 +80,7 @@ public actor JPIPServerSession {
     ///   - binID: The data bin ID.
     /// - Returns: True if the bin was already sent.
     public func hasDataBin(binClass: JPIPDataBinClass, binID: Int) -> Bool {
-        return clientCache.hasDataBin(binClass: binClass, binID: binID)
+        clientCache.hasDataBin(binClass: binClass, binID: binID)
     }
 
     /// Records that a data bin was sent to the client.
@@ -90,7 +94,7 @@ public actor JPIPServerSession {
     ///
     /// - Returns: Cache statistics.
     public func getCacheStatistics() -> JPIPCacheModel.Statistics {
-        return clientCache.statistics
+        clientCache.statistics
     }
 
     /// Sets metadata for the session.
@@ -107,7 +111,7 @@ public actor JPIPServerSession {
     /// - Parameter key: Metadata key.
     /// - Returns: Metadata value if found.
     public func getMetadata(_ key: String) -> String? {
-        return metadata[key]
+        metadata[key]
     }
 
     /// Checks if the session has timed out.
@@ -115,7 +119,7 @@ public actor JPIPServerSession {
     /// - Parameter timeout: Timeout duration in seconds.
     /// - Returns: True if the session has timed out.
     public func hasTimedOut(timeout: TimeInterval) -> Bool {
-        return Date().timeIntervalSince(lastActivity) > timeout
+        Date().timeIntervalSince(lastActivity) > timeout
     }
 
     /// Closes the session and cleans up resources.
@@ -129,7 +133,7 @@ public actor JPIPServerSession {
     ///
     /// - Returns: Dictionary with session information.
     public func getInfo() -> SessionInfo {
-        return SessionInfo(
+        SessionInfo(
             sessionID: sessionID,
             channelID: channelID,
             target: target,

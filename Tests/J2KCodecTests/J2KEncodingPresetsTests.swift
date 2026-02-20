@@ -1,3 +1,7 @@
+//
+// J2KEncodingPresetsTests.swift
+// J2KSwift
+//
 // J2KEncodingPresetsTests.swift
 // J2KSwift
 //
@@ -197,7 +201,7 @@ final class J2KEncodingPresetsTests: XCTestCase {
         let mode = J2KBitrateMode.variableBitrate(minQuality: 0.7, maxBitsPerPixel: 1.0)
 
         switch mode {
-        case .variableBitrate(let minQuality, let maxBpp):
+        case let .variableBitrate(minQuality, maxBpp):
             XCTAssertEqual(minQuality, 0.7)
             XCTAssertEqual(maxBpp, 1.0)
         default:

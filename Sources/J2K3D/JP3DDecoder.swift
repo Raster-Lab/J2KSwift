@@ -1,3 +1,7 @@
+//
+// JP3DDecoder.swift
+// J2KSwift
+//
 /// # JP3DDecoder
 ///
 /// Core JP3D volumetric JPEG 2000 decoder.
@@ -115,7 +119,6 @@ public enum JP3DDecodingStage: String, Sendable {
 /// 2. **Tile Reconstruction**: Dequantize and apply inverse wavelet transform per tile
 /// 3. **Volume Assembly**: Place reconstructed tiles into the output volume
 public actor JP3DDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration
@@ -177,7 +180,7 @@ public actor JP3DDecoder {
         for (tileIdx, parsedTile) in codestream.tiles.enumerated() {
             // Cache for HTJ2K-decoded all-component coefficients of the current tile.
             // Scoped here so it is naturally reset on each tile iteration.
-            var htj2kTileCache: [Float]? = nil
+            var htj2kTileCache: [Float]?
             let index = parsedTile.tileIndex
             let iz = index / (grid.tilesX * grid.tilesY)
             let rem = index % (grid.tilesX * grid.tilesY)
@@ -268,45 +271,21 @@ public actor JP3DDecoder {
                         }
                     }
                 } else {
-                    let compOffset = comp * expectedBytesPerComp
-                    let available = max(0, min(expectedBytesPerComp, parsedTile.data.count - compOffset))
-                    let actualCount = available / 4
-
-                    for i in 0..<actualCount {
-                        let byteOffset = compOffset + i * 4
-                        let b0 = Int32(parsedTile.data[byteOffset])
-                        let b1 = Int32(parsedTile.data[byteOffset + 1])
-                        let b2 = Int32(parsedTile.data[byteOffset + 2])
-                        let b3 = Int32(parsedTile.data[byteOffset + 3])
-                        let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
-                        // Dequantize: lossless = identity, lossy = multiply by step
-                        coefficients[i] = codestream.isLosslessQuantization ? Float(raw) : Float(raw)
-                    }
+                    readLegacyCoefficients(
+                        from: parsedTile.data,
+                        compOffset: comp * expectedBytesPerComp,
+                        expectedBytes: expectedBytesPerComp,
+                        into: &coefficients,
+                        isLossless: codestream.isLosslessQuantization
+                    )
                 }
                 // Apply inverse 3D wavelet transform
                 let floatCoeffs: [Float]
                 do {
-                    let waveletConfig = JP3DTransformConfiguration(
-                        filter: cod.isLossless ? .reversible53 : .irreversible97,
-                        mode: .separable,
-                        boundary: .symmetric,
-                        levelsX: lx,
-                        levelsY: ly,
-                        levelsZ: lz
+                    floatCoeffs = try await inverseWaveletTransform(
+                        coefficients: coefficients, cod: cod,
+                        tw: tw, th: th, td: td, lx: lx, ly: ly, lz: lz
                     )
-                    var coeffData = J2K3DCoefficients(
-                        width: tw, height: th, depth: td,
-                        decompositionLevels: max(lx, max(ly, lz))
-                    )
-                    coeffData.data = coefficients
-                    let decomp = JP3DSubbandDecomposition(
-                        width: tw, height: th, depth: td,
-                        levelsX: lx, levelsY: ly, levelsZ: lz,
-                        coefficients: coeffData,
-                        originalWidth: tw, originalHeight: th, originalDepth: td
-                    )
-                    let wavelet = JP3DWaveletTransform(configuration: waveletConfig)
-                    floatCoeffs = try await wavelet.inverse(decomposition: decomp)
                 } catch {
                     if configuration.tolerateErrors {
                         warnings.append("Tile \(index) comp \(comp): inverse DWT failed – \(error)")
@@ -317,19 +296,12 @@ public actor JP3DDecoder {
                 }
 
                 // Write reconstructed voxels into the output component buffer
-                let outW = siz.width
-                let outSlice = outW * siz.height
-                for z in 0..<td {
-                    for y in 0..<th {
-                        for x in 0..<tw {
-                            let srcIdx = z * tw * th + y * tw + x
-                            let dstIdx = (z0 + z) * outSlice + (y0 + y) * outW + (x0 + x)
-                            if srcIdx < floatCoeffs.count && dstIdx < voxelCount {
-                                componentBuffers[comp][dstIdx] = floatCoeffs[srcIdx]
-                            }
-                        }
-                    }
-                }
+                copyVoxelsToBuffer(
+                    from: floatCoeffs, to: &componentBuffers[comp],
+                    tileDims: (tw, th, td),
+                    tileOrigin: (x0, y0, z0),
+                    outWidth: siz.width, outHeight: siz.height
+                )
             }
 
             tilesDecoded += 1
@@ -342,31 +314,9 @@ public actor JP3DDecoder {
                        tilesDone: tilesDecoded, tilesTotal: tilesExpected)
 
         // Stage 3: Assemble output volume
-        let bytesPerSample = (siz.bitDepth + 7) / 8
-        var volumeComponents: [J2KVolumeComponent] = []
-
-        for comp in 0..<siz.componentCount {
-            var rawData = Data(count: voxelCount * bytesPerSample)
-            let maxVal = Float((1 << siz.bitDepth) - 1)
-
-            for i in 0..<voxelCount {
-                let clamped = max(0, min(maxVal, componentBuffers[comp][i]))
-                let intVal = Int(roundf(clamped))
-                for b in 0..<bytesPerSample {
-                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
-                }
-            }
-
-            volumeComponents.append(J2KVolumeComponent(
-                index: comp,
-                bitDepth: siz.bitDepth,
-                signed: siz.signed,
-                width: siz.width,
-                height: siz.height,
-                depth: siz.depth,
-                data: rawData
-            ))
-        }
+        let volumeComponents = assembleVolumeComponents(
+            from: componentBuffers, siz: siz
+        )
 
         let volume = J2KVolume(
             width: siz.width,
@@ -440,5 +390,111 @@ public actor JP3DDecoder {
             totalTiles: tilesTotal
         )
         progressCallback?(update)
+    }
+
+    private func assembleVolumeComponents(
+        from componentBuffers: [[Float]],
+        siz: JP3DSIZInfo
+    ) -> [J2KVolumeComponent] {
+        let voxelCount = siz.width * siz.height * siz.depth
+        let bytesPerSample = (siz.bitDepth + 7) / 8
+        var volumeComponents: [J2KVolumeComponent] = []
+
+        for comp in 0..<siz.componentCount {
+            var rawData = Data(count: voxelCount * bytesPerSample)
+            let maxVal = Float((1 << siz.bitDepth) - 1)
+
+            for i in 0..<voxelCount {
+                let clamped = max(0, min(maxVal, componentBuffers[comp][i]))
+                let intVal = Int(roundf(clamped))
+                for b in 0..<bytesPerSample {
+                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+                }
+            }
+
+            volumeComponents.append(J2KVolumeComponent(
+                index: comp,
+                bitDepth: siz.bitDepth,
+                signed: siz.signed,
+                width: siz.width,
+                height: siz.height,
+                depth: siz.depth,
+                data: rawData
+            ))
+        }
+
+        return volumeComponents
+    }
+
+    private func readLegacyCoefficients(
+        from data: Data,
+        compOffset: Int,
+        expectedBytes: Int,
+        into coefficients: inout [Float],
+        isLossless: Bool
+    ) {
+        let available = max(0, min(expectedBytes, data.count - compOffset))
+        let actualCount = available / 4
+
+        for i in 0..<actualCount {
+            let byteOffset = compOffset + i * 4
+            let b0 = Int32(data[byteOffset])
+            let b1 = Int32(data[byteOffset + 1])
+            let b2 = Int32(data[byteOffset + 2])
+            let b3 = Int32(data[byteOffset + 3])
+            let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+            coefficients[i] = isLossless ? Float(raw) : Float(raw)
+        }
+    }
+
+    private func inverseWaveletTransform(
+        coefficients: [Float],
+        cod: JP3DCODInfo,
+        tw: Int, th: Int, td: Int,
+        lx: Int, ly: Int, lz: Int
+    ) async throws -> [Float] {
+        let waveletConfig = JP3DTransformConfiguration(
+            filter: cod.isLossless ? .reversible53 : .irreversible97,
+            mode: .separable,
+            boundary: .symmetric,
+            levelsX: lx,
+            levelsY: ly,
+            levelsZ: lz
+        )
+        var coeffData = J2K3DCoefficients(
+            width: tw, height: th, depth: td,
+            decompositionLevels: max(lx, max(ly, lz))
+        )
+        coeffData.data = coefficients
+        let decomp = JP3DSubbandDecomposition(
+            width: tw, height: th, depth: td,
+            levelsX: lx, levelsY: ly, levelsZ: lz,
+            coefficients: coeffData,
+            originalWidth: tw, originalHeight: th, originalDepth: td
+        )
+        let wavelet = JP3DWaveletTransform(configuration: waveletConfig)
+        return try await wavelet.inverse(decomposition: decomp)
+    }
+
+    private func copyVoxelsToBuffer(
+        from source: [Float],
+        to destination: inout [Float],
+        tileDims: (w: Int, h: Int, d: Int),
+        tileOrigin: (x: Int, y: Int, z: Int),
+        outWidth: Int, outHeight: Int
+    ) {
+        let outSlice = outWidth * outHeight
+        let voxelCount = destination.count
+        for z in 0..<tileDims.d {
+            for y in 0..<tileDims.h {
+                for x in 0..<tileDims.w {
+                    let srcIdx = z * tileDims.w * tileDims.h + y * tileDims.w + x
+                    let dstIdx = (tileOrigin.z + z) * outSlice + (tileOrigin.y + y) * outWidth + (tileOrigin.x + x)
+                    if srcIdx < source.count && dstIdx < voxelCount {
+                        destination[dstIdx] = source[srcIdx]
+                    }
+                }
+            }
+        }
     }
 }

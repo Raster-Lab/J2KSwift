@@ -1,3 +1,7 @@
+//
+// J2KMetalColorTransform.swift
+// J2KSwift
+//
 // J2KMetalColorTransform.swift
 // J2KSwift
 //
@@ -206,7 +210,7 @@ public enum J2KMetalNLTType: Sendable {
 public actor J2KMetalColorTransform {
     /// Whether Metal color transform is available on this platform.
     public static var isAvailable: Bool {
-        return J2KMetalDevice.isAvailable
+        J2KMetalDevice.isAvailable
     }
 
     /// The color transform configuration.
@@ -264,7 +268,7 @@ public actor J2KMetalColorTransform {
 
     /// Returns the current processing statistics.
     public func statistics() -> J2KMetalColorTransformStatistics {
-        return _statistics
+        _statistics
     }
 
     /// Resets the processing statistics.
@@ -316,7 +320,7 @@ public actor J2KMetalColorTransform {
         backend: J2KMetalColorTransformBackend = .auto
     ) async throws -> J2KMetalColorTransformResult {
         let count = red.count
-        guard count > 0 else {
+        guard !isEmpty else {
             throw J2KError.invalidParameter("Input components must not be empty")
         }
         guard green.count == count, blue.count == count else {
@@ -369,7 +373,7 @@ public actor J2KMetalColorTransform {
         backend: J2KMetalColorTransformBackend = .auto
     ) async throws -> J2KMetalColorTransformResult {
         let count = component0.count
-        guard count > 0 else {
+        guard !isEmpty else {
             throw J2KError.invalidParameter("Input components must not be empty")
         }
         guard component1.count == count, component2.count == count else {
@@ -458,9 +462,9 @@ public actor J2KMetalColorTransform {
                 let r = red[i]
                 let g = green[i]
                 let b = blue[i]
-                c0[i] =  0.299   * r + 0.587   * g + 0.114   * b
-                c1[i] = -0.16875 * r - 0.33126 * g + 0.5     * b
-                c2[i] =  0.5     * r - 0.41869 * g - 0.08131 * b
+                c0[i] = 0.299 * r + 0.587 * g + 0.114 * b
+                c1[i] = -0.16875 * r - 0.33126 * g + 0.5 * b
+                c2[i] = 0.5 * r - 0.41869 * g - 0.08131 * b
             }
         case .rct:
             for i in 0..<count {
@@ -497,9 +501,9 @@ public actor J2KMetalColorTransform {
                 let y = component0[i]
                 let cb = component1[i]
                 let cr = component2[i]
-                r[i] = y + 1.402   * cr
+                r[i] = y + 1.402 * cr
                 g[i] = y - 0.34413 * cb - 0.71414 * cr
-                b[i] = y + 1.772   * cb
+                b[i] = y + 1.772 * cb
             }
         case .rct:
             for i in 0..<count {
@@ -534,14 +538,14 @@ public actor J2KMetalColorTransform {
                 output[i] = sign * pow(abs(val), exponent)
             }
 
-        case .logarithmic(let scale, let coefficient):
+        case let .logarithmic(scale, coefficient):
             for i in 0..<count {
                 let val = data[i]
                 let sign: Float = val >= 0 ? 1.0 : -1.0
                 output[i] = sign * scale * log(1.0 + coefficient * abs(val))
             }
 
-        case .exponential(let scale, let coefficient):
+        case let .exponential(scale, coefficient):
             for i in 0..<count {
                 let val = data[i]
                 let sign: Float = val >= 0 ? 1.0 : -1.0
@@ -573,7 +577,7 @@ public actor J2KMetalColorTransform {
                 }
             }
 
-        case .lut(let table, let inputMin, let inputMax):
+        case let .lut(table, inputMin, inputMax):
             let lutSize = table.count
             guard lutSize >= 2 else {
                 return data
@@ -832,7 +836,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&p1, length: MemoryLayout<Float>.stride, index: 4)
             encoder.setBytes(&p2, length: MemoryLayout<Float>.stride, index: 5)
 
-        case .logarithmic(let scale, let coefficient):
+        case let .logarithmic(scale, coefficient):
             var cnt = UInt32(count)
             var transformType: UInt32 = 1
             var p1 = scale
@@ -842,7 +846,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&p1, length: MemoryLayout<Float>.stride, index: 4)
             encoder.setBytes(&p2, length: MemoryLayout<Float>.stride, index: 5)
 
-        case .exponential(let scale, let coefficient):
+        case let .exponential(scale, coefficient):
             var cnt = UInt32(count)
             var transformType: UInt32 = 2
             var p1 = scale
@@ -864,7 +868,7 @@ public actor J2KMetalColorTransform {
             encoder.setBytes(&cnt, length: MemoryLayout<UInt32>.stride, index: 2)
             encoder.setBytes(&inverse, length: MemoryLayout<UInt32>.stride, index: 3)
 
-        case .lut(let table, let inputMin, let inputMax):
+        case let .lut(table, inputMin, inputMax):
             let lutBufferSize = table.count * MemoryLayout<Float>.stride
             let lutBuffer = try await bufferPool.acquireBuffer(device: device, size: lutBufferSize)
             table.withUnsafeBytes { src in
@@ -929,6 +933,6 @@ public actor J2KMetalColorTransform {
     // MARK: - Utility
 
     private func currentTime() -> Double {
-        return ProcessInfo.processInfo.systemUptime
+        ProcessInfo.processInfo.systemUptime
     }
 }

@@ -1,3 +1,7 @@
+//
+// J2KExtensions.swift
+// J2KSwift
+//
 /// # J2KExtensions
 ///
 /// Useful extensions for working with JPEG 2000 data.
@@ -84,7 +88,7 @@ extension Array where Element == Int {
     ///
     /// - Returns: The standard deviation value.
     public var standardDeviation: Double {
-        return variance.squareRoot()
+        variance.squareRoot()
     }
 }
 
@@ -111,7 +115,7 @@ extension Array where Element == Double {
     ///
     /// - Returns: The standard deviation value.
     public var standardDeviation: Double {
-        return variance.squareRoot()
+        variance.squareRoot()
     }
 
     /// Normalizes the array values to the range [0, 1].

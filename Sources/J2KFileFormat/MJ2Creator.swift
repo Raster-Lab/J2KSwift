@@ -1,3 +1,7 @@
+//
+// MJ2Creator.swift
+// J2KSwift
+//
 /// # MJ2Creator
 ///
 /// Motion JPEG 2000 file creation from image sequences.
@@ -15,16 +19,16 @@ import J2KCodec
 public enum MJ2CreationError: Error, Sendable {
     /// No frames were provided.
     case noFrames
-    
+
     /// Frame dimensions don't match the first frame.
     case inconsistentDimensions(expected: (Int, Int), got: (Int, Int))
-    
+
     /// Frame component count doesn't match the first frame.
     case inconsistentComponents(expected: Int, got: Int)
-    
+
     /// Creation was cancelled.
     case cancelled
-    
+
     /// Encoding failed for a frame.
     case encodingFailed(frameIndex: Int, error: Error)
 }
@@ -63,13 +67,13 @@ public enum MJ2CreationError: Error, Sendable {
 public actor MJ2Creator {
     /// The configuration for MJ2 creation.
     public let configuration: MJ2CreationConfiguration
-    
+
     /// The JPEG 2000 encoder.
     private let encoder: J2KEncoder
-    
+
     /// Whether creation should be cancelled.
     private var shouldCancel = false
-    
+
     /// Creates a new MJ2 creator.
     ///
     /// - Parameter configuration: Configuration for MJ2 creation.
@@ -77,7 +81,7 @@ public actor MJ2Creator {
         self.configuration = configuration
         self.encoder = J2KEncoder(encodingConfiguration: configuration.encodingConfiguration)
     }
-    
+
     /// Creates an MJ2 file from a sequence of images.
     ///
     /// - Parameters:
@@ -92,22 +96,22 @@ public actor MJ2Creator {
     ) async throws {
         // Reset cancellation flag
         shouldCancel = false
-        
+
         // Validate input
         guard !frames.isEmpty else {
             throw MJ2CreationError.noFrames
         }
-        
+
         // Validate all frames have consistent dimensions and components
         let firstFrame = frames[0]
-        for (_,frame) in frames.enumerated() {
+        for frame in frames {
             if frame.width != firstFrame.width || frame.height != firstFrame.height {
                 throw MJ2CreationError.inconsistentDimensions(
                     expected: (firstFrame.width, firstFrame.height),
                     got: (frame.width, frame.height)
                 )
             }
-            
+
             if frame.components.count != firstFrame.components.count {
                 throw MJ2CreationError.inconsistentComponents(
                     expected: firstFrame.components.count,
@@ -115,7 +119,7 @@ public actor MJ2Creator {
                 )
             }
         }
-        
+
         // Create stream writer
         let writer = try MJ2StreamWriter(
             outputURL: outputURL,
@@ -123,23 +127,23 @@ public actor MJ2Creator {
             height: firstFrame.height,
             configuration: configuration
         )
-        
+
         // Encode and write frames
         if configuration.enableParallelEncoding && frames.count > 1 {
             try await encodeFramesInParallel(frames: frames, writer: writer, progress: progress)
         } else {
             try await encodeFramesSequentially(frames: frames, writer: writer, progress: progress)
         }
-        
+
         // Check for cancellation
         if shouldCancel {
             throw MJ2CreationError.cancelled
         }
-        
+
         // Finalize the file
         try await writer.finalize()
     }
-    
+
     /// Encodes frames sequentially.
     private func encodeFramesSequentially(
         frames: [J2KImage],
@@ -151,13 +155,13 @@ public actor MJ2Creator {
             if shouldCancel {
                 throw MJ2CreationError.cancelled
             }
-            
+
             // Encode frame
             let frameData = try await encodeFrame(frame, index: index)
-            
+
             // Write to file
             try await writer.writeFrame(frameData, isSync: true)
-            
+
             // Report progress
             if let progress = progress {
                 let estimatedSize = UInt64(await writer.frameCount) * UInt64(frameData.count)
@@ -170,7 +174,7 @@ public actor MJ2Creator {
             }
         }
     }
-    
+
     /// Encodes frames in parallel.
     private func encodeFramesInParallel(
         frames: [J2KImage],
@@ -181,21 +185,21 @@ public actor MJ2Creator {
         let parallelCount = configuration.parallelEncodingCount > 0
             ? configuration.parallelEncodingCount
             : min(ProcessInfo.processInfo.processorCount, configuration.maxFrameBufferCount)
-        
+
         // Process frames in batches
         var currentIndex = 0
-        
+
         while currentIndex < frames.count {
             // Check for cancellation
             if shouldCancel {
                 throw MJ2CreationError.cancelled
             }
-            
+
             // Determine batch size
             let batchSize = min(parallelCount, frames.count - currentIndex)
             let batchEnd = currentIndex + batchSize
             let batch = Array(frames[currentIndex..<batchEnd])
-            
+
             // Encode batch in parallel
             let encodedFrames = try await withThrowingTaskGroup(
                 of: (index: Int, data: Data).self
@@ -207,21 +211,21 @@ public actor MJ2Creator {
                         return (frameIndex, data)
                     }
                 }
-                
+
                 // Collect results
                 var results: [(index: Int, data: Data)] = []
                 for try await result in group {
                     results.append(result)
                 }
-                
+
                 // Sort by index to maintain order
                 return results.sorted { $0.index < $1.index }
             }
-            
+
             // Write frames in order
             for (frameIndex, frameData) in encodedFrames {
                 try await writer.writeFrame(frameData, isSync: true)
-                
+
                 // Report progress
                 if let progress = progress {
                     let estimatedSize = UInt64(await writer.frameCount) * UInt64(frameData.count)
@@ -233,11 +237,11 @@ public actor MJ2Creator {
                     progress(update)
                 }
             }
-            
+
             currentIndex = batchEnd
         }
     }
-    
+
     /// Encodes a single frame.
     private func encodeFrame(_ frame: J2KImage, index: Int) async throws -> Data {
         do {
@@ -246,7 +250,7 @@ public actor MJ2Creator {
             throw MJ2CreationError.encodingFailed(frameIndex: index, error: error)
         }
     }
-    
+
     /// Cancels the current creation operation.
     ///
     /// The creation will stop after the current frame or batch completes.
@@ -277,11 +281,11 @@ extension MJ2Creator {
         guard frameCount > 0 else {
             throw MJ2CreationError.noFrames
         }
-        
+
         let frames = Array(repeating: image, count: frameCount)
         try await create(from: frames, outputURL: outputURL, progress: progress)
     }
-    
+
     /// Creates an MJ2 file from images loaded from URLs.
     ///
     /// - Parameters:

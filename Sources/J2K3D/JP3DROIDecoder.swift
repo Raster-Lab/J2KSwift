@@ -1,3 +1,7 @@
+//
+// JP3DROIDecoder.swift
+// J2KSwift
+//
 /// # JP3DROIDecoder
 ///
 /// Region-of-Interest (ROI) decoding for JP3D volumetric JPEG 2000.
@@ -57,7 +61,6 @@ public struct JP3DROIDecoderResult: Sendable {
 /// - If the clamped region has zero area, an empty volume with valid metadata is returned.
 /// - If the ROI equals the entire volume, the decoder follows the full-volume path.
 public actor JP3DROIDecoder {
-
     // MARK: - State
 
     private let configuration: JP3DDecoderConfiguration
@@ -199,42 +202,21 @@ public actor JP3DROIDecoder {
             let expectedBytesPerComp = voxelsPerComp * 4
 
             for comp in 0..<siz.componentCount {
-                let compOffset = comp * expectedBytesPerComp
-                let available = max(0, min(expectedBytesPerComp, parsedTile.data.count - compOffset))
-                let actualCount = available / 4
-
                 var coefficients = [Float](repeating: 0, count: voxelsPerComp)
-                for i in 0..<actualCount {
-                    let byteOffset = compOffset + i * 4
-                    let b0 = Int32(parsedTile.data[byteOffset])
-                    let b1 = Int32(parsedTile.data[byteOffset + 1])
-                    let b2 = Int32(parsedTile.data[byteOffset + 2])
-                    let b3 = Int32(parsedTile.data[byteOffset + 3])
-                    let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
-                    coefficients[i] = Float(raw)
-                }
+                readLegacyCoefficients(
+                    from: parsedTile.data,
+                    compOffset: comp * expectedBytesPerComp,
+                    expectedBytes: expectedBytesPerComp,
+                    into: &coefficients
+                )
 
                 // Inverse wavelet
                 let floatCoeffs: [Float]
                 do {
-                    let waveletConfig = JP3DTransformConfiguration(
-                        filter: cod.isLossless ? .reversible53 : .irreversible97,
-                        mode: .separable, boundary: .symmetric,
-                        levelsX: lx, levelsY: ly, levelsZ: lz
+                    floatCoeffs = try await inverseWaveletTransform(
+                        coefficients: coefficients, cod: cod,
+                        tw: tw, th: th, td: td, lx: lx, ly: ly, lz: lz
                     )
-                    var coeffData = J2K3DCoefficients(
-                        width: tw, height: th, depth: td,
-                        decompositionLevels: max(lx, max(ly, lz))
-                    )
-                    coeffData.data = coefficients
-                    let decomp = JP3DSubbandDecomposition(
-                        width: tw, height: th, depth: td,
-                        levelsX: lx, levelsY: ly, levelsZ: lz,
-                        coefficients: coeffData,
-                        originalWidth: tw, originalHeight: th, originalDepth: td
-                    )
-                    let wavelet = JP3DWaveletTransform(configuration: waveletConfig)
-                    floatCoeffs = try await wavelet.inverse(decomposition: decomp)
                 } catch {
                     if configuration.tolerateErrors {
                         warnings.append("Tile \(idx) comp \(comp): \(error)")
@@ -274,29 +256,9 @@ public actor JP3DROIDecoder {
         }
 
         // Assemble ROI sub-volume
-        let bytesPerSample = (siz.bitDepth + 7) / 8
-        var volumeComponents: [J2KVolumeComponent] = []
-        let maxVal = Float((1 << siz.bitDepth) - 1)
-
-        for comp in 0..<siz.componentCount {
-            var rawData = Data(count: roiVoxels * bytesPerSample)
-            for i in 0..<roiVoxels {
-                let clamped = max(0, min(maxVal, roiBuffers[comp][i]))
-                let intVal = Int(roundf(clamped))
-                for b in 0..<bytesPerSample {
-                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
-                }
-            }
-            volumeComponents.append(J2KVolumeComponent(
-                index: comp,
-                bitDepth: siz.bitDepth,
-                signed: siz.signed,
-                width: roiW,
-                height: roiH,
-                depth: roiD,
-                data: rawData
-            ))
-        }
+        let volumeComponents = assembleROIComponents(
+            from: roiBuffers, siz: siz, roiW: roiW, roiH: roiH, roiD: roiD
+        )
 
         let volume = J2KVolume(width: roiW, height: roiH, depth: roiD, components: volumeComponents)
 
@@ -318,5 +280,86 @@ public actor JP3DROIDecoder {
         var d = dimension
         while d > 1 { d = (d + 1) / 2; maxL += 1 }
         return min(requested, maxL)
+    }
+
+    private func readLegacyCoefficients(
+        from data: Data,
+        compOffset: Int,
+        expectedBytes: Int,
+        into coefficients: inout [Float]
+    ) {
+        let available = max(0, min(expectedBytes, data.count - compOffset))
+        let actualCount = available / 4
+
+        for i in 0..<actualCount {
+            let byteOffset = compOffset + i * 4
+            let b0 = Int32(data[byteOffset])
+            let b1 = Int32(data[byteOffset + 1])
+            let b2 = Int32(data[byteOffset + 2])
+            let b3 = Int32(data[byteOffset + 3])
+            let raw: Int32 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+            coefficients[i] = Float(raw)
+        }
+    }
+
+    private func assembleROIComponents(
+        from roiBuffers: [[Float]],
+        siz: JP3DSIZInfo,
+        roiW: Int,
+        roiH: Int,
+        roiD: Int
+    ) -> [J2KVolumeComponent] {
+        let roiVoxels = roiW * roiH * roiD
+        let bytesPerSample = (siz.bitDepth + 7) / 8
+        let maxVal = Float((1 << siz.bitDepth) - 1)
+        var volumeComponents: [J2KVolumeComponent] = []
+
+        for comp in 0..<siz.componentCount {
+            var rawData = Data(count: roiVoxels * bytesPerSample)
+            for i in 0..<roiVoxels {
+                let clamped = max(0, min(maxVal, roiBuffers[comp][i]))
+                let intVal = Int(roundf(clamped))
+                for b in 0..<bytesPerSample {
+                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+                }
+            }
+            volumeComponents.append(J2KVolumeComponent(
+                index: comp,
+                bitDepth: siz.bitDepth,
+                signed: siz.signed,
+                width: roiW,
+                height: roiH,
+                depth: roiD,
+                data: rawData
+            ))
+        }
+
+        return volumeComponents
+    }
+
+    private func inverseWaveletTransform(
+        coefficients: [Float],
+        cod: JP3DCODInfo,
+        tw: Int, th: Int, td: Int,
+        lx: Int, ly: Int, lz: Int
+    ) async throws -> [Float] {
+        let waveletConfig = JP3DTransformConfiguration(
+            filter: cod.isLossless ? .reversible53 : .irreversible97,
+            mode: .separable, boundary: .symmetric,
+            levelsX: lx, levelsY: ly, levelsZ: lz
+        )
+        var coeffData = J2K3DCoefficients(
+            width: tw, height: th, depth: td,
+            decompositionLevels: max(lx, max(ly, lz))
+        )
+        coeffData.data = coefficients
+        let decomp = JP3DSubbandDecomposition(
+            width: tw, height: th, depth: td,
+            levelsX: lx, levelsY: ly, levelsZ: lz,
+            coefficients: coeffData,
+            originalWidth: tw, originalHeight: th, originalDepth: td
+        )
+        let wavelet = JP3DWaveletTransform(configuration: waveletConfig)
+        return try await wavelet.inverse(decomposition: decomp)
     }
 }

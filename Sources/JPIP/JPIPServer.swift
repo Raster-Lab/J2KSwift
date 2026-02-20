@@ -1,3 +1,7 @@
+//
+// JPIPServer.swift
+// J2KSwift
+//
 /// # JPIPServer
 ///
 /// Server implementation for the JPIP protocol.
@@ -192,7 +196,7 @@ public actor JPIPServer {
     ///
     /// - Returns: Array of registered image names.
     public func listRegisteredImages() async -> [String] {
-        return Array(registeredImages.keys)
+        Array(registeredImages.keys)
     }
 
     /// Starts the server.
@@ -359,10 +363,8 @@ public actor JPIPServer {
             // Add HTJ2K capability headers if the image supports it
             if let info = imageInfoCache[request.target] {
                 let capHeaders = htj2kSupport.capabilityHeaders(for: info)
-                for (key, value) in capHeaders {
-                    if key != "Content-Type" { // Don't override Content-Type
-                        headers[key] = value
-                    }
+                for (key, value) in capHeaders where key != "Content-Type" {
+                    headers[key] = value
                 }
             }
 
@@ -513,7 +515,7 @@ public actor JPIPServer {
     ///
     /// - Returns: Number of active sessions.
     public func getActiveSessionCount() async -> Int {
-        return sessions.count
+        sessions.count
     }
 
     /// Gets the format information for a registered image.
@@ -521,7 +523,7 @@ public actor JPIPServer {
     /// - Parameter name: The registered image name.
     /// - Returns: The image info if available, nil otherwise.
     public func getImageInfo(name: String) -> JPIPImageInfo? {
-        return imageInfoCache[name]
+        imageInfoCache[name]
     }
 
     /// Computes a stable hash string for data, suitable for cache keys.
@@ -543,11 +545,11 @@ public actor JPIPServer {
 extension J2KError {
     /// Creates a file not found error.
     static func fileNotFound(_ message: String) -> J2KError {
-        return .internalError("File not found: \(message)")
+        .internalError("File not found: \(message)")
     }
 
     /// Creates an invalid state error.
     static func invalidState(_ message: String) -> J2KError {
-        return .internalError("Invalid state: \(message)")
+        .internalError("Invalid state: \(message)")
     }
 }

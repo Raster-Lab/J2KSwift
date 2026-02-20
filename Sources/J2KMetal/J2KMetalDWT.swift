@@ -1,3 +1,7 @@
+//
+// J2KMetalDWT.swift
+// J2KSwift
+//
 // J2KMetalDWT.swift
 // J2KSwift
 //
@@ -340,7 +344,7 @@ public struct J2KMetalDWTStatistics: Sendable {
 public actor J2KMetalDWT {
     /// Whether Metal DWT is available on this platform.
     public static var isAvailable: Bool {
-        return J2KMetalDevice.isAvailable
+        J2KMetalDevice.isAvailable
     }
 
     /// The DWT configuration.
@@ -404,7 +408,7 @@ public actor J2KMetalDWT {
     ///
     /// - Returns: A snapshot of the DWT processing statistics.
     public func statistics() -> J2KMetalDWTStatistics {
-        return _statistics
+        _statistics
     }
 
     /// Determines the best backend for the given dimensions.
@@ -848,9 +852,9 @@ public actor J2KMetalDWT {
     ) -> (lowpass: [Float], highpass: [Float]) {
         let alpha: Float = -1.586134342
         let beta: Float  = -0.052980118
-        let gamma: Float =  0.882911075
-        let delta: Float =  0.443506852
-        let K: Float     =  1.230174105
+        let gamma: Float = 0.882911075
+        let delta: Float = 0.443506852
+        let K: Float = 1.230174105
 
         var even = [Float](repeating: 0, count: halfN)
         var odd  = [Float](repeating: 0, count: halfH)
@@ -958,7 +962,7 @@ public actor J2KMetalDWT {
         var data = signal
         for step in 0..<scheme.coefficients.count {
             let coeff = scheme.coefficients[step]
-            let updateOdd = (step % 2 == 0)
+            let updateOdd = (step.isMultiple(of: 2))
             if updateOdd {
                 for i in 0..<halfH {
                     let left = data[2 * i]
@@ -1009,8 +1013,8 @@ public actor J2KMetalDWT {
         let K: Float = 1.230174105
         let alpha: Float = -1.586134342
         let beta: Float  = -0.052980118
-        let gamma: Float =  0.882911075
-        let delta: Float =  0.443506852
+        let gamma: Float = 0.882911075
+        let delta: Float = 0.443506852
 
         var even = lowpass.map { $0 / K }
         var odd  = highpass.map { $0 * K }
@@ -1084,7 +1088,7 @@ public actor J2KMetalDWT {
             var sum: Float = 0
             for k in 0..<filter.synthesisLowpass.count {
                 let idx = pos - k
-                if idx >= 0 && idx % 2 == 0 {
+                if idx >= 0 && idx.isMultiple(of: 2) {
                     let j = idx / 2
                     if j < halfN {
                         sum += lowpass[j] * filter.synthesisLowpass[k]
@@ -1121,7 +1125,7 @@ public actor J2KMetalDWT {
         // Reverse lifting steps
         for step in stride(from: scheme.coefficients.count - 1, through: 0, by: -1) {
             let coeff = -scheme.coefficients[step]
-            let updateOdd = (step % 2 == 0)
+            let updateOdd = (step.isMultiple(of: 2))
             if updateOdd {
                 for i in 0..<halfH {
                     let left = data[2 * i]
@@ -1544,41 +1548,10 @@ public actor J2KMetalDWT {
         cb3.waitUntilCompleted()
 
         // Read results
-        var ll = [Float](repeating: 0, count: halfW * halfH)
-        var lh = [Float](repeating: 0, count: halfW * halfHH)
-        var hl = [Float](repeating: 0, count: halfWH * halfH)
-        var hh = [Float](repeating: 0, count: halfWH * halfHH)
-
-        ll.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: llBuffer.contents(),
-                count: halfW * halfH * MemoryLayout<Float>.stride
-            ))
-        }
-        if halfW * halfHH > 0 {
-            lh.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: lhBuffer.contents(),
-                    count: halfW * halfHH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
-        if halfWH * halfH > 0 {
-            hl.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: hlBuffer.contents(),
-                    count: halfWH * halfH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
-        if halfWH * halfHH > 0 {
-            hh.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: hhBuffer.contents(),
-                    count: halfWH * halfHH * MemoryLayout<Float>.stride
-                ))
-            }
-        }
+        let ll = readFloatArray(from: llBuffer, elementCount: halfW * halfH)
+        let lh = readFloatArray(from: lhBuffer, elementCount: halfW * halfHH)
+        let hl = readFloatArray(from: hlBuffer, elementCount: halfWH * halfH)
+        let hh = readFloatArray(from: hhBuffer, elementCount: halfWH * halfHH)
 
         // Track memory
         let totalMem = UInt64(
@@ -1607,13 +1580,25 @@ public actor J2KMetalDWT {
         )
     }
 
+    private func readFloatArray(from buffer: MTLBuffer, elementCount: Int) -> [Float] {
+        guard elementCount > 0 else { return [] }
+        var result = [Float](repeating: 0, count: elementCount)
+        result.withUnsafeMutableBytes { dst in
+            dst.copyBytes(from: UnsafeRawBufferPointer(
+                start: buffer.contents(),
+                count: elementCount * MemoryLayout<Float>.stride
+            ))
+        }
+        return result
+    }
+
     private func inverse2DGPU(
         subbands: J2KMetalDWTSubbands
     ) async throws -> [Float] {
         // For GPU inverse, delegate to CPU reference (full GPU inverse
         // requires careful reconstruction logic matching the forward path).
         // This maintains correctness while forward transforms get GPU acceleration.
-        return inverse2DCPU(subbands: subbands)
+        inverse2DCPU(subbands: subbands)
     }
 
     private func ensureInitialized() async throws {
@@ -1700,6 +1685,6 @@ public actor J2KMetalDWT {
     #endif
 
     private func currentTime() -> Double {
-        return Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0
+        Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0
     }
 }

@@ -1,3 +1,7 @@
+//
+// JP3DTranscoder.swift
+// J2KSwift
+//
 /// # JP3DTranscoder
 ///
 /// Lossless transcoding between standard JP3D codestreams and their
@@ -117,7 +121,6 @@ public struct JP3DTranscoderResult: Sendable {
 /// let back = try await transcoder.transcode(result.data, configuration: .reverseDefault)
 /// ```
 public actor JP3DTranscoder {
-
     // MARK: - Init
 
     /// Creates a new transcoder.
@@ -138,7 +141,6 @@ public actor JP3DTranscoder {
         _ sourceData: Data,
         configuration: JP3DTranscoderConfiguration = .forwardDefault
     ) async throws -> JP3DTranscoderResult {
-
         // Parse source codestream
         let parser = JP3DCodestreamParser()
         let source = try parser.parse(sourceData)
@@ -341,14 +343,12 @@ public actor JP3DTranscoder {
 
         // Compare
         let count = min(originalCoeffs.count, transcodedCoeffs.count)
-        for i in 0..<count {
-            if originalCoeffs[i] != transcodedCoeffs[i] {
-                throw J2KError.encodingError(
-                    "Round-trip verification failed for tile \(tileIndex): " +
-                    "coefficient \(i) original=\(originalCoeffs[i]) " +
-                    "transcoded=\(transcodedCoeffs[i])"
-                )
-            }
+        for i in 0..<count where originalCoeffs[i] != transcodedCoeffs[i] {
+            throw J2KError.encodingError(
+                "Round-trip verification failed for tile \(tileIndex): " +
+                "coefficient \(i) original=\(originalCoeffs[i]) " +
+                "transcoded=\(transcodedCoeffs[i])"
+            )
         }
     }
 
@@ -359,7 +359,7 @@ public actor JP3DTranscoder {
         tileIndex: Int,
         siz: JP3DSIZInfo
     ) -> (Int, Int, Int) {
-        let tilesX = max(1, (siz.width  + siz.tileSizeX - 1) / siz.tileSizeX)
+        let tilesX = max(1, (siz.width + siz.tileSizeX - 1) / siz.tileSizeX)
         let tilesY = max(1, (siz.height + siz.tileSizeY - 1) / siz.tileSizeY)
 
         let iz = tileIndex / (tilesX * tilesY)
@@ -371,9 +371,9 @@ public actor JP3DTranscoder {
         let y0 = iy * siz.tileSizeY
         let z0 = iz * siz.tileSizeZ
 
-        let tw = min(siz.tileSizeX, siz.width  - x0)
+        let tw = min(siz.tileSizeX, siz.width - x0)
         let th = min(siz.tileSizeY, siz.height - y0)
-        let td = min(siz.tileSizeZ, siz.depth  - z0)
+        let td = min(siz.tileSizeZ, siz.depth - z0)
 
         return (max(1, tw), max(1, th), max(1, td))
     }
@@ -411,6 +411,7 @@ public actor JP3DTranscoder {
 /// Extends `JP3DCodestreamBuilder` with an HTJ2K-aware `build` overload that
 /// optionally inserts CAP and CPF marker segments before the first SOT.
 extension JP3DCodestreamBuilder {
+    // swiftlint:disable function_parameter_count
 
     /// Builds a JP3D codestream with optional HTJ2K marker segments.
     ///
@@ -437,6 +438,7 @@ extension JP3DCodestreamBuilder {
         isLossless: Bool,
         htj2kConfiguration: JP3DHTJ2KConfiguration?
     ) -> Data {
+    // swiftlint:enable function_parameter_count
         guard let htConfig = htj2kConfiguration else {
             // Standard codestream – delegate to the existing method
             return build(
@@ -511,7 +513,6 @@ extension JP3DCodestreamBuilder {
 
 /// Extends `JP3DParsedCodestream` with HTJ2K detection helpers.
 extension JP3DParsedCodestream {
-
     /// Whether this codestream was encoded with HTJ2K tile coding.
     ///
     /// Returns `true` when at least one tile has a `JP3DHTTileInfo` prefix

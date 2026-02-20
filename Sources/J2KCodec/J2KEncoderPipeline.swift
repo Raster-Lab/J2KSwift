@@ -1,3 +1,7 @@
+//
+// J2KEncoderPipeline.swift
+// J2KSwift
+//
 // J2KEncoderPipeline.swift
 // J2KSwift
 //
@@ -105,10 +109,6 @@ final class ParallelResultCollector<T>: @unchecked Sendable {
 /// 7. Codestream Generation — write JPEG 2000 markers and data
 struct EncoderPipeline: Sendable {
     let config: J2KEncodingConfiguration
-
-    init(config: J2KEncodingConfiguration) {
-        self.config = config
-    }
 
     // MARK: - Main Encode
 
@@ -218,7 +218,7 @@ struct EncoderPipeline: Sendable {
     }
 
     // MARK: - Stage 2: Color Transform
-    
+
     /// Applies color space transformation (RCT/ICT or Part 2 MCT).
     ///
     /// - Parameters:
@@ -233,27 +233,30 @@ struct EncoderPipeline: Sendable {
         if let tileMatrix = config.mctConfiguration.perTileMCT[tileIndex] {
             return try applyArrayBasedMCT(components, matrix: tileMatrix, image: image)
         }
-        
+
         // Check if MCT is enabled in configuration
         switch config.mctConfiguration.mode {
         case .disabled:
             // Use standard Part 1 color transform
             return try applyStandardColorTransform(components, image: image)
-            
+
         case .arrayBased(let matrix):
             // Use array-based MCT with specified matrix
             return try applyArrayBasedMCT(components, matrix: matrix, image: image)
-            
+
         case .dependency(let depConfig):
             // Use dependency-based MCT
             return try applyDependencyMCT(components, configuration: depConfig, image: image)
-            
-        case .adaptive(let candidates, let criteria):
+
+        case let .adaptive(candidates, criteria):
             // Select best matrix adaptively based on criteria
-            return try applyAdaptiveMCT(components, candidates: candidates, criteria: criteria, image: image, tileIndex: tileIndex)
+            return try applyAdaptiveMCT(
+                components, candidates: candidates,
+                criteria: criteria, image: image,
+                tileIndex: tileIndex)
         }
     }
-    
+
     /// Applies standard Part 1 color transform (RCT/ICT).
     private func applyStandardColorTransform(
         _ components: [[Int32]], image: J2KImage
@@ -276,7 +279,7 @@ struct EncoderPipeline: Sendable {
         }
         return result
     }
-    
+
     /// Applies array-based MCT using a transformation matrix.
     private func applyArrayBasedMCT(
         _ components: [[Int32]], matrix: J2KMCTMatrix, image: J2KImage
@@ -286,23 +289,23 @@ struct EncoderPipeline: Sendable {
                 "Component count (\(components.count)) must match matrix size (\(matrix.size)) for MCT"
             )
         }
-        
+
         // Convert Int32 to Double for MCT
         let doubleComponents = components.map { component in
             component.map { Double($0) }
         }
-        
+
         // Apply MCT
         let mctConfig = J2KMCTConfiguration(type: .arrayBased, matrix: matrix)
         let mct = J2KMCT(configuration: mctConfig)
         let transformed = try mct.forwardTransform(components: doubleComponents, matrix: matrix)
-        
+
         // Convert back to Int32
         return transformed.map { component in
             component.map { Int32($0.rounded()) }
         }
     }
-    
+
     /// Applies dependency-based MCT.
     private func applyDependencyMCT(
         _ components: [[Int32]], configuration: J2KMCTDependencyConfiguration, image: J2KImage
@@ -311,28 +314,28 @@ struct EncoderPipeline: Sendable {
         let doubleComponents = components.map { component in
             component.map { Double($0) }
         }
-        
+
         // Apply dependency transform
         let transformer = J2KMCTDependencyTransform()
         let transformed: [[Double]]
-        
+
         switch configuration.transform {
         case .chain(let chain):
             transformed = try transformer.forwardTransform(components: doubleComponents, chain: chain)
-            
+
         case .hierarchical(let hierarchical):
             transformed = try transformer.forwardHierarchicalTransform(
                 components: doubleComponents,
                 transform: hierarchical
             )
         }
-        
+
         // Convert back to Int32
         return transformed.map { component in
             component.map { Int32($0.rounded()) }
         }
     }
-    
+
     /// Applies adaptive MCT by selecting the best matrix based on criteria.
     private func applyAdaptiveMCT(
         _ components: [[Int32]],
@@ -344,18 +347,18 @@ struct EncoderPipeline: Sendable {
         // For now, use a simple heuristic: correlation-based selection
         // In a full implementation, this would evaluate each candidate matrix
         // and select based on the specified criteria
-        
+
         // TODO: Implement proper adaptive selection based on:
         // - correlation: Analyze component correlation
         // - rateDistortion: Evaluate R-D performance of each candidate
         // - compressionEfficiency: Compare compression ratios
-        
+
         // Default to first candidate if available
         guard let selectedMatrix = candidates.first else {
             // Fall back to standard transform
             return try applyStandardColorTransform(components, image: image)
         }
-        
+
         // Apply the selected matrix
         return try applyArrayBasedMCT(components, matrix: selectedMatrix, image: image)
     }

@@ -1,3 +1,7 @@
+//
+// J2KPart2FileFormatTests.swift
+// J2KSwift
+//
 // J2KPart2FileFormatTests.swift
 // J2KSwift
 //
@@ -9,7 +13,6 @@ import XCTest
 
 /// Tests for Part 2 box types defined in ISO/IEC 15444-2.
 final class J2KPart2FileFormatTests: XCTestCase {
-
     // MARK: - IPR Box Tests
 
     func testIPRBoxWrite() throws {

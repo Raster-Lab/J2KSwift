@@ -1,3 +1,7 @@
+//
+// JP3DCacheManager.swift
+// J2KSwift
+//
 /// # JP3DCacheManager
 ///
 /// 3D-aware cache manager for volumetric JPIP data bins.
@@ -86,7 +90,6 @@ public enum JP3DCacheEvictionStrategy: Sendable {
 /// }
 /// ```
 public actor JP3DCacheManager {
-
     // MARK: - Configuration
 
     /// Maximum memory the cache may use in bytes.
@@ -167,7 +170,7 @@ public actor JP3DCacheManager {
         switch strategy {
         case .lru:
             evictLRU(count: targetCount)
-        case .spatialProximity(let cx, let cy, let cz):
+        case let .spatialProximity(cx, cy, cz):
             evictBySpatialDistance(centerX: cx, centerY: cy, centerZ: cz, count: targetCount)
         case .viewFrustum(let frustum):
             evictOutsideFrustum(frustum: frustum)

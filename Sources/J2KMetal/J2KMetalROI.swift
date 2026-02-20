@@ -1,3 +1,7 @@
+//
+// J2KMetalROI.swift
+// J2KSwift
+//
 // J2KMetalROI.swift
 // J2KSwift
 //
@@ -29,13 +33,13 @@ public enum J2KMetalROIBackend: Sendable {
 public struct J2KMetalROIConfiguration: Sendable {
     /// Minimum pixel count to prefer GPU over CPU.
     public var gpuThreshold: Int
-    
+
     /// Feathering width for smooth ROI boundaries (in pixels).
     public var featherWidth: Float
-    
+
     /// Backend selection strategy.
     public var backend: J2KMetalROIBackend
-    
+
     /// Creates a Metal ROI configuration.
     ///
     /// - Parameters:
@@ -51,7 +55,7 @@ public struct J2KMetalROIConfiguration: Sendable {
         self.featherWidth = featherWidth
         self.backend = backend
     }
-    
+
     /// Default ROI configuration.
     public static let `default` = J2KMetalROIConfiguration()
 }
@@ -68,7 +72,7 @@ public struct J2KMetalROIResult: Sendable {
     public let usedGPU: Bool
     /// Processing time in seconds.
     public let processingTime: Double
-    
+
     /// Creates an ROI result.
     public init(
         coefficients: [[Int32]],
@@ -97,7 +101,7 @@ public struct J2KMetalROIStatistics: Sendable {
     public var totalProcessingTime: Double
     /// Total pixels processed.
     public var totalPixelsProcessed: Int
-    
+
     /// Creates initial (zero) statistics.
     public init() {
         self.totalOperations = 0
@@ -106,13 +110,13 @@ public struct J2KMetalROIStatistics: Sendable {
         self.totalProcessingTime = 0.0
         self.totalPixelsProcessed = 0
     }
-    
+
     /// GPU utilization rate (0.0 to 1.0).
     public var gpuUtilization: Double {
         guard totalOperations > 0 else { return 0.0 }
         return Double(gpuOperations) / Double(totalOperations)
     }
-    
+
     /// Average pixels processed per second.
     public var pixelsPerSecond: Double {
         guard totalProcessingTime > 0.0 else { return 0.0 }
@@ -149,14 +153,14 @@ public struct J2KMetalROIStatistics: Sendable {
 /// ```
 public actor J2KMetalROI {
     // MARK: Properties
-    
+
     private let device: J2KMetalDevice
     private let shaderLibrary: J2KMetalShaderLibrary
     private let bufferPool: J2KMetalBufferPool
     private var statistics: J2KMetalROIStatistics
-    
+
     // MARK: Initialization
-    
+
     /// Creates a new Metal ROI processor.
     ///
     /// - Parameters:
@@ -172,9 +176,9 @@ public actor J2KMetalROI {
         self.bufferPool = try await J2KMetalBufferPool(device: device)
         self.statistics = J2KMetalROIStatistics()
     }
-    
+
     // MARK: - ROI Mask Generation
-    
+
     /// Generates an ROI mask for a rectangular region.
     ///
     /// - Parameters:
@@ -198,10 +202,10 @@ public actor J2KMetalROI {
     ) async throws -> [[Bool]] {
         let startTime = Date()
         let pixelCount = width * height
-        
+
         // Determine backend
         let useGPU = shouldUseGPU(pixelCount: pixelCount, configuration: configuration)
-        
+
         if useGPU {
             let result = try await generateMaskGPU(
                 width: width,
@@ -211,13 +215,13 @@ public actor J2KMetalROI {
                 roiWidth: roiWidth,
                 roiHeight: roiHeight
             )
-            
+
             updateStatistics(
                 usedGPU: true,
                 processingTime: Date().timeIntervalSince(startTime),
                 pixelCount: pixelCount
             )
-            
+
             return result
         } else {
             let result = generateMaskCPU(
@@ -228,19 +232,19 @@ public actor J2KMetalROI {
                 roiWidth: roiWidth,
                 roiHeight: roiHeight
             )
-            
+
             updateStatistics(
                 usedGPU: false,
                 processingTime: Date().timeIntervalSince(startTime),
                 pixelCount: pixelCount
             )
-            
+
             return result
         }
     }
-    
+
     // MARK: - MaxShift Coefficient Scaling
-    
+
     /// Applies MaxShift ROI scaling to wavelet coefficients.
     ///
     /// - Parameters:
@@ -262,10 +266,10 @@ public actor J2KMetalROI {
     ) async throws -> [[Int32]] {
         let startTime = Date()
         let pixelCount = width * height
-        
+
         // Determine backend
         let useGPU = shouldUseGPU(pixelCount: pixelCount, configuration: configuration)
-        
+
         if useGPU {
             let result = try await applyMaxShiftGPU(
                 coefficients: coefficients,
@@ -274,13 +278,13 @@ public actor J2KMetalROI {
                 width: width,
                 height: height
             )
-            
+
             updateStatistics(
                 usedGPU: true,
                 processingTime: Date().timeIntervalSince(startTime),
                 pixelCount: pixelCount
             )
-            
+
             return result
         } else {
             let result = applyMaxShiftCPU(
@@ -288,31 +292,31 @@ public actor J2KMetalROI {
                 mask: mask,
                 shift: shift
             )
-            
+
             updateStatistics(
                 usedGPU: false,
                 processingTime: Date().timeIntervalSince(startTime),
                 pixelCount: pixelCount
             )
-            
+
             return result
         }
     }
-    
+
     // MARK: - Statistics
-    
+
     /// Returns current performance statistics.
     public func getStatistics() -> J2KMetalROIStatistics {
-        return statistics
+        statistics
     }
-    
+
     /// Resets performance statistics.
     public func resetStatistics() {
         statistics = J2KMetalROIStatistics()
     }
-    
+
     // MARK: - Private Methods (GPU)
-    
+
     private func generateMaskGPU(
         width: Int,
         height: Int,
@@ -323,26 +327,26 @@ public actor J2KMetalROI {
     ) async throws -> [[Bool]] {
         let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
         }
-        
+
         // Get pipeline state
         let pipeline = try await shaderLibrary.computePipeline(for: .roiMaskGenerate)
         computeEncoder.setComputePipelineState(pipeline)
-        
+
         // Allocate buffers
         let pixelCount = width * height
         let maskBuffer = try await bufferPool.allocateBuffer(
             size: pixelCount * MemoryLayout<Bool>.size,
             storageMode: .shared
         )
-        
+
         // Set buffers
         computeEncoder.setBuffer(maskBuffer, offset: 0, index: 0)
-        
+
         var params = (
             UInt32(width),
             UInt32(height),
@@ -357,7 +361,7 @@ public actor J2KMetalROI {
                 computeEncoder.setBytes(ptr.baseAddress! + offset, length: MemoryLayout<UInt32>.size, index: i + 1)
             }
         }
-        
+
         // Dispatch
         let threadgroupSize = MTLSize(width: 16, height: 16, depth: 1)
         let threadgroups = MTLSize(
@@ -367,10 +371,10 @@ public actor J2KMetalROI {
         )
         computeEncoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadgroupSize)
         computeEncoder.endEncoding()
-        
+
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
+
         // Read results
         let maskPtr = maskBuffer.contents().bindMemory(to: Bool.self, capacity: pixelCount)
         var result = Array(repeating: Array(repeating: false, count: width), count: height)
@@ -379,10 +383,10 @@ public actor J2KMetalROI {
                 result[y][x] = maskPtr[y * width + x]
             }
         }
-        
+
         return result
     }
-    
+
     private func applyMaxShiftGPU(
         coefficients: [[Int32]],
         mask: [[Bool]],
@@ -392,21 +396,21 @@ public actor J2KMetalROI {
     ) async throws -> [[Int32]] {
         let mtlDevice = try await device.metalDevice()
         let commandQueue = try await device.commandQueue()
-        
+
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
             throw J2KError.metalOperationFailed("Failed to create command buffer/encoder")
         }
-        
+
         // Get pipeline state
         let pipeline = try await shaderLibrary.computePipeline(for: .roiCoefficientScale)
         computeEncoder.setComputePipelineState(pipeline)
-        
+
         // Flatten input arrays
         let flatCoeffs = coefficients.flatMap { $0 }
         let flatMask = mask.flatMap { $0 }
         let pixelCount = width * height
-        
+
         // Allocate buffers
         let inputBuffer = try await bufferPool.allocateBuffer(
             size: pixelCount * MemoryLayout<Int32>.size,
@@ -420,23 +424,29 @@ public actor J2KMetalROI {
             size: pixelCount * MemoryLayout<Int32>.size,
             storageMode: .shared
         )
-        
+
         // Copy data
         memcpy(inputBuffer.contents(), flatCoeffs, pixelCount * MemoryLayout<Int32>.size)
         memcpy(maskBuffer.contents(), flatMask, pixelCount * MemoryLayout<Bool>.size)
-        
+
         // Set buffers
         computeEncoder.setBuffer(inputBuffer, offset: 0, index: 0)
         computeEncoder.setBuffer(maskBuffer, offset: 0, index: 1)
         computeEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
-        
+
         var params = (UInt32(width), UInt32(height), shift)
+        let uint32Size = MemoryLayout<UInt32>.size
         withUnsafeBytes(of: &params) { ptr in
-            computeEncoder.setBytes(ptr.baseAddress!, length: MemoryLayout<UInt32>.size, index: 3)
-            computeEncoder.setBytes(ptr.baseAddress! + MemoryLayout<UInt32>.size, length: MemoryLayout<UInt32>.size, index: 4)
-            computeEncoder.setBytes(ptr.baseAddress! + 2 * MemoryLayout<UInt32>.size, length: MemoryLayout<UInt32>.size, index: 5)
+            computeEncoder.setBytes(
+                ptr.baseAddress!, length: uint32Size, index: 3)
+            computeEncoder.setBytes(
+                ptr.baseAddress! + uint32Size,
+                length: uint32Size, index: 4)
+            computeEncoder.setBytes(
+                ptr.baseAddress! + 2 * uint32Size,
+                length: uint32Size, index: 5)
         }
-        
+
         // Dispatch
         let threadgroupSize = MTLSize(width: 16, height: 16, depth: 1)
         let threadgroups = MTLSize(
@@ -446,10 +456,10 @@ public actor J2KMetalROI {
         )
         computeEncoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadgroupSize)
         computeEncoder.endEncoding()
-        
+
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
-        
+
         // Read results
         let outputPtr = outputBuffer.contents().bindMemory(to: Int32.self, capacity: pixelCount)
         var result = Array(repeating: Array(repeating: Int32(0), count: width), count: height)
@@ -458,12 +468,12 @@ public actor J2KMetalROI {
                 result[y][x] = outputPtr[y * width + x]
             }
         }
-        
+
         return result
     }
-    
+
     // MARK: - Private Methods (CPU Fallback)
-    
+
     private func generateMaskCPU(
         width: Int,
         height: Int,
@@ -473,7 +483,7 @@ public actor J2KMetalROI {
         roiHeight: Int
     ) -> [[Bool]] {
         var mask = Array(repeating: Array(repeating: false, count: width), count: height)
-        
+
         for row in 0..<height {
             for col in 0..<width {
                 let insideX = col >= x && col < x + roiWidth
@@ -481,10 +491,10 @@ public actor J2KMetalROI {
                 mask[row][col] = insideX && insideY
             }
         }
-        
+
         return mask
     }
-    
+
     private func applyMaxShiftCPU(
         coefficients: [[Int32]],
         mask: [[Bool]],
@@ -493,27 +503,25 @@ public actor J2KMetalROI {
         let height = coefficients.count
         guard height > 0 else { return [] }
         let width = coefficients[0].count
-        
+
         var result = coefficients
-        
+
         for y in 0..<height {
-            for x in 0..<width {
-                if mask[y][x] {
-                    let coeff = coefficients[y][x]
-                    if coeff >= 0 {
-                        result[y][x] = coeff << shift
-                    } else {
-                        result[y][x] = -((-coeff) << shift)
-                    }
+            for x in 0..<width where mask[y][x] {
+                let coeff = coefficients[y][x]
+                if coeff >= 0 {
+                    result[y][x] = coeff << shift
+                } else {
+                    result[y][x] = -((-coeff) << shift)
                 }
             }
         }
-        
+
         return result
     }
-    
+
     // MARK: - Utility
-    
+
     private func shouldUseGPU(
         pixelCount: Int,
         configuration: J2KMetalROIConfiguration
@@ -527,7 +535,7 @@ public actor J2KMetalROI {
             return pixelCount >= configuration.gpuThreshold
         }
     }
-    
+
     private func updateStatistics(
         usedGPU: Bool,
         processingTime: Double,
