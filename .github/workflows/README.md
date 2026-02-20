@@ -103,7 +103,7 @@ Performance tracking and regression detection:
 ### 🧪 JP3D Compliance (`jp3d-compliance.yml`)
 **Triggers**: Push/PR changes to J2K3D sources or compliance tests, Manual
 
-JP3D Part 4 compliance validation:
+JP3D (Part 10 / ISO 15444-10) compliance validation against Part 4 conformance criteria:
 - macOS and Linux compliance tests
 - Conformance report generation and upload
 
