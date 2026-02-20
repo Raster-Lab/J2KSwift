@@ -33,9 +33,9 @@ error: no module named 'J2K3D'
 .product(name: "J2K3D", package: "J2KSwift")
 ```
 
-2. Wrong Swift package version — `J2K3D` requires J2KSwift 1.7.0+:
+2. Wrong Swift package version — `J2K3D` requires J2KSwift 1.9.0+:
 ```swift
-.package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.7.0")
+.package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.9.0")
 ```
 
 3. Package cache stale — run `swift package resolve` or in Xcode: **File → Packages → Reset Package Caches**.
@@ -624,7 +624,7 @@ A: No. Use `J2KDecoder` from `J2KCodec` for 2D J2K/JP2 files. Use `JP3DDecoder.c
 ---
 
 **Q: Does JP3D support floating-point voxels?**
-A: Yes — use `bitDepth: 32` with `signed: true`. Lossless encoding of float data is supported. Lossy float encoding is experimental in 1.8.x.
+A: Yes — use `bitDepth: 32` with `signed: true`. Lossless encoding of float data is supported. Lossy float encoding is experimental in 1.9.x.
 
 ---
 
