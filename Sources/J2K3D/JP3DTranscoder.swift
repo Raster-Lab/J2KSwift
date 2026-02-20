@@ -411,7 +411,9 @@ public actor JP3DTranscoder {
 /// Extends `JP3DCodestreamBuilder` with an HTJ2K-aware `build` overload that
 /// optionally inserts CAP and CPF marker segments before the first SOT.
 extension JP3DCodestreamBuilder {
-    // swiftlint:disable:next function_parameter_count
+
+    // swiftlint:disable function_parameter_count
+
     /// Builds a JP3D codestream with optional HTJ2K marker segments.
     ///
     /// When `htj2kConfiguration` is non-nil the builder inserts CAP and CPF
@@ -437,6 +439,8 @@ extension JP3DCodestreamBuilder {
         isLossless: Bool,
         htj2kConfiguration: JP3DHTJ2KConfiguration?
     ) -> Data {
+
+    // swiftlint:enable function_parameter_count
         guard let htConfig = htj2kConfiguration else {
             // Standard codestream – delegate to the existing method
             return build(

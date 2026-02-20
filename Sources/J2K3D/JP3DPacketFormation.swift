@@ -295,7 +295,8 @@ public struct JP3DCodestreamBuilder: Sendable {
     /// Creates a new codestream builder.
     public init() {}
 
-    // swiftlint:disable:next function_parameter_count
+    // swiftlint:disable function_parameter_count
+
     /// Builds a JP3D codestream from encoded tile data.
     ///
     /// - Parameters:
@@ -358,6 +359,7 @@ public struct JP3DCodestreamBuilder: Sendable {
         return stream
     }
 
+    // swiftlint:enable function_parameter_count
     // MARK: - Private Helpers
 
     private func appendMarker(_ stream: inout Data, _ marker: Marker) {
