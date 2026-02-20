@@ -88,9 +88,9 @@ error: cannot find type 'JP3DHTJ2KConfiguration' in scope
 error: type 'JP3DEncoderResult' does not conform to 'Sendable'
 ```
 
-This should not occur in J2KSwift 1.8.0+ as `JP3DEncoderResult` is `Sendable`. If you see this:
+This should not occur in J2KSwift 1.9.0+ as `JP3DEncoderResult` is `Sendable`. If you see this:
 
-1. Ensure you are using J2KSwift 1.8.0 or later.
+1. Ensure you are using J2KSwift 1.9.0 or later.
 2. Run `swift package update` and `swift package resolve`.
 
 ---

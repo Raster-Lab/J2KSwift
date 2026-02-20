@@ -133,7 +133,7 @@ J2KImageComponent:
 
 ```diff
  dependencies: [
-     .package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.8.0")
+     .package(url: "https://github.com/anthropics/J2KSwift.git", from: "1.9.0")
  ],
  targets: [
      .target(
@@ -494,8 +494,8 @@ func decode(file: URL) async throws {
 
 | J2KSwift Version | J2K3D Module | JP3D Features |
 |-----------------|-------------|--------------|
-| 1.8.0+ | ✅ | Full feature set documented here |
-| 1.7.0 | ✅ | Core encode/decode; no HTJ2K |
+| 1.9.0+ | ✅ | Full feature set documented here |
+| 1.8.0 | ✅ | Core encode/decode; no HTJ2K |
 | 1.6.x | ❌ | J2K3D module not available |
 | < 1.6 | ❌ | JP3D not supported |
 

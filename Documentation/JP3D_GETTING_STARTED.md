@@ -111,7 +111,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/anthropics/J2KSwift.git",
-            from: "1.8.0"
+            from: "1.9.0"
         )
     ],
     targets: [
@@ -520,7 +520,7 @@ do {
 import J2K3D
 
 // Print library version information
-print(JP3DEncoder.version)  // e.g., "J2K3D 1.8.0 (JP3D/ISO 15444-10)"
+print(JP3DEncoder.version)  // e.g., "J2K3D 1.9.0 (JP3D/ISO 15444-10)"
 
 // Check available acceleration
 let caps = JP3DEncoder.capabilities

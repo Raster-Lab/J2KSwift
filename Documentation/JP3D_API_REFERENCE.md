@@ -226,7 +226,7 @@ Encodes a `J2KVolume` into a JP3D-compliant bitstream. Thread-safe via Swift act
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `version` | `String` | Library version string, e.g. `"J2K3D 1.8.0"` |
+| `version` | `String` | Library version string, e.g. `"J2K3D 1.9.0"` |
 | `capabilities` | `JP3DCapabilities` | Runtime capability flags |
 
 ### Initializers
