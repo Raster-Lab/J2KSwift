@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "J2KSwift",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v15),
         .iOS(.v16),
         .tvOS(.v16),
         .watchOS(.v9),
