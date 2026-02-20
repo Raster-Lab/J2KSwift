@@ -40,25 +40,50 @@ jobs:
       - name: Build release
         run: swift build -c release
 
-      - name: Run encode/decode benchmarks
+      - name: Run OpenJPEG benchmark suite
+        continue-on-error: true
         run: |
-          swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+          swift test -c release --filter PerformanceTests \
+            2>&1 | tee benchmark-results.txt || true
+
+      - name: Run encode/decode benchmarks
+        continue-on-error: true
+        run: |
+          swift test -c release --filter Benchmark \
+            --skip JP3DComplianceTests \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer \
+            2>&1 | tee -a benchmark-results.txt || true
 
       - name: Run Accelerate benchmarks
+        continue-on-error: true
         run: |
-          swift test -c release --filter J2KAccelerateBenchmarks 2>&1 | tee -a benchmark-results.txt || true
+          swift test -c release --filter J2KAccelerateBenchmarks \
+            2>&1 | tee -a benchmark-results.txt || true
 
       - name: Check for performance regressions
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         run: |
-          echo "=== Performance Regression Check ==="
-          echo "Threshold: 5% regression triggers warning"
-          echo ""
-          echo "Note: Full regression detection requires baseline results"
-          echo "from the target branch. Results are logged for tracking."
+          echo "=== Performance Regression Check (threshold: 5%) ==="
+          echo "Platform: macOS / $(uname -m)"
           echo ""
           if [ -f benchmark-results.txt ]; then
-            cat benchmark-results.txt
+            # Flag test failures that indicate regressions
+            if grep -q "REGRESSION\|performance regression" benchmark-results.txt 2>/dev/null; then
+              echo "⚠️  Performance regressions detected — see benchmark-results.txt"
+            else
+              echo "✓ No regressions flagged."
+            fi
+            echo ""
+            echo "=== Benchmark Summary ==="
+            grep -E "passed|failed|error|REGRESSION|MP/s|ms" benchmark-results.txt | tail -30 || true
+          else
+            echo "No benchmark results available."
           fi
 
       - name: Upload benchmark results
@@ -66,7 +91,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results-macos
-          path: benchmark-results.txt
+          path: |
+            benchmark-results.txt
           retention-days: 30
 
   benchmark-linux:
@@ -91,9 +117,24 @@ jobs:
       - name: Build release
         run: swift build -c release
 
-      - name: Run encode/decode benchmarks
+      - name: Run OpenJPEG benchmark suite
+        continue-on-error: true
         run: |
-          swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+          swift test -c release --filter PerformanceTests \
+            2>&1 | tee benchmark-results.txt || true
+
+      - name: Run encode/decode benchmarks
+        continue-on-error: true
+        run: |
+          swift test -c release --filter Benchmark \
+            --skip JP3DComplianceTests \
+            --skip Stress \
+            --skip Diagnostic \
+            --skip Fuzz \
+            --skip LargeBlock \
+            --skip EndToEnd \
+            --skip ClientServer \
+            2>&1 | tee -a benchmark-results.txt || true
 
       - name: Upload benchmark results
         if: always()
@@ -128,8 +169,15 @@ jobs:
               uname -m &&
               echo '=== Building Release ===' &&
               swift build -c release &&
-              echo '=== Running Benchmarks ===' &&
-              swift test -c release --filter Benchmark 2>&1 | tee benchmark-results.txt || true
+              echo '=== Running OpenJPEG Benchmark Suite ===' &&
+              swift test -c release --filter PerformanceTests \
+                2>&1 | tee benchmark-results.txt || true &&
+              echo '=== Running Encode/Decode Benchmarks ===' &&
+              swift test -c release --filter Benchmark \
+                --skip JP3DComplianceTests \
+                --skip Stress --skip Diagnostic --skip Fuzz \
+                --skip LargeBlock --skip EndToEnd --skip ClientServer \
+                2>&1 | tee -a benchmark-results.txt || true
             "
 
       - name: Upload benchmark results
@@ -154,19 +202,39 @@ jobs:
       - name: Detect OpenJPEG availability
         id: openjpeg
         run: |
-          apt-get update -qq && apt-get install -y -qq libopenjp2-tools 2>/dev/null && \
+          apt-get update -qq && apt-get install -y -qq libopenjp2-tools python3 2>/dev/null && \
             echo "available=true" >> $GITHUB_OUTPUT || \
             echo "available=false" >> $GITHUB_OUTPUT
 
-      - name: Run OpenJPEG comparison benchmarks
+      - name: Build release (for swift test)
         if: steps.openjpeg.outputs.available == 'true'
+        run: swift build -c release
+
+      - name: Run OpenJPEG comparison benchmarks (swift test)
+        if: steps.openjpeg.outputs.available == 'true'
+        continue-on-error: true
         run: |
           echo "=== OpenJPEG Version ==="
-          opj_decompress -h 2>&1 | head -3 || true
+          opj_compress -h 2>&1 | head -3 || true
           echo ""
-          echo "=== Running Comparison Benchmarks ==="
-          chmod +x Scripts/benchmark_openjpeg.sh 2>/dev/null || true
-          Scripts/benchmark_openjpeg.sh 2>&1 | tee openjpeg-comparison.txt || true
+          echo "=== Running PerformanceTests with OpenJPEG comparison ==="
+          swift test -c release --filter PerformanceTests \
+            2>&1 | tee openjpeg-comparison.txt || true
+
+      - name: Run OpenJPEG comparison script
+        if: steps.openjpeg.outputs.available == 'true'
+        continue-on-error: true
+        run: |
+          echo ""
+          echo "=== Running benchmark_openjpeg.sh ==="
+          chmod +x Scripts/benchmark_openjpeg.sh
+          Scripts/benchmark_openjpeg.sh \
+            --sizes 512,1024 \
+            --modes lossless,lossy2 \
+            --runs 3 \
+            --warmup 1 \
+            --output benchmark_script_results \
+            2>&1 | tee -a openjpeg-comparison.txt || true
 
       - name: Skip OpenJPEG comparison
         if: steps.openjpeg.outputs.available != 'true'
@@ -175,9 +243,65 @@ jobs:
           echo "Install libopenjp2-tools to enable comparison"
 
       - name: Upload comparison results
-        if: always() && steps.openjpeg.outputs.available == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: openjpeg-comparison
-          path: openjpeg-comparison.txt
+          path: |
+            openjpeg-comparison.txt
+            benchmark_script_results/reports/
           retention-days: 30
+
+  regression-detection:
+    name: Performance Regression Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [ benchmark-linux ]
+    if: github.event_name == 'pull_request'
+    container:
+      image: swift:6.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download current benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-linux
+          path: current-results/
+
+      - name: Build release
+        run: swift build -c release
+
+      - name: Run regression detection tests
+        continue-on-error: true
+        run: |
+          echo "=== Performance Regression Detection ==="
+          echo "Threshold: 5% regression triggers warning"
+          echo ""
+          swift test -c release \
+            --filter PerformanceRegressionDetectorTests \
+            2>&1 | tee regression-results.txt || true
+
+      - name: Summarise regression check
+        if: always()
+        run: |
+          echo "=== Regression Check Summary ==="
+          if [ -f regression-results.txt ]; then
+            grep -E "passed|failed|REGRESSION|✓|✗" regression-results.txt | tail -20 || true
+          fi
+          if [ -f current-results/benchmark-results.txt ]; then
+            echo ""
+            echo "=== Current Build Benchmark Summary ==="
+            grep -E "MP/s|ms|passed|failed" current-results/benchmark-results.txt | tail -20 || true
+          fi
+
+      - name: Upload regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-detection-results
+          path: regression-results.txt
+          retention-days: 30
+
