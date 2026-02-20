@@ -13,7 +13,9 @@ import XCTest
 @testable import J2KCodec
 
 final class MJ2IntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "MJ2IntegrationTests (Disabled)") }
+    #endif
 
     // MARK: - Creation-Extraction Round Trip
 

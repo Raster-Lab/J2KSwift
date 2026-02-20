@@ -12,7 +12,9 @@ import J2KCore
 import J2KFileFormat
 
 final class JPIPClientServerIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JPIPClientServerIntegrationTests (Disabled)") }
+    #endif
 
     // MARK: - Mock Transport for Testing
 

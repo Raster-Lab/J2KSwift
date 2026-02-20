@@ -10,7 +10,9 @@ import Foundation
 ///
 /// These tests validate cross-component workflows and end-to-end scenarios.
 final class J2KIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KIntegrationTests (Disabled)") }
+    #endif
 
     private var generator: J2KTestImageGenerator!
 

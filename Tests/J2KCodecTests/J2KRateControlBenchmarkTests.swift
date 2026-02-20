@@ -14,7 +14,9 @@ import XCTest
 
 /// Performance benchmarks for rate control and PCRD-opt.
 final class J2KRateControlBenchmarkTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KRateControlBenchmarkTests (Disabled)") }
+    #endif
 
     // MARK: - PCRD-opt Algorithm Benchmarks
 

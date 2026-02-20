@@ -45,7 +45,9 @@ private func makeVolume(
 // MARK: - Round-Trip Tests
 
 final class JP3DRoundTripTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DRoundTripTests (Disabled)") }
+    #endif
 
     // MARK: 1. Lossless round-trip
 
@@ -256,7 +258,9 @@ final class JP3DRoundTripTests: XCTestCase {
 // MARK: - Progression Order Tests
 
 final class JP3DProgressionOrderIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DProgressionOrderIntegrationTests (Disabled)") }
+    #endif
 
     private func roundTrip(
         volume: J2KVolume,
@@ -304,7 +308,9 @@ final class JP3DProgressionOrderIntegrationTests: XCTestCase {
 // MARK: - Tiling Configuration Tests
 
 final class JP3DTilingIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DTilingIntegrationTests (Disabled)") }
+    #endif
 
     func testStreamingTilingRoundTrip() async throws {
         // Arrange
@@ -370,7 +376,9 @@ final class JP3DTilingIntegrationTests: XCTestCase {
 // MARK: - HTJ2K + JPIP Combined Workflow
 
 final class JP3DHTj2KJPIPWorkflowTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DHTj2KJPIPWorkflowTests (Disabled)") }
+    #endif
 
     /// Validates: encode with HTJ2K → build JPIP viewport → request region → verify bins.
     func testHTJ2KEncodeAndJPIPRegionRequest() async throws {
@@ -461,7 +469,9 @@ final class JP3DHTj2KJPIPWorkflowTests: XCTestCase {
 /// compatible outputs. On Linux (no Metal), both paths fall back to CPU and
 /// results should be identical.
 final class JP3DMetalCPUEquivalenceTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DMetalCPUEquivalenceTests (Disabled)") }
+    #endif
 
     func testMetalAndCPUEncodeProduceSameVolumeShape() async throws {
         // Arrange
@@ -517,7 +527,9 @@ final class JP3DMetalCPUEquivalenceTests: XCTestCase {
 /// (macOS, Linux, Windows). No platform-specific imports are required here;
 /// these tests rely only on J2KCore and J2K3D APIs.
 final class JP3DCrossPlatformTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DCrossPlatformTests (Disabled)") }
+    #endif
 
     func testVersionReportedCorrectly() {
         // Arrange / Act
@@ -593,7 +605,9 @@ final class JP3DCrossPlatformTests: XCTestCase {
 // MARK: - Memory Usage Under Sustained Load
 
 final class JP3DMemoryUsageTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DMemoryUsageTests (Disabled)") }
+    #endif
 
     /// Encodes and decodes a volume repeatedly to detect memory growth.
     /// A catastrophic leak would cause an OOM crash; this test validates
@@ -650,7 +664,9 @@ final class JP3DMemoryUsageTests: XCTestCase {
 // MARK: - Performance Regression Tests
 
 final class JP3DPerformanceRegressionTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DPerformanceRegressionTests (Disabled)") }
+    #endif
 
     /// Baseline: encode a 32×32×8 lossless volume within a reasonable wall-clock budget.
     /// This guards against catastrophic algorithmic regressions vs v1.8.0.
@@ -711,7 +727,9 @@ final class JP3DPerformanceRegressionTests: XCTestCase {
 // MARK: - Encoder/Decoder Configuration Validation
 
 final class JP3DConfigurationValidationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DConfigurationValidationTests (Disabled)") }
+    #endif
 
     func testEncoderConfigurationDefaults() {
         let config = JP3DEncoderConfiguration()
@@ -761,7 +779,9 @@ final class JP3DConfigurationValidationTests: XCTestCase {
 // MARK: - JPIP Streaming API Integration
 
 final class JP3DJPIPAPIIntegrationTests: XCTestCase {
+    #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "JP3DJPIPAPIIntegrationTests (Disabled)") }
+    #endif
 
     func testJPIPClientInitialization() async {
         // Arrange / Act
