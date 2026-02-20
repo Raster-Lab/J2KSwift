@@ -221,4 +221,125 @@ final class J2KSwift62CompatibilityTests: XCTestCase {
             XCTAssertEqual(sum, (0..<10).reduce(0) { $0 + $1 * 256 })
         }
     }
+
+    // MARK: - Actor Concurrency Stress Tests
+
+    /// Verify concurrent access to J2KBenchmarkRunner actor
+    func testBenchmarkRunnerConcurrentAccess() async throws {
+        let runner = J2KBenchmarkRunner()
+
+        // Add results concurrently from multiple tasks
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<50 {
+                group.addTask {
+                    let result = BenchmarkResult(
+                        name: "Concurrent-\(i)",
+                        times: [Double(i) * 0.001]
+                    )
+                    await runner.add(result)
+                }
+            }
+        }
+
+        let results = await runner.getResults()
+        XCTAssertEqual(results.count, 50)
+    }
+
+    /// Verify concurrent access to J2KPipelineProfiler actor
+    func testPipelineProfilerConcurrentAccess() async throws {
+        let profiler = J2KPipelineProfiler()
+
+        // Record metrics concurrently from multiple tasks
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<50 {
+                group.addTask {
+                    let metric = J2KStageMetrics(
+                        stage: .waveletTransform,
+                        elapsedTime: Double(i) * 0.001,
+                        itemsProcessed: i + 1
+                    )
+                    await profiler.record(metric)
+                }
+            }
+        }
+
+        let count = await profiler.metricsCount
+        XCTAssertEqual(count, 50)
+
+        let report = await profiler.generateReport()
+        XCTAssertEqual(report.metrics.count, 50)
+    }
+
+    /// Verify concurrent read/write to J2KMemoryPool actor
+    func testMemoryPoolConcurrentAccess() async throws {
+        let pool = J2KMemoryPool()
+
+        // Acquire and release buffers concurrently
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<20 {
+                group.addTask {
+                    let buffer = await pool.acquire(capacity: 1024)
+                    await pool.release(buffer)
+                }
+            }
+        }
+
+        // If we get here without deadlock or crash, concurrency is correct
+        XCTAssert(true, "Memory pool handled 20 concurrent acquire/release cycles")
+    }
+
+    /// Verify concurrent access to J2KThreadPool actor
+    func testThreadPoolConcurrentAccess() async throws {
+        let pool = J2KThreadPool()
+
+        // Run multiple parallel maps concurrently
+        await withTaskGroup(of: [Int].self) { group in
+            for _ in 0..<5 {
+                group.addTask {
+                    let result = try? await pool.parallelMap(Array(0..<10)) { $0 * 2 }
+                    return result ?? []
+                }
+            }
+
+            for await result in group {
+                XCTAssertEqual(result.count, 10)
+            }
+        }
+    }
+
+    /// Verify Sendable conformance for all public API types
+    func testAllPublicTypesSendable() {
+        // Core types
+        let _: any Sendable = J2KImage(width: 1, height: 1, components: 1, bitDepth: 8)
+        let _: any Sendable = J2KConfiguration()
+        let _: any Sendable = J2KError.invalidParameter("test")
+        let _: any Sendable = J2KColorSpace.sRGB
+        let _: any Sendable = J2KSubband.ll
+
+        // Buffer types
+        let _: any Sendable = J2KBuffer(capacity: 1)
+        let _: any Sendable = J2KImageBuffer(width: 1, height: 1)
+
+        // Benchmark types
+        let _: any Sendable = J2KBenchmark(name: "test")
+        let _: any Sendable = BenchmarkResult(name: "test", times: [0.001])
+
+        // Pipeline types
+        let _: any Sendable = J2KPipelineStage.waveletTransform
+        let _: any Sendable = J2KStageMetrics(stage: .waveletTransform, elapsedTime: 0.001)
+
+        // Volume types
+        let _: any Sendable = J2KVolume(width: 1, height: 1, depth: 1, components: [])
+        let _: any Sendable = J2KVolumeMetadata()
+
+        // Marker types
+        let _: any Sendable = J2KMarker.soc
+
+        // Bit I/O types
+        let _: any Sendable = J2KBitReader(data: Data())
+        let _: any Sendable = J2KBitWriter()
+
+        // All compile = all Sendable
+        XCTAssert(true, "All public types conform to Sendable")
+    }
 }
