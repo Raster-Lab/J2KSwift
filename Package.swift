@@ -43,53 +43,25 @@ let package = Package(
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "J2KCore",
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            name: "J2KCore"),
         .target(
             name: "J2KCodec",
-            dependencies: ["J2KCore"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore"]),
         .target(
             name: "J2KAccelerate",
-            dependencies: ["J2KCore", "J2KCodec"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore", "J2KCodec"]),
         .target(
             name: "J2KFileFormat",
-            dependencies: ["J2KCore", "J2KCodec"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore", "J2KCodec"]),
         .target(
             name: "J2KMetal",
-            dependencies: ["J2KCore"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore"]),
         .target(
             name: "JPIP",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"]),
         .target(
             name: "J2K3D",
-            dependencies: ["J2KCore"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency")
-            ]),
+            dependencies: ["J2KCore"]),
         .testTarget(
             name: "J2KCoreTests",
             dependencies: ["J2KCore", "J2KFileFormat"]),
@@ -122,8 +94,6 @@ let package = Package(
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
             path: "Sources/J2KCLI",
             swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency"),
-                .enableExperimentalFeature("StrictConcurrency"),
                 .unsafeFlags(["-parse-as-library"])
             ]),
     ]

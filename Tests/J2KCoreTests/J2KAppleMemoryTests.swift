@@ -14,7 +14,7 @@ final class J2KAppleMemoryTests: XCTestCase {
         let manager = J2KUnifiedMemoryManager()
 
         let size = 1024 * 1024 // 1 MB
-        let ptr = try await manager.allocateShared(size: size)
+        let ptr = try manager.allocateShared(size: size)
 
         // Verify pointer is valid
         XCTAssertNotEqual(ptr, UnsafeMutableRawPointer(bitPattern: 0))
@@ -24,9 +24,9 @@ final class J2KAppleMemoryTests: XCTestCase {
         let value = ptr.load(as: UInt32.self)
         XCTAssertEqual(value, 0x12345678)
 
-        await manager.deallocate(ptr)
+        manager.deallocate(ptr)
 
-        let stats = await manager.statistics()
+        let stats = manager.statistics()
         XCTAssertEqual(stats["totalAllocated"], 0)
     }
 
@@ -37,19 +37,19 @@ final class J2KAppleMemoryTests: XCTestCase {
 
         // Allocate multiple buffers
         for _ in 0..<5 {
-            let ptr = try await manager.allocateShared(size: 4096)
+            let ptr = try manager.allocateShared(size: 4096)
             pointers.append(ptr)
         }
 
-        let stats = await manager.statistics()
+        let stats = manager.statistics()
         XCTAssertEqual(stats["allocationCount"], 5)
 
         // Deallocate all
         for ptr in pointers {
-            await manager.deallocate(ptr)
+            manager.deallocate(ptr)
         }
 
-        let finalStats = await manager.statistics()
+        let finalStats = manager.statistics()
         XCTAssertEqual(finalStats["totalAllocated"], 0)
     }
 
@@ -57,13 +57,13 @@ final class J2KAppleMemoryTests: XCTestCase {
         let config = J2KUnifiedMemoryManager.Configuration(alignment: 64)
         let manager = J2KUnifiedMemoryManager(configuration: config)
 
-        let ptr = try await manager.allocateShared(size: 100)
+        let ptr = try manager.allocateShared(size: 100)
 
         // Verify 64-byte alignment
         let address = UInt(bitPattern: ptr)
         XCTAssertEqual(address % 64, 0, "Pointer should be 64-byte aligned")
 
-        await manager.deallocate(ptr)
+        manager.deallocate(ptr)
     }
 
     // MARK: - Memory-Mapped File I/O Tests

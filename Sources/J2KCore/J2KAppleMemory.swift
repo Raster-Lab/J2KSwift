@@ -61,8 +61,9 @@ public actor J2KUnifiedMemoryManager {
     }
 
     private let configuration: Configuration
-    private var allocations: [UInt: Int] = [:] // Use address as UInt for key
-    private var totalAllocated: Int = 0
+    private let lock = NSLock()
+    private nonisolated(unsafe) var allocations: [UInt: Int] = [:]
+    private nonisolated(unsafe) var totalAllocated: Int = 0
 
     /// Creates a new unified memory manager.
     ///
@@ -90,10 +91,10 @@ public actor J2KUnifiedMemoryManager {
             throw J2KError.internalError("Failed to allocate aligned memory: errno \(result)")
         }
 
-        let address = UInt(bitPattern: allocatedPtr)
-        Task {
-            await self._trackAllocation(address: address, size: alignedSize)
-        }
+        lock.lock()
+        allocations[UInt(bitPattern: allocatedPtr)] = alignedSize
+        totalAllocated += alignedSize
+        lock.unlock()
 
         // Prefault pages to improve first access performance
         memset(allocatedPtr, 0, alignedSize)
@@ -110,34 +111,26 @@ public actor J2KUnifiedMemoryManager {
     nonisolated public func deallocate(_ pointer: UnsafeMutableRawPointer) {
         #if canImport(Darwin)
         let address = UInt(bitPattern: pointer)
-        Task {
-            await self._untrackAllocation(address: address)
-        }
-        free(pointer)
-        #endif
-    }
-
-    /// Internal method to track allocation (actor-isolated).
-    private func _trackAllocation(address: UInt, size: Int) {
-        allocations[address] = size
-        totalAllocated += size
-    }
-
-    /// Internal method to untrack allocation (actor-isolated).
-    private func _untrackAllocation(address: UInt) {
+        lock.lock()
         if let size = allocations.removeValue(forKey: address) {
             totalAllocated -= size
         }
+        lock.unlock()
+        free(pointer)
+        #endif
     }
 
     /// Returns statistics about memory usage.
     ///
     /// - Returns: A dictionary with memory statistics.
-    public func statistics() -> [String: Int] {
-        [
+    nonisolated public func statistics() -> [String: Int] {
+        lock.lock()
+        let stats = [
             "totalAllocated": totalAllocated,
             "allocationCount": allocations.count
         ]
+        lock.unlock()
+        return stats
     }
 }
 
