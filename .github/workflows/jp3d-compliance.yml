@@ -1,0 +1,100 @@
+name: JP3D Compliance
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+    paths:
+      - 'Sources/J2K3D/**'
+      - 'Tests/J2KComplianceTests/**'
+      - 'Scripts/validate-jp3d-compliance.sh'
+  pull_request:
+    branches: [ main, develop, 'release/*' ]
+    paths:
+      - 'Sources/J2K3D/**'
+      - 'Tests/J2KComplianceTests/**'
+      - 'Scripts/validate-jp3d-compliance.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  jp3d-compliance:
+    name: JP3D Part 4 Compliance Tests
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-compliance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-compliance-
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Build J2K3D target
+        run: swift build --target J2K3D
+
+      - name: Run JP3D compliance tests
+        run: swift test --filter JP3DComplianceTests
+
+      - name: Generate conformance report
+        if: always()
+        run: |
+          chmod +x Scripts/validate-jp3d-compliance.sh
+          Scripts/validate-jp3d-compliance.sh --report-only || true
+
+      - name: Upload conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jp3d-conformance-report
+          path: Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md
+          retention-days: 90
+
+  jp3d-compliance-linux:
+    name: JP3D Part 4 Compliance Tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-compliance-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-compliance-
+
+      - name: Print Swift version
+        run: swift --version
+
+      - name: Build J2K3D target
+        run: swift build --target J2K3D
+
+      - name: Run JP3D compliance tests
+        run: swift test --filter JP3DComplianceTests

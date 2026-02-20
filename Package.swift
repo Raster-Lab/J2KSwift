@@ -114,6 +114,9 @@ let package = Package(
         .testTarget(
             name: "JP3DTests",
             dependencies: ["J2K3D", "J2KCore", "JPIP"]),
+        .testTarget(
+            name: "J2KComplianceTests",
+            dependencies: ["J2K3D", "J2KCore"]),
         .executableTarget(
             name: "J2KCLI",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
