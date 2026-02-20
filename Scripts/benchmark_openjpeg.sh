@@ -199,7 +199,7 @@ measure_median_time() {
         start=$(python3 -c "import time; print(f'{time.perf_counter():.9f}')")
         eval "$cmd" > /dev/null 2>&1 || true
         end=$(python3 -c "import time; print(f'{time.perf_counter():.9f}')")
-        elapsed=$(python3 -c "print(f'{$end - $start:.6f}')")
+        elapsed=$(python3 -c "import sys; print(round(float(sys.argv[1]) - float(sys.argv[2]), 9))" "$end" "$start")
         times+=("$elapsed")
     done
 
@@ -245,9 +245,9 @@ write_csv_row() {
     local csv_file="$1" size="$2" mode="$3" impl="$4" op="$5" median_s="$6"
     local pixels mp throughput_mp median_ms
     pixels=$((size * size))
-    mp=$(python3 -c "print(f'{$pixels / 1e6:.4f}')")
-    throughput_mp=$(python3 -c "print(f'{$pixels / 1e6 / $median_s:.2f}' if $median_s > 0 else '0')")
-    median_ms=$(python3 -c "print(f'{$median_s * 1000:.4f}')")
+    mp=$(python3 -c "import sys; print(f'{int(sys.argv[1]) / 1e6:.4f}')" "$pixels")
+    throughput_mp=$(python3 -c "import sys; p=int(sys.argv[1]); m=float(sys.argv[2]); print(f'{p/1e6/m:.2f}' if m > 0 else '0')" "$pixels" "$median_s")
+    median_ms=$(python3 -c "import sys; print(f'{float(sys.argv[1]) * 1000:.4f}')" "$median_s")
     local platform
     platform="$(uname -s)/$(uname -m)"
     echo "$platform,$size,$mode,$impl,$op,$median_ms,$throughput_mp,$NUM_RUNS" >> "$csv_file"
@@ -319,7 +319,9 @@ run_benchmarks() {
                 local oj_median
                 oj_median=$(benchmark_openjpeg_single "$input_file" "$size" "$mode")
                 local oj_mp
-                oj_mp=$(python3 -c "print(f'{$((size*size)) / 1e6 / $oj_median:.2f}' if $oj_median > 0 else '0')")
+                local pixels_count
+                pixels_count=$((size * size))
+                oj_mp=$(python3 -c "import sys; p=int(sys.argv[1]); m=float(sys.argv[2]); print(f'{p/1e6/m:.2f}' if m > 0 else '0')" "$pixels_count" "$oj_median")
                 log_success "    OpenJPEG encode: ${oj_median}s (${oj_mp} MP/s)"
                 write_csv_row "$csv_file" "$size" "$mode" "OpenJPEG" "Encode" "$oj_median"
             fi
@@ -334,7 +336,7 @@ run_benchmarks() {
                     --filter "BenchmarkRunnerEncodeTests/testRunJ2KSwiftTimingsArePositive" \
                     > /dev/null 2>&1 || true
                 end=$(python3 -c "import time; print(f'{time.perf_counter():.9f}')")
-                j2k_median=$(python3 -c "print(f'{$end - $start:.6f}')")
+                j2k_median=$(python3 -c "import sys; print(round(float(sys.argv[1]) - float(sys.argv[2]), 9))" "$end" "$start")
                 log_success "    J2KSwift encode: ${j2k_median}s"
                 write_csv_row "$csv_file" "$size" "$mode" "J2KSwift" "Encode" "$j2k_median"
             fi
