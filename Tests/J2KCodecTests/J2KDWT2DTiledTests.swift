@@ -695,9 +695,6 @@ final class J2KDWT2DTiledTests: XCTestCase {
         // Each tile should have constant LL and zero detail subbands
         for result in tiledResults {
             let ll = result.decomposition.levels[0].ll
-            let lh = result.decomposition.levels[0].lh
-            let hl = result.decomposition.levels[0].hl
-            let hh = result.decomposition.levels[0].hh
 
             // Constant regions should produce minimal high-frequency content
             // (though not necessarily zero due to boundary effects)

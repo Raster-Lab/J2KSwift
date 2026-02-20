@@ -157,7 +157,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
         let width = 16
         let height = 16
         var data = Data()
-        for y in 0..<height {
+        for _ in 0..<height {
             for x in 0..<width {
                 let value = UInt8((x * 255) / width)
                 data.append(value)

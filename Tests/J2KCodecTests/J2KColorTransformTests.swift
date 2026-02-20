@@ -692,7 +692,6 @@ final class J2KColorTransformTests: XCTestCase {
         // Create test components
         let width = 4
         let height = 4
-        let pixelCount = width * height
 
         let redComponent = createTestComponent(
             index: 0,
