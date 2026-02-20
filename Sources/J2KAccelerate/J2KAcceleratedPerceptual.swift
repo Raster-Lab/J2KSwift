@@ -14,39 +14,39 @@ import J2KCore
 #if canImport(Accelerate)
 import Accelerate
 
-/// # Accelerated Perceptual Operations
-///
-/// Hardware-accelerated implementations of perceptual encoding operations using the Accelerate framework.
-///
-/// This module provides SIMD-optimized implementations of:
-/// - CSF (Contrast Sensitivity Function) computation
-/// - Visual masking calculations
-/// - Spatially-varying quantization
-///
-/// These implementations use vDSP and vForce functions to achieve significant speedups
-/// on Apple Silicon (M1-M4) and Intel processors with AVX support.
-///
-/// ## Performance
-///
-/// Typical speedups on Apple Silicon:
-/// - CSF batch computation: 5-10× faster
-/// - Region masking: 3-8× faster
-/// - Spatially-varying quantization: 4-12× faster
-///
-/// ## Usage
-///
-/// ```swift
-/// #if canImport(Accelerate)
-/// let accelerated = J2KAcceleratedPerceptual()
-///
-/// // Batch CSF computation
-/// let sensitivities = accelerated.batchContrastSensitivity(
-///     frequencies: frequencyArray,
-///     peakFrequency: 4.0,
-///     decayRate: 0.4
-/// )
-/// #endif
-/// ```
+// # Accelerated Perceptual Operations
+//
+// Hardware-accelerated implementations of perceptual encoding operations using the Accelerate framework.
+//
+// This module provides SIMD-optimized implementations of:
+// - CSF (Contrast Sensitivity Function) computation
+// - Visual masking calculations
+// - Spatially-varying quantization
+//
+// These implementations use vDSP and vForce functions to achieve significant speedups
+// on Apple Silicon (M1-M4) and Intel processors with AVX support.
+//
+// ## Performance
+//
+// Typical speedups on Apple Silicon:
+// - CSF batch computation: 5-10× faster
+// - Region masking: 3-8× faster
+// - Spatially-varying quantization: 4-12× faster
+//
+// ## Usage
+//
+// ```swift
+// #if canImport(Accelerate)
+// let accelerated = J2KAcceleratedPerceptual()
+//
+// // Batch CSF computation
+// let sensitivities = accelerated.batchContrastSensitivity(
+//     frequencies: frequencyArray,
+//     peakFrequency: 4.0,
+//     decayRate: 0.4
+// )
+// #endif
+// ```
 
 // MARK: - Accelerated Perceptual Operations
 

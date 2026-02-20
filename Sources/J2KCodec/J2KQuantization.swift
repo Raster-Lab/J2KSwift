@@ -11,62 +11,62 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Quantization
-///
-/// Implementation of quantization and dequantization for JPEG 2000 encoding.
-///
-/// This module implements the quantization stage of the JPEG 2000 encoding pipeline,
-/// which converts wavelet coefficients to integer indices for entropy coding.
-/// Quantization is the primary source of lossy compression in JPEG 2000.
-///
-/// ## Quantization Modes
-///
-/// JPEG 2000 supports several quantization modes:
-///
-/// - **Scalar Quantization**: Standard uniform quantization with a single step size
-/// - **Deadzone Quantization**: Scalar quantization with an enlarged zero bin
-/// - **Expounded Quantization**: Explicit step size for each subband
-/// - **No Quantization**: Used for lossless mode (reversible transform only)
-///
-/// ## Step Size Calculation
-///
-/// The quantization step size is derived from the base step size and subband gain:
-/// ```
-/// Δ_b = Δ_base × 2^(R-r) × G_b
-/// ```
-/// where:
-/// - Δ_base is the base step size derived from quality settings
-/// - R is the number of decomposition levels
-/// - r is the current resolution level
-/// - G_b is the subband gain (1 for LL, √2 for LH/HL, 2 for HH)
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create quantizer with specific parameters
-/// let params = J2KQuantizationParameters(
-///     mode: .deadzone,
-///     baseStepSize: 0.1,
-///     deadzoneWidth: 1.5
-/// )
-/// let quantizer = J2KQuantizer(parameters: params)
-///
-/// // Quantize wavelet coefficients
-/// let quantized = try quantizer.quantize(
-///     coefficients: coefficients,
-///     subband: .hl,
-///     decompositionLevel: 2,
-///     totalLevels: 3
-/// )
-///
-/// // Dequantize for reconstruction
-/// let reconstructed = try quantizer.dequantize(
-///     indices: quantized,
-///     subband: .hl,
-///     decompositionLevel: 2,
-///     totalLevels: 3
-/// )
-/// ```
+// # JPEG 2000 Quantization
+//
+// Implementation of quantization and dequantization for JPEG 2000 encoding.
+//
+// This module implements the quantization stage of the JPEG 2000 encoding pipeline,
+// which converts wavelet coefficients to integer indices for entropy coding.
+// Quantization is the primary source of lossy compression in JPEG 2000.
+//
+// ## Quantization Modes
+//
+// JPEG 2000 supports several quantization modes:
+//
+// - **Scalar Quantization**: Standard uniform quantization with a single step size
+// - **Deadzone Quantization**: Scalar quantization with an enlarged zero bin
+// - **Expounded Quantization**: Explicit step size for each subband
+// - **No Quantization**: Used for lossless mode (reversible transform only)
+//
+// ## Step Size Calculation
+//
+// The quantization step size is derived from the base step size and subband gain:
+// ```
+// Δ_b = Δ_base × 2^(R-r) × G_b
+// ```
+// where:
+// - Δ_base is the base step size derived from quality settings
+// - R is the number of decomposition levels
+// - r is the current resolution level
+// - G_b is the subband gain (1 for LL, √2 for LH/HL, 2 for HH)
+//
+// ## Usage
+//
+// ```swift
+// // Create quantizer with specific parameters
+// let params = J2KQuantizationParameters(
+//     mode: .deadzone,
+//     baseStepSize: 0.1,
+//     deadzoneWidth: 1.5
+// )
+// let quantizer = J2KQuantizer(parameters: params)
+//
+// // Quantize wavelet coefficients
+// let quantized = try quantizer.quantize(
+//     coefficients: coefficients,
+//     subband: .hl,
+//     decompositionLevel: 2,
+//     totalLevels: 3
+// )
+//
+// // Dequantize for reconstruction
+// let reconstructed = try quantizer.dequantize(
+//     indices: quantized,
+//     subband: .hl,
+//     decompositionLevel: 2,
+//     totalLevels: 3
+// )
+// ```
 
 // MARK: - Quantization Mode
 

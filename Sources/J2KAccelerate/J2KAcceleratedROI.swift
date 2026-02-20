@@ -14,47 +14,47 @@ import Accelerate
 import J2KCore
 import J2KCodec
 
-/// # Accelerate-Optimized ROI Operations
-///
-/// Hardware-accelerated implementations of ROI operations using the Accelerate framework.
-///
-/// ## Performance Characteristics
-///
-/// - **Mask Generation**: 5-10× faster using vDSP operations
-/// - **Coefficient Scaling**: 8-15× faster using vDSP_vsmul
-/// - **Feathering**: 3-8× faster using vImage distance transforms
-/// - **Blending**: 10-20× faster using vDSP vector operations
-///
-/// ## Apple Silicon Optimizations
-///
-/// This implementation is specifically optimized for Apple Silicon (M-series and A-series)
-/// processors, using:
-/// - vDSP for vector operations on scaling factors
-/// - vImage for efficient mask processing and distance transforms
-/// - NEON SIMD for coefficient scaling
-/// - Batch processing for improved cache efficiency
-///
-/// ## Usage
-///
-/// ```swift
-/// let accelerated = J2KAcceleratedROI(
-///     imageWidth: 512,
-///     imageHeight: 512
-/// )
-///
-/// // Fast mask generation
-/// let mask = accelerated.generateMask(
-///     for: region,
-///     width: 512,
-///     height: 512
-/// )
-///
-/// // Fast coefficient scaling
-/// let scaled = accelerated.applyScaling(
-///     coefficients: dwtCoeffs,
-///     scalingMap: scalingMap
-/// )
-/// ```
+// # Accelerate-Optimized ROI Operations
+//
+// Hardware-accelerated implementations of ROI operations using the Accelerate framework.
+//
+// ## Performance Characteristics
+//
+// - **Mask Generation**: 5-10× faster using vDSP operations
+// - **Coefficient Scaling**: 8-15× faster using vDSP_vsmul
+// - **Feathering**: 3-8× faster using vImage distance transforms
+// - **Blending**: 10-20× faster using vDSP vector operations
+//
+// ## Apple Silicon Optimizations
+//
+// This implementation is specifically optimized for Apple Silicon (M-series and A-series)
+// processors, using:
+// - vDSP for vector operations on scaling factors
+// - vImage for efficient mask processing and distance transforms
+// - NEON SIMD for coefficient scaling
+// - Batch processing for improved cache efficiency
+//
+// ## Usage
+//
+// ```swift
+// let accelerated = J2KAcceleratedROI(
+//     imageWidth: 512,
+//     imageHeight: 512
+// )
+//
+// // Fast mask generation
+// let mask = accelerated.generateMask(
+//     for: region,
+//     width: 512,
+//     height: 512
+// )
+//
+// // Fast coefficient scaling
+// let scaled = accelerated.applyScaling(
+//     coefficients: dwtCoeffs,
+//     scalingMap: scalingMap
+// )
+// ```
 
 // MARK: - Accelerated ROI Processor
 

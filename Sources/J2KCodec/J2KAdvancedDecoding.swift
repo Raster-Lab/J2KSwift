@@ -11,41 +11,41 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Advanced Decoding
-///
-/// Support for advanced decoding modes in JPEG 2000.
-///
-/// Advanced decoding allows selective extraction of image data based on:
-/// - Quality layers (SNR progressive)
-/// - Resolution levels (spatial progressive)
-/// - Spatial regions (ROI decoding)
-/// - Incremental data availability
-///
-/// ## Decoding Modes
-///
-/// - **Partial Decoding**: Decode up to specific quality layer or resolution
-/// - **ROI Decoding**: Extract specific rectangular regions
-/// - **Progressive Decoding**: Incrementally refine quality or resolution
-/// - **Incremental Decoding**: Process data as it becomes available
-///
-/// ## Usage
-///
-/// ```swift
-/// let decoder = J2KDecoder()
-///
-/// // Partial quality decoding (preview)
-/// let preview = try decoder.decodePartial(
-///     data,
-///     options: J2KPartialDecodingOptions(maxLayer: 2)
-/// )
-///
-/// // ROI decoding
-/// let region = J2KRegion(x: 100, y: 100, width: 512, height: 512)
-/// let roi = try decoder.decodeRegion(data, region: region)
-///
-/// // Resolution progressive (thumbnail)
-/// let thumbnail = try decoder.decodeResolution(data, level: 2)
-/// ```
+// # JPEG 2000 Advanced Decoding
+//
+// Support for advanced decoding modes in JPEG 2000.
+//
+// Advanced decoding allows selective extraction of image data based on:
+// - Quality layers (SNR progressive)
+// - Resolution levels (spatial progressive)
+// - Spatial regions (ROI decoding)
+// - Incremental data availability
+//
+// ## Decoding Modes
+//
+// - **Partial Decoding**: Decode up to specific quality layer or resolution
+// - **ROI Decoding**: Extract specific rectangular regions
+// - **Progressive Decoding**: Incrementally refine quality or resolution
+// - **Incremental Decoding**: Process data as it becomes available
+//
+// ## Usage
+//
+// ```swift
+// let decoder = J2KDecoder()
+//
+// // Partial quality decoding (preview)
+// let preview = try decoder.decodePartial(
+//     data,
+//     options: J2KPartialDecodingOptions(maxLayer: 2)
+// )
+//
+// // ROI decoding
+// let region = J2KRegion(x: 100, y: 100, width: 512, height: 512)
+// let roi = try decoder.decodeRegion(data, region: region)
+//
+// // Resolution progressive (thumbnail)
+// let thumbnail = try decoder.decodeResolution(data, level: 2)
+// ```
 
 // MARK: - Partial Decoding Options
 

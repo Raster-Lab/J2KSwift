@@ -11,30 +11,30 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Encoding Presets
-///
-/// Predefined encoding configurations optimized for different use cases.
-///
-/// Encoding presets provide a simple way to choose between encoding speed,
-/// file size, and quality without manually configuring all parameters.
-///
-/// ## Preset Types
-///
-/// - **Fast**: Optimized for encoding speed with acceptable quality
-/// - **Balanced**: Default balanced settings for general use
-/// - **Quality**: Optimized for maximum quality with slower encoding
-///
-/// ## Usage
-///
-/// ```swift
-/// // Use a preset directly
-/// let config = J2KEncodingPreset.fast.configuration(quality: 0.8)
-/// let encoder = J2KEncoder(configuration: config)
-///
-/// // Or customize a preset
-/// var customConfig = J2KEncodingPreset.balanced.configuration()
-/// customConfig.decompositionLevels = 3
-/// ```
+// # JPEG 2000 Encoding Presets
+//
+// Predefined encoding configurations optimized for different use cases.
+//
+// Encoding presets provide a simple way to choose between encoding speed,
+// file size, and quality without manually configuring all parameters.
+//
+// ## Preset Types
+//
+// - **Fast**: Optimized for encoding speed with acceptable quality
+// - **Balanced**: Default balanced settings for general use
+// - **Quality**: Optimized for maximum quality with slower encoding
+//
+// ## Usage
+//
+// ```swift
+// // Use a preset directly
+// let config = J2KEncodingPreset.fast.configuration(quality: 0.8)
+// let encoder = J2KEncoder(configuration: config)
+//
+// // Or customize a preset
+// var customConfig = J2KEncodingPreset.balanced.configuration()
+// customConfig.decompositionLevels = 3
+// ```
 
 // MARK: - Encoding Preset
 

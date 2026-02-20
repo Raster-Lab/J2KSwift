@@ -11,34 +11,34 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Perceptual Encoder
-///
-/// Implementation of perceptual encoding modes for JPEG 2000.
-///
-/// The perceptual encoder combines visual masking, frequency weighting, and
-/// quality metrics to optimize compression for perceptual quality rather than
-/// mathematical metrics like MSE or PSNR.
-///
-/// ## Features
-///
-/// - CSF-based frequency weighting
-/// - Luminance and texture-based masking
-/// - Motion-adaptive encoding (for video)
-/// - Quality-based rate-distortion optimization
-/// - SSIM/MS-SSIM quality targeting
-///
-/// ## Usage
-///
-/// ```swift
-/// let config = J2KPerceptualEncodingConfiguration(
-///     targetQuality: .ssim(0.95),
-///     enableVisualMasking: true,
-///     enableFrequencyWeighting: true
-/// )
-///
-/// let encoder = J2KPerceptualEncoder(configuration: config)
-/// let encoded = try encoder.encode(image: image)
-/// ```
+// # JPEG 2000 Perceptual Encoder
+//
+// Implementation of perceptual encoding modes for JPEG 2000.
+//
+// The perceptual encoder combines visual masking, frequency weighting, and
+// quality metrics to optimize compression for perceptual quality rather than
+// mathematical metrics like MSE or PSNR.
+//
+// ## Features
+//
+// - CSF-based frequency weighting
+// - Luminance and texture-based masking
+// - Motion-adaptive encoding (for video)
+// - Quality-based rate-distortion optimization
+// - SSIM/MS-SSIM quality targeting
+//
+// ## Usage
+//
+// ```swift
+// let config = J2KPerceptualEncodingConfiguration(
+//     targetQuality: .ssim(0.95),
+//     enableVisualMasking: true,
+//     enableFrequencyWeighting: true
+// )
+//
+// let encoder = J2KPerceptualEncoder(configuration: config)
+// let encoded = try encoder.encode(image: image)
+// ```
 
 // MARK: - Quality Target
 

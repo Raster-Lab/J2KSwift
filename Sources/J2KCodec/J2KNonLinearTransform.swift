@@ -11,41 +11,41 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Part 2 Non-Linear Point Transforms (NLT)
-///
-/// Implementation of non-linear point transforms as defined in ISO/IEC 15444-2.
-///
-/// Non-linear point transforms improve compression efficiency for images with
-/// non-linear characteristics by linearizing the data before wavelet transform
-/// and quantization. This is particularly effective for HDR imaging, gamma-encoded
-/// images, logarithmically-scaled scientific data, and perceptually-encoded content.
-///
-/// ## How It Works
-///
-/// The NLT process consists of:
-/// 1. **Forward Transform**: Apply non-linear function to linearize/decorrelate data
-/// 2. **Encoding**: Process linearized data through standard JPEG 2000 pipeline
-/// 3. **Signaling**: Store transform parameters in NLT marker segments
-/// 4. **Inverse Transform**: Apply inverse function during decoding to restore original values
-///
-/// ## Usage
-///
-/// ```swift
-/// // Encoder path: apply forward transform
-/// let nlt = J2KNonLinearTransform()
-/// let result = try nlt.applyForward(
-///     componentData: componentData,
-///     transform: .gamma(2.2),  // Linearize gamma-encoded data
-///     bitDepth: 10
-/// )
-///
-/// // Decoder path: apply inverse transform
-/// let restored = try nlt.applyInverse(
-///     componentData: encodedData,
-///     transform: .gamma(2.2),
-///     bitDepth: 10
-/// )
-/// ```
+// # JPEG 2000 Part 2 Non-Linear Point Transforms (NLT)
+//
+// Implementation of non-linear point transforms as defined in ISO/IEC 15444-2.
+//
+// Non-linear point transforms improve compression efficiency for images with
+// non-linear characteristics by linearizing the data before wavelet transform
+// and quantization. This is particularly effective for HDR imaging, gamma-encoded
+// images, logarithmically-scaled scientific data, and perceptually-encoded content.
+//
+// ## How It Works
+//
+// The NLT process consists of:
+// 1. **Forward Transform**: Apply non-linear function to linearize/decorrelate data
+// 2. **Encoding**: Process linearized data through standard JPEG 2000 pipeline
+// 3. **Signaling**: Store transform parameters in NLT marker segments
+// 4. **Inverse Transform**: Apply inverse function during decoding to restore original values
+//
+// ## Usage
+//
+// ```swift
+// // Encoder path: apply forward transform
+// let nlt = J2KNonLinearTransform()
+// let result = try nlt.applyForward(
+//     componentData: componentData,
+//     transform: .gamma(2.2),  // Linearize gamma-encoded data
+//     bitDepth: 10
+// )
+//
+// // Decoder path: apply inverse transform
+// let restored = try nlt.applyInverse(
+//     componentData: encodedData,
+//     transform: .gamma(2.2),
+//     bitDepth: 10
+// )
+// ```
 
 // MARK: - NLT Configuration
 

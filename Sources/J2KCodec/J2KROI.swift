@@ -11,45 +11,45 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Region of Interest (ROI)
-///
-/// Implementation of Region of Interest coding for JPEG 2000.
-///
-/// ROI coding allows specific areas of an image to be encoded at higher quality
-/// than the background. In JPEG 2000, this is achieved through the MaxShift method,
-/// which shifts the coefficients of ROI regions to higher bit planes, ensuring
-/// they are decoded before non-ROI regions.
-///
-/// ## MaxShift Method
-///
-/// The MaxShift method works by:
-/// 1. Identifying ROI regions in the spatial domain
-/// 2. Mapping those regions to the wavelet domain
-/// 3. Scaling ROI coefficients by shifting them up by `s` bit positions
-/// 4. During decoding, non-ROI coefficients are identified by their lower magnitude
-///
-/// ## Usage
-///
-/// ```swift
-/// // Define a rectangular ROI
-/// let roi = J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200)
-///
-/// // Create ROI processor
-/// let roiProcessor = J2KROIProcessor(
-///     imageWidth: 512,
-///     imageHeight: 512,
-///     regions: [roi],
-///     shift: 5
-/// )
-///
-/// // Apply ROI scaling to wavelet coefficients
-/// let scaledCoeffs = roiProcessor.applyROIScaling(
-///     coefficients: dwtCoeffs,
-///     subband: .ll,
-///     decompositionLevel: 0,
-///     totalLevels: 3
-/// )
-/// ```
+// # JPEG 2000 Region of Interest (ROI)
+//
+// Implementation of Region of Interest coding for JPEG 2000.
+//
+// ROI coding allows specific areas of an image to be encoded at higher quality
+// than the background. In JPEG 2000, this is achieved through the MaxShift method,
+// which shifts the coefficients of ROI regions to higher bit planes, ensuring
+// they are decoded before non-ROI regions.
+//
+// ## MaxShift Method
+//
+// The MaxShift method works by:
+// 1. Identifying ROI regions in the spatial domain
+// 2. Mapping those regions to the wavelet domain
+// 3. Scaling ROI coefficients by shifting them up by `s` bit positions
+// 4. During decoding, non-ROI coefficients are identified by their lower magnitude
+//
+// ## Usage
+//
+// ```swift
+// // Define a rectangular ROI
+// let roi = J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200)
+//
+// // Create ROI processor
+// let roiProcessor = J2KROIProcessor(
+//     imageWidth: 512,
+//     imageHeight: 512,
+//     regions: [roi],
+//     shift: 5
+// )
+//
+// // Apply ROI scaling to wavelet coefficients
+// let scaledCoeffs = roiProcessor.applyROIScaling(
+//     coefficients: dwtCoeffs,
+//     subband: .ll,
+//     decompositionLevel: 0,
+//     totalLevels: 3
+// )
+// ```
 
 // MARK: - ROI Shape
 

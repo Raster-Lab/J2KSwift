@@ -11,50 +11,50 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Perceptual Quality Metrics
-///
-/// Implementation of image quality metrics for evaluating JPEG 2000 compression.
-///
-/// This module provides various quality metrics that can be used to measure the
-/// perceptual quality of compressed images compared to their originals. These
-/// metrics are essential for:
-/// - Evaluating compression quality
-/// - Rate-distortion optimization
-/// - Quality-based encoding modes
-/// - Benchmarking and validation
-///
-/// ## Supported Metrics
-///
-/// - **PSNR** (Peak Signal-to-Noise Ratio): Simple MSE-based metric
-/// - **SSIM** (Structural Similarity Index): Perceptually motivated metric
-/// - **MS-SSIM** (Multi-Scale SSIM): Multi-resolution extension of SSIM
-///
-/// ## Usage
-///
-/// ```swift
-/// let metrics = J2KQualityMetrics()
-///
-/// // Calculate PSNR between original and compressed
-/// let psnr = try metrics.psnr(
-///     original: originalImage,
-///     compressed: compressedImage
-/// )
-/// print("PSNR: \(psnr) dB")
-///
-/// // Calculate SSIM for better perceptual correlation
-/// let ssim = try metrics.ssim(
-///     original: originalImage,
-///     compressed: compressedImage
-/// )
-/// print("SSIM: \(ssim)")
-///
-/// // Calculate MS-SSIM for multi-scale quality assessment
-/// let msssim = try metrics.msssim(
-///     original: originalImage,
-///     compressed: compressedImage
-/// )
-/// print("MS-SSIM: \(msssim)")
-/// ```
+// # JPEG 2000 Perceptual Quality Metrics
+//
+// Implementation of image quality metrics for evaluating JPEG 2000 compression.
+//
+// This module provides various quality metrics that can be used to measure the
+// perceptual quality of compressed images compared to their originals. These
+// metrics are essential for:
+// - Evaluating compression quality
+// - Rate-distortion optimization
+// - Quality-based encoding modes
+// - Benchmarking and validation
+//
+// ## Supported Metrics
+//
+// - **PSNR** (Peak Signal-to-Noise Ratio): Simple MSE-based metric
+// - **SSIM** (Structural Similarity Index): Perceptually motivated metric
+// - **MS-SSIM** (Multi-Scale SSIM): Multi-resolution extension of SSIM
+//
+// ## Usage
+//
+// ```swift
+// let metrics = J2KQualityMetrics()
+//
+// // Calculate PSNR between original and compressed
+// let psnr = try metrics.psnr(
+//     original: originalImage,
+//     compressed: compressedImage
+// )
+// print("PSNR: \(psnr) dB")
+//
+// // Calculate SSIM for better perceptual correlation
+// let ssim = try metrics.ssim(
+//     original: originalImage,
+//     compressed: compressedImage
+// )
+// print("SSIM: \(ssim)")
+//
+// // Calculate MS-SSIM for multi-scale quality assessment
+// let msssim = try metrics.msssim(
+//     original: originalImage,
+//     compressed: compressedImage
+// )
+// print("MS-SSIM: \(msssim)")
+// ```
 
 // MARK: - Quality Metrics Result
 

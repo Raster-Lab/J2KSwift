@@ -295,6 +295,7 @@ public struct JP3DCodestreamBuilder: Sendable {
     /// Creates a new codestream builder.
     public init() {}
 
+    // swiftlint:disable:next function_parameter_count
     /// Builds a JP3D codestream from encoded tile data.
     ///
     /// - Parameters:
@@ -312,7 +313,6 @@ public struct JP3DCodestreamBuilder: Sendable {
     ///   - tileSizeZ: Tile size along Z.
     ///   - isLossless: Whether lossless encoding was used.
     /// - Returns: The assembled JP3D codestream as `Data`.
-    // swiftlint:disable:next function_parameter_count
     public func build(
         tileData: [Data],
         width: Int,

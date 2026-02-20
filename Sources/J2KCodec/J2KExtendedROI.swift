@@ -11,43 +11,43 @@
 import Foundation
 import J2KCore
 
-/// # Extended JPEG 2000 ROI Methods (ISO/IEC 15444-2)
-///
-/// Implementation of Part 2 extended ROI methods beyond the basic MaxShift approach.
-///
-/// ## Overview
-///
-/// While Part 1 defines the MaxShift method for ROI coding, Part 2 extends
-/// this with more sophisticated approaches:
-/// - General scaling-based ROI with custom scaling factors
-/// - DWT domain ROI allowing arbitrary regions after transform
-/// - Multiple ROI regions with different priorities
-/// - ROI blending and feathering for smooth transitions
-/// - Bitplane-dependent ROI coding
-/// - Quality layer-based ROI
-/// - Adaptive ROI based on content analysis
-/// - Hierarchical (nested) ROI regions
-///
-/// ## Scaling-Based ROI
-///
-/// Unlike MaxShift which uses a uniform shift, scaling-based ROI allows
-/// different scaling factors for different regions, providing fine-grained
-/// control over quality allocation.
-///
-/// ```swift
-/// let roi = J2KExtendedROIRegion(
-///     baseRegion: J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200),
-///     scalingFactor: 2.0,
-///     priority: 10
-/// )
-///
-/// let processor = J2KExtendedROIProcessor(
-///     imageWidth: 512,
-///     imageHeight: 512,
-///     regions: [roi],
-///     method: .scalingBased
-/// )
-/// ```
+// # Extended JPEG 2000 ROI Methods (ISO/IEC 15444-2)
+//
+// Implementation of Part 2 extended ROI methods beyond the basic MaxShift approach.
+//
+// ## Overview
+//
+// While Part 1 defines the MaxShift method for ROI coding, Part 2 extends
+// this with more sophisticated approaches:
+// - General scaling-based ROI with custom scaling factors
+// - DWT domain ROI allowing arbitrary regions after transform
+// - Multiple ROI regions with different priorities
+// - ROI blending and feathering for smooth transitions
+// - Bitplane-dependent ROI coding
+// - Quality layer-based ROI
+// - Adaptive ROI based on content analysis
+// - Hierarchical (nested) ROI regions
+//
+// ## Scaling-Based ROI
+//
+// Unlike MaxShift which uses a uniform shift, scaling-based ROI allows
+// different scaling factors for different regions, providing fine-grained
+// control over quality allocation.
+//
+// ```swift
+// let roi = J2KExtendedROIRegion(
+//     baseRegion: J2KROIRegion.rectangle(x: 100, y: 100, width: 200, height: 200),
+//     scalingFactor: 2.0,
+//     priority: 10
+// )
+//
+// let processor = J2KExtendedROIProcessor(
+//     imageWidth: 512,
+//     imageHeight: 512,
+//     regions: [roi],
+//     method: .scalingBased
+// )
+// ```
 
 // MARK: - Extended ROI Method
 

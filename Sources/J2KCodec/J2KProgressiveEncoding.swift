@@ -11,36 +11,36 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Progressive Encoding
-///
-/// Support for progressive encoding modes in JPEG 2000.
-///
-/// Progressive encoding allows images to be decoded at different levels of quality,
-/// resolution, or detail, enabling efficient streaming and adaptive delivery.
-///
-/// ## Progressive Modes
-///
-/// - **SNR Progressive**: Quality layers provide increasing quality
-/// - **Spatial Progressive**: Resolution levels provide increasing resolution
-/// - **Layer Progressive**: Individual layers can be decoded independently
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create a progressive encoding configuration
-/// let progressive = J2KProgressiveMode.snr(layers: 8)
-/// var config = J2KEncodingConfiguration()
-/// config.progressiveMode = progressive
-///
-/// // Encode with progressive mode
-/// let encoder = J2KEncoder(configuration: config)
-/// let data = try encoder.encode(image)
-///
-/// // The encoded data can be decoded progressively
-/// let decoder = J2KDecoder()
-/// let preview = try decoder.decodeProgressive(data, upToLayer: 2)
-/// let full = try decoder.decodeProgressive(data, upToLayer: 8)
-/// ```
+// # JPEG 2000 Progressive Encoding
+//
+// Support for progressive encoding modes in JPEG 2000.
+//
+// Progressive encoding allows images to be decoded at different levels of quality,
+// resolution, or detail, enabling efficient streaming and adaptive delivery.
+//
+// ## Progressive Modes
+//
+// - **SNR Progressive**: Quality layers provide increasing quality
+// - **Spatial Progressive**: Resolution levels provide increasing resolution
+// - **Layer Progressive**: Individual layers can be decoded independently
+//
+// ## Usage
+//
+// ```swift
+// // Create a progressive encoding configuration
+// let progressive = J2KProgressiveMode.snr(layers: 8)
+// var config = J2KEncodingConfiguration()
+// config.progressiveMode = progressive
+//
+// // Encode with progressive mode
+// let encoder = J2KEncoder(configuration: config)
+// let data = try encoder.encode(image)
+//
+// // The encoded data can be decoded progressively
+// let decoder = J2KDecoder()
+// let preview = try decoder.decodeProgressive(data, upToLayer: 2)
+// let full = try decoder.decodeProgressive(data, upToLayer: 8)
+// ```
 
 // MARK: - Progressive Mode
 

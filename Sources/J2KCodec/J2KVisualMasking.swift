@@ -11,35 +11,35 @@
 import Foundation
 import J2KCore
 
-/// # JPEG 2000 Visual Masking
-///
-/// Implementation of advanced visual masking models for perceptual JPEG 2000 encoding.
-///
-/// Visual masking describes how the visibility of distortions depends on local image
-/// characteristics. This module implements luminance-dependent masking, texture-based
-/// masking, and motion-adaptive masking to improve perceptual compression quality.
-///
-/// ## Masking Models
-///
-/// - **Luminance Masking**: Distortions are less visible in very dark or very bright regions
-/// - **Texture Masking**: Distortions are less visible in high-detail/textured regions
-/// - **Motion Masking**: Distortions are less visible in motion areas (for video)
-///
-/// ## Usage
-///
-/// ```swift
-/// let masking = J2KVisualMasking()
-///
-/// // Calculate masking factor for a region
-/// let factor = masking.calculateMaskingFactor(
-///     luminance: 128.0,
-///     localVariance: 100.0,
-///     motionVector: nil
-/// )
-///
-/// // Apply to quantization step size
-/// let maskedStepSize = baseStepSize * factor
-/// ```
+// # JPEG 2000 Visual Masking
+//
+// Implementation of advanced visual masking models for perceptual JPEG 2000 encoding.
+//
+// Visual masking describes how the visibility of distortions depends on local image
+// characteristics. This module implements luminance-dependent masking, texture-based
+// masking, and motion-adaptive masking to improve perceptual compression quality.
+//
+// ## Masking Models
+//
+// - **Luminance Masking**: Distortions are less visible in very dark or very bright regions
+// - **Texture Masking**: Distortions are less visible in high-detail/textured regions
+// - **Motion Masking**: Distortions are less visible in motion areas (for video)
+//
+// ## Usage
+//
+// ```swift
+// let masking = J2KVisualMasking()
+//
+// // Calculate masking factor for a region
+// let factor = masking.calculateMaskingFactor(
+//     luminance: 128.0,
+//     localVariance: 100.0,
+//     motionVector: nil
+// )
+//
+// // Apply to quantization step size
+// let maskedStepSize = baseStepSize * factor
+// ```
 
 // MARK: - Visual Masking Configuration
 

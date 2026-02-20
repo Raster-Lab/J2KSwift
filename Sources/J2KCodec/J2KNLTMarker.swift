@@ -11,22 +11,22 @@
 import Foundation
 import J2KCore
 
-/// # NLT Marker Segment
-///
-/// The NLT (Non-Linear Transform) marker segment signals non-linear point
-/// transforms in the JPEG 2000 Part 2 codestream.
-///
-/// ## Marker Format
-///
-/// ```
-/// NLT marker: 0xFF90 (Part 2 extension)
-/// Lnlt: Marker segment length (2 bytes)
-/// Cnlt: Number of components with transforms (2 bytes)
-/// For each component:
-///   ICnlt: Component index (2 bytes)
-///   Tnlt: Transform type (1 byte)
-///   Pnlt: Parameter data (variable length)
-/// ```
+// # NLT Marker Segment
+//
+// The NLT (Non-Linear Transform) marker segment signals non-linear point
+// transforms in the JPEG 2000 Part 2 codestream.
+//
+// ## Marker Format
+//
+// ```
+// NLT marker: 0xFF90 (Part 2 extension)
+// Lnlt: Marker segment length (2 bytes)
+// Cnlt: Number of components with transforms (2 bytes)
+// For each component:
+//   ICnlt: Component index (2 bytes)
+//   Tnlt: Transform type (1 byte)
+//   Pnlt: Parameter data (variable length)
+// ```
 
 // MARK: - NLT Marker Segment
 

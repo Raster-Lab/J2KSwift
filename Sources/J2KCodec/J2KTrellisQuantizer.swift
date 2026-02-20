@@ -11,52 +11,52 @@
 import Foundation
 import J2KCore
 
-/// # Trellis Coded Quantization (TCQ)
-///
-/// Implementation of trellis coded quantization for improved rate-distortion
-/// performance in JPEG 2000 encoding.
-///
-/// TCQ uses a finite-state machine (trellis) to select quantization levels
-/// that minimize the rate-distortion cost. Unlike scalar quantization which
-/// quantizes each coefficient independently, TCQ considers the dependencies
-/// between adjacent coefficients to achieve better compression efficiency.
-///
-/// ## Algorithm Overview
-///
-/// TCQ operates by:
-/// 1. Defining a trellis structure with multiple states at each stage
-/// 2. Computing transition costs between states (distortion + rate)
-/// 3. Using the Viterbi algorithm to find the optimal path through the trellis
-/// 4. Selecting quantization levels based on the optimal path
-///
-/// ## Performance Benefits
-///
-/// TCQ typically provides:
-/// - 2-8% improvement in rate-distortion performance over scalar quantization
-/// - Better preservation of edge structures
-/// - Reduced quantization artifacts
-/// - Smoother quality degradation at low bitrates
-///
-/// ## Usage
-///
-/// ```swift
-/// // Create TCQ configuration
-/// let config = J2KTCQConfiguration(
-///     numStates: 4,
-///     baseStepSize: 1.0,
-///     lambdaRD: 0.5
-/// )
-///
-/// // Create trellis quantizer
-/// let tcq = J2KTrellisQuantizer(configuration: config)
-///
-/// // Quantize coefficients
-/// let result = try tcq.quantize(
-///     coefficients: waveletCoeffs,
-///     subband: .hh,
-///     decompositionLevel: 2
-/// )
-/// ```
+// # Trellis Coded Quantization (TCQ)
+//
+// Implementation of trellis coded quantization for improved rate-distortion
+// performance in JPEG 2000 encoding.
+//
+// TCQ uses a finite-state machine (trellis) to select quantization levels
+// that minimize the rate-distortion cost. Unlike scalar quantization which
+// quantizes each coefficient independently, TCQ considers the dependencies
+// between adjacent coefficients to achieve better compression efficiency.
+//
+// ## Algorithm Overview
+//
+// TCQ operates by:
+// 1. Defining a trellis structure with multiple states at each stage
+// 2. Computing transition costs between states (distortion + rate)
+// 3. Using the Viterbi algorithm to find the optimal path through the trellis
+// 4. Selecting quantization levels based on the optimal path
+//
+// ## Performance Benefits
+//
+// TCQ typically provides:
+// - 2-8% improvement in rate-distortion performance over scalar quantization
+// - Better preservation of edge structures
+// - Reduced quantization artifacts
+// - Smoother quality degradation at low bitrates
+//
+// ## Usage
+//
+// ```swift
+// // Create TCQ configuration
+// let config = J2KTCQConfiguration(
+//     numStates: 4,
+//     baseStepSize: 1.0,
+//     lambdaRD: 0.5
+// )
+//
+// // Create trellis quantizer
+// let tcq = J2KTrellisQuantizer(configuration: config)
+//
+// // Quantize coefficients
+// let result = try tcq.quantize(
+//     coefficients: waveletCoeffs,
+//     subband: .hh,
+//     decompositionLevel: 2
+// )
+// ```
 
 // MARK: - TCQ Configuration
 

@@ -413,6 +413,7 @@ public actor JP3DTranscoder {
 /// Extends `JP3DCodestreamBuilder` with an HTJ2K-aware `build` overload that
 /// optionally inserts CAP and CPF marker segments before the first SOT.
 extension JP3DCodestreamBuilder {
+    // swiftlint:disable:next function_parameter_count
     /// Builds a JP3D codestream with optional HTJ2K marker segments.
     ///
     /// When `htj2kConfiguration` is non-nil the builder inserts CAP and CPF
@@ -422,7 +423,6 @@ extension JP3DCodestreamBuilder {
     /// - Parameters: (same as `build(tileData:width:height:depth:components:bitDepth:levelsX:levelsY:levelsZ:tileSizeX:tileSizeY:tileSizeZ:isLossless:)`)
     ///   - htj2kConfiguration: Optional HTJ2K configuration. Pass `nil` for standard JP3D.
     /// - Returns: The assembled JP3D codestream.
-    // swiftlint:disable:next function_parameter_count
     public func build(
         tileData: [Data],
         width: Int,
