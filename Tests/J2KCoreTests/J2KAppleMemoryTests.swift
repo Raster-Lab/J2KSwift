@@ -11,6 +11,9 @@ final class J2KAppleMemoryTests: XCTestCase {
     // MARK: - Unified Memory Manager Tests
 
     func testUnifiedMemoryManagerAllocation() async throws {
+        #if !canImport(Darwin)
+        throw XCTSkip("Unified memory only available on Apple platforms")
+        #endif
         let manager = J2KUnifiedMemoryManager()
 
         let size = 1024 * 1024 // 1 MB
@@ -31,6 +34,9 @@ final class J2KAppleMemoryTests: XCTestCase {
     }
 
     func testUnifiedMemoryManagerMultipleAllocations() async throws {
+        #if !canImport(Darwin)
+        throw XCTSkip("Unified memory only available on Apple platforms")
+        #endif
         let manager = J2KUnifiedMemoryManager()
 
         var pointers: [UnsafeMutableRawPointer] = []
@@ -54,6 +60,9 @@ final class J2KAppleMemoryTests: XCTestCase {
     }
 
     func testUnifiedMemoryManagerAlignment() async throws {
+        #if !canImport(Darwin)
+        throw XCTSkip("Unified memory only available on Apple platforms")
+        #endif
         let config = J2KUnifiedMemoryManager.Configuration(alignment: 64)
         let manager = J2KUnifiedMemoryManager(configuration: config)
 
