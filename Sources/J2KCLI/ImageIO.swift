@@ -153,9 +153,18 @@ extension J2KCLI {
 
         // Create components
         let components = [
-            J2KComponent(index: 0, bitDepth: bitDepth, signed: false, width: width, height: height, subsamplingX: 1, subsamplingY: 1, data: rData),
-            J2KComponent(index: 1, bitDepth: bitDepth, signed: false, width: width, height: height, subsamplingX: 1, subsamplingY: 1, data: gData),
-            J2KComponent(index: 2, bitDepth: bitDepth, signed: false, width: width, height: height, subsamplingX: 1, subsamplingY: 1, data: bData)
+            J2KComponent(
+                index: 0, bitDepth: bitDepth, signed: false,
+                width: width, height: height,
+                subsamplingX: 1, subsamplingY: 1, data: rData),
+            J2KComponent(
+                index: 1, bitDepth: bitDepth, signed: false,
+                width: width, height: height,
+                subsamplingX: 1, subsamplingY: 1, data: gData),
+            J2KComponent(
+                index: 2, bitDepth: bitDepth, signed: false,
+                width: width, height: height,
+                subsamplingX: 1, subsamplingY: 1, data: bData)
         ]
 
         // Create image

@@ -879,7 +879,10 @@ struct DecoderPipeline: Sendable {
             let componentFilter: J2KDWT1D.Filter
             if let kernelConfig = metadata.configuration.waveletKernelConfiguration {
                 // Use arbitrary wavelet kernel if configured
-                if let kernel = kernelConfig.kernel(forTile: 0, component: compIdx, lossless: metadata.configuration.useReversibleTransform) {
+                if let kernel = kernelConfig.kernel(
+                    forTile: 0, component: compIdx,
+                    lossless: metadata.configuration.useReversibleTransform
+                ) {
                     componentFilter = kernel.toDWTFilter()
                 } else {
                     componentFilter = filter

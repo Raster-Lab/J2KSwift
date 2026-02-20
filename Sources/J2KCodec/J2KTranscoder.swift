@@ -747,7 +747,10 @@ public struct J2KTranscoder: Sendable {
 
         Task { @Sendable in
             do {
-                capturedResult = .success(try await encodeFromCoefficientsAsync(coefficients, targetMode: targetMode, progress: progress))
+                capturedResult = .success(
+                    try await encodeFromCoefficientsAsync(
+                        coefficients, targetMode: targetMode,
+                        progress: progress))
             } catch {
                 capturedResult = .failure(error)
             }

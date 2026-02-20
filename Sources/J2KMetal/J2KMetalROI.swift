@@ -435,10 +435,16 @@ public actor J2KMetalROI {
         computeEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
 
         var params = (UInt32(width), UInt32(height), shift)
+        let uint32Size = MemoryLayout<UInt32>.size
         withUnsafeBytes(of: &params) { ptr in
-            computeEncoder.setBytes(ptr.baseAddress!, length: MemoryLayout<UInt32>.size, index: 3)
-            computeEncoder.setBytes(ptr.baseAddress! + MemoryLayout<UInt32>.size, length: MemoryLayout<UInt32>.size, index: 4)
-            computeEncoder.setBytes(ptr.baseAddress! + 2 * MemoryLayout<UInt32>.size, length: MemoryLayout<UInt32>.size, index: 5)
+            computeEncoder.setBytes(
+                ptr.baseAddress!, length: uint32Size, index: 3)
+            computeEncoder.setBytes(
+                ptr.baseAddress! + uint32Size,
+                length: uint32Size, index: 4)
+            computeEncoder.setBytes(
+                ptr.baseAddress! + 2 * uint32Size,
+                length: uint32Size, index: 5)
         }
 
         // Dispatch

@@ -766,7 +766,10 @@ public struct J2KISOTestSuiteLoader: Sendable {
                 if bytes[offset] == 0x23 { // '#'
                     while offset < bytes.count && bytes[offset] != 0x0A { offset += 1 }
                 }
-                if offset < bytes.count && (bytes[offset] == 0x20 || bytes[offset] == 0x0A || bytes[offset] == 0x0D || bytes[offset] == 0x09) {
+                if offset < bytes.count && (bytes[offset] == 0x20
+                    || bytes[offset] == 0x0A
+                    || bytes[offset] == 0x0D
+                    || bytes[offset] == 0x09) {
                     offset += 1
                 } else {
                     break

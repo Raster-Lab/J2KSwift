@@ -363,7 +363,10 @@ public struct J2KSIMDAlignedBuffer: @unchecked Sendable {
     ///
     /// - Parameter body: A closure that takes a typed buffer pointer.
     /// - Returns: The result of the closure.
-    public func withMemoryRebound<T, R>(to type: T.Type, _ body: (UnsafeMutableBufferPointer<T>) throws -> R) rethrows -> R {
+    public func withMemoryRebound<T, R>(
+        to type: T.Type,
+        _ body: (UnsafeMutableBufferPointer<T>) throws -> R
+    ) rethrows -> R {
         let typedPtr = pointer.assumingMemoryBound(to: type)
         let count = size / MemoryLayout<T>.stride
         return try body(UnsafeMutableBufferPointer(start: typedPtr, count: count))

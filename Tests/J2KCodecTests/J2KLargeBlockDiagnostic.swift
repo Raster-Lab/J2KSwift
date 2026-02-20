@@ -95,6 +95,9 @@ final class J2KLargeBlockDiagnostic: XCTestCase {
     /// Note: 64x64 blocks with dense, high-magnitude data have a pre-existing
     /// MQ coder issue unrelated to bypass mode or predictable termination.
     func test64x64WithoutBypass() throws {
-        throw XCTSkip("Pre-existing 64x64 dense data MQ coder issue - not related to bypass mode or predictable termination")
+        throw XCTSkip(
+            "Pre-existing 64x64 dense data MQ coder issue"
+            + " - not related to bypass mode or predictable termination"
+        )
     }
 }

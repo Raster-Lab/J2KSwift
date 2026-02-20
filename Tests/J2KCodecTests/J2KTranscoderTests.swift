@@ -1087,7 +1087,9 @@ final class J2KTranscoderTests: XCTestCase {
             direction: .legacyToHT
         )
         let sequentialEnd = DispatchTime.now()
-        let sequentialTime = Double(sequentialEnd.uptimeNanoseconds - sequentialStart.uptimeNanoseconds) / 1_000_000_000.0
+        let elapsedNanos = sequentialEnd.uptimeNanoseconds
+            - sequentialStart.uptimeNanoseconds
+        let sequentialTime = Double(elapsedNanos) / 1_000_000_000.0
 
         // Log performance metrics
         print("Multi-tile Transcoding Performance:")

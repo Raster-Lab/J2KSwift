@@ -44,7 +44,9 @@ final class MJ2CrossPlatformTests: XCTestCase {
         #if canImport(VideoToolbox)
         XCTAssertTrue(MJ2PlatformCapabilities.hasVideoToolbox, "VideoToolbox should be available on Apple platforms")
         #else
-        XCTAssertFalse(MJ2PlatformCapabilities.hasVideoToolbox, "VideoToolbox should not be available on non-Apple platforms")
+        XCTAssertFalse(
+            MJ2PlatformCapabilities.hasVideoToolbox,
+            "VideoToolbox should not be available on non-Apple platforms")
         #endif
     }
 
@@ -86,7 +88,9 @@ final class MJ2CrossPlatformTests: XCTestCase {
         // Verify software encoder capabilities
         if let softwareCap = capabilities[.software] {
             XCTAssertTrue(softwareCap.supportedCodecs.contains(.h264), "Software encoder should support H.264")
-            XCTAssertFalse(softwareCap.supportsHardwareAcceleration, "Software encoder should not be hardware accelerated")
+            XCTAssertFalse(
+                softwareCap.supportsHardwareAcceleration,
+                "Software encoder should not be hardware accelerated")
         }
 
         #if canImport(VideoToolbox)

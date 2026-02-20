@@ -115,7 +115,11 @@ public struct JP3DRegisteredVolume: Sendable {
     public let tileDepth: Int
 
     /// Creates a registered volume entry.
-    public init(volumeID: String, volume: J2KVolume, data: Data, tileWidth: Int = 128, tileHeight: Int = 128, tileDepth: Int = 8) {
+    public init(
+        volumeID: String, volume: J2KVolume, data: Data,
+        tileWidth: Int = 128, tileHeight: Int = 128,
+        tileDepth: Int = 8
+    ) {
         self.volumeID = volumeID
         self.volume = volume
         self.data = data
@@ -341,9 +345,12 @@ public actor JP3DJPIPServer {
         let vp = session.viewport
         let vol = registered.volume
         let expanded = JP3DStreamingRegion(
-            xRange: max(0, vp.xRange.lowerBound - registered.tileWidth)..<min(vol.width, vp.xRange.upperBound + registered.tileWidth),
-            yRange: max(0, vp.yRange.lowerBound - registered.tileHeight)..<min(vol.height, vp.yRange.upperBound + registered.tileHeight),
-            zRange: max(0, vp.zRange.lowerBound - registered.tileDepth)..<min(vol.depth, vp.zRange.upperBound + registered.tileDepth)
+            xRange: max(0, vp.xRange.lowerBound - registered.tileWidth)
+                ..<min(vol.width, vp.xRange.upperBound + registered.tileWidth),
+            yRange: max(0, vp.yRange.lowerBound - registered.tileHeight)
+                ..<min(vol.height, vp.yRange.upperBound + registered.tileHeight),
+            zRange: max(0, vp.zRange.lowerBound - registered.tileDepth)
+                ..<min(vol.depth, vp.zRange.upperBound + registered.tileDepth)
         )
         guard expanded.isValid else { return }
         _ = extractPrecincts(

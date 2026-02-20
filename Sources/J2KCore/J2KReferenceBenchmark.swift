@@ -158,7 +158,9 @@ public struct J2KReferenceBenchmark: Sendable {
     ///
     /// - Parameter operation: The async operation to measure.
     /// - Returns: A result containing timing statistics.
-    public func measureJ2KSwiftAsync(operation: @escaping @Sendable () async -> Void) async -> ReferenceBenchmarkResult {
+    public func measureJ2KSwiftAsync(
+        operation: @escaping @Sendable () async -> Void
+    ) async -> ReferenceBenchmarkResult {
         let benchmark = J2KBenchmark(name: "\(component.rawValue) - \(testCase.rawValue)")
         let result = await benchmark.measureAsync(
             iterations: iterations,

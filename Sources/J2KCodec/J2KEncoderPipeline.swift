@@ -250,7 +250,10 @@ struct EncoderPipeline: Sendable {
 
         case let .adaptive(candidates, criteria):
             // Select best matrix adaptively based on criteria
-            return try applyAdaptiveMCT(components, candidates: candidates, criteria: criteria, image: image, tileIndex: tileIndex)
+            return try applyAdaptiveMCT(
+                components, candidates: candidates,
+                criteria: criteria, image: image,
+                tileIndex: tileIndex)
         }
     }
 

@@ -233,16 +233,24 @@ public struct J2KDWTAccelerated: Sendable {
         }
 
         // Undo update 2: even[n] -= delta * (odd[n-1] + odd[n])
-        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -delta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(
+            &even, reference: odd, coefficient: -delta,
+            isPredict: false, extension: boundaryExtension)
 
         // Undo predict 2: odd[n] -= gamma * (even[n] + even[n+1])
-        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -gamma, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(
+            &odd, reference: even, coefficient: -gamma,
+            isPredict: true, extension: boundaryExtension)
 
         // Undo update 1: even[n] -= beta * (odd[n-1] + odd[n])
-        try applyLiftingStepOptimized(&even, reference: odd, coefficient: -beta, isPredict: false, extension: boundaryExtension)
+        try applyLiftingStepOptimized(
+            &even, reference: odd, coefficient: -beta,
+            isPredict: false, extension: boundaryExtension)
 
         // Undo predict 1: odd[n] -= alpha * (even[n] + even[n+1])
-        try applyLiftingStepOptimized(&odd, reference: even, coefficient: -alpha, isPredict: true, extension: boundaryExtension)
+        try applyLiftingStepOptimized(
+            &odd, reference: even, coefficient: -alpha,
+            isPredict: true, extension: boundaryExtension)
 
         // Merge even and odd samples
         var result = [Double](repeating: 0, count: n)
@@ -413,7 +421,9 @@ public struct J2KDWTAccelerated: Sendable {
                     right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
                 } else {
                     left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
-                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                    right = i < refSize
+                        ? reference[i]
+                        : getExtendedValue(reference, index: i, extension: boundaryExtension)
                 }
 
                 target[i] += coefficient * (left + right)
@@ -430,7 +440,9 @@ public struct J2KDWTAccelerated: Sendable {
                     right = getExtendedValue(reference, index: i + 1, extension: boundaryExtension)
                 } else {
                     left = getExtendedValue(reference, index: i - 1, extension: boundaryExtension)
-                    right = i < refSize ? reference[i] : getExtendedValue(reference, index: i, extension: boundaryExtension)
+                    right = i < refSize
+                        ? reference[i]
+                        : getExtendedValue(reference, index: i, extension: boundaryExtension)
                 }
 
                 target[i] += coefficient * (left + right)
@@ -596,10 +608,18 @@ public struct J2KDWTAccelerated: Sendable {
             let hhHeight = hlHeight
 
             // Extract subbands
-            let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
-            let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
-            let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
-            let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            let ll = extractSubband(
+                from: colTransformed, x: 0, y: 0,
+                width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(
+                from: colTransformed, x: llWidth, y: 0,
+                width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(
+                from: colTransformed, x: 0, y: llHeight,
+                width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(
+                from: colTransformed, x: llWidth, y: llHeight,
+                width: hhWidth, height: hhHeight, stride: currentWidth)
 
             results.append(DecompositionLevel(
                 ll: ll,
@@ -708,7 +728,8 @@ public struct J2KDWTAccelerated: Sendable {
                     let rowData = Array(currentData[rowStart..<rowEnd])
 
                     group.addTask {
-                        let (low, high) = try self.forwardTransform97(signal: rowData, boundaryExtension: boundaryExtension)
+                        let (low, high) = try self.forwardTransform97(
+                            signal: rowData, boundaryExtension: boundaryExtension)
                         return (row, low, high)
                     }
                     activeTasks += 1
@@ -751,7 +772,8 @@ public struct J2KDWTAccelerated: Sendable {
                     }
 
                     group.addTask {
-                        let (low, high) = try self.forwardTransform97(signal: colData, boundaryExtension: boundaryExtension)
+                        let (low, high) = try self.forwardTransform97(
+                            signal: colData, boundaryExtension: boundaryExtension)
                         return (col, low, high)
                     }
                     activeTasks += 1
@@ -779,10 +801,18 @@ public struct J2KDWTAccelerated: Sendable {
             let hhHeight = hlHeight
 
             // Extract subbands
-            let ll = extractSubband(from: colTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
-            let lh = extractSubband(from: colTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
-            let hl = extractSubband(from: colTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
-            let hh = extractSubband(from: colTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            let ll = extractSubband(
+                from: colTransformed, x: 0, y: 0,
+                width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(
+                from: colTransformed, x: llWidth, y: 0,
+                width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(
+                from: colTransformed, x: 0, y: llHeight,
+                width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(
+                from: colTransformed, x: llWidth, y: llHeight,
+                width: hhWidth, height: hhHeight, stride: currentWidth)
 
             results.append(DecompositionLevel(
                 ll: ll,
@@ -918,10 +948,18 @@ public struct J2KDWTAccelerated: Sendable {
             let hhHeight = hlHeight
 
             // Extract subbands
-            let ll = extractSubband(from: finalTransformed, x: 0, y: 0, width: llWidth, height: llHeight, stride: currentWidth)
-            let lh = extractSubband(from: finalTransformed, x: llWidth, y: 0, width: lhWidth, height: lhHeight, stride: currentWidth)
-            let hl = extractSubband(from: finalTransformed, x: 0, y: llHeight, width: hlWidth, height: hlHeight, stride: currentWidth)
-            let hh = extractSubband(from: finalTransformed, x: llWidth, y: llHeight, width: hhWidth, height: hhHeight, stride: currentWidth)
+            let ll = extractSubband(
+                from: finalTransformed, x: 0, y: 0,
+                width: llWidth, height: llHeight, stride: currentWidth)
+            let lh = extractSubband(
+                from: finalTransformed, x: llWidth, y: 0,
+                width: lhWidth, height: lhHeight, stride: currentWidth)
+            let hl = extractSubband(
+                from: finalTransformed, x: 0, y: llHeight,
+                width: hlWidth, height: hlHeight, stride: currentWidth)
+            let hh = extractSubband(
+                from: finalTransformed, x: llWidth, y: llHeight,
+                width: hhWidth, height: hhHeight, stride: currentWidth)
 
             results.append(DecompositionLevel(
                 ll: ll,
@@ -1035,7 +1073,9 @@ public struct J2KDWTAccelerated: Sendable {
                 let lowpass = Array(colData[0..<lowSize])
                 let highpass = Array(colData[lowSize..<currentHeight])
 
-                let reconstructedCol = try inverseTransform97(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
+                let reconstructedCol = try inverseTransform97(
+                    lowpass: lowpass, highpass: highpass,
+                    boundaryExtension: boundaryExtension)
 
                 for row in 0..<reconstructedCol.count {
                     colInverse[row * currentWidth + col] = reconstructedCol[row]
@@ -1054,7 +1094,9 @@ public struct J2KDWTAccelerated: Sendable {
                 let lowpass = Array(rowData[0..<lowSize])
                 let highpass = Array(rowData[lowSize..<currentWidth])
 
-                let reconstructedRow = try inverseTransform97(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
+                let reconstructedRow = try inverseTransform97(
+                    lowpass: lowpass, highpass: highpass,
+                    boundaryExtension: boundaryExtension)
 
                 for col in 0..<reconstructedRow.count {
                     rowInverse[rowStart + col] = reconstructedRow[col]

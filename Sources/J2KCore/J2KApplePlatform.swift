@@ -326,7 +326,9 @@ public actor J2KPowerEfficiencyManager {
         let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
 
         for source in sources {
-            if let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] {
+            if let description = IOPSGetPowerSourceDescription(
+                snapshot, source
+            ).takeUnretainedValue() as? [String: Any] {
                 if let powerSourceState = description[kIOPSPowerSourceStateKey] as? String {
                     return powerSourceState == kIOPSACPowerValue
                 }

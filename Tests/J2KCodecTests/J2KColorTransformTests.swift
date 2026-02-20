@@ -823,7 +823,9 @@ final class J2KColorTransformTests: XCTestCase {
 
         let components = [
             createTestComponent(index: 0, width: 8, height: 8, fillValue: 100, subsamplingX: 1, subsamplingY: 1),
-            createTestComponent(index: 1, width: 4, height: 8, fillValue: 80, subsamplingX: 2, subsamplingY: 1),  // Different
+            createTestComponent(
+                index: 1, width: 4, height: 8, fillValue: 80,
+                subsamplingX: 2, subsamplingY: 1),  // Different
             createTestComponent(index: 2, width: 8, height: 8, fillValue: 60, subsamplingX: 1, subsamplingY: 1)
         ]
 
@@ -1378,7 +1380,10 @@ final class J2KColorTransformTests: XCTestCase {
             J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
         ]
 
-        XCTAssertThrowsError(try J2KColorTransform.validateColorSpace(components: components, colorSpace: .grayscale)) { error in
+        XCTAssertThrowsError(
+            try J2KColorTransform.validateColorSpace(
+                components: components, colorSpace: .grayscale)
+        ) { error in
             guard case J2KError.invalidComponentConfiguration = error else {
                 XCTFail("Expected invalidComponentConfiguration error")
                 return
@@ -1403,7 +1408,10 @@ final class J2KColorTransformTests: XCTestCase {
             J2KComponent(index: 1, bitDepth: 8, signed: false, width: 256, height: 256)
         ]
 
-        XCTAssertThrowsError(try J2KColorTransform.validateColorSpace(components: components, colorSpace: .sRGB)) { error in
+        XCTAssertThrowsError(
+            try J2KColorTransform.validateColorSpace(
+                components: components, colorSpace: .sRGB)
+        ) { error in
             guard case J2KError.invalidComponentConfiguration = error else {
                 XCTFail("Expected invalidComponentConfiguration error")
                 return

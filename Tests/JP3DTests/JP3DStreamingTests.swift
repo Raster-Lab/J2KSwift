@@ -89,7 +89,9 @@ final class JP3DViewportTests: XCTestCase {
 
 final class JP3DStreamingRegionTests: XCTestCase {
     func testRegionValidation() {
-        let r = JP3DStreamingRegion(xRange: 0..<128, yRange: 0..<128, zRange: 0..<32, qualityLayer: 2, resolutionLevel: 1)
+        let r = JP3DStreamingRegion(
+            xRange: 0..<128, yRange: 0..<128, zRange: 0..<32,
+            qualityLayer: 2, resolutionLevel: 1)
         XCTAssertTrue(r.isValid)
         XCTAssertFalse(r.isEmpty)
     }
@@ -218,7 +220,9 @@ final class JP3DCacheManagerTests: XCTestCase {
     func testSpatialEviction() async {
         let cache = JP3DCacheManager(maxMemoryBytes: 10 * 1024 * 1024, maxEntries: 100)
         for i in 0..<10 {
-            let key = JP3DPrecinct3D(tileX: i * 10, tileY: 0, tileZ: 0, resolutionLevel: 0, subband: 0, precinctIndex: 0)
+            let key = JP3DPrecinct3D(
+                tileX: i * 10, tileY: 0, tileZ: 0,
+                resolutionLevel: 0, subband: 0, precinctIndex: 0)
             let bin = JP3DDataBin(binID: i, tileX: i * 10, tileY: 0, tileZ: 0,
                                   resolutionLevel: 0, qualityLayer: 0,
                                   data: Data(count: 64), isComplete: true)
@@ -294,7 +298,10 @@ final class JP3DCacheManagerTests: XCTestCase {
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<20 {
                 group.addTask {
-                    let key = JP3DPrecinct3D(tileX: i, tileY: 0, tileZ: 0, resolutionLevel: 0, subband: 0, precinctIndex: 0)
+                    let key = JP3DPrecinct3D(
+                        tileX: i, tileY: 0, tileZ: 0,
+                        resolutionLevel: 0, subband: 0,
+                        precinctIndex: 0)
                     let bin = JP3DDataBin(binID: i, tileX: i, tileY: 0, tileZ: 0,
                                          resolutionLevel: 0, qualityLayer: 0,
                                          data: Data(count: 64), isComplete: true)
@@ -622,7 +629,9 @@ final class JP3DJPIPServerTests: XCTestCase {
             directionX: 0, directionY: 0, directionZ: 1,
             nearPlane: 1, farPlane: 10, fovDegrees: 60
         )
-        let viewport = JP3DViewport(xRange: 0..<vol.width, yRange: 0..<vol.height, zRange: 0..<vol.depth, frustum: frustum)
+        let viewport = JP3DViewport(
+            xRange: 0..<vol.width, yRange: 0..<vol.height,
+            zRange: 0..<vol.depth, frustum: frustum)
         let sid = try await server.createSession(volumeID: "vol", viewport: viewport)
         let region = JP3DStreamingRegion(xRange: 0..<vol.width, yRange: 0..<vol.height, zRange: 0..<vol.depth)
         do {

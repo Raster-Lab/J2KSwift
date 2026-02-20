@@ -198,7 +198,8 @@ public actor MJ2MetalPreprocessing {
         )
 
         // Create Metal textures from J2KImage components
-        let sourceTextures = try createTexturesFromComponents(image.components, width: image.width, height: image.height)
+        let sourceTextures = try createTexturesFromComponents(
+            image.components, width: image.width, height: image.height)
 
         // Create Metal texture from pixel buffer
         guard let outputTexture = try createTextureFromPixelBuffer(pixelBuffer, format: outputFormat) else {
@@ -391,7 +392,10 @@ public actor MJ2MetalPreprocessing {
         return buffer
     }
 
-    private func createTextureFromPixelBuffer(_ pixelBuffer: CVPixelBuffer, format: MJ2MetalPixelFormat) throws -> MTLTexture? {
+    private func createTextureFromPixelBuffer(
+        _ pixelBuffer: CVPixelBuffer,
+        format: MJ2MetalPixelFormat
+    ) throws -> MTLTexture? {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
 
@@ -438,7 +442,10 @@ public actor MJ2MetalPreprocessing {
         return texture
     }
 
-    private func createTexturesFromComponents(_ components: [J2KComponent], width: Int, height: Int) throws -> [MTLTexture] {
+    private func createTexturesFromComponents(
+        _ components: [J2KComponent],
+        width: Int, height: Int
+    ) throws -> [MTLTexture] {
         var textures: [MTLTexture] = []
 
         for component in components {

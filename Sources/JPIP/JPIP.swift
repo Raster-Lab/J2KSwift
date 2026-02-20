@@ -117,7 +117,10 @@ public actor JPIPClient {
     ///   - region: The region to request (x, y, width, height).
     /// - Returns: The requested image region.
     /// - Throws: ``J2KError`` if the request fails.
-    public func requestRegion(imageID: String, region: (x: Int, y: Int, width: Int, height: Int)) async throws -> J2KImage {
+    public func requestRegion(
+        imageID: String,
+        region: (x: Int, y: Int, width: Int, height: Int)
+    ) async throws -> J2KImage {
         // Get or create session
         let currentSession = try await getOrCreateSession(target: imageID)
 

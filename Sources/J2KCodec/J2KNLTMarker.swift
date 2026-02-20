@@ -332,7 +332,12 @@ public struct J2KNLTMarkerSegment: Sendable, Equatable {
                 bytesRead += 8
             }
 
-            return (.lookupTable(forwardLUT: forwardLUT, inverseLUT: inverseLUT, interpolation: interpolation), bytesRead)
+            return (
+                .lookupTable(
+                    forwardLUT: forwardLUT,
+                    inverseLUT: inverseLUT,
+                    interpolation: interpolation),
+                bytesRead)
 
         case 0x11:
             // Piecewise linear transform

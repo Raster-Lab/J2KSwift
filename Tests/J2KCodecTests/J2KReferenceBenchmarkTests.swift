@@ -680,7 +680,9 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
         }
     }
 
-    private func runColorTransformRCTBenchmark(_ testCase: J2KReferenceBenchmark.TestCase) throws -> ReferenceBenchmarkResult {
+    private func runColorTransformRCTBenchmark(
+        _ testCase: J2KReferenceBenchmark.TestCase
+    ) throws -> ReferenceBenchmarkResult {
         let width = 512
         let height = 512
         let pixelCount = width * height
@@ -703,7 +705,9 @@ final class J2KReferenceBenchmarkTests: XCTestCase {
         }
     }
 
-    private func runColorTransformICTBenchmark(_ testCase: J2KReferenceBenchmark.TestCase) throws -> ReferenceBenchmarkResult {
+    private func runColorTransformICTBenchmark(
+        _ testCase: J2KReferenceBenchmark.TestCase
+    ) throws -> ReferenceBenchmarkResult {
         let width = 512
         let height = 512
         let pixelCount = width * height

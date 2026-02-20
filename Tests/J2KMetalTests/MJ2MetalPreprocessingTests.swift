@@ -69,7 +69,9 @@ final class MJ2MetalPreprocessingTests: XCTestCase {
         // Test Core Video pixel format mappings
         XCTAssertEqual(MJ2MetalPixelFormat.argb32.cvPixelFormat, kCVPixelFormatType_32ARGB)
         XCTAssertEqual(MJ2MetalPixelFormat.bgra32.cvPixelFormat, kCVPixelFormatType_32BGRA)
-        XCTAssertEqual(MJ2MetalPixelFormat.yuv420BiplanarVideoRange.cvPixelFormat, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        XCTAssertEqual(
+            MJ2MetalPixelFormat.yuv420BiplanarVideoRange.cvPixelFormat,
+            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     }
 
     // MARK: - J2KImage to CVPixelBuffer Tests

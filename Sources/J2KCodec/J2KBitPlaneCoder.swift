@@ -702,8 +702,13 @@ struct BitPlaneCoder: Sendable {
         magnitudes: [UInt32],
         bitMask: UInt32
     ) -> Bool {
-        isEligibleForRunLengthCoding(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, states: states) &&
-               !anyBecomeSignificant(x: x, stripeStart: stripeStart, stripeEnd: stripeEnd, magnitudes: magnitudes, bitMask: bitMask)
+        isEligibleForRunLengthCoding(
+            x: x, stripeStart: stripeStart,
+            stripeEnd: stripeEnd, states: states) &&
+        !anyBecomeSignificant(
+            x: x, stripeStart: stripeStart,
+            stripeEnd: stripeEnd,
+            magnitudes: magnitudes, bitMask: bitMask)
     }
 }
 

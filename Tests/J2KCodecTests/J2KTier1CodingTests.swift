@@ -199,7 +199,9 @@ final class J2KContextModelingTests: XCTestCase {
         XCTAssertEqual(ctx0, .sigPropLL_LH_0)
 
         // One horizontal neighbor
-        let ctx1h = modeler.significanceContext(neighbors: NeighborContribution(horizontal: 1, vertical: 0, diagonal: 0))
+        let ctx1h = modeler.significanceContext(
+            neighbors: NeighborContribution(
+                horizontal: 1, vertical: 0, diagonal: 0))
         XCTAssertEqual(ctx1h, .sigPropLL_LH_1h)
     }
 
@@ -568,7 +570,9 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         // For all zeros, we should have all zero bit-planes
-        XCTAssertGreaterThanOrEqual(zeroBitPlanes, bitDepth, "All zero coefficients should have maximum zero bit-planes")
+        XCTAssertGreaterThanOrEqual(
+            zeroBitPlanes, bitDepth,
+            "All zero coefficients should have maximum zero bit-planes")
         XCTAssertEqual(passCount, 0, "No passes needed for all-zero coefficients")
     }
 
