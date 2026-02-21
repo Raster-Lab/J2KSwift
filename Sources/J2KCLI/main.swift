@@ -44,6 +44,8 @@ struct J2KCLI {
                 try await transcodeCommand(commandArgs)
             case "validate":
                 try await validateCommand(commandArgs)
+            case "testapp":
+                try await testappCommand(commandArgs)
             case "version":
                 printVersion()
             case "help", "-h", "--help":
@@ -78,6 +80,7 @@ struct J2KCLI {
             transcode   Transcode between JPEG 2000 formats
             validate    Validate a JPEG 2000 codestream
             benchmark   Run encoding/decoding benchmarks
+            testapp     Run test app in headless mode (CI/CD)
             version     Print version information
             help        Show this help message
 

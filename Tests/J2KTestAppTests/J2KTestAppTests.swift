@@ -2486,4 +2486,273 @@ final class MJ2TestViewModelTests: XCTestCase {
         XCTAssertNil(vm.currentFrame)
     }
 }
+
+// MARK: - Report Model Tests
+
+#if canImport(Observation)
+
+final class ReportTrendPointTests: XCTestCase {
+
+    func testInitStoresAllProperties() {
+        let date = Date()
+        let pt = ReportTrendPoint(sessionDate: date, passRate: 0.85, totalTests: 20, passedTests: 17)
+        XCTAssertEqual(pt.passRate, 0.85)
+        XCTAssertEqual(pt.totalTests, 20)
+        XCTAssertEqual(pt.passedTests, 17)
+        XCTAssertEqual(pt.sessionDate, date)
+    }
+
+    func testUniqueIDsPerInstance() {
+        let a = ReportTrendPoint(sessionDate: Date(), passRate: 0.9, totalTests: 10, passedTests: 9)
+        let b = ReportTrendPoint(sessionDate: Date(), passRate: 0.9, totalTests: 10, passedTests: 9)
+        XCTAssertNotEqual(a.id, b.id)
+    }
+}
+
+final class CoverageCellTests: XCTestCase {
+
+    func testInitStoresAllProperties() {
+        let cell = CoverageCell(part: "Part 1", section: "Tiles", coverageLevel: 0.75, testCount: 8)
+        XCTAssertEqual(cell.part, "Part 1")
+        XCTAssertEqual(cell.section, "Tiles")
+        XCTAssertEqual(cell.coverageLevel, 0.75)
+        XCTAssertEqual(cell.testCount, 8)
+    }
+
+    func testUniqueIDs() {
+        let a = CoverageCell(part: "Part 1", section: "ROI", coverageLevel: 0.5, testCount: 5)
+        let b = CoverageCell(part: "Part 1", section: "ROI", coverageLevel: 0.5, testCount: 5)
+        XCTAssertNotEqual(a.id, b.id)
+    }
+}
+
+final class ReportExportFormatTests: XCTestCase {
+
+    func testAllCasesCount() {
+        XCTAssertEqual(ReportExportFormat.allCases.count, 3)
+    }
+
+    func testRawValues() {
+        XCTAssertEqual(ReportExportFormat.html.rawValue, "HTML")
+        XCTAssertEqual(ReportExportFormat.json.rawValue, "JSON")
+        XCTAssertEqual(ReportExportFormat.csv.rawValue, "CSV")
+    }
+}
+
+final class ReportViewModelTests: XCTestCase {
+
+    func testLoadTrendPopulatesFivePoints() async {
+        let vm = ReportViewModel()
+        let session = TestSession()
+        await vm.loadTrend(session: session)
+        XCTAssertEqual(vm.trendPoints.count, 5)
+    }
+
+    func testLoadTrendPassRatesInRange() async {
+        let vm = ReportViewModel()
+        let session = TestSession()
+        await vm.loadTrend(session: session)
+        for pt in vm.trendPoints {
+            XCTAssertGreaterThanOrEqual(pt.passRate, 0.0)
+            XCTAssertLessThanOrEqual(pt.passRate, 1.0)
+        }
+    }
+
+    func testLoadCoverageGridPopulatesTwentyCells() {
+        let vm = ReportViewModel()
+        vm.loadCoverageGrid()
+        XCTAssertEqual(vm.coverageGrid.count, 20)
+    }
+
+    func testLoadCoverageGridPartsAndSections() {
+        let vm = ReportViewModel()
+        vm.loadCoverageGrid()
+        let parts = Set(vm.coverageGrid.map(\.part))
+        let sections = Set(vm.coverageGrid.map(\.section))
+        XCTAssertEqual(parts.count, 4)
+        XCTAssertEqual(sections.count, 5)
+    }
+
+    func testExportReportReturnsTrue() async {
+        let vm = ReportViewModel()
+        let result = await vm.exportReport(to: "report.html")
+        XCTAssertTrue(result)
+        XCTAssertEqual(vm.lastExportPath, "report.html")
+        XCTAssertFalse(vm.isExporting)
+    }
+
+    func testDefaultExportFormatIsHTML() {
+        let vm = ReportViewModel()
+        XCTAssertEqual(vm.exportFormat, .html)
+    }
+}
+
+// MARK: - Playlist Model Tests
+
+final class PlaylistPresetTests: XCTestCase {
+
+    func testAllCasesCount() {
+        XCTAssertEqual(PlaylistPreset.allCases.count, 4)
+    }
+
+    func testQuickSmokeCategories() {
+        XCTAssertEqual(PlaylistPreset.quickSmoke.categories, [.encode, .decode])
+    }
+
+    func testFullConformanceCategories() {
+        let cats = PlaylistPreset.fullConformance.categories
+        XCTAssertTrue(cats.contains(.conformance))
+        XCTAssertTrue(cats.contains(.validation))
+    }
+
+    func testPerformanceSuiteCategories() {
+        XCTAssertEqual(PlaylistPreset.performanceSuite.categories, [.performance])
+    }
+
+    func testPresetDescriptionsNonEmpty() {
+        for preset in PlaylistPreset.allCases {
+            XCTAssertFalse(preset.presetDescription.isEmpty)
+        }
+    }
+}
+
+final class PlaylistEntryTests: XCTestCase {
+
+    func testCodableRoundTrip() throws {
+        let entry = PlaylistEntry(name: "Test", categories: [.encode, .decode])
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(PlaylistEntry.self, from: data)
+        XCTAssertEqual(decoded.id, entry.id)
+        XCTAssertEqual(decoded.name, entry.name)
+        XCTAssertEqual(decoded.categories, entry.categories)
+    }
+
+    func testDefaultIDAndDate() {
+        let entry = PlaylistEntry(name: "X", categories: [])
+        XCTAssertFalse(entry.id.uuidString.isEmpty)
+        XCTAssertLessThanOrEqual(entry.createdAt.timeIntervalSinceNow, 1)
+    }
+}
+
+final class PlaylistViewModelTests: XCTestCase {
+
+    func testLoadPresetsPopulatesFourPlaylists() {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        XCTAssertEqual(vm.playlists.count, 4)
+    }
+
+    func testLoadPresetsIdempotent() {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        vm.loadPresets()
+        XCTAssertEqual(vm.playlists.count, 4)
+    }
+
+    func testCreatePlaylistAppendsEntry() {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        let entry = vm.createPlaylist(name: "My Playlist", categories: [.encode])
+        XCTAssertEqual(vm.playlists.count, 5)
+        XCTAssertEqual(entry.name, "My Playlist")
+        XCTAssertEqual(entry.categories, [.encode])
+    }
+
+    func testDeletePlaylistRemovesEntry() {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        let entry = vm.createPlaylist(name: "ToDelete", categories: [])
+        XCTAssertEqual(vm.playlists.count, 5)
+        vm.deletePlaylist(entry)
+        XCTAssertEqual(vm.playlists.count, 4)
+    }
+
+    func testRunPlaylistSetsIsRunningAndComplete() async {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        let entry = vm.playlists[0]
+        let session = TestSession()
+        await vm.runPlaylist(entry, session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertTrue(vm.statusMessage.hasPrefix("Complete"))
+        XCTAssertEqual(vm.progress, 1.0)
+    }
+
+    func testRunPlaylistAddsResultsToSession() async {
+        let vm = PlaylistViewModel()
+        vm.loadPresets()
+        let entry = vm.playlists[0]
+        let session = TestSession()
+        await vm.runPlaylist(entry, session: session)
+        let results = await session.results
+        XCTAssertEqual(results.count, entry.categories.count)
+    }
+}
+
+// MARK: - Headless Runner Tests
+
+final class HeadlessRunConfigTests: XCTestCase {
+
+    func testInitStoresProperties() {
+        let config = HeadlessRunConfig(playlistName: "Quick Smoke Test", outputPath: "out.html", outputFormat: .html)
+        XCTAssertEqual(config.playlistName, "Quick Smoke Test")
+        XCTAssertEqual(config.outputPath, "out.html")
+        XCTAssertEqual(config.outputFormat, .html)
+    }
+}
+
+final class HeadlessRunnerTests: XCTestCase {
+
+    func testParseArgsValidReturnsConfig() {
+        let args = ["--headless", "--playlist", "Quick Smoke Test", "--output", "report.html", "--format", "html"]
+        let config = HeadlessRunner.parseArgs(args)
+        XCTAssertNotNil(config)
+        XCTAssertEqual(config?.playlistName, "Quick Smoke Test")
+        XCTAssertEqual(config?.outputPath, "report.html")
+        XCTAssertEqual(config?.outputFormat, .html)
+    }
+
+    func testParseArgsMissingPlaylistReturnsNil() {
+        let args = ["--headless", "--output", "report.html"]
+        XCTAssertNil(HeadlessRunner.parseArgs(args))
+    }
+
+    func testParseArgsMissingOutputReturnsNil() {
+        let args = ["--headless", "--playlist", "Quick Smoke Test"]
+        XCTAssertNil(HeadlessRunner.parseArgs(args))
+    }
+
+    func testParseArgsFormatJSON() {
+        let args = ["--headless", "--playlist", "Full Conformance", "--output", "r.json", "--format", "json"]
+        let config = HeadlessRunner.parseArgs(args)
+        XCTAssertEqual(config?.outputFormat, .json)
+    }
+
+    func testParseArgsFormatCSV() {
+        let args = ["--headless", "--playlist", "Full Conformance", "--output", "r.csv", "--format", "csv"]
+        let config = HeadlessRunner.parseArgs(args)
+        XCTAssertEqual(config?.outputFormat, .csv)
+    }
+
+    func testRunKnownPlaylistReturnsSuccess() async {
+        let config = HeadlessRunConfig(playlistName: "Quick Smoke Test", outputPath: "out.html", outputFormat: .html)
+        let session = TestSession()
+        let code = await HeadlessRunner.run(config: config, session: session)
+        XCTAssertEqual(code, .success)
+    }
+
+    func testRunUnknownPlaylistReturnsFailure() async {
+        let config = HeadlessRunConfig(playlistName: "Nonexistent Playlist", outputPath: "out.html", outputFormat: .html)
+        let session = TestSession()
+        let code = await HeadlessRunner.run(config: config, session: session)
+        XCTAssertEqual(code, .failure)
+    }
+
+    func testExitCodeRawValues() {
+        XCTAssertEqual(HeadlessExitCode.success.rawValue, 0)
+        XCTAssertEqual(HeadlessExitCode.failure.rawValue, 1)
+    }
+}
+
+#endif
 #endif

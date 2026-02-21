@@ -9,6 +9,27 @@
 import SwiftUI
 import J2KCore
 
+// MARK: - App Screen
+
+/// Top-level navigation items that are not test categories.
+enum AppScreen: String, CaseIterable, Identifiable {
+    case report = "Report"
+    case playlists = "Playlists"
+    var id: String { rawValue }
+    var systemImage: String {
+        switch self {
+        case .report:    return "chart.bar.doc.horizontal"
+        case .playlists: return "list.bullet.rectangle"
+        }
+    }
+}
+
+/// Unified sidebar selection covering both test categories and app screens.
+enum SidebarSelection: Hashable {
+    case category(TestCategory)
+    case screen(AppScreen)
+}
+
 // MARK: - Main Window View
 
 /// Main window layout with sidebar navigation and detail area.
@@ -23,6 +44,15 @@ struct MainWindowView: View {
 
     /// Whether the settings sheet is presented.
     @State private var showSettings: Bool = false
+
+    /// Unified sidebar selection (category or app screen).
+    @State private var sidebarSelection: SidebarSelection? = nil
+
+    /// View model for the reporting dashboard.
+    @State private var reportViewModel = ReportViewModel()
+
+    /// View model for playlist management.
+    @State private var playlistViewModel = PlaylistViewModel()
 
     var body: some View {
         NavigationSplitView {
@@ -44,37 +74,62 @@ struct MainWindowView: View {
     /// Sidebar listing all test categories with icons and counts.
     @ViewBuilder
     private var sidebarContent: some View {
-        List(TestCategory.allCases, selection: $viewModel.selectedCategory) { category in
-            Label {
-                VStack(alignment: .leading) {
-                    Text(category.displayName)
-                        .font(.body)
-                    Text(category.categoryDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+        List(selection: $sidebarSelection) {
+            Section("Tests") {
+                ForEach(TestCategory.allCases) { category in
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text(category.displayName)
+                                .font(.body)
+                            Text(category.categoryDescription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    } icon: {
+                        Image(systemName: category.systemImage)
+                            .foregroundStyle(.tint)
+                    }
+                    .tag(SidebarSelection.category(category))
                 }
-            } icon: {
-                Image(systemName: category.systemImage)
-                    .foregroundStyle(.tint)
             }
-            .tag(category)
+            Section("Tools") {
+                ForEach(AppScreen.allCases) { screen in
+                    Label(screen.rawValue, systemImage: screen.systemImage)
+                        .tag(SidebarSelection.screen(screen))
+                }
+            }
         }
         .listStyle(.sidebar)
         .navigationTitle("J2KTestApp")
+        .onChange(of: sidebarSelection) { _, newValue in
+            if case .category(let cat) = newValue {
+                viewModel.selectedCategory = cat
+            } else {
+                viewModel.selectedCategory = nil
+            }
+        }
     }
 
     // MARK: - Detail Area
 
-    /// Detail view for the selected category.
+    /// Detail view for the selected category or app screen.
     @ViewBuilder
     private var detailContent: some View {
-        if let category = viewModel.selectedCategory {
+        switch sidebarSelection {
+        case .category(let category):
             CategoryDetailView(
                 viewModel: viewModel.viewModel(for: category),
                 session: viewModel.session
             )
-        } else {
+        case .screen(let screen):
+            switch screen {
+            case .report:
+                ReportView(viewModel: reportViewModel, session: viewModel.session)
+            case .playlists:
+                PlaylistView(viewModel: playlistViewModel, session: viewModel.session)
+            }
+        case nil:
             ContentUnavailableView {
                 Label("Select a Category", systemImage: "sidebar.left")
             } description: {

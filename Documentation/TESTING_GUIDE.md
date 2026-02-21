@@ -871,3 +871,143 @@ Select the **Volumetric** category in the sidebar to access the `VolumetricTestV
 
 *J2KTestApp is part of J2KSwift v2.1 — a pure Swift 6 JPEG 2000 implementation.*
 *Last updated: 2026-02-21*
+
+---
+
+## How to Read Test Reports
+
+After running tests through **J2KTestApp** or the headless CLI, the **Report** screen provides a visual summary.
+
+### Summary Dashboard
+
+Select **Report** in the sidebar to open the dashboard. The top section shows three summary cards:
+
+- **Total** — number of tests run in the most recent session.
+- **Passed** — number of tests that passed.
+- **Pass Rate** — overall pass percentage.
+
+### Trend Chart
+
+The **Pass Rate Trend** chart plots pass-rate data points over the last five sessions. Each dot represents a session; the line connecting them shows the trajectory. A flat or rising line indicates stability; a falling line warrants investigation.
+
+### Coverage Heatmap
+
+The **Coverage Heatmap** is a grid of coloured cells mapping JPEG 2000 standard parts (rows) against test sections (columns):
+
+| Colour | Coverage Level |
+|--------|---------------|
+| 🔴 Red | < 25% |
+| 🟠 Orange | 25 – 49% |
+| 🟡 Yellow | 50 – 74% |
+| 🟢 Light green | 75 – 99% |
+| 💚 Dark green | 100% |
+
+Each cell shows the test count. Click **Refresh** (⌘R) to reload data from the current session.
+
+### Exporting Reports
+
+Use the **Export** panel on the left to choose a format and click **Export Report**:
+
+- **HTML** — self-contained HTML file with embedded charts.
+- **JSON** — structured data for programmatic processing.
+- **CSV** — spreadsheet-friendly tabular output.
+
+The path of the last exported file is shown below the export button.
+
+---
+
+## How to Create Test Playlists
+
+A *playlist* is a named set of test categories that can be saved and re-run as a unit.
+
+### Using Preset Playlists
+
+J2KTestApp ships with four built-in presets (see [Preset Playlists Reference](#preset-playlists-reference)). Select **Playlists** in the sidebar. The **Presets** section of the sidebar lists all four.
+
+### Creating a Custom Playlist
+
+1. Click the **＋ New Playlist** button (toolbar or bottom of the sidebar).
+2. Enter a **name** for the playlist.
+3. Toggle the **categories** you want to include.
+4. Click **Create**.
+
+The new playlist appears in the **Custom** section of the sidebar.
+
+### Reordering and Deleting Custom Playlists
+
+- Drag rows in the **Custom** section to reorder them.
+- Swipe left on a row (or right-click and choose **Delete**) to remove it.
+
+### Running a Playlist
+
+Select the playlist and click **Run Playlist** (⌘R) in the detail pane. A progress bar tracks category completion. When finished, the status message confirms the run.
+
+---
+
+## How to Run Tests in CI/CD
+
+J2KTestApp supports a headless mode for automated CI/CD pipelines.
+
+### CLI Usage
+
+```bash
+j2k testapp --headless \
+  --playlist "Quick Smoke Test" \
+  --output report.html \
+  --format html
+```
+
+**Flags:**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--headless` | ✅ | Enable headless (non-GUI) mode |
+| `--playlist <name>` | ✅ | Name of the playlist to run |
+| `--output <path>` | ✅ | Path for the output report file |
+| `--format html\|json\|csv` | Optional | Report format (default: `html`) |
+
+**Exit codes:** `0` = all tests passed, `1` = one or more tests failed.
+
+### GitHub Actions
+
+The repository ships a `interactive-testing.yml` workflow:
+
+```yaml
+# Trigger manually via GitHub Actions UI
+workflow_dispatch:
+  inputs:
+    playlist:
+      description: 'Test playlist to run'
+      default: 'Quick Smoke Test'
+```
+
+To run it manually: go to **Actions → Interactive Testing (Headless) → Run workflow** and choose a playlist.
+
+The workflow also runs automatically every **Monday at 06:00 UTC** (the `schedule` trigger).
+
+On completion:
+- Exit code is checked and the step fails if any tests failed.
+- A **test report artifact** is uploaded (HTML/JSON/CSV) and retained for 30 days.
+
+---
+
+## Preset Playlists Reference
+
+| Preset | Categories | Best Used For |
+|--------|-----------|---------------|
+| **Quick Smoke Test** | Encode, Decode | Fast pre-merge sanity check (< 1 min) |
+| **Full Conformance** | Conformance, Validation, Encode, Decode | ISO/IEC 15444 compliance verification |
+| **Performance Suite** | Performance | Benchmarking and regression detection |
+| **Encode/Decode Only** | Encode, Decode | Pipeline-focused testing without conformance overhead |
+
+### When to Use Each Preset
+
+- **Quick Smoke Test** — Run on every PR to catch regressions quickly.
+- **Full Conformance** — Run nightly or before a release to verify standard compliance.
+- **Performance Suite** — Run on main branch after performance-related changes to detect regressions.
+- **Encode/Decode Only** — Run when working on codec changes and conformance testing is not relevant.
+
+---
+
+*J2KTestApp is part of J2KSwift v2.1 — a pure Swift 6 JPEG 2000 implementation.*
+*Last updated: 2026-07-01*

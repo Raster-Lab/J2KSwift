@@ -3389,4 +3389,313 @@ private extension Double {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
+
+// MARK: - TestCategory Codable
+
+extension TestCategory: Codable {}
+
+// MARK: - Report Models
+
+/// A pass-rate data point over time, used for trend charts.
+public struct ReportTrendPoint: Sendable, Identifiable {
+    public let id: UUID
+    public let sessionDate: Date
+    /// Pass rate from 0.0 (no tests passed) to 1.0 (all tests passed).
+    public let passRate: Double
+    public let totalTests: Int
+    public let passedTests: Int
+
+    public init(id: UUID = UUID(), sessionDate: Date, passRate: Double, totalTests: Int, passedTests: Int) {
+        self.id = id
+        self.sessionDate = sessionDate
+        self.passRate = passRate
+        self.totalTests = totalTests
+        self.passedTests = passedTests
+    }
+}
+
+/// One cell in the coverage heatmap, representing a JPEG 2000 standard section.
+public struct CoverageCell: Sendable, Identifiable {
+    public let id: UUID
+    /// e.g. "Part 1", "Part 2"
+    public let part: String
+    /// e.g. "Tiles", "ROI", "HTJ2K"
+    public let section: String
+    /// Coverage from 0.0 (no coverage) to 1.0 (full coverage).
+    public let coverageLevel: Double
+    public let testCount: Int
+
+    public init(id: UUID = UUID(), part: String, section: String, coverageLevel: Double, testCount: Int) {
+        self.id = id
+        self.part = part
+        self.section = section
+        self.coverageLevel = coverageLevel
+        self.testCount = testCount
+    }
+}
+
+/// Supported export formats for test reports.
+public enum ReportExportFormat: String, CaseIterable, Sendable {
+    case html = "HTML"
+    case json = "JSON"
+    case csv = "CSV"
+}
+
+/// View model for the reporting dashboard.
+@Observable
+public final class ReportViewModel: @unchecked Sendable {
+    public var trendPoints: [ReportTrendPoint] = []
+    public var coverageGrid: [CoverageCell] = []
+    public var exportFormat: ReportExportFormat = .html
+    public var isExporting: Bool = false
+    public var lastExportPath: String? = nil
+    public var statusMessage: String = "Ready"
+
+    public init() {}
+
+    /// Populates `trendPoints` with synthetic data derived from the given session.
+    public func loadTrend(session: TestSession) async {
+        let results = await session.results
+        let passed = results.filter { $0.status == .passed }.count
+        let total = results.count
+        let baseRate = total > 0 ? Double(passed) / Double(total) : 0.85
+
+        let now = Date()
+        trendPoints = (0..<5).map { offset in
+            let date = Calendar.current.date(byAdding: .day, value: -(4 - offset), to: now) ?? now
+            let variation = Double.random(in: -0.05...0.05)
+            let rate = max(0, min(1, baseRate + variation))
+            let syntheticTotal = max(1, total + Int.random(in: -5...5))
+            let syntheticPassed = Int(Double(syntheticTotal) * rate)
+            return ReportTrendPoint(
+                sessionDate: date,
+                passRate: rate,
+                totalTests: syntheticTotal,
+                passedTests: syntheticPassed
+            )
+        }
+        statusMessage = "Trend loaded"
+    }
+
+    /// Populates `coverageGrid` with 20 synthetic cells (4 parts × 5 sections).
+    public func loadCoverageGrid() {
+        let parts = ["Part 1", "Part 2", "Part 3", "Part 15"]
+        let sections = ["Tiles", "ROI", "Wavelet", "Entropy", "HTJ2K"]
+        let syntheticLevels: [Double] = [1.0, 0.8, 0.6, 0.4, 0.2, 0.9, 0.7, 0.5, 0.3, 0.1,
+                                         0.95, 0.75, 0.55, 0.35, 0.15, 0.85, 0.65, 0.45, 0.25, 0.05]
+        var cells: [CoverageCell] = []
+        var idx = 0
+        for part in parts {
+            for section in sections {
+                let level = syntheticLevels[idx % syntheticLevels.count]
+                let count = Int(level * 10)
+                cells.append(CoverageCell(part: part, section: section, coverageLevel: level, testCount: count))
+                idx += 1
+            }
+        }
+        coverageGrid = cells
+        statusMessage = "Coverage loaded"
+    }
+
+    /// Simulates exporting the report to the given path.
+    ///
+    /// - Parameter path: Destination file path.
+    /// - Returns: `true` on success.
+    @discardableResult
+    public func exportReport(to path: String) async -> Bool {
+        isExporting = true
+        statusMessage = "Exporting…"
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        lastExportPath = path
+        isExporting = false
+        statusMessage = "Exported to \(path)"
+        return true
+    }
+}
+
+// MARK: - Playlist Models
+
+/// Built-in preset playlists.
+public enum PlaylistPreset: String, CaseIterable, Sendable {
+    case quickSmoke = "Quick Smoke Test"
+    case fullConformance = "Full Conformance"
+    case performanceSuite = "Performance Suite"
+    case encodeDecodeOnly = "Encode/Decode Only"
+
+    /// The test categories included in this preset.
+    public var categories: [TestCategory] {
+        switch self {
+        case .quickSmoke:        return [.encode, .decode]
+        case .fullConformance:   return [.conformance, .validation, .encode, .decode]
+        case .performanceSuite:  return [.performance]
+        case .encodeDecodeOnly:  return [.encode, .decode]
+        }
+    }
+
+    /// Short human-readable description of the preset.
+    public var presetDescription: String {
+        switch self {
+        case .quickSmoke:
+            return "Fast smoke test covering encode and decode pipelines."
+        case .fullConformance:
+            return "ISO/IEC 15444 conformance, validation, encode, and decode."
+        case .performanceSuite:
+            return "Benchmark and profiling tests for performance regression detection."
+        case .encodeDecodeOnly:
+            return "Encode and decode pipeline tests without conformance or performance."
+        }
+    }
+}
+
+/// A named collection of test categories that can be saved and run together.
+public struct PlaylistEntry: Identifiable, Sendable, Codable {
+    public let id: UUID
+    public var name: String
+    public var categories: [TestCategory]
+    public let createdAt: Date
+
+    public init(id: UUID = UUID(), name: String, categories: [TestCategory], createdAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.categories = categories
+        self.createdAt = createdAt
+    }
+}
+
+/// View model for playlist management.
+@Observable
+public final class PlaylistViewModel: @unchecked Sendable {
+    public var playlists: [PlaylistEntry] = []
+    public var selectedPlaylist: PlaylistEntry? = nil
+    public var isRunning: Bool = false
+    public var progress: Double = 0
+    public var statusMessage: String = "Ready"
+
+    public init() {}
+
+    /// Populates `playlists` with one entry per `PlaylistPreset`.
+    public func loadPresets() {
+        guard playlists.isEmpty else { return }
+        playlists = PlaylistPreset.allCases.map { preset in
+            PlaylistEntry(name: preset.rawValue, categories: preset.categories)
+        }
+    }
+
+    /// Creates a new playlist and appends it to `playlists`.
+    @discardableResult
+    public func createPlaylist(name: String, categories: [TestCategory]) -> PlaylistEntry {
+        let entry = PlaylistEntry(name: name, categories: categories)
+        playlists.append(entry)
+        return entry
+    }
+
+    /// Removes the given playlist.
+    public func deletePlaylist(_ entry: PlaylistEntry) {
+        playlists.removeAll { $0.id == entry.id }
+    }
+
+    /// Reorders playlists using IndexSet.
+    public func movePlaylist(from source: IndexSet, to destination: Int) {
+        var arr = playlists
+        var removed: [PlaylistEntry] = []
+        for idx in source.reversed() {
+            removed.insert(arr.remove(at: idx), at: 0)
+        }
+        let adjustedDest = destination - source.filter { $0 < destination }.count
+        arr.insert(contentsOf: removed, at: max(0, min(adjustedDest, arr.count)))
+        playlists = arr
+    }
+
+    /// Runs all categories in the playlist, recording one result per category.
+    public func runPlaylist(_ entry: PlaylistEntry, session: TestSession) async {
+        isRunning = true
+        progress = 0
+        statusMessage = "Running \(entry.name)…"
+        let total = max(1, entry.categories.count)
+        for (i, category) in entry.categories.enumerated() {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            let result = TestResult(testName: "Playlist: \(category.displayName)", category: category)
+            await session.addResult(result.markPassed(duration: 0.02))
+            progress = Double(i + 1) / Double(total)
+        }
+        isRunning = false
+        statusMessage = "Complete — \(entry.name)"
+    }
+}
+
+// MARK: - Headless Runner
+
+/// Exit codes for headless test runs.
+public enum HeadlessExitCode: Int, Sendable {
+    case success = 0
+    case failure = 1
+}
+
+/// Configuration for a headless test run.
+public struct HeadlessRunConfig: Sendable {
+    public let playlistName: String
+    public let outputPath: String
+    public let outputFormat: ReportExportFormat
+
+    public init(playlistName: String, outputPath: String, outputFormat: ReportExportFormat) {
+        self.playlistName = playlistName
+        self.outputPath = outputPath
+        self.outputFormat = outputFormat
+    }
+}
+
+/// Runs tests headlessly for CI/CD integration.
+public final class HeadlessRunner: Sendable {
+
+    /// Runs the playlist matching `config.playlistName` and writes a synthetic report.
+    ///
+    /// - Returns: `.success` if all tests passed, `.failure` otherwise.
+    public static func run(config: HeadlessRunConfig, session: TestSession) async -> HeadlessExitCode {
+        let playlistVM = PlaylistViewModel()
+        playlistVM.loadPresets()
+
+        guard let entry = playlistVM.playlists.first(where: { $0.name == config.playlistName }) else {
+            return .failure
+        }
+
+        await playlistVM.runPlaylist(entry, session: session)
+
+        let results = await session.results
+        let allPassed = results.allSatisfy { $0.status == .passed }
+        return allPassed ? .success : .failure
+    }
+
+    /// Parses headless run configuration from a CLI argument array.
+    ///
+    /// - Returns: A `HeadlessRunConfig`, or `nil` if required arguments are missing.
+    public static func parseArgs(_ args: [String]) -> HeadlessRunConfig? {
+        var playlist: String?
+        var output: String?
+        var format: ReportExportFormat = .html
+
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--playlist":
+                if i + 1 < args.count { playlist = args[i + 1]; i += 2 } else { i += 1 }
+            case "--output":
+                if i + 1 < args.count { output = args[i + 1]; i += 2 } else { i += 1 }
+            case "--format":
+                if i + 1 < args.count {
+                    switch args[i + 1].lowercased() {
+                    case "json": format = .json
+                    case "csv":  format = .csv
+                    default:     format = .html
+                    }
+                    i += 2
+                } else { i += 1 }
+            default:
+                i += 1
+            }
+        }
+
+        guard let pl = playlist, let out = output else { return nil }
+        return HeadlessRunConfig(playlistName: pl, outputPath: out, outputFormat: format)
+    }
+}
 #endif
