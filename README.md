@@ -8,23 +8,57 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 2.0.0 (Released February 21, 2026)  
-**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (2,900+ tests, 100% pass rate)  
-**Previous Release**: 1.9.0 (JP3D Volumetric Support)
+**Current Version**: 2.1.0  
+**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (3,000+ tests, 100% pass rate)  
+**Previous Release**: 2.0.0 (Performance Refactoring, Full Conformance, CLI Toolset)
 
 ## 📦 Release Status
 
-**v2.0.0** delivers performance refactoring, full conformance, and a complete CLI toolset (Phase 17):
-- 🚀 **Performance Refactoring** — ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, Accelerate framework deep integration
-- 📐 **ISO/IEC 15444-4 Conformance** — 304 conformance tests across Parts 1, 2, 3, 10, and 15
-- 🔄 **OpenJPEG Interoperability** — 165 bidirectional tests, ≥1.5–3× faster on Apple Silicon
-- 🛠️ **CLI Toolset** — `j2k encode/decode/info/transcode/validate/benchmark` with dual British/American spelling
-- ⚡ **Swift 6.2 Strict Concurrency** — Zero data races, ThreadSanitizer clean across all 8 modules
-- 📚 **Documentation Overhaul** — DocC catalogues for all modules, 8 usage guides, 8 runnable examples
-- 🧪 **800+ New Tests** — Integration, stress, performance, and conformance (2,900+ total)
-- 🖥️ **Cross-Platform GPU** — Metal (Apple) and Vulkan (Linux/Windows) compute backends
+**v2.1.0** delivers the native macOS GUI testing application and complete testing documentation (Phase 18):
+- 🖥️ **J2KTestApp** — Native macOS SwiftUI application for visually testing every J2KSwift feature
+- 🎨 **GUI Polish** — Consistent design system, dark/light mode, accessibility (VoiceOver), window state persistence
+- 📊 **Interactive Dashboards** — Encode/Decode, Conformance matrix, Performance charts, GPU comparison, SIMD gauges
+- 🌊 **Streaming & Volumetric** — JPIP progressive streaming canvas, JP3D slice navigation, MJ2 frame playback
+- 📋 **Test Reports & Playlists** — Trend charts, heatmap, export (HTML/JSON/CSV), named test playlists
+- 🤖 **Headless CI Mode** — `j2k testapp --headless --playlist --output --format` for GitHub Actions integration
+- 📖 **Complete Testing Guide** — Step-by-step instructions for every screen, keyboard shortcuts, glossary
 
-See [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for v2.0.0 details, or [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md) for the previous release.
+See [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for v2.1.0 details, or [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for the previous release.
+
+## 🖥️ J2KTestApp — GUI Testing Application
+
+J2KTestApp is a native macOS SwiftUI application that provides a complete graphical environment for testing every feature of J2KSwift.
+
+### Building and Running J2KTestApp
+
+```bash
+# Build J2KTestApp
+swift build --target J2KTestApp
+
+# Run J2KTestApp
+swift run J2KTestApp
+```
+
+Or open `Package.swift` in Xcode, select the **J2KTestApp** scheme, and press **⌘R**.
+
+### GUI Screens
+
+| Screen | Description |
+|--------|-------------|
+| **Encode** | Drag-and-drop encoding with configuration panel and presets |
+| **Decode** | File-based decoding with ROI selector, resolution stepper, marker inspector |
+| **Round-Trip** | One-click encode/decode/compare with PSNR/SSIM metrics |
+| **Conformance** | Part 1/2/3/10/15 conformance matrix dashboard |
+| **Validation** | Codestream syntax and file format validators |
+| **Performance** | Benchmark runner with live charts and regression detection |
+| **GPU** | Metal pipeline testing with GPU vs CPU comparison |
+| **SIMD** | ARM Neon/Intel SSE verification with utilisation gauges |
+| **JPIP** | Progressive streaming canvas with network metrics |
+| **Volumetric** | JP3D slice navigation with encode/decode comparison |
+| **MJ2** | Motion JPEG 2000 frame playback and quality inspection |
+| **Report** | Summary dashboard, trend charts, heatmap, and export |
+
+See [Documentation/TESTING_GUIDE.md](Documentation/TESTING_GUIDE.md) for a complete guide to using J2KTestApp.
 
 ## 🎯 Project Goals
 
@@ -54,7 +88,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "2.0.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "2.1.0")
 ]
 ```
 
@@ -373,6 +407,7 @@ let encoded = try mqCoder.encode(quantized)
 ### Getting Started
 - **[README.md](README.md)**: This file — quick start and overview
 - **[CHANGELOG.md](CHANGELOG.md)**: Complete version history
+- **[RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md)**: Complete v2.1.0 release notes
 - **[RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)**: Complete v2.0.0 release notes
 - **[GETTING_STARTED.md](GETTING_STARTED.md)**: Comprehensive introduction
 - **[TUTORIAL_ENCODING.md](TUTORIAL_ENCODING.md)**: Step-by-step encoding guide
@@ -485,30 +520,34 @@ JP3D volumetric JPEG 2000 (ISO/IEC 15444-10) encoding, decoding, and streaming. 
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: v2.0.0 — Production Ready
+### Current Status: v2.1.0 — Production Ready
 
 > **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional** with ARM Neon SIMD, Intel SSE/AVX, and Metal GPU acceleration.
 > 
 > **Decoder Status**: The high-level `J2KDecoder.decode()` API is **fully functional** with full ISO/IEC 15444-4 conformance and verified OpenJPEG interoperability.
+> 
+> **J2KTestApp Status**: The native macOS GUI testing application is **complete** with 13 screens, design system, accessibility, window state persistence, and headless CI mode.
 
 
-**All Phases Complete** (295 weeks):
+**All Phases Complete** (315 weeks):
 - ✅ Phase 0–8: Foundation through Production Ready (Weeks 1–100)
 - ✅ Phase 9–12: vDSP, JPIP, HTJ2K, Extended Formats (Weeks 101–154)
 - ✅ Phase 13–14: Part 2 Extensions, Motion JPEG 2000 (Weeks 155–210)
 - ✅ Phase 15–16: JP3D Volumetric Support (Weeks 211–235)
 - ✅ Phase 17: Performance Refactoring & Conformance (Weeks 236–295)
+- ✅ Phase 18: GUI Testing Application (Weeks 296–315)
 
-**Current**: v2.0.0 — see [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for details
+**Current**: v2.1.0 — see [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for details
 
 ## 🧪 Testing
 
-### Test Statistics (v2.0.0)
-- **Total Tests**: 2,900+
+### Test Statistics (v2.1.0)
+- **Total Tests**: 3,000+
 - **Passing**: 100% pass rate
 - **Conformance Tests**: 304 (ISO/IEC 15444-4, Parts 1, 2, 3, 10, 15)
 - **Interoperability Tests**: 165 (OpenJPEG bidirectional)
 - **Integration Tests**: 200+ (end-to-end, stress, regression)
+- **GUI Tests**: 309 (J2KTestApp models and view models)
 
 ### Test Coverage by Module
 - **J2KCore**: 100% of public APIs tested
@@ -529,12 +568,22 @@ swift test
 swift test --filter J2KCoreTests
 swift test --filter J2KCodecTests
 swift test --filter J2KFileFormatTests
+swift test --filter J2KTestAppTests
 
 # Run with coverage
 swift test --enable-code-coverage
 
 # Performance tests
 swift test --filter J2KBenchmarkTests
+```
+
+### J2KTestApp GUI Testing
+```bash
+# Build and run the GUI testing application (macOS only)
+swift run J2KTestApp
+
+# Headless CI mode
+j2k testapp --headless --playlist "Quick Smoke Test" --output report.html --format html
 ```
 
 See [CONFORMANCE_TESTING.md](CONFORMANCE_TESTING.md) for details on testing strategy.
@@ -617,7 +666,7 @@ This project represents a 295-week development effort following a comprehensive 
 - **Releases**: https://github.com/Raster-Lab/J2KSwift/releases
 - **Milestones**: [MILESTONES.md](MILESTONES.md)
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md)
-- **Release Notes**: [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)
+- **Release Notes**: [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md)
 
 ## 📊 Project Status
 
@@ -638,11 +687,12 @@ This project represents a 295-week development effort following a comprehensive 
 | Motion JPEG 2000 | ✅ Complete | 100% | ISO/IEC 15444-3 compliant |
 | CLI Tools | ✅ Complete | 100% | Dual British/American spelling |
 | Conformance | ✅ Complete | 304 tests | Parts 1, 2, 3, 10, 15 |
+| **J2KTestApp** | ✅ Complete | 309 tests | GUI testing application (Phase 18) |
 
 ---
 
-**J2KSwift v2.0.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
-**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance  
+**J2KSwift v2.1.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
+**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, native macOS GUI testing application  
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
-For detailed information, see [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)
+For detailed information, see [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md)
