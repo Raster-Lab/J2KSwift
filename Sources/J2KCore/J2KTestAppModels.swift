@@ -1915,7 +1915,7 @@ public struct InteropComparisonResult: Sendable, Equatable {
 
     /// Speedup of J2KSwift vs OpenJPEG (>1 means J2KSwift is faster).
     public var speedup: Double {
-        openJPEGTime > 0 ? openJPEGTime / j2kSwiftTime : 0
+        j2kSwiftTime > 0 ? openJPEGTime / j2kSwiftTime : 0
     }
 
     public init(

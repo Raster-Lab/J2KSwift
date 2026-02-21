@@ -1391,10 +1391,22 @@ final class InteropComparisonResultTests: XCTestCase {
             maxPixelDifference: 0,
             meanPixelDifference: 0.0,
             withinTolerance: true,
+            j2kSwiftTime: 0.0,
+            openJPEGTime: 0.042
+        )
+        XCTAssertEqual(result.speedup, 0.0)
+    }
+
+    func testSpeedupZeroOpenJPEGTime() {
+        let result = InteropComparisonResult(
+            codestreamName: "test.j2k",
+            maxPixelDifference: 0,
+            meanPixelDifference: 0.0,
+            withinTolerance: true,
             j2kSwiftTime: 0.035,
             openJPEGTime: 0.0
         )
-        XCTAssertEqual(result.speedup, 0.0)
+        XCTAssertEqual(result.speedup, 0.0, accuracy: 0.001)
     }
 }
 
