@@ -4,7 +4,7 @@
 //
 /// # HTJ2K Block Coder
 ///
-/// Implementation of the FBCOT (Fast Block Coder with Optimized Truncation) algorithm
+/// Implementation of the FBCOT (Fast Block Coder with Optimised Truncation) algorithm
 /// for HTJ2K (High-Throughput JPEG 2000) as specified in ISO/IEC 15444-15.
 ///
 /// The HT block coder replaces the traditional EBCOT Tier-1 coding with a significantly
@@ -433,7 +433,7 @@ struct HTMagSgnCoder: Sendable {
 /// HTJ2K block encoder implementing the FBCOT algorithm.
 ///
 /// The HT block encoder encodes wavelet coefficients in a code-block using
-/// the Fast Block Coder with Optimized Truncation. It produces coded data
+/// the Fast Block Coder with Optimised Truncation. It produces coded data
 /// consisting of interleaved MEL, VLC, and MagSgn streams.
 ///
 /// The encoder processes coefficients in stripe-based order (4 rows at a time)

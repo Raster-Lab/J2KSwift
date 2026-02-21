@@ -24,7 +24,7 @@ import Metal
 public enum J2KMetalBufferAllocationStrategy: Sendable {
     /// Shared memory accessible by both CPU and GPU (unified memory on Apple Silicon).
     case shared
-    /// Managed memory with explicit synchronization (macOS only, falls back to shared).
+    /// Managed memory with explicit synchronisation (macOS only, falls back to shared).
     case managed
     /// Private memory accessible only by GPU (fastest GPU access, requires blit for transfer).
     case `private`
@@ -154,7 +154,7 @@ public actor J2KMetalBufferPool {
     private var _statistics = J2KMetalBufferPoolStatistics()
 
     #if canImport(Metal)
-    /// Pooled buffers organized by size bucket for efficient matching.
+    /// Pooled buffers organised by size bucket for efficient matching.
     private var pool: [Int: [any MTLBuffer]] = [:]
     #endif
 

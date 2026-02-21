@@ -17,7 +17,7 @@ import J2KCore
 // performance in JPEG 2000 encoding.
 //
 // TCQ uses a finite-state machine (trellis) to select quantization levels
-// that minimize the rate-distortion cost. Unlike scalar quantization which
+// that minimise the rate-distortion cost. Unlike scalar quantization which
 // quantizes each coefficient independently, TCQ considers the dependencies
 // between adjacent coefficients to achieve better compression efficiency.
 //
@@ -74,7 +74,7 @@ public struct J2KTCQConfiguration: Sendable, Equatable {
     /// quantization unit. Smaller values preserve more detail.
     public let baseStepSize: Double
 
-    /// Lambda parameter for rate-distortion optimization.
+    /// Lambda parameter for rate-distortion optimisation.
     ///
     /// Controls the trade-off between rate and distortion.
     /// Higher values favor lower bitrates at the cost of quality.
@@ -303,7 +303,7 @@ public struct J2KTrellisQuantizer: Sendable {
     public init(configuration: J2KTCQConfiguration = .default) {
         self.configuration = configuration
 
-        // Initialize trellis states
+        // Initialise trellis states
         // Each state has a different quantization level offset
         self.states = (0..<configuration.numStates).map { i in
             J2KTrellisState(index: i, levelOffset: i)
@@ -440,10 +440,10 @@ public struct J2KTrellisQuantizer: Sendable {
         let numStages = coefficients.count
         let numStates = configuration.numStates
 
-        // Initialize trellis: trellis[stage][state]
+        // Initialise trellis: trellis[stage][state]
         var trellis: [[J2KTrellisPathNode]] = []
 
-        // Stage 0: Initialize all states
+        // Stage 0: Initialise all states
         var initialStage: [J2KTrellisPathNode] = []
         for state in 0..<numStates {
             let node = J2KTrellisPathNode(state: state, cost: 0.0)
@@ -456,7 +456,7 @@ public struct J2KTrellisQuantizer: Sendable {
             let coefficient = coefficients[stage]
             var nextStage: [J2KTrellisPathNode] = []
 
-            // Initialize next stage nodes with infinite cost
+            // Initialise next stage nodes with infinite cost
             for state in 0..<numStates {
                 nextStage.append(J2KTrellisPathNode(state: state, cost: .infinity))
             }
@@ -627,7 +627,7 @@ private struct OptimalPath {
 
 /// Context-based adaptation for TCQ (placeholder for future implementation).
 ///
-/// This would analyze local signal characteristics and adapt quantization
+/// This would analyse local signal characteristics and adapt quantization
 /// strategies accordingly. For now, we use a fixed strategy.
 struct J2KTCQContextAdapter: Sendable {
     /// Analyzes local context and returns adapted parameters.

@@ -44,7 +44,7 @@ public enum MJ2VideoToolboxError: Error, Sendable {
     /// Invalid image dimensions.
     case invalidDimensions
 
-    /// Unsupported color space.
+    /// Unsupported colour space.
     case unsupportedColorSpace
 
     /// Configuration error.
@@ -138,7 +138,7 @@ public struct MJ2VideoToolboxDecoderConfiguration: Sendable {
     /// Enable deinterlacing.
     public var deinterlace: Bool
 
-    /// Output color space.
+    /// Output colour space.
     public var outputColorSpace: J2KColorSpace
 
     /// Creates default decoder configuration.

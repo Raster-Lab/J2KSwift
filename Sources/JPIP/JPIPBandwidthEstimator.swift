@@ -320,7 +320,7 @@ public actor JPIPBandwidthEstimator {
 
         guard first > 0 else { return 0.0 }
 
-        // Normalize trend to -1.0 to 1.0 range
+        // Normalise trend to -1.0 to 1.0 range
         let change = (last - first) / first
         return max(-1.0, min(1.0, change))
     }

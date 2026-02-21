@@ -5,7 +5,7 @@
 // J2KAcceleratedTrellis.swift
 // J2KSwift
 //
-// Apple Silicon optimized trellis coded quantization using Accelerate framework.
+// Apple Silicon optimised trellis coded quantization using Accelerate framework.
 //
 
 #if canImport(Accelerate)
@@ -17,7 +17,7 @@ import J2KCodec
 /// # Accelerated Trellis Coded Quantization
 ///
 /// Hardware-accelerated implementation of TCQ using Apple's Accelerate framework.
-/// Provides 3-8× speedup over pure Swift implementation through vectorized operations.
+/// Provides 3-8× speedup over pure Swift implementation through vectorised operations.
 ///
 /// ## Performance Optimizations
 ///
@@ -80,7 +80,7 @@ public struct J2KAcceleratedTrellis: Sendable {
             return try fallbackQuantizer.quantize(coefficients: coefficients, stepSize: stepSize)
         }
 
-        // Use vectorized Viterbi algorithm
+        // Use vectorised Viterbi algorithm
         let path = try findOptimalPathVectorized(
             coefficients: coefficients,
             stepSize: stepSize
@@ -163,9 +163,9 @@ public struct J2KAcceleratedTrellis: Sendable {
         )
     }
 
-    // MARK: - Vectorized Viterbi Algorithm
+    // MARK: - Vectorised Viterbi Algorithm
 
-    /// Finds optimal path using vectorized operations.
+    /// Finds optimal path using vectorised operations.
     private func findOptimalPathVectorized(
         coefficients: [Double],
         stepSize: Double
@@ -173,7 +173,7 @@ public struct J2KAcceleratedTrellis: Sendable {
         let numStages = coefficients.count
         let numStates = configuration.numStates
 
-        // Pre-allocate buffers for vectorized operations
+        // Pre-allocate buffers for vectorised operations
         var currentCosts = [Double](repeating: 0.0, count: numStates)
         var nextCosts = [Double](repeating: .infinity, count: numStates)
 
@@ -257,7 +257,7 @@ public struct J2KAcceleratedTrellis: Sendable {
         let quantLevels = path.map { $0.quantLevel }
         let states = path.map { $0.state }
 
-        // Compute final statistics using vectorized operations
+        // Compute final statistics using vectorised operations
         let (totalDistortion, totalRate) = computePathCostVectorized(
             coefficients: coefficients,
             quantLevels: quantLevels,
@@ -272,7 +272,7 @@ public struct J2KAcceleratedTrellis: Sendable {
         )
     }
 
-    /// Computes best transition using vectorized operations.
+    /// Computes best transition using vectorised operations.
     private func computeBestTransitionVectorized(
         coefficient: Double,
         stepSize: Double,
@@ -316,7 +316,7 @@ public struct J2KAcceleratedTrellis: Sendable {
         return (bestState, bestLevel, bestCost)
     }
 
-    /// Computes path cost using vectorized operations.
+    /// Computes path cost using vectorised operations.
     private func computePathCostVectorized(
         coefficients: [Double],
         quantLevels: [Int32],
@@ -324,7 +324,7 @@ public struct J2KAcceleratedTrellis: Sendable {
     ) -> (distortion: Double, rate: Double) {
         let count = coefficients.count
 
-        // Vectorized distortion computation
+        // Vectorised distortion computation
         var reconstructed = quantLevels.map { Double($0) * stepSize }
         var errors = [Double](repeating: 0.0, count: count)
 

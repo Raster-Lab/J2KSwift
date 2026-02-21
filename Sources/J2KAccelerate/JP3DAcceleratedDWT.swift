@@ -5,7 +5,7 @@
 // JP3DAcceleratedDWT.swift
 // J2KSwift
 //
-// Accelerate-framework-optimized 3D DWT operations for JP3D (Week 214-217).
+// Accelerate-framework-optimised 3D DWT operations for JP3D (Week 214-217).
 //
 
 import Foundation
@@ -15,7 +15,7 @@ import J2KCore
 import Accelerate
 #endif
 
-/// Accelerate-framework-optimized 3D DWT operations.
+/// Accelerate-framework-optimised 3D DWT operations.
 ///
 /// Provides vDSP-based 1D filtering along X, Y, and Z axes for volumetric data.
 /// Used internally by `JP3DWaveletTransform` on Apple platforms.

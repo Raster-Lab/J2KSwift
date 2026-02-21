@@ -419,7 +419,7 @@ public actor JPIPPredictivePrefetchEngine {
     /// Generates prefetch predictions for a session.
     ///
     /// Combines viewport prediction, resolution prefetching, and spatial
-    /// locality analysis to produce a prioritized list of tile indices
+    /// locality analysis to produce a prioritised list of tile indices
     /// that should be prefetched.
     ///
     /// - Parameter sessionID: The session identifier.
@@ -758,7 +758,7 @@ public struct PrefetchPrediction: Sendable {
 
 // MARK: - Push Scheduler
 
-/// Schedules and prioritizes server push operations.
+/// Schedules and prioritises server push operations.
 ///
 /// Manages a queue of push items sorted by priority, respects
 /// bandwidth limits, and tracks push delivery state.

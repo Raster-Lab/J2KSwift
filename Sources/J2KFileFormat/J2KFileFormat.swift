@@ -151,7 +151,7 @@ public struct J2KFormatDetector: Sendable {
             }
         }
 
-        // Default to JP2 if signature is valid but no ftyp found or recognized
+        // Default to JP2 if signature is valid but no ftyp found or recognised
         return .jp2
     }
 
@@ -648,7 +648,7 @@ public struct J2KFileWriter: Sendable {
             try headerWriter.writeBox(bpccBox)
         }
 
-        // Color Specification box (colr)
+        // Colour Specification box (colr)
         let colrBox = try buildColorSpecificationBox(image: image)
         try headerWriter.writeBox(colrBox)
 
@@ -656,15 +656,15 @@ public struct J2KFileWriter: Sendable {
         try writer.writeRawBox(type: .jp2h, content: headerWriter.data)
     }
 
-    /// Builds a color specification box based on image components.
+    /// Builds a colour specification box based on image components.
     ///
-    /// - Note: This implementation makes basic assumptions about color space:
+    /// - Note: This implementation makes basic assumptions about colour space:
     ///   - 1 component: Greyscale
     ///   - 3 components: sRGB
-    ///   - 4+ components: sRGB (assumes RGBA; CMYK and other color spaces not yet supported)
-    /// Future versions should implement proper color space detection based on component metadata.
+    ///   - 4+ components: sRGB (assumes RGBA; CMYK and other colour spaces not yet supported)
+    /// Future versions should implement proper colour space detection based on component metadata.
     private func buildColorSpecificationBox(image: J2KImage) throws -> J2KColorSpecificationBox {
-        // Determine color space based on number of components
+        // Determine colour space based on number of components
         let colorSpace: J2KColorSpecificationBox.EnumeratedColorSpace
         switch image.components.count {
         case 1:
@@ -673,7 +673,7 @@ public struct J2KFileWriter: Sendable {
             colorSpace = .sRGB
         case 4:
             // Assume RGBA (sRGB with alpha)
-            // Note: CMYK and other 4-component color spaces are not yet supported
+            // Note: CMYK and other 4-component colour spaces are not yet supported
             colorSpace = .sRGB
         default:
             // Default fallback for unusual component counts

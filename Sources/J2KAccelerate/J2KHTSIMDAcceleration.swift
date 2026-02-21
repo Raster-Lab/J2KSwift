@@ -84,12 +84,12 @@ public struct HTSIMDCapability: Sendable, Equatable {
 
 /// SIMD-accelerated processor for HTJ2K block coding operations.
 ///
-/// Provides vectorized implementations of the most performance-critical operations
+/// Provides vectorised implementations of the most performance-critical operations
 /// in the HT cleanup pass:
-/// - **Batch significance extraction**: Vectorized `abs`, shift, and mask across
+/// - **Batch significance extraction**: Vectorised `abs`, shift, and mask across
 ///   multiple coefficients simultaneously.
 /// - **Batch magnitude/sign separation**: Parallel absolute value and sign extraction.
-/// - **Batch refinement bit extraction**: Vectorized bit-plane extraction for MagRef pass.
+/// - **Batch refinement bit extraction**: Vectorised bit-plane extraction for MagRef pass.
 /// - **Batch VLC pattern extraction**: Parallel significance pattern computation.
 ///
 /// All operations automatically fall back to scalar implementations when the input

@@ -5,16 +5,16 @@
 // J2KHTBlockCoderPooled.swift
 // J2KSwift
 //
-// Pool-optimized HT block coding for reduced memory allocations
+// Pool-optimised HT block coding for reduced memory allocations
 //
 
 import Foundation
 import J2KCore
 
-/// Pool-optimized HT block encoder that uses buffer pooling to reduce allocations.
+/// Pool-optimised HT block encoder that uses buffer pooling to reduce allocations.
 ///
 /// This encoder is functionally equivalent to ``HTBlockEncoder`` but uses
-/// pre-allocated buffers from ``J2KBufferPool`` to minimize memory allocations
+/// pre-allocated buffers from ``J2KBufferPool`` to minimise memory allocations
 /// during encoding operations.
 ///
 /// ## Performance Benefits

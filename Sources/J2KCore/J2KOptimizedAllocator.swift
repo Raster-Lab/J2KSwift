@@ -4,7 +4,7 @@
 //
 /// # J2KOptimizedAllocator
 ///
-/// Optimized memory allocation for JPEG 2000 pipeline stages.
+/// Optimised memory allocation for JPEG 2000 pipeline stages.
 ///
 /// This module provides arena-based allocation, pre-allocated scratch buffers,
 /// and batch allocation to reduce overhead in the encoding/decoding pipeline.

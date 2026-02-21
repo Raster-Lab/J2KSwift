@@ -4,11 +4,11 @@
 //
 /// # J2KMetalPerformance
 ///
-/// Metal-specific performance optimization and tuning.
+/// Metal-specific performance optimisation and tuning.
 ///
-/// This module provides Metal GPU performance optimization including
-/// kernel launch minimization, shader occupancy optimization, memory
-/// bandwidth optimization, and async compute utilization.
+/// This module provides Metal GPU performance optimisation including
+/// kernel launch minimization, shader occupancy optimisation, memory
+/// bandwidth optimisation, and async compute utilization.
 
 #if canImport(Metal)
 import Metal
@@ -19,11 +19,11 @@ import Foundation
 
 /// Metal performance optimizer for GPU-accelerated operations.
 ///
-/// This actor coordinates Metal GPU performance optimizations including:
+/// This actor coordinates Metal GPU performance optimisations including:
 /// - Kernel launch batching and minimization
-/// - Shader occupancy optimization
+/// - Shader occupancy optimisation
 /// - Register pressure reduction
-/// - Memory bandwidth optimization
+/// - Memory bandwidth optimisation
 /// - Async compute pipeline utilization
 ///
 /// Example:
@@ -37,7 +37,7 @@ public actor J2KMetalPerformance {
     /// Metal device.
     private let device: MTLDevice
 
-    /// Performance optimization configuration.
+    /// Performance optimisation configuration.
     public struct Configuration: Sendable {
         /// Maximum threadgroup size for kernels.
         public var maxThreadgroupSize: Int
@@ -156,12 +156,12 @@ public actor J2KMetalPerformance {
     /// Session start time.
     private var sessionStart: Date?
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates a Metal performance optimizer.
     ///
     /// - Parameters:
-    ///   - device: Metal device to optimize for.
+    ///   - device: Metal device to optimise for.
     ///   - configuration: Initial configuration (default: .balanced).
     public init(device: MTLDevice, configuration: Configuration = .balanced) {
         self.device = device
@@ -172,7 +172,7 @@ public actor J2KMetalPerformance {
 
     /// Optimizes configuration for maximum throughput.
     ///
-    /// - Returns: Optimized configuration.
+    /// - Returns: Optimised configuration.
     public func optimizeForThroughput() -> Configuration {
         configuration = .highThroughput
         return configuration
@@ -180,7 +180,7 @@ public actor J2KMetalPerformance {
 
     /// Optimizes configuration for minimum latency.
     ///
-    /// - Returns: Optimized configuration.
+    /// - Returns: Optimised configuration.
     public func optimizeForLatency() -> Configuration {
         configuration = .lowLatency
         return configuration
@@ -198,7 +198,7 @@ public actor J2KMetalPerformance {
         configuration
     }
 
-    // MARK: - Threadgroup Optimization
+    // MARK: - Threadgroup Optimisation
 
     /// Calculates optimal threadgroup size for the given workload.
     ///
@@ -295,7 +295,7 @@ public actor J2KMetalPerformance {
         return (tgWidth, tgHeight)
     }
 
-    // MARK: - Memory Bandwidth Optimization
+    // MARK: - Memory Bandwidth Optimisation
 
     /// Calculates optimal memory access pattern for the given data layout.
     ///
@@ -351,7 +351,7 @@ public actor J2KMetalPerformance {
         return min(1.0, actualBandwidth / estimatedPeakBandwidth)
     }
 
-    // MARK: - Kernel Launch Optimization
+    // MARK: - Kernel Launch Optimisation
 
     /// Records a kernel launch for performance tracking.
     ///

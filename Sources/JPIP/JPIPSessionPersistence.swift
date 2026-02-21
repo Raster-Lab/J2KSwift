@@ -14,10 +14,10 @@ import J2KCore
 
 // MARK: - Session State Version
 
-/// Version identifier for session state serialization format.
+/// Version identifier for session state serialisation format.
 ///
 /// Enables forward compatibility by allowing older versions to detect
-/// and handle newer serialization formats gracefully.
+/// and handle newer serialisation formats gracefully.
 public enum JPIPSessionStateVersion: Int, Codable, Sendable {
     /// Initial version of session state format.
     case v1 = 1
@@ -28,7 +28,7 @@ public enum JPIPSessionStateVersion: Int, Codable, Sendable {
 
 // MARK: - Serializable Data Bin
 
-/// A Codable representation of a JPIP data bin for serialization.
+/// A Codable representation of a JPIP data bin for serialisation.
 public struct JPIPSerializableDataBin: Codable, Sendable {
     /// The data bin class raw value.
     public let binClassRawValue: Int
@@ -58,7 +58,7 @@ public struct JPIPSerializableDataBin: Codable, Sendable {
 
     /// Creates a serializable data bin from a JPIPDataBin.
     ///
-    /// - Parameter dataBin: The data bin to serialize.
+    /// - Parameter dataBin: The data bin to serialise.
     public init(from dataBin: JPIPDataBin) {
         self.binClassRawValue = dataBin.binClass.rawValue
         self.binID = dataBin.binID
@@ -84,7 +84,7 @@ public struct JPIPSerializableDataBin: Codable, Sendable {
 
 // MARK: - Serializable Precinct
 
-/// A Codable representation of a JPIP precinct for serialization.
+/// A Codable representation of a JPIP precinct for serialisation.
 public struct JPIPSerializablePrecinct: Codable, Sendable {
     /// Precinct identifier components.
     public let tile: Int
@@ -104,7 +104,7 @@ public struct JPIPSerializablePrecinct: Codable, Sendable {
 
     /// Creates a serializable precinct from JPIPPrecinctData.
     ///
-    /// - Parameter precinctData: The precinct data to serialize.
+    /// - Parameter precinctData: The precinct data to serialise.
     public init(from precinctData: JPIPPrecinctData) {
         self.tile = precinctData.precinctID.tile
         self.component = precinctData.precinctID.component
@@ -143,7 +143,7 @@ public struct JPIPSerializablePrecinct: Codable, Sendable {
 /// Captures all session state needed for persistence and recovery,
 /// including channel information, cache model, and precinct data.
 public struct JPIPSessionStateSnapshot: Codable, Sendable {
-    /// The serialization format version.
+    /// The serialisation format version.
     public let version: JPIPSessionStateVersion
 
     /// The unique session identifier.
@@ -155,7 +155,7 @@ public struct JPIPSessionStateSnapshot: Codable, Sendable {
     /// The target image being accessed.
     public let target: String?
 
-    /// Whether the session was active when serialized.
+    /// Whether the session was active when serialised.
     public let wasActive: Bool
 
     /// Timestamp when the snapshot was created.
@@ -215,7 +215,7 @@ public struct JPIPSessionStateSnapshot: Codable, Sendable {
 
 /// A complete serializable snapshot of a server-side JPIP session.
 public struct JPIPServerSessionStateSnapshot: Codable, Sendable {
-    /// The serialization format version.
+    /// The serialisation format version.
     public let version: JPIPSessionStateVersion
 
     /// The unique session identifier.
@@ -227,7 +227,7 @@ public struct JPIPServerSessionStateSnapshot: Codable, Sendable {
     /// The target image.
     public let target: String
 
-    /// Whether the session was active when serialized.
+    /// Whether the session was active when serialised.
     public let wasActive: Bool
 
     /// Timestamp when the snapshot was created.
@@ -278,7 +278,7 @@ public struct JPIPServerSessionStateSnapshot: Codable, Sendable {
 
 /// Protocol for session state persistence backends.
 ///
-/// Implementations provide storage for serialized session state,
+/// Implementations provide storage for serialised session state,
 /// supporting both file-based and in-memory backends.
 public protocol JPIPSessionPersistenceStore: Sendable {
     /// Saves a client session state snapshot.
@@ -333,10 +333,10 @@ public actor JPIPInMemoryPersistenceStore: JPIPSessionPersistenceStore {
     /// Stored server session snapshots.
     private var serverSessions: [String: Data] = [:]
 
-    /// JSON encoder for serialization.
+    /// JSON encoder for serialisation.
     private let encoder = JSONEncoder()
 
-    /// JSON decoder for deserialization.
+    /// JSON decoder for deserialisation.
     private let decoder = JSONDecoder()
 
     /// Creates a new in-memory persistence store.
@@ -388,7 +388,7 @@ public actor JPIPInMemoryPersistenceStore: JPIPSessionPersistenceStore {
 
 // MARK: - File-Based Persistence Store
 
-/// A file-based session persistence store using JSON serialization.
+/// A file-based session persistence store using JSON serialisation.
 ///
 /// Stores each session as a separate JSON file in a configurable directory.
 /// Provides durable persistence across application restarts.
@@ -396,10 +396,10 @@ public actor JPIPFilePersistenceStore: JPIPSessionPersistenceStore {
     /// The directory where session files are stored.
     private let directory: URL
 
-    /// JSON encoder for serialization.
+    /// JSON encoder for serialisation.
     private let encoder: JSONEncoder
 
-    /// JSON decoder for deserialization.
+    /// JSON decoder for deserialisation.
     private let decoder: JSONDecoder
 
     /// Creates a new file-based persistence store.
@@ -523,7 +523,7 @@ public struct JPIPSessionRecoveryConfiguration: Sendable {
     /// Snapshots older than this are considered stale.
     public let maxSnapshotAge: TimeInterval
 
-    /// Whether to attempt cache model synchronization on reconnect.
+    /// Whether to attempt cache model synchronisation on reconnect.
     public let synchronizeCacheOnReconnect: Bool
 
     /// Whether to restore precinct cache data.
@@ -621,7 +621,7 @@ public struct JPIPSessionRecoveryResult: Sendable {
 
 /// Manages session persistence and recovery for JPIP sessions.
 ///
-/// Coordinates serialization, storage, and recovery of both client
+/// Coordinates serialisation, storage, and recovery of both client
 /// and server session state. Supports automatic persistence on
 /// session events and recovery after disconnection.
 public actor JPIPSessionPersistenceManager {
@@ -658,7 +658,7 @@ public actor JPIPSessionPersistenceManager {
     /// Creates a snapshot of the session's state and saves it to the store.
     ///
     /// - Parameter session: The session to persist.
-    /// - Throws: If serialization or saving fails.
+    /// - Throws: If serialisation or saving fails.
     public func persistSession(_ session: JPIPSession) async throws {
         let startTime = Date()
 
@@ -782,7 +782,7 @@ public actor JPIPSessionPersistenceManager {
     /// Persists the current state of a server session.
     ///
     /// - Parameter session: The server session to persist.
-    /// - Throws: If serialization or saving fails.
+    /// - Throws: If serialisation or saving fails.
     public func persistServerSession(_ session: JPIPServerSession) async throws {
         let startTime = Date()
 

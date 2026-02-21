@@ -16,7 +16,7 @@ import J2KCore
 // Implementation of perceptual encoding modes for JPEG 2000.
 //
 // The perceptual encoder combines visual masking, frequency weighting, and
-// quality metrics to optimize compression for perceptual quality rather than
+// quality metrics to optimise compression for perceptual quality rather than
 // mathematical metrics like MSE or PSNR.
 //
 // ## Features
@@ -24,7 +24,7 @@ import J2KCore
 // - CSF-based frequency weighting
 // - Luminance and texture-based masking
 // - Motion-adaptive encoding (for video)
-// - Quality-based rate-distortion optimization
+// - Quality-based rate-distortion optimisation
 // - SSIM/MS-SSIM quality targeting
 //
 // ## Usage
@@ -201,10 +201,10 @@ public struct J2KPerceptualEncoder: Sendable {
 
     // MARK: - Quantization Step Calculation
 
-    /// Calculates perceptually optimized quantization steps.
+    /// Calculates perceptually optimised quantization steps.
     ///
     /// Combines visual masking and frequency weighting to produce quantization
-    /// steps that optimize for perceptual quality.
+    /// steps that optimise for perceptual quality.
     ///
     /// - Parameters:
     ///   - baseQuantization: Base quantization value.
@@ -383,7 +383,7 @@ public struct J2KPerceptualEncoder: Sendable {
     }
 }
 
-// MARK: - Rate-Distortion Optimization
+// MARK: - Rate-Distortion Optimisation
 
 extension J2KPerceptualEncoder {
     /// Estimates optimal base quantization for a target bitrate.

@@ -14,7 +14,7 @@
 /// ### Transforms
 /// - ``J2KDWTAccelerated``
 ///
-/// ### Color Conversion
+/// ### Colour Conversion
 /// - ``J2KColorTransform``
 
 import Foundation
@@ -28,7 +28,7 @@ import Accelerate
 ///
 /// This type provides high-performance implementations of the discrete wavelet transform
 /// using platform-specific acceleration frameworks. On Apple platforms, it uses the Accelerate
-/// framework's vDSP library for optimized vector operations.
+/// framework's vDSP library for optimised vector operations.
 ///
 /// The implementation supports:
 /// - 5/3 reversible filter (for lossless compression)
@@ -154,7 +154,7 @@ public struct J2KDWTAccelerated: Sendable {
         // Update 2: even[n] += delta * (odd[n-1] + odd[n])
         try applyLiftingStep(&even, reference: odd, coefficient: delta, isPredict: false, extension: boundaryExtension)
 
-        // Scaling using vDSP for vectorized operations
+        // Scaling using vDSP for vectorised operations
         even.withUnsafeMutableBufferPointer { evenPtr in
             var scalar = k
             vDSP_vsmulD(evenPtr.baseAddress!, 1, &scalar, evenPtr.baseAddress!, 1, vDSP_Length(lowpassSize))
@@ -280,7 +280,7 @@ public struct J2KDWTAccelerated: Sendable {
     /// Applies a lifting step operation with hardware acceleration.
     ///
     /// This helper method implements the predict and update steps of the lifting scheme
-    /// using vectorized operations when possible.
+    /// using vectorised operations when possible.
     ///
     /// - Parameters:
     ///   - target: Array to be updated (modified in place).
@@ -320,9 +320,9 @@ public struct J2KDWTAccelerated: Sendable {
         }
     }
 
-    /// SIMD-optimized lifting step for interior elements with boundary handling.
+    /// SIMD-optimised lifting step for interior elements with boundary handling.
     ///
-    /// This method uses vDSP operations for vectorized processing of interior elements,
+    /// This method uses vDSP operations for vectorised processing of interior elements,
     /// falling back to scalar operations only for boundary elements. This provides
     /// significant performance improvement over the naive scalar loop.
     ///
@@ -362,11 +362,11 @@ public struct J2KDWTAccelerated: Sendable {
             interiorEnd = min(targetSize, refSize)
         }
 
-        // Process interior elements with vDSP (vectorized)
+        // Process interior elements with vDSP (vectorised)
         if interiorEnd > interiorStart {
             let interiorCount = interiorEnd - interiorStart
 
-            // Allocate temporary arrays for vectorized operations
+            // Allocate temporary arrays for vectorised operations
             var leftValues = [Double](repeating: 0, count: interiorCount)
             var rightValues = [Double](repeating: 0, count: interiorCount)
             var sumValues = [Double](repeating: 0, count: interiorCount)
@@ -390,14 +390,14 @@ public struct J2KDWTAccelerated: Sendable {
                 }
             }
 
-            // Vectorized addition: sum = left + right
+            // Vectorised addition: sum = left + right
             vDSP_vaddD(leftValues, 1, rightValues, 1, &sumValues, 1, vDSP_Length(interiorCount))
 
-            // Vectorized scaling: scaled = coefficient * sum
+            // Vectorised scaling: scaled = coefficient * sum
             var coef = coefficient
             vDSP_vsmulD(sumValues, 1, &coef, &scaledValues, 1, vDSP_Length(interiorCount))
 
-            // Vectorized accumulation: target += scaled
+            // Vectorised accumulation: target += scaled
             target.withUnsafeMutableBufferPointer { targetPtr in
                 scaledValues.withUnsafeBufferPointer { scaledPtr in
                     vDSP_vaddD(
@@ -449,7 +449,7 @@ public struct J2KDWTAccelerated: Sendable {
             }
         }
         #else
-        // Fallback to non-optimized version on platforms without Accelerate
+        // Fallback to non-optimised version on platforms without Accelerate
         try applyLiftingStep(&target, reference: reference, coefficient: coefficient,
                            isPredict: isPredict, extension: boundaryExtension)
         #endif
@@ -836,7 +836,7 @@ public struct J2KDWTAccelerated: Sendable {
         #endif
     }
 
-    /// Performs cache-optimized 2D forward DWT using matrix transpose.
+    /// Performs cache-optimised 2D forward DWT using matrix transpose.
     ///
     /// This method uses hardware-accelerated matrix transpose to convert column operations
     /// into row operations, providing better cache locality and improved performance.
@@ -1115,7 +1115,7 @@ public struct J2KDWTAccelerated: Sendable {
     #if canImport(Accelerate)
     /// Transposes a 2D matrix using hardware acceleration for cache-friendly access.
     ///
-    /// This method uses vDSP's matrix transpose operation which is cache-optimized,
+    /// This method uses vDSP's matrix transpose operation which is cache-optimised,
     /// providing significant performance improvements over naive element-by-element copying.
     ///
     /// - Parameters:
@@ -1132,7 +1132,7 @@ public struct J2KDWTAccelerated: Sendable {
 
         data.withUnsafeBufferPointer { srcPtr in
             result.withUnsafeMutableBufferPointer { dstPtr in
-                // vDSP_mtrans performs optimized matrix transpose
+                // vDSP_mtrans performs optimised matrix transpose
                 // C = A^T where A is rows×cols, C is cols×rows
                 vDSP_mtransD(
                     srcPtr.baseAddress!, 1,  // Source matrix
@@ -1229,20 +1229,20 @@ public enum BoundaryExtension: Sendable {
     case zeroPadding
 }
 
-/// Hardware-accelerated color space transformations for JPEG 2000.
+/// Hardware-accelerated colour space transformations for JPEG 2000.
 ///
-/// This type provides high-performance implementations of the Irreversible Color Transform (ICT)
+/// This type provides high-performance implementations of the Irreversible Colour Transform (ICT)
 /// using platform-specific acceleration frameworks. On Apple platforms, it uses the Accelerate
-/// framework's vDSP library for optimized vector operations.
+/// framework's vDSP library for optimised vector operations.
 ///
-/// The ICT converts between RGB and YCbCr color spaces using floating-point arithmetic
+/// The ICT converts between RGB and YCbCr colour spaces using floating-point arithmetic
 /// as defined in ISO/IEC 15444-1, Annex G.3.
 ///
 /// ## Performance
 ///
 /// On Apple platforms with Accelerate framework:
 /// - 2-4x faster than scalar implementation for large arrays
-/// - Vectorized multiply-add operations via vDSP
+/// - Vectorised multiply-add operations via vDSP
 /// - Reduced loop overhead
 ///
 /// ## Usage
@@ -1261,7 +1261,7 @@ public enum BoundaryExtension: Sendable {
 /// let rgb = try transform.ycbcrToRGB(ycbcr)
 /// ```
 public struct J2KColorTransform: Sendable {
-    /// Creates a new accelerated color transform processor.
+    /// Creates a new accelerated colour transform processor.
     public init() {}
 
     // MARK: - Availability Check
@@ -1280,9 +1280,9 @@ public struct J2KColorTransform: Sendable {
 
     // MARK: - Forward ICT (RGB → YCbCr)
 
-    /// Applies the hardware-accelerated forward Irreversible Color Transform (RGB → YCbCr).
+    /// Applies the hardware-accelerated forward Irreversible Colour Transform (RGB → YCbCr).
     ///
-    /// Uses vDSP vectorized operations for high-performance color conversion.
+    /// Uses vDSP vectorised operations for high-performance colour conversion.
     /// The ICT coefficients are from ISO/IEC 15444-1, Annex G.3:
     /// ```
     /// Y  =  0.299   × R + 0.587   × G + 0.114   × B
@@ -1368,9 +1368,9 @@ public struct J2KColorTransform: Sendable {
 
     // MARK: - Inverse ICT (YCbCr → RGB)
 
-    /// Applies the hardware-accelerated inverse Irreversible Color Transform (YCbCr → RGB).
+    /// Applies the hardware-accelerated inverse Irreversible Colour Transform (YCbCr → RGB).
     ///
-    /// Uses vDSP vectorized operations for high-performance color conversion.
+    /// Uses vDSP vectorised operations for high-performance colour conversion.
     /// The inverse ICT coefficients are from ISO/IEC 15444-1, Annex G.3:
     /// ```
     /// R = Y + 1.402    × Cr
@@ -1439,13 +1439,13 @@ public struct J2KColorTransform: Sendable {
 
     // MARK: - Interleaved API
 
-    /// Converts interleaved RGB data to YCbCr color space using the ICT.
+    /// Converts interleaved RGB data to YCbCr colour space using the ICT.
     ///
     /// The input array must contain interleaved RGB values: [R0, G0, B0, R1, G1, B1, ...].
     /// The output array contains interleaved YCbCr values: [Y0, Cb0, Cr0, Y1, Cb1, Cr1, ...].
     ///
-    /// - Parameter rgb: Interleaved RGB color data. Length must be a multiple of 3.
-    /// - Returns: Interleaved YCbCr color data.
+    /// - Parameter rgb: Interleaved RGB colour data. Length must be a multiple of 3.
+    /// - Returns: Interleaved YCbCr colour data.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if input length is not a multiple of 3 or is empty.
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if acceleration is not available.
     public func rgbToYCbCr(_ rgb: [Double]) throws -> [Double] {
@@ -1483,13 +1483,13 @@ public struct J2KColorTransform: Sendable {
         return result
     }
 
-    /// Converts interleaved YCbCr data to RGB color space using the inverse ICT.
+    /// Converts interleaved YCbCr data to RGB colour space using the inverse ICT.
     ///
     /// The input array must contain interleaved YCbCr values: [Y0, Cb0, Cr0, Y1, Cb1, Cr1, ...].
     /// The output array contains interleaved RGB values: [R0, G0, B0, R1, G1, B1, ...].
     ///
-    /// - Parameter ycbcr: Interleaved YCbCr color data. Length must be a multiple of 3.
-    /// - Returns: Interleaved RGB color data.
+    /// - Parameter ycbcr: Interleaved YCbCr colour data. Length must be a multiple of 3.
+    /// - Returns: Interleaved RGB colour data.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if input length is not a multiple of 3 or is empty.
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if acceleration is not available.
     public func ycbcrToRGB(_ ycbcr: [Double]) throws -> [Double] {

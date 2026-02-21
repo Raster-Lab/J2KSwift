@@ -18,7 +18,7 @@ import J2KCore
 
 /// Per-image cache policy configuration.
 ///
-/// Allows customizing cache behavior for individual images based on their
+/// Allows customising cache behavior for individual images based on their
 /// access patterns and importance.
 public struct JPIPImageCachePolicy: Sendable {
     /// Image identifier this policy applies to.

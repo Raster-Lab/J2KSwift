@@ -5,15 +5,15 @@
 // J2KLosslessDecodingBenchmark.swift
 // J2KSwift
 //
-// Benchmark comparing standard vs optimized lossless decoding
+// Benchmark comparing standard vs optimised lossless decoding
 //
 
 import Foundation
 import J2KCore
 
-/// Comprehensive benchmarks for lossless decoding optimization.
+/// Comprehensive benchmarks for lossless decoding optimisation.
 ///
-/// Compares performance between standard and optimized implementations
+/// Compares performance between standard and optimised implementations
 /// across various image sizes and decomposition levels.
 public struct J2KLosslessDecodingBenchmark {
     /// Runs all benchmarks and returns a summary report.
@@ -66,7 +66,7 @@ public struct J2KLosslessDecodingBenchmark {
                 )
             }
 
-            // Optimized implementation
+            // Optimised implementation
             let optimizer = J2KDWT1DOptimizer()
             let optimizedBenchmark = J2KBenchmark(name: "Optimized-1D-\(size)")
             let optimizedResult = try optimizedBenchmark.measureThrowing(iterations: 100) {
@@ -120,7 +120,7 @@ public struct J2KLosslessDecodingBenchmark {
                 )
             }
 
-            // Optimized implementation
+            // Optimised implementation
             let optimizer = J2KDWT2DOptimizer()
             let optimizedBenchmark = J2KBenchmark(name: "Optimized-2D-\(width)x\(height)")
             let optimizedResult = try optimizedBenchmark.measureThrowing(iterations: 50) {
@@ -184,7 +184,7 @@ public struct J2KLosslessDecodingBenchmark {
                 )
             }
 
-            // Optimized implementation
+            // Optimised implementation
             let optimizer = J2KDWT2DOptimizer()
             let optimizedBenchmark = J2KBenchmark(name: "Optimized-ML\(numLevels)")
             let optimizedResult = try optimizedBenchmark.measureThrowing(iterations: 20) {

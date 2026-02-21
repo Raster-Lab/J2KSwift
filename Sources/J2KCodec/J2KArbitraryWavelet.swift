@@ -100,7 +100,7 @@ public struct J2KADSMarker: Sendable, Equatable {
     /// Maximum decomposition levels.
     public let maxLevels: Int
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates an ADS marker segment.
     ///
@@ -148,7 +148,7 @@ public struct J2KADSMarker: Sendable, Equatable {
         }
     }
 
-    // MARK: - Serialization
+    // MARK: - Serialisation
 
     /// Encodes the ADS marker segment to binary codestream format.
     ///
@@ -390,7 +390,7 @@ public struct J2KArbitraryWaveletTransform: Sendable {
     /// Boundary extension mode for handling signal edges during convolution.
     public let boundaryExtension: J2KDWT1D.BoundaryExtension
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates an arbitrary wavelet transform engine.
     ///

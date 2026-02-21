@@ -110,7 +110,7 @@ public struct JPIPQualityDecision: Sendable {
 /// Adaptive quality engine for JPIP streaming.
 ///
 /// Monitors bandwidth conditions and adjusts quality settings dynamically
-/// to optimize user experience. Tracks QoE metrics and provides smooth
+/// to optimise user experience. Tracks QoE metrics and provides smooth
 /// quality transitions.
 ///
 /// Example:

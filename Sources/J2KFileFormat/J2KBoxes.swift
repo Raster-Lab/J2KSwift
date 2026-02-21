@@ -305,7 +305,7 @@ public struct J2KHeaderBox: J2KBox {
 ///   - Number of components (2 bytes): Number of image components
 ///   - Bits per component (1 byte): Bit depth (default value)
 ///   - Compression type (1 byte): Always 7 for JPEG 2000
-///   - Color space unknown (1 byte): 0 or 1
+///   - Colour space unknown (1 byte): 0 or 1
 ///   - Intellectual property (1 byte): 0 or 1
 ///
 /// Example:
@@ -344,10 +344,10 @@ public struct J2KImageHeaderBox: J2KBox {
     /// Compression type (always 7 for JPEG 2000).
     public var compressionType: UInt8
 
-    /// Color space unknown flag.
+    /// Colour space unknown flag.
     ///
-    /// - `0`: Color space is known (specified in a color specification box)
-    /// - `1`: Color space is unknown
+    /// - `0`: Colour space is known (specified in a colour specification box)
+    /// - `1`: Colour space is unknown
     public var colorSpaceUnknown: UInt8
 
     /// Intellectual property flag.
@@ -364,7 +364,7 @@ public struct J2KImageHeaderBox: J2KBox {
     ///   - numComponents: The number of image components.
     ///   - bitsPerComponent: The bits per component (1-38, actual value = bitsPerComponent - 1 + sign bit).
     ///   - compressionType: The compression type (default: 7 for JPEG 2000).
-    ///   - colorSpaceUnknown: Whether the color space is unknown (default: 0).
+    ///   - colorSpaceUnknown: Whether the colour space is unknown (default: 0).
     ///   - intellectualProperty: Whether IP information exists (default: 0).
     public init(
         width: UInt32,
@@ -421,7 +421,7 @@ public struct J2KImageHeaderBox: J2KBox {
         // Compression type (1 byte)
         data.append(compressionType)
 
-        // Color space unknown (1 byte)
+        // Colour space unknown (1 byte)
         data.append(colorSpaceUnknown)
 
         // Intellectual property (1 byte)
@@ -460,7 +460,7 @@ public struct J2KImageHeaderBox: J2KBox {
             throw J2KError.fileFormatError("Unsupported compression type: \(compressionType), expected 7")
         }
 
-        // Color space unknown (1 byte)
+        // Colour space unknown (1 byte)
         colorSpaceUnknown = data[12]
         guard colorSpaceUnknown <= 1 else {
             throw J2KError.fileFormatError("Invalid color space unknown flag: \(colorSpaceUnknown)")
@@ -623,11 +623,11 @@ public struct J2KBitsPerComponentBox: J2KBox {
     }
 }
 
-// MARK: - Color Specification Box
+// MARK: - Colour Specification Box
 
-/// The color specification box.
+/// The colour specification box.
 ///
-/// This box specifies the color space of the image. At least one color
+/// This box specifies the colour space of the image. At least one colour
 /// specification box must be present in the JP2 header box.
 ///
 /// ## Box Structure
@@ -643,7 +643,7 @@ public struct J2KBitsPerComponentBox: J2KBox {
 /// ## Examples
 ///
 /// ```swift
-/// // sRGB color space
+/// // sRGB colour space
 /// let box = J2KColorSpecificationBox(
 ///     method: .enumerated(.sRGB),
 ///     precedence: 0,
@@ -666,9 +666,9 @@ public struct J2KBitsPerComponentBox: J2KBox {
 /// )
 /// ```
 public struct J2KColorSpecificationBox: J2KBox {
-    /// Color specification method.
+    /// Colour specification method.
     public enum Method: Equatable, Sendable {
-        /// Enumerated color space (method 1).
+        /// Enumerated colour space (method 1).
         case enumerated(EnumeratedColorSpace)
 
         /// Restricted ICC profile (method 2).
@@ -677,7 +677,7 @@ public struct J2KColorSpecificationBox: J2KBox {
         /// Any ICC profile (method 3).
         case anyICC(Data)
 
-        /// Vendor-specific color space (method 4).
+        /// Vendor-specific colour space (method 4).
         case vendor(Data)
 
         /// Returns the method code.
@@ -691,24 +691,24 @@ public struct J2KColorSpecificationBox: J2KBox {
         }
     }
 
-    /// Enumerated color space identifiers.
+    /// Enumerated colour space identifiers.
     public enum EnumeratedColorSpace: UInt32, Equatable, Sendable {
-        /// sRGB color space (ITU-R BT.709).
+        /// sRGB colour space (ITU-R BT.709).
         case sRGB = 16
 
         /// Greyscale (sGrey).
         case greyscale = 17
 
-        /// YCbCr color space.
+        /// YCbCr colour space.
         case yCbCr = 18
 
-        /// CMYK color space.
+        /// CMYK colour space.
         case cmyk = 12
 
-        /// e-sRGB color space.
+        /// e-sRGB colour space.
         case esRGB = 20
 
-        /// ROMM-RGB (ProPhoto RGB) color space.
+        /// ROMM-RGB (ProPhoto RGB) colour space.
         case rommRGB = 21
     }
 
@@ -716,22 +716,22 @@ public struct J2KColorSpecificationBox: J2KBox {
         .colr
     }
 
-    /// The color specification method.
+    /// The colour specification method.
     public var method: Method
 
-    /// The precedence of this color specification (0-255).
+    /// The precedence of this colour specification (0-255).
     ///
-    /// When multiple color specification boxes exist, the one with the
+    /// When multiple colour specification boxes exist, the one with the
     /// lowest precedence value takes priority. Value 0 has highest priority.
     public var precedence: UInt8
 
     /// The approximation level (0=accurate, 1=approximate).
     public var approximation: UInt8
 
-    /// Creates a new color specification box.
+    /// Creates a new colour specification box.
     ///
     /// - Parameters:
-    ///   - method: The color specification method.
+    ///   - method: The colour specification method.
     ///   - precedence: The precedence (default: 0).
     ///   - approximation: The approximation level (default: 0).
     public init(method: Method, precedence: UInt8 = 0, approximation: UInt8 = 0) {
@@ -796,7 +796,7 @@ public struct J2KColorSpecificationBox: J2KBox {
         // Method-specific data
         switch methodCode {
         case 1:
-            // Enumerated color space
+            // Enumerated colour space
             guard data.count == 7 else {
                 throw J2KError.fileFormatError(
                     "Invalid enumerated color space box length: \(data.count), expected 7"
@@ -831,7 +831,7 @@ public struct J2KColorSpecificationBox: J2KBox {
             method = .anyICC(profile)
 
         case 4:
-            // Vendor color space
+            // Vendor colour space
             guard data.count > 3 else {
                 throw J2KError.fileFormatError("Vendor color space data is empty")
             }
@@ -848,7 +848,7 @@ public struct J2KColorSpecificationBox: J2KBox {
 
 /// The palette box.
 ///
-/// This box defines a palette for indexed color images. It specifies the
+/// This box defines a palette for indexed colour images. It specifies the
 /// number of entries, number of palette components, and bit depth of each
 /// palette component.
 ///
@@ -1088,7 +1088,7 @@ public struct J2KPaletteBox: J2KBox {
 ///     .direct(component: 2)
 /// ])
 ///
-/// // Palette mapping (indexed color)
+/// // Palette mapping (indexed colour)
 /// let box = J2KComponentMappingBox(mappings: [
 ///     .palette(component: 0, paletteColumn: 0),
 ///     .palette(component: 0, paletteColumn: 1),
@@ -1214,7 +1214,7 @@ public struct J2KComponentMappingBox: J2KBox {
 ///
 /// This box specifies the type and association of each channel in the image.
 /// It is optional but recommended for images with specific channel types
-/// (e.g., color with alpha, premultiplied alpha).
+/// (e.g., colour with alpha, premultiplied alpha).
 ///
 /// ## Box Structure
 ///
@@ -1229,7 +1229,7 @@ public struct J2KComponentMappingBox: J2KBox {
 ///
 /// ## Channel Types
 ///
-/// - 0: Color channel
+/// - 0: Colour channel
 /// - 1: Opacity (alpha) channel
 /// - 2: Premultiplied opacity channel
 /// - 65535: Unspecified channel type
@@ -1237,7 +1237,7 @@ public struct J2KComponentMappingBox: J2KBox {
 /// ## Association Values
 ///
 /// - 0: Associated with whole image
-/// - 1-65534: Associated with specific color channel
+/// - 1-65534: Associated with specific colour channel
 /// - 65535: Unassociated
 ///
 /// ## Examples
@@ -1245,15 +1245,15 @@ public struct J2KComponentMappingBox: J2KBox {
 /// ```swift
 /// // RGB with alpha
 /// let box = J2KChannelDefinitionBox(channels: [
-///     .color(index: 0, association: 1),   // Red
-///     .color(index: 1, association: 2),   // Green
-///     .color(index: 2, association: 3),   // Blue
+///     .colour(index: 0, association: 1),   // Red
+///     .colour(index: 1, association: 2),   // Green
+///     .colour(index: 2, association: 3),   // Blue
 ///     .opacity(index: 3, association: 0)  // Alpha (whole image)
 /// ])
 ///
 /// // Grayscale with alpha
 /// let box = J2KChannelDefinitionBox(channels: [
-///     .color(index: 0, association: 1),   // Luminance
+///     .colour(index: 0, association: 1),   // Luminance
 ///     .opacity(index: 1, association: 0)  // Alpha
 /// ])
 /// ```
@@ -1269,7 +1269,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
         /// The associated channel or image (0-65535).
         ///
         /// - 0: Associated with whole image
-        /// - 1-65534: Associated with specific color channel
+        /// - 1-65534: Associated with specific colour channel
         /// - 65535: Unassociated
         public let association: UInt16
 
@@ -1285,12 +1285,12 @@ public struct J2KChannelDefinitionBox: J2KBox {
             self.association = association
         }
 
-        /// Creates a color channel definition.
+        /// Creates a colour channel definition.
         ///
         /// - Parameters:
         ///   - index: The channel index.
-        ///   - association: The associated color channel (default: 0 for whole image).
-        /// - Returns: A color channel definition.
+        ///   - association: The associated colour channel (default: 0 for whole image).
+        /// - Returns: A colour channel definition.
         public static func color(index: UInt16, association: UInt16 = 0) -> Channel {
             Channel(index: index, type: .color, association: association)
         }
@@ -1328,7 +1328,7 @@ public struct J2KChannelDefinitionBox: J2KBox {
 
     /// Channel type identifiers.
     public enum ChannelType: UInt16, Equatable, Sendable {
-        /// Color channel.
+        /// Colour channel.
         case color = 0
 
         /// Opacity (alpha) channel.

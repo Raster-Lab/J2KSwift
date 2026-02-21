@@ -90,7 +90,7 @@ public struct J2KAcceleratedWaveletFilter: Sendable, Equatable {
 /// ## Performance
 ///
 /// On Apple platforms with Accelerate framework:
-/// - Uses `vDSP_convD` for vectorized convolution
+/// - Uses `vDSP_convD` for vectorised convolution
 /// - Symmetric boundary extension for edge handling
 /// - Efficient downsampling via stride-based extraction
 ///

@@ -4,9 +4,9 @@
 //
 /// # J2KApplePlatform
 ///
-/// Apple platform-specific features and optimizations.
+/// Apple platform-specific features and optimisations.
 ///
-/// Provides Grand Central Dispatch optimization, Quality of Service classes,
+/// Provides Grand Central Dispatch optimisation, Quality of Service classes,
 /// power efficiency modes, thermal state monitoring, and battery-aware processing
 /// for optimal performance on Apple platforms.
 
@@ -24,9 +24,9 @@ import UIKit
 import IOKit.ps
 #endif
 
-// MARK: - Grand Central Dispatch Optimization
+// MARK: - Grand Central Dispatch Optimisation
 
-/// Optimized Grand Central Dispatch utilities for JPEG 2000 processing.
+/// Optimised Grand Central Dispatch utilities for JPEG 2000 processing.
 ///
 /// Provides helpers for efficient parallel processing using GCD with
 /// appropriate Quality of Service levels and workload distribution.
@@ -77,7 +77,7 @@ public actor J2KGCDDispatcher {
         self.configuration = configuration
     }
 
-    /// Processes items in parallel using optimized GCD.
+    /// Processes items in parallel using optimised GCD.
     ///
     /// - Parameters:
     ///   - items: The items to process.

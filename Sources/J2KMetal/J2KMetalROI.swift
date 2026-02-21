@@ -159,7 +159,7 @@ public actor J2KMetalROI {
     private let bufferPool: J2KMetalBufferPool
     private var statistics: J2KMetalROIStatistics
 
-    // MARK: Initialization
+    // MARK: Initialisation
 
     /// Creates a new Metal ROI processor.
     ///

@@ -210,7 +210,7 @@ public struct TranscodingTileCoefficients: Sendable {
     /// The tile height in pixels.
     public let height: Int
 
-    /// Code-block coefficients organized by component index then subband.
+    /// Code-block coefficients organised by component index then subband.
     ///
     /// The outer array index is the component index. Each dictionary maps
     /// subband to an array of code-block coefficients.
@@ -260,7 +260,7 @@ public struct TranscodingCoefficients: Sendable {
     /// Per-component signedness.
     public let signedComponents: [Bool]
 
-    /// The color space of the source image.
+    /// The colour space of the source image.
     public let colorSpace: J2KColorSpace
 
     /// The number of wavelet decomposition levels.
@@ -304,7 +304,7 @@ public struct TranscodingCoefficients: Sendable {
     ///   - componentCount: The number of components.
     ///   - bitDepths: Per-component bit depths.
     ///   - signedComponents: Per-component signedness.
-    ///   - colorSpace: The color space.
+    ///   - colorSpace: The colour space.
     ///   - decompositionLevels: Wavelet decomposition levels.
     ///   - progressionOrder: The packet progression order.
     ///   - qualityLayers: The number of quality layers.
@@ -518,7 +518,7 @@ public struct TranscodingResult: Sendable {
 /// layer is re-encoded, preserving all other information:
 ///
 /// - Wavelet coefficients (unchanged)
-/// - Color transform parameters
+/// - Colour transform parameters
 /// - Quantization step sizes
 /// - Quality layer structure
 /// - Progression order
@@ -1150,7 +1150,7 @@ public struct J2KTranscoder: Sendable {
             }
         }
 
-        // Set color space based on component count if not already determined
+        // Set colour space based on component count if not already determined
         if metadata.colorSpace == .unknown {
             metadata.colorSpace = metadata.componentCount >= 3 ? .sRGB : .grayscale
         }
@@ -1480,7 +1480,7 @@ public struct J2KTranscoder: Sendable {
         } catch {
             // If decoding fails (e.g., data doesn't correspond to this specific block),
             // return zeros rather than propagating the error since the tile data
-            // may be organized differently than expected
+            // may be organised differently than expected
             return [Int](repeating: 0, count: blockSize)
         }
     }

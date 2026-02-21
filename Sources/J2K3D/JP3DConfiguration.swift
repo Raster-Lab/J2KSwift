@@ -60,7 +60,7 @@ public struct JP3DTilingConfiguration: Sendable, Equatable {
         tileSizeX: 256, tileSizeY: 256, tileSizeZ: 16
     )
 
-    /// Streaming-optimized tiling configuration (128×128×8).
+    /// Streaming-optimised tiling configuration (128×128×8).
     ///
     /// Smaller tiles for lower latency progressive delivery.
     public static let streaming = JP3DTilingConfiguration(
@@ -231,7 +231,7 @@ public struct JP3DTilingConfiguration: Sendable, Equatable {
 
 /// Progression order for JP3D encoding.
 ///
-/// Defines the order in which data is organized in the JP3D codestream,
+/// Defines the order in which data is organised in the JP3D codestream,
 /// affecting how the volume can be progressively decoded.
 public enum JP3DProgressionOrder: String, Sendable, Equatable, CaseIterable {
     /// Layer-Resolution-Component-Position-Slice.
@@ -321,7 +321,7 @@ public enum JP3DCompressionMode: Sendable, Equatable {
 /// Storage for 3D wavelet coefficients.
 ///
 /// `J2K3DCoefficients` stores the output of a 3D discrete wavelet transform,
-/// organized by decomposition level and subband.
+/// organised by decomposition level and subband.
 public struct J2K3DCoefficients: Sendable {
     /// The width of the coefficient array.
     public let width: Int

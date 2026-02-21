@@ -226,7 +226,7 @@ public struct J2KDWT2DTiled: Sendable {
             )
         }
 
-        // Initialize output image
+        // Initialise output image
         var result: [[Int32]] = Array(
             repeating: Array(repeating: 0, count: image.width),
             count: image.height

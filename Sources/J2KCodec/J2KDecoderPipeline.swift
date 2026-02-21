@@ -30,7 +30,7 @@ public enum DecodingStage: String, Sendable, CaseIterable {
     /// Inverse wavelet transform.
     case inverseWaveletTransform = "Inverse Wavelet Transform"
 
-    /// Inverse color space transformation.
+    /// Inverse colour space transformation.
     case inverseColorTransform = "Inverse Color Transform"
 
     /// Image reconstruction.
@@ -61,7 +61,7 @@ struct DecoderConfiguration: Sendable {
     /// Code block size (from COD marker).
     var codeBlockSize: (width: Int, height: Int) = (32, 32)
 
-    /// Whether to use reversible color transform.
+    /// Whether to use reversible colour transform.
     var useReversibleTransform: Bool = true
 
     /// Number of quality layers (from COD marker).
@@ -143,7 +143,7 @@ struct CodestreamMetadata: Sendable {
 /// 3. Entropy Decoding — EBCOT bit-plane decoding per code block
 /// 4. Dequantization — convert integer indices to coefficients
 /// 5. Inverse Wavelet Transform — multi-level 2D IDWT reconstruction
-/// 6. Inverse Color Transform — YCbCr → RGB conversion
+/// 6. Inverse Colour Transform — YCbCr → RGB conversion
 /// 7. Image Reconstruction — assemble final image
 struct DecoderPipeline: Sendable {
     /// Decodes a JPEG 2000 codestream through the full pipeline.
@@ -182,7 +182,7 @@ struct DecoderPipeline: Sendable {
         let spatialData = try applyInverseWaveletTransform(dequantizedSubbands, metadata: metadata)
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 1.0)
 
-        // Stage 6: Inverse color transform
+        // Stage 6: Inverse colour transform
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 0.0)
         let rgbData = try applyInverseColorTransform(spatialData, metadata: metadata)
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
@@ -955,7 +955,7 @@ struct DecoderPipeline: Sendable {
                     let hh2D = to2D(hhInfo.coefficients, width: hhInfo.width, height: hhInfo.height)
 
                     // Apply single-level inverse transform
-                    // Use optimized path for lossless (reversible 5/3 filter)
+                    // Use optimised path for lossless (reversible 5/3 filter)
                     if case .reversible53 = componentFilter {
                         let optimizer = J2KDWT2DOptimizer()
                         currentLL = try optimizer.inverseTransform2DOptimized(
@@ -992,9 +992,9 @@ struct DecoderPipeline: Sendable {
         return componentData
     }
 
-    // MARK: - Stage 6: Inverse Color Transform
+    // MARK: - Stage 6: Inverse Colour Transform
 
-    /// Applies inverse color transform.
+    /// Applies inverse colour transform.
     private func applyInverseColorTransform(
         _ components: [[Int32]],
         metadata: CodestreamMetadata

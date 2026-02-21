@@ -111,7 +111,7 @@ public enum J2KQuantizationMode: Sendable, Equatable, CaseIterable {
     /// Trellis coded quantization (TCQ).
     ///
     /// Uses a trellis structure and Viterbi algorithm to select
-    /// quantization levels that minimize rate-distortion cost.
+    /// quantization levels that minimise rate-distortion cost.
     /// Provides 2-8% improvement over scalar quantization.
     /// Part of ISO/IEC 15444-2 (JPEG 2000 Part 2 extensions).
     case trellis
@@ -417,7 +417,7 @@ public struct J2KStepSizeCalculator: Sendable {
     /// Δ = 2^(ε_b - B) × (1 + μ/2^11)
     /// ```
     /// where ε_b is the exponent (5 bits), μ is the mantissa (11 bits), and B is a bias.
-    /// For simplicity, we use a normalized encoding where step sizes are stored
+    /// For simplicity, we use a normalised encoding where step sizes are stored
     /// with sufficient precision for typical use cases.
     ///
     /// - Parameter stepSize: The step size to encode.
@@ -474,10 +474,10 @@ public struct J2KDynamicRange: Sendable {
     /// - Parameters:
     ///   - bitDepth: The bit depth of the input data.
     ///   - signed: Whether the data is signed.
-    /// - Returns: Scaling factor to normalize values.
+    /// - Returns: Scaling factor to normalise values.
     public static func scalingFactor(bitDepth: Int, signed: Bool) -> Double {
-        // For 8-bit unsigned: range is 0-255, normalize to ~1.0
-        // For 16-bit unsigned: range is 0-65535, normalize to ~1.0
+        // For 8-bit unsigned: range is 0-255, normalise to ~1.0
+        // For 16-bit unsigned: range is 0-65535, normalise to ~1.0
         let maxValue = Double((1 << bitDepth) - 1)
         return 1.0 / maxValue
     }
@@ -594,7 +594,7 @@ public struct J2KQuantizer: Sendable {
         }
     }
 
-    /// Quantizes a single Int32 coefficient (optimized version).
+    /// Quantizes a single Int32 coefficient (optimised version).
     ///
     /// This overload avoids type conversion overhead by working directly with Int32 values.
     ///

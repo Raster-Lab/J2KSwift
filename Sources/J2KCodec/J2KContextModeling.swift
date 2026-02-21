@@ -229,7 +229,7 @@ struct ContextModeler: Sendable {
     }
 
     /// Context formation for HL subband (horizontal details).
-    /// Optimized to remove redundant branches and simplify logic.
+    /// Optimised to remove redundant branches and simplify logic.
     private func significanceContextHL(h: Int, v: Int, d: Int) -> EBCOTContext {
         // Vertical neighbor presence has priority in HL subband
         if v >= 1 {
@@ -249,7 +249,7 @@ struct ContextModeler: Sendable {
     }
 
     /// Context formation for LH (and LL) subband (vertical details).
-    /// Optimized to remove redundant branches and simplify logic.
+    /// Optimised to remove redundant branches and simplify logic.
     private func significanceContextLH(h: Int, v: Int, d: Int) -> EBCOTContext {
         // Horizontal neighbor presence has priority in LH subband
         if h >= 1 {
@@ -318,7 +318,7 @@ struct ContextModeler: Sendable {
     ///
     /// The sign context depends on the signs of significant horizontal and
     /// vertical neighbors. The context is symmetric with an XOR sign prediction.
-    /// Optimized to reduce branching and simplify XOR logic.
+    /// Optimised to reduce branching and simplify XOR logic.
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: A tuple containing the context label and the sign prediction (XOR bit).
@@ -329,7 +329,7 @@ struct ContextModeler: Sendable {
         // XOR prediction is true when exactly one contribution is negative
         let xorBit = (hSign < 0) != (vSign < 0)
 
-        // Normalize contributions to -1, 0, +1 and map to context
+        // Normalise contributions to -1, 0, +1 and map to context
         let hContrib = hSign == 0 ? 0 : (hSign > 0 ? 1 : -1)
         let vContrib = vSign == 0 ? 0 : (vSign > 0 ? 1 : -1)
 
@@ -347,7 +347,7 @@ struct ContextModeler: Sendable {
             if v == 0 {
                 return .signH0V0
             } else {
-                // v is non-zero, already normalized
+                // v is non-zero, already normalised
                 return .signH0Vneg
             }
         } else if h > 0 {
@@ -543,12 +543,12 @@ struct NeighborCalculator: Sendable {
 /// Manages the context states for MQ coding.
 ///
 /// This type holds the MQ contexts for all 19 EBCOT context labels,
-/// initialized with appropriate probability estimates.
+/// initialised with appropriate probability estimates.
 struct ContextStateArray: Sendable {
     /// The MQ contexts for each EBCOT context label.
     var contexts: [MQContext]
 
-    /// Creates a new context state array with default initialization.
+    /// Creates a new context state array with default initialisation.
     init() {
         contexts = EBCOTContext.allCases.map { ebcotCtx in
             MQContext(stateIndex: ebcotCtx.initialState, mps: false)

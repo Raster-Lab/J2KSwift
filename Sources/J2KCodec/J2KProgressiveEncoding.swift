@@ -80,7 +80,7 @@ public enum J2KProgressiveMode: Sendable, Equatable {
     ///
     /// - Parameters:
     ///   - layers: Number of quality layers.
-    ///   - resolutionFirst: If true, prioritize resolution over quality.
+    ///   - resolutionFirst: If true, prioritise resolution over quality.
     ///
     /// **Use cases:**
     /// - Real-time streaming
@@ -209,7 +209,7 @@ public struct J2KProgressiveDecodingOptions: Sendable, Equatable {
     ///   - maxLayer: Maximum quality layer to decode (default: nil for all layers).
     ///   - maxResolutionLevel: Maximum resolution level (default: nil for full resolution).
     ///   - region: Specific region to decode (default: nil for full image).
-    ///   - earlyStop: Enable early stopping optimization (default: true).
+    ///   - earlyStop: Enable early stopping optimisation (default: true).
     public init(
         maxLayer: Int? = nil,
         maxResolutionLevel: Int? = nil,
@@ -276,7 +276,7 @@ public struct J2KRegion: Sendable, Equatable {
 
 // MARK: - Progressive Encoding Strategy
 
-/// Strategy for organizing progressive encoding.
+/// Strategy for organising progressive encoding.
 public struct J2KProgressiveEncodingStrategy: Sendable {
     /// The progressive mode to use.
     public let mode: J2KProgressiveMode
@@ -312,7 +312,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
         self.layerBitrates = layerBitrates
     }
 
-    /// Creates a strategy optimized for quality progression.
+    /// Creates a strategy optimised for quality progression.
     ///
     /// - Parameter layers: Number of quality layers.
     /// - Returns: A quality-progressive encoding strategy.
@@ -324,7 +324,7 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
         )
     }
 
-    /// Creates a strategy optimized for resolution progression.
+    /// Creates a strategy optimised for resolution progression.
     ///
     /// - Parameter levels: Maximum decomposition level.
     /// - Returns: A resolution-progressive encoding strategy.
@@ -336,12 +336,12 @@ public struct J2KProgressiveEncodingStrategy: Sendable {
         )
     }
 
-    /// Creates a strategy optimized for streaming.
+    /// Creates a strategy optimised for streaming.
     ///
     /// - Parameters:
     ///   - layers: Number of quality layers.
     ///   - levels: Maximum decomposition level.
-    /// - Returns: A streaming-optimized encoding strategy.
+    /// - Returns: A streaming-optimised encoding strategy.
     public static func streaming(layers: Int, levels: Int) -> J2KProgressiveEncodingStrategy {
         J2KProgressiveEncodingStrategy(
             mode: .combined(qualityLayers: layers, decompositionLevels: levels),

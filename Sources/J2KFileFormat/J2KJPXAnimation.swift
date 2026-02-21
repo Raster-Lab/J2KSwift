@@ -721,7 +721,7 @@ public struct J2KCodestreamRegistrationBox: J2KBox, Sendable {
 /// Compositing layer header box.
 ///
 /// The compositing layer header box ('jplh') is a super-box that contains
-/// layer-specific metadata including color specifications, opacity settings,
+/// layer-specific metadata including colour specifications, opacity settings,
 /// codestream registration, and labels.
 ///
 /// ## Box Structure
@@ -729,7 +729,7 @@ public struct J2KCodestreamRegistrationBox: J2KBox, Sendable {
 /// - Type: 'jplh' (0x6A706C68)
 /// - Length: Variable
 /// - Content: Sub-boxes including:
-///   - 'colr': Color specification boxes
+///   - 'colr': Colour specification boxes
 ///   - 'opct': Opacity box (optional)
 ///   - 'creg': Codestream registration box (optional)
 ///   - 'lbl ': Label boxes (optional)
@@ -748,7 +748,7 @@ public struct J2KCodestreamRegistrationBox: J2KBox, Sendable {
 /// let data = try header.write()
 /// ```
 public struct J2KCompositionLayerHeaderBox: J2KBox, Sendable {
-    /// Color space specifications for this layer.
+    /// Colour space specifications for this layer.
     public var colorSpecs: [J2KColorSpecificationBox]
 
     /// Optional opacity specification.
@@ -767,7 +767,7 @@ public struct J2KCompositionLayerHeaderBox: J2KBox, Sendable {
     /// Creates a compositing layer header box.
     ///
     /// - Parameters:
-    ///   - colorSpecs: Color specifications (default: empty).
+    ///   - colorSpecs: Colour specifications (default: empty).
     ///   - opacity: Opacity box (default: nil).
     ///   - registration: Codestream registration (default: nil).
     ///   - labels: Label boxes (default: empty).
@@ -877,7 +877,7 @@ public struct J2KJPXAnimationSequence: Sendable {
     /// Ordered list of animation frames.
     public var frames: [J2KAnimationFrame]
 
-    /// Optional background color as (r, g, b).
+    /// Optional background colour as (r, g, b).
     public var backgroundColor: (r: UInt8, g: UInt8, b: UInt8)?
 
     /// Sum of all frame durations in timescale ticks.
@@ -1157,7 +1157,7 @@ public struct J2KMultiLayerCompositor: Sendable {
 
     /// Generates a ``J2KCompositionLayerHeaderBox`` for each layer.
     ///
-    /// Each header includes an sRGB color specification, an opacity box
+    /// Each header includes an sRGB colour specification, an opacity box
     /// (when opacity is not fully opaque), and a label box (when a label
     /// is provided).
     ///

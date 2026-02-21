@@ -53,10 +53,10 @@ extension J2KCLI {
     /// Normalise a flag key so that British and American spellings map to the same key.
     static func normaliseKey(_ key: String) -> String {
         switch key {
-        // --colour -> --color
+        // --colour -> --colour
         case "colour":                  return "color"
         case "colour-space":            return "color-space"
-        // --optimise -> --optimize
+        // --optimise -> --optimise
         case "optimise":                return "optimize"
         case "optimise-progressive":    return "optimize-progressive"
         default:                        return key

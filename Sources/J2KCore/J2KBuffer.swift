@@ -15,7 +15,7 @@ import Foundation
 ///
 /// `J2KBuffer` provides a managed memory buffer with automatic reference counting
 /// and support for efficient copy-on-write operations. It is designed to handle
-/// large image data efficiently while minimizing memory copies.
+/// large image data efficiently while minimising memory copies.
 ///
 /// > Important: This is an **internal implementation detail** of the J2KSwift library.
 /// > It is exposed as `public` only for cross-module use within the package.

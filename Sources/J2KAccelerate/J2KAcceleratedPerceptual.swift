@@ -18,7 +18,7 @@ import Accelerate
 //
 // Hardware-accelerated implementations of perceptual encoding operations using the Accelerate framework.
 //
-// This module provides SIMD-optimized implementations of:
+// This module provides SIMD-optimised implementations of:
 // - CSF (Contrast Sensitivity Function) computation
 // - Visual masking calculations
 // - Spatially-varying quantization
@@ -81,11 +81,11 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var normalized = [Double](repeating: 0.0, count: count)
         var temp = [Double](repeating: 0.0, count: count)
 
-        // Normalize frequencies: f / peak
+        // Normalise frequencies: f / peak
         var peak = peakFrequency
         vDSP_vsdivD(frequencies, 1, &peak, &normalized, 1, vDSP_Length(count))
 
-        // Compute: 1 - normalized / decay
+        // Compute: 1 - normalised / decay
         var decay = decayRate
         var one = 1.0
         vDSP_vsdivD(normalized, 1, &decay, &temp, 1, vDSP_Length(count))
@@ -98,7 +98,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var tempCount = Int32(count)
         vvexp(&result, temp, &tempCount)
 
-        // Multiply: normalized * exp(temp)
+        // Multiply: normalised * exp(temp)
         vDSP_vmulD(normalized, 1, result, 1, &result, 1, vDSP_Length(count))
 
         // Clamp minimum to 0.01
@@ -110,11 +110,11 @@ public struct J2KAcceleratedPerceptual: Sendable {
 
     /// Computes visual weights for multiple frequencies using vDSP.
     ///
-    /// Weight is inverse of normalized sensitivity, clamped to [minWeight, maxWeight].
+    /// Weight is inverse of normalised sensitivity, clamped to [minWeight, maxWeight].
     ///
     /// - Parameters:
     ///   - sensitivities: Array of CSF sensitivity values.
-    ///   - peakSensitivity: Peak sensitivity for normalization.
+    ///   - peakSensitivity: Peak sensitivity for normalisation.
     ///   - minimumWeight: Minimum allowed weight.
     ///   - maximumWeight: Maximum allowed weight.
     /// - Returns: Array of weight values.
@@ -130,7 +130,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var result = [Double](repeating: 0.0, count: count)
         var normalized = [Double](repeating: 0.0, count: count)
 
-        // Normalize: sensitivities / peak
+        // Normalise: sensitivities / peak
         var peak = peakSensitivity
         vDSP_vsdivD(sensitivities, 1, &peak, &normalized, 1, vDSP_Length(count))
 
@@ -138,7 +138,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var minSens = 0.1
         vDSP_vthresD(normalized, 1, &minSens, &normalized, 1, vDSP_Length(count))
 
-        // Invert: 1.0 / normalized
+        // Invert: 1.0 / normalised
         var one = 1.0
         vDSP_svdivD(&one, normalized, 1, &result, 1, vDSP_Length(count))
 
@@ -169,7 +169,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var normalized = [Double](repeating: 0.0, count: count)
         var deviation = [Double](repeating: 0.0, count: count)
 
-        // Normalize: luminances / 255.0
+        // Normalise: luminances / 255.0
         var divisor = 255.0
         vDSP_vsdivD(luminances, 1, &divisor, &normalized, 1, vDSP_Length(count))
 
@@ -208,7 +208,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var normalized = [Double](repeating: 0.0, count: count)
         var logValues = [Double](repeating: 0.0, count: count)
 
-        // Normalize: variance / 5000.0
+        // Normalise: variance / 5000.0
         var divisor = 5000.0
         vDSP_vsdivD(variances, 1, &divisor, &normalized, 1, vDSP_Length(count))
 
@@ -217,11 +217,11 @@ public struct J2KAcceleratedPerceptual: Sendable {
         var one = 1.0
         vDSP_vclipD(normalized, 1, &zero, &one, &normalized, 1, vDSP_Length(count))
 
-        // Scale: normalized * 10
+        // Scale: normalised * 10
         var ten = 10.0
         vDSP_vsmulD(normalized, 1, &ten, &normalized, 1, vDSP_Length(count))
 
-        // Compute: log1p(normalized)
+        // Compute: log1p(normalised)
         var tempCount = Int32(count)
         vvlog1p(&logValues, normalized, &tempCount)
 
@@ -351,7 +351,7 @@ public struct J2KAcceleratedPerceptual: Sendable {
 
     /// Processes multiple regions in parallel to compute masking factors.
     ///
-    /// This is optimized for processing multiple codeblocks efficiently.
+    /// This is optimised for processing multiple codeblocks efficiently.
     ///
     /// - Parameters:
     ///   - regions: Array of sample arrays for each region.

@@ -13,7 +13,7 @@ import Foundation
 
 /// A memory pool for efficient temporary buffer allocation.
 ///
-/// `J2KMemoryPool` maintains a pool of reusable buffers to minimize allocation
+/// `J2KMemoryPool` maintains a pool of reusable buffers to minimise allocation
 /// overhead during image processing operations. Buffers are automatically returned
 /// to the pool when they are no longer needed.
 ///

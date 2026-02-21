@@ -227,7 +227,7 @@ public actor J2KMetalQuantizer {
     private let bufferPool: J2KMetalBufferPool
     private var statistics: J2KMetalQuantizationStatistics
 
-    // MARK: Initialization
+    // MARK: Initialisation
 
     /// Creates a new Metal quantizer.
     ///

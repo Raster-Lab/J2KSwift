@@ -209,7 +209,7 @@ public actor JPIPProgressiveStreamingPipeline {
 
     /// Streams a view window progressively.
     ///
-    /// Generates prioritized data bins for the requested view window,
+    /// Generates prioritised data bins for the requested view window,
     /// adapting quality and resolution based on bandwidth conditions.
     ///
     /// - Parameter request: View window request.
@@ -237,7 +237,7 @@ public actor JPIPProgressiveStreamingPipeline {
             targetLatency: configuration.targetLatency
         )
 
-        // Get prioritized tiles
+        // Get prioritised tiles
         let prioritizedTiles = await tileManager.getPriorityQueue()
 
         // Generate data bins based on streaming mode

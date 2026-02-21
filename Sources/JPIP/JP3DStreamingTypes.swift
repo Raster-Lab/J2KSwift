@@ -58,11 +58,11 @@ public struct JP3DViewFrustum: Sendable, Equatable {
     /// Z component of the view origin.
     public let originZ: Double
 
-    /// X component of the normalized view direction.
+    /// X component of the normalised view direction.
     public let directionX: Double
-    /// Y component of the normalized view direction.
+    /// Y component of the normalised view direction.
     public let directionY: Double
-    /// Z component of the normalized view direction.
+    /// Z component of the normalised view direction.
     public let directionZ: Double
 
     /// Near clipping plane distance.

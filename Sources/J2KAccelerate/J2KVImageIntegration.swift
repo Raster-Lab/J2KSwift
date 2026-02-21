@@ -26,7 +26,7 @@ import Accelerate
 /// - 5-10× faster format conversion
 /// - 3-8× faster resampling with high-quality filters
 /// - 10-20× faster alpha blending and compositing
-/// - Optimized for Apple Silicon with NEON and AMX
+/// - Optimised for Apple Silicon with NEON and AMX
 ///
 /// ## Usage
 ///
@@ -62,7 +62,7 @@ public struct J2KVImageIntegration: Sendable {
 
     /// Converts YCbCr to RGB using vImage.
     ///
-    /// Uses vImage's optimized color conversion for YCbCr 4:4:4 to RGB.
+    /// Uses vImage's optimised colour conversion for YCbCr 4:4:4 to RGB.
     ///
     /// - Parameters:
     ///   - y: Y (luma) component data.

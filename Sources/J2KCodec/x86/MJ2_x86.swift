@@ -16,7 +16,7 @@ import J2KCore
 
 #if arch(x86_64)
 
-/// x86-64 specific optimizations for Motion JPEG 2000.
+/// x86-64 specific optimisations for Motion JPEG 2000.
 ///
 /// This type provides x86-64 specific implementations and fallbacks for MJ2 operations
 /// that may have different performance characteristics on Intel processors.
@@ -32,7 +32,7 @@ import J2KCore
 ///
 /// On x86-64 platforms:
 /// - Limited to software encoding (no VideoToolbox on non-Apple x86-64)
-/// - AVX/AVX2 SIMD for color conversion
+/// - AVX/AVX2 SIMD for colour conversion
 /// - May benefit from Rosetta 2 when running ARM64 code on Intel Macs
 ///
 /// ## Usage
@@ -40,14 +40,14 @@ import J2KCore
 /// ```swift
 /// // Automatically used on x86-64 platforms when needed
 /// if MJ2X86.isAvailable {
-///     // Platform-specific optimizations
+///     // Platform-specific optimisations
 /// }
 /// ```
 public struct MJ2X86: Sendable {
     /// Creates a new x86-64 specific MJ2 processor.
     public init() {}
 
-    /// Indicates whether x86-64 MJ2 optimizations are available.
+    /// Indicates whether x86-64 MJ2 optimisations are available.
     ///
     /// Returns `true` only on x86-64 platforms.
     public static var isAvailable: Bool {
@@ -103,7 +103,7 @@ public struct MJ2X86: Sendable {
 
 #else
 
-/// Placeholder for x86-64 optimizations on non-x86-64 platforms.
+/// Placeholder for x86-64 optimisations on non-x86-64 platforms.
 public struct MJ2X86: Sendable {
     public init() {}
 

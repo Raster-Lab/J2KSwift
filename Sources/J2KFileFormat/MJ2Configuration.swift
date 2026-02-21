@@ -35,7 +35,7 @@ public enum MJ2Profile: String, Sendable {
 
     /// Broadcast Profile - Professional broadcast applications
     ///
-    /// Optimized for:
+    /// Optimised for:
     /// - High bit rates
     /// - Low latency
     /// - Frame-accurate editing
@@ -43,10 +43,10 @@ public enum MJ2Profile: String, Sendable {
 
     /// Cinema Profile - Digital cinema applications
     ///
-    /// Optimized for:
+    /// Optimised for:
     /// - High resolution (2K, 4K, 8K)
     /// - High quality
-    /// - Color fidelity
+    /// - Colour fidelity
     case cinema = "cinema"
 
     /// Returns the brand identifier for this profile.

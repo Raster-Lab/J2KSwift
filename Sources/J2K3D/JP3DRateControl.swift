@@ -6,7 +6,7 @@
 ///
 /// Rate control for JP3D volumetric JPEG 2000 encoding.
 ///
-/// Provides quantization and rate-distortion optimization for 3D wavelet
+/// Provides quantization and rate-distortion optimisation for 3D wavelet
 /// coefficients, supporting lossless, lossy PSNR, target bitrate, and
 /// visually lossless modes.
 ///
@@ -47,7 +47,7 @@ public struct JP3DQuantizedTile: Sendable {
     public let decompositionLevels: Int
 }
 
-/// A quality layer containing rate-distortion optimized data.
+/// A quality layer containing rate-distortion optimised data.
 public struct JP3DQualityLayer: Sendable {
     /// The quality layer index (0 = lowest quality).
     public let index: Int
@@ -65,7 +65,7 @@ public struct JP3DQualityLayer: Sendable {
 /// Rate controller for JP3D encoding.
 ///
 /// Handles quantization of 3D wavelet coefficients and formation of quality
-/// layers using post-compression rate-distortion optimization (PCRD-opt).
+/// layers using post-compression rate-distortion optimisation (PCRD-opt).
 ///
 /// Example:
 /// ```swift
@@ -169,7 +169,7 @@ public struct JP3DRateController: Sendable {
         return quantized.coefficients.map { Float($0) * quantized.stepSize }
     }
 
-    /// Forms quality layers for rate-distortion optimization.
+    /// Forms quality layers for rate-distortion optimisation.
     ///
     /// Uses PCRD-opt to allocate bits across quality layers for optimal
     /// quality at each target rate.

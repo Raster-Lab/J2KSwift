@@ -23,7 +23,7 @@ import J2KCore
 /// Encodes images to JPEG 2000 format.
 ///
 /// `J2KEncoder` provides a high-level API for encoding images to JPEG 2000 codestreams.
-/// It connects all encoding components — color transform, wavelet transform, quantization,
+/// It connects all encoding components — colour transform, wavelet transform, quantization,
 /// entropy coding, and rate control — into a complete encoding pipeline.
 ///
 /// ## Basic Usage
@@ -82,7 +82,7 @@ public struct J2KEncoder: Sendable {
     ///
     /// This method processes the image through the complete JPEG 2000 encoding pipeline:
     /// 1. Preprocessing and input validation
-    /// 2. Color transform (RCT for lossless, ICT for lossy)
+    /// 2. Colour transform (RCT for lossless, ICT for lossy)
     /// 3. Multi-level wavelet transform
     /// 4. Quantization
     /// 5. EBCOT entropy coding
@@ -118,7 +118,7 @@ public struct J2KEncoder: Sendable {
 ///
 /// `J2KDecoder` provides a high-level API for decoding JPEG 2000 codestreams to images.
 /// It connects all decoding components — codestream parsing, entropy decoding, dequantization,
-/// inverse wavelet transform, and inverse color transform — into a complete decoding pipeline.
+/// inverse wavelet transform, and inverse colour transform — into a complete decoding pipeline.
 ///
 /// ## Basic Usage
 ///
@@ -147,7 +147,7 @@ public struct J2KDecoder: Sendable {
     /// 3. EBCOT entropy decoding
     /// 4. Dequantization
     /// 5. Inverse wavelet transform
-    /// 6. Inverse color transform (YCbCr → RGB)
+    /// 6. Inverse colour transform (YCbCr → RGB)
     /// 7. Image reconstruction
     ///
     /// - Parameter data: The JPEG 2000 codestream data to decode.

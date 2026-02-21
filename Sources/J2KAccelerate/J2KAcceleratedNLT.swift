@@ -27,7 +27,7 @@ import Accelerate
 /// On Apple platforms with Accelerate framework:
 /// - 8-12× faster LUT lookups using `vDSP_vindex`
 /// - 10-15× faster transcendental functions using vForce (`vvpowf`, `vvlogf`, `vvexpf`)
-/// - SIMD-optimized gamma correction and HDR transforms
+/// - SIMD-optimised gamma correction and HDR transforms
 /// - Parallel processing across multiple components
 ///
 /// ## Usage
@@ -42,7 +42,7 @@ import Accelerate
 ///     bitDepth: 10
 /// )
 ///
-/// // Apply LUT using vDSP_vindex (vectorized)
+/// // Apply LUT using vDSP_vindex (vectorised)
 /// let lutResult = try accelerated.applyLUT(
 ///     data: componentData,
 ///     lut: lookupTable,
@@ -64,7 +64,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
     // MARK: - Accelerated Gamma Transform
 
-    /// Applies gamma transform using vForce vectorized power function.
+    /// Applies gamma transform using vForce vectorised power function.
     ///
     /// Forward transform: y = x^gamma
     /// Inverse transform: y = x^(1/gamma)
@@ -96,7 +96,7 @@ public struct J2KAcceleratedNLT: Sendable {
         let maxValue = signed ? Float((1 << (bitDepth - 1)) - 1) : Float((1 << bitDepth) - 1)
         let minValue = signed ? Float(-(1 << (bitDepth - 1))) : Float(0)
 
-        // Convert to float and normalize to [0, 1]
+        // Convert to float and normalise to [0, 1]
         var floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
 
@@ -123,7 +123,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
     // MARK: - Accelerated Logarithmic Transform
 
-    /// Applies logarithmic transform using vForce vectorized log function.
+    /// Applies logarithmic transform using vForce vectorised log function.
     ///
     /// Forward transform: y = ln(x + 1)
     /// Inverse transform: y = exp(x) - 1
@@ -151,7 +151,7 @@ public struct J2KAcceleratedNLT: Sendable {
         let maxValue = signed ? Float((1 << (bitDepth - 1)) - 1) : Float((1 << bitDepth) - 1)
         let minValue = signed ? Float(-(1 << (bitDepth - 1))) : Float(0)
 
-        // Convert to float and normalize to [0, 1]
+        // Convert to float and normalise to [0, 1]
         var floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
         var temp = [Float](repeating: 0, count: data.count)
@@ -159,7 +159,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
         if !inverse {
             // Forward: log(x + 1)
-            // Add 1 to normalized values
+            // Add 1 to normalised values
             var one: Float = 1.0
             var floatIn = floatData
             vDSP_vsadd(&floatIn, 1, &one, &floatData, 1, vDSP_Length(data.count))
@@ -167,13 +167,13 @@ public struct J2KAcceleratedNLT: Sendable {
             // Apply log
             if base10 {
                 vvlog10f(&result, &floatData, &count)
-                // Normalize to [0, 1] using log10(2)
+                // Normalise to [0, 1] using log10(2)
                 var scale = Float(1.0 / log10(2.0))
                 temp = result
                 vDSP_vsmul(&temp, 1, &scale, &result, 1, vDSP_Length(data.count))
             } else {
                 vvlogf(&result, &floatData, &count)
-                // Normalize to [0, 1] using ln(2)
+                // Normalise to [0, 1] using ln(2)
                 var scale = Float(1.0 / log(2.0))
                 temp = result
                 vDSP_vsmul(&temp, 1, &scale, &result, 1, vDSP_Length(data.count))
@@ -221,7 +221,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
     // MARK: - Accelerated LUT Application
 
-    /// Applies lookup table transform using vDSP vectorized indexing.
+    /// Applies lookup table transform using vDSP vectorised indexing.
     ///
     /// Uses `vDSP_vindex` for fast LUT lookups with optional linear interpolation.
     ///
@@ -255,13 +255,13 @@ public struct J2KAcceleratedNLT: Sendable {
         // Convert LUT to float
         var floatLUT = lut.map { Float($0) }
 
-        // Normalize data to LUT index range [0, lut.count - 1]
+        // Normalise data to LUT index range [0, lut.count - 1]
         var floatData = data.map { Float($0) }
         var normMin = minValue
         var normMax = maxValue
         var lutMaxIndex = Float(lut.count - 1)
 
-        // Normalize: (x - min) / (max - min) * (lut.count - 1)
+        // Normalise: (x - min) / (max - min) * (lut.count - 1)
         var floatIn1 = floatData
         vDSP_vsadd(&floatIn1, 1, &normMin, &floatData, 1, vDSP_Length(data.count))
         var scale = lutMaxIndex / (normMax - normMin)
@@ -307,7 +307,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
     /// Applies Perceptual Quantizer (PQ) transform for HDR content.
     ///
-    /// Implements SMPTE ST 2084 using vectorized operations.
+    /// Implements SMPTE ST 2084 using vectorised operations.
     ///
     /// - Parameters:
     ///   - data: The input component data.
@@ -337,7 +337,7 @@ public struct J2KAcceleratedNLT: Sendable {
         let c2 = Float(18.8515625)
         let c3 = Float(18.6875)
 
-        // Convert to float and normalize to [0, 1]
+        // Convert to float and normalise to [0, 1]
         var floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
         var temp = [Float](repeating: 0, count: data.count)
@@ -419,7 +419,7 @@ public struct J2KAcceleratedNLT: Sendable {
 
     /// Applies Hybrid Log-Gamma (HLG) transform for HDR content.
     ///
-    /// Implements ITU-R BT.2100 using vectorized operations.
+    /// Implements ITU-R BT.2100 using vectorised operations.
     ///
     /// - Parameters:
     ///   - data: The input component data.
@@ -447,7 +447,7 @@ public struct J2KAcceleratedNLT: Sendable {
         let b = Float(0.28466892)
         let c = Float(0.55991073)
 
-        // Convert to float and normalize to [0, 1]
+        // Convert to float and normalise to [0, 1]
         let floatData = data.map { (Float($0) - minValue) / (maxValue - minValue) }
         var result = [Float](repeating: 0, count: data.count)
 

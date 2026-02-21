@@ -13,16 +13,16 @@ import J2KCore
 
 // # JPEG 2000 Encoding Presets
 //
-// Predefined encoding configurations optimized for different use cases.
+// Predefined encoding configurations optimised for different use cases.
 //
 // Encoding presets provide a simple way to choose between encoding speed,
 // file size, and quality without manually configuring all parameters.
 //
 // ## Preset Types
 //
-// - **Fast**: Optimized for encoding speed with acceptable quality
+// - **Fast**: Optimised for encoding speed with acceptable quality
 // - **Balanced**: Default balanced settings for general use
-// - **Quality**: Optimized for maximum quality with slower encoding
+// - **Quality**: Optimised for maximum quality with slower encoding
 //
 // ## Usage
 //
@@ -72,7 +72,7 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
     /// - Small code blocks (32×32)
     /// - Many quality layers (10 layers)
     /// - Visual weighting enabled
-    /// - Multi-threaded with aggressive optimization
+    /// - Multi-threaded with aggressive optimisation
     ///
     /// **Performance:** 1.5-2× slower than balanced
     /// **Quality:** Best possible quality
@@ -147,7 +147,7 @@ public struct J2KEncodingConfiguration: Sendable {
 
     /// Whether to use lossless compression.
     ///
-    /// When true, the encoder uses the reversible color transform (RCT)
+    /// When true, the encoder uses the reversible colour transform (RCT)
     /// and reversible wavelet filter (5/3), ensuring perfect reconstruction.
     public var lossless: Bool
 
@@ -212,7 +212,7 @@ public struct J2KEncodingConfiguration: Sendable {
 
     /// Whether to use HTJ2K (High-Throughput JPEG 2000) block coding.
     ///
-    /// When enabled, uses the FBCOT (Fast Block Coder with Optimized Truncation)
+    /// When enabled, uses the FBCOT (Fast Block Coder with Optimised Truncation)
     /// algorithm instead of traditional EBCOT, providing significantly faster
     /// encoding and decoding throughput as specified in ISO/IEC 15444-15.
     ///
@@ -228,45 +228,45 @@ public struct J2KEncodingConfiguration: Sendable {
     ///
     /// Each code-block in JPEG 2000 is an independent unit of entropy coding with
     /// its own MQ encoder state and context models, making them ideal for parallel
-    /// processing without any synchronization overhead.
+    /// processing without any synchronisation overhead.
     ///
     /// - Default: true
     public var enableParallelCodeBlocks: Bool
 
-    /// Whether to enable fast MEL encoding optimization for HTJ2K.
+    /// Whether to enable fast MEL encoding optimisation for HTJ2K.
     ///
-    /// When enabled, uses optimized run-length encoding in the MEL (Magnitude Exchange
+    /// When enabled, uses optimised run-length encoding in the MEL (Magnitude Exchange
     /// Length) coder with adaptive thresholding and efficient buffering strategies.
-    /// This optimization provides faster MEL encoding at the cost of slightly larger
+    /// This optimisation provides faster MEL encoding at the cost of slightly larger
     /// MEL segments in some cases.
     ///
     /// Only applies when `useHTJ2K` is true.
     ///
-    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Note: This is an HTJ2K-specific optimisation.
     /// - Default: true
     public var enableFastMEL: Bool
 
-    /// Whether to enable VLC table optimization for HTJ2K.
+    /// Whether to enable VLC table optimisation for HTJ2K.
     ///
-    /// When enabled, uses optimized lookup tables for VLC (Variable Length Coding)
+    /// When enabled, uses optimised lookup tables for VLC (Variable Length Coding)
     /// encoding and decoding, providing faster throughput at the cost of increased
     /// memory usage (approximately 4-8 KB per encoder instance).
     ///
     /// Only applies when `useHTJ2K` is true.
     ///
-    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Note: This is an HTJ2K-specific optimisation.
     /// - Default: true
     public var enableVLCOptimization: Bool
 
     /// Whether to enable efficient magnitude/sign bit packing for HTJ2K.
     ///
-    /// When enabled, uses optimized bit packing strategies for the MagSgn (Magnitude
+    /// When enabled, uses optimised bit packing strategies for the MagSgn (Magnitude
     /// and Sign) coder, reducing the number of bit-level operations and improving
     /// cache efficiency during encoding and decoding.
     ///
     /// Only applies when `useHTJ2K` is true.
     ///
-    /// - Note: This is an HTJ2K-specific optimization.
+    /// - Note: This is an HTJ2K-specific optimisation.
     /// - Default: true
     public var enableMagSgnPacking: Bool
 
@@ -354,7 +354,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - useHTJ2K: Use HTJ2K block coding (default: false).
     ///   - enableParallelCodeBlocks: Enable parallel code-block encoding (default: true).
     ///   - enableFastMEL: Enable fast MEL encoding for HTJ2K (default: true).
-    ///   - enableVLCOptimization: Enable VLC table optimization for HTJ2K (default: true).
+    ///   - enableVLCOptimization: Enable VLC table optimisation for HTJ2K (default: true).
     ///   - enableMagSgnPacking: Enable efficient magnitude/sign packing for HTJ2K (default: true).
     ///   - blockSizeMode: Block size selection mode (default: .fixed).
     ///   - tileBlockSizeOverrides: Per-tile block size overrides for adaptive mode (default: empty).

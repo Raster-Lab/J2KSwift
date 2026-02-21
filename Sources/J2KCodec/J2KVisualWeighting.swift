@@ -17,7 +17,7 @@ import J2KCore
 //
 // Visual frequency weighting applies frequency-dependent scaling to quantization
 // step sizes based on the human visual system's contrast sensitivity function (CSF).
-// This allows for perceptually optimized compression by allocating more bits to
+// This allows for perceptually optimised compression by allocating more bits to
 // frequency bands that are more visible to human observers.
 //
 // ## Contrast Sensitivity Function (CSF)
@@ -168,11 +168,11 @@ public struct J2KVisualWeighting: Sendable {
         // Convert sensitivity to weight (inverse relationship)
         // Higher sensitivity = LOWER weight (preserve detail, less quantization)
         // Lower sensitivity = HIGHER weight (can quantize more)
-        // Normalize sensitivity to a reference value around peak
+        // Normalise sensitivity to a reference value around peak
         let peakSensitivity = contrastSensitivity(frequency: configuration.peakFrequency)
         let normalizedSensitivity = sensitivity / peakSensitivity
 
-        // Weight is inverse of normalized sensitivity
+        // Weight is inverse of normalised sensitivity
         let rawWeight = 1.0 / max(0.1, normalizedSensitivity)
 
         // Clamp to configured bounds
@@ -317,7 +317,7 @@ public struct J2KVisualWeighting: Sendable {
         let peak = configuration.peakFrequency
         let decay = configuration.decayRate
 
-        // Normalize frequency relative to peak
+        // Normalise frequency relative to peak
         let normalizedFreq = f / peak
 
         // CSF with peak at configuration.peakFrequency

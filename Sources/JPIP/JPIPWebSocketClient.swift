@@ -95,7 +95,7 @@ public actor JPIPWebSocketClient {
     /// WebSocket transport layer.
     private let webSocketTransport: JPIPWebSocketTransport
 
-    /// HTTP fallback transport (lazy-initialized on failure).
+    /// HTTP fallback transport (lazy-initialised on failure).
     private var httpTransport: JPIPTransport?
 
     /// Whether currently using HTTP fallback.

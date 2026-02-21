@@ -7,7 +7,7 @@
 /// Implementation of the MQ arithmetic coder used in JPEG 2000 entropy coding.
 ///
 /// The MQ-coder is a context-adaptive binary arithmetic coder used in JPEG 2000's
-/// EBCOT (Embedded Block Coding with Optimized Truncation) algorithm. It provides
+/// EBCOT (Embedded Block Coding with Optimised Truncation) algorithm. It provides
 /// efficient compression by adapting probability estimates based on context.
 
 import Foundation
@@ -40,7 +40,7 @@ enum TerminationMode: Sendable, Equatable, Hashable {
 
     /// Near-optimal termination mode.
     ///
-    /// Uses a tighter termination sequence that minimizes wasted bits,
+    /// Uses a tighter termination sequence that minimises wasted bits,
     /// producing better compression efficiency. The decoder must support
     /// this mode to properly handle the shorter termination sequence.
     ///
@@ -368,7 +368,7 @@ struct MQEncoder: Sendable {
         // It ensures that the encoder state is reset-compatible
 
         // Calculate the number of bits to output to reach a clean state
-        // We need to ensure the decoder can synchronize at this point
+        // We need to ensure the decoder can synchronise at this point
 
         // Step 1: Add the current interval to C
         c += a
@@ -410,9 +410,9 @@ struct MQEncoder: Sendable {
         return Data(output)
     }
 
-    /// Near-optimal termination - minimizes wasted bits.
+    /// Near-optimal termination - minimises wasted bits.
     ///
-    /// This mode uses a termination sequence that minimizes wasted bits while
+    /// This mode uses a termination sequence that minimises wasted bits while
     /// still ensuring correct decoding. It follows the approach described in
     /// the JPEG 2000 standard for rate-optimal termination.
     ///
@@ -420,12 +420,12 @@ struct MQEncoder: Sendable {
     ///   True near-optimal termination requires analysis of the decoder state
     ///   to determine the minimum number of bytes needed.
     ///
-    /// - TODO (v1.1 Phase 4): Implement true near-optimal termination by analyzing the interval (A)
+    /// - TODO (v1.1 Phase 4): Implement true near-optimal termination by analysing the interval (A)
     ///   and code register (C) to determine if fewer termination bytes are sufficient.
     ///   This could save 1-2 bytes per code-block termination.
     private mutating func finishNearOptimal() -> Data {
         // For now, use the default termination which is safe and correct.
-        // A true near-optimal termination would analyze the interval (A)
+        // A true near-optimal termination would analyse the interval (A)
         // and code register (C) to determine if fewer bytes are sufficient.
         //
         // TODO (v1.1 Phase 4): Implement proper near-optimal termination algorithm per JPEG 2000 standard

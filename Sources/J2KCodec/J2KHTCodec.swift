@@ -10,7 +10,7 @@
 /// HTJ2K provides significantly faster encoding and decoding throughput compared
 /// to legacy JPEG 2000, while maintaining compatibility with the JPEG 2000
 /// codestream structure. The key difference is the replacement of EBCOT Tier-1
-/// coding with the FBCOT (Fast Block Coder with Optimized Truncation) algorithm.
+/// coding with the FBCOT (Fast Block Coder with Optimised Truncation) algorithm.
 ///
 /// ## Mixed Codestream Support
 ///
@@ -135,7 +135,7 @@ struct HTJ2KConfiguration: Sendable {
 /// HTJ2K encoder for high-throughput JPEG 2000 encoding.
 ///
 /// The encoder performs the complete HTJ2K encoding pipeline:
-/// 1. Color transform (RCT for lossless, ICT for lossy)
+/// 1. Colour transform (RCT for lossless, ICT for lossy)
 /// 2. Wavelet transform (5/3 for lossless, 9/7 for lossy)
 /// 3. Quantization (for lossy mode)
 /// 4. HT block coding (FBCOT) or legacy EBCOT

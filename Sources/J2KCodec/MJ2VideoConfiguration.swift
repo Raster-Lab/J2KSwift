@@ -117,7 +117,7 @@ public struct MJ2PerformanceConfiguration: Sendable {
         self.maxThreads = maxThreads
     }
 
-    /// Real-time preset (prioritize speed).
+    /// Real-time preset (prioritise speed).
     public static let realtime = MJ2PerformanceConfiguration(
         priority: .speed,
         allowHardwareAcceleration: true

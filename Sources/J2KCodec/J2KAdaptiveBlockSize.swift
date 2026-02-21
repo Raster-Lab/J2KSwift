@@ -89,7 +89,7 @@ public enum J2KBlockSizeMode: Sendable, Equatable {
 
     /// Automatically select block sizes per tile based on content analysis.
     ///
-    /// The analyzer examines each tile's edge density, frequency content,
+    /// The analyser examines each tile's edge density, frequency content,
     /// and texture complexity to choose optimal block dimensions from
     /// 16×16, 32×32, or 64×64.
     ///
@@ -108,23 +108,23 @@ public enum J2KBlockSizeMode: Sendable, Equatable {
     }
 }
 
-// MARK: - Content Analyzer
+// MARK: - Content Analyser
 
 /// Analyzes image tile content to determine optimal block sizes.
 ///
-/// The analyzer computes content metrics (edge density, frequency energy,
+/// The analyser computes content metrics (edge density, frequency energy,
 /// texture complexity) for each tile region. These metrics drive the
 /// adaptive block size selection to balance quality and throughput.
 ///
 /// ## Usage
 ///
 /// ```swift
-/// let analyzer = J2KContentAnalyzer()
-/// let metrics = analyzer.analyzeRegion(samples: tileData, width: 256, height: 256)
-/// let blockSize = analyzer.selectBlockSize(for: metrics, aggressiveness: .balanced)
+/// let analyser = J2KContentAnalyzer()
+/// let metrics = analyser.analyzeRegion(samples: tileData, width: 256, height: 256)
+/// let blockSize = analyser.selectBlockSize(for: metrics, aggressiveness: .balanced)
 /// ```
 public struct J2KContentAnalyzer: Sendable {
-    /// Creates a new content analyzer.
+    /// Creates a new content analyser.
     public init() {}
 
     // MARK: - Edge Density Estimation
@@ -132,7 +132,7 @@ public struct J2KContentAnalyzer: Sendable {
     /// Estimates edge density for a region of image samples.
     ///
     /// Uses a simplified Sobel gradient approximation to detect edges.
-    /// The result is normalized to [0.0, 1.0] where 1.0 indicates maximum edge density.
+    /// The result is normalised to [0.0, 1.0] where 1.0 indicates maximum edge density.
     ///
     /// - Parameters:
     ///   - samples: Flattened array of pixel values (row-major).
@@ -164,8 +164,8 @@ public struct J2KContentAnalyzer: Sendable {
         }
 
         let averageGradient = gradientSum / Double(count)
-        // Normalize: typical max gradient for 8-bit is ~1443 (255*4*sqrt(2))
-        // Use 500.0 as practical normalization factor for reasonable range
+        // Normalise: typical max gradient for 8-bit is ~1443 (255*4*sqrt(2))
+        // Use 500.0 as practical normalisation factor for reasonable range
         return min(1.0, averageGradient / 500.0)
     }
 
@@ -314,7 +314,7 @@ public struct J2KContentAnalyzer: Sendable {
 
 /// Selects block sizes for all tiles in an image using content analysis.
 ///
-/// The selector processes each tile region, analyzes its content, and
+/// The selector processes each tile region, analyses its content, and
 /// determines the optimal code block size. Per-tile overrides can be
 /// provided to bypass automatic selection for specific tiles.
 ///
@@ -337,7 +337,7 @@ public struct J2KAdaptiveBlockSizeSelector: Sendable {
     /// and the override value is used directly.
     public let overrides: [Int: (width: Int, height: Int)]
 
-    /// The content analyzer used for tile analysis.
+    /// The content analyser used for tile analysis.
     private let analyzer: J2KContentAnalyzer
 
     /// Creates an adaptive block size selector.
@@ -356,10 +356,10 @@ public struct J2KAdaptiveBlockSizeSelector: Sendable {
 
     /// Selects block sizes for all tiles in an image.
     ///
-    /// For each tile, either uses the per-tile override or analyzes
+    /// For each tile, either uses the per-tile override or analyses
     /// the tile content to select the optimal block size.
     ///
-    /// - Parameter image: The image to analyze.
+    /// - Parameter image: The image to analyse.
     /// - Returns: Array of block sizes, one per tile. For non-tiled images,
     ///   returns a single-element array.
     public func selectBlockSizes(for image: J2KImage) -> [(width: Int, height: Int)] {
@@ -407,7 +407,7 @@ public struct J2KAdaptiveBlockSizeSelector: Sendable {
     ///
     /// - Parameters:
     ///   - image: The image containing the tile.
-    ///   - tileIndex: Index of the tile to analyze.
+    ///   - tileIndex: Index of the tile to analyse.
     /// - Returns: Content metrics for the tile.
     public func analyzeTile(from image: J2KImage, tileIndex: Int) -> J2KContentMetrics {
         let samples = extractTileSamples(from: image, tileIndex: tileIndex)

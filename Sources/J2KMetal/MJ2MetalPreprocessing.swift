@@ -6,8 +6,8 @@
 ///
 /// Metal-accelerated preprocessing for Motion JPEG 2000 frames.
 ///
-/// This module provides GPU-accelerated color conversion, scaling, and pixel format conversion
-/// optimized for VideoToolbox integration and efficient frame processing.
+/// This module provides GPU-accelerated colour conversion, scaling, and pixel format conversion
+/// optimised for VideoToolbox integration and efficient frame processing.
 
 #if canImport(Metal)
 import Foundation
@@ -146,7 +146,7 @@ public actor MJ2MetalPreprocessing {
     /// - Parameters:
     ///   - device: Metal device to use.
     ///   - configuration: Preprocessing configuration.
-    /// - Throws: `MJ2MetalPreprocessingError` if initialization fails.
+    /// - Throws: `MJ2MetalPreprocessingError` if initialisation fails.
     public init(device: MTLDevice, configuration: MJ2MetalPreprocessingConfiguration = .default()) throws {
         self.device = device
         self.configuration = configuration
@@ -206,7 +206,7 @@ public actor MJ2MetalPreprocessing {
             throw MJ2MetalPreprocessingError.textureCreationFailed
         }
 
-        // Perform color conversion on GPU
+        // Perform colour conversion on GPU
         try await performColorConversion(
             sourceTextures: sourceTextures,
             outputTexture: outputTexture,
@@ -222,7 +222,7 @@ public actor MJ2MetalPreprocessing {
     ///
     /// - Parameters:
     ///   - pixelBuffer: Source CVPixelBuffer.
-    ///   - targetColorSpace: Desired color space for J2KImage.
+    ///   - targetColorSpace: Desired colour space for J2KImage.
     /// - Returns: Converted J2KImage.
     /// - Throws: `MJ2MetalPreprocessingError` if conversion fails.
     public func convertToJ2KImage(
@@ -498,7 +498,7 @@ public actor MJ2MetalPreprocessing {
         outputFormat: MJ2MetalPixelFormat
     ) async throws {
         // For now, implement simple RGB to BGRA conversion
-        // More sophisticated color space conversions would require additional Metal shaders
+        // More sophisticated colour space conversions would require additional Metal shaders
 
         guard sourceTextures.count >= 3 else {
             throw MJ2MetalPreprocessingError.unsupportedPixelFormat

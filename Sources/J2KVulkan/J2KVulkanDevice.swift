@@ -137,7 +137,7 @@ public struct J2KVulkanDeviceProperties: Sendable {
 /// let device = J2KVulkanDevice()
 ///
 /// if J2KVulkanDevice.isAvailable {
-///     try await device.initialize()
+///     try await device.initialise()
 ///     let props = await device.deviceProperties()
 ///     // Use device for GPU operations
 /// } else {

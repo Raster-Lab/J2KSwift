@@ -78,7 +78,7 @@ public struct JPIPPrioritizedTile: Sendable {
     /// Viewport visibility score (0.0 = not visible, 1.0 = fully visible).
     public let visibilityScore: Double
 
-    /// Creates a prioritized tile.
+    /// Creates a prioritised tile.
     ///
     /// - Parameters:
     ///   - tile: The tile identifier.
@@ -230,11 +230,11 @@ public actor JPIPMultiResolutionTileManager {
         return tiles
     }
 
-    /// Gets the prioritized tile queue.
+    /// Gets the prioritised tile queue.
     ///
     /// Returns tiles ordered by priority (highest first).
     ///
-    /// - Returns: Ordered array of prioritized tiles.
+    /// - Returns: Ordered array of prioritised tiles.
     public func getPriorityQueue() -> [JPIPPrioritizedTile] {
         priorityQueue
     }
@@ -276,7 +276,7 @@ public actor JPIPMultiResolutionTileManager {
     private func rebuildPriorityQueue() {
         var newQueue: [JPIPPrioritizedTile] = []
 
-        // Generate prioritized tiles for all resolution levels
+        // Generate prioritised tiles for all resolution levels
         for resLevel in 0..<configuration.resolutionLevels {
             let tiles = getTilesForResolution(resLevel)
 

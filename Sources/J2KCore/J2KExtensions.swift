@@ -120,7 +120,7 @@ extension Array where Element == Double {
 
     /// Normalizes the array values to the range [0, 1].
     ///
-    /// - Returns: A new array with normalized values.
+    /// - Returns: A new array with normalised values.
     public func normalized() -> [Double] {
         guard !isEmpty else { return [] }
         guard let minVal = self.min(), let maxVal = self.max() else { return self }

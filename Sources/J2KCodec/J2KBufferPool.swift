@@ -5,7 +5,7 @@
 // J2KBufferPool.swift
 // J2KSwift
 //
-// Created for lossless decoding optimization
+// Created for lossless decoding optimisation
 //
 
 import Foundation
