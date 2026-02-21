@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to J2KSwift! This document provides guidelines and instructions for contributing to the project.
 
+All documentation in J2KSwift is written in **British English**. Please use British spellings throughout your contributions (see [Language](#language) below and [ADR-005](Documentation/ADR/ADR-005-british-english.md)).
+
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
@@ -10,9 +12,12 @@ Thank you for your interest in contributing to J2KSwift! This document provides 
 - [CI/CD Process](CI_CD_GUIDE.md) - **See comprehensive CI/CD guide**
 - [Code Style](#code-style)
 - [Testing Requirements](#testing-requirements)
+- [Performance Testing Guidelines](#performance-testing-guidelines)
 - [Documentation Standards](#documentation-standards)
+- [Architecture Decision Records](#architecture-decision-records)
 - [Pull Request Process](#pull-request-process)
 - [Issue Guidelines](#issue-guidelines)
+- [Language](#language)
 
 ## Code of Conduct
 
@@ -73,6 +78,9 @@ We are committed to providing a welcoming and inclusive environment for all cont
    ```bash
    swift test
    ```
+
+7. Read the architecture overview before making structural changes:
+   - [`Documentation/ARCHITECTURE.md`](Documentation/ARCHITECTURE.md) — module organisation, concurrency model, performance subsystems
 
 ## Development Workflow
 
@@ -238,6 +246,77 @@ func testEncoderWithCustomConfiguration() throws {
 - Use `XCTestCase.measure` for benchmarking
 - Document performance expectations
 
+## Performance Testing Guidelines
+
+Performance is a first-class concern in J2KSwift. The following guidelines
+ensure that performance regressions are caught early and that benchmarks are
+reproducible.
+
+### Using `XCTestCase.measure { }`
+
+Wrap the code under test in `measure { }` to record wall-clock time across
+ten iterations. XCTest computes the mean and standard deviation automatically.
+
+```swift
+func testDWTPerformance() {
+    let image = J2KImage.syntheticRGB(width: 1024, height: 1024)
+    measure {
+        _ = try? J2KDWT2D().forward(image.components[0])
+    }
+}
+```
+
+Place performance tests in the `Tests/PerformanceTests/` directory, **not**
+alongside unit tests, so that CI can run them separately on dedicated hardware.
+
+### Running the Performance Test Suite
+
+```bash
+# Run all performance tests
+swift test --filter PerformanceTests
+
+# Run a single benchmark
+swift test --filter PerformanceTests.J2KDWTPerformanceTests/testDWTPerformance
+```
+
+Performance tests are excluded from the default `swift test` run in CI to
+avoid flaky results on shared runners. They run on dedicated bare-metal GitHub
+Actions runners on every pull request that touches codec, transform, or
+accelerate code.
+
+### Performance Regression Thresholds
+
+The following thresholds apply to the reference hardware (Apple M2 Pro, 16 GB):
+
+| Operation | Target | Regression threshold |
+|-----------|--------|---------------------|
+| Lossy encode — 4K RGB | ≥ 500 MP/s | < 450 MP/s |
+| Lossless encode — 4K RGB | ≥ 350 MP/s | < 315 MP/s |
+| Lossy decode — 4K RGB | ≥ 600 MP/s | < 540 MP/s |
+| DWT forward pass (1024×1024) | ≤ 4 ms | > 5 ms |
+| ICT colour transform (1024×1024) | ≤ 1 ms | > 1.5 ms |
+
+A CI job compares the measured baseline against these thresholds and fails the
+build if any threshold is exceeded. Results are posted as a PR comment.
+
+### Using the OpenJPEG Benchmark Script
+
+`Scripts/benchmark_openjpeg.sh` compares J2KSwift throughput against
+OpenJPEG on a set of reference images. Run it locally before submitting
+performance-sensitive changes:
+
+```bash
+# Requires OpenJPEG to be installed (brew install openjpeg)
+bash Scripts/benchmark_openjpeg.sh
+
+# Limit to a specific image size
+bash Scripts/benchmark_openjpeg.sh --size 4096x4096
+```
+
+The script outputs a Markdown table suitable for pasting into a pull request
+description. Benchmark results are also saved to `profile_results/` for
+historical comparison.
+
 ## Documentation Standards
 
 ### Code Documentation
@@ -257,7 +336,7 @@ Example:
 /// Decodes JPEG 2000 data into an image.
 ///
 /// This method performs complete decoding of a JPEG 2000 codestream,
-/// including entropy decoding, inverse wavelet transform, and dequantization.
+/// including entropy decoding, inverse wavelet transform, and dequantisation.
 ///
 /// - Parameter data: The JPEG 2000 data to decode. Must be a valid
 ///   JPEG 2000 codestream or file format.
@@ -346,8 +425,8 @@ Use the bug report template and include:
 
 - Clear, descriptive title
 - Steps to reproduce
-- Expected behavior
-- Actual behavior
+- Expected behaviour
+- Actual behaviour
 - Environment details (OS, Swift version, etc.)
 - Relevant code snippets or error messages
 
@@ -375,11 +454,11 @@ Issues and PRs are labeled with priority:
 - **P0 - Critical**: Security issues, data loss bugs
 - **P1 - High**: Major bugs, important features
 - **P2 - Medium**: Minor bugs, nice-to-have features
-- **P3 - Low**: Polish, optimizations, refactoring
+- **P3 - Low**: Polish, optimisations, refactoring
 
 ## Recognition
 
-Contributors will be recognized in:
+Contributors will be recognised in:
 
 - Release notes
 - CONTRIBUTORS.md file
@@ -391,7 +470,70 @@ Contributors will be recognized in:
 - Start a discussion in GitHub Discussions
 - Review existing documentation
 
-## License
+## Architecture Decision Records
+
+Architecture Decision Records (ADRs) document the significant architectural
+choices made in J2KSwift — what was decided, why, and what the consequences are.
+
+ADRs live in [`Documentation/ADR/`](Documentation/ADR/). The
+[`Documentation/ADR/README.md`](Documentation/ADR/README.md) file provides an
+index of all records.
+
+### When to Write an ADR
+
+Write a new ADR when you are:
+
+- Introducing a new module or changing the module dependency graph.
+- Adopting a new concurrency pattern or changing actor boundaries.
+- Adding a new platform target or GPU backend.
+- Making a breaking change to a public API.
+- Choosing between two or more reasonable technical approaches with different
+  trade-offs.
+
+### ADR Lifecycle
+
+| Status | Meaning |
+|--------|---------|
+| Proposed | Under discussion; not yet agreed |
+| Accepted | Decision taken and implemented |
+| Deprecated | Was accepted but no longer applies |
+| Superseded | Replaced by a newer ADR |
+
+### Current ADRs
+
+| ADR | Decision |
+|-----|---------|
+| [ADR-001](Documentation/ADR/ADR-001-swift6-strict-concurrency.md) | Swift 6 strict concurrency |
+| [ADR-002](Documentation/ADR/ADR-002-value-types-cow.md) | Value types with copy-on-write storage |
+| [ADR-003](Documentation/ADR/ADR-003-modular-gpu-backends.md) | Modular GPU backends (Metal + Vulkan) |
+| [ADR-004](Documentation/ADR/ADR-004-no-dicom-dependency.md) | No DICOM library dependencies |
+| [ADR-005](Documentation/ADR/ADR-005-british-english.md) | British English in documentation |
+
+## Language
+
+All **documentation** and **source code comments** in J2KSwift use **British
+English**. The rationale is recorded in
+[ADR-005](Documentation/ADR/ADR-005-british-english.md).
+
+Common spellings to remember:
+
+| Use (British) | Avoid (American) |
+|---------------|-----------------|
+| colour | color |
+| optimisation | optimization |
+| organise | organize |
+| behaviour | behavior |
+| recognise | recognize |
+| analyse | analyze |
+| favour | favor |
+| artefact | artifact |
+| initialisation | initialization |
+| parallelisation | parallelization |
+
+**Exception**: Swift identifier names (`colorSpace`, `optimize`, etc.) use
+American English to match the Swift standard library and Apple's frameworks.
+
+
 
 By contributing to J2KSwift, you agree that your contributions will be licensed under the MIT License.
 
