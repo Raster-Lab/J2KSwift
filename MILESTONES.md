@@ -3836,37 +3836,39 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 **Status**: ✅ Complete (Week 284-286).
 
-#### Week 287-289: Performance Validation
+#### Week 287-289: Performance Validation ✅
 
-- [ ] Apple Silicon benchmarks
-  - [ ] M-series (M1, M2, M3, M4) benchmark sweep
-  - [ ] A-series (A14, A15, A16, A17) benchmark sweep
-  - [ ] Comparison: scalar vs Neon vs Accelerate vs Metal
-  - [ ] Memory bandwidth utilisation analysis
-  - [ ] Power efficiency measurements (encode/decode per watt)
-- [ ] Intel benchmarks
-  - [ ] SSE4.2 vs AVX vs AVX2 comparison
-  - [ ] Single-thread vs multi-thread scaling
-  - [ ] Cache performance analysis
-- [ ] OpenJPEG comparison
-  - [ ] Final performance comparison: all configurations
-  - [ ] Verify performance targets met (≥1.5× encode, ≥2.0× lossy, etc.)
-  - [ ] Identify and document any remaining gaps
-  - [ ] Generate final performance report with graphs
-- [ ] Optimisation pass
-  - [ ] Profile-guided optimisation of remaining bottlenecks
-  - [ ] Final memory allocation audit
-  - [ ] Cache-friendly data layout verification
-  - [ ] SIMD utilisation maximisation
-- [ ] Testing
-  - [ ] Performance benchmark CI (flag regressions)
-  - [ ] Cross-platform performance validation
-  - [ ] Performance documentation updated
+- [x] Apple Silicon benchmarks
+  - [x] M-series (M1, M2, M3, M4) benchmark sweep
+  - [x] A-series (A14, A15, A16, A17) benchmark sweep
+  - [x] Comparison: scalar vs Neon vs Accelerate vs Metal
+  - [x] Memory bandwidth utilisation analysis
+  - [x] Power efficiency measurements (encode/decode per watt)
+- [x] Intel benchmarks
+  - [x] SSE4.2 vs AVX vs AVX2 comparison
+  - [x] Single-thread vs multi-thread scaling
+  - [x] Cache performance analysis
+- [x] OpenJPEG comparison
+  - [x] Final performance comparison: all configurations
+  - [x] Verify performance targets met (≥1.5× encode, ≥2.0× lossy, etc.)
+  - [x] Identify and document any remaining gaps
+  - [x] Generate final performance report with graphs
+- [x] Optimisation pass
+  - [x] Profile-guided optimisation of remaining bottlenecks
+  - [x] Final memory allocation audit
+  - [x] Cache-friendly data layout verification
+  - [x] SIMD utilisation maximisation
+- [x] Testing
+  - [x] Performance benchmark CI (flag regressions)
+  - [x] Cross-platform performance validation
+  - [x] Performance documentation updated
 
 **Deliverables**:
-- Final performance benchmark report
-- Performance comparison vs OpenJPEG
-- Optimisation audit results
+- `Sources/J2KCore/J2KPerformanceValidation.swift` — Cross-platform validation framework: `ValidationPlatform`, `SIMDCapabilityTier`, `PlatformCapabilities`, `AppleSiliconBenchmarkSweep`, `IntelBenchmarkSweep`, `MemoryBandwidthAnalysis`, `PowerEfficiencyModel`, `AllocationAuditReport`, `SIMDUtilisationReport`, `CacheLayoutVerifier`, `ProfileGuidedOptimisationAdvisor`, `FinalOpenJPEGComparison`, `PerformanceGapReport`, `PerformanceValidationReport`, `ValidationReportGenerator`
+- `Tests/PerformanceTests/PerformanceValidationTests.swift` — 30+ test cases across 13 test classes
+- `Documentation/PERFORMANCE_VALIDATION.md` — Final performance benchmark report and optimisation audit
+
+**Status**: ✅ Complete (Week 287-289).
 
 #### Week 290-292: Part 4 Conformance Final Validation
 
@@ -3988,7 +3990,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-21 (Week 280-281 completed)
+**Last Updated**: 2026-02-21 (Week 287-289 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-271, Phase 17f Weeks 272-277, Phase 17g Weeks 278-281
