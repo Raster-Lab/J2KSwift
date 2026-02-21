@@ -38,7 +38,7 @@ public enum J2KMetalFeatureTier: Int, Sendable, Comparable {
 
 // MARK: - Metal Device Configuration
 
-/// Configuration for Metal device initialization and behavior.
+/// Configuration for Metal device initialisation and behavior.
 ///
 /// Controls how the Metal device is selected, memory limits are enforced,
 /// and fallback behavior when Metal is unavailable.
@@ -71,14 +71,14 @@ public struct J2KMetalDeviceConfiguration: Sendable {
     /// Default configuration suitable for most use cases.
     public static let `default` = J2KMetalDeviceConfiguration()
 
-    /// Configuration optimized for high performance.
+    /// Configuration optimised for high performance.
     public static let highPerformance = J2KMetalDeviceConfiguration(
         preferLowPower: false,
         maxMemoryUsage: 0,
         enableFallback: true
     )
 
-    /// Configuration optimized for low power usage.
+    /// Configuration optimised for low power usage.
     public static let lowPower = J2KMetalDeviceConfiguration(
         preferLowPower: true,
         maxMemoryUsage: 256 * 1024 * 1024,
@@ -90,7 +90,7 @@ public struct J2KMetalDeviceConfiguration: Sendable {
 
 /// Manages Metal device lifecycle and provides GPU access for JPEG 2000 operations.
 ///
-/// `J2KMetalDevice` handles Metal device initialization, command queue creation,
+/// `J2KMetalDevice` handles Metal device initialisation, command queue creation,
 /// feature tier identification, and graceful degradation when Metal is unavailable.
 /// All mutable state is protected by the actor isolation model for thread safety.
 ///
@@ -100,7 +100,7 @@ public struct J2KMetalDeviceConfiguration: Sendable {
 /// let device = J2KMetalDevice()
 ///
 /// if J2KMetalDevice.isAvailable {
-///     try await device.initialize()
+///     try await device.initialise()
 ///     let queue = try await device.commandQueue()
 ///     // Use queue for GPU operations
 /// }
@@ -139,7 +139,7 @@ public actor J2KMetalDevice {
     private var _featureTier: J2KMetalFeatureTier = .unknown
     #endif
 
-    /// Whether the device has been initialized.
+    /// Whether the device has been initialised.
     private var isInitialized = false
 
     /// Current GPU memory usage tracking.
@@ -159,7 +159,7 @@ public actor J2KMetalDevice {
     /// subsequent calls are no-ops.
     ///
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Metal is not available.
-    /// - Throws: ``J2KError/internalError(_:)`` if device initialization fails.
+    /// - Throws: ``J2KError/internalError(_:)`` if device initialisation fails.
     public func initialize() throws {
         guard !isInitialized else { return }
 
@@ -182,9 +182,9 @@ public actor J2KMetalDevice {
         #endif
     }
 
-    /// Validates that the device is initialized and ready for use.
+    /// Validates that the device is initialised and ready for use.
     ///
-    /// - Throws: ``J2KError/internalError(_:)`` if the device is not initialized.
+    /// - Throws: ``J2KError/internalError(_:)`` if the device is not initialised.
     public func validateReady() throws {
         guard isInitialized else {
             throw J2KError.internalError("Metal device not initialized. Call initialize() first.")
@@ -203,7 +203,7 @@ public actor J2KMetalDevice {
     /// Returns the Metal command queue for submitting work.
     ///
     /// - Returns: The Metal command queue.
-    /// - Throws: ``J2KError/internalError(_:)`` if the device is not initialized.
+    /// - Throws: ``J2KError/internalError(_:)`` if the device is not initialised.
     public func commandQueue() throws -> any MTLCommandQueue {
         try validateReady()
         return _commandQueue!
@@ -223,7 +223,7 @@ public actor J2KMetalDevice {
 
     /// Returns the device name for diagnostic purposes.
     ///
-    /// - Returns: The GPU device name, or "unavailable" if Metal is not initialized.
+    /// - Returns: The GPU device name, or "unavailable" if Metal is not initialised.
     public func deviceName() -> String {
         #if canImport(Metal)
         return device?.name ?? "unavailable"

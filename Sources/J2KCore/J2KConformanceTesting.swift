@@ -960,7 +960,7 @@ public struct J2KPlatformInfo: Sendable {
 public struct HTJ2KTestVectorGenerator: Sendable {
     /// Types of test patterns that can be generated.
     public enum TestPattern: Sendable {
-        /// Solid color pattern (all pixels same value).
+        /// Solid colour pattern (all pixels same value).
         case solid(value: Int32)
 
         /// Gradient pattern (linear ramp from 0 to max value).
@@ -1463,7 +1463,7 @@ public struct HTJ2KConformanceTestHarness: Sendable {
             config: noiseConfig
         ))
 
-        // 5. Solid color (trivial case)
+        // 5. Solid colour (trivial case)
         let solidConfig = HTJ2KTestVectorGenerator.Configuration(
             width: 16,
             height: 16,
@@ -1613,7 +1613,7 @@ public struct HTJ2KTestVectorParser: Sendable {
     ///
     /// - Parameter patternStr: Pattern specification (e.g., "solid(128)", "checkerboard(8)").
     /// - Returns: The corresponding test pattern.
-    /// - Throws: `ParseError.unknownPattern` if the pattern is not recognized.
+    /// - Throws: `ParseError.unknownPattern` if the pattern is not recognised.
     private static func parsePattern(_ patternStr: String) throws -> HTJ2KTestVectorGenerator.TestPattern {
         let trimmed = patternStr.trimmingCharacters(in: .whitespaces).lowercased()
 

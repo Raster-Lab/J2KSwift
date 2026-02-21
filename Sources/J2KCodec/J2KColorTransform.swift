@@ -11,34 +11,34 @@
 import Foundation
 import J2KCore
 
-/// Color transform modes supported by JPEG 2000.
+/// Colour transform modes supported by JPEG 2000.
 ///
-/// JPEG 2000 supports two types of color transforms:
-/// - **Reversible Color Transform (RCT)**: Integer-to-integer transform for lossless compression
-/// - **Irreversible Color Transform (ICT)**: Floating-point transform for lossy compression
+/// JPEG 2000 supports two types of colour transforms:
+/// - **Reversible Colour Transform (RCT)**: Integer-to-integer transform for lossless compression
+/// - **Irreversible Colour Transform (ICT)**: Floating-point transform for lossy compression
 public enum J2KColorTransformMode: String, Sendable, CaseIterable {
-    /// Reversible Color Transform (RCT) - integer-to-integer, lossless
+    /// Reversible Colour Transform (RCT) - integer-to-integer, lossless
     case reversible = "RCT"
 
-    /// Irreversible Color Transform (ICT) - floating-point, lossy
+    /// Irreversible Colour Transform (ICT) - floating-point, lossy
     case irreversible = "ICT"
 
-    /// No color transform applied
+    /// No colour transform applied
     case none = "None"
 }
 
-/// Configuration for color transform operations.
+/// Configuration for colour transform operations.
 public struct J2KColorTransformConfiguration: Sendable {
-    /// The color transform mode to use.
+    /// The colour transform mode to use.
     public let mode: J2KColorTransformMode
 
     /// Whether to validate reversibility (for RCT).
     public let validateReversibility: Bool
 
-    /// Creates a new color transform configuration.
+    /// Creates a new colour transform configuration.
     ///
     /// - Parameters:
-    ///   - mode: The color transform mode (default: .reversible).
+    ///   - mode: The colour transform mode (default: .reversible).
     ///   - validateReversibility: Whether to validate reversibility for RCT (default: true in debug, false in release).
     public init(
         mode: J2KColorTransformMode = .reversible,
@@ -64,12 +64,12 @@ public struct J2KColorTransformConfiguration: Sendable {
     public static let none = J2KColorTransformConfiguration(mode: .none)
 }
 
-/// Performs color space transformations for JPEG 2000 encoding and decoding.
+/// Performs colour space transformations for JPEG 2000 encoding and decoding.
 ///
-/// The `J2KColorTransform` class provides implementations of the Reversible Color Transform (RCT)
-/// and Irreversible Color Transform (ICT) as defined in ISO/IEC 15444-1.
+/// The `J2KColorTransform` class provides implementations of the Reversible Colour Transform (RCT)
+/// and Irreversible Colour Transform (ICT) as defined in ISO/IEC 15444-1.
 ///
-/// ## Reversible Color Transform (RCT)
+/// ## Reversible Colour Transform (RCT)
 ///
 /// The RCT uses integer arithmetic to ensure perfect reversibility for lossless compression:
 ///
@@ -107,19 +107,19 @@ public struct J2KColorTransformConfiguration: Sendable {
 /// )
 /// ```
 public struct J2KColorTransform: Sendable {
-    /// Configuration for the color transform.
+    /// Configuration for the colour transform.
     public let configuration: J2KColorTransformConfiguration
 
-    /// Creates a new color transform with the specified configuration.
+    /// Creates a new colour transform with the specified configuration.
     ///
-    /// - Parameter configuration: The color transform configuration (default: lossless).
+    /// - Parameter configuration: The colour transform configuration (default: lossless).
     public init(configuration: J2KColorTransformConfiguration = .lossless) {
         self.configuration = configuration
     }
 
-    // MARK: - Reversible Color Transform (RCT)
+    // MARK: - Reversible Colour Transform (RCT)
 
-    /// Applies the forward Reversible Color Transform (RGB → YCbCr).
+    /// Applies the forward Reversible Colour Transform (RGB → YCbCr).
     ///
     /// Transforms RGB components to YCbCr using integer arithmetic for perfect reversibility.
     ///
@@ -170,7 +170,7 @@ public struct J2KColorTransform: Sendable {
         return (y, cb, cr)
     }
 
-    /// Applies the inverse Reversible Color Transform (YCbCr → RGB).
+    /// Applies the inverse Reversible Colour Transform (YCbCr → RGB).
     ///
     /// Transforms YCbCr components back to RGB using integer arithmetic for perfect reconstruction.
     ///
@@ -323,9 +323,9 @@ public struct J2KColorTransform: Sendable {
         return (redComponent, greenComponent, blueComponent)
     }
 
-    // MARK: - Irreversible Color Transform (ICT)
+    // MARK: - Irreversible Colour Transform (ICT)
 
-    /// Applies the forward Irreversible Color Transform (RGB → YCbCr).
+    /// Applies the forward Irreversible Colour Transform (RGB → YCbCr).
     ///
     /// Transforms RGB components to YCbCr using floating-point arithmetic for better decorrelation.
     /// This transform is not reversible due to floating-point rounding, but provides better
@@ -393,7 +393,7 @@ public struct J2KColorTransform: Sendable {
         return (y, cb, cr)
     }
 
-    /// Applies the inverse Irreversible Color Transform (YCbCr → RGB).
+    /// Applies the inverse Irreversible Colour Transform (YCbCr → RGB).
     ///
     /// Transforms YCbCr components back to RGB using floating-point arithmetic.
     /// Due to floating-point rounding, the reconstruction is not perfect.
@@ -699,7 +699,7 @@ public struct J2KColorTransform: Sendable {
 
     // MARK: - Palette Support
 
-    /// Represents a color palette for indexed color images.
+    /// Represents a colour palette for indexed colour images.
     public struct Palette: Sendable {
         /// The palette entries (RGB triplets).
         public let entries: [(red: UInt8, green: UInt8, blue: UInt8)]
@@ -717,11 +717,11 @@ public struct J2KColorTransform: Sendable {
         }
     }
 
-    /// Expands indexed color data using a palette to RGB components.
+    /// Expands indexed colour data using a palette to RGB components.
     ///
     /// - Parameters:
     ///   - indices: The palette indices (0 to palette.count-1).
-    ///   - palette: The color palette.
+    ///   - palette: The colour palette.
     /// - Returns: A tuple containing (R, G, B) component data.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if indices are out of range.
     public func expandPalette(
@@ -752,7 +752,7 @@ public struct J2KColorTransform: Sendable {
         return (red, green, blue)
     }
 
-    /// A color value used for palette operations.
+    /// A colour value used for palette operations.
     private struct RGBColor: Hashable {
         let red: UInt8
         let green: UInt8
@@ -763,9 +763,9 @@ public struct J2KColorTransform: Sendable {
         }
     }
 
-    /// Creates a palette from RGB component data using color quantization.
+    /// Creates a palette from RGB component data using colour quantization.
     ///
-    /// This uses a simple median cut algorithm to reduce colors.
+    /// This uses a simple median cut algorithm to reduce colours.
     ///
     /// - Parameters:
     ///   - red: The red component data.
@@ -793,7 +793,7 @@ public struct J2KColorTransform: Sendable {
             throw J2KError.invalidParameter("maxColors must be in range [1, 256]")
         }
 
-        // Build color histogram
+        // Build colour histogram
         var colorMap: [RGBColor: Int] = [:]
         let count = red.count
 
@@ -802,7 +802,7 @@ public struct J2KColorTransform: Sendable {
             colorMap[color, default: 0] += 1
         }
 
-        // If we already have few enough colors, use them directly
+        // If we already have few enough colours, use them directly
         if colorMap.count <= maxColors {
             let entries = colorMap.keys.map { $0.asTuple() }
             let palette = Palette(entries: entries)
@@ -821,8 +821,8 @@ public struct J2KColorTransform: Sendable {
             return (palette, indices)
         }
 
-        // Otherwise, use simple color quantization
-        // For simplicity, we'll use a basic approach: take the most common colors
+        // Otherwise, use simple colour quantization
+        // For simplicity, we'll use a basic approach: take the most common colours
         let sortedColors = colorMap.sorted { $0.value > $1.value }
         let topColors = Array(sortedColors.prefix(maxColors).map { $0.key })
         let entries = topColors.map { $0.asTuple() }
@@ -841,7 +841,7 @@ public struct J2KColorTransform: Sendable {
             if let index = colorToIndex[color] {
                 indices[i] = index
             } else {
-                // Find nearest color in palette
+                // Find nearest colour in palette
                 var minDistance = Int.max
                 var bestIndex: UInt8 = 0
 
@@ -864,12 +864,12 @@ public struct J2KColorTransform: Sendable {
         return (palette, indices)
     }
 
-    // MARK: - Color Space Detection
+    // MARK: - Colour Space Detection
 
-    /// Detects the color space based on the number and properties of components.
+    /// Detects the colour space based on the number and properties of components.
     ///
     /// - Parameter components: The image components.
-    /// - Returns: The detected color space.
+    /// - Returns: The detected colour space.
     public static func detectColorSpace(components: [J2KComponent]) -> J2KColorSpace {
         guard !components.isEmpty else {
             return .unknown
@@ -891,12 +891,12 @@ public struct J2KColorTransform: Sendable {
         }
     }
 
-    /// Validates that components are suitable for a given color space.
+    /// Validates that components are suitable for a given colour space.
     ///
     /// - Parameters:
     ///   - components: The image components.
-    ///   - colorSpace: The expected color space.
-    /// - Throws: ``J2KError/invalidComponentConfiguration(_:)`` if components don't match the color space.
+    ///   - colorSpace: The expected colour space.
+    /// - Throws: ``J2KError/invalidComponentConfiguration(_:)`` if components don't match the colour space.
     public static func validateColorSpace(
         components: [J2KComponent],
         colorSpace: J2KColorSpace
@@ -921,7 +921,7 @@ public struct J2KColorTransform: Sendable {
             break
 
         case .unknown:
-            // Unknown color space, no validation
+            // Unknown colour space, no validation
             break
         }
     }

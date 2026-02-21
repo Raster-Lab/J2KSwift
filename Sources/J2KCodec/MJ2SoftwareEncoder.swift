@@ -16,7 +16,7 @@ import J2KCore
 
 /// Software-based video encoder using system tools or libraries.
 ///
-/// This actor provides cross-platform video encoding capabilities by utilizing:
+/// This actor provides cross-platform video encoding capabilities by utilising:
 /// 1. FFmpeg command-line tool (if available)
 /// 2. x264/x265 libraries (if linked)
 /// 3. Basic software fallback
@@ -66,7 +66,7 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
     public nonisolated let isHardwareAccelerated = false
     public nonisolated let capabilities: MJ2EncoderCapabilities
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates a software encoder with the specified configuration.
     ///

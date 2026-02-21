@@ -19,7 +19,7 @@ public enum EncodingStage: String, Sendable, CaseIterable {
     /// Input validation and preprocessing.
     case preprocessing = "Preprocessing"
 
-    /// Color space transformation (RCT or ICT).
+    /// Colour space transformation (RCT or ICT).
     case colorTransform = "Color Transform"
 
     /// Discrete wavelet transform (forward).
@@ -98,7 +98,7 @@ final class ParallelResultCollector<T: Sendable>: Sendable {
 ///
 /// The pipeline processes an image through these stages:
 /// 1. Preprocessing — validate input, extract component data
-/// 2. Color Transform — apply RCT (lossless) or ICT (lossy)
+/// 2. Colour Transform — apply RCT (lossless) or ICT (lossy)
 /// 3. Wavelet Transform — multi-level 2D DWT decomposition
 /// 4. Quantization — convert coefficients to integer indices
 /// 5. Entropy Coding — EBCOT bit-plane coding per code block
@@ -127,7 +127,7 @@ struct EncoderPipeline: Sendable {
         let componentData = try extractComponentData(from: image)
         reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
 
-        // Stage 2: Color Transform
+        // Stage 2: Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
         let transformedData = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
@@ -214,9 +214,9 @@ struct EncoderPipeline: Sendable {
         return result
     }
 
-    // MARK: - Stage 2: Color Transform
+    // MARK: - Stage 2: Colour Transform
 
-    /// Applies color space transformation (RCT/ICT or Part 2 MCT).
+    /// Applies colour space transformation (RCT/ICT or Part 2 MCT).
     ///
     /// - Parameters:
     ///   - components: The component data.
@@ -234,7 +234,7 @@ struct EncoderPipeline: Sendable {
         // Check if MCT is enabled in configuration
         switch config.mctConfiguration.mode {
         case .disabled:
-            // Use standard Part 1 color transform
+            // Use standard Part 1 colour transform
             return try applyStandardColorTransform(components, image: image)
 
         case .arrayBased(let matrix):
@@ -254,11 +254,11 @@ struct EncoderPipeline: Sendable {
         }
     }
 
-    /// Applies standard Part 1 color transform (RCT/ICT).
+    /// Applies standard Part 1 colour transform (RCT/ICT).
     private func applyStandardColorTransform(
         _ components: [[Int32]], image: J2KImage
     ) throws -> [[Int32]] {
-        // Color transform only applies to 3+ component images
+        // Colour transform only applies to 3+ component images
         guard components.count >= 3 else { return components }
 
         let mode: J2KColorTransformMode = config.lossless ? .reversible : .irreversible
@@ -346,7 +346,7 @@ struct EncoderPipeline: Sendable {
         // and select based on the specified criteria
 
         // TODO: Implement proper adaptive selection based on:
-        // - correlation: Analyze component correlation
+        // - correlation: Analyse component correlation
         // - rateDistortion: Evaluate R-D performance of each candidate
         // - compressionEfficiency: Compare compression ratios
 
@@ -413,7 +413,7 @@ struct EncoderPipeline: Sendable {
                 componentFilter = filter
             }
 
-            // Convert 1D array to 2D for DWT (optimized version)
+            // Convert 1D array to 2D for DWT (optimised version)
             var image2D: [[Int32]] = []
             image2D.reserveCapacity(height)
             for row in 0..<height {
@@ -506,7 +506,7 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
-                // Use Int32-optimized quantize method to avoid unnecessary conversions
+                // Use Int32-optimised quantize method to avoid unnecessary conversions
                 let quantized = try quantizer.quantize(
                     coefficients: info.coefficients,
                     subband: info.subband,
@@ -575,7 +575,7 @@ struct EncoderPipeline: Sendable {
                             blockCoeffs.append(contentsOf: info.coefficients[srcStart..<srcEnd])
                         }
 
-                        // Determine bit depth from max coefficient magnitude (SIMD-optimized)
+                        // Determine bit depth from max coefficient magnitude (SIMD-optimised)
                         let maxMag = Self.maxAbsValue(blockCoeffs)
                         let bitDepth = maxMag > 0 ? Int(log2(Double(maxMag))) + 2 : 1
 

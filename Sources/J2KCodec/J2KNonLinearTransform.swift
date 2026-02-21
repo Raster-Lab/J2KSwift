@@ -62,9 +62,9 @@ public struct J2KNLTConfiguration: Sendable, Equatable {
     /// an entry for each component or be empty (no transforms).
     public let componentTransforms: [J2KNLTComponentTransform]?
 
-    /// Whether to optimize transform parameters automatically.
+    /// Whether to optimise transform parameters automatically.
     ///
-    /// When enabled, the encoder analyzes component statistics and
+    /// When enabled, the encoder analyses component statistics and
     /// may adjust transform parameters for better compression.
     public let autoOptimize: Bool
 
@@ -73,7 +73,7 @@ public struct J2KNLTConfiguration: Sendable, Equatable {
     /// - Parameters:
     ///   - enabled: Whether to enable NLT (default: true).
     ///   - componentTransforms: Per-component transforms (default: nil).
-    ///   - autoOptimize: Whether to auto-optimize parameters (default: false).
+    ///   - autoOptimize: Whether to auto-optimise parameters (default: false).
     public init(
         enabled: Bool = true,
         componentTransforms: [J2KNLTComponentTransform]? = nil,
@@ -90,7 +90,7 @@ public struct J2KNLTConfiguration: Sendable, Equatable {
     /// Configuration with NLT disabled.
     public static let disabled = J2KNLTConfiguration(enabled: false)
 
-    /// Configuration with automatic optimization.
+    /// Configuration with automatic optimisation.
     public static let autoOptimized = J2KNLTConfiguration(
         enabled: true,
         componentTransforms: nil,
@@ -444,25 +444,25 @@ public struct J2KNonLinearTransform: Sendable {
             guard gamma > 0 else {
                 throw J2KError.invalidParameter("Gamma must be positive: \(gamma)")
             }
-            // Normalize to [0, 1], apply gamma, scale back
+            // Normalise to [0, 1], apply gamma, scale back
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(normalized, gamma)
             return transformed * (maxValue - minValue) + minValue
 
         case .logarithmic:
-            // ln(x + 1) with normalization
+            // ln(x + 1) with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log(normalized + 1.0) / log(2.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
 
         case .logarithmic10:
-            // log10(x + 1) with normalization
+            // log10(x + 1) with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log10(normalized + 1.0) / log10(2.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
 
         case .exponential:
-            // exp(x) - 1 with normalization
+            // exp(x) - 1 with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = (exp(normalized) - 1.0) / (exp(1.0) - 1.0)  // Normalize to [0, 1]
             return transformed * (maxValue - minValue) + minValue
@@ -511,25 +511,25 @@ public struct J2KNonLinearTransform: Sendable {
             guard gamma > 0 else {
                 throw J2KError.invalidParameter("Gamma must be positive: \(gamma)")
             }
-            // Normalize to [0, 1], apply inverse gamma, scale back
+            // Normalise to [0, 1], apply inverse gamma, scale back
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(normalized, 1.0 / gamma)
             return transformed * (maxValue - minValue) + minValue
 
         case .logarithmic:
-            // exp(y) - 1 with normalization
+            // exp(y) - 1 with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = exp(normalized * log(2.0)) - 1.0
             return transformed * (maxValue - minValue) + minValue
 
         case .logarithmic10:
-            // 10^y - 1 with normalization
+            // 10^y - 1 with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = pow(10.0, normalized * log10(2.0)) - 1.0
             return transformed * (maxValue - minValue) + minValue
 
         case .exponential:
-            // ln(x + 1) with normalization
+            // ln(x + 1) with normalisation
             let normalized = (value - minValue) / (maxValue - minValue)
             let transformed = log(normalized * (exp(1.0) - 1.0) + 1.0)
             return transformed * (maxValue - minValue) + minValue
@@ -568,7 +568,7 @@ public struct J2KNonLinearTransform: Sendable {
 
     /// Applies PQ (SMPTE ST 2084) forward transform.
     private func applyPQForward(value: Double, minValue: Double, maxValue: Double) throws -> Double {
-        // Normalize to [0, 1]
+        // Normalise to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
 
         // PQ constants
@@ -589,7 +589,7 @@ public struct J2KNonLinearTransform: Sendable {
 
     /// Applies PQ (SMPTE ST 2084) inverse transform.
     private func applyPQInverse(value: Double, minValue: Double, maxValue: Double) throws -> Double {
-        // Normalize to [0, 1]
+        // Normalise to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
 
         // PQ constants
@@ -610,7 +610,7 @@ public struct J2KNonLinearTransform: Sendable {
 
     /// Applies HLG (Hybrid Log-Gamma) forward transform.
     private func applyHLGForward(value: Double, minValue: Double, maxValue: Double) throws -> Double {
-        // Normalize to [0, 1]
+        // Normalise to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
 
         // HLG constants
@@ -631,7 +631,7 @@ public struct J2KNonLinearTransform: Sendable {
 
     /// Applies HLG (Hybrid Log-Gamma) inverse transform.
     private func applyHLGInverse(value: Double, minValue: Double, maxValue: Double) throws -> Double {
-        // Normalize to [0, 1]
+        // Normalise to [0, 1]
         let normalized = (value - minValue) / (maxValue - minValue)
 
         // HLG constants
@@ -664,7 +664,7 @@ public struct J2KNonLinearTransform: Sendable {
             return value
         }
 
-        // Normalize value to LUT index range [0, lut.count - 1]
+        // Normalise value to LUT index range [0, lut.count - 1]
         let normalized = (value - minValue) / (maxValue - minValue)
         let index = normalized * Double(lut.count - 1)
 

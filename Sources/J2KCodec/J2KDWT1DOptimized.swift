@@ -5,15 +5,15 @@
 // J2KDWT1DOptimized.swift
 // J2KSwift
 //
-// Optimized lossless decoding path for reversible 5/3 filter
+// Optimised lossless decoding path for reversible 5/3 filter
 //
 
 import Foundation
 import J2KCore
 
-/// Optimized 1D DWT operations for lossless (reversible 5/3) decoding.
+/// Optimised 1D DWT operations for lossless (reversible 5/3) decoding.
 ///
-/// This module provides optimized implementations specifically for lossless decoding,
+/// This module provides optimised implementations specifically for lossless decoding,
 /// with the following enhancements:
 /// - Pre-computed boundary extension lookup tables
 /// - Reduced memory allocations through buffer reuse
@@ -44,11 +44,11 @@ public struct J2KDWT1DOptimizer: Sendable {
     /// Creates a new DWT optimizer.
     public init() {}
 
-    // MARK: - Optimized Inverse Transform
+    // MARK: - Optimised Inverse Transform
 
-    /// Optimized inverse transform using 5/3 reversible filter.
+    /// Optimised inverse transform using 5/3 reversible filter.
     ///
-    /// This implementation includes several optimizations:
+    /// This implementation includes several optimisations:
     /// 1. Pre-computed boundary extension values
     /// 2. Vectorization hints for the compiler
     /// 3. Reduced branching in the hot path
@@ -57,7 +57,7 @@ public struct J2KDWT1DOptimizer: Sendable {
     /// - Parameters:
     ///   - lowpass: Low-pass subband coefficients.
     ///   - highpass: High-pass subband coefficients.
-    ///   - boundaryExtension: Boundary extension mode (only symmetric and periodic are optimized).
+    ///   - boundaryExtension: Boundary extension mode (only symmetric and periodic are optimised).
     /// - Returns: Reconstructed signal.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if inputs are invalid.
     public func inverseTransform53Optimized(
@@ -88,11 +88,11 @@ public struct J2KDWT1DOptimizer: Sendable {
         )
     }
 
-    // MARK: - Symmetric Boundary Extension (Optimized)
+    // MARK: - Symmetric Boundary Extension (Optimised)
 
-    /// Optimized inverse transform with symmetric boundary extension.
+    /// Optimised inverse transform with symmetric boundary extension.
     ///
-    /// This is the most common case and is heavily optimized with:
+    /// This is the most common case and is heavily optimised with:
     /// - Pre-computed boundary values
     /// - Minimal branching
     /// - Better instruction-level parallelism
@@ -113,7 +113,7 @@ public struct J2KDWT1DOptimizer: Sendable {
         let highRight = highpass.last ?? 0
 
         // Undo update step: even[n] = s[n] - floor((d[n-1] + d[n]) / 4)
-        // Optimized with reduced branching
+        // Optimised with reduced branching
         for i in 0..<lowpassSize {
             let left: Int32
             let right: Int32
@@ -137,7 +137,7 @@ public struct J2KDWT1DOptimizer: Sendable {
         }
 
         // Undo predict step: odd[n] = d[n] + floor((even[n] + even[n+1]) / 2)
-        // Optimized with bounds pre-checking
+        // Optimised with bounds pre-checking
         if highpassSize > 0 {
             for i in 0..<(highpassSize - 1) {
                 let left = even[i]
@@ -153,7 +153,7 @@ public struct J2KDWT1DOptimizer: Sendable {
         }
 
         // Merge even and odd samples
-        // Optimized interleaving with explicit loop unrolling hint
+        // Optimised interleaving with explicit loop unrolling hint
         var result = [Int32](repeating: 0, count: n)
 
         // Process in pairs for better instruction-level parallelism
@@ -191,21 +191,21 @@ public struct J2KDWT1DOptimizer: Sendable {
     }
 }
 
-// MARK: - 2D Optimized Transform
+// MARK: - 2D Optimised Transform
 
-/// Optimized 2D DWT operations for lossless decoding.
+/// Optimised 2D DWT operations for lossless decoding.
 public struct J2KDWT2DOptimizer: Sendable {
     private let optimizer1D = J2KDWT1DOptimizer()
 
     /// Creates a new 2D DWT optimizer.
     public init() {}
 
-    /// Optimized 2D inverse transform for lossless decoding.
+    /// Optimised 2D inverse transform for lossless decoding.
     ///
-    /// This implementation optimizes column processing by:
+    /// This implementation optimises column processing by:
     /// - Using a tiled approach for better cache utilization
     /// - Minimizing temporary allocations
-    /// - Optimizing memory access patterns
+    /// - Optimising memory access patterns
     ///
     /// - Parameters:
     ///   - ll: Low-low subband.
@@ -249,7 +249,7 @@ public struct J2KDWT2DOptimizer: Sendable {
             )
         }
 
-        // For lossless, use optimized 1D transforms
+        // For lossless, use optimised 1D transforms
         // Apply inverse 1D DWT to columns first
         var columnInversed = [[Int32]]()
 
@@ -268,7 +268,7 @@ public struct J2KDWT2DOptimizer: Sendable {
                 hlColumn.append(hl[row][col])
             }
 
-            // Use optimized transform
+            // Use optimised transform
             let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
                 lowpass: llColumn,
                 highpass: hlColumn,
@@ -298,7 +298,7 @@ public struct J2KDWT2DOptimizer: Sendable {
                 hhColumn.append(hh[row][col])
             }
 
-            // Use optimized transform
+            // Use optimised transform
             let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
                 lowpass: lhColumn,
                 highpass: hhColumn,
@@ -330,7 +330,7 @@ public struct J2KDWT2DOptimizer: Sendable {
                 highpass.append(row[i])
             }
 
-            // Use optimized transform
+            // Use optimised transform
             let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
                 lowpass: lowpass,
                 highpass: highpass,

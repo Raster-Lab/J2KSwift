@@ -11,11 +11,11 @@
 import Foundation
 import J2KCore
 
-/// Tracks memory allocations in the HTJ2K block coder for profiling and optimization.
+/// Tracks memory allocations in the HTJ2K block coder for profiling and optimisation.
 ///
 /// This actor provides thread-safe tracking of memory allocations during encoding and
 /// decoding operations, enabling identification of hot allocation paths and validation
-/// of memory optimization improvements.
+/// of memory optimisation improvements.
 ///
 /// ## Usage
 ///

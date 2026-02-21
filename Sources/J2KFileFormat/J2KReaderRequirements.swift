@@ -79,7 +79,7 @@ public enum J2KStandardFeature: UInt16, Sendable, Equatable, Hashable, CaseItera
     /// Visual masking model (Part 2).
     case visualMasking = 28
 
-    /// Perceptual encoding optimizations (Part 2).
+    /// Perceptual encoding optimisations (Part 2).
     case perceptualEncoding = 29
 
     /// A human-readable name describing the feature.

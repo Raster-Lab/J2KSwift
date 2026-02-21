@@ -38,13 +38,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse97Horizontal = "j2k_dwt_inverse_97_horizontal"
     /// Inverse 9/7 irreversible wavelet transform (vertical).
     case dwtInverse97Vertical = "j2k_dwt_inverse_97_vertical"
-    /// Forward ICT color transform (RGB → YCbCr).
+    /// Forward ICT colour transform (RGB → YCbCr).
     case ictForward = "j2k_ict_forward"
-    /// Inverse ICT color transform (YCbCr → RGB).
+    /// Inverse ICT colour transform (YCbCr → RGB).
     case ictInverse = "j2k_ict_inverse"
-    /// Forward RCT color transform (reversible).
+    /// Forward RCT colour transform (reversible).
     case rctForward = "j2k_rct_forward"
-    /// Inverse RCT color transform (reversible).
+    /// Inverse RCT colour transform (reversible).
     case rctInverse = "j2k_rct_inverse"
     /// General N×N matrix-vector multiplication for MCT.
     case mctMatrixMultiply = "j2k_mct_matrix_multiply"
@@ -72,11 +72,11 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case nltParametric = "j2k_nlt_parametric"
     /// LUT-based non-linear transform.
     case nltLUT = "j2k_nlt_lut"
-    /// Optimized 3×3 MCT matrix multiply.
+    /// Optimised 3×3 MCT matrix multiply.
     case mctMatrixMultiply3x3 = "j2k_mct_matrix_multiply_3x3"
-    /// Optimized 4×4 MCT matrix multiply.
+    /// Optimised 4×4 MCT matrix multiply.
     case mctMatrixMultiply4x4 = "j2k_mct_matrix_multiply_4x4"
-    /// Fused color + MCT transform.
+    /// Fused colour + MCT transform.
     case colorMCTFused = "j2k_color_mct_fused"
     /// Perceptual Quantizer (SMPTE ST 2084).
     case nltPQ = "j2k_nlt_pq"
@@ -110,7 +110,7 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case quantizePerceptual = "j2k_quantize_perceptual"
     /// Parallel trellis state evaluation for TCQ.
     case quantizeTrellisEvaluate = "j2k_quantize_trellis_evaluate"
-    /// Compute distortion metrics for R-D optimization.
+    /// Compute distortion metrics for R-D optimisation.
     case quantizeDistortionMetric = "j2k_quantize_distortion_metric"
 }
 
@@ -619,7 +619,7 @@ enum J2KMetalShaderSource {
         }
     }
 
-    // MARK: - Forward ICT (Irreversible Color Transform)
+    // MARK: - Forward ICT (Irreversible Colour Transform)
 
     kernel void j2k_ict_forward(
         device const float* r [[buffer(0)]],
@@ -642,7 +642,7 @@ enum J2KMetalShaderSource {
         cr[gid] =  0.5f     * rv - 0.41869f * gv - 0.08131f * bv;
     }
 
-    // MARK: - Inverse ICT (Irreversible Color Transform)
+    // MARK: - Inverse ICT (Irreversible Colour Transform)
 
     kernel void j2k_ict_inverse(
         device const float* y [[buffer(0)]],
@@ -665,7 +665,7 @@ enum J2KMetalShaderSource {
         b[gid] = yv + 1.772f   * cbv;
     }
 
-    // MARK: - Forward RCT (Reversible Color Transform)
+    // MARK: - Forward RCT (Reversible Colour Transform)
 
     kernel void j2k_rct_forward(
         device const int* r [[buffer(0)]],
@@ -688,7 +688,7 @@ enum J2KMetalShaderSource {
         v[gid] = rv - gv;
     }
 
-    // MARK: - Inverse RCT (Reversible Color Transform)
+    // MARK: - Inverse RCT (Reversible Colour Transform)
 
     kernel void j2k_rct_inverse(
         device const int* y [[buffer(0)]],
@@ -1233,7 +1233,7 @@ enum J2KMetalShaderSource {
             return;
         }
 
-        // Normalize to [0, lutSize-1]
+        // Normalise to [0, lutSize-1]
         float normalized = (val - inputMin) / range * float(lutSize - 1);
         normalized = clamp(normalized, 0.0f, float(lutSize - 1));
 
@@ -1245,7 +1245,7 @@ enum J2KMetalShaderSource {
         output[gid] = lut[idx0] * (1.0f - frac) + lut[idx1] * frac;
     }
 
-    // MARK: - Optimized 3×3 MCT Matrix Multiply
+    // MARK: - Optimised 3×3 MCT Matrix Multiply
 
     kernel void j2k_mct_matrix_multiply_3x3(
         device const float* input [[buffer(0)]],
@@ -1265,7 +1265,7 @@ enum J2KMetalShaderSource {
         output[2 * sampleCount + gid] = matrix[6] * c0 + matrix[7] * c1 + matrix[8] * c2;
     }
 
-    // MARK: - Optimized 4×4 MCT Matrix Multiply
+    // MARK: - Optimised 4×4 MCT Matrix Multiply
 
     kernel void j2k_mct_matrix_multiply_4x4(
         device const float* input [[buffer(0)]],
@@ -1287,7 +1287,7 @@ enum J2KMetalShaderSource {
         output[3 * sampleCount + gid] = matrix[12] * c0 + matrix[13] * c1 + matrix[14] * c2 + matrix[15] * c3;
     }
 
-    // MARK: - Fused Color Transform + MCT
+    // MARK: - Fused Colour Transform + MCT
 
     kernel void j2k_color_mct_fused(
         device const float* input [[buffer(0)]],
@@ -1300,8 +1300,8 @@ enum J2KMetalShaderSource {
     ) {
         if (gid >= sampleCount) return;
 
-        // Apply color transform then MCT in a single pass
-        // First: color transform
+        // Apply colour transform then MCT in a single pass
+        // First: colour transform
         float temp[16]; // Max 16 components
         for (uint c = 0; c < componentCount && c < 16; c++) {
             float sum = 0.0f;
@@ -1745,7 +1745,7 @@ enum J2KMetalShaderSource {
         decisions[gid * 256 + coeffIndex] = bestDecision;  // Store decision path
     }
 
-    // Compute distortion metrics for R-D optimization
+    // Compute distortion metrics for R-D optimisation
     kernel void j2k_quantize_distortion_metric(
         device const float* original [[buffer(0)]],
         device const float* reconstructed [[buffer(1)]],

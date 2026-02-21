@@ -38,7 +38,7 @@ import Foundation
 /// Represents a JPEG 2000 image with metadata and pixel data.
 ///
 /// A J2KImage contains all the necessary information to describe a JPEG 2000 image,
-/// including dimensions, components, tiling information, and color space metadata.
+/// including dimensions, components, tiling information, and colour space metadata.
 public struct J2KImage: Sendable {
     /// The width of the image in pixels.
     public let width: Int
@@ -46,7 +46,7 @@ public struct J2KImage: Sendable {
     /// The height of the image in pixels.
     public let height: Int
 
-    /// The image components (color channels).
+    /// The image components (colour channels).
     public let components: [J2KComponent]
 
     /// The horizontal offset of the image reference grid origin.
@@ -67,7 +67,7 @@ public struct J2KImage: Sendable {
     /// The vertical offset of the first tile.
     public let tileOffsetY: Int
 
-    /// The color space of the image.
+    /// The colour space of the image.
     public let colorSpace: J2KColorSpace
 
     /// Creates a new J2KImage with the specified parameters.
@@ -75,14 +75,14 @@ public struct J2KImage: Sendable {
     /// - Parameters:
     ///   - width: The width of the image in pixels.
     ///   - height: The height of the image in pixels.
-    ///   - components: The image components (color channels).
+    ///   - components: The image components (colour channels).
     ///   - offsetX: The horizontal offset of the image reference grid origin (default: 0).
     ///   - offsetY: The vertical offset of the image reference grid origin (default: 0).
     ///   - tileWidth: The width of a tile in pixels, 0 for no tiling (default: 0).
     ///   - tileHeight: The height of a tile in pixels, 0 for no tiling (default: 0).
     ///   - tileOffsetX: The horizontal offset of the first tile (default: 0).
     ///   - tileOffsetY: The vertical offset of the first tile (default: 0).
-    ///   - colorSpace: The color space of the image (default: .sRGB).
+    ///   - colorSpace: The colour space of the image (default: .sRGB).
     public init(
         width: Int,
         height: Int,
@@ -112,7 +112,7 @@ public struct J2KImage: Sendable {
     /// - Parameters:
     ///   - width: The width of the image in pixels.
     ///   - height: The height of the image in pixels.
-    ///   - components: The number of color components (e.g., 3 for RGB, 4 for RGBA).
+    ///   - components: The number of colour components (e.g., 3 for RGB, 4 for RGBA).
     ///   - bitDepth: The bit depth per component (default: 8).
     ///   - signed: Whether the components are signed (default: false).
     public init(width: Int, height: Int, components: Int, bitDepth: Int = 8, signed: Bool = false) {
@@ -221,7 +221,7 @@ public struct J2KImage: Sendable {
     }
 }
 
-/// Represents a single component (color channel) of a JPEG 2000 image.
+/// Represents a single component (colour channel) of a JPEG 2000 image.
 ///
 /// Each component has its own bit depth, sign, and dimensions. Components can be
 /// subsampled relative to the full image resolution.
@@ -376,7 +376,7 @@ public struct J2KTileComponent: Sendable {
     /// The height of this tile-component in pixels.
     public let height: Int
 
-    /// The precincts in this tile-component (organized by resolution level).
+    /// The precincts in this tile-component (organised by resolution level).
     public var precincts: [[J2KPrecinct]]
 
     /// Creates a new tile-component.
@@ -385,7 +385,7 @@ public struct J2KTileComponent: Sendable {
     ///   - componentIndex: The component index.
     ///   - width: The width in pixels.
     ///   - height: The height in pixels.
-    ///   - precincts: The precincts organized by resolution level.
+    ///   - precincts: The precincts organised by resolution level.
     public init(
         componentIndex: Int,
         width: Int,
@@ -422,7 +422,7 @@ public struct J2KPrecinct: Sendable {
     /// The resolution level this precinct belongs to.
     public let resolutionLevel: Int
 
-    /// The code-blocks in this precinct organized by subband (LL, HL, LH, HH).
+    /// The code-blocks in this precinct organised by subband (LL, HL, LH, HH).
     public var codeBlocks: [J2KSubband: [J2KCodeBlock]]
 
     /// Creates a new precinct.
@@ -434,7 +434,7 @@ public struct J2KPrecinct: Sendable {
     ///   - width: The width.
     ///   - height: The height.
     ///   - resolutionLevel: The resolution level.
-    ///   - codeBlocks: The code-blocks organized by subband.
+    ///   - codeBlocks: The code-blocks organised by subband.
     public init(
         index: Int,
         x: Int,
@@ -550,39 +550,39 @@ public enum J2KSubband: String, Sendable, Hashable {
     case hh = "HH"
 }
 
-/// Represents the color space of a JPEG 2000 image.
+/// Represents the colour space of a JPEG 2000 image.
 public enum J2KColorSpace: Sendable, Equatable {
-    /// sRGB color space (standard dynamic range).
+    /// sRGB colour space (standard dynamic range).
     case sRGB
 
     /// Grayscale (single component).
     case grayscale
 
-    /// YCbCr color space.
+    /// YCbCr colour space.
     case yCbCr
 
-    /// HDR color space with extended dynamic range (e.g., Rec. 2020, Rec. 2100).
+    /// HDR colour space with extended dynamic range (e.g., Rec. 2020, Rec. 2100).
     ///
     /// HDR images typically use higher bit depths (10, 12, or 16 bits) and represent
     /// luminance values that exceed the standard 0-1 range of SDR content.
     ///
     /// Common HDR standards:
-    /// - Rec. 2020: Wide color gamut for UHDTV
+    /// - Rec. 2020: Wide colour gamut for UHDTV
     /// - Rec. 2100 (HLG/PQ): HDR transfer functions
     /// - SMPTE ST 2084 (PQ): Perceptual quantization
     /// - ARIB STD-B67 (HLG): Hybrid log-gamma
     case hdr
 
-    /// HDR color space with linear light encoding.
+    /// HDR colour space with linear light encoding.
     ///
     /// Linear HDR represents light intensity directly without gamma correction,
     /// suitable for physically-based rendering and compositing operations.
     case hdrLinear
 
-    /// ICC profile-based color space.
+    /// ICC profile-based colour space.
     case iccProfile(Data)
 
-    /// Unknown or unspecified color space.
+    /// Unknown or unspecified colour space.
     case unknown
 
     /// Equatable conformance for J2KColorSpace.

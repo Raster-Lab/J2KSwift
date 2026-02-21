@@ -6,14 +6,14 @@
 ///
 /// Efficient image buffer with copy-on-write semantics.
 ///
-/// This module provides an optimized buffer specifically for image data
-/// with automatic copy-on-write behavior to minimize memory copies.
+/// This module provides an optimised buffer specifically for image data
+/// with automatic copy-on-write behavior to minimise memory copies.
 
 import Foundation
 
 /// An efficient buffer for storing image component data.
 ///
-/// `J2KImageBuffer` provides optimized storage for image data with
+/// `J2KImageBuffer` provides optimised storage for image data with
 /// copy-on-write semantics. When a buffer is copied, the underlying
 /// storage is shared until a write operation occurs, at which point
 /// a new copy is created.
@@ -172,7 +172,7 @@ public struct J2KImageBuffer: Sendable {
                 byteCount: capacity,
                 alignment: MemoryLayout<UInt64>.alignment
             )
-            // Initialize to zero
+            // Initialise to zero
             buffer.initializeMemory(as: UInt8.self, repeating: 0)
         }
 

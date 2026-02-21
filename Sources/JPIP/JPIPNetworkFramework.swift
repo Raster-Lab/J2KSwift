@@ -538,7 +538,7 @@ public struct JPIPHTTP3Configuration: Sendable {
 
 /// Efficient TLS configuration for JPIP.
 ///
-/// Provides optimized TLS configuration using Network.framework's
+/// Provides optimised TLS configuration using Network.framework's
 /// built-in support for modern TLS versions and cipher suites.
 ///
 /// Example:

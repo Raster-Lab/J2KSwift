@@ -214,7 +214,7 @@ public struct J2KMCTDependencyTransform: Sendable {
             throw J2KError.invalidParameter("All components must have the same sample count")
         }
 
-        // Initialize output with input (identity for non-dependent components)
+        // Initialise output with input (identity for non-dependent components)
         var output = components
 
         // Apply each dependency in order
@@ -268,7 +268,7 @@ public struct J2KMCTDependencyTransform: Sendable {
             throw J2KError.invalidParameter("All components must have the same sample count")
         }
 
-        // Initialize output with input
+        // Initialise output with input
         var output = components
 
         // Apply dependencies in order (forward through the chain)
@@ -402,14 +402,14 @@ public struct J2KMCTDependencyConfiguration: Sendable {
     /// The transform type.
     public let transform: TransformType
 
-    /// Whether to optimize dependency graph evaluation order.
+    /// Whether to optimise dependency graph evaluation order.
     public let optimizeEvaluation: Bool
 
     /// Creates a new dependency configuration.
     ///
     /// - Parameters:
     ///   - transform: The transform type.
-    ///   - optimizeEvaluation: Whether to optimize evaluation order (default: true).
+    ///   - optimizeEvaluation: Whether to optimise evaluation order (default: true).
     public init(transform: TransformType, optimizeEvaluation: Bool = true) {
         self.transform = transform
         self.optimizeEvaluation = optimizeEvaluation

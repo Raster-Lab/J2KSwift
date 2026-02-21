@@ -769,7 +769,7 @@ public struct MJ2SampleEntry: Sendable {
 
     /// Writes the sample entry to binary data.
     ///
-    /// - Returns: The serialized sample entry data.
+    /// - Returns: The serialised sample entry data.
     /// - Throws: ``J2KError`` if writing fails.
     public func write() throws -> Data {
         var data = Data()
@@ -816,7 +816,7 @@ public struct MJ2SampleEntry: Sendable {
         // Depth
         data.append(contentsOf: depth.bigEndianBytes)
 
-        // Pre-defined (2 bytes, color table ID = -1)
+        // Pre-defined (2 bytes, colour table ID = -1)
         data.append(contentsOf: UInt16(0xFFFF).bigEndianBytes)
 
         // JP2 header box (if present)
@@ -896,7 +896,7 @@ public struct MJ2SampleEntry: Sendable {
         depth = data.readUInt16(at: offset)
         offset += 2
 
-        // Skip color table ID (2 bytes)
+        // Skip colour table ID (2 bytes)
         offset += 2
 
         // Read jp2h box if present

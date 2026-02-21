@@ -91,7 +91,7 @@ public struct JPIPWebSocketFrame: Sendable {
     /// - Bytes 5-8: Payload length (UInt32, big-endian)
     /// - Bytes 9+: Payload data
     ///
-    /// - Returns: The serialized frame data.
+    /// - Returns: The serialised frame data.
     public func serialize() -> Data {
         var data = Data()
         data.append(type.rawValue)
@@ -108,8 +108,8 @@ public struct JPIPWebSocketFrame: Sendable {
 
     /// Deserializes a frame from binary data.
     ///
-    /// - Parameter data: The binary data to deserialize.
-    /// - Returns: The deserialized frame, or nil if data is invalid.
+    /// - Parameter data: The binary data to deserialise.
+    /// - Returns: The deserialised frame, or nil if data is invalid.
     public static func deserialize(from data: Data) -> JPIPWebSocketFrame? {
         // Minimum frame size: 9 bytes (type + requestID + length)
         guard data.count >= 9 else { return nil }

@@ -43,7 +43,7 @@ public protocol J2KBox: Sendable {
 
     /// Writes the box to binary data.
     ///
-    /// - Returns: The serialized box data including header.
+    /// - Returns: The serialised box data including header.
     /// - Throws: ``J2KError`` if writing fails.
     func write() throws -> Data
 
@@ -104,10 +104,10 @@ public struct J2KBoxType: RawRepresentable, Sendable, Equatable, Hashable {
     /// Bits per component box ('bpcc') - Bit depth per component
     public static let bpcc = J2KBoxType(string: "bpcc")
 
-    /// Color specification box ('colr') - Color space information
+    /// Colour specification box ('colr') - Colour space information
     public static let colr = J2KBoxType(string: "colr")
 
-    /// Palette box ('pclr') - Palette data for indexed color
+    /// Palette box ('pclr') - Palette data for indexed colour
     public static let pclr = J2KBoxType(string: "pclr")
 
     /// Component mapping box ('cmap') - Maps palette indices to components
@@ -362,9 +362,9 @@ public struct J2KBoxReader: Sendable {
     }
 }
 
-/// Writer for serializing JP2 boxes to binary data.
+/// Writer for serialising JP2 boxes to binary data.
 ///
-/// `J2KBoxWriter` provides efficient serialization of box structures to create JP2 files.
+/// `J2KBoxWriter` provides efficient serialisation of box structures to create JP2 files.
 /// It automatically handles standard and extended length boxes.
 ///
 /// Example:

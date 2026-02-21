@@ -13,7 +13,7 @@ import J2KCore
 
 /// Multi-component transform types supported by JPEG 2000 Part 2.
 ///
-/// MCT extends the basic color transforms (RCT/ICT) with arbitrary linear transforms
+/// MCT extends the basic colour transforms (RCT/ICT) with arbitrary linear transforms
 /// that can decorrelate any number of components.
 public enum J2KMCTType: String, Sendable, CaseIterable {
     /// Array-based transform using explicit matrix coefficients
@@ -293,7 +293,7 @@ public struct J2KMCTEncodingConfiguration: Sendable {
         /// Select based on component correlation
         case correlation
 
-        /// Select based on rate-distortion optimization
+        /// Select based on rate-distortion optimisation
         case rateDistortion
 
         /// Select based on compression efficiency

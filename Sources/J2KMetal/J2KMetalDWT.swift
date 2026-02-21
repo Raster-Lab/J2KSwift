@@ -127,7 +127,7 @@ public struct J2KMetalDWTConfiguration: Sendable {
     /// Minimum image dimension to prefer GPU over CPU.
     public var gpuThreshold: Int
 
-    /// Whether to enable threadgroup memory optimization.
+    /// Whether to enable threadgroup memory optimisation.
     public var useThreadgroupMemory: Bool
 
     /// Whether to enable async compute for overlapped execution.
@@ -141,7 +141,7 @@ public struct J2KMetalDWTConfiguration: Sendable {
     ///   - tileWidth: Tile width for large images. Defaults to `0` (full-width).
     ///   - tileHeight: Tile height for large images. Defaults to `0` (full-height).
     ///   - gpuThreshold: Minimum dimension to prefer GPU. Defaults to `256`.
-    ///   - useThreadgroupMemory: Enable threadgroup optimization. Defaults to `true`.
+    ///   - useThreadgroupMemory: Enable threadgroup optimisation. Defaults to `true`.
     ///   - enableAsyncCompute: Enable async compute. Defaults to `false`.
     public init(
         filter: J2KMetalDWTFilter = .irreversible97,
@@ -167,7 +167,7 @@ public struct J2KMetalDWTConfiguration: Sendable {
     /// Default configuration for lossless compression.
     public static let lossless = J2KMetalDWTConfiguration(filter: .reversible53)
 
-    /// Configuration optimized for large images with tile-based processing.
+    /// Configuration optimised for large images with tile-based processing.
     public static let largeImage = J2KMetalDWTConfiguration(
         filter: .irreversible97,
         decompositionLevels: 5,
@@ -271,7 +271,7 @@ public enum J2KMetalDWTBackend: Sendable {
 /// Performance statistics for Metal DWT operations.
 ///
 /// Tracks timing, backend usage, and memory consumption for
-/// monitoring and optimization purposes.
+/// monitoring and optimisation purposes.
 public struct J2KMetalDWTStatistics: Sendable {
     /// Total number of DWT operations performed.
     public var totalOperations: Int
@@ -359,7 +359,7 @@ public actor J2KMetalDWT {
     /// The shader library for compute kernels.
     private let shaderLibrary: J2KMetalShaderLibrary
 
-    /// Whether the Metal backend has been initialized.
+    /// Whether the Metal backend has been initialised.
     private var isInitialized = false
 
     /// Processing statistics.
@@ -391,7 +391,7 @@ public actor J2KMetalDWT {
     /// multiple times; subsequent calls are no-ops.
     ///
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Metal is not available.
-    /// - Throws: ``J2KError/internalError(_:)`` if initialization fails.
+    /// - Throws: ``J2KError/internalError(_:)`` if initialisation fails.
     public func initialize() async throws {
         guard !isInitialized else { return }
 

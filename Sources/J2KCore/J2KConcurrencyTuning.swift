@@ -55,12 +55,12 @@ public struct J2KConcurrencyLimits: Sendable {
         self.enableWorkStealing = enableWorkStealing
     }
 
-    /// Creates limits optimized for the current system.
+    /// Creates limits optimised for the current system.
     ///
     /// Automatically detects processor count and adjusts parallelism
     /// to avoid over-subscription.
     ///
-    /// - Returns: System-optimized concurrency limits.
+    /// - Returns: System-optimised concurrency limits.
     public static func forSystem() -> J2KConcurrencyLimits {
         let cores = ProcessInfo.processInfo.activeProcessorCount
         return J2KConcurrencyLimits(
@@ -98,7 +98,7 @@ public struct J2KConcurrencyLimits: Sendable {
 /// Metrics for analysing actor contention in concurrent pipelines.
 ///
 /// Tracks message-passing overhead, isolation crossings, and contention
-/// hotspots to guide optimization of actor boundaries.
+/// hotspots to guide optimisation of actor boundaries.
 public struct J2KActorContentionMetrics: Sendable, CustomStringConvertible {
     /// Total number of actor message sends.
     public let messageSends: Int
@@ -150,7 +150,7 @@ public struct J2KActorContentionMetrics: Sendable, CustomStringConvertible {
     }
 }
 
-// MARK: - Actor Contention Analyzer
+// MARK: - Actor Contention Analyser
 
 /// Analyzes actor contention to identify message-passing overhead and hot paths.
 ///
@@ -159,11 +159,11 @@ public struct J2KActorContentionMetrics: Sendable, CustomStringConvertible {
 ///
 /// Example:
 /// ```swift
-/// let analyzer = J2KActorContentionAnalyzer()
-/// await analyzer.beginAnalysis()
+/// let analyser = J2KActorContentionAnalyzer()
+/// await analyser.beginAnalysis()
 /// // ... perform concurrent operations ...
-/// await analyzer.recordIsolationCrossing(label: "encoder.entropy")
-/// let metrics = await analyzer.endAnalysis(taskCount: 8)
+/// await analyser.recordIsolationCrossing(label: "encoder.entropy")
+/// let metrics = await analyser.endAnalysis(taskCount: 8)
 /// print(metrics)
 /// ```
 public actor J2KActorContentionAnalyzer {
@@ -174,7 +174,7 @@ public actor J2KActorContentionAnalyzer {
     private var hotPathLabels: [String] = []
     private var isAnalysing: Bool = false
 
-    /// Creates a new contention analyzer.
+    /// Creates a new contention analyser.
     public init() {}
 
     /// Begins a new contention analysis session.
@@ -330,7 +330,7 @@ public struct J2KConcurrentPipeline: Sendable {
 
     /// Creates a new concurrent pipeline.
     ///
-    /// - Parameter limits: Concurrency limits (default: system-optimized).
+    /// - Parameter limits: Concurrency limits (default: system-optimised).
     public init(limits: J2KConcurrencyLimits = .forSystem()) {
         self.limits = limits
     }

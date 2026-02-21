@@ -144,8 +144,8 @@ public enum J2KPathUtilities: Sendable {
     /// On Windows, converts forward slashes to backslashes.
     /// On Unix-like systems, returns the path unchanged.
     ///
-    /// - Parameter path: The path to normalize.
-    /// - Returns: The normalized path string.
+    /// - Parameter path: The path to normalise.
+    /// - Returns: The normalised path string.
     public static func normalizePath(_ path: String) -> String {
         #if os(Windows)
         return path.replacingOccurrences(of: "/", with: "\\")
@@ -188,7 +188,7 @@ public enum J2KFoundationCompat: Sendable {
     public static func fileExists(at url: URL) -> Bool {
         #if os(Windows)
         // On Windows, URL.path may return paths with forward slashes;
-        // FileManager handles this, but we normalize for safety.
+        // FileManager handles this, but we normalise for safety.
         let path = J2KPathUtilities.normalizePath(url.path)
         return FileManager.default.fileExists(atPath: path)
         #else

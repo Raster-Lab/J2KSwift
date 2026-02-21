@@ -64,7 +64,7 @@ public struct J2KPartialDecodingOptions: Sendable, Equatable {
     /// Specific region to decode (nil = full image).
     public let region: J2KRegion?
 
-    /// Enable early stopping optimization.
+    /// Enable early stopping optimisation.
     ///
     /// When true, the decoder stops processing as soon as the requested
     /// quality/resolution is achieved, saving computation time.
@@ -73,7 +73,7 @@ public struct J2KPartialDecodingOptions: Sendable, Equatable {
     /// Decode only specific components (nil = all components).
     ///
     /// For RGB images: [0, 1, 2] for R, G, B components.
-    /// Can be used to decode grayscale from color images: [0] for Y component.
+    /// Can be used to decode grayscale from colour images: [0] for Y component.
     public let components: [Int]?
 
     /// Creates new partial decoding options.
@@ -82,7 +82,7 @@ public struct J2KPartialDecodingOptions: Sendable, Equatable {
     ///   - maxLayer: Maximum quality layer to decode (default: nil for all layers).
     ///   - maxResolutionLevel: Maximum resolution level (default: nil for full resolution).
     ///   - region: Specific region to decode (default: nil for full image).
-    ///   - earlyStop: Enable early stopping optimization (default: true).
+    ///   - earlyStop: Enable early stopping optimisation (default: true).
     ///   - components: Specific components to decode (default: nil for all components).
     public init(
         maxLayer: Int? = nil,

@@ -101,7 +101,7 @@ public struct J2KMetalMCTResult: Sendable {
 /// Performance statistics for Metal MCT operations.
 ///
 /// Tracks timing, backend usage, and throughput for monitoring
-/// and optimization purposes.
+/// and optimisation purposes.
 public struct J2KMetalMCTStatistics: Sendable {
     /// Total number of MCT operations performed.
     public var totalOperations: Int
@@ -148,8 +148,8 @@ public struct J2KMetalMCTStatistics: Sendable {
 ///
 /// `J2KMetalMCT` provides GPU-accelerated N×N matrix-based component
 /// transforms using Metal compute shaders. It supports general N×N
-/// transforms with optimized 3×3 and 4×4 fast paths, batch processing,
-/// and fused color+MCT operations.
+/// transforms with optimised 3×3 and 4×4 fast paths, batch processing,
+/// and fused colour+MCT operations.
 ///
 /// ## Usage
 ///
@@ -172,7 +172,7 @@ public struct J2KMetalMCTStatistics: Sendable {
 /// ## Performance
 ///
 /// - 3×3 fast path: Unrolled computation avoiding loop overhead
-/// - 4×4 fast path: Optimized for 4-component images
+/// - 4×4 fast path: Optimised for 4-component images
 /// - General N×N: Supports arbitrary component counts up to 16
 /// - Target: 10-25× speedup vs CPU on Apple Silicon
 public actor J2KMetalMCT {
@@ -193,7 +193,7 @@ public actor J2KMetalMCT {
     /// The shader library for compute kernels.
     private let shaderLibrary: J2KMetalShaderLibrary
 
-    /// Whether the Metal backend has been initialized.
+    /// Whether the Metal backend has been initialised.
     private var isInitialized = false
 
     /// Processing statistics.
@@ -221,7 +221,7 @@ public actor J2KMetalMCT {
     /// Initializes the Metal backend for MCT operations.
     ///
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Metal is not available.
-    /// - Throws: ``J2KError/internalError(_:)`` if initialization fails.
+    /// - Throws: ``J2KError/internalError(_:)`` if initialisation fails.
     public func initialize() async throws {
         guard !isInitialized else { return }
 
@@ -273,7 +273,7 @@ public actor J2KMetalMCT {
 
     /// Performs a forward MCT using the given matrix.
     ///
-    /// Transforms N components using an N×N matrix. Uses optimized fast
+    /// Transforms N components using an N×N matrix. Uses optimised fast
     /// paths for 3×3 and 4×4 matrices when available.
     ///
     /// - Parameters:
@@ -386,16 +386,16 @@ public actor J2KMetalMCT {
         )
     }
 
-    // MARK: - Fused Color + MCT
+    // MARK: - Fused Colour + MCT
 
-    /// Performs a fused color transform and MCT in a single GPU pass.
+    /// Performs a fused colour transform and MCT in a single GPU pass.
     ///
-    /// Combines a color space transform and an MCT into one operation,
+    /// Combines a colour space transform and an MCT into one operation,
     /// reducing memory bandwidth by avoiding intermediate storage.
     ///
     /// - Parameters:
     ///   - components: Input component data.
-    ///   - colorMatrix: Color transform matrix (N×N flat row-major).
+    ///   - colorMatrix: Colour transform matrix (N×N flat row-major).
     ///   - mctMatrix: MCT matrix (N×N flat row-major).
     ///   - componentCount: Number of components.
     ///   - backend: Backend preference. Defaults to `.auto`.
@@ -597,7 +597,7 @@ public actor J2KMetalMCT {
         )
 
         if componentCount == 3 {
-            // Optimized 3×3 fast path
+            // Optimised 3×3 fast path
             for i in 0..<sampleCount {
                 let c0 = components[0][i]
                 let c1 = components[1][i]
@@ -607,7 +607,7 @@ public actor J2KMetalMCT {
                 output[2][i] = matrix[6] * c0 + matrix[7] * c1 + matrix[8] * c2
             }
         } else if componentCount == 4 {
-            // Optimized 4×4 fast path
+            // Optimised 4×4 fast path
             for i in 0..<sampleCount {
                 let c0 = components[0][i]
                 let c1 = components[1][i]
@@ -650,7 +650,7 @@ public actor J2KMetalMCT {
         )
 
         for i in 0..<sampleCount {
-            // Apply color transform
+            // Apply colour transform
             var temp = [Float](repeating: 0, count: componentCount)
             for c in 0..<componentCount {
                 var sum: Float = 0
@@ -696,7 +696,7 @@ public actor J2KMetalMCT {
         let queue = try await metalDevice.commandQueue()
         let device = queue.device
 
-        // Select optimized shader based on component count
+        // Select optimised shader based on component count
         let shaderFunc: J2KMetalShaderFunction
         switch componentCount {
         case 3:
@@ -757,7 +757,7 @@ public actor J2KMetalMCT {
 
         switch componentCount {
         case 3, 4:
-            // Optimized: only sampleCount parameter
+            // Optimised: only sampleCount parameter
             var sc = UInt32(sampleCount)
             encoder.setBytes(&sc, length: MemoryLayout<UInt32>.stride, index: 3)
         default:

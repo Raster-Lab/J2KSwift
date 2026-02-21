@@ -5,7 +5,7 @@
 // J2KMetalColorTransform.swift
 // J2KSwift
 //
-// Metal-accelerated color space transforms for JPEG 2000.
+// Metal-accelerated colour space transforms for JPEG 2000.
 //
 
 import Foundation
@@ -15,26 +15,26 @@ import J2KCore
 @preconcurrency import Metal
 #endif
 
-// MARK: - Color Transform Type
+// MARK: - Colour Transform Type
 
-/// Color transform type for Metal-accelerated operations.
+/// Colour transform type for Metal-accelerated operations.
 ///
-/// Defines the color space conversion to apply. ICT is used for lossy
+/// Defines the colour space conversion to apply. ICT is used for lossy
 /// compression and RCT for lossless compression per JPEG 2000 standard.
 public enum J2KMetalColorTransformType: Sendable {
-    /// Irreversible Color Transform (ICT) for lossy compression.
+    /// Irreversible Colour Transform (ICT) for lossy compression.
     ///
     /// Converts RGB to YCbCr using floating-point coefficients.
     case ict
-    /// Reversible Color Transform (RCT) for lossless compression.
+    /// Reversible Colour Transform (RCT) for lossless compression.
     ///
     /// Converts RGB to YUV using integer arithmetic.
     case rct
 }
 
-// MARK: - Color Transform Backend
+// MARK: - Colour Transform Backend
 
-/// Backend selection for color transform computation.
+/// Backend selection for colour transform computation.
 ///
 /// Controls whether the transform runs on GPU (Metal) or CPU,
 /// with automatic selection based on sample count.
@@ -47,23 +47,23 @@ public enum J2KMetalColorTransformBackend: Sendable {
     case auto
 }
 
-// MARK: - Color Transform Configuration
+// MARK: - Colour Transform Configuration
 
-/// Configuration for Metal-accelerated color transforms.
+/// Configuration for Metal-accelerated colour transforms.
 ///
 /// Controls the transform type, backend selection, and GPU dispatch
 /// parameters for optimal performance.
 public struct J2KMetalColorTransformConfiguration: Sendable {
-    /// The color transform type to apply.
+    /// The colour transform type to apply.
     public var transformType: J2KMetalColorTransformType
 
     /// Minimum sample count to prefer GPU over CPU.
     public var gpuThreshold: Int
 
-    /// Creates a Metal color transform configuration.
+    /// Creates a Metal colour transform configuration.
     ///
     /// - Parameters:
-    ///   - transformType: The color transform type. Defaults to `.ict`.
+    ///   - transformType: The colour transform type. Defaults to `.ict`.
     ///   - gpuThreshold: Minimum samples to prefer GPU. Defaults to `1024`.
     public init(
         transformType: J2KMetalColorTransformType = .ict,
@@ -80,9 +80,9 @@ public struct J2KMetalColorTransformConfiguration: Sendable {
     public static let lossless = J2KMetalColorTransformConfiguration(transformType: .rct)
 }
 
-// MARK: - Color Transform Result
+// MARK: - Colour Transform Result
 
-/// Result of a color transform operation.
+/// Result of a colour transform operation.
 ///
 /// Contains three output components (Y/Cb/Cr for ICT, or Y/U/V for RCT)
 /// and metadata about the transform that was applied.
@@ -98,7 +98,7 @@ public struct J2KMetalColorTransformResult: Sendable {
     /// Whether the GPU was used for this operation.
     public let usedGPU: Bool
 
-    /// Creates a color transform result.
+    /// Creates a colour transform result.
     public init(
         component0: [Float],
         component1: [Float],
@@ -114,14 +114,14 @@ public struct J2KMetalColorTransformResult: Sendable {
     }
 }
 
-// MARK: - Color Transform Statistics
+// MARK: - Colour Transform Statistics
 
-/// Performance statistics for Metal color transform operations.
+/// Performance statistics for Metal colour transform operations.
 ///
 /// Tracks timing, backend usage, and throughput for monitoring
-/// and optimization purposes.
+/// and optimisation purposes.
 public struct J2KMetalColorTransformStatistics: Sendable {
-    /// Total number of color transform operations performed.
+    /// Total number of colour transform operations performed.
     public var totalOperations: Int
     /// Number of operations that ran on GPU.
     public var gpuOperations: Int
@@ -174,12 +174,12 @@ public enum J2KMetalNLTType: Sendable {
     case lut(table: [Float], inputMin: Float, inputMax: Float)
 }
 
-// MARK: - Metal Color Transform
+// MARK: - Metal Colour Transform
 
-/// Metal-accelerated color space transforms for JPEG 2000.
+/// Metal-accelerated colour space transforms for JPEG 2000.
 ///
 /// `J2KMetalColorTransform` provides GPU-accelerated forward and inverse
-/// color transforms (ICT and RCT) as well as non-linear point transforms
+/// colour transforms (ICT and RCT) as well as non-linear point transforms
 /// using Metal compute shaders. It includes automatic CPU/GPU backend
 /// selection based on input size.
 ///
@@ -208,12 +208,12 @@ public enum J2KMetalNLTType: Sendable {
 /// Target performance: 10-25× speedup vs CPU for large images on
 /// Apple Silicon GPUs.
 public actor J2KMetalColorTransform {
-    /// Whether Metal color transform is available on this platform.
+    /// Whether Metal colour transform is available on this platform.
     public static var isAvailable: Bool {
         J2KMetalDevice.isAvailable
     }
 
-    /// The color transform configuration.
+    /// The colour transform configuration.
     public let configuration: J2KMetalColorTransformConfiguration
 
     /// The Metal device for GPU operations.
@@ -225,16 +225,16 @@ public actor J2KMetalColorTransform {
     /// The shader library for compute kernels.
     private let shaderLibrary: J2KMetalShaderLibrary
 
-    /// Whether the Metal backend has been initialized.
+    /// Whether the Metal backend has been initialised.
     private var isInitialized = false
 
     /// Processing statistics.
     private var _statistics = J2KMetalColorTransformStatistics()
 
-    /// Creates a Metal color transform instance.
+    /// Creates a Metal colour transform instance.
     ///
     /// - Parameters:
-    ///   - configuration: The color transform configuration. Defaults to `.lossy`.
+    ///   - configuration: The colour transform configuration. Defaults to `.lossy`.
     ///   - device: The Metal device manager. A new instance is created if not provided.
     ///   - bufferPool: The buffer pool. A new instance is created if not provided.
     ///   - shaderLibrary: The shader library. A new instance is created if not provided.
@@ -250,10 +250,10 @@ public actor J2KMetalColorTransform {
         self.shaderLibrary = shaderLibrary ?? J2KMetalShaderLibrary()
     }
 
-    /// Initializes the Metal backend for color transform operations.
+    /// Initializes the Metal backend for colour transform operations.
     ///
     /// - Throws: ``J2KError/unsupportedFeature(_:)`` if Metal is not available.
-    /// - Throws: ``J2KError/internalError(_:)`` if initialization fails.
+    /// - Throws: ``J2KError/internalError(_:)`` if initialisation fails.
     public func initialize() async throws {
         guard !isInitialized else { return }
 
@@ -299,9 +299,9 @@ public actor J2KMetalColorTransform {
         }
     }
 
-    // MARK: - Forward Color Transform
+    // MARK: - Forward Colour Transform
 
-    /// Performs a forward color transform on RGB components.
+    /// Performs a forward colour transform on RGB components.
     ///
     /// Converts RGB to YCbCr (ICT) or YUV (RCT) depending on
     /// the configured transform type.
@@ -311,7 +311,7 @@ public actor J2KMetalColorTransform {
     ///   - green: Green channel samples.
     ///   - blue: Blue channel samples.
     ///   - backend: Backend preference. Defaults to `.auto`.
-    /// - Returns: The color transform result with three output components.
+    /// - Returns: The colour transform result with three output components.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if inputs are invalid.
     public func forwardTransform(
         red: [Float],
@@ -352,9 +352,9 @@ public actor J2KMetalColorTransform {
         return result
     }
 
-    // MARK: - Inverse Color Transform
+    // MARK: - Inverse Colour Transform
 
-    /// Performs an inverse color transform to recover RGB components.
+    /// Performs an inverse colour transform to recover RGB components.
     ///
     /// Converts YCbCr (ICT) or YUV (RCT) back to RGB depending on
     /// the configured transform type.
@@ -364,7 +364,7 @@ public actor J2KMetalColorTransform {
     ///   - component1: Second component (Cb or U).
     ///   - component2: Third component (Cr or V).
     ///   - backend: Backend preference. Defaults to `.auto`.
-    /// - Returns: The color transform result with RGB output components.
+    /// - Returns: The colour transform result with RGB output components.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if inputs are invalid.
     public func inverseTransform(
         component0: [Float],

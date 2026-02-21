@@ -4,9 +4,9 @@
 //
 /// # J2KAppleMemory
 ///
-/// Apple-specific memory optimizations for J2KSwift.
+/// Apple-specific memory optimisations for J2KSwift.
 ///
-/// Provides memory optimizations leveraging Apple Silicon unified memory architecture,
+/// Provides memory optimisations leveraging Apple Silicon unified memory architecture,
 /// large page support, memory-mapped I/O with advanced flags, SIMD-aligned buffers,
 /// and compressed memory awareness.
 
@@ -71,7 +71,7 @@ public actor J2KUnifiedMemoryManager {
         self.configuration = configuration
     }
 
-    /// Allocates a shared memory buffer optimized for unified memory access.
+    /// Allocates a shared memory buffer optimised for unified memory access.
     ///
     /// On Apple Silicon, this allocates memory that can be efficiently shared
     /// between CPU and GPU without copying.
@@ -128,7 +128,7 @@ public actor J2KUnifiedMemoryManager {
 
 // MARK: - Memory-Mapped File I/O with F_NOCACHE
 
-/// Memory-mapped file manager with Apple-specific optimizations.
+/// Memory-mapped file manager with Apple-specific optimisations.
 ///
 /// Provides memory-mapped file I/O with F_NOCACHE flag to bypass buffer cache
 /// for large sequential reads/writes, improving performance on Apple platforms.
@@ -155,7 +155,7 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
     /// Creates a new memory-mapped file manager.
     public init() {}
 
-    /// Maps a file into memory with Apple-specific optimizations.
+    /// Maps a file into memory with Apple-specific optimisations.
     ///
     /// - Parameters:
     ///   - url: The file URL to map.
@@ -299,7 +299,7 @@ public struct J2KSIMDAlignedBuffer: @unchecked Sendable {
         /// 32-byte alignment for AVX-style operations.
         case simd32 = 32
 
-        /// 64-byte alignment for cache line optimization.
+        /// 64-byte alignment for cache line optimisation.
         case cache64 = 64
 
         /// 128-byte alignment for large SIMD operations.

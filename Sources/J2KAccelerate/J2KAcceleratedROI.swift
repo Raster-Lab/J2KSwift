@@ -14,7 +14,7 @@ import Accelerate
 import J2KCore
 import J2KCodec
 
-// # Accelerate-Optimized ROI Operations
+// # Accelerate-Optimised ROI Operations
 //
 // Hardware-accelerated implementations of ROI operations using the Accelerate framework.
 //
@@ -27,7 +27,7 @@ import J2KCodec
 //
 // ## Apple Silicon Optimizations
 //
-// This implementation is specifically optimized for Apple Silicon (M-series and A-series)
+// This implementation is specifically optimised for Apple Silicon (M-series and A-series)
 // processors, using:
 // - vDSP for vector operations on scaling factors
 // - vImage for efficient mask processing and distance transforms
@@ -58,7 +58,7 @@ import J2KCodec
 
 // MARK: - Accelerated ROI Processor
 
-/// Accelerate-optimized ROI processor.
+/// Accelerate-optimised ROI processor.
 public struct J2KAcceleratedROI: Sendable {
     /// Image dimensions.
     public let imageWidth: Int
@@ -448,7 +448,7 @@ public struct J2KAcceleratedROI: Sendable {
 
     /// Applies scaling to multiple coefficient arrays in batch.
     ///
-    /// Optimized for cache efficiency with batch processing.
+    /// Optimised for cache efficiency with batch processing.
     ///
     /// - Parameters:
     ///   - coefficientsBatch: Array of coefficient arrays.

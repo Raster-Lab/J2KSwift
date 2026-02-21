@@ -19,7 +19,7 @@ import J2KCore
 // perceptual quality of compressed images compared to their originals. These
 // metrics are essential for:
 // - Evaluating compression quality
-// - Rate-distortion optimization
+// - Rate-distortion optimisation
 // - Quality-based encoding modes
 // - Benchmarking and validation
 //

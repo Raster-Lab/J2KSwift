@@ -77,7 +77,7 @@ public enum JP3DCacheEvictionStrategy: Sendable {
 
 /// 3D-aware cache actor for volumetric JPIP data bins.
 ///
-/// All reads and writes are serialized through the actor, making the cache safe
+/// All reads and writes are serialised through the actor, making the cache safe
 /// for concurrent use from multiple streaming sessions. Eviction policies account
 /// for spatial position, view frustum, resolution level, and recency.
 ///

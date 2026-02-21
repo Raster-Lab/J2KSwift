@@ -6,7 +6,7 @@
 ///
 /// Implementation of the EBCOT bit-plane coding algorithm for JPEG 2000.
 ///
-/// The EBCOT (Embedded Block Coding with Optimized Truncation) algorithm encodes
+/// The EBCOT (Embedded Block Coding with Optimised Truncation) algorithm encodes
 /// wavelet coefficients using three coding passes per bit-plane:
 /// 1. Significance Propagation Pass (SPP)
 /// 2. Magnitude Refinement Pass (MRP)
@@ -103,7 +103,7 @@ struct CodingOptions: Sendable {
 
     /// Near-optimal termination for better compression.
     ///
-    /// Uses a tighter termination sequence to minimize wasted bits.
+    /// Uses a tighter termination sequence to minimise wasted bits.
     static let optimalCompression = CodingOptions(terminationMode: .nearOptimal)
 }
 
@@ -181,12 +181,12 @@ struct BitPlaneCoder: Sendable {
         let activeBitPlanes = maxMagnitude > 0 ? Int(log2(Double(maxMagnitude))) + 1 : 0
         let zeroBitPlanes = max(0, bitDepth - activeBitPlanes)
 
-        // Initialize state arrays
+        // Initialise state arrays
         var states = [CoefficientState](repeating: [], count: width * height)
         var firstRefineFlags = [Bool](repeating: false, count: width * height)
         let signArray = signs
 
-        // Initialize MQ encoder and contexts
+        // Initialise MQ encoder and contexts
         var encoder = MQEncoder()
         var contextStates = ContextStateArray()
 
@@ -317,7 +317,7 @@ struct BitPlaneCoder: Sendable {
         var magnitudes = [UInt32](repeating: 0, count: count)
         var signs = [Bool](repeating: false, count: count)
 
-        // SIMD-optimized path: process 4 coefficients at a time using SIMD4
+        // SIMD-optimised path: process 4 coefficients at a time using SIMD4
         let simdCount = count / 4
         let remainder = count % 4
 
@@ -770,7 +770,7 @@ struct BitPlaneDecoder: Sendable {
         zeroBitPlanes: Int,
         passSegmentLengths: [Int] = []
     ) throws -> [Int32] {
-        // Initialize coefficient arrays
+        // Initialise coefficient arrays
         var magnitudes = [UInt32](repeating: 0, count: width * height)
         var signs = [Bool](repeating: false, count: width * height)
         var states = [CoefficientState](repeating: [], count: width * height)
@@ -796,7 +796,7 @@ struct BitPlaneDecoder: Sendable {
             }
         }
 
-        // Initialize MQ decoder and contexts
+        // Initialise MQ decoder and contexts
         var decoder = MQDecoder(data: Data())  // Will be replaced before first use
         var contextStates = ContextStateArray()
         var passSegmentIndex = 0

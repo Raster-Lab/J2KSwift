@@ -4,12 +4,12 @@
 //
 /// # Rate Control
 ///
-/// Implementation of rate-distortion optimization for JPEG 2000 encoding.
+/// Implementation of rate-distortion optimisation for JPEG 2000 encoding.
 ///
 /// Rate control determines how to allocate bits across different code blocks
-/// and quality layers to achieve a target bitrate while maximizing quality.
+/// and quality layers to achieve a target bitrate while maximising quality.
 /// This module implements the PCRD-opt (Post Compression Rate Distortion
-/// Optimization) algorithm from ISO/IEC 15444-1.
+/// Optimisation) algorithm from ISO/IEC 15444-1.
 ///
 /// ## Overview
 ///
@@ -25,7 +25,7 @@
 /// // Create rate controller with target rates
 /// let rateControl = J2KRateControl(targetRates: [0.5, 1.0, 2.0])
 ///
-/// // Optimize layers for code blocks
+/// // Optimise layers for code blocks
 /// let layers = try rateControl.optimizeLayers(
 ///     codeBlocks: codeBlocks,
 ///     totalPixels: width * height
@@ -88,12 +88,12 @@ public struct CodingPassInfo: Sendable {
 
 // MARK: - Rate Control Mode
 
-/// Defines the mode for rate control optimization.
+/// Defines the mode for rate control optimisation.
 public enum RateControlMode: Sendable, Equatable {
     /// Target a specific bitrate in bits per pixel.
     ///
-    /// The encoder will optimize to achieve the target bitrate
-    /// while maximizing quality.
+    /// The encoder will optimise to achieve the target bitrate
+    /// while maximising quality.
     case targetBitrate(Double)
 
     /// Target a constant quality level.
@@ -108,7 +108,7 @@ public enum RateControlMode: Sendable, Equatable {
 
 // MARK: - Rate Control Configuration
 
-/// Configuration for rate-distortion optimization.
+/// Configuration for rate-distortion optimisation.
 public struct RateControlConfiguration: Sendable {
     /// The rate control mode.
     public let mode: RateControlMode
@@ -127,7 +127,7 @@ public struct RateControlConfiguration: Sendable {
 
     /// Optional MCT configuration for distortion adjustment.
     ///
-    /// When provided, rate-distortion optimization accounts for
+    /// When provided, rate-distortion optimisation accounts for
     /// improved compression efficiency from MCT decorrelation.
     public let mctConfiguration: J2KMCTEncodingConfiguration?
 
@@ -194,7 +194,7 @@ public struct RateControlConfiguration: Sendable {
 
 // MARK: - Distortion Estimation Method
 
-/// Method for estimating distortion in rate-distortion optimization.
+/// Method for estimating distortion in rate-distortion optimisation.
 public enum DistortionEstimationMethod: Sendable, Equatable {
     /// Use norm-based estimation (fast, approximate).
     ///
@@ -216,7 +216,7 @@ public enum DistortionEstimationMethod: Sendable, Equatable {
 
 // MARK: - Rate Control
 
-/// Implements rate-distortion optimization for JPEG 2000 encoding.
+/// Implements rate-distortion optimisation for JPEG 2000 encoding.
 ///
 /// This class uses the PCRD-opt algorithm to determine optimal truncation
 /// points for code-block contributions across quality layers.
@@ -230,7 +230,7 @@ public enum DistortionEstimationMethod: Sendable, Equatable {
 ///    points sorted by descending slope.
 ///
 /// 3. **Select Optimal Points**: For each quality layer, select truncation
-///    points that maximize quality while meeting the rate constraint.
+///    points that maximise quality while meeting the rate constraint.
 ///
 /// 4. **Form Layers**: Generate quality layer structures with the selected
 ///    code-block contributions.
@@ -268,15 +268,15 @@ public struct J2KRateControl: Sendable {
         self.configuration = .targetBitrate(maxRate, layerCount: targetRates.count)
     }
 
-    // MARK: - Layer Optimization
+    // MARK: - Layer Optimisation
 
     /// Optimizes quality layers using PCRD-opt algorithm.
     ///
     /// - Parameters:
     ///   - codeBlocks: The encoded code-blocks.
     ///   - totalPixels: Total number of pixels in the image.
-    /// - Returns: An array of optimized quality layers.
-    /// - Throws: ``J2KError`` if optimization fails.
+    /// - Returns: An array of optimised quality layers.
+    /// - Throws: ``J2KError`` if optimisation fails.
     public func optimizeLayers(
         codeBlocks: [J2KCodeBlock],
         totalPixels: Int
@@ -539,9 +539,9 @@ public struct J2KRateControl: Sendable {
 
 // MARK: - Rate-Distortion Statistics
 
-/// Statistics from rate-distortion optimization.
+/// Statistics from rate-distortion optimisation.
 ///
-/// Provides information about the optimization process for analysis
+/// Provides information about the optimisation process for analysis
 /// and debugging.
 public struct RateDistortionStats: Sendable {
     /// The actual bitrate achieved for each layer (bits per pixel).

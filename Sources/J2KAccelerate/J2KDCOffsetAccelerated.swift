@@ -26,7 +26,7 @@ import Accelerate
 ///
 /// On Apple platforms with Accelerate framework:
 /// - 4-8× faster mean computation using `vDSP_meanv`
-/// - Vectorized offset addition/subtraction using `vDSP_vsadd`
+/// - Vectorised offset addition/subtraction using `vDSP_vsadd`
 /// - Optimal cache utilization through vector operations
 ///
 /// ## Usage
@@ -37,10 +37,10 @@ import Accelerate
 /// // Compute mean using vDSP (fast path on Apple)
 /// let mean = try accelerated.computeMean(data)
 ///
-/// // Remove DC offset using vectorized subtraction
+/// // Remove DC offset using vectorised subtraction
 /// let adjusted = try accelerated.removeOffset(mean, from: data)
 ///
-/// // Restore DC offset using vectorized addition
+/// // Restore DC offset using vectorised addition
 /// let restored = try accelerated.addOffset(mean, to: adjusted)
 /// ```
 public struct J2KDCOffsetAccelerated: Sendable {
@@ -60,7 +60,7 @@ public struct J2KDCOffsetAccelerated: Sendable {
 
     /// Computes the arithmetic mean of sample values using vDSP.
     ///
-    /// Uses `vDSP_meanv` on Apple platforms for vectorized mean
+    /// Uses `vDSP_meanv` on Apple platforms for vectorised mean
     /// computation. Falls back to scalar computation elsewhere.
     ///
     /// - Parameter data: The sample data array.
@@ -83,7 +83,7 @@ public struct J2KDCOffsetAccelerated: Sendable {
 
     // MARK: - Accelerated Offset Removal
 
-    /// Removes a DC offset from data using vectorized subtraction.
+    /// Removes a DC offset from data using vectorised subtraction.
     ///
     /// Uses `vDSP_vsadd` with negated offset on Apple platforms.
     ///
@@ -108,7 +108,7 @@ public struct J2KDCOffsetAccelerated: Sendable {
 
     // MARK: - Accelerated Offset Addition
 
-    /// Adds a DC offset to data using vectorized addition.
+    /// Adds a DC offset to data using vectorised addition.
     ///
     /// Uses `vDSP_vsadd` on Apple platforms for fast offset restoration.
     ///
@@ -133,7 +133,7 @@ public struct J2KDCOffsetAccelerated: Sendable {
 
     // MARK: - Accelerated Extended Precision Scaling
 
-    /// Scales wavelet coefficients using vectorized multiplication.
+    /// Scales wavelet coefficients using vectorised multiplication.
     ///
     /// Uses `vDSP_vsmul` on Apple platforms for fast coefficient scaling
     /// with a single factor. Falls back to scalar operations elsewhere.
@@ -157,7 +157,7 @@ public struct J2KDCOffsetAccelerated: Sendable {
         #endif
     }
 
-    /// Clamps coefficients to a given magnitude range using vectorized operations.
+    /// Clamps coefficients to a given magnitude range using vectorised operations.
     ///
     /// Uses `vDSP_vclip` on Apple platforms.
     ///

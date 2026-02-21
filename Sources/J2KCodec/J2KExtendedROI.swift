@@ -262,7 +262,7 @@ public struct J2KExtendedROIProcessor: Sendable {
         decompositionLevel: Int,
         totalLevels: Int
     ) -> [[Double]] {
-        // Initialize with no scaling
+        // Initialise with no scaling
         var scalingMap = Array(
             repeating: Array(repeating: 1.0, count: width),
             count: height
@@ -521,7 +521,7 @@ public struct J2KExtendedROIProcessor: Sendable {
 
     /// Generates adaptive ROI based on content analysis.
     ///
-    /// This analyzes image content (e.g., edge strength, texture complexity)
+    /// This analyses image content (e.g., edge strength, texture complexity)
     /// to automatically determine ROI regions.
     ///
     /// - Parameters:
@@ -573,7 +573,7 @@ public struct J2KExtendedROIProcessor: Sendable {
                 }
                 avgEdge /= Double(count)
 
-                // Normalize to 0-1 range (assuming max edge ~255)
+                // Normalise to 0-1 range (assuming max edge ~255)
                 let normalizedEdge = avgEdge / 255.0
 
                 if normalizedEdge > threshold && count >= minRegionSize {

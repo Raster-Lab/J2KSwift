@@ -6,7 +6,7 @@
 ///
 /// Frame sequence organization for Motion JPEG 2000 extraction.
 ///
-/// This module provides types for organizing and accessing extracted frames
+/// This module provides types for organising and accessing extracted frames
 /// from MJ2 files.
 
 import Foundation
@@ -64,8 +64,8 @@ public struct MJ2FrameMetadata: Sendable {
 
 /// A sequence of frames extracted from an MJ2 file.
 ///
-/// `MJ2FrameSequence` provides organized access to extracted frames
-/// with metadata about timing and synchronization.
+/// `MJ2FrameSequence` provides organised access to extracted frames
+/// with metadata about timing and synchronisation.
 ///
 /// Example:
 /// ```swift

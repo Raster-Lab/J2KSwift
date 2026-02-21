@@ -3700,25 +3700,35 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 #### Week 278-279: API Documentation
 
-- [ ] DocC documentation overhaul
-  - [ ] Complete DocC for all public APIs (every module)
-  - [ ] Consistent British English throughout
-  - [ ] Usage examples for every major API
-  - [ ] Cross-references between related APIs
-  - [ ] Architecture overview articles
-  - [ ] Migration guide from v1.9.0 to v2.0
-- [ ] Code comment review
-  - [ ] Consistent British English in all source comments
-  - [ ] Update terminology: colour, optimise, serialise, etc.
-  - [ ] Remove outdated or misleading comments
-  - [ ] Add explanatory comments for complex algorithms
-- [ ] Testing
-  - [ ] DocC build succeeds with zero warnings
-  - [ ] All code examples compile and run
+- [x] DocC documentation overhaul
+  - [x] Complete DocC for all public APIs (every module)
+  - [x] Consistent British English throughout
+  - [x] Usage examples for every major API
+  - [x] Cross-references between related APIs
+  - [x] Architecture overview articles
+  - [x] Migration guide from v1.9.0 to v2.0
+- [x] Code comment review
+  - [x] Consistent British English in all source comments
+  - [x] Update terminology: colour, optimise, serialise, etc.
+  - [x] Remove outdated or misleading comments
+  - [x] Add explanatory comments for complex algorithms
+- [x] Testing
+  - [x] DocC build succeeds with zero warnings
+  - [x] All code examples compile and run
 
 **Deliverables**:
-- Complete DocC documentation for all modules
-- Updated source comments (British English)
+- `Sources/J2KCore/J2KCore.docc/` — J2KCore DocC catalog (landing page, Architecture, GettingStarted, MigrationGuide)
+- `Sources/J2KCodec/J2KCodec.docc/` — J2KCodec DocC catalog (landing page, EncodingPipeline, DecodingPipeline)
+- `Sources/J2KAccelerate/J2KAccelerate.docc/` — J2KAccelerate DocC catalog
+- `Sources/J2KFileFormat/J2KFileFormat.docc/` — J2KFileFormat DocC catalog
+- `Sources/J2KMetal/J2KMetal.docc/` — J2KMetal DocC catalog
+- `Sources/J2KVulkan/J2KVulkan.docc/` — J2KVulkan DocC catalog
+- `Sources/JPIP/JPIP.docc/` — JPIP DocC catalog
+- `Sources/J2K3D/J2K3D.docc/` — J2K3D DocC catalog
+- Updated source comments (British English) across 109 files
+- `Tests/J2KCoreTests/J2KDocumentationTests.swift` — Documentation validation tests
+
+**Status**: Complete.
 
 #### Week 280-281: Library Usage Documentation
 

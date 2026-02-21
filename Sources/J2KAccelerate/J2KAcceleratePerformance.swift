@@ -4,10 +4,10 @@
 //
 /// # J2KAcceleratePerformance
 ///
-/// Accelerate framework performance optimization and tuning.
+/// Accelerate framework performance optimisation and tuning.
 ///
-/// This module provides Accelerate framework performance optimization
-/// including vDSP optimization, NEON code paths, AMX support detection,
+/// This module provides Accelerate framework performance optimisation
+/// including vDSP optimisation, NEON code paths, AMX support detection,
 /// and data conversion minimization.
 
 #if canImport(Accelerate)
@@ -19,8 +19,8 @@ import Foundation
 
 /// Accelerate framework performance optimizer.
 ///
-/// This actor coordinates Accelerate framework optimizations including:
-/// - vDSP operation selection and optimization
+/// This actor coordinates Accelerate framework optimisations including:
+/// - vDSP operation selection and optimisation
 /// - NEON SIMD code path utilization
 /// - AMX (Apple Matrix coprocessor) detection and usage
 /// - Data format conversion minimization
@@ -33,9 +33,9 @@ import Foundation
 /// let metrics = await optimizer.performanceMetrics()
 /// ```
 public actor J2KAcceleratePerformance {
-    /// Performance optimization configuration.
+    /// Performance optimisation configuration.
     public struct Configuration: Sendable {
-        /// Enable aggressive vDSP optimization.
+        /// Enable aggressive vDSP optimisation.
         public var enableVDSPOptimization: Bool
 
         /// Use NEON-specific code paths when available.
@@ -47,7 +47,7 @@ public actor J2KAcceleratePerformance {
         /// Minimum array size for Accelerate operations.
         public var minAccelerateSize: Int
 
-        /// Batch size for vectorized operations.
+        /// Batch size for vectorised operations.
         public var vectorBatchSize: Int
 
         /// Enable in-place operations to reduce allocations.
@@ -192,7 +192,7 @@ public actor J2KAcceleratePerformance {
         }
     }
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates an Accelerate performance optimizer.
     ///
@@ -206,7 +206,7 @@ public actor J2KAcceleratePerformance {
 
     /// Optimizes configuration for maximum throughput.
     ///
-    /// - Returns: Optimized configuration.
+    /// - Returns: Optimised configuration.
     public func optimizeForThroughput() -> Configuration {
         configuration = .highThroughput
         return configuration
@@ -214,7 +214,7 @@ public actor J2KAcceleratePerformance {
 
     /// Optimizes configuration for low power consumption.
     ///
-    /// - Returns: Optimized configuration.
+    /// - Returns: Optimised configuration.
     public func optimizeForLowPower() -> Configuration {
         configuration = .lowPower
         return configuration
@@ -243,7 +243,7 @@ public actor J2KAcceleratePerformance {
         return arraySize >= configuration.minAccelerateSize
     }
 
-    /// Determines optimal batch size for vectorized operations.
+    /// Determines optimal batch size for vectorised operations.
     ///
     /// - Parameters:
     ///   - totalSize: Total number of elements.
@@ -297,7 +297,7 @@ public actor J2KAcceleratePerformance {
         }
     }
 
-    // MARK: - NEON Optimization
+    // MARK: - NEON Optimisation
 
     /// Checks if NEON paths should be used.
     ///
@@ -313,7 +313,7 @@ public actor J2KAcceleratePerformance {
         return 16 // 128-bit NEON vectors
     }
 
-    // MARK: - AMX Optimization
+    // MARK: - AMX Optimisation
 
     /// Checks if AMX should be used for matrix operations.
     ///
@@ -342,7 +342,7 @@ public actor J2KAcceleratePerformance {
         return (16, 16)
     }
 
-    // MARK: - Data Conversion Optimization
+    // MARK: - Data Conversion Optimisation
 
     /// Determines if data conversion can be avoided.
     ///

@@ -28,7 +28,7 @@ import J2KCodec
 ///
 /// On Apple platforms with Accelerate framework:
 /// - 20-50× faster matrix multiplication using `vDSP_mmul` or `cblas_dgemm`
-/// - Optimized 3×3 and 4×4 fast paths using NEON SIMD
+/// - Optimised 3×3 and 4×4 fast paths using NEON SIMD
 /// - Batch processing for improved cache utilization
 /// - AMX acceleration on M-series chips for large matrices
 ///
@@ -43,7 +43,7 @@ import J2KCodec
 ///     matrix: transformMatrix
 /// )
 ///
-/// // Use optimized 3×3 fast path for RGB→YCbCr
+/// // Use optimised 3×3 fast path for RGB→YCbCr
 /// let ycbcr = try accelerated.forwardTransform3x3(
 ///     components: rgbData,
 ///     matrix: J2KMCTMatrix.rgbToYCbCr
@@ -97,7 +97,7 @@ public struct J2KAcceleratedMCT: Sendable {
 
         let n = matrix.size
 
-        // Use optimized fast paths for common sizes
+        // Use optimised fast paths for common sizes
         if n == 3 {
             return try forwardTransform3x3(components: components, matrix: matrix)
         } else if n == 4 {
@@ -165,9 +165,9 @@ public struct J2KAcceleratedMCT: Sendable {
         return output
     }
 
-    // MARK: - 3×3 Optimized Transform (RGB/YCbCr)
+    // MARK: - 3×3 Optimised Transform (RGB/YCbCr)
 
-    /// Applies a forward 3×3 transform using NEON-optimized operations.
+    /// Applies a forward 3×3 transform using NEON-optimised operations.
     ///
     /// This is a fast path for the common case of 3-component images (RGB, YCbCr).
     /// Uses SIMD instructions on Apple Silicon for maximum performance.
@@ -198,7 +198,7 @@ public struct J2KAcceleratedMCT: Sendable {
         // Extract matrix coefficients
         let m = matrix.coefficients
 
-        // Process samples in vectorized batches
+        // Process samples in vectorised batches
         let c0 = components[0]
         let c1 = components[1]
         let c2 = components[2]
@@ -229,9 +229,9 @@ public struct J2KAcceleratedMCT: Sendable {
         return output
     }
 
-    // MARK: - 4×4 Optimized Transform (RGBA/CMYK)
+    // MARK: - 4×4 Optimised Transform (RGBA/CMYK)
 
-    /// Applies a forward 4×4 transform using NEON-optimized operations.
+    /// Applies a forward 4×4 transform using NEON-optimised operations.
     ///
     /// This is a fast path for 4-component images (RGBA, CMYK).
     ///

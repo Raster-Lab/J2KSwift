@@ -36,7 +36,7 @@ public enum JP3DMetalDWTBackend: Sendable {
 /// Performance statistics for JP3D Metal DWT operations.
 ///
 /// Tracks transform counts and processing time for monitoring
-/// and optimization of volumetric DWT pipelines.
+/// and optimisation of volumetric DWT pipelines.
 public struct JP3DMetalDWTStatistics: Sendable {
     /// Total number of forward transforms performed.
     public let forwardTransforms: Int
@@ -86,7 +86,7 @@ public struct JP3DMetalDWTStatistics: Sendable {
 ///
 /// ```swift
 /// let dwt = JP3DMetalDWT(backend: .automatic)
-/// try await dwt.initialize()
+/// try await dwt.initialise()
 ///
 /// // Forward 5/3 DWT along the X axis
 /// let (low, high) = try await dwt.forward53X(
@@ -131,7 +131,7 @@ public actor JP3DMetalDWT {
     /// The requested backend for this instance.
     private let backend: JP3DMetalDWTBackend
 
-    /// Whether the actor has been successfully initialized.
+    /// Whether the actor has been successfully initialised.
     private var isInitialized = false
 
     /// Whether the Metal GPU path is active for this instance.
@@ -171,7 +171,7 @@ public actor JP3DMetalDWT {
     /// silently falls back to CPU without throwing.
     ///
     /// - Throws: ``J2KError/internalError(_:)`` only when the backend is
-    ///   explicitly `.metal` and initialization fails completely.
+    ///   explicitly `.metal` and initialisation fails completely.
     public func initialize() async throws {
         guard !isInitialized else { return }
         defer { isInitialized = true }

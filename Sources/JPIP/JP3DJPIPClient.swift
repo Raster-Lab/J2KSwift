@@ -100,7 +100,7 @@ public enum JP3DClientError: Error, Sendable {
 
 /// 3D JPIP client actor for streaming volumetric data from a JP3D server.
 ///
-/// Maintains a single JPIP session with a server and serializes all requests
+/// Maintains a single JPIP session with a server and serialises all requests
 /// through the actor. Viewport changes cancel outstanding stale requests to
 /// prevent wasted bandwidth. Reconnects automatically on network address changes.
 ///

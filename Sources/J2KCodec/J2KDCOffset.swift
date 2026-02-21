@@ -62,7 +62,7 @@ public struct J2KDCOffsetConfiguration: Sendable, Equatable {
     /// The method used to compute the DC offset.
     public let method: J2KDCOffsetMethod
 
-    /// Whether to optimize the offset for natural images.
+    /// Whether to optimise the offset for natural images.
     ///
     /// When enabled, the offset computation considers image statistics
     /// and may use a weighted mean or median instead of arithmetic mean.
@@ -73,7 +73,7 @@ public struct J2KDCOffsetConfiguration: Sendable, Equatable {
     /// - Parameters:
     ///   - enabled: Whether to enable DC offset removal (default: true).
     ///   - method: The offset computation method (default: .mean).
-    ///   - optimizeForNaturalImages: Whether to optimize for natural images (default: false).
+    ///   - optimizeForNaturalImages: Whether to optimise for natural images (default: false).
     public init(
         enabled: Bool = true,
         method: J2KDCOffsetMethod = .mean,
@@ -90,7 +90,7 @@ public struct J2KDCOffsetConfiguration: Sendable, Equatable {
     /// Configuration with DC offset disabled.
     public static let disabled = J2KDCOffsetConfiguration(enabled: false)
 
-    /// Configuration optimized for natural images.
+    /// Configuration optimised for natural images.
     public static let naturalImage = J2KDCOffsetConfiguration(
         enabled: true,
         method: .mean,
@@ -142,7 +142,7 @@ public struct J2KDCOffsetResult: Sendable {
 
 /// Statistics about a component's sample values.
 ///
-/// Used for DC offset computation and optimization decisions.
+/// Used for DC offset computation and optimisation decisions.
 public struct J2KComponentStatistics: Sendable, Equatable {
     /// The arithmetic mean of sample values.
     public let mean: Double

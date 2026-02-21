@@ -196,7 +196,7 @@ public final class J2KSharedBuffer: @unchecked Sendable {
 ///
 /// `J2KZeroCopyBuffer` provides a unified interface for working with
 /// data that may come from various sources (Data, raw pointers, shared buffers)
-/// while minimizing copies.
+/// while minimising copies.
 ///
 /// Example:
 /// ```swift

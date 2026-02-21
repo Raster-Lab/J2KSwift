@@ -23,7 +23,7 @@ public enum MJ2PlaybackError: Error, Sendable {
     /// No video tracks found in the file.
     case noVideoTracks
 
-    /// The player is not initialized.
+    /// The player is not initialised.
     case notInitialized
 
     /// Seek operation failed.
@@ -271,7 +271,7 @@ public actor MJ2Player {
     /// Cache misses.
     private var cacheMisses: Int = 0
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates a new MJ2 player.
     ///

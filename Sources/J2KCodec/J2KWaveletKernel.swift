@@ -22,7 +22,7 @@ import J2KCore
 /// - Symmetry classification for efficient boundary handling
 /// - Reversible (lossless) and irreversible (lossy) filters
 /// - Conversion to lifting scheme for efficient in-place computation
-/// - Binary serialization for ADS marker segments
+/// - Binary serialisation for ADS marker segments
 ///
 /// ## Usage
 ///
@@ -89,7 +89,7 @@ public struct J2KWaveletKernel: Sendable, Equatable {
     /// Scaling factor applied to highpass subband after transform.
     public let highpassScale: Double
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates a wavelet kernel with the specified filter coefficients and properties.
     ///
@@ -236,7 +236,7 @@ public struct J2KWaveletKernel: Sendable, Equatable {
         .custom(toCustomFilter())
     }
 
-    // MARK: - Serialization
+    // MARK: - Serialisation
 
     /// Serializes the wavelet kernel to binary data for ADS marker segment encoding.
     ///
@@ -286,8 +286,8 @@ public struct J2KWaveletKernel: Sendable, Equatable {
     /// Reads the kernel specification from a binary representation previously
     /// created by ``encode()``.
     ///
-    /// - Parameter data: Binary data containing the serialized kernel.
-    /// - Returns: The deserialized wavelet kernel.
+    /// - Parameter data: Binary data containing the serialised kernel.
+    /// - Returns: The deserialised wavelet kernel.
     /// - Throws: ``J2KError/invalidData(_:)`` if the data is malformed or truncated.
     public static func decode(from data: Data) throws -> J2KWaveletKernel {
         var offset = 0
@@ -594,10 +594,10 @@ public enum J2KWaveletKernelLibrary: Sendable {
         )
     }
 
-    /// CDF 5/3 wavelet with proper normalization factors.
+    /// CDF 5/3 wavelet with proper normalisation factors.
     ///
     /// This is equivalent to ``leGall53`` but includes explicit scaling factors
-    /// for normalized subband energies. Suitable for use with quantization.
+    /// for normalised subband energies. Suitable for use with quantization.
     public static let cdf53 = J2KWaveletKernel(
         name: "CDF 5/3",
         analysisLowpass: [-1.0 / 8.0, 2.0 / 8.0, 6.0 / 8.0, 2.0 / 8.0, -1.0 / 8.0],

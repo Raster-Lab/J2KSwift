@@ -7,7 +7,7 @@
 /// WebSocket server implementation for JPIP protocol.
 ///
 /// Provides WebSocket upgrade handling, concurrent session management,
-/// efficient binary frame serialization, and connection health monitoring.
+/// efficient binary frame serialisation, and connection health monitoring.
 
 import Foundation
 import J2KCore
@@ -223,7 +223,7 @@ public struct JPIPWebSocketServerConfiguration: Sendable {
 /// Extends the base JPIP server with WebSocket capabilities including:
 /// - HTTP to WebSocket upgrade handling
 /// - Concurrent WebSocket session management
-/// - Efficient binary frame serialization for data bins
+/// - Efficient binary frame serialisation for data bins
 /// - Connection health monitoring and keepalive
 /// - Server-initiated push for data bins
 ///
@@ -249,7 +249,7 @@ public actor JPIPWebSocketServer {
     /// The underlying JPIP server for request processing.
     private let jpipServer: JPIPServer
 
-    /// Message encoder for frame serialization.
+    /// Message encoder for frame serialisation.
     private let encoder: JPIPWebSocketMessageEncoder
 
     /// Whether the server is running.
@@ -582,7 +582,7 @@ public actor JPIPWebSocketServer {
     /// - Parameters:
     ///   - dataBin: The data bin to push.
     ///   - connectionID: The target connection.
-    /// - Returns: The serialized frame data, or nil if connection not found.
+    /// - Returns: The serialised frame data, or nil if connection not found.
     public func pushDataBin(
         _ dataBin: JPIPDataBin,
         to connectionID: String
@@ -624,7 +624,7 @@ public actor JPIPWebSocketServer {
 
     /// Sends keepalive pings to all active connections.
     ///
-    /// - Returns: Array of (connectionID, serialized ping frame) tuples.
+    /// - Returns: Array of (connectionID, serialised ping frame) tuples.
     public func sendKeepalivePings() async -> [(String, Data)] {
         var pings: [(String, Data)] = []
 

@@ -14,7 +14,7 @@ import Foundation
 
 /// Represents a stage in the JPEG 2000 encoding or decoding pipeline.
 public enum J2KPipelineStage: String, Sendable, CaseIterable {
-    /// Color transform stage (RCT/ICT).
+    /// Colour transform stage (RCT/ICT).
     case colorTransform = "Color Transform"
 
     /// Discrete wavelet transform stage.

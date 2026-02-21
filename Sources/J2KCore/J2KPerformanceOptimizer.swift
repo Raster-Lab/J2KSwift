@@ -4,11 +4,11 @@
 //
 /// # J2KPerformanceOptimizer
 ///
-/// Comprehensive performance optimization coordinator for J2KSwift.
+/// Comprehensive performance optimisation coordinator for J2KSwift.
 ///
-/// This actor provides system-wide performance tuning and optimization
+/// This actor provides system-wide performance tuning and optimisation
 /// for Apple Silicon platforms, coordinating CPU/GPU work, managing
-/// resource allocation, and optimizing pipeline execution.
+/// resource allocation, and optimising pipeline execution.
 
 import Foundation
 
@@ -20,14 +20,14 @@ import Metal
 import Accelerate
 #endif
 
-/// Performance optimization coordinator for J2KSwift operations.
+/// Performance optimisation coordinator for J2KSwift operations.
 ///
-/// This actor coordinates performance optimizations across the entire
+/// This actor coordinates performance optimisations across the entire
 /// encoding/decoding pipeline, including:
 /// - CPU/GPU work overlap and parallelization
-/// - Memory allocation and cache optimization
+/// - Memory allocation and cache optimisation
 /// - Metal and Accelerate framework tuning
-/// - Pipeline-level optimizations
+/// - Pipeline-level optimisations
 ///
 /// Example:
 /// ```swift
@@ -41,7 +41,7 @@ import Accelerate
 /// print("Throughput: \(profile.throughputMBps) MB/s")
 /// ```
 public actor J2KPerformanceOptimizer {
-    /// Performance optimization mode.
+    /// Performance optimisation mode.
     public enum OptimizationMode: Sendable {
         /// Balanced performance and power consumption (default).
         case balanced
@@ -52,14 +52,14 @@ public actor J2KPerformanceOptimizer {
         /// Minimize power consumption while maintaining acceptable performance.
         case lowPower
 
-        /// Optimize for thermal constraints (mobile devices).
+        /// Optimise for thermal constraints (mobile devices).
         case thermalConstrained
 
-        /// Custom optimization parameters.
+        /// Custom optimisation parameters.
         case custom(OptimizationParameters)
     }
 
-    /// Optimization parameters for fine-tuning performance.
+    /// Optimisation parameters for fine-tuning performance.
     public struct OptimizationParameters: Sendable {
         /// Maximum CPU threads to use (0 = automatic).
         public var maxCPUThreads: Int
@@ -79,10 +79,10 @@ public actor J2KPerformanceOptimizer {
         /// Minimum batch size for GPU operations.
         public var minGPUBatchSize: Int
 
-        /// Enable cache optimization hints.
+        /// Enable cache optimisation hints.
         public var enableCacheOptimization: Bool
 
-        /// Creates default optimization parameters.
+        /// Creates default optimisation parameters.
         public init(
             maxCPUThreads: Int = 0,
             preferredGPUFamily: Int? = nil,
@@ -155,7 +155,7 @@ public actor J2KPerformanceOptimizer {
         /// Peak memory usage in bytes.
         public let peakMemoryUsage: Int
 
-        /// Number of synchronization points.
+        /// Number of synchronisation points.
         public let syncPoints: Int
 
         /// Data processed in bytes.
@@ -189,10 +189,10 @@ public actor J2KPerformanceOptimizer {
 
     // MARK: - State
 
-    /// Current optimization mode.
+    /// Current optimisation mode.
     private var mode: OptimizationMode = .balanced
 
-    /// Current optimization parameters.
+    /// Current optimisation parameters.
     private var parameters: OptimizationParameters = .balanced
 
     /// Metal device (if available).
@@ -200,11 +200,11 @@ public actor J2KPerformanceOptimizer {
     private var metalDevice: MTLDevice?
     #endif
 
-    // MARK: - Initialization
+    // MARK: - Initialisation
 
     /// Creates a new performance optimizer.
     ///
-    /// - Parameter mode: Initial optimization mode (default: .balanced).
+    /// - Parameter mode: Initial optimisation mode (default: .balanced).
     public init(mode: OptimizationMode = .balanced) {
         self.mode = mode
 
@@ -232,7 +232,7 @@ public actor J2KPerformanceOptimizer {
     ///
     /// This sets up optimal parameters for maximum throughput,
     /// including aggressive batching, CPU/GPU overlap, and minimal
-    /// synchronization.
+    /// synchronisation.
     public func configureForHighPerformance() {
         mode = .highPerformance
         parameters = .highPerformance
@@ -240,7 +240,7 @@ public actor J2KPerformanceOptimizer {
 
     /// Configures the optimizer for low-power operation.
     ///
-    /// This sets up parameters to minimize power consumption,
+    /// This sets up parameters to minimise power consumption,
     /// including reduced threading, conservative batching, and
     /// memory usage limits.
     public func configureForLowPower() {
@@ -250,25 +250,25 @@ public actor J2KPerformanceOptimizer {
 
     /// Configures the optimizer with custom parameters.
     ///
-    /// - Parameter parameters: Custom optimization parameters.
+    /// - Parameter parameters: Custom optimisation parameters.
     public func configure(with parameters: OptimizationParameters) {
         self.mode = .custom(parameters)
         self.parameters = parameters
     }
 
-    /// Returns the current optimization parameters.
+    /// Returns the current optimisation parameters.
     public func currentParameters() -> OptimizationParameters {
         parameters
     }
 
-    // MARK: - Pipeline Optimization
+    // MARK: - Pipeline Optimisation
 
     /// Optimizes an encoding pipeline operation.
     ///
-    /// This method profiles and optimizes the execution of an encoding
-    /// operation, applying configured optimizations for maximum performance.
+    /// This method profiles and optimises the execution of an encoding
+    /// operation, applying configured optimisations for maximum performance.
     ///
-    /// - Parameter operation: The encoding operation to optimize.
+    /// - Parameter operation: The encoding operation to optimise.
     /// - Returns: Performance profile with detailed metrics.
     /// - Throws: Any error thrown by the operation.
     public func optimizeEncodingPipeline<T>(
@@ -304,10 +304,10 @@ public actor J2KPerformanceOptimizer {
 
     /// Optimizes a decoding pipeline operation.
     ///
-    /// This method profiles and optimizes the execution of a decoding
-    /// operation, applying configured optimizations for maximum performance.
+    /// This method profiles and optimises the execution of a decoding
+    /// operation, applying configured optimisations for maximum performance.
     ///
-    /// - Parameter operation: The decoding operation to optimize.
+    /// - Parameter operation: The decoding operation to optimise.
     /// - Returns: Performance profile with detailed metrics.
     /// - Throws: Any error thrown by the operation.
     public func optimizeDecodingPipeline<T>(
@@ -341,7 +341,7 @@ public actor J2KPerformanceOptimizer {
         return (result, profile)
     }
 
-    // MARK: - Optimization Strategies
+    // MARK: - Optimisation Strategies
 
     /// Determines if GPU acceleration should be used for the given workload.
     ///

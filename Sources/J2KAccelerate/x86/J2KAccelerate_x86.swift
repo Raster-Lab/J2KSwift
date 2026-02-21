@@ -92,9 +92,9 @@ public struct J2KAccelerateX86: Sendable {
 
     // MARK: - x86-64 Specific Optimizations
 
-    /// Performs DWT with x86-64 optimized cache blocking.
+    /// Performs DWT with x86-64 optimised cache blocking.
     ///
-    /// Uses smaller cache blocking sizes optimized for Intel cache hierarchy.
+    /// Uses smaller cache blocking sizes optimised for Intel cache hierarchy.
     ///
     /// - Parameters:
     ///   - data: Input data array.
@@ -142,7 +142,7 @@ public struct J2KAccelerateX86: Sendable {
         return output
     }
 
-    /// Performs matrix multiplication with AVX-optimized blocking.
+    /// Performs matrix multiplication with AVX-optimised blocking.
     ///
     /// Uses block sizes tuned for AVX/AVX2 (256-bit SIMD).
     ///
@@ -175,7 +175,7 @@ public struct J2KAccelerateX86: Sendable {
 
         var result = [Double](repeating: 0.0, count: m * n)
 
-        // Use BLAS which is optimized for x86-64
+        // Use BLAS which is optimised for x86-64
         var alpha = 1.0
         var beta = 0.0
 

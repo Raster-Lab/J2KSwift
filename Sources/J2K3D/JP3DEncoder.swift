@@ -130,7 +130,7 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
         levelsZ: 1
     )
 
-    /// Streaming-optimized configuration.
+    /// Streaming-optimised configuration.
     ///
     /// Uses smaller tiles for lower latency progressive delivery.
     public static let streaming = JP3DEncoderConfiguration(

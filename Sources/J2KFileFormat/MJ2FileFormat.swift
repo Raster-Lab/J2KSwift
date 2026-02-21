@@ -12,7 +12,7 @@
 ///
 /// ## File Structure
 ///
-/// An MJ2 file consists of boxes (atoms) organized in a hierarchical structure:
+/// An MJ2 file consists of boxes (atoms) organised in a hierarchical structure:
 /// - File type box (ftyp) - Identifies the file as MJ2
 /// - Movie box (moov) - Contains all metadata
 /// - Media data box (mdat) - Contains JPEG 2000 codestreams

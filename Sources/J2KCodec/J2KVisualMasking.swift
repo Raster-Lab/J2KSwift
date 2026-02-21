@@ -282,7 +282,7 @@ public struct J2KVisualMasking: Sendable {
     /// - Parameter luminance: Mean luminance value (0-255 scale).
     /// - Returns: Masking factor (>1.0 = more masking, <1.0 = less masking).
     public func luminanceMaskingFactor(luminance: Double) -> Double {
-        // Normalize to 0-1 range
+        // Normalise to 0-1 range
         let normLum = luminance / 255.0
 
         // U-shaped curve: masking is strongest at extremes
@@ -305,7 +305,7 @@ public struct J2KVisualMasking: Sendable {
     /// - Parameter variance: Local variance of the region.
     /// - Returns: Masking factor (>1.0 = more masking, <1.0 = less masking).
     public func textureMaskingFactor(variance: Double) -> Double {
-        // Normalize variance to a reasonable range
+        // Normalise variance to a reasonable range
         // Typical variance in natural images: 0-5000
         let normVariance = min(variance / 5000.0, 1.0)
 
@@ -434,7 +434,7 @@ extension J2KVisualMasking {
     /// Calculates perceptually masked quantization step size.
     ///
     /// Combines visual masking with frequency weighting to produce an
-    /// optimized quantization step size for perceptual quality.
+    /// optimised quantization step size for perceptual quality.
     ///
     /// - Parameters:
     ///   - baseStepSize: The base quantization step size.

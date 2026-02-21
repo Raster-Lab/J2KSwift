@@ -33,7 +33,7 @@ import J2KCore
 /// Defines the order in which packets are written to the codestream.
 ///
 /// JPEG 2000 supports five progression orders that determine how image data
-/// is organized for transmission. Each order provides different benefits for
+/// is organised for transmission. Each order provides different benefits for
 /// specific use cases.
 public enum ProgressionOrder: UInt8, Sendable, CaseIterable {
     /// Layer-Resolution-Component-Position (LRCP).
@@ -232,7 +232,7 @@ public struct PacketHeaderWriter: Sendable {
         }
         writer.writeBit(true)
 
-        // Initialize MQ encoder for tag tree and other packet header elements
+        // Initialise MQ encoder for tag tree and other packet header elements
         var encoder = MQEncoder()
         var context = MQContext()
 
@@ -354,7 +354,7 @@ public struct PacketHeaderReader: Sendable {
             )
         }
 
-        // Initialize MQ decoder
+        // Initialise MQ decoder
         let mqData = data.suffix(from: reader.position)
         var decoder = MQDecoder(data: mqData)
         var context = MQContext()
@@ -433,19 +433,19 @@ public struct PacketHeaderReader: Sendable {
 ///
 /// The layer formation algorithm determines which coding passes from each
 /// code-block should be included in each quality layer to achieve target
-/// bit rates while maximizing image quality.
+/// bit rates while maximising image quality.
 public struct LayerFormation: Sendable {
     /// The target bit rates for each layer (bits per pixel).
     public let targetRates: [Double]
 
-    /// Whether to use rate-distortion optimization.
+    /// Whether to use rate-distortion optimisation.
     public let useRDOptimization: Bool
 
     /// Creates a new layer formation configuration.
     ///
     /// - Parameters:
     ///   - targetRates: Target bit rates for each layer in bits per pixel.
-    ///   - useRDOptimization: Whether to use rate-distortion optimization (default: false).
+    ///   - useRDOptimization: Whether to use rate-distortion optimisation (default: false).
     public init(targetRates: [Double], useRDOptimization: Bool = false) {
         self.targetRates = targetRates
         self.useRDOptimization = useRDOptimization
@@ -462,7 +462,7 @@ public struct LayerFormation: Sendable {
         codeBlocks: [J2KCodeBlock],
         totalPixels: Int
     ) throws -> [QualityLayer] {
-        // Use rate-distortion optimization if enabled
+        // Use rate-distortion optimisation if enabled
         if useRDOptimization {
             let rateControl = J2KRateControl(targetRates: targetRates)
             return try rateControl.optimizeLayers(

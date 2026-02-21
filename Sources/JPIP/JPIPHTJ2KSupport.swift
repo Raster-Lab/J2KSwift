@@ -82,7 +82,7 @@ public struct JPIPHTJ2KSupport: Sendable {
     /// Reads the file header to determine the format (JP2, J2K, JPH, etc.)
     /// and whether it uses HTJ2K encoding.
     ///
-    /// - Parameter url: The file URL to analyze.
+    /// - Parameter url: The file URL to analyse.
     /// - Returns: Image info with format and HTJ2K capability.
     /// - Throws: ``J2KError`` if the file cannot be read or parsed.
     public func detectFormat(at url: URL) throws -> JPIPImageInfo {

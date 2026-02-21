@@ -5,7 +5,7 @@
 // J2KHTBlockCoderOptimizations.swift
 // J2KSwift
 //
-// Memory optimizations for HT block coding
+// Memory optimisations for HT block coding
 //
 
 import Foundation

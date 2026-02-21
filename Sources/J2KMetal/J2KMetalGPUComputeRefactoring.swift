@@ -474,7 +474,7 @@ public struct J2KMetal3Features: Sendable {
 /// Example:
 /// ```swift
 /// let pipeline = J2KMetalShaderPipelineManager()
-/// try await pipeline.initialize()
+/// try await pipeline.initialise()
 ///
 /// let variant = pipeline.shaderVariant(
 ///     baseName: "j2k_dwt_forward_97_horizontal",
