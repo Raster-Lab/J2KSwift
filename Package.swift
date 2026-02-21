@@ -41,6 +41,9 @@ let package = Package(
         .executable(
             name: "j2k",
             targets: ["J2KCLI"]),
+        .executable(
+            name: "J2KTestApp",
+            targets: ["J2KTestApp"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -104,10 +107,20 @@ let package = Package(
         .testTarget(
             name: "PerformanceTests",
             dependencies: ["J2KCore"]),
+        .testTarget(
+            name: "J2KTestAppTests",
+            dependencies: ["J2KCore"]),
         .executableTarget(
             name: "J2KCLI",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
             path: "Sources/J2KCLI",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]),
+        .executableTarget(
+            name: "J2KTestApp",
+            dependencies: ["J2KCore"],
+            path: "Sources/J2KTestApp",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
