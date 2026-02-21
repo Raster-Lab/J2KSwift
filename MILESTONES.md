@@ -3555,36 +3555,36 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 #### Week 269-271: Performance Benchmarking vs OpenJPEG
 
-- [ ] Benchmark framework
-  - [ ] Standardised benchmark suite (encode, decode, transcode)
-  - [ ] Multiple image sizes: 256², 512², 1024², 2048², 4096², 8192²
-  - [ ] Multiple configurations: lossless, lossy (various rates), HTJ2K
-  - [ ] Wall-clock time, CPU time, peak memory, throughput (MP/s)
-- [ ] Encode performance comparison
-  - [ ] J2KSwift vs OpenJPEG encode: all configurations
-  - [ ] Single-threaded comparison (apples to apples)
-  - [ ] Multi-threaded comparison
-  - [ ] GPU-accelerated vs CPU-only comparison
-- [ ] Decode performance comparison
-  - [ ] J2KSwift vs OpenJPEG decode: all configurations
-  - [ ] Progressive decode comparison
-  - [ ] ROI decode comparison
-  - [ ] HTJ2K decode comparison
-- [ ] Performance analysis
-  - [ ] Identify areas where J2KSwift trails OpenJPEG
-  - [ ] Profile and optimise bottlenecks until parity or better
-  - [ ] Document performance characteristics and trade-offs
-  - [ ] Generate performance comparison report with graphs
-- [ ] Performance targets (vs OpenJPEG)
-  - [ ] Lossless encode: ≥1.5× faster on Apple Silicon, ≥1.0× on x86-64
-  - [ ] Lossy encode: ≥2.0× faster on Apple Silicon, ≥1.2× on x86-64
-  - [ ] HTJ2K encode: ≥3.0× faster on Apple Silicon
-  - [ ] Decode (all modes): ≥1.5× faster on Apple Silicon
-  - [ ] GPU-accelerated: ≥10× faster on Apple Silicon with Metal
-- [ ] Testing
-  - [ ] Automated benchmark suite with regression detection
-  - [ ] CI performance tracking (flag regressions >5%)
-  - [ ] Cross-platform benchmark results
+- [x] Benchmark framework
+  - [x] Standardised benchmark suite (encode, decode, transcode)
+  - [x] Multiple image sizes: 256², 512², 1024², 2048², 4096², 8192²
+  - [x] Multiple configurations: lossless, lossy (various rates), HTJ2K
+  - [x] Wall-clock time, CPU time, peak memory, throughput (MP/s)
+- [x] Encode performance comparison
+  - [x] J2KSwift vs OpenJPEG encode: all configurations
+  - [x] Single-threaded comparison (apples to apples)
+  - [x] Multi-threaded comparison
+  - [x] GPU-accelerated vs CPU-only comparison
+- [x] Decode performance comparison
+  - [x] J2KSwift vs OpenJPEG decode: all configurations
+  - [x] Progressive decode comparison
+  - [x] ROI decode comparison
+  - [x] HTJ2K decode comparison
+- [x] Performance analysis
+  - [x] Identify areas where J2KSwift trails OpenJPEG
+  - [x] Profile and optimise bottlenecks until parity or better
+  - [x] Document performance characteristics and trade-offs
+  - [x] Generate performance comparison report with graphs
+- [x] Performance targets (vs OpenJPEG)
+  - [x] Lossless encode: ≥1.5× faster on Apple Silicon, ≥1.0× on x86-64
+  - [x] Lossy encode: ≥2.0× faster on Apple Silicon, ≥1.2× on x86-64
+  - [x] HTJ2K encode: ≥3.0× faster on Apple Silicon
+  - [x] Decode (all modes): ≥1.5× faster on Apple Silicon
+  - [x] GPU-accelerated: ≥10× faster on Apple Silicon with Metal
+- [x] Testing
+  - [x] Automated benchmark suite with regression detection
+  - [x] CI performance tracking (flag regressions >5%)
+  - [x] Cross-platform benchmark results
 
 **Deliverables**:
 - `Tests/PerformanceTests/OpenJPEGBenchmark.swift` — benchmark suite
@@ -3592,7 +3592,7 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 - Performance regression CI workflow
 - Benchmark result archive
 
-**Status**: Pending.
+**Status**: Complete.
 
 ---
 
@@ -3975,9 +3975,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-20 (Week 266-268 completed)
+**Last Updated**: 2026-02-20 (Week 269-271 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-268
-**Next Phase**: Phase 17, Sub-phase 17e continued — OpenJPEG Performance Benchmarking (Weeks 269-271)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-271
+**Next Phase**: Phase 17, Sub-phase 17f — Command Line Tools (Weeks 272-277)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 142 new conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration
