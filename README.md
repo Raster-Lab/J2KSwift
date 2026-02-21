@@ -8,37 +8,38 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 1.9.0 (Released February 20, 2026)  
-**Status**: Complete encoder/decoder with JP3D volumetric support, Motion JPEG 2000, HTJ2K, and Metal GPU acceleration (2,100+ tests, 100% pass rate)  
-**Previous Release**: 1.8.0 (Motion JPEG 2000)
+**Current Version**: 2.0.0 (Released February 21, 2026)  
+**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (2,900+ tests, 100% pass rate)  
+**Previous Release**: 1.9.0 (JP3D Volumetric Support)
 
 ## 📦 Release Status
 
-**v1.9.0** delivers comprehensive JP3D volumetric JPEG 2000 support (ISO/IEC 15444-10):
-- 🏥 **JP3D Volumetric JPEG 2000** - Complete 3D encoding, decoding, and streaming (ISO/IEC 15444-10)
-- 🧊 **3D Wavelet Transforms** - 5/3 Le Gall reversible and 9/7 CDF irreversible with Metal GPU 20-50× speedup
-- ⚡ **HTJ2K Integration** - High-throughput 3D encoding (5-10× faster than standard JP3D)
-- 🌊 **JPIP 3D Streaming** - View-dependent progressive delivery with 8 progression modes
-- 🎯 **ROI Decoding** - Efficient spatial subset decoding for large volumes
-- 📐 **Part 4 Compliance** - Full ISO/IEC 15444-10 conformance testing
-- 🧪 **350+ New Tests** - Comprehensive JP3D unit, integration, and compliance tests (2,100+ total)
-- 📚 **9 Documentation Guides** - Complete JP3D documentation suite
+**v2.0.0** delivers performance refactoring, full conformance, and a complete CLI toolset (Phase 17):
+- 🚀 **Performance Refactoring** — ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, Accelerate framework deep integration
+- 📐 **ISO/IEC 15444-4 Conformance** — 304 conformance tests across Parts 1, 2, 3, 10, and 15
+- 🔄 **OpenJPEG Interoperability** — 165 bidirectional tests, ≥1.5–3× faster on Apple Silicon
+- 🛠️ **CLI Toolset** — `j2k encode/decode/info/transcode/validate/benchmark` with dual British/American spelling
+- ⚡ **Swift 6.2 Strict Concurrency** — Zero data races, ThreadSanitizer clean across all 8 modules
+- 📚 **Documentation Overhaul** — DocC catalogues for all modules, 8 usage guides, 8 runnable examples
+- 🧪 **800+ New Tests** — Integration, stress, performance, and conformance (2,900+ total)
+- 🖥️ **Cross-Platform GPU** — Metal (Apple) and Vulkan (Linux/Windows) compute backends
 
-See [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md) for v1.9.0 details, or [RELEASE_NOTES_v1.8.0.md](RELEASE_NOTES_v1.8.0.md) for the previous release.
+See [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for v2.0.0 details, or [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md) for the previous release.
 
 ## 🎯 Project Goals
 
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
-- **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model
-- **Fully Functional**: Complete encoder and decoder pipelines (v1.2.0)
-- **Cross-Platform**: macOS 12+, iOS 15+, tvOS 15+, watchOS 8+, Linux, Windows
-- **Standards Compliant**: ISO/IEC 15444-1 (JPEG 2000 Part 1) core implementation
-- **Hardware Accelerated**: vDSP integration with SIMD optimizations (2-8× speedup)
-- **Network Streaming**: JPIP protocol support for efficient image streaming
+- **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model — zero data races
+- **Fully Functional**: Complete encoder and decoder pipelines with JP3D, MJ2, and HTJ2K
+- **Cross-Platform**: macOS 15+, iOS 17+, tvOS 17+, watchOS 10+, visionOS 1+, Linux, Windows
+- **Standards Compliant**: Full ISO/IEC 15444-4 conformance across Parts 1, 2, 3, 10, and 15
+- **Hardware Accelerated**: ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, Accelerate framework (1.5–10× faster than OpenJPEG)
+- **Network Streaming**: JPIP protocol support for efficient 2D and 3D image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
-- **Well Documented**: 40+ comprehensive guides, tutorials, and API documentation
-- **High Quality**: 100% test pass rate (2,100+ tests) with comprehensive test coverage
+- **Well Documented**: DocC catalogues for 8 modules, 50+ guides, tutorials, and API documentation
+- **High Quality**: 100% test pass rate (2,900+ tests) with comprehensive test coverage
+- **CLI Toolset**: Complete command-line tools for encoding, decoding, transcoding, validation, and benchmarking
 
 ## 🚀 Quick Start
 
@@ -53,7 +54,7 @@ Add J2KSwift to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.9.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "2.0.0")
 ]
 ```
 
@@ -363,26 +364,20 @@ let encoded = try mqCoder.encode(quantized)
 - **Round-Trip**: Complete encode→decode workflows
 - **Test Coverage**: 1,498 tests, 98.3% passing (25 skipped)
 
-### Coming in v1.1 (8-12 weeks)
-- ⚡ **Hardware Acceleration**: vDSP integration (2-4x speedup)
-- 🌐 **JPIP Streaming**: Complete image/region/progressive requests
-- 🐛 **Bug Fixes**: Bypass mode optimization (5 skipped tests)
-- 🎨 **Advanced Decoding**: ROI, resolution-progressive, quality-progressive
-- 🔧 **Performance**: Profiling, optimization, parallelization
-
 ### Future Releases
-- **v1.2**: HTJ2K codec (ISO/IEC 15444-15, High Throughput JPEG 2000), lossless transcoding between legacy JPEG 2000 and HTJ2K, advanced encoding features, extended format support
-- **v2.0**: JPEG 2000 Part 2 extensions, Motion JPEG 2000, JPSEC
+- **v2.1**: Multi-spectral JP3D, Vulkan JP3D DWT, JPEG XS exploration
+- **v3.0**: x86-64 SIMD code removal (Apple-first architecture), JPEG XS support
 
 ## 📚 Documentation
 
 ### Getting Started
-- **[README.md](README.md)**: This file - quick start and overview
-- **[RELEASE_NOTES_v1.0.md](RELEASE_NOTES_v1.0.md)**: Complete v1.0.0 release notes
+- **[README.md](README.md)**: This file — quick start and overview
+- **[RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)**: Complete v2.0.0 release notes
 - **[GETTING_STARTED.md](GETTING_STARTED.md)**: Comprehensive introduction
 - **[TUTORIAL_ENCODING.md](TUTORIAL_ENCODING.md)**: Step-by-step encoding guide
 - **[TUTORIAL_DECODING.md](TUTORIAL_DECODING.md)**: Step-by-step decoding guide
-- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)**: Upgrading from other libraries
+- **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)**: Migrating from OpenJPEG
+- **[MIGRATION_GUIDE_v2.0.md](MIGRATION_GUIDE_v2.0.md)**: Migrating from v1.9.0 to v2.0.0
 
 ### API Reference
 - **[API_REFERENCE.md](API_REFERENCE.md)**: Complete API documentation
@@ -474,7 +469,10 @@ Hardware-accelerated operations using platform-specific frameworks (Accelerate o
 File format support for JP2, J2K, JPX, and other JPEG 2000 container formats, including Motion JPEG 2000 (MJ2) creation, extraction, and playback.
 
 ### J2KMetal
-Metal GPU acceleration for Apple Silicon processors, providing 15-40× performance improvements for wavelet transforms, color transforms, ROI processing, and quantization.
+Metal GPU acceleration for Apple Silicon processors, providing 10–40× performance improvements for wavelet transforms, colour transforms, ROI processing, and quantisation.
+
+### J2KVulkan
+Vulkan GPU compute backend for Linux and Windows platforms, with SPIR-V compute shaders and automatic CPU fallback.
 
 ### JPIP
 JPEG 2000 Interactive Protocol implementation for efficient network streaming, including JP3D 3D streaming with view-dependent progressive delivery.
@@ -486,40 +484,40 @@ JP3D volumetric JPEG 2000 (ISO/IEC 15444-10) encoding, decoding, and streaming. 
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: v1.2.0 Development - Critical Bug Fixes
+### Current Status: v2.0.0 — Production Ready
 
-> **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional**! All encoding pipeline stages (color transform, wavelet transform, quantization, entropy coding, rate control) are integrated and working.
+> **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional** with ARM Neon SIMD, Intel SSE/AVX, and Metal GPU acceleration.
 > 
-> **Decoder Status**: The high-level `J2KDecoder.decode()` API is **fully functional**! Complete decoder pipeline with progressive decoding, ROI support, and cross-platform compatibility.
+> **Decoder Status**: The high-level `J2KDecoder.decode()` API is **fully functional** with full ISO/IEC 15444-4 conformance and verified OpenJPEG interoperability.
 
 
-**All 8 Phases Complete** (100 weeks):
-- ✅ Phase 0: Foundation (Weeks 1-10)
-- ✅ Phase 1: Entropy Coding (Weeks 11-25)  
-- ✅ Phase 2: Wavelet Transform (Weeks 26-40)
-- ✅ Phase 3: Quantization (Weeks 41-48)
-- ✅ Phase 4: Color Transforms (Weeks 49-56)
-- ✅ Phase 5: File Format (Weeks 57-68)
-- ✅ Phase 6: JPIP Protocol (Weeks 69-80)
-- ✅ Phase 7: Optimization & Features (Weeks 81-92)
-- ✅ Phase 8: Production Ready (Weeks 93-100)
+**All Phases Complete** (295 weeks):
+- ✅ Phase 0–8: Foundation through Production Ready (Weeks 1–100)
+- ✅ Phase 9–12: vDSP, JPIP, HTJ2K, Extended Formats (Weeks 101–154)
+- ✅ Phase 13–14: Part 2 Extensions, Motion JPEG 2000 (Weeks 155–210)
+- ✅ Phase 15–16: JP3D Volumetric Support (Weeks 211–235)
+- ✅ Phase 17: Performance Refactoring & Conformance (Weeks 236–295)
 
-**Next**: Version 1.5.0 - Additional optimizations and features (see [MILESTONES.md](MILESTONES.md))
+**Current**: v2.0.0 — see [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for details
 
 ## 🧪 Testing
 
-### Test Statistics (v1.0.0)
-- **Total Tests**: 1,344
-- **Passing**: 1,292 (96.1%)
-- **Failing**: 32 (bit-plane decoder cleanup pass)
-- **Skipped**: 20 (platform-specific)
+### Test Statistics (v2.0.0)
+- **Total Tests**: 2,900+
+- **Passing**: 100% pass rate
+- **Conformance Tests**: 304 (ISO/IEC 15444-4, Parts 1, 2, 3, 10, 15)
+- **Interoperability Tests**: 165 (OpenJPEG bidirectional)
+- **Integration Tests**: 200+ (end-to-end, stress, regression)
 
 ### Test Coverage by Module
 - **J2KCore**: 100% of public APIs tested
-- **J2KCodec**: 96.1% pass rate (entropy coding has known issues)
+- **J2KCodec**: 100% pass rate (ARM Neon + Intel SSE/AVX SIMD validated)
 - **J2KFileFormat**: 100% pass rate
-- **J2KAccelerate**: Framework tests complete
-- **JPIP**: Infrastructure tests complete
+- **J2KAccelerate**: 100% pass rate (deep vDSP/vImage/BLAS integration)
+- **J2KMetal**: 100% pass rate (GPU compute refactoring validated)
+- **J2KVulkan**: 100% pass rate (SPIR-V compute shaders)
+- **JPIP**: 100% pass rate (2D and 3D streaming)
+- **J2K3D**: 100% pass rate (JP3D volumetric)
 
 ### Running Tests
 ```bash
@@ -542,19 +540,24 @@ See [CONFORMANCE_TESTING.md](CONFORMANCE_TESTING.md) for details on testing stra
 
 ## 🚀 Performance
 
-### Current Benchmarks (Apple Silicon M1)
-- **MQ Encoding**: 18,800+ code-blocks/second
-- **Wavelet Transform**: Efficient with SIMD optimization ready
-- **Memory Usage**: Zero-copy buffers, memory pooling
-- **Build Time**: ~45 seconds clean build, ~5 seconds incremental
+### Performance vs OpenJPEG (v2.0.0)
 
-### Performance Targets (v1.1)
-- **Encoding Speed**: Within 80% of OpenJPEG
-- **Decoding Speed**: Within 80% of OpenJPEG
-- **Memory Usage**: < 2x compressed file size
-- **Thread Scaling**: > 80% efficiency up to 8 cores
+| Metric | Apple Silicon | Intel x86-64 |
+|--------|--------------|--------------|
+| Lossless encode | ≥1.5× faster | ≥1.0× (parity) |
+| Lossy encode | ≥2.0× faster | ≥1.2× faster |
+| HTJ2K encode | ≥3.0× faster | N/A |
+| Decode (all modes) | ≥1.5× faster | ≥1.0× (parity) |
+| GPU-accelerated (Metal) | ≥10× faster | N/A |
 
-See [PERFORMANCE.md](PERFORMANCE.md) and [REFERENCE_BENCHMARKS.md](REFERENCE_BENCHMARKS.md) for detailed metrics.
+### Hardware Acceleration
+- **ARM Neon SIMD**: Vectorised entropy coding, wavelet lifting, colour transforms
+- **Intel SSE/AVX**: SSE4.2 and AVX2 for entropy, wavelets, quantisation
+- **Metal GPU**: Optimised DWT shaders, tile-based dispatch, async compute
+- **Vulkan GPU**: Cross-platform SPIR-V compute for Linux/Windows
+- **Accelerate Framework**: Deep vDSP, vImage, BLAS/LAPACK integration
+
+See [PERFORMANCE.md](PERFORMANCE.md), [Documentation/PERFORMANCE_COMPARISON.md](Documentation/PERFORMANCE_COMPARISON.md), and [Documentation/PERFORMANCE_VALIDATION.md](Documentation/PERFORMANCE_VALIDATION.md) for detailed metrics.
 
 ## 🤝 Contributing
 
@@ -563,13 +566,11 @@ We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 For information about our CI/CD workflows and automated testing, see [CI_CD_GUIDE.md](CI_CD_GUIDE.md).
 
 ### Areas Needing Help
-1. **High-level codec integration** (v1.1 priority)
-2. **Bit-plane decoder bug fix** (32 failing tests)
-3. **Hardware acceleration implementation** (vDSP)
-4. **JPIP streaming completion**
-5. **Cross-platform testing**
-6. **Documentation improvements**
-7. **ISO test suite validation**
+1. **Multi-spectral JP3D extensions** (v2.1 target)
+2. **Vulkan JP3D DWT acceleration** (Linux/Windows GPU)
+3. **Cross-platform testing** (Windows, Linux ARM64)
+4. **JPEG XS exploration** (v3.0 target)
+5. **Community feedback and real-world usage reports**
 
 ### Development Process
 ```bash
@@ -596,7 +597,7 @@ J2KSwift is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-This project represents a 100-week development effort following a comprehensive milestone-based roadmap. Special thanks to:
+This project represents a 295-week development effort following a comprehensive milestone-based roadmap. Special thanks to:
 
 - The JPEG committee for the JPEG 2000 standard (ISO/IEC 15444)
 - Apple's Swift team for Swift 6.2 and the concurrency model
@@ -614,29 +615,32 @@ This project represents a 100-week development effort following a comprehensive 
 - **Repository**: https://github.com/Raster-Lab/J2KSwift
 - **Releases**: https://github.com/Raster-Lab/J2KSwift/releases
 - **Milestones**: [MILESTONES.md](MILESTONES.md)
-- **Release Notes**: [RELEASE_NOTES_v1.0.md](RELEASE_NOTES_v1.0.md)
+- **Release Notes**: [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)
 
 ## 📊 Project Status
 
 | Component | Status | Test Coverage | Notes |
 |-----------|--------|---------------|-------|
 | Core Types | ✅ Complete | 100% | Production ready |
-| Wavelet Transform | ✅ Complete | 100% | Fully functional |
-| Entropy Coding | ✅ Complete | 99.7% | 5 known issues (bypass mode) |
-| Quantization | ✅ Complete | 100% | Fully functional |
-| Color Transforms | ✅ Complete | 100% | RCT & ICT working |
-| File Format | ✅ Complete | 100% | JP2/JPX/JPM support |
-| JPIP Protocol | ✅ Infrastructure | 100% | Awaiting decoder integration |
-| **Encoder API** | ✅ **Complete** | **100%** | **Fully functional in v1.0!** |
-| Decoder API | ⏳ Planned | N/A | Coming in v1.1 |
-| Hardware Accel | ⏳ Partial | 100% | DWT acceleration working, more in v1.1 |
-| HTJ2K Codec | ⏳ Planned | N/A | Coming in v1.2 (Part 15) |
-| Lossless Transcoding | ⏳ Planned | N/A | Coming in v1.2 (JPEG 2000 ↔ HTJ2K) |
+| Wavelet Transform | ✅ Complete | 100% | ARM Neon + Intel SSE/AVX SIMD |
+| Entropy Coding | ✅ Complete | 100% | SIMD-accelerated MQ-coder |
+| Quantisation | ✅ Complete | 100% | Vectorised quantise/dequantise |
+| Colour Transforms | ✅ Complete | 100% | ICT/RCT with SIMD acceleration |
+| File Format | ✅ Complete | 100% | JP2/JPX/JPM/J2K/JPH support |
+| JPIP Protocol | ✅ Complete | 100% | 2D and 3D streaming |
+| Encoder API | ✅ Complete | 100% | ≥1.5–3× faster than OpenJPEG |
+| Decoder API | ✅ Complete | 100% | Full Part 4 conformance |
+| Hardware Accel | ✅ Complete | 100% | Metal, Vulkan, Accelerate, Neon, SSE/AVX |
+| HTJ2K Codec | ✅ Complete | 100% | ≥3× faster on Apple Silicon |
+| JP3D Volumetric | ✅ Complete | 100% | ISO/IEC 15444-10 compliant |
+| Motion JPEG 2000 | ✅ Complete | 100% | ISO/IEC 15444-3 compliant |
+| CLI Tools | ✅ Complete | 100% | Dual British/American spelling |
+| Conformance | ✅ Complete | 304 tests | Parts 1, 2, 3, 10, 15 |
 
 ---
 
-**J2KSwift v1.9.0** - A modern Swift implementation of JPEG 2000 with JP3D volumetric support  
-**Status**: Complete encoder/decoder with JP3D, MJ2, HTJ2K, Metal GPU acceleration  
+**J2KSwift v2.0.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
+**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance  
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
-For detailed information, see [RELEASE_NOTES_v1.9.0.md](RELEASE_NOTES_v1.9.0.md)
+For detailed information, see [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)

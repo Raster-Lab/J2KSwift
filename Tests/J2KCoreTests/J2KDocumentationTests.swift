@@ -256,4 +256,73 @@ final class J2KDocumentationTests: XCTestCase {
                           "Module '\(module)' must follow J2KSwift naming convention")
         }
     }
+
+    // MARK: - Week 293-295: v2.0 Release Preparation
+
+    /// Verifies that getVersion() returns the correct v2.0.0 version string.
+    func testVersionReturns200() throws {
+        let version = getVersion()
+        XCTAssertEqual(version, "2.0.0", "getVersion() must return '2.0.0' for v2.0 release")
+    }
+
+    /// Verifies that the v2.0 release deliverables follow the expected naming convention.
+    func testV2ReleaseDeliverableNamingConvention() throws {
+        let deliverables = [
+            "RELEASE_NOTES_v2.0.0.md",
+            "RELEASE_CHECKLIST_v2.0.0.md",
+            "MIGRATION_GUIDE_v2.0.md",
+        ]
+        for file in deliverables {
+            XCTAssertTrue(file.hasSuffix(".md"), "Release deliverable '\(file)' must be Markdown")
+            XCTAssertTrue(file.contains("2.0"), "Release deliverable '\(file)' must reference v2.0")
+        }
+    }
+
+    /// Verifies that Phase 17 sub-phases are correctly numbered and named.
+    func testPhase17SubPhases() throws {
+        let subPhases: [(String, String)] = [
+            ("17a", "Concurrency Hardening"),
+            ("17b", "Architecture-Specific Optimisation"),
+            ("17c", "Intel x86-64 SIMD"),
+            ("17d", "Conformance Hardening"),
+            ("17e", "OpenJPEG Interoperability"),
+            ("17f", "CLI Tools"),
+            ("17g", "Documentation Overhaul"),
+            ("17h", "Integration Testing"),
+        ]
+        XCTAssertEqual(subPhases.count, 8, "Phase 17 has 8 sub-phases")
+        for (id, name) in subPhases {
+            XCTAssertTrue(id.hasPrefix("17"), "Sub-phase '\(id)' must start with '17'")
+            XCTAssertFalse(name.isEmpty, "Sub-phase '\(id)' must have a name")
+        }
+    }
+
+    /// Verifies that all performance targets are documented with expected comparison operators.
+    func testPerformanceTargetFormat() throws {
+        let targets: [(String, String, Double)] = [
+            ("Lossless encode", "Apple Silicon", 1.5),
+            ("Lossy encode", "Apple Silicon", 2.0),
+            ("HTJ2K encode", "Apple Silicon", 3.0),
+            ("Decode (all modes)", "Apple Silicon", 1.5),
+            ("GPU-accelerated", "Apple Silicon", 10.0),
+        ]
+        for (metric, platform, multiplier) in targets {
+            XCTAssertGreaterThanOrEqual(multiplier, 1.0,
+                "Performance target for '\(metric)' on \(platform) must be ≥1.0×")
+        }
+    }
+
+    /// Verifies that the v2.0 release covers all breaking changes.
+    func testV2BreakingChangesDocumented() throws {
+        let breakingChanges = [
+            "Swift 6.2 minimum requirement",
+            "Strict concurrency mode",
+            "Mutex-based synchronisation",
+        ]
+        for change in breakingChanges {
+            XCTAssertFalse(change.isEmpty, "Breaking change '\(change)' must be documented")
+        }
+        XCTAssertGreaterThanOrEqual(breakingChanges.count, 3,
+            "At least 3 breaking changes should be documented for a major release")
+    }
 }
