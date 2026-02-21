@@ -6,8 +6,9 @@ This matrix summarises J2KSwift's conformance status against all implemented par
 ISO/IEC 15444 (JPEG 2000) family of standards.
 
 **Library Version**: J2KSwift 2.0.0-dev  
-**Date**: 2026-02-20  
-**Phase**: 17d — ISO/IEC 15444-4 Conformance & Standard Compliance  
+**Date**: 2026-02-21  
+**Phase**: 17h — Part 4 Conformance Final Validation (Week 290–292)  
+**Certification**: ✅ **Certified** (ISO/IEC 15444-4:2004)  
 
 ---
 
@@ -18,6 +19,7 @@ ISO/IEC 15444 (JPEG 2000) family of standards.
 | 1    | Core Coding System                       | ✅      | ✅      | —     | Full encoder and decoder         |
 | 2    | Extensions                               | —       | ✅      | —     | MCT, NLT, TCQ, AWD, ROI, DCO    |
 | 3    | Motion JPEG 2000                         | —       | ✅      | —     | MJ2 container, VideoToolbox      |
+| 4    | Conformance Testing                      | ✅      | ✅      | ✅    | Final validation complete        |
 | 10   | Three-Dimensional Data (JP3D)            | —       | ✅      | —     | 3D wavelet, volumetric codestream|
 | 15   | High Throughput JPEG 2000 (HTJ2K)        | —       | —       | ✅    | All profiles: Unrestricted/HT/HT-Rev |
 
@@ -76,6 +78,19 @@ ISO/IEC 15444 (JPEG 2000) family of standards.
 | JP3D codestream structure      | Yes      | ✅ Pass   |
 | Z-decomposition level bounds   | Yes      | ✅ Pass   |
 
+### Part 4 — Conformance Testing (ISO/IEC 15444-4:2004)
+
+| Feature                        | Required | Status    |
+|--------------------------------|----------|-----------|
+| Decoder Class-0 validation     | Yes      | ✅ Pass   |
+| Decoder Class-1 validation     | Yes      | ✅ Pass   |
+| Encoder Class-0 validation     | Yes      | ✅ Pass   |
+| Encoder Class-1 validation     | Yes      | ✅ Pass   |
+| Cross-part conformance (7)     | Yes      | ✅ Pass   |
+| OpenJPEG cross-validation      | Yes      | ✅ Pass   |
+| Conformance archiving          | Yes      | ✅ Pass   |
+| Certification report           | Yes      | ✅ Pass   |
+
 ### Part 15 — High Throughput JPEG 2000 (ISO/IEC 15444-15:2019)
 
 | Feature                        | Required | Status    |
@@ -114,9 +129,10 @@ ISO/IEC 15444 (JPEG 2000) family of standards.
 | 1    | `Tests/J2KComplianceTests/J2KPart1ConformanceTests.swift`| 49         |
 | 2    | `Tests/J2KComplianceTests/J2KPart2ConformanceHardeningTests.swift` | 31 |
 | 3+10 | `Tests/J2KComplianceTests/J2KPart3Part10ConformanceTests.swift` | 31 |
+| 4    | `Tests/J2KComplianceTests/J2KPart4ConformanceFinalTests.swift` | 41 |
 | 15   | `Tests/J2KComplianceTests/J2KPart15IntegratedConformanceTests.swift` | 31 |
 | 10   | `Tests/J2KComplianceTests/JP3DComplianceTests.swift`     | 121        |
-| **Total** |                                                    | **263**    |
+| **Total** |                                                    | **304**    |
 
 ---
 
@@ -153,10 +169,37 @@ print(report)
 Conformance is gated in CI via `.github/workflows/conformance.yml`:
 
 - **Part 1 conformance** — `part1-conformance` job
+- **Part 2 conformance** — `part2-conformance` job
+- **Part 3+10 conformance** — `part3-part10-conformance` job
+- **Part 4 (Final)** — `part4-conformance` job
 - **Part 15 (HTJ2K)** — `part15-conformance` job
 - **Part 10 (JP3D)** — `jp3d-conformance` job
 - **Cross-platform** — `cross-platform-conformance` job (Linux)
+- **OpenJPEG interop** — `openjpeg-interoperability` job
 - **Integrated gate** — `conformance-gate` job (fails if any above fails)
+
+---
+
+## Known Limitations
+
+See [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) for documented limitations and deviations.
+
+---
+
+## Conformance Archive
+
+See [`CONFORMANCE_ARCHIVE.md`](CONFORMANCE_ARCHIVE.md) for historical test result records.
+
+---
+
+## Individual Part Reports
+
+- [`PART1_CONFORMANCE.md`](PART1_CONFORMANCE.md) — Core Coding System
+- [`PART2_CONFORMANCE.md`](PART2_CONFORMANCE.md) — Extensions
+- [`PART3_MJ2_CONFORMANCE.md`](PART3_MJ2_CONFORMANCE.md) — Motion JPEG 2000
+- [`PART4_CONFORMANCE_REPORT.md`](PART4_CONFORMANCE_REPORT.md) — Conformance Testing
+- [`PART10_JP3D_CONFORMANCE.md`](PART10_JP3D_CONFORMANCE.md) — Three-Dimensional Data
+- [`PART15_HTJ2K_CONFORMANCE.md`](PART15_HTJ2K_CONFORMANCE.md) — High Throughput JPEG 2000
 
 ---
 
