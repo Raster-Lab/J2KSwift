@@ -295,39 +295,40 @@ struct ValidationView: View {
         }
     }
 
-    @ViewBuilder
-    private func markerRow(marker: CodestreamMarkerInfo, indent: Int) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "tag.fill")
-                    .foregroundStyle(.tint)
-                    .font(.caption)
+    private func markerRow(marker: CodestreamMarkerInfo, indent: Int) -> AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "tag.fill")
+                        .foregroundStyle(.tint)
+                        .font(.caption)
 
-                Text(marker.name)
-                    .font(.caption.monospaced().bold())
+                    Text(marker.name)
+                        .font(.caption.monospaced().bold())
 
-                Text(String(format: "@ 0x%04X", marker.offset))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    Text(String(format: "@ 0x%04X", marker.offset))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
 
-                if let length = marker.length {
-                    Text("(\(length) bytes)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                    if let length = marker.length {
+                        Text("(\(length) bytes)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Text(marker.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                .padding(.leading, CGFloat(indent * 16))
+                .padding(.vertical, 2)
 
-                Text(marker.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                ForEach(marker.children) { child in
+                    markerRow(marker: child, indent: indent + 1)
+                }
             }
-            .padding(.leading, CGFloat(indent * 16))
-            .padding(.vertical, 2)
-
-            ForEach(marker.children) { child in
-                markerRow(marker: child, indent: indent + 1)
-            }
-        }
+        )
     }
 }
 #endif

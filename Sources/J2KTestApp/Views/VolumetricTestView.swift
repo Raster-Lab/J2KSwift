@@ -246,50 +246,57 @@ struct VolumetricTestView: View {
                 .padding(.horizontal)
                 .padding(.top, 8)
 
-            // Header row
-            HStack(spacing: 0) {
-                Text("Slice").font(.caption.bold()).frame(width: 50, alignment: .center)
-                Text("Plane").font(.caption.bold()).frame(width: 70, alignment: .leading)
-                Text("PSNR (dB)").font(.caption.bold()).frame(width: 90, alignment: .trailing)
-                Text("SSIM").font(.caption.bold()).frame(width: 80, alignment: .trailing)
-                Text("Decode (ms)").font(.caption.bold()).frame(width: 100, alignment: .trailing)
-                Text("Size").font(.caption.bold()).frame(width: 80, alignment: .trailing)
-            }
-            .padding(.horizontal)
+            metricsHeaderRow
 
             Divider()
 
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(viewModel.sliceMetrics) { slice in
-                        HStack(spacing: 0) {
-                            Text("\(slice.index + 1)")
-                                .font(.caption.monospacedDigit())
-                                .frame(width: 50, alignment: .center)
-                            Text(slice.plane.rawValue)
-                                .font(.caption)
-                                .frame(width: 70, alignment: .leading)
-                            Text(String(format: "%.1f", slice.psnr))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(slice.psnr >= 40 ? .primary : .orange)
-                                .frame(width: 90, alignment: .trailing)
-                            Text(String(format: "%.4f", slice.ssim))
-                                .font(.caption.monospacedDigit())
-                                .frame(width: 80, alignment: .trailing)
-                            Text(String(format: "%.2f", slice.decodeTimeMs))
-                                .font(.caption.monospacedDigit())
-                                .frame(width: 100, alignment: .trailing)
-                            Text("\(slice.width)×\(slice.height)")
-                                .font(.caption.monospacedDigit())
-                                .frame(width: 80, alignment: .trailing)
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 2)
+                        metricsRow(for: slice)
                         Divider()
                     }
                 }
             }
         }
+    }
+
+    private var metricsHeaderRow: some View {
+        HStack(spacing: 0) {
+            Text("Slice").font(.caption.bold()).frame(width: 50, alignment: .center)
+            Text("Plane").font(.caption.bold()).frame(width: 70, alignment: .leading)
+            Text("PSNR (dB)").font(.caption.bold()).frame(width: 90, alignment: .trailing)
+            Text("SSIM").font(.caption.bold()).frame(width: 80, alignment: .trailing)
+            Text("Decode (ms)").font(.caption.bold()).frame(width: 100, alignment: .trailing)
+            Text("Size").font(.caption.bold()).frame(width: 80, alignment: .trailing)
+        }
+        .padding(.horizontal)
+    }
+
+    private func metricsRow(for slice: VolumeSlice) -> some View {
+        HStack(spacing: 0) {
+            Text("\(slice.index + 1)")
+                .font(.caption.monospacedDigit())
+                .frame(width: 50, alignment: .center)
+            Text(slice.plane.rawValue)
+                .font(.caption)
+                .frame(width: 70, alignment: .leading)
+            Text(String(format: "%.1f", slice.psnr))
+                .font(.caption.monospacedDigit())
+                .foregroundColor(slice.psnr >= 40 ? Color.primary : Color.orange)
+                .frame(width: 90, alignment: .trailing)
+            Text(String(format: "%.4f", slice.ssim))
+                .font(.caption.monospacedDigit())
+                .frame(width: 80, alignment: .trailing)
+            Text(String(format: "%.2f", slice.decodeTimeMs))
+                .font(.caption.monospacedDigit())
+                .frame(width: 100, alignment: .trailing)
+            Text("\(slice.width)×\(slice.height)")
+                .font(.caption.monospacedDigit())
+                .frame(width: 80, alignment: .trailing)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 2)
     }
 }
 #endif
