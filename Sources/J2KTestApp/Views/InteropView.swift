@@ -286,9 +286,9 @@ struct InteropView: View {
         }
     }
 
-    @ViewBuilder
-    private func diffNodeRow(node: CodestreamDiffNode, indent: Int) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+
+    private func diffNodeRow(node: CodestreamDiffNode, indent: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: node.matches ? "equal.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(node.matches ? .green : .orange)
@@ -306,7 +306,7 @@ struct InteropView: View {
             ForEach(node.children) { child in
                 diffNodeRow(node: child, indent: indent + 1)
             }
-        }
+        })
     }
 }
 #endif
