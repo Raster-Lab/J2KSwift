@@ -41,7 +41,7 @@ All codec types conform to ``Sendable`` for safe use with Swift 6 structured con
 
 ### Quantisation
 
-- ``J2KQuantization``
+- ``J2KQuantizer``
 - ``J2KQuantizationMode``
 - ``J2KQuantizationParameters``
 
@@ -57,7 +57,8 @@ All codec types conform to ``Sendable`` for safe use with Swift 6 structured con
 
 ### Region of Interest
 
-- ``J2KExtendedROI``
+- ``J2KROIProcessor``
+- ``J2KExtendedROIProcessor``
 
 ### Transcoding
 
@@ -72,3 +73,8 @@ All codec types conform to ``Sendable`` for safe use with Swift 6 structured con
 ### Perceptual Coding
 
 - ``J2KVisualMasking``
+
+### Articles
+
+- <doc:EncodingPipeline>
+- <doc:DecodingPipeline>

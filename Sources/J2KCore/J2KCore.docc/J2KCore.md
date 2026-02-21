@@ -87,3 +87,9 @@ Use J2KCore when you need to:
 - ``J2KVolumeComponent``
 - ``J2KVolumeMetadata``
 - ``J2KVolumeModality``
+
+### Articles
+
+- <doc:GettingStarted>
+- <doc:Architecture>
+- <doc:MigrationGuide>

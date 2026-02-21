@@ -33,19 +33,20 @@ Motion JPEG 2000 support includes ``MJ2FileReader`` for reading video files, ``M
 
 - ``J2KSignatureBox``
 - ``J2KFileTypeBox``
+- ``J2KHeaderBox``
 - ``J2KImageHeaderBox``
-- ``J2KColourSpecificationBox``
+- ``J2KColorSpecificationBox``
 - ``J2KChannelDefinitionBox``
 - ``J2KResolutionBox``
+- ``J2KCaptureResolutionBox``
+- ``J2KDisplayResolutionBox``
 - ``J2KPaletteBox``
 - ``J2KComponentMappingBox``
 - ``J2KBitsPerComponentBox``
-- ``J2KIntellectualPropertyBox``
+- ``J2KIPRBox``
 - ``J2KXMLBox``
 - ``J2KUUIDBox``
-- ``J2KUUIDInfoBox``
-- ``J2KURLBox``
-- ``J2KContiguousCodestreamBox``
+- ``J2KDataEntryURLBox``
 
 ### JPX Extended Format
 
