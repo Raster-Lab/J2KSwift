@@ -798,5 +798,76 @@ Settings are saved as JSON and persist across application launches.
 
 ---
 
+## How to Test JPIP Streaming
+
+The **Streaming** screen provides two tabbed sub-screens: **JPIP** and **MJ2**. Select the **Streaming** category in the sidebar to access them.
+
+### How to Test JPIP Streaming
+
+1. Open the **Streaming** category and select the **JPIP** tab.
+2. In the **Control Panel**, enter the JPIP server URL (e.g. `jpip://localhost:8080/image.jp2`).
+3. Click **Connect** in the toolbar.
+   - The status badge changes to **On** (green) when connected.
+4. Adjust the **Window of Interest** sliders to select a region of the image.
+5. Set the desired **Resolution Level** using the stepper.
+6. Click **Load Image** to start a progressive load.
+   - The **Progressive Image Canvas** displays the image as quality layers arrive.
+   - The toolbar progress bar tracks the current quality layer.
+7. After loading completes, read the **Network Metrics** panel:
+   - **Bytes Received** — total compressed data delivered in this session
+   - **Avg Latency** — average round-trip time per JPIP request
+   - **Requests** — total number of JPIP data-bin requests sent
+   - **Duration** — elapsed session time in seconds
+8. Review the **Request Log** table to inspect every individual JPIP request with its status code, byte count, latency, and URL path.
+9. Click **Clear Log** to reset metrics and the request log for a fresh test.
+10. Click **Disconnect** to close the JPIP session.
+
+### How to Test Motion JPEG 2000
+
+1. Open the **Streaming** category and select the **MJ2** tab.
+2. In the **Control Panel**, configure the encoding settings:
+   - Toggle **Uniform Settings** to apply one quality value across all frames, or disable to configure per-frame.
+   - Adjust the **Quality** slider (0.0–1.0) for uniform encoding.
+   - Set the **Frame Rate** field (frames per second).
+3. Click **Load Sequence** in the toolbar to load a test frame sequence (60 frames by default).
+4. Use the **Playback Controls** to navigate frames:
+   - **Play/Pause** — toggle live playback simulation
+   - **Stop** — return to frame 1
+   - **Step Forward/Backward** — single-frame navigation
+   - **Frame Scrubber** — drag to jump directly to any frame
+5. Click any bar in the **Frame Timeline** at the bottom to jump to that frame.
+   - Bar height indicates PSNR; colour indicates quality tier (green ≥ 45 dB, yellow 40–45 dB, orange < 40 dB).
+6. Inspect the selected frame in the **Control Panel**:
+   - Timestamp, resolution, compressed size, PSNR, SSIM, and decode time are shown.
+7. The **Sequence Summary** panel shows aggregate statistics: frame count, duration, average PSNR, and average SSIM.
+8. Click **Clear** to reset and load a new sequence.
+
+---
+
+## How to Test Volumetric (JP3D)
+
+Select the **Volumetric** category in the sidebar to access the `VolumetricTestView`.
+
+1. In the **Control Panel**, choose an anatomical plane: **Axial**, **Coronal**, or **Sagittal**.
+2. Set the wavelet parameters:
+   - **Z-axis Levels** stepper (1–6 decomposition levels along the z-axis)
+   - **Wavelet** radio group: 5/3 (lossless), 9/7 (lossy), or Haar
+3. Click **Run Test** in the toolbar.
+   - The toolbar progress bar shows per-slice encode/decode progress.
+   - The status bar reports the current slice number.
+4. When complete, the **Slice Comparison** panel appears:
+   - Left placeholder: original slice
+   - Right placeholder: decoded slice (or difference image if **Show Difference Overlay** is enabled)
+   - PSNR and SSIM badges appear in the header for the current slice.
+5. Use the **Slice Navigator** in the Control Panel to scroll through slices:
+   - Drag the slider, or use the chevron buttons to step one slice at a time.
+6. Review the **Per-Slice Quality Metrics** table at the bottom:
+   - Each row shows slice index, plane, PSNR (dB), SSIM, decode time (ms), and resolution.
+   - PSNR values below 40 dB are highlighted in orange as a quality warning.
+7. Toggle **Show Difference Overlay** to switch the right comparison panel between decoded and difference views.
+8. Click **Clear** to reset all results and re-run with different parameters.
+
+---
+
 *J2KTestApp is part of J2KSwift v2.1 — a pure Swift 6 JPEG 2000 implementation.*
 *Last updated: 2026-02-21*

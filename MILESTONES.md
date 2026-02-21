@@ -4166,38 +4166,38 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Build GUI screens for JPIP streaming visualisation, JP3D volumetric navigation, and Motion JPEG 2000 frame inspection.
 
-- [ ] JPIP streaming screen (`JPIPTestView`)
-  - [ ] Server connection panel: enter JPIP server URL, connect/disconnect buttons, session status indicator
-  - [ ] Progressive image canvas: image renders progressively as data arrives, with resolution/quality indicators
-  - [ ] Window-of-interest selector: draw a rectangle on the image canvas to request a specific region
-  - [ ] Network metrics panel: bytes received, latency, request count, session duration
-  - [ ] Request log: scrollable list of all JPIP requests and responses with timing
-- [ ] JP3D volumetric screen (`VolumetricTestView`)
-  - [ ] Volume loader: open a volumetric dataset (multi-slice DICOM, raw volume)
-  - [ ] Slice navigator: slider to scroll through axial/coronal/sagittal slices with live image preview
-  - [ ] 3D wavelet parameter panel: decomposition levels, wavelet type, z-axis transform options
-  - [ ] Volumetric encode/decode with per-slice quality metrics table
-  - [ ] Slice comparison view: original vs decoded slice with difference overlay
-- [ ] Motion JPEG 2000 screen (`MJ2TestView`)
-  - [ ] Frame sequence loader: open an MJ2 file or image sequence folder
-  - [ ] Playback controls: play, pause, step forward/backward, frame slider
-  - [ ] Per-frame quality inspector: click any frame to see PSNR/SSIM and full-size decode
-  - [ ] Frame encoding configuration: apply different settings per frame or uniformly
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (streaming/volumetric sections)
-  - [ ] "How to Test JPIP Streaming" — step-by-step: enter server URL → connect → view progressive load → select region → read metrics
-  - [ ] "How to Test Volumetric (JP3D)" — step-by-step: load volume → navigate slices → encode → decode → compare slices
-  - [ ] "How to Test Motion JPEG 2000" — step-by-step: load MJ2 → playback → inspect frame quality → re-encode
-- [ ] Testing
-  - [ ] JPIP session view model tests
-  - [ ] Volumetric slice navigation tests
-  - [ ] MJ2 playback controller tests
+- [x] JPIP streaming screen (`JPIPTestView`)
+  - [x] Server connection panel: enter JPIP server URL, connect/disconnect buttons, session status indicator
+  - [x] Progressive image canvas: image renders progressively as data arrives, with resolution/quality indicators
+  - [x] Window-of-interest selector: draw a rectangle on the image canvas to request a specific region
+  - [x] Network metrics panel: bytes received, latency, request count, session duration
+  - [x] Request log: scrollable list of all JPIP requests and responses with timing
+- [x] JP3D volumetric screen (`VolumetricTestView`)
+  - [x] Volume loader: open a volumetric dataset (multi-slice DICOM, raw volume)
+  - [x] Slice navigator: slider to scroll through axial/coronal/sagittal slices with live image preview
+  - [x] 3D wavelet parameter panel: decomposition levels, wavelet type, z-axis transform options
+  - [x] Volumetric encode/decode with per-slice quality metrics table
+  - [x] Slice comparison view: original vs decoded slice with difference overlay
+- [x] Motion JPEG 2000 screen (`MJ2TestView`)
+  - [x] Frame sequence loader: open an MJ2 file or image sequence folder
+  - [x] Playback controls: play, pause, step forward/backward, frame slider
+  - [x] Per-frame quality inspector: click any frame to see PSNR/SSIM and full-size decode
+  - [x] Frame encoding configuration: apply different settings per frame or uniformly
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (streaming/volumetric sections)
+  - [x] "How to Test JPIP Streaming" — step-by-step: enter server URL → connect → view progressive load → select region → read metrics
+  - [x] "How to Test Volumetric (JP3D)" — step-by-step: load volume → navigate slices → encode → decode → compare slices
+  - [x] "How to Test Motion JPEG 2000" — step-by-step: load MJ2 → playback → inspect frame quality → re-encode
+- [x] Testing
+  - [x] JPIP session view model tests
+  - [x] Volumetric slice navigation tests
+  - [x] MJ2 playback controller tests
 
 **Deliverables**:
 - `JPIPTestView`, `VolumetricTestView`, `MJ2TestView` SwiftUI screens
 - Progressive streaming canvas, slice navigator, frame playback controls
 - `TESTING_GUIDE.md` — JPIP, volumetric, and MJ2 testing sections
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 308-310).
 
 ### Week 311-313: Test Reporting Dashboard and Automation
 
@@ -4348,9 +4348,9 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-02-21 (Phase 18 Week 305-307 complete)
+**Last Updated**: 2026-02-21 (Phase 18 Week 308-310 complete)
 **Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-307
-**Next Phase**: Phase 18 Week 308-310 (Streaming and Volumetric Testing GUI Screens)
+**Next Phase**: Phase 18 Week 311-313 (Test Reporting Dashboard and Automation)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README

@@ -150,15 +150,27 @@ enum PerformanceTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+// MARK: - Streaming Tab
+
+/// Tab selection within the Streaming category.
+enum StreamingTab: String, CaseIterable, Identifiable {
+    /// JPIP network streaming tests.
+    case jpip = "JPIP"
+    /// Motion JPEG 2000 frame playback tests.
+    case mj2 = "MJ2"
+
+    var id: String { rawValue }
+}
+
 // MARK: - Category Detail View
 
 /// Detail view for a single test category.
 ///
-/// Routes `.encode`, `.decode`, `.conformance`, `.validation`, and
-/// `.performance` to their dedicated GUI screens. The performance
-/// category uses tabbed sub-screens for Benchmark, GPU, and SIMD.
-/// All other categories fall back to the generic results-table layout
-/// until their dedicated screens are implemented.
+/// Routes `.encode`, `.decode`, `.conformance`, `.validation`, `.performance`,
+/// `.streaming`, and `.volumetric` to their dedicated GUI screens. Performance
+/// uses tabbed sub-screens for Benchmark, GPU, and SIMD. Streaming uses tabbed
+/// sub-screens for JPIP and MJ2.  All other categories fall back to the generic
+/// results-table layout until their dedicated screens are implemented.
 struct CategoryDetailView: View {
     /// View model for this category.
     @State var viewModel: TestCategoryViewModel
@@ -184,12 +196,20 @@ struct CategoryDetailView: View {
     @State private var gpuTestViewModel = GPUTestViewModel()
     /// View model for the SIMD Testing screen.
     @State private var simdTestViewModel = SIMDTestViewModel()
+    /// View model for the JPIP streaming screen.
+    @State private var jpipViewModel = JPIPViewModel()
+    /// View model for the MJ2 playback screen.
+    @State private var mj2ViewModel = MJ2TestViewModel()
+    /// View model for the JP3D volumetric screen.
+    @State private var volumetricViewModel = VolumetricTestViewModel()
 
     /// Log messages for the console.
     @State private var logMessages: [LogMessage] = []
 
     /// Selected tab within the Performance screen.
     @State private var performanceTab: PerformanceTab = .benchmark
+    /// Selected tab within the Streaming screen.
+    @State private var streamingTab: StreamingTab = .jpip
 
     var body: some View {
         switch viewModel.category {
@@ -203,8 +223,10 @@ struct CategoryDetailView: View {
             ValidationView(viewModel: validationViewModel, session: session)
         case .performance:
             performanceDetailView
-        default:
-            genericDetailView
+        case .streaming:
+            streamingDetailView
+        case .volumetric:
+            VolumetricTestView(viewModel: volumetricViewModel, session: session)
         }
     }
 
@@ -236,71 +258,29 @@ struct CategoryDetailView: View {
         }
     }
 
-    // MARK: - Generic Detail View (fallback for other categories)
+    // MARK: - Streaming Detail View (tabbed)
 
     @ViewBuilder
-    private var genericDetailView: some View {
+    private var streamingDetailView: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(viewModel.category.displayName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Text(viewModel.category.categoryDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-
-                Button(action: {
-                    Task { await viewModel.startTests(session: session) }
-                }) {
-                    Label("Run", systemImage: "play.fill")
-                }
-                .disabled(viewModel.isRunning)
-                .keyboardShortcut(.return, modifiers: [.command])
-
-                Button(action: {
-                    viewModel.clearResults()
-                }) {
-                    Label("Clear", systemImage: "trash")
+            // Tab selector
+            Picker("Streaming Tab", selection: $streamingTab) {
+                ForEach(StreamingTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
             }
-            .padding()
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
             Divider()
 
-            // Progress
-            if viewModel.isRunning || viewModel.progress > 0 {
-                ProgressIndicatorView(
-                    overallProgress: viewModel.progress,
-                    stages: [],
-                    statusMessage: viewModel.statusMessage
-                )
+            switch streamingTab {
+            case .jpip:
+                JPIPTestView(viewModel: jpipViewModel, session: session)
+            case .mj2:
+                MJ2TestView(viewModel: mj2ViewModel, session: session)
             }
-
-            // Results table
-            if !viewModel.results.isEmpty {
-                ResultsTableView(
-                    results: viewModel.results,
-                    selectedResult: $viewModel.selectedResult
-                )
-                .frame(minHeight: 200)
-            } else {
-                ContentUnavailableView {
-                    Label("No Results", systemImage: "tray")
-                } description: {
-                    Text("Run tests to see results here.")
-                }
-                .frame(maxHeight: .infinity)
-            }
-
-            Divider()
-
-            // Log console
-            LogConsoleView(messages: logMessages)
-                .frame(height: 150)
         }
     }
 }

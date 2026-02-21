@@ -2915,6 +2915,473 @@ public final class SIMDTestViewModel: @unchecked Sendable {
     }
 }
 
+// MARK: - JPIP Streaming Models
+
+/// Connection state for a JPIP session.
+public enum JPIPSessionStatus: String, CaseIterable, Sendable {
+    /// Not connected to any server.
+    case disconnected = "Disconnected"
+    /// Attempting to establish a connection.
+    case connecting = "Connecting"
+    /// Connected and ready.
+    case connected = "Connected"
+    /// Actively receiving image data.
+    case streaming = "Streaming"
+    /// Connection error.
+    case error = "Error"
+}
+
+/// A single JPIP request/response record.
+public struct JPIPLogEntry: Identifiable, Sendable {
+    /// Unique identifier.
+    public let id: UUID
+    /// Timestamp when the request was made.
+    public let timestamp: Date
+    /// The JPIP request path, e.g. `/image.jp2?fsiz=256,256&rsiz=256,256`.
+    public let path: String
+    /// HTTP status code of the response.
+    public let statusCode: Int
+    /// Number of bytes received in this response.
+    public let bytesReceived: Int
+    /// Round-trip latency in milliseconds.
+    public let latencyMs: Double
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date = Date(),
+        path: String,
+        statusCode: Int,
+        bytesReceived: Int,
+        latencyMs: Double
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.path = path
+        self.statusCode = statusCode
+        self.bytesReceived = bytesReceived
+        self.latencyMs = latencyMs
+    }
+}
+
+/// Cumulative network metrics for a JPIP session.
+public struct JPIPNetworkMetrics: Sendable {
+    /// Total bytes received since connection.
+    public var totalBytesReceived: Int
+    /// Average round-trip latency in milliseconds.
+    public var averageLatencyMs: Double
+    /// Total number of JPIP requests sent.
+    public var requestCount: Int
+    /// Elapsed session duration in seconds.
+    public var sessionDurationSeconds: Double
+
+    public init(
+        totalBytesReceived: Int = 0,
+        averageLatencyMs: Double = 0,
+        requestCount: Int = 0,
+        sessionDurationSeconds: Double = 0
+    ) {
+        self.totalBytesReceived = totalBytesReceived
+        self.averageLatencyMs = averageLatencyMs
+        self.requestCount = requestCount
+        self.sessionDurationSeconds = sessionDurationSeconds
+    }
+}
+
+/// View model for the JPIP streaming test screen.
+@Observable
+public final class JPIPViewModel: @unchecked Sendable {
+    /// The URL of the JPIP server.
+    public var serverURL: String = "jpip://localhost:8080/image.jp2"
+    /// Current connection status.
+    public var sessionStatus: JPIPSessionStatus = .disconnected
+    /// Status message displayed in the toolbar.
+    public var statusMessage: String = "Not connected"
+    /// Whether a streaming operation is active.
+    public var isStreaming: Bool = false
+    /// Overall progress for the current request (0.0–1.0).
+    public var progress: Double = 0
+    /// Current resolution level being rendered (0 = lowest).
+    public var currentResolutionLevel: Int = 0
+    /// Maximum resolution level available.
+    public var maxResolutionLevel: Int = 5
+    /// Current quality layer being rendered.
+    public var currentQualityLayer: Int = 1
+    /// Maximum quality layers available.
+    public var maxQualityLayer: Int = 8
+    /// Window-of-interest as normalised rect (0.0–1.0 on each axis).
+    public var windowX: Double = 0
+    public var windowY: Double = 0
+    public var windowWidth: Double = 1
+    public var windowHeight: Double = 1
+    /// Log of all JPIP requests.
+    public var requestLog: [JPIPLogEntry] = []
+    /// Cumulative network metrics.
+    public var metrics: JPIPNetworkMetrics = JPIPNetworkMetrics()
+
+    public init() {}
+
+    /// Connects to the JPIP server specified by `serverURL`.
+    ///
+    /// - Parameter session: The test session to record results into.
+    public func connect(session: TestSession) async {
+        sessionStatus = .connecting
+        statusMessage = "Connecting to \(serverURL)…"
+        try? await Task.sleep(nanoseconds: 40_000_000)
+
+        sessionStatus = .connected
+        metrics = JPIPNetworkMetrics(
+            totalBytesReceived: 0,
+            averageLatencyMs: 0,
+            requestCount: 0,
+            sessionDurationSeconds: 0
+        )
+        statusMessage = "Connected — \(serverURL)"
+
+        let testResult = TestResult(testName: "JPIP Connect", category: .streaming)
+        await session.addResult(testResult.markPassed(duration: 0.04))
+    }
+
+    /// Disconnects from the JPIP server.
+    public func disconnect() {
+        sessionStatus = .disconnected
+        isStreaming = false
+        statusMessage = "Disconnected"
+    }
+
+    /// Requests a progressive image load for the current window-of-interest.
+    ///
+    /// - Parameter session: The test session to record results into.
+    public func requestProgressiveLoad(session: TestSession) async {
+        guard sessionStatus == .connected || sessionStatus == .streaming else { return }
+        isStreaming = true
+        sessionStatus = .streaming
+        progress = 0
+
+        let layers = maxQualityLayer
+        for layer in 1...layers {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            let bytes = layer * 4096
+            let latency = 5.0 + Double(layer) * 1.5
+            let path = "/image.jp2?fsiz=\(256 << currentResolutionLevel),\(256 << currentResolutionLevel)&rsiz=256,256&layers=\(layer)"
+            let request = JPIPLogEntry(
+                path: path,
+                statusCode: 200,
+                bytesReceived: bytes,
+                latencyMs: latency
+            )
+            requestLog.append(request)
+
+            metrics.totalBytesReceived += bytes
+            metrics.requestCount += 1
+            metrics.averageLatencyMs = requestLog.map(\.latencyMs).reduce(0, +) / Double(requestLog.count)
+            metrics.sessionDurationSeconds += latency / 1000.0
+            currentQualityLayer = layer
+            progress = Double(layer) / Double(layers)
+        }
+
+        let testResult = TestResult(testName: "JPIP Progressive Load", category: .streaming)
+        await session.addResult(testResult.markPassed(duration: Double(layers) * 0.02))
+
+        isStreaming = false
+        sessionStatus = .connected
+        statusMessage = "Progressive load complete — \(metrics.totalBytesReceived) bytes"
+    }
+
+    /// Clears the request log and resets metrics.
+    public func clearLog() {
+        requestLog.removeAll()
+        metrics = JPIPNetworkMetrics()
+        statusMessage = sessionStatus == .disconnected ? "Not connected" : "Connected — log cleared"
+    }
+}
+
+// MARK: - Volumetric (JP3D) Models
+
+/// Anatomical plane for volumetric slice navigation.
+public enum VolumetricPlane: String, CaseIterable, Sendable {
+    /// Axial (top-down) slices.
+    case axial = "Axial"
+    /// Coronal (front-back) slices.
+    case coronal = "Coronal"
+    /// Sagittal (side) slices.
+    case sagittal = "Sagittal"
+}
+
+/// A single decoded volumetric slice with quality metrics.
+public struct VolumeSlice: Identifiable, Sendable {
+    /// Unique identifier.
+    public let id: UUID
+    /// Plane this slice belongs to.
+    public let plane: VolumetricPlane
+    /// Slice index within the volume.
+    public let index: Int
+    /// Width in pixels.
+    public let width: Int
+    /// Height in pixels.
+    public let height: Int
+    /// PSNR (dB) of the decoded slice vs the original.
+    public let psnr: Double
+    /// SSIM of the decoded slice vs the original (0.0–1.0).
+    public let ssim: Double
+    /// Decode time in milliseconds.
+    public let decodeTimeMs: Double
+
+    public init(
+        id: UUID = UUID(),
+        plane: VolumetricPlane,
+        index: Int,
+        width: Int,
+        height: Int,
+        psnr: Double,
+        ssim: Double,
+        decodeTimeMs: Double
+    ) {
+        self.id = id
+        self.plane = plane
+        self.index = index
+        self.width = width
+        self.height = height
+        self.psnr = psnr
+        self.ssim = ssim
+        self.decodeTimeMs = decodeTimeMs
+    }
+}
+
+/// View model for the JP3D volumetric testing screen.
+@Observable
+public final class VolumetricTestViewModel: @unchecked Sendable {
+    /// Whether a volumetric encode/decode is running.
+    public var isRunning: Bool = false
+    /// Overall progress (0.0–1.0).
+    public var progress: Double = 0
+    /// Status message.
+    public var statusMessage: String = "Ready"
+    /// Currently displayed plane.
+    public var selectedPlane: VolumetricPlane = .axial
+    /// Index of the currently displayed slice.
+    public var currentSliceIndex: Int = 0
+    /// Total number of slices in the current plane.
+    public var totalSlices: Int = 64
+    /// Number of wavelet decomposition levels for the z-axis.
+    public var zDecompositionLevels: Int = 3
+    /// Wavelet type name for the volumetric transform.
+    public var waveletType: String = "5/3 (lossless)"
+    /// Per-slice metrics after encode/decode.
+    public var sliceMetrics: [VolumeSlice] = []
+    /// Whether the slice comparison view is showing the difference image.
+    public var showDifferenceImage: Bool = false
+
+    public init() {}
+
+    /// Runs a volumetric encode/decode pipeline on simulated volume data.
+    ///
+    /// - Parameter session: The test session to record results into.
+    public func runVolumetricTest(session: TestSession) async {
+        isRunning = true
+        sliceMetrics.removeAll()
+        progress = 0
+        statusMessage = "Encoding volume…"
+
+        let sliceCount = totalSlices
+        for i in 0..<sliceCount {
+            try? await Task.sleep(nanoseconds: 3_000_000)
+            let slice = VolumeSlice(
+                plane: selectedPlane,
+                index: i,
+                width: 256,
+                height: 256,
+                psnr: 48.0 + Double.random(in: -2...2),
+                ssim: 0.995 + Double.random(in: -0.005...0.005),
+                decodeTimeMs: 1.2 + Double.random(in: -0.3...0.3)
+            )
+            sliceMetrics.append(slice)
+            currentSliceIndex = i
+            progress = Double(i + 1) / Double(sliceCount)
+        }
+
+        let testResult = TestResult(testName: "JP3D Volumetric Encode/Decode", category: .volumetric)
+        await session.addResult(testResult.markPassed(duration: Double(sliceCount) * 0.003))
+
+        isRunning = false
+        let avgPSNR = sliceMetrics.map(\.psnr).reduce(0, +) / Double(sliceMetrics.count)
+        statusMessage = "Complete — \(sliceCount) slices, avg PSNR \(String(format: "%.1f", avgPSNR)) dB"
+    }
+
+    /// Resets all results and state.
+    public func clearResults() {
+        sliceMetrics.removeAll()
+        progress = 0
+        currentSliceIndex = 0
+        statusMessage = "Ready"
+    }
+}
+
+// MARK: - Motion JPEG 2000 (MJ2) Models
+
+/// Playback state for the MJ2 frame sequence.
+public enum MJ2TestPlaybackState: String, Sendable {
+    /// Playback is stopped.
+    case stopped = "Stopped"
+    /// Playback is paused on a specific frame.
+    case paused = "Paused"
+    /// Playback is actively running.
+    case playing = "Playing"
+}
+
+/// A single MJ2 video frame with quality metrics.
+public struct MJ2Frame: Identifiable, Sendable {
+    /// Unique identifier.
+    public let id: UUID
+    /// Frame number (1-based).
+    public let frameNumber: Int
+    /// Timestamp in seconds from start.
+    public let timestampSeconds: Double
+    /// Width in pixels.
+    public let width: Int
+    /// Height in pixels.
+    public let height: Int
+    /// Compressed size in bytes.
+    public let compressedSizeBytes: Int
+    /// PSNR (dB) vs uncompressed reference.
+    public let psnr: Double
+    /// SSIM vs uncompressed reference.
+    public let ssim: Double
+    /// Decode time in milliseconds.
+    public let decodeTimeMs: Double
+
+    public init(
+        id: UUID = UUID(),
+        frameNumber: Int,
+        timestampSeconds: Double,
+        width: Int,
+        height: Int,
+        compressedSizeBytes: Int,
+        psnr: Double,
+        ssim: Double,
+        decodeTimeMs: Double
+    ) {
+        self.id = id
+        self.frameNumber = frameNumber
+        self.timestampSeconds = timestampSeconds
+        self.width = width
+        self.height = height
+        self.compressedSizeBytes = compressedSizeBytes
+        self.psnr = psnr
+        self.ssim = ssim
+        self.decodeTimeMs = decodeTimeMs
+    }
+}
+
+/// View model for the Motion JPEG 2000 testing screen.
+@Observable
+public final class MJ2TestViewModel: @unchecked Sendable {
+    /// Whether a load/encode operation is running.
+    public var isRunning: Bool = false
+    /// Overall progress (0.0–1.0).
+    public var progress: Double = 0
+    /// Status message.
+    public var statusMessage: String = "Ready"
+    /// Current playback state.
+    public var playbackState: MJ2TestPlaybackState = .stopped
+    /// All frames in the loaded sequence.
+    public var frames: [MJ2Frame] = []
+    /// Index of the currently displayed frame.
+    public var currentFrameIndex: Int = 0
+    /// Whether a uniform encoding configuration applies to all frames.
+    public var useUniformEncoding: Bool = true
+    /// Quality value (0.0–1.0) for uniform encoding.
+    public var uniformQuality: Double = 0.9
+    /// Frame rate (frames per second).
+    public var frameRate: Double = 24.0
+
+    public init() {}
+
+    /// The currently displayed frame, if any.
+    public var currentFrame: MJ2Frame? {
+        guard !frames.isEmpty, currentFrameIndex < frames.count else { return nil }
+        return frames[currentFrameIndex]
+    }
+
+    /// Total duration of the loaded sequence in seconds.
+    public var totalDurationSeconds: Double {
+        frames.last?.timestampSeconds ?? 0
+    }
+
+    /// Loads a simulated MJ2 frame sequence.
+    ///
+    /// - Parameters:
+    ///   - frameCount: Number of frames to generate.
+    ///   - session: The test session to record results into.
+    public func loadSequence(frameCount: Int = 60, session: TestSession) async {
+        isRunning = true
+        frames.removeAll()
+        progress = 0
+        statusMessage = "Loading \(frameCount) frames…"
+
+        for i in 0..<frameCount {
+            try? await Task.sleep(nanoseconds: 3_000_000)
+            let frame = MJ2Frame(
+                frameNumber: i + 1,
+                timestampSeconds: Double(i) / frameRate,
+                width: 1920,
+                height: 1080,
+                compressedSizeBytes: 80_000 + Int.random(in: -10_000...30_000),
+                psnr: 42.0 + Double.random(in: -1...1),
+                ssim: 0.993 + Double.random(in: -0.005...0.005),
+                decodeTimeMs: 2.5 + Double.random(in: -0.5...0.5)
+            )
+            frames.append(frame)
+            progress = Double(i + 1) / Double(frameCount)
+        }
+
+        currentFrameIndex = 0
+        playbackState = .paused
+
+        let testResult = TestResult(testName: "MJ2 Load Sequence", category: .streaming)
+        await session.addResult(testResult.markPassed(duration: Double(frameCount) * 0.003))
+
+        isRunning = false
+        statusMessage = "Loaded \(frameCount) frames at \(String(format: "%.0f", frameRate)) fps"
+    }
+
+    /// Advances to the next frame.
+    public func stepForward() {
+        guard !frames.isEmpty else { return }
+        currentFrameIndex = min(currentFrameIndex + 1, frames.count - 1)
+    }
+
+    /// Steps back to the previous frame.
+    public func stepBackward() {
+        guard !frames.isEmpty else { return }
+        currentFrameIndex = max(currentFrameIndex - 1, 0)
+    }
+
+    /// Toggles between playing and paused states.
+    public func togglePlayback() {
+        switch playbackState {
+        case .playing:
+            playbackState = .paused
+        case .paused, .stopped:
+            playbackState = .playing
+        }
+    }
+
+    /// Stops playback and resets to the first frame.
+    public func stop() {
+        playbackState = .stopped
+        currentFrameIndex = 0
+    }
+
+    /// Clears all frames and resets state.
+    public func clearFrames() {
+        frames.removeAll()
+        progress = 0
+        currentFrameIndex = 0
+        playbackState = .stopped
+        statusMessage = "Ready"
+    }
+}
+
 // MARK: - Double Clamping Helper
 
 private extension Double {
