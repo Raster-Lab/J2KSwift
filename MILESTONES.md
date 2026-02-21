@@ -3996,9 +3996,251 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-21 (Week 293-295 completed)
-**Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (complete)
+## Phase 18: Interactive Testing Application (v2.1, Weeks 296-315)
+
+**Goal**: Build an interactive application for testing J2KSwift, providing a hands-on environment for exercising encoding, decoding, visualisation, and validation workflows across all supported JPEG 2000 features.
+
+This phase delivers a cross-platform interactive testing tool that enables developers and testers to explore J2KSwift capabilities in real time. The application provides immediate visual feedback for encoding/decoding pipelines, supports all JPEG 2000 parts (1, 2, 3, 10, 15), and serves as both a testing harness and a demonstration of the library's API surface. It is built entirely on the existing J2KSwift modules with no external UI framework dependencies beyond Foundation and platform-native APIs.
+
+**Target Platform**: macOS (primary, SwiftUI), Linux/Windows (terminal-based fallback).
+
+### Week 296-298: Interactive Testing Application Architecture
+
+**Goal**: Design and scaffold the interactive testing application with core navigation and module structure.
+
+- [ ] Application architecture
+  - [ ] Define `J2KTestApp` entry point with SwiftUI lifecycle (macOS) and terminal fallback (Linux)
+  - [ ] Implement `TestSession` actor for managing test state and results
+  - [ ] Create `TestCategory` enum covering all JPEG 2000 parts and modules
+  - [ ] Design `TestResult` model with pass/fail/skip/error states and timing data
+  - [ ] Implement `TestRunner` protocol for pluggable test execution
+- [ ] Navigation and discovery
+  - [ ] Implement module browser listing all J2KSwift modules and their public APIs
+  - [ ] Create test catalogue with categorised test scenarios
+  - [ ] Add search and filtering for test discovery
+  - [ ] Implement test history with persistent storage
+- [ ] Testing
+  - [ ] Unit tests for `TestSession`, `TestResult`, and `TestRunner`
+  - [ ] Verify application scaffolding builds on macOS and Linux
+
+**Deliverables**:
+- `J2KTestApp` application target in `Package.swift`
+- `TestSession` actor and `TestRunner` protocol
+- Module browser and test catalogue
+
+**Status**: ⏳ Planned.
+
+### Week 299-301: Encoding and Decoding Test Workflows
+
+**Goal**: Implement interactive workflows for testing encoding and decoding pipelines with real-time feedback.
+
+- [ ] Encoding test workflows
+  - [ ] Interactive encoder configuration (quality, tile size, progression, wavelet, MCT)
+  - [ ] Real-time encoding with progress reporting and timing
+  - [ ] Side-by-side comparison of encoding configurations
+  - [ ] Batch encoding with summary statistics
+  - [ ] Support lossless, lossy, HTJ2K, and visually lossless modes
+- [ ] Decoding test workflows
+  - [ ] Interactive decoder with region-of-interest selection
+  - [ ] Progressive decoding visualisation (resolution and quality layers)
+  - [ ] Multi-component image decoding and channel inspection
+  - [ ] Codestream header and marker inspection
+- [ ] Round-trip validation
+  - [ ] Encode-decode round-trip with PSNR/SSIM metrics
+  - [ ] Bit-exact verification for lossless mode
+  - [ ] Configurable image generators (gradients, patterns, noise, natural)
+- [ ] Testing
+  - [ ] Integration tests for encoding/decoding workflows
+  - [ ] Verify round-trip metrics computation
+
+**Deliverables**:
+- Encoding and decoding interactive workflow views/commands
+- Round-trip validation with quality metrics
+- Configurable test image generators
+
+**Status**: ⏳ Planned.
+
+### Week 302-304: Conformance and Interoperability Testing Interface
+
+**Goal**: Provide interactive access to Part 4 conformance suites and OpenJPEG interoperability testing.
+
+- [ ] Conformance test interface
+  - [ ] Interactive Part 1 conformance test runner with per-test detail
+  - [ ] Part 2, 3, 10, and 15 conformance test execution
+  - [ ] Conformance matrix visualisation (pass/fail/skip per requirement)
+  - [ ] Exportable conformance reports (JSON, text)
+- [ ] OpenJPEG interoperability interface
+  - [ ] Bidirectional encode/decode comparison with OpenJPEG
+  - [ ] Visual diff for decoded image comparison
+  - [ ] Performance comparison dashboard (J2KSwift vs OpenJPEG)
+  - [ ] Codestream structure comparison
+- [ ] Validation tools
+  - [ ] Codestream syntax validator with detailed error reporting
+  - [ ] File format validator (JP2, JPX, JPM box structure)
+  - [ ] Marker segment inspector with hex dump
+- [ ] Testing
+  - [ ] Tests for conformance report generation
+  - [ ] Tests for interoperability comparison logic
+
+**Deliverables**:
+- Conformance test runner with matrix visualisation
+- OpenJPEG interoperability comparison interface
+- Codestream and file format validation tools
+
+**Status**: ⏳ Planned.
+
+### Week 305-307: Performance Profiling and GPU Testing Interface
+
+**Goal**: Interactive performance profiling, benchmarking, and GPU pipeline testing.
+
+- [ ] Performance profiling
+  - [ ] Interactive benchmark runner with configurable parameters
+  - [ ] Real-time throughput and latency display
+  - [ ] Memory usage tracking and allocation audit
+  - [ ] Historical performance comparison (run-over-run)
+- [ ] GPU testing interface
+  - [ ] Metal pipeline interactive testing (macOS)
+  - [ ] Vulkan pipeline interactive testing (Linux)
+  - [ ] GPU vs CPU comparison with speedup metrics
+  - [ ] Shader compilation and dispatch verification
+- [ ] SIMD testing interface
+  - [ ] ARM Neon operation verification and benchmarking
+  - [ ] Intel SSE/AVX operation verification and benchmarking
+  - [ ] SIMD utilisation reporting
+- [ ] Testing
+  - [ ] Benchmark harness tests
+  - [ ] GPU pipeline smoke tests
+
+**Deliverables**:
+- Interactive benchmark runner with historical comparison
+- GPU pipeline testing interface (Metal and Vulkan)
+- SIMD verification and benchmarking tools
+
+**Status**: ⏳ Planned.
+
+### Week 308-310: Streaming and Volumetric Testing Interface
+
+**Goal**: Interactive testing for JPIP streaming and JP3D volumetric workflows.
+
+- [ ] JPIP streaming test interface
+  - [ ] Interactive JPIP client with session management
+  - [ ] Progressive image loading visualisation
+  - [ ] Window-of-interest selection and request monitoring
+  - [ ] Session statistics and network metrics
+- [ ] JP3D volumetric test interface
+  - [ ] Volume data loading and slice navigation
+  - [ ] 3D wavelet transform parameter exploration
+  - [ ] Volumetric encoding/decoding with quality metrics
+  - [ ] Slice-by-slice comparison for round-trip validation
+- [ ] Motion JPEG 2000 test interface
+  - [ ] Frame sequence encoding/decoding
+  - [ ] Frame-by-frame quality inspection
+  - [ ] Temporal navigation and playback controls
+- [ ] Testing
+  - [ ] JPIP session management tests
+  - [ ] Volumetric round-trip tests
+
+**Deliverables**:
+- JPIP streaming test client with visualisation
+- JP3D volumetric testing tools
+- Motion JPEG 2000 frame inspection interface
+
+**Status**: ⏳ Planned.
+
+### Week 311-313: Test Reporting and Automation
+
+**Goal**: Comprehensive test reporting, CI integration, and automated test suite management.
+
+- [ ] Test reporting
+  - [ ] HTML report generation with charts and summaries
+  - [ ] JSON/CSV export for CI/CD integration
+  - [ ] Test coverage mapping to JPEG 2000 standard sections
+  - [ ] Regression detection with configurable thresholds
+- [ ] Automation
+  - [ ] Scriptable test execution via CLI arguments
+  - [ ] Headless mode for CI/CD pipelines
+  - [ ] Test playlist support (save/load test configurations)
+  - [ ] Scheduled test execution with notification
+- [ ] CI/CD integration
+  - [ ] GitHub Actions workflow for interactive test suite
+  - [ ] Artifact collection for test reports
+  - [ ] Performance regression gating
+- [ ] Testing
+  - [ ] Report generation tests
+  - [ ] CLI automation tests
+
+**Deliverables**:
+- HTML/JSON/CSV test report generation
+- Scriptable headless mode for CI/CD
+- GitHub Actions workflow integration
+
+**Status**: ⏳ Planned.
+
+### Week 314-315: Polish, Documentation and v2.1 Release Preparation
+
+**Goal**: Final polish, documentation, and v2.1 release preparation for the interactive testing application.
+
+- [ ] Polish
+  - [ ] UI/UX refinement (macOS SwiftUI)
+  - [ ] Terminal UI refinement (Linux)
+  - [ ] Error handling and graceful degradation
+  - [ ] Accessibility review
+- [ ] Documentation
+  - [ ] Interactive testing application user guide
+  - [ ] Developer guide for extending test scenarios
+  - [ ] API documentation for test framework types
+  - [ ] Example test configurations and playlists
+- [ ] Release preparation
+  - [ ] Update `VERSION` file to 2.1.0
+  - [ ] `RELEASE_NOTES_v2.1.0.md` — release notes
+  - [ ] Update `README.md` with interactive testing application section
+  - [ ] Update `MILESTONES.md` with completion status
+- [ ] Testing
+  - [ ] Full integration test pass
+  - [ ] Cross-platform verification (macOS, Linux)
+  - [ ] Clean install test
+
+**Deliverables**:
+- Polished interactive testing application
+- User and developer documentation
+- v2.1.0 release preparation
+
+**Status**: ⏳ Planned.
+
+---
+
+#### Phase 18 Summary
+
+**Expected Benefits**:
+- Hands-on interactive environment for exploring all J2KSwift capabilities
+- Real-time visual feedback for encoding/decoding/streaming pipelines
+- Integrated conformance and interoperability testing with OpenJPEG
+- Performance profiling with historical comparison and regression detection
+- Scriptable and CI/CD-ready for automated testing workflows
+- Comprehensive test reporting in HTML, JSON, and CSV formats
+
+**Architecture Principles**:
+- **SwiftUI on macOS**: Native interactive experience with live previews
+- **Terminal Fallback**: Full functionality via terminal interface on Linux/Windows
+- **Actor-Based State**: `TestSession` actor for thread-safe test state management
+- **Pluggable Tests**: `TestRunner` protocol for extensible test scenarios
+- **Headless Mode**: CI/CD integration without GUI dependencies
+- **British English**: Consistent terminology throughout
+
+**Test Coverage Goals**:
+- Application scaffolding and navigation tests: 20+
+- Encoding/decoding workflow tests: 30+
+- Conformance and interoperability tests: 20+
+- Performance profiling tests: 15+
+- Streaming and volumetric tests: 15+
+- Reporting and automation tests: 20+
+- Total new tests: 120+
+
+---
+
+**Last Updated**: 2026-02-21 (Phase 18 planned)
+**Current Phase**: Phase 18 — Interactive Testing Application (planned)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-271, Phase 17f Weeks 272-277, Phase 17g Weeks 278-283, Phase 17h Weeks 284-295
-**Next Phase**: v2.1 planning
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0)
+**Next Phase**: Phase 18 (v2.1, Weeks 296-315)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README
