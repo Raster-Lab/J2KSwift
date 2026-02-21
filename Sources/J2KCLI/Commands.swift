@@ -358,7 +358,16 @@ extension J2KCLI {
         """)
     }
 
-    /// Minimal JP2 container wrapper – appends the codestream in a jp2c box.
+    /// Wraps a raw J2K codestream in a minimal JP2 container.
+    ///
+    /// Builds a JP2 file with four boxes: JP2 signature, file-type, JP2 header
+    /// (containing image-header and colour-specification sub-boxes), and the
+    /// contiguous codestream box (`jp2c`) that holds the supplied codestream.
+    ///
+    /// - Parameters:
+    ///   - codestream: The raw JPEG 2000 codestream bytes.
+    ///   - image: The decoded image, used to populate the image-header box.
+    /// - Returns: A valid JP2 file as `Data`.
     static func wrapInJP2Container(_ codestream: Data, image: J2KImage) -> Data {
         // JP2 signature box
         var out = Data()

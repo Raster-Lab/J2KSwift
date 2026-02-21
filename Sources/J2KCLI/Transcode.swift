@@ -107,8 +107,13 @@ extension J2KCLI {
         // Wrap in container if required
         if outputFormat == "jp2" || outputFormat == "jpx" {
             let decoder = J2KDecoder()
-            if let image = try? decoder.decode(outputData) {
+            do {
+                let image = try decoder.decode(outputData)
                 outputData = wrapInJP2Container(outputData, image: image)
+            } catch {
+                if verbose {
+                    print("Warning: could not wrap output in JP2 container: \(error). Writing raw codestream.")
+                }
             }
         }
 

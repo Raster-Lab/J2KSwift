@@ -86,7 +86,7 @@ extension J2KCLI {
                 "width":       image.width,
                 "height":      image.height,
                 "components":  image.componentCount,
-                "colourSpace": colourSpaceName(image.colorSpace),
+                "colorSpace": colourSpaceName(image.colorSpace),
                 "isHTJ2K":     isHTJ2K,
                 "fileSize":    data.count,
             ]
@@ -189,7 +189,9 @@ extension J2KCLI {
         // Walk boxes looking for 'jp2c' (contiguous codestream box)
         var offset = 0
         while offset + 8 <= data.count {
-            let boxLen = Int(UInt32(bigEndian: data.subdata(in: offset..<offset+4).withUnsafeBytes { $0.load(as: UInt32.self) }))
+            let lenBytes = data.subdata(in: offset..<offset+4)
+            let bigEndianLen: UInt32 = lenBytes.withUnsafeBytes { $0.load(as: UInt32.self) }
+            let boxLen = Int(UInt32(bigEndian: bigEndianLen))
             guard let boxType = String(data: data.subdata(in: offset+4..<offset+8), encoding: .ascii) else { break }
             if boxType == "jp2c" {
                 let payloadStart = offset + 8
@@ -204,9 +206,11 @@ extension J2KCLI {
 
     /// Heuristic HTJ2K detection: check for fast-mode markers in the codestream.
     static func detectHTJ2K(_ data: Data) -> Bool {
-        // HTJ2K uses the same SOC (0xFF4F) but has the CAP segment (0xFF50)
+        // HTJ2K uses the same SOC (0xFF4F) but has the CAP segment (0xFF50).
+        // Scan only the first htj2kScanDepth bytes, as the CAP marker appears early.
+        let htj2kScanDepth = 256
         guard data.count > 4 else { return false }
-        for i in 0..<min(data.count - 1, 256) {
+        for i in 0..<min(data.count - 1, htj2kScanDepth) {
             if data[i] == 0xFF && data[i + 1] == 0x50 { return true }
         }
         return false

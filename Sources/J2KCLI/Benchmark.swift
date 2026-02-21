@@ -198,7 +198,9 @@ extension J2KCLI {
         let median = times.count.isMultiple(of: 2)
             ? (sorted[times.count / 2 - 1] + sorted[times.count / 2]) / 2
             : sorted[times.count / 2]
-        let variance = times.map { ($0 - avg) * ($0 - avg) }.reduce(0, +) / n
+        let variance = times.count > 1
+            ? times.map { ($0 - avg) * ($0 - avg) }.reduce(0, +) / Double(times.count - 1)
+            : 0.0
         return Stats(avg: avg, median: median, min: sorted.first!, max: sorted.last!, stddev: variance.squareRoot())
     }
 
