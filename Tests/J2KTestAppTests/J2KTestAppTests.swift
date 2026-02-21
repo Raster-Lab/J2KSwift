@@ -2114,4 +2114,376 @@ final class SIMDTestViewModelTests: XCTestCase {
         XCTAssertLessThanOrEqual(vm.utilisationPercentage, 100)
     }
 }
+
+// MARK: - JPIP Request Tests
+
+final class JPIPLogEntryTests: XCTestCase {
+
+    func testRequestCreation() {
+        let request = JPIPLogEntry(
+            path: "/image.jp2?layers=3",
+            statusCode: 200,
+            bytesReceived: 4096,
+            latencyMs: 12.5
+        )
+        XCTAssertEqual(request.path, "/image.jp2?layers=3")
+        XCTAssertEqual(request.statusCode, 200)
+        XCTAssertEqual(request.bytesReceived, 4096)
+        XCTAssertEqual(request.latencyMs, 12.5, accuracy: 0.001)
+    }
+
+    func testRequestHasUniqueID() {
+        let r1 = JPIPLogEntry(path: "/a", statusCode: 200, bytesReceived: 100, latencyMs: 5)
+        let r2 = JPIPLogEntry(path: "/b", statusCode: 200, bytesReceived: 100, latencyMs: 5)
+        XCTAssertNotEqual(r1.id, r2.id)
+    }
+}
+
+// MARK: - JPIP Network Metrics Tests
+
+final class JPIPNetworkMetricsTests: XCTestCase {
+
+    func testDefaultInit() {
+        let metrics = JPIPNetworkMetrics()
+        XCTAssertEqual(metrics.totalBytesReceived, 0)
+        XCTAssertEqual(metrics.averageLatencyMs, 0)
+        XCTAssertEqual(metrics.requestCount, 0)
+        XCTAssertEqual(metrics.sessionDurationSeconds, 0)
+    }
+
+    func testCustomInit() {
+        let metrics = JPIPNetworkMetrics(
+            totalBytesReceived: 1024,
+            averageLatencyMs: 8.0,
+            requestCount: 4,
+            sessionDurationSeconds: 2.5
+        )
+        XCTAssertEqual(metrics.totalBytesReceived, 1024)
+        XCTAssertEqual(metrics.averageLatencyMs, 8.0, accuracy: 0.001)
+        XCTAssertEqual(metrics.requestCount, 4)
+        XCTAssertEqual(metrics.sessionDurationSeconds, 2.5, accuracy: 0.001)
+    }
+}
+
+// MARK: - JPIP View Model Tests
+
+final class JPIPViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = JPIPViewModel()
+        XCTAssertEqual(vm.sessionStatus, .disconnected)
+        XCTAssertFalse(vm.isStreaming)
+        XCTAssertTrue(vm.requestLog.isEmpty)
+        XCTAssertEqual(vm.metrics.requestCount, 0)
+        XCTAssertEqual(vm.windowX, 0)
+        XCTAssertEqual(vm.windowY, 0)
+        XCTAssertEqual(vm.windowWidth, 1)
+        XCTAssertEqual(vm.windowHeight, 1)
+    }
+
+    func testConnect() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        XCTAssertEqual(vm.sessionStatus, .connected)
+        XCTAssertFalse(vm.isStreaming)
+    }
+
+    func testConnectRecordsTestResult() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testDisconnect() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        vm.disconnect()
+        XCTAssertEqual(vm.sessionStatus, .disconnected)
+        XCTAssertFalse(vm.isStreaming)
+    }
+
+    func testProgressiveLoad() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        await vm.requestProgressiveLoad(session: session)
+        XCTAssertFalse(vm.isStreaming)
+        XCTAssertEqual(vm.sessionStatus, .connected)
+        XCTAssertFalse(vm.requestLog.isEmpty)
+        XCTAssertGreaterThan(vm.metrics.totalBytesReceived, 0)
+        XCTAssertGreaterThan(vm.metrics.requestCount, 0)
+    }
+
+    func testProgressiveLoadRequestCount() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        await vm.requestProgressiveLoad(session: session)
+        XCTAssertEqual(vm.requestLog.count, vm.maxQualityLayer)
+    }
+
+    func testClearLog() async {
+        let vm = JPIPViewModel()
+        let session = TestSession()
+        await vm.connect(session: session)
+        await vm.requestProgressiveLoad(session: session)
+        XCTAssertFalse(vm.requestLog.isEmpty)
+        vm.clearLog()
+        XCTAssertTrue(vm.requestLog.isEmpty)
+        XCTAssertEqual(vm.metrics.requestCount, 0)
+    }
+}
+
+// MARK: - Volume Slice Tests
+
+final class VolumeSliceTests: XCTestCase {
+
+    func testSliceCreation() {
+        let slice = VolumeSlice(
+            plane: .axial,
+            index: 5,
+            width: 256,
+            height: 256,
+            psnr: 48.0,
+            ssim: 0.997,
+            decodeTimeMs: 1.1
+        )
+        XCTAssertEqual(slice.plane, .axial)
+        XCTAssertEqual(slice.index, 5)
+        XCTAssertEqual(slice.width, 256)
+        XCTAssertEqual(slice.height, 256)
+        XCTAssertEqual(slice.psnr, 48.0, accuracy: 0.001)
+        XCTAssertEqual(slice.ssim, 0.997, accuracy: 0.0001)
+        XCTAssertEqual(slice.decodeTimeMs, 1.1, accuracy: 0.001)
+    }
+
+    func testAllPlanesAvailable() {
+        let planes = VolumetricPlane.allCases
+        XCTAssertEqual(planes.count, 3)
+        XCTAssertTrue(planes.contains(.axial))
+        XCTAssertTrue(planes.contains(.coronal))
+        XCTAssertTrue(planes.contains(.sagittal))
+    }
+}
+
+// MARK: - Volumetric Test View Model Tests
+
+final class VolumetricTestViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = VolumetricTestViewModel()
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertTrue(vm.sliceMetrics.isEmpty)
+        XCTAssertEqual(vm.selectedPlane, .axial)
+        XCTAssertEqual(vm.currentSliceIndex, 0)
+        XCTAssertFalse(vm.showDifferenceImage)
+    }
+
+    func testRunVolumetricTest() async {
+        let vm = VolumetricTestViewModel()
+        vm.totalSlices = 4  // Use a small count for speed
+        let session = TestSession()
+        await vm.runVolumetricTest(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.sliceMetrics.count, 4)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testRunVolumetricTestRecordsResult() async {
+        let vm = VolumetricTestViewModel()
+        vm.totalSlices = 2
+        let session = TestSession()
+        await vm.runVolumetricTest(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testSlicePSNRAboveThreshold() async {
+        let vm = VolumetricTestViewModel()
+        vm.totalSlices = 4
+        let session = TestSession()
+        await vm.runVolumetricTest(session: session)
+        for slice in vm.sliceMetrics {
+            XCTAssertGreaterThan(slice.psnr, 30.0)
+        }
+    }
+
+    func testClearResults() async {
+        let vm = VolumetricTestViewModel()
+        vm.totalSlices = 2
+        let session = TestSession()
+        await vm.runVolumetricTest(session: session)
+        XCTAssertFalse(vm.sliceMetrics.isEmpty)
+        vm.clearResults()
+        XCTAssertTrue(vm.sliceMetrics.isEmpty)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.currentSliceIndex, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+    }
+}
+
+// MARK: - MJ2 Frame Tests
+
+final class MJ2FrameTests: XCTestCase {
+
+    func testFrameCreation() {
+        let frame = MJ2Frame(
+            frameNumber: 1,
+            timestampSeconds: 0.0,
+            width: 1920,
+            height: 1080,
+            compressedSizeBytes: 80_000,
+            psnr: 42.0,
+            ssim: 0.993,
+            decodeTimeMs: 2.5
+        )
+        XCTAssertEqual(frame.frameNumber, 1)
+        XCTAssertEqual(frame.timestampSeconds, 0.0, accuracy: 0.001)
+        XCTAssertEqual(frame.width, 1920)
+        XCTAssertEqual(frame.height, 1080)
+        XCTAssertEqual(frame.compressedSizeBytes, 80_000)
+        XCTAssertEqual(frame.psnr, 42.0, accuracy: 0.001)
+        XCTAssertEqual(frame.ssim, 0.993, accuracy: 0.0001)
+    }
+
+    func testFrameHasUniqueID() {
+        let f1 = MJ2Frame(frameNumber: 1, timestampSeconds: 0, width: 1920, height: 1080,
+                          compressedSizeBytes: 80_000, psnr: 42, ssim: 0.99, decodeTimeMs: 2.5)
+        let f2 = MJ2Frame(frameNumber: 2, timestampSeconds: 1, width: 1920, height: 1080,
+                          compressedSizeBytes: 80_000, psnr: 42, ssim: 0.99, decodeTimeMs: 2.5)
+        XCTAssertNotEqual(f1.id, f2.id)
+    }
+}
+
+// MARK: - MJ2 Test View Model Tests
+
+final class MJ2TestViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = MJ2TestViewModel()
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertTrue(vm.frames.isEmpty)
+        XCTAssertEqual(vm.playbackState, .stopped)
+        XCTAssertEqual(vm.currentFrameIndex, 0)
+        XCTAssertTrue(vm.useUniformEncoding)
+        XCTAssertEqual(vm.frameRate, 24.0, accuracy: 0.001)
+    }
+
+    func testLoadSequence() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.frames.count, 5)
+        XCTAssertEqual(vm.playbackState, .paused)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testLoadSequenceRecordsResult() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 3, session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testCurrentFrame() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        let frame = vm.currentFrame
+        XCTAssertNotNil(frame)
+        XCTAssertEqual(frame?.frameNumber, 1)
+    }
+
+    func testTotalDuration() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        XCTAssertGreaterThan(vm.totalDurationSeconds, 0)
+    }
+
+    func testStepForward() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        vm.stepForward()
+        XCTAssertEqual(vm.currentFrameIndex, 1)
+    }
+
+    func testStepBackward() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        vm.currentFrameIndex = 3
+        vm.stepBackward()
+        XCTAssertEqual(vm.currentFrameIndex, 2)
+    }
+
+    func testStepBackwardAtStart() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        vm.currentFrameIndex = 0
+        vm.stepBackward()
+        XCTAssertEqual(vm.currentFrameIndex, 0)
+    }
+
+    func testStepForwardAtEnd() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        vm.currentFrameIndex = 4
+        vm.stepForward()
+        XCTAssertEqual(vm.currentFrameIndex, 4)
+    }
+
+    func testTogglePlayback() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 3, session: session)
+        XCTAssertEqual(vm.playbackState, .paused)
+        vm.togglePlayback()
+        XCTAssertEqual(vm.playbackState, .playing)
+        vm.togglePlayback()
+        XCTAssertEqual(vm.playbackState, .paused)
+    }
+
+    func testStop() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 3, session: session)
+        vm.currentFrameIndex = 2
+        vm.togglePlayback()
+        vm.stop()
+        XCTAssertEqual(vm.playbackState, .stopped)
+        XCTAssertEqual(vm.currentFrameIndex, 0)
+    }
+
+    func testClearFrames() async {
+        let vm = MJ2TestViewModel()
+        let session = TestSession()
+        await vm.loadSequence(frameCount: 5, session: session)
+        XCTAssertFalse(vm.frames.isEmpty)
+        vm.clearFrames()
+        XCTAssertTrue(vm.frames.isEmpty)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.currentFrameIndex, 0)
+        XCTAssertEqual(vm.playbackState, .stopped)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+    }
+
+    func testCurrentFrameNilWhenEmpty() {
+        let vm = MJ2TestViewModel()
+        XCTAssertNil(vm.currentFrame)
+    }
+}
 #endif
