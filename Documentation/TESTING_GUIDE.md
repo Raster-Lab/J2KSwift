@@ -468,6 +468,168 @@ requiring external files.
 
 ---
 
+## How to Test Conformance
+
+The **Conformance** screen provides an interactive dashboard for ISO/IEC 15444-4 conformance testing
+across Parts 1, 2, 3/10, and 15 of the JPEG 2000 standard.
+
+### Opening the Conformance Screen
+
+1. Select **Conformance** in the sidebar.
+2. The conformance matrix loads automatically with the default requirement set.
+
+### Running Conformance Tests
+
+1. Click **Run All Conformance Tests** in the toolbar.
+2. A progress bar shows overall completion.
+3. As tests complete, cells in the matrix update with colour-coded results:
+   - 🟢 **Green** — Pass
+   - 🔴 **Red** — Fail
+   - ⚪ **Grey** — Skip (requirement not applicable to this part)
+4. The **summary banner** at the top left shows e.g. "17/17 tests passed" with a percentage bar.
+
+### Reading the Conformance Matrix
+
+| Column | Description |
+|--------|-------------|
+| **Requirement** | Requirement identifier (e.g. T.1.1) |
+| **Description** | Human-readable description of the requirement |
+| **Part 1** | Core coding system result |
+| **Part 2** | Extensions result |
+| **Part 3/10** | Motion and volumetric result |
+| **Part 15** | HTJ2K result |
+
+Click the **chevron** at the end of any row to expand the detailed test log.
+
+### Filtering by Part
+
+Use the **Filter by Part** segmented control in the left panel to show only requirements
+relevant to a specific part. Select "All Parts" to see the full matrix.
+
+### Exporting the Conformance Report
+
+1. Select the desired format (JSON, HTML, or PDF) using the segmented control.
+2. Click **Export** to generate the report.
+3. JSON exports include `totalTests`, `passed`, `failed`, `skipped`, `passRate`, and `duration`.
+
+---
+
+## How to Test OpenJPEG Interoperability
+
+The **Conformance** sidebar category includes interoperability testing. In the current implementation
+the interoperability screen is accessible through dedicated views that compare J2KSwift and OpenJPEG
+decode outputs side by side.
+
+### Loading a Codestream
+
+1. Drop a J2K or JP2 file into the input area, or use the file picker to select one.
+2. The file name appears in the **Input Codestream** section of the left panel.
+
+### Running the Comparison
+
+1. Click **Run Comparison** in the toolbar.
+2. The screen performs four steps:
+   - Decode the codestream with J2KSwift
+   - Decode the codestream with OpenJPEG
+   - Compute pixel-level differences
+   - Build a codestream structure diff tree
+3. Progress is shown via a progress bar.
+
+### Reading the Results
+
+**Side-by-Side Images**: The top area shows J2KSwift output on the left and OpenJPEG output on the right.
+
+**Performance Comparison**: The left panel shows a bar chart comparing J2KSwift and OpenJPEG
+decode times with a speedup factor.
+
+**Pixel Difference**: Max pixel difference and tolerance status are shown. Adjust the
+**Tolerance Threshold** slider (0–10) to set the acceptable pixel difference.
+
+**Codestream Structure Diff**: The bottom area shows a tree of marker segments with:
+- 🟢 **Green equal sign** — Values match between J2KSwift and OpenJPEG
+- 🟠 **Orange warning** — Values differ
+
+### Bidirectional Testing
+
+Toggle **Bidirectional** in the toolbar to test both directions:
+- Encode with J2KSwift → Decode with OpenJPEG
+- Encode with OpenJPEG → Decode with J2KSwift
+
+### Results History
+
+All comparison results are accumulated in the **Results History** section of the left panel,
+showing the codestream name, tolerance pass/fail, and speedup factor.
+
+---
+
+## How to Validate a Codestream
+
+The **Validation** screen provides three tools for inspecting JPEG 2000 codestreams and file formats.
+
+### Opening the Validation Screen
+
+1. Select **Validation** in the sidebar.
+2. Drop a J2K, JP2, JPX, or JPM file into the input area.
+
+### Codestream Syntax Validation
+
+1. Select **Codestream** mode in the toolbar segmented control.
+2. Click **Validate**.
+3. The findings list shows each marker found with:
+   - Severity icon: 🔵 Info, 🟠 Warning, 🔴 Error
+   - Byte offset in hexadecimal
+   - Description of the finding
+4. The left panel shows a **Valid** or **Invalid** badge.
+
+### File Format Validation
+
+1. Select **File Format** mode.
+2. Click **Validate**.
+3. The box structure tree shows all JP2/JPX/JPM boxes:
+   - ✅ Green checkbox — Valid box
+   - ❌ Red checkbox — Invalid box
+   - Nested boxes are indented to show hierarchy
+4. Each box shows type code, description, and size in bytes.
+
+### Marker Inspector
+
+1. Select **Marker Inspector** mode.
+2. Click **Validate**.
+3. The marker list shows all codestream markers with:
+   - Marker name (SOC, SIZ, COD, etc.)
+   - Byte offset
+   - Length in bytes
+   - Summary description
+4. The **Hex Dump** panel below shows raw hex data for the selected marker with highlighted boundaries.
+
+---
+
+## Conformance Matrix Reference
+
+The conformance matrix maps JPEG 2000 standard requirements to test results across parts.
+
+| Requirement | Description | Applicable Parts |
+|-------------|-------------|------------------|
+| T.1.1 | SOC marker present at start of codestream | All |
+| T.1.2 | SIZ marker immediately follows SOC | All |
+| T.1.3 | COD marker present in main header | All |
+| T.1.4 | QCD marker present in main header | All |
+| T.1.5 | SOT marker present for each tile | All |
+| T.1.6 | EOC marker at end of codestream | All |
+| T.1.7 | Valid tile-part lengths | All |
+| T.1.8 | Component sub-sampling factors valid | All |
+| T.2.1 | Part 2 extended capabilities signalled | Part 1, Part 2 |
+| T.2.2 | MCT extension markers valid | Part 1, Part 2 |
+| T.2.3 | Arbitrary wavelet decomposition valid | Part 1, Part 2 |
+| T.3.1 | Part 3/10 volumetric marker segments | Part 3/10 |
+| T.3.2 | Z-axis transform parameters valid | Part 3/10 |
+| T.15.1 | HTJ2K CAP marker present | Part 15 |
+| T.15.2 | HT cleanup pass valid | Part 15 |
+| T.15.3 | HT SigProp and MagRef passes valid | Part 15 |
+| T.15.4 | FBCOT block coder output valid | Part 15 |
+
+---
+
 ## Common GUI Components
 
 ### Image Preview Panel

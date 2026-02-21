@@ -4089,39 +4089,39 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Build GUI screens for ISO/IEC 15444-4 conformance testing and OpenJPEG interoperability comparison with visual dashboards.
 
-- [ ] Conformance dashboard screen (`ConformanceView`)
-  - [ ] Conformance matrix grid: rows = standard requirements, columns = parts (1, 2, 3, 10, 15), cells = pass/fail/skip with colour coding (green/red/grey)
-  - [ ] Click any cell to expand the detailed test log for that requirement
-  - [ ] "Run All Conformance Tests" button with aggregate progress bar
-  - [ ] Per-part tab selector: Part 1, Part 2, Part 3/10, Part 15 — each showing relevant tests
-  - [ ] Export conformance report as JSON, HTML, or PDF
-  - [ ] Conformance summary banner: "304/304 tests passed" with percentage bar
-- [ ] OpenJPEG interoperability screen (`InteropView`)
-  - [ ] Side-by-side decode comparison: J2KSwift output vs OpenJPEG output for the same codestream
-  - [ ] Pixel difference overlay with configurable tolerance threshold
-  - [ ] Performance comparison chart: bar graph of J2KSwift vs OpenJPEG encode/decode times
-  - [ ] Codestream structure comparison: expandable tree diff of marker segments
-  - [ ] Bidirectional test: encode with J2KSwift → decode with OpenJPEG, and vice versa
-- [ ] Validation tools screen (`ValidationView`)
-  - [ ] Codestream syntax validator: drag-and-drop a J2K file, see pass/fail with detailed error list
-  - [ ] File format validator: JP2/JPX/JPM box structure tree with validity indicators
-  - [ ] Marker segment inspector: hex dump with highlighted marker boundaries and decoded field values
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (conformance/interop sections)
-  - [ ] "How to Test Conformance" — step-by-step: open Conformance tab → run all → read matrix → export report
-  - [ ] "How to Test OpenJPEG Interoperability" — step-by-step: load codestream → compare outputs → check pixel diff → read performance chart
-  - [ ] "How to Validate a Codestream" — step-by-step: drag file → read syntax errors → inspect markers → export findings
-  - [ ] "Conformance Matrix Reference" — explanation of each requirement and what it verifies
-- [ ] Testing
-  - [ ] Tests for conformance matrix data model and report export
-  - [ ] Tests for interoperability comparison view model
-  - [ ] SwiftUI preview tests for ConformanceView, InteropView, ValidationView
+- [x] Conformance dashboard screen (`ConformanceView`)
+  - [x] Conformance matrix grid: rows = standard requirements, columns = parts (1, 2, 3, 10, 15), cells = pass/fail/skip with colour coding (green/red/grey)
+  - [x] Click any cell to expand the detailed test log for that requirement
+  - [x] "Run All Conformance Tests" button with aggregate progress bar
+  - [x] Per-part tab selector: Part 1, Part 2, Part 3/10, Part 15 — each showing relevant tests
+  - [x] Export conformance report as JSON, HTML, or PDF
+  - [x] Conformance summary banner: "304/304 tests passed" with percentage bar
+- [x] OpenJPEG interoperability screen (`InteropView`)
+  - [x] Side-by-side decode comparison: J2KSwift output vs OpenJPEG output for the same codestream
+  - [x] Pixel difference overlay with configurable tolerance threshold
+  - [x] Performance comparison chart: bar graph of J2KSwift vs OpenJPEG encode/decode times
+  - [x] Codestream structure comparison: expandable tree diff of marker segments
+  - [x] Bidirectional test: encode with J2KSwift → decode with OpenJPEG, and vice versa
+- [x] Validation tools screen (`ValidationView`)
+  - [x] Codestream syntax validator: drag-and-drop a J2K file, see pass/fail with detailed error list
+  - [x] File format validator: JP2/JPX/JPM box structure tree with validity indicators
+  - [x] Marker segment inspector: hex dump with highlighted marker boundaries and decoded field values
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (conformance/interop sections)
+  - [x] "How to Test Conformance" — step-by-step: open Conformance tab → run all → read matrix → export report
+  - [x] "How to Test OpenJPEG Interoperability" — step-by-step: load codestream → compare outputs → check pixel diff → read performance chart
+  - [x] "How to Validate a Codestream" — step-by-step: drag file → read syntax errors → inspect markers → export findings
+  - [x] "Conformance Matrix Reference" — explanation of each requirement and what it verifies
+- [x] Testing
+  - [x] Tests for conformance matrix data model and report export
+  - [x] Tests for interoperability comparison view model
+  - [x] SwiftUI preview tests for ConformanceView, InteropView, ValidationView
 
 **Deliverables**:
 - `ConformanceView`, `InteropView`, `ValidationView` SwiftUI screens
 - Conformance matrix dashboard, OpenJPEG comparison charts, codestream validators
 - `TESTING_GUIDE.md` — conformance, interoperability, and validation testing sections
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 302-304).
 
 ### Week 305-307: Performance Profiling and GPU Testing GUI Screens
 
@@ -4348,9 +4348,9 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-02-21 (Phase 18 Week 296-298 complete)
+**Last Updated**: 2026-02-21 (Phase 18 Week 302-304 complete)
 **Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-298
-**Next Phase**: Phase 18 Week 302-304 (Conformance and Interoperability GUI Screens)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-304
+**Next Phase**: Phase 18 Week 305-307 (Performance Profiling and GPU Testing GUI Screens)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README

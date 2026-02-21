@@ -140,7 +140,7 @@ struct MainWindowView: View {
 
 /// Detail view for a single test category.
 ///
-/// Routes `.encode`, `.decode`, and the round-trip sub-task to their
+/// Routes `.encode`, `.decode`, `.conformance`, and `.validation` to their
 /// dedicated GUI screens. All other categories fall back to the generic
 /// results-table layout until their dedicated screens are implemented.
 struct CategoryDetailView: View {
@@ -156,6 +156,12 @@ struct CategoryDetailView: View {
     @State private var decodeViewModel = DecodeViewModel()
     /// View model for the Round-Trip screen.
     @State private var roundTripViewModel = RoundTripViewModel()
+    /// View model for the Conformance screen.
+    @State private var conformanceViewModel = ConformanceViewModel()
+    /// View model for the Interoperability screen.
+    @State private var interopViewModel = InteropViewModel()
+    /// View model for the Validation screen.
+    @State private var validationViewModel = ValidationViewModel()
 
     /// Log messages for the console.
     @State private var logMessages: [LogMessage] = []
@@ -166,6 +172,10 @@ struct CategoryDetailView: View {
             EncodeView(viewModel: encodeViewModel, session: session)
         case .decode:
             DecodeView(viewModel: decodeViewModel, session: session)
+        case .conformance:
+            ConformanceView(viewModel: conformanceViewModel, session: session)
+        case .validation:
+            ValidationView(viewModel: validationViewModel, session: session)
         default:
             genericDetailView
         }

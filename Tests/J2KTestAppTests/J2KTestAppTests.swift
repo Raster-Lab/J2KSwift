@@ -1133,4 +1133,522 @@ final class RoundTripViewModelTests: XCTestCase {
         XCTAssertEqual(RoundTripViewModel.TestImageType.allCases.count, 5)
     }
 }
+
+// MARK: - Conformance Part Tests
+
+final class ConformancePartTests: XCTestCase {
+
+    func testAllPartsExist() {
+        XCTAssertEqual(ConformancePart.allCases.count, 4)
+    }
+
+    func testPartRawValues() {
+        XCTAssertEqual(ConformancePart.part1.rawValue, "Part 1")
+        XCTAssertEqual(ConformancePart.part2.rawValue, "Part 2")
+        XCTAssertEqual(ConformancePart.part3_10.rawValue, "Part 3/10")
+        XCTAssertEqual(ConformancePart.part15.rawValue, "Part 15")
+    }
+
+    func testPartIdentifiable() {
+        XCTAssertEqual(ConformancePart.part1.id, "Part 1")
+    }
+}
+
+// MARK: - Conformance Cell Status Tests
+
+final class ConformanceCellStatusTests: XCTestCase {
+
+    func testCellStatusRawValues() {
+        XCTAssertEqual(ConformanceCellStatus.pass.rawValue, "Pass")
+        XCTAssertEqual(ConformanceCellStatus.fail.rawValue, "Fail")
+        XCTAssertEqual(ConformanceCellStatus.skip.rawValue, "Skip")
+    }
+}
+
+// MARK: - Conformance Requirement Tests
+
+final class ConformanceRequirementTests: XCTestCase {
+
+    func testRequirementCreation() {
+        let req = ConformanceRequirement(
+            requirementId: "T.1.1",
+            description: "SOC marker present"
+        )
+        XCTAssertEqual(req.requirementId, "T.1.1")
+        XCTAssertEqual(req.description, "SOC marker present")
+        XCTAssertTrue(req.results.isEmpty)
+        XCTAssertTrue(req.detailLog.isEmpty)
+    }
+
+    func testRequirementWithResults() {
+        let req = ConformanceRequirement(
+            requirementId: "T.2.1",
+            description: "Part 2 extended capabilities",
+            results: [.part1: .pass, .part2: .pass, .part3_10: .skip],
+            detailLog: "All applicable parts validated."
+        )
+        XCTAssertEqual(req.results[.part1], .pass)
+        XCTAssertEqual(req.results[.part3_10], .skip)
+        XCTAssertFalse(req.detailLog.isEmpty)
+    }
+
+    func testRequirementIdentifiable() {
+        let req = ConformanceRequirement(requirementId: "T.1.1", description: "Test")
+        XCTAssertFalse(req.id.uuidString.isEmpty)
+    }
+
+    func testRequirementEquatable() {
+        let id = UUID()
+        let a = ConformanceRequirement(id: id, requirementId: "T.1.1", description: "Test")
+        let b = ConformanceRequirement(id: id, requirementId: "T.1.1", description: "Test")
+        XCTAssertEqual(a, b)
+    }
+}
+
+// MARK: - Conformance Report Tests
+
+final class ConformanceReportTests: XCTestCase {
+
+    func testReportPassRate() {
+        let report = ConformanceReport(totalTests: 10, passedTests: 8, failedTests: 1, skippedTests: 1, duration: 1.5)
+        XCTAssertEqual(report.passRate, 80.0, accuracy: 0.001)
+    }
+
+    func testReportPerfectPassRate() {
+        let report = ConformanceReport(totalTests: 100, passedTests: 100, failedTests: 0, skippedTests: 0, duration: 2.0)
+        XCTAssertEqual(report.passRate, 100.0, accuracy: 0.001)
+    }
+
+    func testReportEmptyPassRate() {
+        let report = ConformanceReport(totalTests: 0, passedTests: 0, failedTests: 0, skippedTests: 0, duration: 0)
+        XCTAssertEqual(report.passRate, 0.0, accuracy: 0.001)
+    }
+
+    func testReportSummaryBanner() {
+        let report = ConformanceReport(totalTests: 304, passedTests: 304, failedTests: 0, skippedTests: 0, duration: 1.0)
+        XCTAssertEqual(report.summaryBanner, "304/304 tests passed")
+    }
+}
+
+// MARK: - Conformance Export Format Tests
+
+final class ConformanceExportFormatTests: XCTestCase {
+
+    func testAllFormatsExist() {
+        XCTAssertEqual(ConformanceExportFormat.allCases.count, 3)
+    }
+
+    func testFormatRawValues() {
+        XCTAssertEqual(ConformanceExportFormat.json.rawValue, "JSON")
+        XCTAssertEqual(ConformanceExportFormat.html.rawValue, "HTML")
+        XCTAssertEqual(ConformanceExportFormat.pdf.rawValue, "PDF")
+    }
+}
+
+// MARK: - Conformance View Model Tests
+
+final class ConformanceViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = ConformanceViewModel()
+        XCTAssertTrue(vm.requirements.isEmpty)
+        XCTAssertNil(vm.selectedPart)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertNil(vm.report)
+        XCTAssertNil(vm.expandedRequirementId)
+        XCTAssertEqual(vm.exportFormat, .json)
+    }
+
+    func testLoadDefaultRequirements() {
+        let vm = ConformanceViewModel()
+        vm.loadDefaultRequirements()
+        XCTAssertFalse(vm.requirements.isEmpty)
+        XCTAssertEqual(vm.requirements.count, 17)
+        XCTAssertTrue(vm.statusMessage.contains("17"))
+    }
+
+    func testFilteredRequirementsNoFilter() {
+        let vm = ConformanceViewModel()
+        vm.loadDefaultRequirements()
+        XCTAssertEqual(vm.filteredRequirements.count, vm.requirements.count)
+    }
+
+    func testFilteredRequirementsWithPartFilter() {
+        let vm = ConformanceViewModel()
+        vm.loadDefaultRequirements()
+        // Before running tests, results are empty so filtering by part returns nothing
+        vm.selectedPart = .part1
+        XCTAssertEqual(vm.filteredRequirements.count, 0)
+    }
+
+    func testRunAllTests() async {
+        let vm = ConformanceViewModel()
+        vm.loadDefaultRequirements()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertNotNil(vm.report)
+        XCTAssertEqual(vm.report?.totalTests, 17)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testRunAllTestsAutoLoads() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        XCTAssertFalse(vm.requirements.isEmpty)
+        XCTAssertNotNil(vm.report)
+    }
+
+    func testRunAllTestsRecordsResults() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testExportReportJSON() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        vm.exportFormat = .json
+        let exported = vm.exportReport()
+        XCTAssertTrue(exported.contains("totalTests"))
+        XCTAssertTrue(exported.contains("passRate"))
+    }
+
+    func testExportReportHTML() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        vm.exportFormat = .html
+        let exported = vm.exportReport()
+        XCTAssertTrue(exported.contains("<html>"))
+        XCTAssertTrue(exported.contains("Conformance Report"))
+    }
+
+    func testExportReportPDF() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        vm.exportFormat = .pdf
+        let exported = vm.exportReport()
+        XCTAssertTrue(exported.contains("PDF export"))
+    }
+
+    func testExportReportNoReport() {
+        let vm = ConformanceViewModel()
+        let exported = vm.exportReport()
+        XCTAssertTrue(exported.isEmpty)
+    }
+
+    func testFilteredRequirementsAfterRun() async {
+        let vm = ConformanceViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        vm.selectedPart = .part1
+        // Part 1 requirements (T.1.x) have results for all parts
+        XCTAssertFalse(vm.filteredRequirements.isEmpty)
+    }
+}
+
+// MARK: - Interop Comparison Result Tests
+
+final class InteropComparisonResultTests: XCTestCase {
+
+    func testComparisonResultCreation() {
+        let result = InteropComparisonResult(
+            codestreamName: "test.j2k",
+            maxPixelDifference: 0,
+            meanPixelDifference: 0.0,
+            withinTolerance: true,
+            j2kSwiftTime: 0.035,
+            openJPEGTime: 0.042
+        )
+        XCTAssertEqual(result.codestreamName, "test.j2k")
+        XCTAssertEqual(result.maxPixelDifference, 0)
+        XCTAssertTrue(result.withinTolerance)
+    }
+
+    func testSpeedupCalculation() {
+        let result = InteropComparisonResult(
+            codestreamName: "test.j2k",
+            maxPixelDifference: 0,
+            meanPixelDifference: 0.0,
+            withinTolerance: true,
+            j2kSwiftTime: 0.035,
+            openJPEGTime: 0.042
+        )
+        XCTAssertEqual(result.speedup, 0.042 / 0.035, accuracy: 0.001)
+    }
+
+    func testSpeedupZeroDivision() {
+        let result = InteropComparisonResult(
+            codestreamName: "test.j2k",
+            maxPixelDifference: 0,
+            meanPixelDifference: 0.0,
+            withinTolerance: true,
+            j2kSwiftTime: 0.0,
+            openJPEGTime: 0.042
+        )
+        XCTAssertEqual(result.speedup, 0.0)
+    }
+
+    func testSpeedupZeroOpenJPEGTime() {
+        let result = InteropComparisonResult(
+            codestreamName: "test.j2k",
+            maxPixelDifference: 0,
+            meanPixelDifference: 0.0,
+            withinTolerance: true,
+            j2kSwiftTime: 0.035,
+            openJPEGTime: 0.0
+        )
+        XCTAssertEqual(result.speedup, 0.0, accuracy: 0.001)
+    }
+}
+
+// MARK: - Codestream Diff Node Tests
+
+final class CodestreamDiffNodeTests: XCTestCase {
+
+    func testDiffNodeMatching() {
+        let node = CodestreamDiffNode(name: "SOC", j2kSwiftValue: "0xFF4F", openJPEGValue: "0xFF4F")
+        XCTAssertTrue(node.matches)
+    }
+
+    func testDiffNodeMismatch() {
+        let node = CodestreamDiffNode(name: "SIZ", j2kSwiftValue: "512×512", openJPEGValue: "256×256")
+        XCTAssertFalse(node.matches)
+    }
+
+    func testDiffNodeWithChildren() {
+        let child = CodestreamDiffNode(name: "Rsiz", j2kSwiftValue: "0", openJPEGValue: "0")
+        let parent = CodestreamDiffNode(name: "SIZ", j2kSwiftValue: "512", openJPEGValue: "512", children: [child])
+        XCTAssertEqual(parent.children.count, 1)
+        XCTAssertTrue(parent.children[0].matches)
+    }
+}
+
+// MARK: - Interop View Model Tests
+
+final class InteropViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = InteropViewModel()
+        XCTAssertNil(vm.inputFileURL)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertEqual(vm.toleranceThreshold, 1)
+        XCTAssertNil(vm.comparisonResult)
+        XCTAssertTrue(vm.allResults.isEmpty)
+        XCTAssertTrue(vm.diffNodes.isEmpty)
+        XCTAssertTrue(vm.isBidirectional)
+    }
+
+    func testLoadCodestream() {
+        let vm = InteropViewModel()
+        let url = URL(fileURLWithPath: "/tmp/test.j2k")
+        vm.loadCodestream(url: url)
+        XCTAssertEqual(vm.inputFileURL, url)
+        XCTAssertTrue(vm.statusMessage.contains("test.j2k"))
+    }
+
+    func testRunComparisonWithoutFile() async {
+        let vm = InteropViewModel()
+        let session = TestSession()
+        await vm.runComparison(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertTrue(vm.statusMessage.contains("No codestream"))
+    }
+
+    func testRunComparison() async {
+        let vm = InteropViewModel()
+        vm.loadCodestream(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        let session = TestSession()
+        await vm.runComparison(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertNotNil(vm.comparisonResult)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+        XCTAssertTrue(vm.comparisonResult?.withinTolerance == true)
+    }
+
+    func testRunComparisonRecordsResults() async {
+        let vm = InteropViewModel()
+        vm.loadCodestream(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        let session = TestSession()
+        await vm.runComparison(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testRunComparisonBuildsDiffTree() async {
+        let vm = InteropViewModel()
+        vm.loadCodestream(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        let session = TestSession()
+        await vm.runComparison(session: session)
+        XCTAssertFalse(vm.diffNodes.isEmpty)
+    }
+
+    func testAllResultsAccumulate() async {
+        let vm = InteropViewModel()
+        let session = TestSession()
+        vm.loadCodestream(url: URL(fileURLWithPath: "/tmp/a.j2k"))
+        await vm.runComparison(session: session)
+        vm.loadCodestream(url: URL(fileURLWithPath: "/tmp/b.j2k"))
+        await vm.runComparison(session: session)
+        XCTAssertEqual(vm.allResults.count, 2)
+    }
+}
+
+// MARK: - Validation Finding Tests
+
+final class ValidationFindingTests: XCTestCase {
+
+    func testFindingCreation() {
+        let finding = ValidationFinding(severity: .error, offset: 0, message: "Missing SOC marker")
+        XCTAssertEqual(finding.severity, .error)
+        XCTAssertEqual(finding.offset, 0)
+        XCTAssertEqual(finding.message, "Missing SOC marker")
+    }
+
+    func testFindingSeverityValues() {
+        XCTAssertEqual(ValidationSeverity.error.rawValue, "Error")
+        XCTAssertEqual(ValidationSeverity.warning.rawValue, "Warning")
+        XCTAssertEqual(ValidationSeverity.info.rawValue, "Info")
+    }
+}
+
+// MARK: - Validation Mode Tests
+
+final class ValidationModeTests: XCTestCase {
+
+    func testAllModesExist() {
+        XCTAssertEqual(ValidationMode.allCases.count, 3)
+    }
+
+    func testModeRawValues() {
+        XCTAssertEqual(ValidationMode.codestream.rawValue, "Codestream")
+        XCTAssertEqual(ValidationMode.fileFormat.rawValue, "File Format")
+        XCTAssertEqual(ValidationMode.markerInspector.rawValue, "Marker Inspector")
+    }
+}
+
+// MARK: - File Format Box Info Tests
+
+final class FileFormatBoxInfoTests: XCTestCase {
+
+    func testBoxInfoCreation() {
+        let box = FileFormatBoxInfo(boxType: "jp2h", description: "JP2 Header", offset: 32, length: 45)
+        XCTAssertEqual(box.boxType, "jp2h")
+        XCTAssertEqual(box.description, "JP2 Header")
+        XCTAssertEqual(box.offset, 32)
+        XCTAssertEqual(box.length, 45)
+        XCTAssertTrue(box.isValid)
+        XCTAssertTrue(box.children.isEmpty)
+    }
+
+    func testBoxInfoWithChildren() {
+        let child = FileFormatBoxInfo(boxType: "ihdr", description: "Image Header", offset: 40, length: 22)
+        let parent = FileFormatBoxInfo(boxType: "jp2h", description: "JP2 Header", offset: 32, length: 45, children: [child])
+        XCTAssertEqual(parent.children.count, 1)
+        XCTAssertEqual(parent.children[0].boxType, "ihdr")
+    }
+
+    func testBoxInfoInvalid() {
+        let box = FileFormatBoxInfo(boxType: "bad!", description: "Corrupt box", offset: 0, length: 0, isValid: false)
+        XCTAssertFalse(box.isValid)
+    }
+}
+
+// MARK: - Validation View Model Tests
+
+final class ValidationViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = ValidationViewModel()
+        XCTAssertNil(vm.inputFileURL)
+        XCTAssertEqual(vm.selectedMode, .codestream)
+        XCTAssertFalse(vm.isValidating)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertNil(vm.validationPassed)
+        XCTAssertTrue(vm.findings.isEmpty)
+        XCTAssertTrue(vm.boxTree.isEmpty)
+        XCTAssertTrue(vm.markerSegments.isEmpty)
+        XCTAssertTrue(vm.selectedMarkerHex.isEmpty)
+    }
+
+    func testLoadFile() {
+        let vm = ValidationViewModel()
+        let url = URL(fileURLWithPath: "/tmp/test.j2k")
+        vm.loadFile(url: url)
+        XCTAssertEqual(vm.inputFileURL, url)
+        XCTAssertTrue(vm.statusMessage.contains("test.j2k"))
+    }
+
+    func testLoadFileClearsPrevious() {
+        let vm = ValidationViewModel()
+        vm.findings = [ValidationFinding(severity: .info, offset: 0, message: "Old")]
+        vm.validationPassed = true
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/new.j2k"))
+        XCTAssertTrue(vm.findings.isEmpty)
+        XCTAssertNil(vm.validationPassed)
+    }
+
+    func testValidateWithoutFile() async {
+        let vm = ValidationViewModel()
+        let session = TestSession()
+        await vm.validate(session: session)
+        XCTAssertFalse(vm.isValidating)
+        XCTAssertTrue(vm.statusMessage.contains("No file"))
+    }
+
+    func testValidateCodestream() async {
+        let vm = ValidationViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        vm.selectedMode = .codestream
+        let session = TestSession()
+        await vm.validate(session: session)
+        XCTAssertFalse(vm.isValidating)
+        XCTAssertTrue(vm.validationPassed == true)
+        XCTAssertFalse(vm.findings.isEmpty)
+        XCTAssertTrue(vm.statusMessage.contains("valid"))
+    }
+
+    func testValidateFileFormat() async {
+        let vm = ValidationViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.jp2"))
+        vm.selectedMode = .fileFormat
+        let session = TestSession()
+        await vm.validate(session: session)
+        XCTAssertFalse(vm.isValidating)
+        XCTAssertTrue(vm.validationPassed == true)
+        XCTAssertFalse(vm.boxTree.isEmpty)
+        XCTAssertTrue(vm.statusMessage.contains("valid"))
+    }
+
+    func testValidateMarkerInspector() async {
+        let vm = ValidationViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        vm.selectedMode = .markerInspector
+        let session = TestSession()
+        await vm.validate(session: session)
+        XCTAssertFalse(vm.isValidating)
+        XCTAssertFalse(vm.markerSegments.isEmpty)
+        XCTAssertFalse(vm.selectedMarkerHex.isEmpty)
+    }
+
+    func testValidateRecordsResults() async {
+        let vm = ValidationViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.j2k"))
+        let session = TestSession()
+        await vm.validate(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+}
 #endif
