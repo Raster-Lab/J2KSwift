@@ -372,6 +372,7 @@ let encoded = try mqCoder.encode(quantized)
 
 ### Getting Started
 - **[README.md](README.md)**: This file — quick start and overview
+- **[CHANGELOG.md](CHANGELOG.md)**: Complete version history
 - **[RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)**: Complete v2.0.0 release notes
 - **[GETTING_STARTED.md](GETTING_STARTED.md)**: Comprehensive introduction
 - **[TUTORIAL_ENCODING.md](TUTORIAL_ENCODING.md)**: Step-by-step encoding guide
@@ -615,6 +616,7 @@ This project represents a 295-week development effort following a comprehensive 
 - **Repository**: https://github.com/Raster-Lab/J2KSwift
 - **Releases**: https://github.com/Raster-Lab/J2KSwift/releases
 - **Milestones**: [MILESTONES.md](MILESTONES.md)
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
 - **Release Notes**: [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md)
 
 ## 📊 Project Status
