@@ -896,4 +896,341 @@ final class J2KArbitraryWaveletTests: XCTestCase {
         // Note: Visual comparison of performance metrics will show if arbitrary path
         // is within 10% of standard path performance
     }
+
+    // MARK: - Pre-computed Filter Properties Tests
+
+    func testFilterPropertiesDCGain() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.haar
+
+        // Act
+        let props = J2KFilterProperties(kernel: kernel)
+
+        // Assert - Haar lowpass coefficients sum to sqrt(2)
+        XCTAssertEqual(props.analysisLowpassDCGain, kernel.analysisLowpass.reduce(0, +), accuracy: 1e-10)
+        XCTAssertEqual(props.analysisHighpassDCGain, kernel.analysisHighpass.reduce(0, +), accuracy: 1e-10)
+    }
+
+    func testFilterPropertiesL2Norm() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+
+        // Act
+        let props = J2KFilterProperties(kernel: kernel)
+
+        // Assert - L2 norms should be positive
+        XCTAssertGreaterThan(props.analysisLowpassNorm, 0)
+        XCTAssertGreaterThan(props.analysisHighpassNorm, 0)
+        XCTAssertGreaterThan(props.synthesisLowpassNorm, 0)
+        XCTAssertGreaterThan(props.synthesisHighpassNorm, 0)
+    }
+
+    func testFilterPropertiesNormalisationFactors() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.leGall53
+
+        // Act
+        let props = J2KFilterProperties(kernel: kernel)
+
+        // Assert - normalisation factor is inverse of L2 norm
+        XCTAssertEqual(props.lowpassNormalisationFactor, 1.0 / props.analysisLowpassNorm, accuracy: 1e-10)
+        XCTAssertEqual(props.highpassNormalisationFactor, 1.0 / props.analysisHighpassNorm, accuracy: 1e-10)
+    }
+
+    func testFilterPropertiesMaxFilterLength() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+
+        // Act
+        let props = J2KFilterProperties(kernel: kernel)
+
+        // Assert - CDF 9/7 has 9-tap lowpass, 7-tap highpass
+        XCTAssertEqual(props.maxFilterLength, 9)
+    }
+
+    func testFilterPropertiesEquatable() throws {
+        // Arrange
+        let props1 = J2KFilterProperties(kernel: J2KWaveletKernelLibrary.haar)
+        let props2 = J2KFilterProperties(kernel: J2KWaveletKernelLibrary.haar)
+        let props3 = J2KFilterProperties(kernel: J2KWaveletKernelLibrary.cdf97)
+
+        // Assert
+        XCTAssertEqual(props1, props2)
+        XCTAssertNotEqual(props1, props3)
+    }
+
+    // MARK: - Kernel Type Recognition Tests
+
+    func testIdentifyLeGall53Kernel() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.leGall53
+
+        // Act
+        let kernelType = identifyKernelType(kernel)
+
+        // Assert
+        XCTAssertEqual(kernelType, .leGall53)
+    }
+
+    func testIdentifyCDF97Kernel() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+
+        // Act
+        let kernelType = identifyKernelType(kernel)
+
+        // Assert
+        XCTAssertEqual(kernelType, .cdf97)
+    }
+
+    func testIdentifyHaarKernel() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.haar
+
+        // Act
+        let kernelType = identifyKernelType(kernel)
+
+        // Assert
+        XCTAssertEqual(kernelType, .haar)
+    }
+
+    func testIdentifyCustomKernel() throws {
+        // Arrange - Daubechies-4 has no lifting steps, should be custom
+        let kernel = J2KWaveletKernelLibrary.daubechies4
+
+        // Act
+        let kernelType = identifyKernelType(kernel)
+
+        // Assert
+        XCTAssertEqual(kernelType, .custom)
+    }
+
+    func testIdentifyCDF53Kernel() throws {
+        // Arrange - CDF 5/3 has same lifting steps as Le Gall 5/3
+        let kernel = J2KWaveletKernelLibrary.cdf53
+
+        // Act
+        let kernelType = identifyKernelType(kernel)
+
+        // Assert
+        XCTAssertEqual(kernelType, .leGall53)
+    }
+
+    // MARK: - SIMD Convolution Tests
+
+    func testSIMDConvolve1DIdentity() throws {
+        // Arrange - delta filter [1.0] should pass signal through
+        let signal: [Double] = [1, 2, 3, 4, 5, 6, 7, 8]
+        let filter: [Double] = [1.0]
+
+        // Act
+        let result = simdConvolve1D(
+            signal: signal,
+            filter: filter,
+            signalExtender: { idx in
+                idx >= 0 && idx < signal.count ? signal[idx] : 0.0
+            },
+            outputCount: 4,
+            stride: 2,
+            offset: 0,
+            filterCenter: 0
+        )
+
+        // Assert - should extract even-indexed samples
+        XCTAssertEqual(result.count, 4)
+        XCTAssertEqual(result[0], 1.0, accuracy: 1e-10)
+        XCTAssertEqual(result[1], 3.0, accuracy: 1e-10)
+        XCTAssertEqual(result[2], 5.0, accuracy: 1e-10)
+        XCTAssertEqual(result[3], 7.0, accuracy: 1e-10)
+    }
+
+    func testSIMDConvolve1DWithLongFilter() throws {
+        // Arrange - 9-tap filter exercises the SIMD4 path (2 SIMD iterations + 1 scalar)
+        let signal: [Double] = Array(repeating: 1.0, count: 16)
+        let filter: [Double] = [0.1, 0.1, 0.1, 0.1, 0.2, 0.1, 0.1, 0.1, 0.1]
+        let expectedSum = filter.reduce(0, +) // all signal values are 1.0
+
+        // Act
+        let result = simdConvolve1D(
+            signal: signal,
+            filter: filter,
+            signalExtender: { idx in
+                idx >= 0 && idx < signal.count ? signal[idx] : 0.0
+            },
+            outputCount: 4,
+            stride: 2,
+            offset: 4,
+            filterCenter: 4
+        )
+
+        // Assert - constant signal convolved with any filter should give sum of filter
+        XCTAssertEqual(result.count, 4)
+        for value in result {
+            XCTAssertEqual(value, expectedSum, accuracy: 1e-10)
+        }
+    }
+
+    // MARK: - Kernel Cache Tests
+
+    func testKernelCacheGetOrCompute() throws {
+        // Arrange
+        let cache = J2KWaveletKernelCache()
+        let kernel = J2KWaveletKernelLibrary.cdf97
+
+        // Act
+        let state1 = cache.getOrCompute(for: kernel)
+        let state2 = cache.getOrCompute(for: kernel)
+
+        // Assert
+        XCTAssertEqual(state1.kernelType, .cdf97)
+        XCTAssertEqual(state2.kernelType, .cdf97)
+        XCTAssertEqual(cache.count, 1)
+    }
+
+    func testKernelCacheMultipleKernels() throws {
+        // Arrange
+        let cache = J2KWaveletKernelCache()
+
+        // Act
+        _ = cache.getOrCompute(for: J2KWaveletKernelLibrary.haar)
+        _ = cache.getOrCompute(for: J2KWaveletKernelLibrary.cdf97)
+        _ = cache.getOrCompute(for: J2KWaveletKernelLibrary.leGall53)
+
+        // Assert
+        XCTAssertEqual(cache.count, 3)
+    }
+
+    func testKernelCacheClear() throws {
+        // Arrange
+        let cache = J2KWaveletKernelCache()
+        _ = cache.getOrCompute(for: J2KWaveletKernelLibrary.haar)
+        _ = cache.getOrCompute(for: J2KWaveletKernelLibrary.cdf97)
+        XCTAssertEqual(cache.count, 2)
+
+        // Act
+        cache.clear()
+
+        // Assert
+        XCTAssertEqual(cache.count, 0)
+    }
+
+    func testKernelCachePreservesProperties() throws {
+        // Arrange
+        let cache = J2KWaveletKernelCache()
+        let kernel = J2KWaveletKernelLibrary.leGall53
+
+        // Act
+        let state = cache.getOrCompute(for: kernel)
+
+        // Assert
+        XCTAssertEqual(state.kernelType, .leGall53)
+        XCTAssertEqual(state.properties.maxFilterLength, 5)
+        XCTAssertTrue(state.customFilter.isReversible)
+    }
+
+    // MARK: - Optimised Engine Tests
+
+    func testOptimisedEngineForwardTransformCDF97() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let engine = J2KOptimisedWaveletEngine(kernel: kernel)
+        let signal: [Double] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        // Act
+        let (low, high) = try engine.forwardTransform1D(signal: signal)
+
+        // Assert - should match standard 9/7 transform
+        let (refLow, refHigh) = try J2KDWT1D.forwardTransform97(signal: signal)
+        XCTAssertEqual(low.count, refLow.count)
+        XCTAssertEqual(high.count, refHigh.count)
+        for i in 0..<low.count {
+            XCTAssertEqual(low[i], refLow[i], accuracy: 1e-10)
+        }
+        for i in 0..<high.count {
+            XCTAssertEqual(high[i], refHigh[i], accuracy: 1e-10)
+        }
+    }
+
+    func testOptimisedEngineRoundTripCDF97() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let engine = J2KOptimisedWaveletEngine(kernel: kernel)
+        let signal: [Double] = [10, 20, 30, 40, 50, 60, 70, 80]
+
+        // Act
+        let (low, high) = try engine.forwardTransform1D(signal: signal)
+        let reconstructed = try engine.inverseTransform1D(lowpass: low, highpass: high)
+
+        // Assert
+        XCTAssertEqual(reconstructed.count, signal.count)
+        for i in 0..<signal.count {
+            XCTAssertEqual(reconstructed[i], signal[i], accuracy: 1e-6)
+        }
+    }
+
+    func testOptimisedEngineForwardTransformLeGall53() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.leGall53
+        let engine = J2KOptimisedWaveletEngine(kernel: kernel)
+        let signal: [Double] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        // Act
+        let (low, high) = try engine.forwardTransform1D(signal: signal)
+
+        // Assert - should match standard 5/3 lifting path
+        let (refLow, refHigh) = try J2KDWT1D.forwardTransformCustom(
+            signal: signal,
+            filter: .leGall53
+        )
+        XCTAssertEqual(low.count, refLow.count)
+        XCTAssertEqual(high.count, refHigh.count)
+        for i in 0..<low.count {
+            XCTAssertEqual(low[i], refLow[i], accuracy: 1e-10)
+        }
+    }
+
+    func testOptimisedEngineWithCachedState() throws {
+        // Arrange
+        let cache = J2KWaveletKernelCache()
+        let kernel = J2KWaveletKernelLibrary.cdf97
+        let cachedState = cache.getOrCompute(for: kernel)
+        let engine = J2KOptimisedWaveletEngine(
+            kernel: kernel,
+            cachedState: cachedState
+        )
+        let signal: [Double] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        // Act
+        let (low, high) = try engine.forwardTransform1D(signal: signal)
+
+        // Assert
+        XCTAssertEqual(engine.kernelType, .cdf97)
+        XCTAssertEqual(low.count, 4)
+        XCTAssertEqual(high.count, 4)
+    }
+
+    func testOptimisedEngineCustomKernel() throws {
+        // Arrange - Daubechies-4 goes through SIMD path
+        let kernel = J2KWaveletKernelLibrary.daubechies4
+        let engine = J2KOptimisedWaveletEngine(kernel: kernel)
+        let signal: [Double] = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        // Act
+        XCTAssertEqual(engine.kernelType, .custom)
+        let (low, high) = try engine.forwardTransform1D(signal: signal)
+
+        // Assert - should produce valid subband sizes
+        XCTAssertEqual(low.count, 4)
+        XCTAssertEqual(high.count, 4)
+    }
+
+    func testOptimisedEngineShortSignalError() throws {
+        // Arrange
+        let kernel = J2KWaveletKernelLibrary.haar
+        let engine = J2KOptimisedWaveletEngine(kernel: kernel)
+        let signal: [Double] = [1]
+
+        // Act & Assert
+        XCTAssertThrowsError(try engine.forwardTransform1D(signal: signal))
+    }
 }

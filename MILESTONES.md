@@ -1410,11 +1410,11 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
   - [x] Integrate with J2KAccelerate module
   - [x] Add kernel selection API
   - [x] Support kernel per tile-component
-- [ ] Optimized kernel implementations
-  - [ ] Pre-compute filter properties (normalization, scaling)
-  - [ ] Fast paths for common kernel types
-  - [ ] SIMD-optimized convolution for popular filters
-  - [ ] Cache filter state for repeated operations
+- [x] Optimized kernel implementations
+  - [x] Pre-compute filter properties (normalization, scaling)
+  - [x] Fast paths for common kernel types
+  - [x] SIMD-optimized convolution for popular filters
+  - [x] Cache filter state for repeated operations
 - [x] Testing and validation
   - [x] Test standard wavelets (5/3, 9/7) via arbitrary kernel path
   - [x] Validate custom wavelets (Haar, CDF, Daubechies)
@@ -1434,8 +1434,9 @@ This phase adds the extended features defined in ISO/IEC 15444-2, including vari
 - `Sources/J2KCodec/J2KEncoderPipeline.swift` - Arbitrary kernel support ✅
 - `Sources/J2KCodec/J2KDecoderPipeline.swift` - Arbitrary kernel support ✅
 - `Sources/J2KAccelerate/J2KAcceleratedWavelet.swift` - Accelerate-optimized wavelets ✅
-- `Tests/J2KCodecTests/J2KArbitraryWaveletTests.swift` - 50 tests (39 foundation + 11 integration) ✅
+- `Tests/J2KCodecTests/J2KArbitraryWaveletTests.swift` - 72 tests (39 foundation + 11 integration + 22 optimisation) ✅
 - `Documentation/PART2_ARBITRARY_WAVELETS.md` - Feature guide with integration examples ✅
+- `Sources/J2KCodec/J2KOptimizedWaveletKernel.swift` - Optimised kernel engine with caching ✅
 - Performance: Within 10% of standard wavelets ✅
 
 ### Week 163-164: Multi-Component Transform (MCT) - Array-Based
