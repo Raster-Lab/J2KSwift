@@ -54,6 +54,9 @@ struct MainWindowView: View {
     /// View model for playlist management.
     @State private var playlistViewModel = PlaylistViewModel()
 
+    /// Window preferences for persisting window state.
+    let windowPreferences: WindowPreferences
+
     var body: some View {
         NavigationSplitView {
             sidebarContent
@@ -64,6 +67,13 @@ struct MainWindowView: View {
             toolbarContent
         }
         .frame(minWidth: 900, minHeight: 600)
+        .background(
+            GeometryReader { geo in
+                Color.clear.onChange(of: geo.size) { _, newSize in
+                    windowPreferences.saveSize(width: newSize.width, height: newSize.height)
+                }
+            }
+        )
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: viewModel.session)
         }
@@ -91,20 +101,30 @@ struct MainWindowView: View {
                             .foregroundStyle(.tint)
                     }
                     .tag(SidebarSelection.category(category))
+                    .accessibilityIdentifier("\(AccessibilityIdentifiers.sidebarItem).\(category.rawValue)")
+                    .accessibilityLabel(category.displayName)
+                    .accessibilityHint(category.categoryDescription)
                 }
             }
             Section("Tools") {
                 ForEach(AppScreen.allCases) { screen in
                     Label(screen.rawValue, systemImage: screen.systemImage)
                         .tag(SidebarSelection.screen(screen))
+                        .accessibilityIdentifier("\(AccessibilityIdentifiers.sidebarItem).\(screen.rawValue)")
+                        .accessibilityLabel(screen.rawValue)
                 }
             }
         }
         .listStyle(.sidebar)
         .navigationTitle("J2KTestApp")
+        .accessibilityIdentifier(AccessibilityIdentifiers.sidebar)
         .onChange(of: sidebarSelection) { _, newValue in
             if case .category(let cat) = newValue {
                 viewModel.selectedCategory = cat
+                windowPreferences.saveSidebarSelection(cat.rawValue)
+            } else if case .screen(let screen) = newValue {
+                viewModel.selectedCategory = nil
+                windowPreferences.saveSidebarSelection("screen.\(screen.rawValue)")
             } else {
                 viewModel.selectedCategory = nil
             }
@@ -152,6 +172,7 @@ struct MainWindowView: View {
             .disabled(viewModel.isRunningAll)
             .help("Run all tests across all categories")
             .keyboardShortcut("r", modifiers: [.command])
+            .accessibilityIdentifier(AccessibilityIdentifiers.runAllButton)
 
             Button(action: {
                 viewModel.stopAllTests()
@@ -161,6 +182,7 @@ struct MainWindowView: View {
             .disabled(!viewModel.isRunningAll)
             .help("Stop all running tests")
             .keyboardShortcut(".", modifiers: [.command])
+            .accessibilityIdentifier(AccessibilityIdentifiers.stopButton)
         }
 
         ToolbarItemGroup(placement: .secondaryAction) {
@@ -173,6 +195,7 @@ struct MainWindowView: View {
             }
             .help("Export test results as JSON")
             .keyboardShortcut("e", modifiers: [.command, .shift])
+            .accessibilityIdentifier(AccessibilityIdentifiers.exportButton)
 
             Button(action: {
                 showSettings = true
@@ -181,6 +204,7 @@ struct MainWindowView: View {
             }
             .help("Open application settings")
             .keyboardShortcut(",", modifiers: [.command])
+            .accessibilityIdentifier(AccessibilityIdentifiers.settingsButton)
         }
 
         ToolbarItem(placement: .status) {

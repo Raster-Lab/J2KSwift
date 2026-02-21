@@ -5,7 +5,38 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] — 2026-02-21
+## [2.1.0] — 2026-07-15
+
+**Phase 18 — Native macOS GUI Testing Application (J2KTestApp)**
+
+### Added
+- `J2KTestApp` — native macOS SwiftUI application with 13 dedicated test screens
+- `EncodeView`, `DecodeView`, `RoundTripView` — encoding/decoding workflows with visual comparison
+- `ConformanceView`, `InteropView`, `ValidationView` — standards and interoperability dashboards
+- `PerformanceView`, `GPUTestView`, `SIMDTestView` — performance profiling screens with live charts
+- `JPIPTestView`, `VolumetricTestView`, `MJ2TestView` — streaming and volumetric test screens
+- `ReportView` — trend charts, coverage heatmap, and HTML/JSON/CSV export
+- `PlaylistView` — named test playlists with preset and custom sections
+- Headless CLI mode (`j2k testapp --headless --playlist --output --format`) for CI/CD
+- GitHub Actions workflow (`interactive-testing.yml`) for automated headless test runs
+- `J2KDesignSystem` — spacing, corner radius, icon size, and typography design tokens
+- `WindowPreferences` — `UserDefaults`-backed window size and sidebar selection persistence
+- `AboutViewModel` — version, copyright, tagline, repository/docs links, acknowledgements
+- `AboutView` — application icon and About screen accessible from Help menu
+- `AccessibilityIdentifiers` — string constants for all interactive controls (VoiceOver, UI testing)
+- `ErrorStateModel` — identifiable error state with factory methods for common conditions
+- `SettingsSceneView` — native macOS `Settings` scene (⌘,)
+- 309 tests in `J2KTestAppTests` covering all view models and GUI models
+- `Documentation/TESTING_GUIDE.md` — complete guide with Quick Start, Troubleshooting, Extending, Keyboard Shortcuts, Conformance Matrix, Performance Targets, and Glossary sections
+- `RELEASE_NOTES_v2.1.0.md`
+
+### Changed
+- `VERSION` bumped from `2.0.0` to `2.1.0`
+- `getVersion()` now returns `"2.1.0"`
+- `README.md` updated with J2KTestApp section, GUI screen table, and v2.1.0 status
+- `MILESTONES.md` Phase 18 Week 314–315 marked complete; footer updated
+
+
 
 **Major Release — Performance Refactoring & Full ISO/IEC 15444-4 Conformance**
 

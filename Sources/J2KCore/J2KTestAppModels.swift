@@ -3698,4 +3698,215 @@ public final class HeadlessRunner: Sendable {
         return HeadlessRunConfig(playlistName: pl, outputPath: out, outputFormat: format)
     }
 }
-#endif
+
+// MARK: - Design System
+
+#if canImport(SwiftUI) && os(macOS)
+import SwiftUI
+
+/// Design system tokens for consistent visual styling across J2KTestApp.
+public struct J2KDesignSystem: Sendable {
+    // Spacing
+    public static let spacingXS: CGFloat = 4
+    public static let spacingSM: CGFloat = 8
+    public static let spacingMD: CGFloat = 16
+    public static let spacingLG: CGFloat = 24
+    public static let spacingXL: CGFloat = 32
+
+    // Corner Radius
+    public static let cornerRadiusSM: CGFloat = 6
+    public static let cornerRadiusMD: CGFloat = 10
+    public static let cornerRadiusLG: CGFloat = 14
+
+    // Icon sizes
+    public static let iconSizeSM: CGFloat = 16
+    public static let iconSizeMD: CGFloat = 24
+    public static let iconSizeLG: CGFloat = 48
+    public static let iconSizeXL: CGFloat = 96
+
+    // Typography scale names (used with .font())
+    public static let headlineFont: Font = .title2.weight(.semibold)
+    public static let subheadlineFont: Font = .headline
+    public static let bodyFont: Font = .body
+    public static let captionFont: Font = .caption
+    public static let monoFont: Font = .system(.caption, design: .monospaced)
+}
+
+// MARK: - Window Preferences
+
+/// Persists window size, sidebar selection, and last-used tab across launches.
+@Observable
+public final class WindowPreferences: Sendable {
+    private static let widthKey  = "j2k.window.width"
+    private static let heightKey = "j2k.window.height"
+    private static let sidebarKey = "j2k.window.sidebarSelection"
+
+    /// Saved window width in points.
+    public nonisolated(unsafe) var savedWidth: CGFloat
+    /// Saved window height in points.
+    public nonisolated(unsafe) var savedHeight: CGFloat
+    /// Identifier of the last-selected sidebar item.
+    public nonisolated(unsafe) var savedSidebarSelection: String
+
+    public init() {
+        let ud = UserDefaults.standard
+        savedWidth  = ud.double(forKey: Self.widthKey)  > 0 ? ud.double(forKey: Self.widthKey)  : 1_200
+        savedHeight = ud.double(forKey: Self.heightKey) > 0 ? ud.double(forKey: Self.heightKey) : 800
+        savedSidebarSelection = ud.string(forKey: Self.sidebarKey) ?? ""
+    }
+
+    /// Persists the current window size to `UserDefaults`.
+    public func saveSize(width: CGFloat, height: CGFloat) {
+        savedWidth  = width
+        savedHeight = height
+        let ud = UserDefaults.standard
+        ud.set(Double(width),  forKey: Self.widthKey)
+        ud.set(Double(height), forKey: Self.heightKey)
+    }
+
+    /// Persists the sidebar selection identifier to `UserDefaults`.
+    public func saveSidebarSelection(_ id: String) {
+        savedSidebarSelection = id
+        UserDefaults.standard.set(id, forKey: Self.sidebarKey)
+    }
+}
+
+// MARK: - About View Model
+
+/// View model providing data for the About screen.
+public struct AboutViewModel: Sendable {
+    /// Application name.
+    public let appName: String = "J2KTestApp"
+    /// Marketing version string.
+    public let version: String
+    /// Copyright statement.
+    public let copyright: String = "© 2026 Raster Lab. All rights reserved."
+    /// One-sentence description of the application.
+    public let tagline: String = "A native macOS application for testing the J2KSwift JPEG 2000 framework."
+    /// URL of the project repository.
+    public let repositoryURL: URL = URL(string: "https://github.com/Raster-Lab/J2KSwift")!
+    /// URL of the documentation.
+    public let documentationURL: URL = URL(string: "https://github.com/Raster-Lab/J2KSwift/blob/main/README.md")!
+    /// Third-party acknowledgements.
+    public let acknowledgements: [String] = [
+        "ISO/IEC 15444 JPEG 2000 standard",
+        "Swift 6 strict concurrency",
+        "Apple Accelerate framework",
+        "Apple Metal framework",
+    ]
+
+    public init(version: String = getVersion()) {
+        self.version = version
+    }
+}
+
+// MARK: - Accessibility Identifiers
+
+/// Namespace for accessibility identifiers used in J2KTestApp.
+///
+/// Use these constants with `.accessibilityIdentifier(_:)` on SwiftUI views
+/// to support UI testing and VoiceOver navigation.
+public enum AccessibilityIdentifiers {
+    // Sidebar
+    public static let sidebar = "j2k.sidebar"
+    public static let sidebarItem = "j2k.sidebar.item"
+
+    // Toolbar
+    public static let runAllButton   = "j2k.toolbar.runAll"
+    public static let stopButton     = "j2k.toolbar.stop"
+    public static let exportButton   = "j2k.toolbar.export"
+    public static let settingsButton = "j2k.toolbar.settings"
+
+    // Encode screen
+    public static let encodeDropZone     = "j2k.encode.dropZone"
+    public static let encodeRunButton    = "j2k.encode.run"
+    public static let encodePresetPicker = "j2k.encode.preset"
+
+    // Decode screen
+    public static let decodeFileButton   = "j2k.decode.file"
+    public static let decodeRunButton    = "j2k.decode.run"
+
+    // Performance screen
+    public static let benchmarkRunButton = "j2k.perf.run"
+    public static let gpuRunButton       = "j2k.gpu.run"
+    public static let simdRunButton      = "j2k.simd.run"
+
+    // Report screen
+    public static let exportReportButton = "j2k.report.export"
+
+    // Playlist screen
+    public static let newPlaylistButton  = "j2k.playlist.new"
+    public static let runPlaylistButton  = "j2k.playlist.run"
+
+    // About screen
+    public static let aboutVersionLabel  = "j2k.about.version"
+    public static let aboutRepoLink      = "j2k.about.repoLink"
+}
+
+// MARK: - Error State Model
+
+/// Represents an error state that can be displayed in any screen.
+public struct ErrorStateModel: Sendable, Identifiable {
+    public let id: UUID
+    /// Short title summarising the error.
+    public let title: String
+    /// Detailed error message.
+    public let message: String
+    /// Optional suggested action the user can take.
+    public let suggestedAction: String?
+    /// System image name for the error icon.
+    public let systemImage: String
+
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        message: String,
+        suggestedAction: String? = nil,
+        systemImage: String = "exclamationmark.triangle"
+    ) {
+        self.id = id
+        self.title = title
+        self.message = message
+        self.suggestedAction = suggestedAction
+        self.systemImage = systemImage
+    }
+
+    // Common pre-built error states
+    public static func fileNotFound(_ path: String) -> ErrorStateModel {
+        ErrorStateModel(
+            title: "File Not Found",
+            message: "The file at '\(path)' could not be found.",
+            suggestedAction: "Check that the file exists and try again.",
+            systemImage: "doc.badge.exclamationmark"
+        )
+    }
+
+    public static func encodingFailed(_ reason: String) -> ErrorStateModel {
+        ErrorStateModel(
+            title: "Encoding Failed",
+            message: reason,
+            suggestedAction: "Try a different configuration or smaller image.",
+            systemImage: "xmark.circle"
+        )
+    }
+
+    public static func decodingFailed(_ reason: String) -> ErrorStateModel {
+        ErrorStateModel(
+            title: "Decoding Failed",
+            message: reason,
+            suggestedAction: "Verify the file is a valid JPEG 2000 codestream.",
+            systemImage: "xmark.circle"
+        )
+    }
+
+    public static func networkUnavailable() -> ErrorStateModel {
+        ErrorStateModel(
+            title: "Network Unavailable",
+            message: "Could not connect to the JPIP server.",
+            suggestedAction: "Check your network connection and server address.",
+            systemImage: "wifi.slash"
+        )
+    }
+}
+#endif // canImport(SwiftUI) && os(macOS)
+#endif // canImport(Observation)

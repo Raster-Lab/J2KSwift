@@ -52,6 +52,13 @@ A comprehensive guide to testing every feature of J2KSwift using the native macO
   - [Log Console](#log-console)
 - [Settings](#settings)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Quick Start](#quick-start)
+- [Troubleshooting](#troubleshooting)
+- [Extending the Test App](#extending-the-test-app)
+- [Keyboard Shortcuts Reference](#keyboard-shortcuts-reference)
+- [Conformance Matrix Reference](#conformance-matrix-reference)
+- [Performance Targets Reference](#performance-targets-reference)
+- [Glossary](#glossary)
 
 ---
 
@@ -1009,5 +1016,325 @@ On completion:
 
 ---
 
+---
+
+## Quick Start
+
+This one-page summary gets you from a fresh checkout to a passing smoke test in under five minutes.
+
+| Step | Command / Action | Expected Result |
+|------|-----------------|----------------|
+| 1. Clone | `git clone https://github.com/Raster-Lab/J2KSwift.git && cd J2KSwift` | Repository cloned |
+| 2. Build | `swift build --target J2KTestApp` | `Build complete!` |
+| 3. Launch | `swift run J2KTestApp` | Main window opens |
+| 4. Select | Click **Encode** in the sidebar | Encode screen appears |
+| 5. Run smoke test | Click **Run All** (⌘R) | Progress bar fills; all results green |
+| 6. Read results | Click **Report** in the sidebar | Summary dashboard with pass rate |
+
+If any step fails, see [Troubleshooting](#troubleshooting) below.
+
+---
+
+## Troubleshooting
+
+### Build Errors
+
+**Error: `'J2KCore' module not found`**  
+Cause: Missing module dependency.  
+Fix: Run `swift package resolve` then `swift build --target J2KTestApp` again.
+
+**Error: `cannot find type 'Observable' in scope`**  
+Cause: Swift version is older than 5.9.  
+Fix: Install Swift 6.2 or later (bundled with Xcode 16.3+).
+
+**Error: `unable to attach DB`** (SwiftData/Core Data)  
+Cause: Stale build artefact.  
+Fix: Delete `.build/` and retry: `rm -rf .build && swift build --target J2KTestApp`.
+
+### Runtime Issues
+
+**Sidebar shows no items**  
+Cause: `TestCategory.allCases` returned empty — usually a Debug build issue.  
+Fix: Build with `swift build -c release --target J2KTestApp`.
+
+**All tests show "pending" and never run**  
+Cause: The async test runner task may have been cancelled.  
+Fix: Click **Stop** (⌘.) then **Run All** (⌘R) again.
+
+**Encode / Decode buttons are greyed out**  
+Cause: No image has been loaded yet (the button requires a valid input path).  
+Fix: Drag an image file onto the drop zone, or click **Open File…**.
+
+**JPIP screen shows "Network Unavailable"**  
+Cause: No JPIP server is running at the configured address.  
+Fix: Start a local OpenJPEG JPIP server or change the URL in the JPIP screen to a reachable endpoint.
+
+**GPU screen shows "Metal not available"**  
+Cause: Running in a VM or on a machine without Metal support.  
+Fix: GPU tests are skipped automatically; results are marked as "skipped" rather than "failed".
+
+**Report export produces an empty file**  
+Cause: No test results have been recorded yet.  
+Fix: Run at least one test category before exporting.
+
+### macOS Permissions
+
+If macOS shows a security warning when launching J2KTestApp for the first time:  
+1. Go to **System Settings → Privacy & Security**.  
+2. Scroll to the bottom and click **Open Anyway**.  
+3. Confirm in the dialog that appears.
+
+---
+
+## Extending the Test App
+
+This section is for developers who want to add new test scenarios or GUI screens.
+
+### Adding a New Test Runner
+
+1. **Create a type** that conforms to `TestRunnerProtocol` in your module:
+
+```swift
+import J2KCore
+
+struct MyCustomTestRunner: TestRunnerProtocol {
+    let category: TestCategory = .encode   // choose the appropriate category
+
+    func run(session: TestSession) async {
+        let result = TestResult(testName: "My custom test", category: category)
+        // Perform your test logic here…
+        await session.addResult(result.markPassed(duration: 0.1))
+    }
+}
+```
+
+2. **Register the runner** during app startup:
+
+```swift
+TestRunnerRegistry.shared.register(MyCustomTestRunner(), for: .encode)
+```
+
+3. **Run it** via the existing Encode screen — your runner will be invoked alongside the built-in ones when the user presses **Run**.
+
+### Adding a New GUI Screen
+
+1. **Create a view model** in `Sources/J2KCore/J2KTestAppModels.swift` (must be in J2KCore because the test target imports J2KCore):
+
+```swift
+#if canImport(SwiftUI) && os(macOS)
+import SwiftUI
+
+@Observable
+public final class MyFeatureViewModel {
+    public var isRunning: Bool = false
+    public var result: String = ""
+
+    public init() {}
+
+    public func run() async {
+        isRunning = true
+        // … your logic …
+        result = "Done"
+        isRunning = false
+    }
+}
+#endif
+```
+
+2. **Create a SwiftUI view** in `Sources/J2KTestApp/Views/MyFeatureView.swift`:
+
+```swift
+#if canImport(SwiftUI) && os(macOS)
+import SwiftUI
+import J2KCore
+
+struct MyFeatureView: View {
+    @State var viewModel: MyFeatureViewModel
+    let session: TestSession
+
+    var body: some View {
+        VStack {
+            Text(viewModel.result)
+            Button("Run") {
+                Task { await viewModel.run() }
+            }
+            .disabled(viewModel.isRunning)
+        }
+        .padding()
+        .navigationTitle("My Feature")
+    }
+}
+#endif
+```
+
+3. **Add a `TestCategory` case** (if needed) in `J2KTestAppModels.swift`:
+
+```swift
+public enum TestCategory: String, CaseIterable, Identifiable, Codable {
+    // … existing cases …
+    case myFeature = "myFeature"
+}
+```
+
+4. **Wire it up** in `CategoryDetailView.body` in `Sources/J2KTestApp/Views/MainWindow.swift`:
+
+```swift
+case .myFeature:
+    MyFeatureView(viewModel: myFeatureViewModel, session: session)
+```
+
+5. **Write tests** in `Tests/J2KTestAppTests/J2KTestAppTests.swift` using `@testable import J2KCore`:
+
+```swift
+final class MyFeatureViewModelTests: XCTestCase {
+    func testRunSetsResult() async {
+        let vm = MyFeatureViewModel()
+        await vm.run()
+        XCTAssertEqual(vm.result, "Done")
+    }
+}
+```
+
+### Design Guidelines for New Screens
+
+- Use `J2KDesignSystem` tokens for spacing, typography, and corner radius — do not hardcode values.
+- Apply `AccessibilityIdentifiers` constants to interactive controls.
+- Wrap error states in `ErrorStateModel` and display them with a consistent error view.
+- Use British English throughout labels, tooltips, and documentation.
+- All view models must be `@Observable` and `public` (so they can be tested via J2KCore).
+
+---
+
+## Keyboard Shortcuts Reference
+
+| Shortcut | Action |
+|----------|--------|
+| **⌘R** | Run all tests |
+| **⌘.** | Stop all running tests |
+| **⌘⇧E** | Export test results |
+| **⌘,** | Open Settings |
+| **⌘W** | Close window |
+| **⌘Q** | Quit J2KTestApp |
+| **⌘1** — **⌘7** | Jump to sidebar category 1–7 |
+| **↑ / ↓** | Navigate sidebar items |
+| **⌘↩** | Run selected category |
+| **⌘⇧C** | Copy selected result to clipboard |
+| **⌘⇧S** | Save current report |
+| **Space** | Preview selected image (Quick Look) |
+
+### Encode Screen
+
+| Shortcut | Action |
+|----------|--------|
+| **⌘O** | Open image file |
+| **⌘↩** | Start encoding |
+| **⌘1–5** | Select encoding preset |
+
+### Decode Screen
+
+| Shortcut | Action |
+|----------|--------|
+| **⌘O** | Open J2K/JP2 file |
+| **⌘↩** | Start decoding |
+| **⌘+** / **⌘-** | Zoom in / out on preview |
+| **⌘⌥R** | Reset ROI to full image |
+
+### Report Screen
+
+| Shortcut | Action |
+|----------|--------|
+| **⌘⇧E** | Export report |
+| **⌘⇧J** | Export as JSON |
+| **⌘⇧H** | Export as HTML |
+
+---
+
+## Conformance Matrix Reference
+
+| Part | Standard | Categories Tested | Pass Target |
+|------|----------|-------------------|-------------|
+| **Part 1** | ISO/IEC 15444-1 | Core encode/decode, lossless, lossy | 100% |
+| **Part 2** | ISO/IEC 15444-2 | Extended capabilities, ROI | 100% |
+| **Part 3** | ISO/IEC 15444-3 | Motion JPEG 2000 | 100% |
+| **Part 10** | ISO/IEC 15444-10 | JP3D volumetric | 100% |
+| **Part 15** | ISO/IEC 15444-15 | HTJ2K high-throughput | 100% |
+
+### Reading the Conformance Matrix
+
+The ConformanceView shows a colour-coded grid:
+
+- 🟢 **Green** — all tests for that requirement passed
+- 🟡 **Amber** — some tests passed but at least one skipped
+- 🔴 **Red** — one or more tests failed
+- ⬜ **Grey** — not yet tested
+
+---
+
+## Performance Targets Reference
+
+| Metric | Target | Platform |
+|--------|--------|----------|
+| Encode throughput | ≥ 500 MP/s | Apple M-series |
+| Decode throughput | ≥ 800 MP/s | Apple M-series |
+| HTJ2K encode | ≥ 2 GP/s | Apple M-series (Metal) |
+| HTJ2K decode | ≥ 3 GP/s | Apple M-series (Metal) |
+| SIMD utilisation | ≥ 85% | ARM Neon |
+| GPU speedup (encode) | ≥ 4× vs CPU | Metal |
+| GPU speedup (decode) | ≥ 6× vs CPU | Metal |
+| Memory overhead | < 3× image size | All platforms |
+
+---
+
+## Glossary
+
+| Term | Definition |
+|------|-----------|
+| **JPEG 2000** | ISO/IEC 15444 image compression standard supporting both lossy and lossless coding. |
+| **JP2** | The JPEG 2000 Part 1 file format container (`.jp2`). |
+| **JPX** | The JPEG 2000 Part 2 extended file format (`.jpx`). |
+| **J2K / JPC** | Raw JPEG 2000 codestream without a file format wrapper (`.j2k`, `.j2c`). |
+| **MJ2** | Motion JPEG 2000 — a video container wrapping JPEG 2000 frames (`.mj2`). |
+| **JP3D** | JPEG 2000 Part 10 — volumetric 3D image coding. |
+| **HTJ2K** | High Throughput JPEG 2000 (ISO/IEC 15444-15) — a block coding variant optimised for speed. |
+| **DWT** | Discrete Wavelet Transform — the spatial decorrelation step in JPEG 2000 encoding. |
+| **5/3 filter** | Integer reversible wavelet filter used for lossless JPEG 2000 coding. |
+| **9/7 filter** | Float irreversible wavelet filter used for lossy JPEG 2000 coding. |
+| **MCT** | Multiple Component Transform — converts RGB to YCbCr (or similar) before coding. |
+| **RCT** | Reversible Colour Transform — integer MCT for lossless coding. |
+| **ICT** | Irreversible Colour Transform — float MCT for lossy coding. |
+| **Tile** | A rectangular subdivision of an image that is encoded independently. |
+| **Precinct** | A spatial subdivision of a subband; the basic unit for JPIP data packets. |
+| **Code block** | The smallest unit of entropy coding in JPEG 2000 (typically 64×64 samples). |
+| **MQ coder** | The adaptive binary arithmetic entropy coder used in JPEG 2000. |
+| **PCRL** | Progression order: Position–Component–Resolution–Layer. |
+| **LRCP** | Progression order: Layer–Resolution–Component–Position (default). |
+| **RLCP** | Progression order: Resolution–Layer–Component–Position. |
+| **RPCL** | Progression order: Resolution–Position–Component–Layer. |
+| **CPRL** | Progression order: Component–Position–Resolution–Layer. |
+| **Quality layer** | A set of code-block contributions that collectively improve image quality by a defined amount. |
+| **Resolution level** | A level in the DWT hierarchy; level 0 is the full resolution, higher levels are coarser. |
+| **ROI** | Region of Interest — a spatial area that is encoded at higher quality than the background. |
+| **PSNR** | Peak Signal-to-Noise Ratio — a measure of reconstruction quality in decibels (higher = better). |
+| **SSIM** | Structural Similarity Index — a perceptual image quality metric (1.0 = identical). |
+| **MSE** | Mean Squared Error — average squared difference between original and reconstructed pixels. |
+| **JPIP** | JPEG 2000 Interactive Protocol (ISO/IEC 15444-9) — HTTP-based progressive streaming. |
+| **WOI** | Window of Interest — the spatial region requested by a JPIP client. |
+| **Metal** | Apple's low-level GPU compute and graphics framework. |
+| **SIMD** | Single Instruction, Multiple Data — CPU instruction set for parallel arithmetic. |
+| **Neon** | ARM's SIMD instruction set extension. |
+| **AVX2** | Intel's Advanced Vector Extensions 2 (256-bit SIMD). |
+| **SSE4.2** | Intel's Streaming SIMD Extensions 4.2 (128-bit). |
+| **Accelerate** | Apple's framework for high-performance signal processing (vDSP, vImage, BLAS, LAPACK). |
+| **OpenJPEG** | The ISO reference open-source JPEG 2000 codec used for interoperability testing. |
+| **Codestream** | The raw sequence of bytes produced by JPEG 2000 encoding. |
+| **SOC marker** | Start Of Codestream — the first 2 bytes (`0xFF 0x4F`) of every JPEG 2000 codestream. |
+| **SOT marker** | Start Of Tile-part. |
+| **SIZ marker** | Image and tile size marker segment. |
+| **COD marker** | Coding style default marker segment. |
+| **QCD marker** | Quantisation default marker segment. |
+| **EOC marker** | End Of Codestream (`0xFF 0xD9`). |
+
+---
+
 *J2KTestApp is part of J2KSwift v2.1 — a pure Swift 6 JPEG 2000 implementation.*
-*Last updated: 2026-07-01*
+*Last updated: 2026-07-15*

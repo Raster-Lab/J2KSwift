@@ -2754,5 +2754,282 @@ final class HeadlessRunnerTests: XCTestCase {
     }
 }
 
+#if canImport(SwiftUI) && os(macOS)
+
+// MARK: - J2KDesignSystem Tests
+
+final class J2KDesignSystemTests: XCTestCase {
+    func testSpacingTokensArePositive() {
+        XCTAssertGreaterThan(J2KDesignSystem.spacingXS, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.spacingSM, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.spacingMD, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.spacingLG, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.spacingXL, 0)
+    }
+
+    func testSpacingTokensAreIncreasing() {
+        XCTAssertLessThan(J2KDesignSystem.spacingXS, J2KDesignSystem.spacingSM)
+        XCTAssertLessThan(J2KDesignSystem.spacingSM, J2KDesignSystem.spacingMD)
+        XCTAssertLessThan(J2KDesignSystem.spacingMD, J2KDesignSystem.spacingLG)
+        XCTAssertLessThan(J2KDesignSystem.spacingLG, J2KDesignSystem.spacingXL)
+    }
+
+    func testCornerRadiusTokensArePositive() {
+        XCTAssertGreaterThan(J2KDesignSystem.cornerRadiusSM, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.cornerRadiusMD, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.cornerRadiusLG, 0)
+    }
+
+    func testCornerRadiusTokensAreIncreasing() {
+        XCTAssertLessThan(J2KDesignSystem.cornerRadiusSM, J2KDesignSystem.cornerRadiusMD)
+        XCTAssertLessThan(J2KDesignSystem.cornerRadiusMD, J2KDesignSystem.cornerRadiusLG)
+    }
+
+    func testIconSizeTokensArePositive() {
+        XCTAssertGreaterThan(J2KDesignSystem.iconSizeSM, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.iconSizeMD, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.iconSizeLG, 0)
+        XCTAssertGreaterThan(J2KDesignSystem.iconSizeXL, 0)
+    }
+
+    func testIconSizeTokensAreIncreasing() {
+        XCTAssertLessThan(J2KDesignSystem.iconSizeSM, J2KDesignSystem.iconSizeMD)
+        XCTAssertLessThan(J2KDesignSystem.iconSizeMD, J2KDesignSystem.iconSizeLG)
+        XCTAssertLessThan(J2KDesignSystem.iconSizeLG, J2KDesignSystem.iconSizeXL)
+    }
+}
+
+// MARK: - WindowPreferences Tests
+
+final class WindowPreferencesTests: XCTestCase {
+
+    /// Use a unique suite name so tests don't pollute standard user defaults.
+    private func freshPreferences() -> WindowPreferences {
+        // Clear relevant defaults before creating a fresh instance
+        let ud = UserDefaults.standard
+        ud.removeObject(forKey: "j2k.window.width")
+        ud.removeObject(forKey: "j2k.window.height")
+        ud.removeObject(forKey: "j2k.window.sidebarSelection")
+        return WindowPreferences()
+    }
+
+    func testDefaultWidthIsReasonable() {
+        let prefs = freshPreferences()
+        XCTAssertGreaterThanOrEqual(prefs.savedWidth, 800)
+    }
+
+    func testDefaultHeightIsReasonable() {
+        let prefs = freshPreferences()
+        XCTAssertGreaterThanOrEqual(prefs.savedHeight, 600)
+    }
+
+    func testDefaultSidebarSelectionIsEmpty() {
+        let prefs = freshPreferences()
+        XCTAssertEqual(prefs.savedSidebarSelection, "")
+    }
+
+    func testSaveSizeUpdatesProperties() {
+        let prefs = freshPreferences()
+        prefs.saveSize(width: 1400, height: 900)
+        XCTAssertEqual(prefs.savedWidth, 1400)
+        XCTAssertEqual(prefs.savedHeight, 900)
+    }
+
+    func testSaveSizePersistsToUserDefaults() {
+        let prefs = freshPreferences()
+        prefs.saveSize(width: 1300, height: 850)
+        let ud = UserDefaults.standard
+        XCTAssertEqual(ud.double(forKey: "j2k.window.width"), 1300)
+        XCTAssertEqual(ud.double(forKey: "j2k.window.height"), 850)
+    }
+
+    func testSaveSidebarSelectionUpdatesProperty() {
+        let prefs = freshPreferences()
+        prefs.saveSidebarSelection("encode")
+        XCTAssertEqual(prefs.savedSidebarSelection, "encode")
+    }
+
+    func testSaveSidebarSelectionPersistsToUserDefaults() {
+        let prefs = freshPreferences()
+        prefs.saveSidebarSelection("performance")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "j2k.window.sidebarSelection"), "performance")
+    }
+
+    func testSaveSizeRoundTrip() {
+        let prefs = freshPreferences()
+        prefs.saveSize(width: 1920, height: 1080)
+        let prefs2 = WindowPreferences()
+        XCTAssertEqual(prefs2.savedWidth, 1920)
+        XCTAssertEqual(prefs2.savedHeight, 1080)
+    }
+}
+
+// MARK: - AboutViewModel Tests
+
+final class AboutViewModelTests: XCTestCase {
+    func testAppNameIsJ2KTestApp() {
+        let vm = AboutViewModel()
+        XCTAssertEqual(vm.appName, "J2KTestApp")
+    }
+
+    func testVersionMatchesLibraryVersion() {
+        let vm = AboutViewModel()
+        XCTAssertEqual(vm.version, getVersion())
+    }
+
+    func testCopyrightContainsRasterLab() {
+        let vm = AboutViewModel()
+        XCTAssertTrue(vm.copyright.contains("Raster Lab"))
+    }
+
+    func testRepositoryURLIsValid() {
+        let vm = AboutViewModel()
+        XCTAssertEqual(vm.repositoryURL.host, "github.com")
+    }
+
+    func testDocumentationURLIsValid() {
+        let vm = AboutViewModel()
+        XCTAssertEqual(vm.documentationURL.host, "github.com")
+    }
+
+    func testAcknowledgementsIsNonEmpty() {
+        let vm = AboutViewModel()
+        XCTAssertFalse(vm.acknowledgements.isEmpty)
+    }
+
+    func testTaglineIsNonEmpty() {
+        let vm = AboutViewModel()
+        XCTAssertFalse(vm.tagline.isEmpty)
+    }
+
+    func testCustomVersionInit() {
+        let vm = AboutViewModel(version: "99.0.0")
+        XCTAssertEqual(vm.version, "99.0.0")
+    }
+}
+
+// MARK: - AccessibilityIdentifiers Tests
+
+final class AccessibilityIdentifiersTests: XCTestCase {
+    func testSidebarIdentifierIsNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.sidebar.isEmpty)
+    }
+
+    func testSidebarItemIdentifierIsNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.sidebarItem.isEmpty)
+    }
+
+    func testToolbarIdentifiersAreNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.runAllButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.stopButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.exportButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.settingsButton.isEmpty)
+    }
+
+    func testEncodeScreenIdentifiersAreNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.encodeDropZone.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.encodeRunButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.encodePresetPicker.isEmpty)
+    }
+
+    func testReportAndPlaylistIdentifiersAreNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.exportReportButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.newPlaylistButton.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.runPlaylistButton.isEmpty)
+    }
+
+    func testAboutIdentifiersAreNonEmpty() {
+        XCTAssertFalse(AccessibilityIdentifiers.aboutVersionLabel.isEmpty)
+        XCTAssertFalse(AccessibilityIdentifiers.aboutRepoLink.isEmpty)
+    }
+
+    func testAllIdentifiersUseJ2KPrefix() {
+        let ids = [
+            AccessibilityIdentifiers.sidebar,
+            AccessibilityIdentifiers.sidebarItem,
+            AccessibilityIdentifiers.runAllButton,
+            AccessibilityIdentifiers.stopButton,
+            AccessibilityIdentifiers.exportButton,
+            AccessibilityIdentifiers.settingsButton,
+            AccessibilityIdentifiers.encodeDropZone,
+            AccessibilityIdentifiers.encodeRunButton,
+            AccessibilityIdentifiers.exportReportButton,
+            AccessibilityIdentifiers.aboutVersionLabel,
+        ]
+        for id in ids {
+            XCTAssertTrue(id.hasPrefix("j2k."), "Identifier '\(id)' should start with 'j2k.'")
+        }
+    }
+}
+
+// MARK: - ErrorStateModel Tests
+
+final class ErrorStateModelTests: XCTestCase {
+    func testInitWithDefaults() {
+        let error = ErrorStateModel(title: "Test", message: "A message")
+        XCTAssertEqual(error.title, "Test")
+        XCTAssertEqual(error.message, "A message")
+        XCTAssertNil(error.suggestedAction)
+        XCTAssertEqual(error.systemImage, "exclamationmark.triangle")
+    }
+
+    func testInitWithSuggestedAction() {
+        let error = ErrorStateModel(
+            title: "Error",
+            message: "Something failed",
+            suggestedAction: "Try again"
+        )
+        XCTAssertEqual(error.suggestedAction, "Try again")
+    }
+
+    func testIDIsUnique() {
+        let e1 = ErrorStateModel(title: "A", message: "B")
+        let e2 = ErrorStateModel(title: "A", message: "B")
+        XCTAssertNotEqual(e1.id, e2.id)
+    }
+
+    func testFileNotFoundFactory() {
+        let error = ErrorStateModel.fileNotFound("/some/path.j2k")
+        XCTAssertEqual(error.title, "File Not Found")
+        XCTAssertTrue(error.message.contains("/some/path.j2k"))
+        XCTAssertNotNil(error.suggestedAction)
+        XCTAssertEqual(error.systemImage, "doc.badge.exclamationmark")
+    }
+
+    func testEncodingFailedFactory() {
+        let error = ErrorStateModel.encodingFailed("Out of memory")
+        XCTAssertEqual(error.title, "Encoding Failed")
+        XCTAssertTrue(error.message.contains("Out of memory"))
+        XCTAssertNotNil(error.suggestedAction)
+    }
+
+    func testDecodingFailedFactory() {
+        let error = ErrorStateModel.decodingFailed("Invalid marker")
+        XCTAssertEqual(error.title, "Decoding Failed")
+        XCTAssertTrue(error.message.contains("Invalid marker"))
+        XCTAssertNotNil(error.suggestedAction)
+    }
+
+    func testNetworkUnavailableFactory() {
+        let error = ErrorStateModel.networkUnavailable()
+        XCTAssertEqual(error.title, "Network Unavailable")
+        XCTAssertNotNil(error.suggestedAction)
+        XCTAssertEqual(error.systemImage, "wifi.slash")
+    }
+
+    func testErrorStateModelIsSendable() {
+        // Verify the type is Sendable by storing in a let constant (compile-time check)
+        let _: any Sendable = ErrorStateModel(title: "T", message: "M")
+    }
+
+    func testErrorStateModelIsIdentifiable() {
+        let e = ErrorStateModel(title: "T", message: "M")
+        let _: UUID = e.id   // Compile-time check: id exists and is UUID
+        XCTAssertNotNil(e.id)
+    }
+}
+
+#endif // canImport(SwiftUI) && os(macOS)
+
 #endif
 #endif
