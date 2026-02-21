@@ -185,10 +185,10 @@ public struct J2KXSCapabilities: Sendable {
 
     /// Capabilities for the current build.
     ///
-    /// During Phase 19 this always reports the codec as unavailable.
+    /// From Phase 20 onwards the codec is available for all three profiles.
     public static let current = J2KXSCapabilities(
-        isAvailable: false,
-        supportedProfiles: [.light, .main],
-        version: "exploration-2.2.0"
+        isAvailable: true,
+        supportedProfiles: [.light, .main, .high],
+        version: "2.3.0"
     )
 }

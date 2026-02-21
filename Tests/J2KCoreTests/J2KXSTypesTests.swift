@@ -110,15 +110,14 @@ final class J2KXSTypesTests: XCTestCase {
 
     // MARK: - J2KXSCapabilities
 
-    func testCurrentCapabilitiesNotAvailable() {
+    func testCurrentCapabilitiesAvailable() {
         let caps = J2KXSCapabilities.current
-        XCTAssertFalse(caps.isAvailable)
+        XCTAssertTrue(caps.isAvailable)
     }
 
     func testCurrentCapabilitiesVersion() {
         let caps = J2KXSCapabilities.current
-        XCTAssertTrue(caps.version.contains("exploration"))
-        XCTAssertTrue(caps.version.contains("2.2.0"))
+        XCTAssertTrue(caps.version.contains("2.3.0"))
     }
 
     func testCurrentCapabilitiesSupportedProfiles() {
@@ -126,6 +125,7 @@ final class J2KXSTypesTests: XCTestCase {
         XCTAssertFalse(caps.supportedProfiles.isEmpty)
         XCTAssertTrue(caps.supportedProfiles.contains(.light))
         XCTAssertTrue(caps.supportedProfiles.contains(.main))
+        XCTAssertTrue(caps.supportedProfiles.contains(.high))
     }
 
     func testCapabilitiesCustomInit() {

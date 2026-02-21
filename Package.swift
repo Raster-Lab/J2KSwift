@@ -38,6 +38,9 @@ let package = Package(
         .library(
             name: "J2K3D",
             targets: ["J2K3D"]),
+        .library(
+            name: "J2KXS",
+            targets: ["J2KXS"]),
         .executable(
             name: "j2k",
             targets: ["J2KCLI"]),
@@ -71,6 +74,9 @@ let package = Package(
         .target(
             name: "J2K3D",
             dependencies: ["J2KCore"]),
+        .target(
+            name: "J2KXS",
+            dependencies: ["J2KCore"]),
         .testTarget(
             name: "J2KCoreTests",
             dependencies: ["J2KCore", "J2KFileFormat"]),
@@ -98,6 +104,9 @@ let package = Package(
         .testTarget(
             name: "JP3DTests",
             dependencies: ["J2K3D", "J2KCore", "JPIP"]),
+        .testTarget(
+            name: "J2KXSTests",
+            dependencies: ["J2KXS", "J2KCore"]),
         .testTarget(
             name: "J2KComplianceTests",
             dependencies: ["J2K3D", "J2KCore"]),

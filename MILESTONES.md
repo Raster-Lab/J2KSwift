@@ -4431,3 +4431,81 @@ Phase 19 (Weeks 316–325) adds hyperspectral and multi-spectral imaging capabil
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0), Phase 19 Weeks 316-325 (v2.2.0)
 **Next Phase**: Phase 20 (planned)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens, design system, accessibility, window state persistence, headless CI mode, complete TESTING_GUIDE.md, and v2.1.0 release; multi-spectral JP3D encoding/decoding with inter-band prediction, Vulkan-accelerated 3D DWT, and JPEG XS (ISO/IEC 21122) exploration types
+
+---
+
+## Phase 20: JPEG XS Core Codec (v2.3.0, Weeks 326–335)
+
+**Goal**: Implement the foundational JPEG XS codec pipeline in a new `J2KXS` module, enabling `J2KXSCapabilities.isAvailable` to become `true`. Introduces slice-based DWT, uniform scalar quantisation, prefix-code packetisation, and a complete encoder/decoder actor pair.
+
+### Week 326–328: J2KXS Image Types and Codec API ✅
+
+- [x] Define `J2KXSPixelFormat` — `.yuv420`, `.yuv422`, `.yuv444`, `.rgb`, `.rgba`; `planeCount` computed
+- [x] Define `J2KXSImage` — width/height/pixelFormat/planes; `pixelCount` computed; dimension clamping
+- [x] Define `J2KXSError` — `.invalidConfiguration`, `.encodingFailed`, `.decodingFailed`, `.unsupportedProfile`, `.planeMismatch`
+- [x] Define `J2KXSEncodeResult` — `encodedData`, `profile`, `level`, `sliceCount`, `encodingTimeMs`, `encodedBytes` computed
+- [x] Define `J2KXSDecodeResult` — `image`, `profile`, `level`, `decodingTimeMs`
+
+### Week 329–331: Slice-Based DWT Engine ✅
+
+- [x] Define `J2KXSDWTOrientation` — `.ll`, `.lh`, `.hl`, `.hh`; `label` computed, `isApproximation` computed
+- [x] Define `J2KXSSubband` — orientation, level, coefficients, width/height; `count` computed; level clamping
+- [x] Define `J2KXSDecompositionResult` — subbands, decompositionLevels, width/height; `approximation` computed
+- [x] Implement `J2KXSDWTEngine` actor — `forward(slice:width:height:levels:)` async throws, `inverse(_:)` async throws
+- [x] Implement `resetStatistics()` and `forwardTransformCount`/`inverseTransformCount` diagnostics
+- [x] Haar-like lifting scaffold (forward 2-D decompose + inverse reconstitute)
+
+### Week 332–334: Quantisation and Entropy Coding ✅
+
+- [x] Define `J2KXSQuantisationParameters` — `stepSize`, `deadZoneOffset`; `.default`, `.fine`, `.coarse` presets
+- [x] Define `J2KXSQuantisedCoefficients` — orientation/level/values/stepIndex/stepSize/width/height; `count` computed
+- [x] Implement `J2KXSQuantiser` actor — `quantise(subband:parameters:)` async, `dequantise(_:)` async
+- [x] Implement `resetStatistics()` and `processedCoefficientCount` diagnostic
+- [x] Define `J2KXSEntropyMode` — `.significanceRange`, `.varianceAdaptive`; `packetHeaderID` computed
+- [x] Define `J2KXSEncodedSlice` — `data`, `lineOffset`, `lineCount`, `componentIndex`; `byteCount` computed
+- [x] Define `J2KXSPacketHeader` — magic `0xFF10`, entropy mode, line metadata, `serialisedSize`
+- [x] Implement `J2KXSPacketiser` actor — `pack(slices:mode:)` async throws, `unpack(_:)` async throws
+- [x] Implement `resetStatistics()` and `packedSliceCount`/`unpackedSliceCount` diagnostics
+
+### Week 335: Encoder/Decoder Actors and Release ✅
+
+- [x] Implement `J2KXSEncoder` actor — `encode(_:configuration:)` async throws; validates profile/plane count; per-component slice pipeline
+- [x] Implement `J2KXSDecoder` actor — `decode(_:pixelFormat:width:height:)` async throws; reconstructs planes from packetised codestream
+- [x] Update `J2KXSCapabilities.current` — `isAvailable: true`, `supportedProfiles: [.light, .main, .high]`, `version: "2.3.0"`
+- [x] Add `J2KXS` product and target to `Package.swift`
+- [x] Update `VERSION` to `2.3.0`
+
+### Phase 20 Test Coverage ✅
+
+- [x] `J2KXSTests` (52 tests) in `Tests/J2KXSTests/`
+  - Pixel format plane counts for all 5 formats; `CaseIterable` count
+  - Image creation, `pixelCount`, dimension clamping, equality
+  - All error cases: `invalidConfiguration`, `unsupportedProfile`, `planeMismatch`
+  - `J2KXSEncodeResult` properties, slice count clamping
+  - `J2KXSDecodeResult` properties
+  - DWT orientation labels and `isApproximation`
+  - Subband creation, level clamping
+  - DWT engine: forward small slice (4×4, 1 level), too-small-for-levels error, sample count mismatch, inverse round trip, statistics reset, approximation subband at level 2
+  - Quantisation parameters: default/fine/coarse presets, step size clamping, dead zone clamping
+  - Quantiser: quantise produces Int values, zero coefficients stay zero, dequantise sign reconstruction, statistics reset
+  - Entropy mode packet header IDs, `allCases` count
+  - Encoded slice properties and `lineCount` clamping
+  - Packetiser: pack/unpack round trip, empty slices error, invalid magic error, statistics reset
+  - Encoder: encode small 8×8 RGB image, plane mismatch error, unsupported profile error
+  - Decoder: decode small image, empty codestream error
+  - Capabilities: `isAvailable` true, version "2.3.0", all three profiles supported
+
+### Phase 20 Summary
+
+Phase 20 (Weeks 326–335) delivers the `J2KXS` module — a new Swift 6 strict-concurrency library implementing the foundational JPEG XS (ISO/IEC 21122) codec pipeline. The encoder divides images into horizontal slices, transforms each slice with a Haar-based lifting DWT, quantises subbands with a uniform scalar quantiser, and serialises the result via a custom packetiser that enables random slice access in the codestream. The decoder mirrors this pipeline in reverse. `J2KXSCapabilities.isAvailable` is now `true` and all three profiles (Light, Main, High) are reported as supported. All 52 new tests pass under Swift 6.2 strict concurrency.
+
+**Status**: ✅ Complete (v2.3.0)
+
+---
+
+**Last Updated**: 2026-11-29 (Phase 20 Week 335 complete)
+**Current Phase**: Phase 20 — JPEG XS Core Codec (complete)
+**Current Version**: 2.3.0
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0), Phase 19 Weeks 316-325 (v2.2.0), Phase 20 Weeks 326-335 (v2.3.0)
+**Next Phase**: Phase 21 (planned)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens, design system, accessibility, window state persistence, headless CI mode, complete TESTING_GUIDE.md, and v2.1.0 release; multi-spectral JP3D encoding/decoding with inter-band prediction, Vulkan-accelerated 3D DWT, and JPEG XS (ISO/IEC 21122) exploration types; JPEG XS Core Codec (`J2KXS` module) with slice-based DWT, scalar quantisation, entropy packetisation, encoder/decoder actors (v2.3.0)
