@@ -4046,44 +4046,44 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Build dedicated GUI screens for testing JPEG 2000 encoding and decoding with visual feedback and guided workflows.
 
-- [ ] Encoding screen (`EncodeView`)
-  - [ ] Drag-and-drop image input (PNG, TIFF, BMP) with thumbnail preview
-  - [ ] Configuration panel with controls: quality slider, tile size picker, progression order dropdown, wavelet selector (5/3, 9/7), MCT toggle, HTJ2K toggle
-  - [ ] Preset buttons: Lossless, Lossy High Quality, Visually Lossless, Maximum Compression
-  - [ ] "Encode" button with real-time progress bar and per-stage timing breakdown
-  - [ ] Output panel showing encoded file size, compression ratio, and encoding time
-  - [ ] Side-by-side comparison of multiple encoding configurations in a split view
-  - [ ] Batch encoding: select a folder of images, encode all with chosen settings, display summary table
-- [ ] Decoding screen (`DecodeView`)
-  - [ ] File picker for JP2/J2K/JPX input files with codestream header summary
-  - [ ] Decode button with progress bar and decoded image preview
-  - [ ] Region-of-interest selector: draw a rectangle on the image to decode only that region
-  - [ ] Resolution level stepper: decode at each resolution level with side-by-side comparison
-  - [ ] Quality layer slider: progressively add quality layers and show visual improvement
-  - [ ] Component channel selector for multi-component images (view individual channels)
-  - [ ] Marker inspector panel: expandable tree view of all codestream markers (SOC, SIZ, COD, QCD, SOT, etc.)
-- [ ] Round-trip validation screen (`RoundTripView`)
-  - [ ] One-click encode → decode → compare workflow
-  - [ ] Automatic PSNR, SSIM, and MSE computation with colour-coded pass/fail thresholds
-  - [ ] Bit-exact verification badge for lossless round-trips
-  - [ ] Difference image view highlighting pixel-level discrepancies
-  - [ ] Test image generator panel: create synthetic test images (gradients, checkerboards, noise, Lena-style)
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (encoding/decoding sections)
-  - [ ] "How to Test Encoding" — step-by-step guide with screenshots: load image → configure → encode → inspect output
-  - [ ] "How to Test Decoding" — step-by-step guide: open J2K file → decode → inspect → use ROI selector
-  - [ ] "How to Test Round-Trip" — step-by-step guide: select image → one-click round-trip → read PSNR/SSIM → check lossless badge
-  - [ ] "Encoding Presets Reference" — table of all presets with expected compression ratios
-- [ ] Testing
-  - [ ] Integration tests for encode/decode GUI workflows (programmatic view model testing)
-  - [ ] Verify round-trip metrics computation matches expected values
-  - [ ] SwiftUI preview tests for EncodeView, DecodeView, RoundTripView
+- [x] Encoding screen (`EncodeView`)
+  - [x] Drag-and-drop image input (PNG, TIFF, BMP) with thumbnail preview
+  - [x] Configuration panel with controls: quality slider, tile size picker, progression order dropdown, wavelet selector (5/3, 9/7), MCT toggle, HTJ2K toggle
+  - [x] Preset buttons: Lossless, Lossy High Quality, Visually Lossless, Maximum Compression
+  - [x] "Encode" button with real-time progress bar and per-stage timing breakdown
+  - [x] Output panel showing encoded file size, compression ratio, and encoding time
+  - [x] Side-by-side comparison of multiple encoding configurations in a split view
+  - [x] Batch encoding: select a folder of images, encode all with chosen settings, display summary table
+- [x] Decoding screen (`DecodeView`)
+  - [x] File picker for JP2/J2K/JPX input files with codestream header summary
+  - [x] Decode button with progress bar and decoded image preview
+  - [x] Region-of-interest selector: draw a rectangle on the image to decode only that region
+  - [x] Resolution level stepper: decode at each resolution level with side-by-side comparison
+  - [x] Quality layer slider: progressively add quality layers and show visual improvement
+  - [x] Component channel selector for multi-component images (view individual channels)
+  - [x] Marker inspector panel: expandable tree view of all codestream markers (SOC, SIZ, COD, QCD, SOT, etc.)
+- [x] Round-trip validation screen (`RoundTripView`)
+  - [x] One-click encode → decode → compare workflow
+  - [x] Automatic PSNR, SSIM, and MSE computation with colour-coded pass/fail thresholds
+  - [x] Bit-exact verification badge for lossless round-trips
+  - [x] Difference image view highlighting pixel-level discrepancies
+  - [x] Test image generator panel: create synthetic test images (gradients, checkerboards, noise, Lena-style)
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (encoding/decoding sections)
+  - [x] "How to Test Encoding" — step-by-step guide with screenshots: load image → configure → encode → inspect output
+  - [x] "How to Test Decoding" — step-by-step guide: open J2K file → decode → inspect → use ROI selector
+  - [x] "How to Test Round-Trip" — step-by-step guide: select image → one-click round-trip → read PSNR/SSIM → check lossless badge
+  - [x] "Encoding Presets Reference" — table of all presets with expected compression ratios
+- [x] Testing
+  - [x] Integration tests for encode/decode GUI workflows (programmatic view model testing)
+  - [x] Verify round-trip metrics computation matches expected values
+  - [x] SwiftUI preview tests for EncodeView, DecodeView, RoundTripView
 
 **Deliverables**:
 - `EncodeView`, `DecodeView`, `RoundTripView` SwiftUI screens
 - Drag-and-drop input, real-time progress, visual comparison, marker inspector
 - `TESTING_GUIDE.md` — encoding, decoding, and round-trip testing sections with step-by-step instructions
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 299-301).
 
 ### Week 302-304: Conformance and Interoperability GUI Screens
 
@@ -4352,5 +4352,5 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 **Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-298
-**Next Phase**: Phase 18 Week 299-301 (Encoding and Decoding GUI Screens)
+**Next Phase**: Phase 18 Week 302-304 (Conformance and Interoperability GUI Screens)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README

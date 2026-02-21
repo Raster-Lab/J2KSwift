@@ -140,8 +140,9 @@ struct MainWindowView: View {
 
 /// Detail view for a single test category.
 ///
-/// Displays the category's test controls, results table, and log
-/// console in a vertically split layout.
+/// Routes `.encode`, `.decode`, and the round-trip sub-task to their
+/// dedicated GUI screens. All other categories fall back to the generic
+/// results-table layout until their dedicated screens are implemented.
 struct CategoryDetailView: View {
     /// View model for this category.
     @State var viewModel: TestCategoryViewModel
@@ -149,10 +150,31 @@ struct CategoryDetailView: View {
     /// The test session.
     let session: TestSession
 
+    /// View model for the Encode screen.
+    @State private var encodeViewModel = EncodeViewModel()
+    /// View model for the Decode screen.
+    @State private var decodeViewModel = DecodeViewModel()
+    /// View model for the Round-Trip screen.
+    @State private var roundTripViewModel = RoundTripViewModel()
+
     /// Log messages for the console.
     @State private var logMessages: [LogMessage] = []
 
     var body: some View {
+        switch viewModel.category {
+        case .encode:
+            EncodeView(viewModel: encodeViewModel, session: session)
+        case .decode:
+            DecodeView(viewModel: decodeViewModel, session: session)
+        default:
+            genericDetailView
+        }
+    }
+
+    // MARK: - Generic Detail View (fallback for other categories)
+
+    @ViewBuilder
+    private var genericDetailView: some View {
         VStack(spacing: 0) {
             // Header
             HStack {

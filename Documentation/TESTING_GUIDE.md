@@ -21,6 +21,24 @@ A comprehensive guide to testing every feature of J2KSwift using the native macO
   - [Streaming](#streaming)
   - [Volumetric](#volumetric)
   - [Validation](#validation)
+- [How to Test Encoding](#how-to-test-encoding)
+  - [Step-by-Step: Encode a Single Image](#step-by-step-encode-a-single-image)
+  - [Encoding Presets Reference](#encoding-presets-reference)
+  - [Side-by-Side Configuration Comparison](#side-by-side-configuration-comparison)
+  - [Batch Encoding](#batch-encoding)
+- [How to Test Decoding](#how-to-test-decoding)
+  - [Step-by-Step: Decode a File](#step-by-step-decode-a-file)
+  - [Using the Region-of-Interest Selector](#using-the-region-of-interest-selector)
+  - [Resolution Level Stepper](#resolution-level-stepper)
+  - [Quality Layer Slider](#quality-layer-slider)
+  - [Component Channel Selector](#component-channel-selector)
+  - [Marker Inspector Panel](#marker-inspector-panel)
+- [How to Test Round-Trip](#how-to-test-round-trip)
+  - [Step-by-Step: One-Click Round-Trip](#step-by-step-one-click-round-trip)
+  - [Understanding PSNR, SSIM, and MSE](#understanding-psnr-ssim-and-mse)
+  - [Lossless Bit-Exact Badge](#lossless-bit-exact-badge)
+  - [Difference Image View](#difference-image-view)
+  - [Test Image Generator](#test-image-generator)
 - [Common GUI Components](#common-gui-components)
   - [Image Preview Panel](#image-preview-panel)
   - [Image Comparison View](#image-comparison-view)
@@ -220,6 +238,233 @@ Validate codestream and file format correctness:
 - **Syntax validator** — drag-and-drop J2K file validation
 - **File format validator** — JP2/JPX/JPM box structure tree
 - **Marker inspector** — hex dump with highlighted boundaries and decoded fields
+
+---
+
+## How to Test Encoding
+
+The **Encode** screen (`EncodeView`) provides a complete workflow for testing JPEG 2000 encoding.
+Open it by selecting **Encode** in the sidebar.
+
+### Step-by-Step: Encode a Single Image
+
+1. **Load an input image** — drag and drop a PNG, TIFF, or BMP file onto the drop zone in the
+   detail area, or click inside the zone to browse.  The thumbnail preview appears immediately.
+
+2. **Configure encoding** — use the left-hand configuration panel to adjust:
+   - **Quality slider** — drag from 0.0 (maximum compression) to 1.0 (lossless).
+   - **Wavelet selector** — choose `5/3 (Lossless)`, `9/7 Float`, `9/7 Fixed`, or `Haar`.
+   - **Tile Width / Tile Height** — enter pixel dimensions for the tile grid.
+   - **Decomp Levels stepper** — number of wavelet decomposition levels (0–10).
+   - **Quality Layers stepper** — number of embedded quality layers (1–20).
+   - **Progression Order** — select LRCP, RLCP, RPCL, PCRL, or CPRL via the radio group.
+   - **MCT toggle** — enable Multi-Component Transform (ICT) for colour images.
+   - **HTJ2K toggle** — enable Part 15 high-throughput encoding.
+
+3. **Apply a preset** (optional) — click one of the four preset buttons at the top of the panel
+   to populate all settings at once:
+   - **Lossless** — quality 1.0, 5/3 wavelet, 1 quality layer.
+   - **Lossy High Quality** — quality 0.95, 9/7 Float, 5 layers.
+   - **Visually Lossless** — quality 0.85, RLCP progression.
+   - **Maximum Compression** — quality 0.5, 512×512 tiles, 10 layers.
+
+4. **Encode** — click the **Encode** button in the toolbar (or press **⌘↵**).  A real-time
+   progress bar appears showing overall percentage and a per-stage breakdown:
+   - Colour Transform → DWT → Quantise → Entropy Coding → Rate Control → Packaging.
+
+5. **Inspect the output** — when encoding completes the **Encoding Output** box shows:
+   - **Encoded Size** — size of the produced codestream (e.g. "12.4 KB").
+   - **Compression Ratio** — input bytes ÷ output bytes (e.g. "8.19:1").
+   - **Encoding Time** — wall-clock time in milliseconds.
+   - **Stage Timing** — per-stage timing breakdown.
+
+6. **Compare** — a side-by-side comparison panel shows the original image alongside the
+   encoded-then-decoded output.  Use the segmented control to switch between **Side by Side**,
+   **Overlay**, and **Difference** modes.
+
+### Encoding Presets Reference
+
+| Preset | Quality | Wavelet | Tile | Layers | Progression | Typical Ratio |
+|--------|---------|---------|------|--------|-------------|---------------|
+| **Lossless** | 1.00 | 5/3 | 256×256 | 1 | LRCP | 2:1 – 4:1 |
+| **Lossy High Quality** | 0.95 | 9/7 Float | 256×256 | 5 | LRCP | 8:1 – 15:1 |
+| **Visually Lossless** | 0.85 | 9/7 Float | 256×256 | 5 | RLCP | 15:1 – 25:1 |
+| **Maximum Compression** | 0.50 | 9/7 Float | 512×512 | 10 | CPRL | 40:1 – 80:1 |
+
+### Side-by-Side Configuration Comparison
+
+1. Select the **Compare** tab in the toolbar above the detail area.
+2. Adjust the configuration panel to the first configuration and click **Add Current Config**.
+3. Change settings in the panel and click **Add Current Config** again.
+4. The comparison panel shows each configuration's output side by side.  Click the **×** button
+   on any card to remove it from the comparison.
+
+### Batch Encoding
+
+1. Select the **Batch** tab.
+2. Click **Select Folder…** to choose a directory of images.  The list of files appears below.
+3. Configure encoding settings in the left panel.
+4. Click **Encode All**.  A progress bar tracks the overall batch progress.
+5. When complete, a summary table shows each file's encoded size, compression ratio, and time.
+
+---
+
+## How to Test Decoding
+
+The **Decode** screen (`DecodeView`) provides an interactive environment for testing JPEG 2000
+decoding.  Open it by selecting **Decode** in the sidebar.
+
+### Step-by-Step: Decode a File
+
+1. **Open a file** — click **Open File…** in the toolbar and select a JP2, J2K, or JPX file.
+   The codestream header summary appears in the banner at the top of the preview area,
+   showing file name, format, dimensions, and component count.
+
+2. **Configure decoding** — use the left-hand control panel to adjust:
+   - **Resolution Level slider** — 0 = full resolution; higher values decode at reduced
+     resolution (each step halves the width and height).
+   - **Quality Layer slider** — 0 = all layers (maximum quality); higher values decode with
+     fewer layers (faster, lower quality).
+   - **Component selector** — choose **All Components** or select an individual channel
+     (Component 0 = Y/R, 1 = Cb/G, 2 = Cr/B).
+
+3. **Decode** — click the **Decode** button (or press **⌘↵**).  A progress bar tracks the
+   four internal decode stages.
+
+4. **Inspect the result** — the decoded image appears in the main preview area.  Use the zoom
+   (`+`/`−`) and pan controls to examine details.  The **Decode Result** box in the left panel
+   shows dimensions, component count, and decoding time.
+
+### Using the Region-of-Interest Selector
+
+1. Click the **ROI** toggle button in the toolbar to activate the selection tool.
+2. Draw a rectangle on the preview image to define the region to decode.
+3. An indicator at the bottom of the preview shows the selected region dimensions and offset.
+4. Click **Decode** — only the selected region is decoded.  This exercises the JPEG 2000
+   region-of-interest decoding path.
+5. To clear the ROI, click the **×** button next to the indicator, or click the **ROI** toggle
+   again and click **Clear** in the status area.
+
+### Resolution Level Stepper
+
+| Level | Effective Resolution | Use Case |
+|-------|---------------------|----------|
+| 0 | Full (1×) | Complete detail inspection |
+| 1 | ½ × ½ | Thumbnail generation |
+| 2 | ¼ × ¼ | Fast preview |
+| 3 | ⅛ × ⅛ | Overview only |
+
+Drag the **Resolution Level** slider to the desired level and press **Decode** after each change
+to compare the decoded output at each level.
+
+### Quality Layer Slider
+
+- Drag the **Quality Layer** slider to 0 for maximum quality (all layers decoded).
+- Increase the value to stop decoding after fewer layers — the image will be noisier but
+  decoding will be faster.
+- This exercises the progressive-quality path defined in ISO/IEC 15444-1 Annex B.
+
+### Component Channel Selector
+
+For multi-component images (YCbCr or RGB):
+
+- **All Components** — decodes all three channels and combines them.
+- **Component 0 (Y/R)** — luminance or red channel only.
+- **Component 1 (Cb/G)** — blue-difference or green channel.
+- **Component 2 (Cr/B)** — red-difference or blue channel.
+
+Inspecting individual components is useful for verifying MCT (Multi-Component Transform)
+correctness.
+
+### Marker Inspector Panel
+
+1. Click the **Markers** toggle button in the toolbar to open the inspector panel on the right.
+2. The tree view shows all codestream marker segments:
+   - **SOC** — Start of Codestream (byte offset 0x0000)
+   - **SIZ** — Image and tile size (dimensions, components, bit depth)
+   - **COD** — Coding style default (progression order, wavelet, levels)
+   - **QCD** — Quantisation default (step sizes)
+   - **SOT** — Start of Tile-part (expandable; contains **SOD**)
+   - **EOC** — End of Codestream
+3. Click the **▶** arrow on any composite marker (e.g. SOT) to expand its children.
+4. Each row shows the marker name, byte offset in hexadecimal, and a human-readable summary.
+
+---
+
+## How to Test Round-Trip
+
+The **Round-Trip Validation** screen (`RoundTripView`) performs a complete encode → decode →
+compare workflow with automatic quality metrics.  It is accessible via the **Encode** sidebar
+entry when using the **Round-Trip** tab, or directly from the main window.
+
+### Step-by-Step: One-Click Round-Trip
+
+1. **Choose or generate an input image**:
+   - To use a synthetic image, select a type from the **Test Image Generator** panel
+     (Gradient, Checkerboard, Noise, Solid Colour, or Lena-Style) and click **Generate**.
+   - To use a real image, drag and drop it onto the encode drop zone first.
+
+2. **Select an encoding preset** from the left panel: Lossless, Lossy High Quality, Visually
+   Lossless, or Maximum Compression.
+
+3. **Run** — click **Run Round-Trip** (or press **⌘↵**).  Three steps execute in sequence:
+   - **Step 1/3: Encoding** — input image is encoded with the selected configuration.
+   - **Step 2/3: Decoding** — encoded codestream is decoded back to pixels.
+   - **Step 3/3: Computing metrics** — PSNR, SSIM, and MSE are computed.
+
+4. **Read the results** — the metrics panel at the bottom of the screen shows:
+   - **PSNR** — coloured green (≥ 40 dB) or red (< 40 dB).
+   - **SSIM** — coloured green (≥ 0.99) or red (< 0.99).
+   - **MSE** — coloured green (< 10.0) or red (≥ 10.0).
+   - A **Pass** or **Fail** badge appears in the toolbar.
+
+5. **Compare images** — the main area shows original vs. round-tripped in **Side by Side** mode.
+   Use the segmented control to switch to **Overlay** or **Difference** modes.
+
+### Understanding PSNR, SSIM, and MSE
+
+| Metric | Full Name | Pass Threshold | Notes |
+|--------|-----------|---------------|-------|
+| **PSNR** | Peak Signal-to-Noise Ratio | ≥ 40 dB | Higher is better; ∞ for lossless |
+| **SSIM** | Structural Similarity Index | ≥ 0.99 | Range 0–1; 1.0 = identical |
+| **MSE** | Mean Squared Error | < 10.0 | Lower is better; 0.0 = identical |
+
+Typical values for common presets:
+
+| Preset | PSNR | SSIM | MSE |
+|--------|------|------|-----|
+| Lossless | ∞ dB | 1.0000 | 0.0 |
+| Lossy High Quality | ~49 dB | ~0.995 | ~0.2 |
+| Visually Lossless | ~47 dB | ~0.993 | ~0.5 |
+| Maximum Compression | ~40 dB | ~0.990 | ~1.0 |
+
+### Lossless Bit-Exact Badge
+
+When the **Lossless** preset is used (5/3 wavelet, quality = 1.0), the round-trip produces
+bit-for-bit identical pixels.  The toolbar displays a **Bit-Exact Lossless ✓** badge in green.
+The PSNR is shown as **∞ dB** and SSIM as **1.0000**.  MSE is **0.0**.
+
+### Difference Image View
+
+1. After a round-trip completes, click the **Difference** toggle button in the toolbar.
+2. The main area switches to a difference image that highlights per-pixel discrepancies:
+   - **Black pixels** — identical to the original (no difference).
+   - **Bright pixels** — indicate deviations from the original.
+3. For a lossless round-trip the difference image will be uniformly black.
+4. Toggle the button again to switch back to the comparison view.
+
+### Test Image Generator
+
+The **Test Image Generator** panel creates 64×64 synthetic images for quick testing without
+requiring external files.
+
+| Type | Description | Best for |
+|------|-------------|---------|
+| **Gradient** | Smooth horizontal/vertical colour ramp | Wavelet transform quality |
+| **Checkerboard** | High-frequency black/white pattern | Entropy coding efficiency |
+| **Noise** | Random per-pixel values | Worst-case compression |
+| **Solid Colour** | Uniform grey (128, 128, 128) | Lossless verification |
+| **Lena-Style** | Sinusoidal luminance pattern | Natural image approximation |
 
 ---
 
