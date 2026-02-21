@@ -776,12 +776,13 @@ All existing v1.7.0 APIs remain unchanged. The MJ2 module is purely additive —
 ## Additional Resources
 
 - **Cross-Platform Guide**: See `MJ2_CROSS_PLATFORM.md` for platform-specific transcoding details.
-- **Performance Guide**: See `MJ2_PERFORMANCE.md` for benchmarking and optimization.
+- **Performance Guide**: See `MJ2_PERFORMANCE.md` for benchmarking and optimisation.
 - **VideoToolbox Integration**: See `MJ2_VIDEOTOOLBOX.md` for hardware acceleration on Apple platforms.
 - **Motion JPEG 2000 Specification**: See `MOTION_JPEG2000.md` for the implementation plan and standards references.
+- **Examples**: See `../Examples/BatchProcessing.swift` for batch frame encoding patterns.
 
 ---
 
-**Last Updated**: 2026-02-19
-**Version**: 1.8.0
+**Last Updated**: 2026-02-21
+**Version**: 2.0.0
 **Maintainer**: J2KSwift Team

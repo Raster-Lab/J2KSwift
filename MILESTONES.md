@@ -3733,37 +3733,39 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 #### Week 280-281: Library Usage Documentation
 
-- [ ] Getting started guide
-  - [ ] `Documentation/GETTING_STARTED.md` — quick start (5-minute guide)
-  - [ ] Installation via SPM, CocoaPods, manual
-  - [ ] First encode/decode example
-  - [ ] Platform-specific setup notes
-- [ ] Feature guides
-  - [ ] `Documentation/ENCODING_GUIDE.md` — comprehensive encoding guide
-  - [ ] `Documentation/DECODING_GUIDE.md` — comprehensive decoding guide
-  - [ ] `Documentation/HTJ2K_GUIDE.md` — HTJ2K usage guide
-  - [ ] `Documentation/METAL_GPU_GUIDE.md` — GPU acceleration guide
-  - [ ] `Documentation/JPIP_GUIDE.md` — JPIP streaming guide
-  - [ ] `Documentation/JP3D_GUIDE.md` — volumetric imaging guide
-  - [ ] `Documentation/MJ2_GUIDE.md` — motion JPEG 2000 guide (updated)
-  - [ ] `Documentation/DICOM_INTEGRATION.md` — DICOM usage patterns (library-independent)
-- [ ] Sample code
-  - [ ] `Examples/BasicEncoding.swift` — simple encode/decode
-  - [ ] `Examples/HTJ2KTranscoding.swift` — HTJ2K workflows
-  - [ ] `Examples/ProgressiveDecoding.swift` — progressive decode
-  - [ ] `Examples/GPUAcceleration.swift` — Metal GPU usage
-  - [ ] `Examples/JPIPStreaming.swift` — JPIP client/server
-  - [ ] `Examples/VolumetricImaging.swift` — JP3D workflows
-  - [ ] `Examples/BatchProcessing.swift` — batch file processing
-  - [ ] `Examples/DICOMWorkflow.swift` — DICOM-aware workflow (independent)
-- [ ] Testing
-  - [ ] All example code compiles and runs
-  - [ ] Documentation link validation (no broken links)
+- [x] Getting started guide
+  - [x] `Documentation/GETTING_STARTED.md` — quick start (5-minute guide)
+  - [x] Installation via SPM, CocoaPods, manual
+  - [x] First encode/decode example
+  - [x] Platform-specific setup notes
+- [x] Feature guides
+  - [x] `Documentation/ENCODING_GUIDE.md` — comprehensive encoding guide
+  - [x] `Documentation/DECODING_GUIDE.md` — comprehensive decoding guide
+  - [x] `Documentation/HTJ2K_GUIDE.md` — HTJ2K usage guide
+  - [x] `Documentation/METAL_GPU_GUIDE.md` — GPU acceleration guide
+  - [x] `Documentation/JPIP_GUIDE.md` — JPIP streaming guide
+  - [x] `Documentation/JP3D_GUIDE.md` — volumetric imaging guide
+  - [x] `Documentation/MJ2_GUIDE.md` — motion JPEG 2000 guide (updated)
+  - [x] `Documentation/DICOM_INTEGRATION.md` — DICOM usage patterns (library-independent)
+- [x] Sample code
+  - [x] `Examples/BasicEncoding.swift` — simple encode/decode
+  - [x] `Examples/HTJ2KTranscoding.swift` — HTJ2K workflows
+  - [x] `Examples/ProgressiveDecoding.swift` — progressive decode
+  - [x] `Examples/GPUAcceleration.swift` — Metal GPU usage
+  - [x] `Examples/JPIPStreaming.swift` — JPIP client/server
+  - [x] `Examples/VolumetricImaging.swift` — JP3D workflows
+  - [x] `Examples/BatchProcessing.swift` — batch file processing
+  - [x] `Examples/DICOMWorkflow.swift` — DICOM-aware workflow (independent)
+- [x] Testing
+  - [x] All example code compiles and runs
+  - [x] Documentation link validation (no broken links)
 
 **Deliverables**:
 - Complete documentation suite in `Documentation/`
 - Example code in `Examples/`
 - Updated `README.md` with v2.0 features
+
+**Status**: Complete.
 
 #### Week 282-283: Architecture and Contributor Documentation
 
@@ -3984,9 +3986,9 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-**Last Updated**: 2026-02-21 (Week 272-277 completed)
+**Last Updated**: 2026-02-21 (Week 280-281 completed)
 **Current Phase**: Phase 17 — v2.0 Performance Refactoring & Conformance (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-271, Phase 17f Weeks 272-277
-**Next Phase**: Phase 17, Sub-phase 17g — Documentation Overhaul (Weeks 278-283)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 142 new conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17a Weeks 236-241, Phase 17b Weeks 242-251, Phase 17c Weeks 252-255, Phase 17d Weeks 256-265, Phase 17e Weeks 266-271, Phase 17f Weeks 272-277, Phase 17g Weeks 278-281
+**Next Phase**: Phase 17, Sub-phase 17g — Documentation Overhaul (Weeks 282-283)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 142 new conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files (BasicEncoding, HTJ2KTranscoding, ProgressiveDecoding, GPUAcceleration, JPIPStreaming, VolumetricImaging, BatchProcessing, DICOMWorkflow)
