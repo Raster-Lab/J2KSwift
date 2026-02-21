@@ -1,0 +1,88 @@
+name: Interactive Testing (Headless)
+
+on:
+  workflow_dispatch:
+    inputs:
+      playlist:
+        description: 'Test playlist to run'
+        required: true
+        default: 'Quick Smoke Test'
+        type: choice
+        options:
+          - 'Quick Smoke Test'
+          - 'Full Conformance'
+          - 'Performance Suite'
+          - 'Encode/Decode Only'
+      report_format:
+        description: 'Report output format'
+        required: false
+        default: 'html'
+        type: choice
+        options:
+          - html
+          - json
+          - csv
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  headless-tests:
+    name: Headless Test Run (${{ github.event.inputs.playlist || 'Quick Smoke Test' }})
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Build
+        run: swift build -c release --product j2k
+
+      - name: Run headless tests
+        id: run_tests
+        run: |
+          PLAYLIST="${{ github.event.inputs.playlist || 'Quick Smoke Test' }}"
+          FORMAT="${{ github.event.inputs.report_format || 'html' }}"
+          REPORT="test_report.${FORMAT}"
+          .build/release/j2k testapp \
+            --headless \
+            --playlist "${PLAYLIST}" \
+            --output "${REPORT}" \
+            --format "${FORMAT}"
+        continue-on-error: true
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report-${{ github.run_id }}
+          path: test_report.*
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Check exit code
+        run: |
+          if [ "${{ steps.run_tests.outcome }}" = "failure" ]; then
+            echo "Tests failed — see uploaded report artifact"
+            exit 1
+          fi

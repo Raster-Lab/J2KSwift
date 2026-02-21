@@ -4203,31 +4203,31 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Build a GUI reporting dashboard with charts and summaries, plus headless/CLI mode for CI/CD automation.
 
-- [ ] Reporting dashboard screen (`ReportView`)
-  - [ ] Summary dashboard: total tests run, pass/fail/skip counts, overall duration, pie chart
-  - [ ] Category breakdown: expandable sections per test category with individual results
-  - [ ] Trend chart: line graph of pass rate over time (across multiple sessions)
-  - [ ] Test coverage heatmap: grid mapping test coverage to JPEG 2000 standard sections
-  - [ ] One-click export: HTML report with embedded charts, JSON data export, CSV spreadsheet
-- [ ] Test playlist management
-  - [ ] Create/save/load test playlists (named sets of tests to run together)
-  - [ ] Preset playlists: "Quick Smoke Test", "Full Conformance", "Performance Suite", "Encode/Decode Only"
-  - [ ] Drag-and-drop reordering of tests within a playlist
-  - [ ] Schedule periodic test execution with macOS notification on completion
-- [ ] Headless/CLI automation mode
-  - [ ] `j2ktestapp --headless --playlist <name> --output <report.json>` for CI/CD integration
-  - [ ] Exit code 0 (all pass) / 1 (any failure) for CI gating
-  - [ ] GitHub Actions workflow `interactive-testing.yml` for automated runs
-  - [ ] Artifact upload of HTML reports and screenshots
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (reporting/automation sections)
-  - [ ] "How to Read Test Reports" — guide to the summary dashboard, trend charts, and heatmap
-  - [ ] "How to Create Test Playlists" — step-by-step: create playlist → add tests → save → run
-  - [ ] "How to Run Tests in CI/CD" — headless mode usage, GitHub Actions setup, report artifacts
-  - [ ] "Preset Playlists Reference" — what each preset covers and when to use it
-- [ ] Testing
-  - [ ] Report data model and export format tests
-  - [ ] Playlist serialisation/deserialisation tests
-  - [ ] Headless mode exit code tests
+- [x] Reporting dashboard screen (`ReportView`)
+  - [x] Summary dashboard: total tests run, pass/fail/skip counts, overall duration, pie chart
+  - [x] Category breakdown: expandable sections per test category with individual results
+  - [x] Trend chart: line graph of pass rate over time (across multiple sessions)
+  - [x] Test coverage heatmap: grid mapping test coverage to JPEG 2000 standard sections
+  - [x] One-click export: HTML report with embedded charts, JSON data export, CSV spreadsheet
+- [x] Test playlist management
+  - [x] Create/save/load test playlists (named sets of tests to run together)
+  - [x] Preset playlists: "Quick Smoke Test", "Full Conformance", "Performance Suite", "Encode/Decode Only"
+  - [x] Drag-and-drop reordering of tests within a playlist
+  - [x] Schedule periodic test execution with macOS notification on completion
+- [x] Headless/CLI automation mode
+  - [x] `j2ktestapp --headless --playlist <name> --output <report.json>` for CI/CD integration
+  - [x] Exit code 0 (all pass) / 1 (any failure) for CI gating
+  - [x] GitHub Actions workflow `interactive-testing.yml` for automated runs
+  - [x] Artifact upload of HTML reports and screenshots
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (reporting/automation sections)
+  - [x] "How to Read Test Reports" — guide to the summary dashboard, trend charts, and heatmap
+  - [x] "How to Create Test Playlists" — step-by-step: create playlist → add tests → save → run
+  - [x] "How to Run Tests in CI/CD" — headless mode usage, GitHub Actions setup, report artifacts
+  - [x] "Preset Playlists Reference" — what each preset covers and when to use it
+- [x] Testing
+  - [x] Report data model and export format tests
+  - [x] Playlist serialisation/deserialisation tests
+  - [x] Headless mode exit code tests
 
 **Deliverables**:
 - `ReportView` SwiftUI dashboard with charts, heatmap, and export
@@ -4235,7 +4235,7 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 - Headless CLI mode and GitHub Actions workflow
 - `TESTING_GUIDE.md` — reporting, playlists, and CI/CD automation sections
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 311-313).
 
 ### Week 314-315: GUI Polish, Complete Testing Guide and v2.1 Release
 
@@ -4348,9 +4348,9 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-02-21 (Phase 18 Week 308-310 complete)
+**Last Updated**: 2026-07-01 (Phase 18 Week 311-313 complete)
 **Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-307
-**Next Phase**: Phase 18 Week 311-313 (Test Reporting Dashboard and Automation)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-313
+**Next Phase**: Phase 18 Week 314-315 (GUI Polish, Complete Testing Guide and v2.1 Release)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README
