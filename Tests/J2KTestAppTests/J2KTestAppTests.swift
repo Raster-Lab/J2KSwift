@@ -651,4 +651,486 @@ final class MainViewModelTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: path)
     }
 }
+
+// MARK: - Encode Configuration Tests
+
+final class EncodeConfigurationTests: XCTestCase {
+
+    func testDefaultConfiguration() {
+        let config = EncodeConfiguration()
+        XCTAssertEqual(config.quality, 0.9)
+        XCTAssertEqual(config.tileWidth, 256)
+        XCTAssertEqual(config.tileHeight, 256)
+        XCTAssertEqual(config.decompositionLevels, 5)
+        XCTAssertEqual(config.qualityLayers, 5)
+        XCTAssertEqual(config.progressionOrder, .lrcp)
+        XCTAssertEqual(config.waveletType, .nineSevenFloat)
+        XCTAssertTrue(config.mctEnabled)
+        XCTAssertFalse(config.htj2kEnabled)
+    }
+
+    func testLosslessPreset() {
+        let config = EncodeConfiguration.Preset.lossless.configuration
+        XCTAssertEqual(config.quality, 1.0)
+        XCTAssertEqual(config.waveletType, .fiveThree)
+        XCTAssertEqual(config.qualityLayers, 1)
+    }
+
+    func testHighQualityPreset() {
+        let config = EncodeConfiguration.Preset.highQuality.configuration
+        XCTAssertEqual(config.quality, 0.95)
+        XCTAssertEqual(config.waveletType, .nineSevenFloat)
+        XCTAssertEqual(config.qualityLayers, 5)
+    }
+
+    func testVisuallyLosslessPreset() {
+        let config = EncodeConfiguration.Preset.visuallyLossless.configuration
+        XCTAssertEqual(config.quality, 0.85)
+        XCTAssertEqual(config.progressionOrder, .rlcp)
+    }
+
+    func testMaxCompressionPreset() {
+        let config = EncodeConfiguration.Preset.maxCompression.configuration
+        XCTAssertEqual(config.quality, 0.5)
+        XCTAssertEqual(config.tileWidth, 512)
+        XCTAssertEqual(config.tileHeight, 512)
+        XCTAssertEqual(config.qualityLayers, 10)
+    }
+
+    func testAllPresetsHaveUniqueQualities() {
+        let qualities = EncodeConfiguration.Preset.allCases.map { $0.configuration.quality }
+        let unique = Set(qualities)
+        XCTAssertEqual(unique.count, EncodeConfiguration.Preset.allCases.count)
+    }
+
+    func testProgressionOrderAllCases() {
+        XCTAssertEqual(ProgressionOrderChoice.allCases.count, 5)
+        XCTAssertEqual(ProgressionOrderChoice.lrcp.rawValue, "LRCP")
+        XCTAssertEqual(ProgressionOrderChoice.cprl.rawValue, "CPRL")
+    }
+
+    func testWaveletTypeAllCases() {
+        XCTAssertEqual(WaveletTypeChoice.allCases.count, 4)
+        XCTAssertEqual(WaveletTypeChoice.fiveThree.rawValue, "5/3 (Lossless)")
+        XCTAssertEqual(WaveletTypeChoice.haar.rawValue, "Haar")
+    }
+}
+
+// MARK: - Encode Operation Result Tests
+
+final class EncodeOperationResultTests: XCTestCase {
+
+    func testCompressionRatio() {
+        let result = EncodeOperationResult(
+            inputFileName: "test.png",
+            inputSize: 1000,
+            encodedSize: 200,
+            encodingTime: 0.05
+        )
+        XCTAssertEqual(result.compressionRatio, 5.0, accuracy: 0.001)
+    }
+
+    func testCompressionRatioZeroEncodedSize() {
+        let result = EncodeOperationResult(
+            inputFileName: "test.png",
+            inputSize: 1000,
+            encodedSize: 0,
+            encodingTime: 0.01
+        )
+        XCTAssertEqual(result.compressionRatio, 0)
+    }
+
+    func testSuccessfulResult() {
+        let result = EncodeOperationResult(
+            inputFileName: "img.png",
+            inputSize: 4096,
+            encodedSize: 512,
+            encodingTime: 0.1,
+            succeeded: true
+        )
+        XCTAssertTrue(result.succeeded)
+        XCTAssertTrue(result.errorMessage.isEmpty)
+    }
+
+    func testFailedResult() {
+        let result = EncodeOperationResult(
+            inputFileName: "img.png",
+            inputSize: 4096,
+            encodedSize: 0,
+            encodingTime: 0.01,
+            succeeded: false,
+            errorMessage: "Invalid input"
+        )
+        XCTAssertFalse(result.succeeded)
+        XCTAssertEqual(result.errorMessage, "Invalid input")
+    }
+}
+
+// MARK: - Encode View Model Tests
+
+final class EncodeViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = EncodeViewModel()
+        XCTAssertNil(vm.inputImageURL)
+        XCTAssertNil(vm.inputImageData)
+        XCTAssertFalse(vm.isEncoding)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertNil(vm.lastResult)
+        XCTAssertNil(vm.outputData)
+        XCTAssertTrue(vm.batchResults.isEmpty)
+    }
+
+    func testApplyPreset() {
+        let vm = EncodeViewModel()
+        vm.applyPreset(.lossless)
+        XCTAssertEqual(vm.configuration.quality, 1.0)
+        XCTAssertEqual(vm.configuration.waveletType, .fiveThree)
+    }
+
+    func testApplyAllPresets() {
+        let vm = EncodeViewModel()
+        for preset in EncodeConfiguration.Preset.allCases {
+            vm.applyPreset(preset)
+            XCTAssertEqual(vm.configuration, preset.configuration)
+        }
+    }
+
+    func testSetInputImage() {
+        let vm = EncodeViewModel()
+        let url = URL(fileURLWithPath: "/tmp/sample.png")
+        vm.inputImageURL = url
+        vm.statusMessage = "Loaded: sample.png"
+        XCTAssertEqual(vm.inputImageURL, url)
+        XCTAssertEqual(vm.statusMessage, "Loaded: sample.png")
+    }
+
+    func testSetBatchInputURLs() {
+        let vm = EncodeViewModel()
+        let urls = (1...5).map { URL(fileURLWithPath: "/tmp/img\($0).png") }
+        vm.setBatchInputURLs(urls)
+        XCTAssertEqual(vm.batchInputURLs.count, 5)
+        XCTAssertTrue(vm.statusMessage.contains("5"))
+    }
+
+    func testAddAndRemoveComparisonConfiguration() {
+        let vm = EncodeViewModel()
+        let config = EncodeConfiguration.Preset.highQuality.configuration
+        vm.addComparisonConfiguration(config)
+        XCTAssertEqual(vm.comparisonConfigurations.count, 1)
+        vm.removeComparisonConfiguration(at: 0)
+        XCTAssertTrue(vm.comparisonConfigurations.isEmpty)
+    }
+
+    func testRemoveComparisonConfigurationOutOfBoundsDoesNotCrash() {
+        let vm = EncodeViewModel()
+        vm.removeComparisonConfiguration(at: 99) // Should not crash
+        XCTAssertTrue(vm.comparisonConfigurations.isEmpty)
+    }
+
+    func testEncodedSizeStringBeforeEncoding() {
+        let vm = EncodeViewModel()
+        XCTAssertEqual(vm.encodedSizeString, "—")
+        XCTAssertEqual(vm.compressionRatioString, "—")
+        XCTAssertEqual(vm.encodingTimeString, "—")
+    }
+
+    func testEncodeWithoutInput() async {
+        let vm = EncodeViewModel()
+        let session = TestSession()
+        await vm.encode(session: session)
+        XCTAssertEqual(vm.statusMessage, "No input image selected.")
+        XCTAssertFalse(vm.isEncoding)
+    }
+
+    func testEncodeWithInput() async {
+        let vm = EncodeViewModel()
+        vm.inputImageData = Data(repeating: 128, count: 1024)
+        vm.inputImageURL = URL(fileURLWithPath: "/tmp/test.png")
+        let session = TestSession()
+        await vm.encode(session: session)
+        XCTAssertFalse(vm.isEncoding)
+        XCTAssertNotNil(vm.lastResult)
+        XCTAssertNotNil(vm.outputData)
+        XCTAssertTrue(vm.lastResult?.succeeded == true)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testEncodeSetsMetricsStrings() async {
+        let vm = EncodeViewModel()
+        vm.inputImageData = Data(repeating: 0, count: 2048)
+        vm.inputImageURL = URL(fileURLWithPath: "/tmp/img.png")
+        let session = TestSession()
+        await vm.encode(session: session)
+        XCTAssertNotEqual(vm.encodedSizeString, "—")
+        XCTAssertNotEqual(vm.compressionRatioString, "—")
+        XCTAssertNotEqual(vm.encodingTimeString, "—")
+    }
+}
+
+// MARK: - Decode Configuration Tests
+
+final class DecodeConfigurationTests: XCTestCase {
+
+    func testDefaultConfiguration() {
+        let config = DecodeConfiguration()
+        XCTAssertEqual(config.resolutionLevel, 0)
+        XCTAssertEqual(config.qualityLayer, 0)
+        XCTAssertNil(config.regionOfInterest)
+        XCTAssertNil(config.componentIndex)
+    }
+
+    func testCustomConfiguration() {
+        let roi = CGRect(x: 10, y: 20, width: 100, height: 80)
+        let config = DecodeConfiguration(
+            resolutionLevel: 2,
+            qualityLayer: 3,
+            regionOfInterest: roi,
+            componentIndex: 1
+        )
+        XCTAssertEqual(config.resolutionLevel, 2)
+        XCTAssertEqual(config.qualityLayer, 3)
+        XCTAssertEqual(config.regionOfInterest, roi)
+        XCTAssertEqual(config.componentIndex, 1)
+    }
+}
+
+// MARK: - Codestream Marker Info Tests
+
+final class CodestreamMarkerInfoTests: XCTestCase {
+
+    func testMarkerCreation() {
+        let marker = CodestreamMarkerInfo(name: "SOC", offset: 0)
+        XCTAssertEqual(marker.name, "SOC")
+        XCTAssertEqual(marker.offset, 0)
+        XCTAssertNil(marker.length)
+        XCTAssertTrue(marker.summary.isEmpty)
+        XCTAssertTrue(marker.children.isEmpty)
+    }
+
+    func testMarkerWithChildren() {
+        let child = CodestreamMarkerInfo(name: "SOD", offset: 100)
+        let parent = CodestreamMarkerInfo(name: "SOT", offset: 88, length: 10, children: [child])
+        XCTAssertEqual(parent.children.count, 1)
+        XCTAssertEqual(parent.children.first?.name, "SOD")
+    }
+
+    func testMarkerIdentifiable() {
+        let m1 = CodestreamMarkerInfo(name: "SOC", offset: 0)
+        let m2 = CodestreamMarkerInfo(name: "SOC", offset: 0)
+        // Each marker gets a unique UUID
+        XCTAssertNotEqual(m1.id, m2.id)
+    }
+}
+
+// MARK: - Decode View Model Tests
+
+final class DecodeViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = DecodeViewModel()
+        XCTAssertNil(vm.inputFileURL)
+        XCTAssertFalse(vm.isDecoding)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertNil(vm.lastResult)
+        XCTAssertNil(vm.outputImageData)
+        XCTAssertTrue(vm.markers.isEmpty)
+        XCTAssertTrue(vm.codestreamHeaderSummary.isEmpty)
+        XCTAssertFalse(vm.isROISelectionActive)
+        XCTAssertEqual(vm.maxResolutionLevel, 5)
+        XCTAssertEqual(vm.maxQualityLayer, 5)
+    }
+
+    func testLoadFile() {
+        let vm = DecodeViewModel()
+        let url = URL(fileURLWithPath: "/tmp/test.jp2")
+        vm.loadFile(url: url)
+        XCTAssertEqual(vm.inputFileURL, url)
+        XCTAssertFalse(vm.markers.isEmpty)
+        XCTAssertFalse(vm.codestreamHeaderSummary.isEmpty)
+        XCTAssertTrue(vm.statusMessage.contains("test.jp2"))
+    }
+
+    func testLoadFileSetsExpectedMarkers() {
+        let vm = DecodeViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.jp2"))
+        let markerNames = vm.markers.map { $0.name }
+        XCTAssertTrue(markerNames.contains("SOC"))
+        XCTAssertTrue(markerNames.contains("EOC"))
+        XCTAssertTrue(markerNames.contains("SIZ"))
+    }
+
+    func testSetRegionOfInterest() {
+        let vm = DecodeViewModel()
+        let roi = CGRect(x: 0, y: 0, width: 128, height: 128)
+        vm.setRegionOfInterest(roi)
+        XCTAssertEqual(vm.configuration.regionOfInterest, roi)
+        XCTAssertTrue(vm.statusMessage.contains("128"))
+    }
+
+    func testClearRegionOfInterest() {
+        let vm = DecodeViewModel()
+        vm.setRegionOfInterest(CGRect(x: 0, y: 0, width: 64, height: 64))
+        vm.clearRegionOfInterest()
+        XCTAssertNil(vm.configuration.regionOfInterest)
+        XCTAssertTrue(vm.statusMessage.contains("cleared"))
+    }
+
+    func testDecodeTimeStringBeforeDecoding() {
+        let vm = DecodeViewModel()
+        XCTAssertEqual(vm.decodingTimeString, "—")
+    }
+
+    func testDecodeWithoutFile() async {
+        let vm = DecodeViewModel()
+        let session = TestSession()
+        await vm.decode(session: session)
+        XCTAssertEqual(vm.statusMessage, "No input file selected.")
+        XCTAssertFalse(vm.isDecoding)
+    }
+
+    func testDecodeWithFile() async {
+        let vm = DecodeViewModel()
+        vm.loadFile(url: URL(fileURLWithPath: "/tmp/test.jp2"))
+        let session = TestSession()
+        await vm.decode(session: session)
+        XCTAssertFalse(vm.isDecoding)
+        XCTAssertNotNil(vm.lastResult)
+        XCTAssertNotNil(vm.outputImageData)
+        XCTAssertTrue(vm.lastResult?.succeeded == true)
+        XCTAssertEqual(vm.lastResult?.imageWidth, 512)
+        XCTAssertEqual(vm.lastResult?.imageHeight, 512)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+}
+
+// MARK: - Round-Trip Metrics Tests
+
+final class RoundTripMetricsTests: XCTestCase {
+
+    func testLosslessMetrics() {
+        let metrics = RoundTripMetrics(psnr: .infinity, ssim: 1.0, mse: 0.0, isBitExact: true)
+        XCTAssertTrue(metrics.isBitExact)
+        XCTAssertTrue(metrics.passes)
+        XCTAssertEqual(metrics.mse, 0.0)
+    }
+
+    func testPassingLossyMetrics() {
+        let metrics = RoundTripMetrics(psnr: 45.0, ssim: 0.995, mse: 0.5)
+        XCTAssertTrue(metrics.psnrPasses)
+        XCTAssertTrue(metrics.ssimPasses)
+        XCTAssertTrue(metrics.passes)
+    }
+
+    func testFailingPSNR() {
+        let metrics = RoundTripMetrics(psnr: 35.0, ssim: 0.995, mse: 2.0)
+        XCTAssertFalse(metrics.psnrPasses)
+        XCTAssertFalse(metrics.passes)
+    }
+
+    func testFailingSSIM() {
+        let metrics = RoundTripMetrics(psnr: 50.0, ssim: 0.97, mse: 1.0)
+        XCTAssertFalse(metrics.ssimPasses)
+        XCTAssertFalse(metrics.passes)
+    }
+
+    func testThresholds() {
+        XCTAssertEqual(RoundTripMetrics.psnrPassThreshold, 40.0, accuracy: 0.001)
+        XCTAssertEqual(RoundTripMetrics.ssimPassThreshold, 0.99, accuracy: 0.001)
+    }
+}
+
+// MARK: - Round-Trip View Model Tests
+
+final class RoundTripViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = RoundTripViewModel()
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertNil(vm.originalImageData)
+        XCTAssertNil(vm.roundTrippedImageData)
+        XCTAssertNil(vm.metrics)
+        XCTAssertFalse(vm.showDifferenceImage)
+        XCTAssertEqual(vm.selectedTestImageType, .gradient)
+    }
+
+    func testGenerateGradientTestImage() {
+        let vm = RoundTripViewModel()
+        vm.selectedTestImageType = .gradient
+        vm.generateTestImage()
+        XCTAssertNotNil(vm.encodeViewModel.inputImageData)
+        XCTAssertFalse(vm.encodeViewModel.inputImageData!.isEmpty)
+        XCTAssertTrue(vm.statusMessage.contains("Gradient"))
+    }
+
+    func testGenerateCheckerboardTestImage() {
+        let vm = RoundTripViewModel()
+        vm.selectedTestImageType = .checkerboard
+        vm.generateTestImage()
+        XCTAssertNotNil(vm.encodeViewModel.inputImageData)
+        XCTAssertTrue(vm.statusMessage.contains("Checkerboard"))
+    }
+
+    func testGenerateAllTestImageTypes() {
+        let vm = RoundTripViewModel()
+        for imageType in RoundTripViewModel.TestImageType.allCases {
+            vm.selectedTestImageType = imageType
+            vm.generateTestImage()
+            XCTAssertNotNil(vm.encodeViewModel.inputImageData)
+            XCTAssertFalse(vm.encodeViewModel.inputImageData!.isEmpty)
+        }
+    }
+
+    func testRoundTripWithoutInput() async {
+        let vm = RoundTripViewModel()
+        let session = TestSession()
+        await vm.runRoundTrip(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertTrue(vm.statusMessage.contains("No input"))
+    }
+
+    func testRoundTripLossless() async {
+        let vm = RoundTripViewModel()
+        vm.selectedTestImageType = .gradient
+        vm.generateTestImage()
+        vm.encodeViewModel.applyPreset(.lossless)
+        let session = TestSession()
+        await vm.runRoundTrip(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertNotNil(vm.metrics)
+        XCTAssertTrue(vm.metrics?.isBitExact == true)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+        XCTAssertTrue(vm.statusMessage.contains("Bit-exact"))
+    }
+
+    func testRoundTripLossy() async {
+        let vm = RoundTripViewModel()
+        vm.selectedTestImageType = .checkerboard
+        vm.generateTestImage()
+        vm.encodeViewModel.applyPreset(.highQuality)
+        let session = TestSession()
+        await vm.runRoundTrip(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertNotNil(vm.metrics)
+        XCTAssertFalse(vm.metrics?.isBitExact == true)
+        XCTAssertNotNil(vm.roundTrippedImageData)
+    }
+
+    func testRoundTripRecordsResults() async {
+        let vm = RoundTripViewModel()
+        vm.generateTestImage()
+        let session = TestSession()
+        await vm.runRoundTrip(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testTestImageTypeAllCases() {
+        XCTAssertEqual(RoundTripViewModel.TestImageType.allCases.count, 5)
+    }
+}
 #endif

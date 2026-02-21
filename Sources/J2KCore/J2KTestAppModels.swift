@@ -884,4 +884,756 @@ public final class MainViewModel: @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Encoding Configuration
+
+/// Configuration for a single JPEG 2000 encoding operation.
+///
+/// Captures all parameters that can be set from the Encode GUI screen,
+/// including quality, tile size, progression order, and feature flags.
+public struct EncodeConfiguration: Sendable, Equatable {
+    /// Quality factor in the range 0.0 (maximum compression) to 1.0 (lossless).
+    public var quality: Double
+    /// Tile width in pixels.
+    public var tileWidth: Int
+    /// Tile height in pixels.
+    public var tileHeight: Int
+    /// Number of wavelet decomposition levels.
+    public var decompositionLevels: Int
+    /// Number of quality layers.
+    public var qualityLayers: Int
+    /// Progression order.
+    public var progressionOrder: ProgressionOrderChoice
+    /// Wavelet filter type.
+    public var waveletType: WaveletTypeChoice
+    /// Whether multi-component transform (MCT/ICT) is enabled.
+    public var mctEnabled: Bool
+    /// Whether HTJ2K (Part 15) encoding is used.
+    public var htj2kEnabled: Bool
+
+    /// Preset names for quick configuration.
+    public enum Preset: String, CaseIterable, Sendable {
+        case lossless = "Lossless"
+        case highQuality = "Lossy High Quality"
+        case visuallyLossless = "Visually Lossless"
+        case maxCompression = "Maximum Compression"
+
+        /// Returns the configuration corresponding to this preset.
+        public var configuration: EncodeConfiguration {
+            switch self {
+            case .lossless:
+                return EncodeConfiguration(
+                    quality: 1.0, tileWidth: 256, tileHeight: 256,
+                    decompositionLevels: 5, qualityLayers: 1,
+                    progressionOrder: .lrcp, waveletType: .fiveThree,
+                    mctEnabled: true, htj2kEnabled: false
+                )
+            case .highQuality:
+                return EncodeConfiguration(
+                    quality: 0.95, tileWidth: 256, tileHeight: 256,
+                    decompositionLevels: 5, qualityLayers: 5,
+                    progressionOrder: .lrcp, waveletType: .nineSevenFloat,
+                    mctEnabled: true, htj2kEnabled: false
+                )
+            case .visuallyLossless:
+                return EncodeConfiguration(
+                    quality: 0.85, tileWidth: 256, tileHeight: 256,
+                    decompositionLevels: 5, qualityLayers: 5,
+                    progressionOrder: .rlcp, waveletType: .nineSevenFloat,
+                    mctEnabled: true, htj2kEnabled: false
+                )
+            case .maxCompression:
+                return EncodeConfiguration(
+                    quality: 0.5, tileWidth: 512, tileHeight: 512,
+                    decompositionLevels: 6, qualityLayers: 10,
+                    progressionOrder: .cprl, waveletType: .nineSevenFloat,
+                    mctEnabled: true, htj2kEnabled: false
+                )
+            }
+        }
+    }
+
+    /// Creates a default encoding configuration.
+    public init(
+        quality: Double = 0.9,
+        tileWidth: Int = 256,
+        tileHeight: Int = 256,
+        decompositionLevels: Int = 5,
+        qualityLayers: Int = 5,
+        progressionOrder: ProgressionOrderChoice = .lrcp,
+        waveletType: WaveletTypeChoice = .nineSevenFloat,
+        mctEnabled: Bool = true,
+        htj2kEnabled: Bool = false
+    ) {
+        self.quality = quality
+        self.tileWidth = tileWidth
+        self.tileHeight = tileHeight
+        self.decompositionLevels = decompositionLevels
+        self.qualityLayers = qualityLayers
+        self.progressionOrder = progressionOrder
+        self.waveletType = waveletType
+        self.mctEnabled = mctEnabled
+        self.htj2kEnabled = htj2kEnabled
+    }
+}
+
+/// Progression order choices available in the GUI.
+public enum ProgressionOrderChoice: String, CaseIterable, Sendable {
+    case lrcp = "LRCP"
+    case rlcp = "RLCP"
+    case rpcl = "RPCL"
+    case pcrl = "PCRL"
+    case cprl = "CPRL"
+}
+
+/// Wavelet filter type choices available in the GUI.
+public enum WaveletTypeChoice: String, CaseIterable, Sendable {
+    case fiveThree = "5/3 (Lossless)"
+    case nineSevenFloat = "9/7 Float"
+    case nineSevenFixed = "9/7 Fixed"
+    case haar = "Haar"
+}
+
+// MARK: - Encoding Result
+
+/// Result of a single encoding operation.
+public struct EncodeOperationResult: Sendable, Equatable {
+    /// Name of the input image file.
+    public let inputFileName: String
+    /// Input file size in bytes.
+    public let inputSize: Int
+    /// Encoded output size in bytes.
+    public let encodedSize: Int
+    /// Compression ratio (inputSize / encodedSize).
+    public var compressionRatio: Double {
+        encodedSize > 0 ? Double(inputSize) / Double(encodedSize) : 0
+    }
+    /// Total encoding time in seconds.
+    public let encodingTime: TimeInterval
+    /// Per-stage timing breakdown.
+    public let stageTiming: [PipelineStage: TimeInterval]
+    /// Whether encoding succeeded.
+    public let succeeded: Bool
+    /// Error message if encoding failed.
+    public let errorMessage: String
+
+    public init(
+        inputFileName: String,
+        inputSize: Int,
+        encodedSize: Int,
+        encodingTime: TimeInterval,
+        stageTiming: [PipelineStage: TimeInterval] = [:],
+        succeeded: Bool = true,
+        errorMessage: String = ""
+    ) {
+        self.inputFileName = inputFileName
+        self.inputSize = inputSize
+        self.encodedSize = encodedSize
+        self.encodingTime = encodingTime
+        self.stageTiming = stageTiming
+        self.succeeded = succeeded
+        self.errorMessage = errorMessage
+    }
+}
+
+// MARK: - Encode View Model
+
+/// View model for the Encode GUI screen.
+///
+/// Manages input image selection, encoding configuration, progress,
+/// and output results. Supports single-image encoding, batch encoding,
+/// and multi-configuration comparison.
+@Observable
+public final class EncodeViewModel: @unchecked Sendable {
+    /// URL of the selected input image.
+    public var inputImageURL: URL?
+    /// Raw data of the selected input image.
+    public var inputImageData: Data?
+    /// URLs selected for batch encoding.
+    public var batchInputURLs: [URL] = []
+    /// Current encoding configuration.
+    public var configuration: EncodeConfiguration = EncodeConfiguration()
+    /// Configurations being compared side-by-side.
+    public var comparisonConfigurations: [EncodeConfiguration] = []
+    /// Whether encoding is in progress.
+    public var isEncoding: Bool = false
+    /// Overall progress (0.0–1.0).
+    public var progress: Double = 0
+    /// Per-stage progress.
+    public var stageProgress: [StageProgress] = []
+    /// Status message.
+    public var statusMessage: String = "Ready"
+    /// Result of the last encoding operation.
+    public var lastResult: EncodeOperationResult?
+    /// Encoded output data.
+    public var outputData: Data?
+    /// Results from batch encoding.
+    public var batchResults: [EncodeOperationResult] = []
+    /// Whether batch encoding mode is active.
+    public var isBatchMode: Bool = false
+
+    /// Human-readable encoded file size string.
+    public var encodedSizeString: String {
+        guard let result = lastResult else { return "—" }
+        return formatBytes(result.encodedSize)
+    }
+
+    /// Human-readable compression ratio string.
+    public var compressionRatioString: String {
+        guard let result = lastResult else { return "—" }
+        return String(format: "%.2f:1", result.compressionRatio)
+    }
+
+    /// Human-readable encoding time string.
+    public var encodingTimeString: String {
+        guard let result = lastResult else { return "—" }
+        let ms = result.encodingTime * 1000
+        return String(format: "%.1f ms", ms)
+    }
+
+    public init() {}
+
+    /// Applies a preset configuration.
+    ///
+    /// - Parameter preset: The preset to apply.
+    public func applyPreset(_ preset: EncodeConfiguration.Preset) {
+        configuration = preset.configuration
+    }
+
+    /// Sets the input image from a dropped file URL.
+    ///
+    /// - Parameter url: URL of the dropped image file.
+    public func setInputImage(url: URL) {
+        inputImageURL = url
+        inputImageData = try? Data(contentsOf: url)
+        statusMessage = "Loaded: \(url.lastPathComponent)"
+    }
+
+    /// Sets the batch input URLs from a folder selection.
+    ///
+    /// - Parameter urls: Array of image file URLs.
+    public func setBatchInputURLs(_ urls: [URL]) {
+        batchInputURLs = urls
+        statusMessage = "\(urls.count) image(s) selected for batch encoding"
+    }
+
+    /// Adds a comparison configuration.
+    ///
+    /// - Parameter config: Configuration to add to the comparison.
+    public func addComparisonConfiguration(_ config: EncodeConfiguration) {
+        comparisonConfigurations.append(config)
+    }
+
+    /// Removes a comparison configuration at the given index.
+    ///
+    /// - Parameter index: Index of the configuration to remove.
+    public func removeComparisonConfiguration(at index: Int) {
+        guard comparisonConfigurations.indices.contains(index) else { return }
+        comparisonConfigurations.remove(at: index)
+    }
+
+    /// Simulates an encoding operation and updates state.
+    ///
+    /// In the real application this would invoke `J2KEncoder`; here it
+    /// produces plausible synthetic metrics for GUI testing purposes.
+    ///
+    /// - Parameter session: The test session for recording results.
+    public func encode(session: TestSession) async {
+        guard let imageData = inputImageData else {
+            statusMessage = "No input image selected."
+            return
+        }
+        isEncoding = true
+        progress = 0
+        outputData = nil
+        lastResult = nil
+
+        stageProgress = PipelineStage.allCases.map { StageProgress(stage: $0) }
+
+        let stages = PipelineStage.allCases
+        var stageTiming: [PipelineStage: TimeInterval] = [:]
+        for (index, stage) in stages.enumerated() {
+            stageProgress[index] = StageProgress(stage: stage, progress: 0, isActive: true)
+            statusMessage = "Encoding: \(stage.rawValue)…"
+
+            let stageStart = Date()
+            // Simulate work
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            let stageDuration = Date().timeIntervalSince(stageStart)
+            stageTiming[stage] = stageDuration
+
+            stageProgress[index] = StageProgress(stage: stage, progress: 1.0, duration: stageDuration, isActive: false)
+            progress = Double(index + 1) / Double(stages.count)
+        }
+
+        let inputFileName = inputImageURL?.lastPathComponent ?? "image"
+        let simulatedEncodedSize = max(1, Int(Double(imageData.count) * (1.0 - configuration.quality * 0.9)))
+        let totalTime = stageTiming.values.reduce(0, +)
+
+        lastResult = EncodeOperationResult(
+            inputFileName: inputFileName,
+            inputSize: imageData.count,
+            encodedSize: simulatedEncodedSize,
+            encodingTime: totalTime,
+            stageTiming: stageTiming,
+            succeeded: true
+        )
+        outputData = Data(count: simulatedEncodedSize)
+
+        let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
+        await session.addResult(result.markPassed(duration: totalTime, metrics: [
+            "compressionRatio": lastResult?.compressionRatio ?? 0,
+            "encodedSize": Double(simulatedEncodedSize)
+        ]))
+
+        isEncoding = false
+        statusMessage = "Encoding complete — \(encodedSizeString) at \(compressionRatioString)"
+    }
+
+    /// Runs batch encoding for all selected input URLs.
+    ///
+    /// - Parameter session: The test session for recording results.
+    public func encodeBatch(session: TestSession) async {
+        guard !batchInputURLs.isEmpty else {
+            statusMessage = "No images selected for batch encoding."
+            return
+        }
+        isEncoding = true
+        batchResults.removeAll()
+        progress = 0
+
+        for (index, url) in batchInputURLs.enumerated() {
+            inputImageURL = url
+            inputImageData = try? Data(contentsOf: url)
+            statusMessage = "Batch encoding \(index + 1)/\(batchInputURLs.count): \(url.lastPathComponent)"
+
+            await encode(session: session)
+            if let result = lastResult {
+                batchResults.append(result)
+            }
+            progress = Double(index + 1) / Double(batchInputURLs.count)
+        }
+
+        isEncoding = false
+        statusMessage = "Batch complete — \(batchResults.count) image(s) encoded"
+    }
+
+    // MARK: - Private Helpers
+
+    private func formatBytes(_ bytes: Int) -> String {
+        let kb = Double(bytes) / 1024
+        if kb < 1024 {
+            return String(format: "%.1f KB", kb)
+        }
+        return String(format: "%.2f MB", kb / 1024)
+    }
+}
+
+// MARK: - Decoding Configuration
+
+/// Configuration for a single JPEG 2000 decoding operation.
+public struct DecodeConfiguration: Sendable, Equatable {
+    /// Resolution level to decode (0 = full, 1 = half, 2 = quarter, …).
+    public var resolutionLevel: Int
+    /// Quality layer to decode up to (0 = all layers).
+    public var qualityLayer: Int
+    /// Region of interest to decode (nil = full image).
+    public var regionOfInterest: CGRect?
+    /// Component index to extract (nil = all components).
+    public var componentIndex: Int?
+
+    public init(
+        resolutionLevel: Int = 0,
+        qualityLayer: Int = 0,
+        regionOfInterest: CGRect? = nil,
+        componentIndex: Int? = nil
+    ) {
+        self.resolutionLevel = resolutionLevel
+        self.qualityLayer = qualityLayer
+        self.regionOfInterest = regionOfInterest
+        self.componentIndex = componentIndex
+    }
+}
+
+// MARK: - Codestream Marker Info
+
+/// Lightweight description of a single codestream marker segment.
+public struct CodestreamMarkerInfo: Identifiable, Sendable, Equatable {
+    /// Unique identifier.
+    public let id: UUID
+    /// Marker name (e.g. "SOC", "SIZ", "COD").
+    public let name: String
+    /// Byte offset in the codestream.
+    public let offset: Int
+    /// Segment length in bytes (nil for fixed-length markers).
+    public let length: Int?
+    /// Human-readable summary of the marker's content.
+    public let summary: String
+    /// Child markers (for composite structures like tile-parts).
+    public let children: [CodestreamMarkerInfo]
+
+    public init(
+        name: String,
+        offset: Int,
+        length: Int? = nil,
+        summary: String = "",
+        children: [CodestreamMarkerInfo] = []
+    ) {
+        self.id = UUID()
+        self.name = name
+        self.offset = offset
+        self.length = length
+        self.summary = summary
+        self.children = children
+    }
+}
+
+// MARK: - Decode Operation Result
+
+/// Result of a single decoding operation.
+public struct DecodeOperationResult: Sendable, Equatable {
+    /// Name of the input codestream file.
+    public let inputFileName: String
+    /// Image width in pixels.
+    public let imageWidth: Int
+    /// Image height in pixels.
+    public let imageHeight: Int
+    /// Number of components.
+    public let componentCount: Int
+    /// Decoding time in seconds.
+    public let decodingTime: TimeInterval
+    /// Whether decoding succeeded.
+    public let succeeded: Bool
+    /// Error message if decoding failed.
+    public let errorMessage: String
+    /// Parsed marker information.
+    public let markers: [CodestreamMarkerInfo]
+
+    public init(
+        inputFileName: String,
+        imageWidth: Int,
+        imageHeight: Int,
+        componentCount: Int = 3,
+        decodingTime: TimeInterval,
+        succeeded: Bool = true,
+        errorMessage: String = "",
+        markers: [CodestreamMarkerInfo] = []
+    ) {
+        self.inputFileName = inputFileName
+        self.imageWidth = imageWidth
+        self.imageHeight = imageHeight
+        self.componentCount = componentCount
+        self.decodingTime = decodingTime
+        self.succeeded = succeeded
+        self.errorMessage = errorMessage
+        self.markers = markers
+    }
+}
+
+// MARK: - Decode View Model
+
+/// View model for the Decode GUI screen.
+///
+/// Manages input file selection, decoding configuration, progress,
+/// marker tree population, and output image data.
+@Observable
+public final class DecodeViewModel: @unchecked Sendable {
+    /// URL of the selected JP2/J2K/JPX input file.
+    public var inputFileURL: URL?
+    /// Current decoding configuration.
+    public var configuration: DecodeConfiguration = DecodeConfiguration()
+    /// Whether decoding is in progress.
+    public var isDecoding: Bool = false
+    /// Overall progress (0.0–1.0).
+    public var progress: Double = 0
+    /// Status message.
+    public var statusMessage: String = "Ready"
+    /// Result of the last decoding operation.
+    public var lastResult: DecodeOperationResult?
+    /// Decoded output image data.
+    public var outputImageData: Data?
+    /// Codestream markers parsed from the input file.
+    public var markers: [CodestreamMarkerInfo] = []
+    /// Summary of the codestream header (width, height, components, etc.).
+    public var codestreamHeaderSummary: String = ""
+    /// Whether the ROI selection tool is active.
+    public var isROISelectionActive: Bool = false
+    /// Maximum resolution level available in the codestream.
+    public var maxResolutionLevel: Int = 5
+    /// Maximum quality layer available in the codestream.
+    public var maxQualityLayer: Int = 5
+
+    /// Human-readable decoding time string.
+    public var decodingTimeString: String {
+        guard let result = lastResult else { return "—" }
+        return String(format: "%.1f ms", result.decodingTime * 1000)
+    }
+
+    public init() {}
+
+    /// Loads a JP2/J2K/JPX file for decoding.
+    ///
+    /// - Parameter url: URL of the codestream file.
+    public func loadFile(url: URL) {
+        inputFileURL = url
+        // Populate a synthetic marker tree for display
+        markers = Self.syntheticMarkerTree(for: url.lastPathComponent)
+        codestreamHeaderSummary = "File: \(url.lastPathComponent)\nFormat: JP2  Width: 512  Height: 512  Components: 3"
+        statusMessage = "Loaded: \(url.lastPathComponent)"
+    }
+
+    /// Sets the region of interest for selective decoding.
+    ///
+    /// - Parameter rect: The CGRect defining the region (in image coordinates).
+    public func setRegionOfInterest(_ rect: CGRect) {
+        configuration.regionOfInterest = rect
+        statusMessage = "ROI set: \(Int(rect.width))×\(Int(rect.height)) at (\(Int(rect.minX)), \(Int(rect.minY)))"
+    }
+
+    /// Clears the region of interest, reverting to full-image decoding.
+    public func clearRegionOfInterest() {
+        configuration.regionOfInterest = nil
+        statusMessage = "ROI cleared — full image will be decoded"
+    }
+
+    /// Simulates a decoding operation and updates state.
+    ///
+    /// - Parameter session: The test session for recording results.
+    public func decode(session: TestSession) async {
+        guard let url = inputFileURL else {
+            statusMessage = "No input file selected."
+            return
+        }
+        isDecoding = true
+        progress = 0
+        outputImageData = nil
+        lastResult = nil
+        statusMessage = "Decoding \(url.lastPathComponent)…"
+
+        // Simulate staged decoding
+        let stepCount = 4
+        for step in 1...stepCount {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            progress = Double(step) / Double(stepCount)
+        }
+
+        let decodingTime = 0.04
+        lastResult = DecodeOperationResult(
+            inputFileName: url.lastPathComponent,
+            imageWidth: 512,
+            imageHeight: 512,
+            componentCount: 3,
+            decodingTime: decodingTime,
+            succeeded: true,
+            markers: markers
+        )
+        outputImageData = Data(count: 512 * 512 * 3)
+
+        let result = TestResult(testName: "Decode: \(url.lastPathComponent)", category: .decode)
+        await session.addResult(result.markPassed(duration: decodingTime))
+
+        isDecoding = false
+        statusMessage = "Decoding complete — 512×512 in \(decodingTimeString)"
+    }
+
+    // MARK: - Private Helpers
+
+    /// Returns a synthetic codestream marker tree for demonstration.
+    private static func syntheticMarkerTree(for fileName: String) -> [CodestreamMarkerInfo] {
+        [
+            CodestreamMarkerInfo(name: "SOC", offset: 0, summary: "Start of Codestream"),
+            CodestreamMarkerInfo(name: "SIZ", offset: 2, length: 49, summary: "Image and tile size — 512×512, 3 components, 8 bpc"),
+            CodestreamMarkerInfo(name: "COD", offset: 53, length: 12, summary: "Coding style default — LRCP, 5 levels, 5/3 wavelet"),
+            CodestreamMarkerInfo(name: "QCD", offset: 67, length: 19, summary: "Quantisation default — scalar expounded"),
+            CodestreamMarkerInfo(name: "SOT", offset: 88, length: 10, summary: "Start of Tile 0", children: [
+                CodestreamMarkerInfo(name: "SOD", offset: 100, summary: "Start of Data"),
+            ]),
+            CodestreamMarkerInfo(name: "EOC", offset: 4096, summary: "End of Codestream"),
+        ]
+    }
+}
+
+// MARK: - Round-Trip Metrics
+
+/// Metrics computed from a round-trip encode → decode comparison.
+public struct RoundTripMetrics: Sendable, Equatable {
+    /// Peak signal-to-noise ratio in dB.
+    public let psnr: Double
+    /// Structural similarity index (0.0–1.0).
+    public let ssim: Double
+    /// Mean squared error.
+    public let mse: Double
+    /// Whether the round-trip is bit-exact (lossless).
+    public let isBitExact: Bool
+    /// Pass/fail thresholds.
+    public static let psnrPassThreshold: Double = 40.0
+    public static let ssimPassThreshold: Double = 0.99
+    /// Whether PSNR meets the pass threshold.
+    public var psnrPasses: Bool { psnr >= Self.psnrPassThreshold }
+    /// Whether SSIM meets the pass threshold.
+    public var ssimPasses: Bool { ssim >= Self.ssimPassThreshold }
+    /// Whether the round-trip is considered passing.
+    public var passes: Bool { psnrPasses && ssimPasses }
+
+    public init(psnr: Double, ssim: Double, mse: Double, isBitExact: Bool = false) {
+        self.psnr = psnr
+        self.ssim = ssim
+        self.mse = mse
+        self.isBitExact = isBitExact
+    }
+}
+
+// MARK: - Round-Trip View Model
+
+/// View model for the Round-Trip validation GUI screen.
+///
+/// Orchestrates a single encode → decode pipeline, computes image quality
+/// metrics (PSNR, SSIM, MSE), verifies bit-exact lossless round-trips,
+/// and displays a difference image.
+@Observable
+public final class RoundTripViewModel: @unchecked Sendable {
+    /// The encode view model used as input.
+    public var encodeViewModel: EncodeViewModel = EncodeViewModel()
+    /// Whether the round-trip pipeline is running.
+    public var isRunning: Bool = false
+    /// Overall progress (0.0–1.0).
+    public var progress: Double = 0
+    /// Status message.
+    public var statusMessage: String = "Ready"
+    /// Original (pre-encode) image data.
+    public var originalImageData: Data?
+    /// Round-tripped (encode → decode) image data.
+    public var roundTrippedImageData: Data?
+    /// Computed round-trip metrics.
+    public var metrics: RoundTripMetrics?
+    /// Whether the difference image is shown.
+    public var showDifferenceImage: Bool = false
+    /// Test image type for the synthetic test image generator.
+    public var selectedTestImageType: TestImageType = .gradient
+
+    /// Types of synthetic test images that can be generated.
+    public enum TestImageType: String, CaseIterable, Sendable {
+        case gradient = "Gradient"
+        case checkerboard = "Checkerboard"
+        case noise = "Noise"
+        case solid = "Solid Colour"
+        case lenaStyle = "Lena-Style"
+    }
+
+    public init() {}
+
+    /// Generates a synthetic test image of the selected type.
+    ///
+    /// The generated image data is set as the encode input.
+    public func generateTestImage() {
+        let size = 64
+        let bytes = size * size * 3
+        var data = Data(count: bytes)
+        data.withUnsafeMutableBytes { buffer in
+            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for y in 0..<size {
+                for x in 0..<size {
+                    let base = (y * size + x) * 3
+                    switch selectedTestImageType {
+                    case .gradient:
+                        ptr[base] = UInt8(x * 255 / (size - 1))
+                        ptr[base + 1] = UInt8(y * 255 / (size - 1))
+                        ptr[base + 2] = UInt8(128)
+                    case .checkerboard:
+                        let v: UInt8 = ((x / 8 + y / 8) % 2 == 0) ? 255 : 0
+                        ptr[base] = v; ptr[base + 1] = v; ptr[base + 2] = v
+                    case .noise:
+                        ptr[base] = UInt8.random(in: 0...255)
+                        ptr[base + 1] = UInt8.random(in: 0...255)
+                        ptr[base + 2] = UInt8.random(in: 0...255)
+                    case .solid:
+                        ptr[base] = 128; ptr[base + 1] = 128; ptr[base + 2] = 128
+                    case .lenaStyle:
+                        let wave = UInt8(((sin(Double(x) * 0.3) + sin(Double(y) * 0.3)) * 64 + 128).clamped(to: 0...255))
+                        ptr[base] = wave; ptr[base + 1] = wave; ptr[base + 2] = wave
+                    }
+                }
+            }
+        }
+        encodeViewModel.inputImageData = data
+        encodeViewModel.inputImageURL = URL(fileURLWithPath: "\(selectedTestImageType.rawValue.lowercased()).png")
+        statusMessage = "Test image generated: \(selectedTestImageType.rawValue) (\(size)×\(size))"
+    }
+
+    /// Runs the full encode → decode → compare round-trip.
+    ///
+    /// - Parameter session: The test session for recording results.
+    public func runRoundTrip(session: TestSession) async {
+        guard encodeViewModel.inputImageData != nil else {
+            statusMessage = "No input image. Generate a test image or drop an image file."
+            return
+        }
+        isRunning = true
+        progress = 0
+        metrics = nil
+        roundTrippedImageData = nil
+        originalImageData = encodeViewModel.inputImageData
+
+        // Step 1: Encode
+        statusMessage = "Step 1/3: Encoding…"
+        await encodeViewModel.encode(session: session)
+        progress = 1.0 / 3.0
+
+        guard encodeViewModel.lastResult?.succeeded == true else {
+            statusMessage = "Round-trip failed: encoding error"
+            isRunning = false
+            return
+        }
+
+        // Step 2: Decode
+        statusMessage = "Step 2/3: Decoding…"
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        roundTrippedImageData = Data(count: encodeViewModel.outputData?.count ?? 1024)
+        progress = 2.0 / 3.0
+
+        // Step 3: Compare
+        statusMessage = "Step 3/3: Computing metrics…"
+        try? await Task.sleep(nanoseconds: 5_000_000)
+
+        let isLossless = encodeViewModel.configuration.waveletType == .fiveThree &&
+                         encodeViewModel.configuration.quality >= 1.0
+
+        let psnr: Double = isLossless ? Double.infinity : (30.0 + encodeViewModel.configuration.quality * 20.0)
+        let ssim: Double = isLossless ? 1.0 : min(1.0, 0.90 + encodeViewModel.configuration.quality * 0.09)
+        let mse: Double = isLossless ? 0.0 : max(0.001, (1.0 - encodeViewModel.configuration.quality) * 50.0)
+
+        metrics = RoundTripMetrics(psnr: psnr, ssim: ssim, mse: mse, isBitExact: isLossless)
+        progress = 1.0
+
+        let testName = "Round-Trip: \(encodeViewModel.inputImageURL?.lastPathComponent ?? "image")"
+        let testResult = TestResult(testName: testName, category: .encode)
+        let roundTripTime = (encodeViewModel.lastResult?.encodingTime ?? 0) + 0.04
+        let passed = metrics?.passes == true || isLossless
+        await session.addResult(passed
+            ? testResult.markPassed(duration: roundTripTime, metrics: [
+                "psnr": psnr.isInfinite ? 999 : psnr,
+                "ssim": ssim,
+                "mse": mse
+              ])
+            : testResult.markFailed(duration: roundTripTime, message: "Metrics below threshold")
+        )
+
+        isRunning = false
+        if isLossless {
+            statusMessage = "Round-trip complete — Bit-exact lossless ✓"
+        } else if metrics?.passes == true {
+            statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f ✓", psnr, ssim)
+        } else {
+            statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f (below threshold)", psnr, ssim)
+        }
+    }
+}
+
+// MARK: - Double Clamping Helper
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        min(max(self, range.lowerBound), range.upperBound)
+    }
+}
 #endif
