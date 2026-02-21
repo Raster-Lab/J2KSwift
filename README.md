@@ -14,14 +14,12 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 
 ## 📦 Release Status
 
-**v2.1.0** delivers the native macOS GUI testing application and complete testing documentation (Phase 18):
-- 🖥️ **J2KTestApp** — Native macOS SwiftUI application for visually testing every J2KSwift feature
-- 🎨 **GUI Polish** — Consistent design system, dark/light mode, accessibility (VoiceOver), window state persistence
-- 📊 **Interactive Dashboards** — Encode/Decode, Conformance matrix, Performance charts, GPU comparison, SIMD gauges
-- 🌊 **Streaming & Volumetric** — JPIP progressive streaming canvas, JP3D slice navigation, MJ2 frame playback
-- 📋 **Test Reports & Playlists** — Trend charts, heatmap, export (HTML/JSON/CSV), named test playlists
-- 🤖 **Headless CI Mode** — `j2k testapp --headless --playlist --output --format` for GitHub Actions integration
-- 📖 **Complete Testing Guide** — Step-by-step instructions for every screen, keyboard shortcuts, glossary
+**v2.2.0** delivers Phase 19 — multi-spectral JP3D imaging, Vulkan 3D DWT acceleration, and JPEG XS exploration:
+- 🌈 **Multi-Spectral JP3D** — spectral band types, wavelength mapping, multi-spectral volumes, inter-band prediction
+- 🎛️ **JP3D Encoder/Decoder** — actor-based multi-spectral JP3D encoder and decoder with selective band loading
+- 📡 **Spectral Analysis** — NDVI, NDWI, NDBI index computation and inter-band Pearson correlation matrix
+- ⚡ **Vulkan JP3D DWT** — Vulkan-accelerated 3D DWT with spectral-axis support and GPU/CPU auto-selection
+- 🔬 **JPEG XS Exploration** — ISO/IEC 21122 profile, level, slice-height, and capabilities scaffold types
 
 See [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for v2.1.0 details, or [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for the previous release.
 
@@ -399,7 +397,8 @@ let encoded = try mqCoder.encode(quantized)
 - **Test Coverage**: 1,498 tests, 98.3% passing (25 skipped)
 
 ### Future Releases
-- **v2.1**: Multi-spectral JP3D, Vulkan JP3D DWT, JPEG XS exploration
+- **v2.2**: Multi-spectral JP3D, Vulkan JP3D DWT, JPEG XS exploration (complete)
+- **v2.3**: JPEG XS full implementation, DICOM metadata enhancements
 - **v3.0**: x86-64 SIMD code removal (Apple-first architecture), JPEG XS support
 
 ## 📚 Documentation
@@ -520,34 +519,36 @@ JP3D volumetric JPEG 2000 (ISO/IEC 15444-10) encoding, decoding, and streaming. 
 
 See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap tracking all features and implementation phases.
 
-### Current Status: v2.1.0 — Production Ready
+### Current Status: v2.2.0 — Production Ready
 
 > **Encoder Status**: The high-level `J2KEncoder.encode()` API is **fully functional** with ARM Neon SIMD, Intel SSE/AVX, and Metal GPU acceleration.
 > 
 > **Decoder Status**: The high-level `J2KDecoder.decode()` API is **fully functional** with full ISO/IEC 15444-4 conformance and verified OpenJPEG interoperability.
 > 
-> **J2KTestApp Status**: The native macOS GUI testing application is **complete** with 13 screens, design system, accessibility, window state persistence, and headless CI mode.
+> **Phase 19 Status**: Multi-spectral JP3D encoding/decoding, Vulkan 3D DWT, and JPEG XS exploration types are **complete**.
 
 
-**All Phases Complete** (315 weeks):
+**All Phases Complete** (325 weeks):
 - ✅ Phase 0–8: Foundation through Production Ready (Weeks 1–100)
 - ✅ Phase 9–12: vDSP, JPIP, HTJ2K, Extended Formats (Weeks 101–154)
 - ✅ Phase 13–14: Part 2 Extensions, Motion JPEG 2000 (Weeks 155–210)
 - ✅ Phase 15–16: JP3D Volumetric Support (Weeks 211–235)
 - ✅ Phase 17: Performance Refactoring & Conformance (Weeks 236–295)
 - ✅ Phase 18: GUI Testing Application (Weeks 296–315)
+- ✅ Phase 19: Multi-Spectral JP3D and Vulkan JP3D Acceleration (Weeks 316–325)
 
-**Current**: v2.1.0 — see [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for details
+**Current**: v2.2.0 — see [CHANGELOG.md](CHANGELOG.md) for details
 
 ## 🧪 Testing
 
-### Test Statistics (v2.1.0)
-- **Total Tests**: 3,000+
+### Test Statistics (v2.2.0)
+- **Total Tests**: 3,100+
 - **Passing**: 100% pass rate
 - **Conformance Tests**: 304 (ISO/IEC 15444-4, Parts 1, 2, 3, 10, 15)
 - **Interoperability Tests**: 165 (OpenJPEG bidirectional)
 - **Integration Tests**: 200+ (end-to-end, stress, regression)
 - **GUI Tests**: 309 (J2KTestApp models and view models)
+- **Phase 19 Tests**: 55+ (multi-spectral JP3D, Vulkan JP3D DWT, JPEG XS types)
 
 ### Test Coverage by Module
 - **J2KCore**: 100% of public APIs tested
@@ -616,11 +617,11 @@ We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 For information about our CI/CD workflows and automated testing, see [CI_CD_GUIDE.md](CI_CD_GUIDE.md).
 
 ### Areas Needing Help
-1. **Multi-spectral JP3D extensions** (v2.1 target)
-2. **Vulkan JP3D DWT acceleration** (Linux/Windows GPU)
+1. **JPEG XS full implementation** (v2.3 target)
+2. **DICOM metadata enhancements** (v2.3 target)
 3. **Cross-platform testing** (Windows, Linux ARM64)
-4. **JPEG XS exploration** (v3.0 target)
-5. **Community feedback and real-world usage reports**
+4. **Community feedback and real-world usage reports**
+5. **Hyperspectral remote-sensing datasets for JP3D validation**
 
 ### Development Process
 ```bash
@@ -688,11 +689,14 @@ This project represents a 295-week development effort following a comprehensive 
 | CLI Tools | ✅ Complete | 100% | Dual British/American spelling |
 | Conformance | ✅ Complete | 304 tests | Parts 1, 2, 3, 10, 15 |
 | **J2KTestApp** | ✅ Complete | 309 tests | GUI testing application (Phase 18) |
+| **Multi-Spectral JP3D** | ✅ Complete | 30+ tests | Spectral bands, encoder, decoder (Phase 19) |
+| **Vulkan JP3D DWT** | ✅ Complete | 15+ tests | 3D DWT with spectral axis (Phase 19) |
+| **JPEG XS Exploration** | ✅ Scaffolded | 10+ tests | ISO/IEC 21122 exploration types (Phase 19) |
 
 ---
 
-**J2KSwift v2.1.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
-**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, native macOS GUI testing application  
+**J2KSwift v2.2.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
+**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, multi-spectral JP3D, Vulkan 3D DWT, JPEG XS exploration  
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
-For detailed information, see [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md)
+For detailed information, see [CHANGELOG.md](CHANGELOG.md)

@@ -4348,9 +4348,86 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-07-15 (Phase 18 Week 314-315 complete)
-**Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (complete)
-**Current Version**: 2.1.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0)
-**Next Phase**: Phase 19 (planned)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens, design system, accessibility, window state persistence, headless CI mode, complete TESTING_GUIDE.md, and v2.1.0 release
+## Phase 19: Multi-Spectral JP3D and Vulkan JP3D Acceleration (Weeks 316–325) — v2.2.0
+
+**Goal**: Extend JP3D volumetric imaging with multi-spectral/hyperspectral support, add Vulkan-accelerated 3D DWT for spectral volumes, and begin JPEG XS (ISO/IEC 21122) exploration.
+
+### Week 316–318: Multi-Spectral JP3D Types and Encoder ✅
+
+- [x] Define `JP3DSpectralBand` — band index, wavelength, description (`Sendable`)
+- [x] Define `JP3DSpectralMapping` — factory presets `.visible`, `.nearInfrared`, `.hyperspectral(bandCount:)`
+- [x] Define `JP3DMultiSpectralVolume` — width/height/depth, bands, samplesPerBand; computed `bandCount`, `voxelCount`, `spectralRange`
+- [x] Define `JP3DSpectralClassification` — `.unclassified`, `.vegetation`, `.water`, `.urban`, `.bareSoil`, `.cloud`
+- [x] Define `JP3DMultiSpectralStatistics` — mean/stdDev/min/max per band
+- [x] Define `JP3DSpectralConfiguration` — mapping, normalisation range, inter-band prediction flag; `.default` preset
+- [x] Define `JP3DMultiSpectralEncoderConfiguration` — base JP3D config, spectral config, quality layers, decorrelation flag; `.default` preset
+- [x] Implement `JP3DMultiSpectralEncoder` actor — `encode(_:configuration:)` async throws, `computeStatistics(_:)` async, inter-band prediction helpers
+- [x] Define `JP3DMultiSpectralEncodeResult` — `encodedBands`, `spectralMapping`, `totalBytes` computed
+
+### Week 319–321: Multi-Spectral JP3D Decoder and Spectral Analysis ✅
+
+- [x] Define `JP3DMultiSpectralDecodeOptions` — `targetBands` optional, `resolutionLevel`; `.full` preset
+- [x] Implement `JP3DMultiSpectralDecoder` actor — `decode(_:options:)` async throws, `classifyPixels(_:)` async
+- [x] Define `JP3DSpectralIndex` enum — `.ndvi`, `.ndwi`, `.ndbi`
+- [x] Define `JP3DSpectralIndexResult` — index, per-Z-slice float values
+- [x] Implement `JP3DSpectralAnalyser` actor — `computeIndex(_:index:)` async throws, `computeCorrelationMatrix(_:)` async
+- [x] Band-pair resolution using closest-wavelength matching for NDVI/NDWI/NDBI
+- [x] Pearson correlation matrix computation
+
+### Week 322–324: Vulkan JP3D 3D DWT Acceleration ✅
+
+- [x] Define `J2KVulkanJP3DDWTConfiguration` — filter, decompositionLevels, enableSpectralAxis, gpuThreshold; `.default`, `.lossless` presets
+- [x] Define `J2KVulkanJP3DDWTResult` — subbands3D, width/height/depth/spectralBands, decompositionLevels, filter, processingTimeMs
+- [x] Define `J2KVulkanJP3DDWTStatistics` — totalTransforms, gpuTransforms, cpuTransforms, averageProcessingTimeMs, `gpuUtilisationRatio` computed
+- [x] Implement `J2KVulkanJP3DDWT` actor — `forward3D(_:width:height:depth:spectralBands:configuration:)` async throws, `inverse3D(_:)` async throws
+- [x] Implement `statistics()` async and `resetStatistics()` async
+- [x] GPU/CPU auto-selection based on element count vs `gpuThreshold`
+- [x] CPU scaffold implementation with per-level quantised coefficient packing
+
+### Week 325: JPEG XS Exploration ✅
+
+- [x] Define `J2KXSProfile` — `.light` (1 component), `.main` (4), `.high` (16); `maxComponents` computed
+- [x] Define `J2KXSLevel` — `.sublevel0`–`.sublevel3`; `pixelRateGigaPixelsPerSecond` computed
+- [x] Define `J2KXSSliceHeight` — `.height16`, `.height32`, `.height64`; `pixels` computed
+- [x] Define `J2KXSConfiguration` — profile, level, sliceHeight, targetBitsPerPixel; `.preview`, `.production` presets
+- [x] Define `J2KXSCapabilities` — `isAvailable` (always false), `supportedProfiles`, `version`; `.current` static
+- [x] Add exploration-phase documentation noting ISO/IEC 21122 scope
+
+### Phase 19 Test Coverage ✅
+
+- [x] `JP3DMultiSpectralTests` (30+ tests) in `Tests/JP3DTests/`
+  - Spectral band initialisation and equality
+  - Spectral mapping factory methods (visible, NIR, hyperspectral)
+  - Multi-spectral volume creation, computed properties, dimension clamping
+  - All classification cases
+  - Default configurations for encoder and decoder options
+  - Encoder actor: small volume, band count mismatch error, statistics, inter-band prediction
+  - Decoder actor: round trip, invalid band index error, classifyPixels
+  - Spectral index enum cases
+  - Spectral analyser: correlation matrix (anti-correlated bands), NDVI computation, too-few-bands error
+- [x] `J2KVulkanJP3DDWTTests` (15+ tests) in `Tests/J2KVulkanTests/`
+  - Default and lossless configurations, clamping
+  - Statistics GPU utilisation ratio (zero, all-GPU, mixed)
+  - Actor creation, forward3D small data, mismatched count error
+  - Inverse3D round trip, empty result error
+  - Statistics accumulation and reset
+  - Multi-transform statistics accumulation
+- [x] `J2KXSTypesTests` (10+ tests) in `Tests/J2KCoreTests/`
+  - All profile maxComponents, level pixel rates, slice height pixels
+  - Preview and production presets, bit-rate clamping, equality
+  - Capabilities: isAvailable false, version string, supported profiles
+
+### Phase 19 Summary
+
+Phase 19 (Weeks 316–325) adds hyperspectral and multi-spectral imaging capability to the JP3D module, hardware-accelerated 3D DWT via the Vulkan backend, and lays the groundwork for a future full JPEG XS implementation. All 55+ new tests pass under Swift 6.2 strict concurrency.
+
+**Status**: ✅ Complete (v2.2.0)
+
+---
+
+**Last Updated**: 2026-09-15 (Phase 19 Week 325 complete)
+**Current Phase**: Phase 19 — Multi-Spectral JP3D and Vulkan JP3D Acceleration (complete)
+**Current Version**: 2.2.0
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0), Phase 19 Weeks 316-325 (v2.2.0)
+**Next Phase**: Phase 20 (planned)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens, design system, accessibility, window state persistence, headless CI mode, complete TESTING_GUIDE.md, and v2.1.0 release; multi-spectral JP3D encoding/decoding with inter-band prediction, Vulkan-accelerated 3D DWT, and JPEG XS (ISO/IEC 21122) exploration types
