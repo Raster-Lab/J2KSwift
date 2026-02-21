@@ -142,7 +142,7 @@ public struct NeonContextFormation: Sendable {
             }
 
             // Clamp diagonal contribution to 0, 1, or 2
-            let dClamped = min(dContrib, SIMD4<Int32>(repeating: 2))
+            let dClamped = pointwiseMin(dContrib, SIMD4<Int32>(repeating: 2))
 
             // Combine: context = hContrib | (vContrib << 2) | (dClamped << 4)
             let context = hContrib | (vContrib &<< 2) | (dClamped &<< 4)
@@ -589,7 +589,7 @@ public struct NeonContextModelling: Sendable {
 
             // All four must be zero for a valid run
             let allZero = vec .== SIMD4<Int32>(repeating: 0)
-            if allZero == SIMDMask<SIMD4<Int32.Scalar>>(repeating: true) {
+            if allZero == SIMDMask<SIMD4<Int32>>(repeating: true) {
                 for lane in 0..<4 {
                     result[i * 4 + lane] = 1
                 }
