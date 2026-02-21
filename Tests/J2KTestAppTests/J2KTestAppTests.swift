@@ -1899,7 +1899,7 @@ final class GPUTestResultTests: XCTestCase {
             outputsMatch: true,
             gpuMemoryBytes: 1024
         )
-        XCTAssertTrue(result.speedupFactor.isInfinite)
+        XCTAssertEqual(result.speedupFactor, 0)
     }
 }
 
@@ -2052,7 +2052,7 @@ final class SIMDTestResultTests: XCTestCase {
             outputsMatch: true,
             platform: "ARM Neon"
         )
-        XCTAssertTrue(result.speedup.isInfinite)
+        XCTAssertEqual(result.speedup, 0)
     }
 }
 

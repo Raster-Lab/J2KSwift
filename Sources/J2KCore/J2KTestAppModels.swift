@@ -2591,7 +2591,7 @@ public struct GPUTestResult: Identifiable, Sendable, Equatable {
 
     /// Speed-up factor of GPU over CPU.
     public var speedupFactor: Double {
-        cpuTimeMs > 0 ? cpuTimeMs / gpuTimeMs : 0
+        gpuTimeMs > 0 ? cpuTimeMs / gpuTimeMs : 0
     }
 
     public init(
@@ -2797,7 +2797,7 @@ public struct SIMDTestResult: Identifiable, Sendable, Equatable {
 
     /// Speed-up factor of SIMD over scalar.
     public var speedup: Double {
-        scalarTimeMs > 0 ? scalarTimeMs / simdTimeMs : 0
+        simdTimeMs > 0 ? scalarTimeMs / simdTimeMs : 0
     }
 
     public init(
@@ -2890,11 +2890,14 @@ public final class SIMDTestViewModel: @unchecked Sendable {
             progress = Double(index + 1) / Double(operations.count)
         }
 
-        // Calculate utilisation as average speed-up relative to target
+        // Calculate utilisation percentage: how much SIMD benefit we get
+        // relative to maximum theoretical speed-up. A speedup of targetUtilisation/100
+        // or more maps to 100% utilisation.
         let averageSpeedup = results.isEmpty
             ? 0
             : results.map(\.speedup).reduce(0, +) / Double(results.count)
-        utilisationPercentage = (averageSpeedup / targetUtilisation * 100).clamped(to: 0...100)
+        let maxExpectedSpeedup = 8.0
+        utilisationPercentage = (averageSpeedup / maxExpectedSpeedup * 100).clamped(to: 0...100)
 
         let testResult = TestResult(testName: "SIMD Vectorisation Test", category: .performance)
         await session.addResult(testResult.markPassed(duration: Double(operations.count) * 0.005))
