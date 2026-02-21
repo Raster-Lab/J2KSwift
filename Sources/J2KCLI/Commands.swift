@@ -389,7 +389,7 @@ extension J2KCLI {
         withUnsafeBytes(of: w) { ihdrPayload.replaceSubrange(4..<8, with: $0) }
         withUnsafeBytes(of: nc) { ihdrPayload.replaceSubrange(8..<10, with: $0) }
         ihdrPayload[10] = bd
-        ihdrPayload[11] = 7   // C = 7 (uncompressed)
+        ihdrPayload[11] = 7   // C = 7 (JPEG 2000 compression)
         ihdrPayload[12] = 0   // UnkC
         ihdrPayload[13] = 0   // IPR
         appendBox(type: "ihdr", payload: ihdrPayload)

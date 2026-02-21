@@ -192,7 +192,7 @@ final class J2KCLITests: XCTestCase {
 
     func testArgumentParsing() {
         // Basic flag parsing
-        let opts = J2KArgumentParser.parse(["--lossless", "--quality", "0.9", "-i", "input.pgm"])
+        let opts = CLIArgumentParserTestHelper.parse(["--lossless", "--quality", "0.9", "-i", "input.pgm"])
         XCTAssertEqual(opts["lossless"], "true")
         XCTAssertEqual(opts["quality"],  "0.9")
         XCTAssertEqual(opts["i"],        "input.pgm")
@@ -200,30 +200,30 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIDualSpelling() {
         // British spelling should map to American spelling
-        let opts1 = J2KArgumentParser.parse(["--colour-space", "sRGB"])
-        let opts2 = J2KArgumentParser.parse(["--color-space",  "sRGB"])
+        let opts1 = CLIArgumentParserTestHelper.parse(["--colour-space", "sRGB"])
+        let opts2 = CLIArgumentParserTestHelper.parse(["--color-space",  "sRGB"])
         XCTAssertEqual(opts1["color-space"], "sRGB", "--colour-space should map to color-space")
         XCTAssertEqual(opts2["color-space"], "sRGB", "--color-space should be stored as color-space")
 
-        let opts3 = J2KArgumentParser.parse(["--colour"])
-        let opts4 = J2KArgumentParser.parse(["--color"])
+        let opts3 = CLIArgumentParserTestHelper.parse(["--colour"])
+        let opts4 = CLIArgumentParserTestHelper.parse(["--color"])
         XCTAssertEqual(opts3["color"], "true", "--colour should map to color")
         XCTAssertEqual(opts4["color"], "true", "--color should be stored as color")
 
-        let opts5 = J2KArgumentParser.parse(["--optimise"])
-        let opts6 = J2KArgumentParser.parse(["--optimize"])
+        let opts5 = CLIArgumentParserTestHelper.parse(["--optimise"])
+        let opts6 = CLIArgumentParserTestHelper.parse(["--optimize"])
         XCTAssertEqual(opts5["optimize"], "true", "--optimise should map to optimize")
         XCTAssertEqual(opts6["optimize"], "true", "--optimize should be stored as optimize")
     }
 
     func testArgumentParsingPositional() {
-        let opts = J2KArgumentParser.parse(["image.jp2", "--json"])
+        let opts = CLIArgumentParserTestHelper.parse(["image.jp2", "--json"])
         XCTAssertEqual(opts["_positional"], "image.jp2")
         XCTAssertEqual(opts["json"], "true")
     }
 
     func testArgumentParsingShortFlags() {
-        let opts = J2KArgumentParser.parse(["-i", "input.j2k", "-o", "output.ppm", "-r", "5"])
+        let opts = CLIArgumentParserTestHelper.parse(["-i", "input.j2k", "-o", "output.ppm", "-r", "5"])
         XCTAssertEqual(opts["i"], "input.j2k")
         XCTAssertEqual(opts["o"], "output.ppm")
         XCTAssertEqual(opts["r"], "5")
@@ -234,7 +234,7 @@ final class J2KCLITests: XCTestCase {
 
 /// A standalone argument parser that mirrors J2KCLI.parseArguments / normaliseKey
 /// but is accessible without importing the executable module.
-enum J2KArgumentParser {
+enum CLIArgumentParserTestHelper {
     static func parse(_ args: [String]) -> [String: String] {
         var result: [String: String] = [:]
         var i = 0
