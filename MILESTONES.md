@@ -4008,39 +4008,39 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Design and scaffold the SwiftUI macOS application with the main window layout, sidebar navigation, and core GUI infrastructure.
 
-- [ ] SwiftUI application scaffold
-  - [ ] Create `J2KTestApp` macOS application target in `Package.swift` (SwiftUI App lifecycle)
-  - [ ] Implement main window with sidebar navigation (`NavigationSplitView`) and detail area
-  - [ ] Design sidebar with categorised test sections: Encode, Decode, Conformance, Performance, Streaming, Volumetric, Validation
-  - [ ] Implement toolbar with global actions: Run All, Stop, Export Results, Settings
-  - [ ] Add application menu bar with keyboard shortcuts for common operations
-- [ ] GUI state management
-  - [ ] Implement `TestSession` actor for thread-safe test state across all GUI views
-  - [ ] Create `@Observable` view models for each test category screen
-  - [ ] Design `TestResult` model with pass/fail/skip/error states, timing, and thumbnail previews
-  - [ ] Implement persistent settings storage (tile size defaults, quality presets, output directory)
-  - [ ] Add `TestRunner` protocol for pluggable test execution from any GUI screen
-- [ ] Common GUI components
-  - [ ] Image preview panel with zoom, pan, and pixel-level inspection
-  - [ ] Image comparison view (side-by-side, overlay, and difference modes)
-  - [ ] Progress indicator bar with per-stage breakdown (colour transform → DWT → quantise → entropy)
-  - [ ] Results table with sortable columns (test name, status, duration, metrics)
-  - [ ] Log console panel showing real-time encoder/decoder output
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (initial)
-  - [ ] "Getting Started" section: how to build and launch J2KTestApp
-  - [ ] "Main Window Overview" section with annotated screenshot of sidebar, detail area, toolbar
-  - [ ] "Navigation" section explaining each sidebar category and what it tests
-- [ ] Testing
-  - [ ] Unit tests for `TestSession`, `TestResult`, view models
-  - [ ] SwiftUI preview tests for main window layout
-  - [ ] Verify application target builds and launches on macOS
+- [x] SwiftUI application scaffold
+  - [x] Create `J2KTestApp` macOS application target in `Package.swift` (SwiftUI App lifecycle)
+  - [x] Implement main window with sidebar navigation (`NavigationSplitView`) and detail area
+  - [x] Design sidebar with categorised test sections: Encode, Decode, Conformance, Performance, Streaming, Volumetric, Validation
+  - [x] Implement toolbar with global actions: Run All, Stop, Export Results, Settings
+  - [x] Add application menu bar with keyboard shortcuts for common operations
+- [x] GUI state management
+  - [x] Implement `TestSession` actor for thread-safe test state across all GUI views
+  - [x] Create `@Observable` view models for each test category screen
+  - [x] Design `TestResult` model with pass/fail/skip/error states, timing, and thumbnail previews
+  - [x] Implement persistent settings storage (tile size defaults, quality presets, output directory)
+  - [x] Add `TestRunner` protocol for pluggable test execution from any GUI screen
+- [x] Common GUI components
+  - [x] Image preview panel with zoom, pan, and pixel-level inspection
+  - [x] Image comparison view (side-by-side, overlay, and difference modes)
+  - [x] Progress indicator bar with per-stage breakdown (colour transform → DWT → quantise → entropy)
+  - [x] Results table with sortable columns (test name, status, duration, metrics)
+  - [x] Log console panel showing real-time encoder/decoder output
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (initial)
+  - [x] "Getting Started" section: how to build and launch J2KTestApp
+  - [x] "Main Window Overview" section with annotated screenshot of sidebar, detail area, toolbar
+  - [x] "Navigation" section explaining each sidebar category and what it tests
+- [x] Testing
+  - [x] Unit tests for `TestSession`, `TestResult`, view models
+  - [x] SwiftUI preview tests for main window layout
+  - [x] Verify application target builds and launches on macOS
 
 **Deliverables**:
 - `J2KTestApp` SwiftUI macOS application target
 - Main window with sidebar navigation and common GUI components
 - `Documentation/TESTING_GUIDE.md` — Getting Started, Main Window Overview, Navigation sections
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 296-298).
 
 ### Week 299-301: Encoding and Decoding GUI Screens
 
@@ -4348,9 +4348,9 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-02-21 (Phase 18 planned)
-**Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (planned)
+**Last Updated**: 2026-02-21 (Phase 18 Week 296-298 complete)
+**Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0)
-**Next Phase**: Phase 18 (v2.1, Weeks 296-315)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-298
+**Next Phase**: Phase 18 Week 299-301 (Encoding and Decoding GUI Screens)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README
