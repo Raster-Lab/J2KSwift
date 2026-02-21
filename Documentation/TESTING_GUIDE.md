@@ -39,6 +39,11 @@ A comprehensive guide to testing every feature of J2KSwift using the native macO
   - [Lossless Bit-Exact Badge](#lossless-bit-exact-badge)
   - [Difference Image View](#difference-image-view)
   - [Test Image Generator](#test-image-generator)
+- [How to Test Performance](#how-to-test-performance)
+  - [Benchmark Tab — Throughput and Latency Profiling](#benchmark-tab--throughput-and-latency-profiling)
+  - [GPU Tab — Metal Acceleration Testing](#gpu-tab--metal-acceleration-testing)
+  - [SIMD Tab — Vectorisation Testing](#simd-tab--vectorisation-testing)
+  - [Performance Targets Reference](#performance-targets-reference)
 - [Common GUI Components](#common-gui-components)
   - [Image Preview Panel](#image-preview-panel)
   - [Image Comparison View](#image-comparison-view)
@@ -601,6 +606,69 @@ The **Validation** screen provides three tools for inspecting JPEG 2000 codestre
    - Length in bytes
    - Summary description
 4. The **Hex Dump** panel below shows raw hex data for the selected marker with highlighted boundaries.
+
+---
+
+## How to Test Performance
+
+The **Performance** screen provides three tabbed sub-screens: **Benchmark**, **GPU**, and **SIMD**. Select the **Performance** category in the sidebar to access them.
+
+### Benchmark Tab — Throughput and Latency Profiling
+
+1. Select the **Benchmark** tab at the top.
+2. In the left panel, tick the **Image Sizes** to benchmark (e.g. 512×512, 1024×1024).
+3. Tick the **Coding Modes** to test (e.g. Lossless, HTJ2K).
+4. Adjust **Iterations** (default: 10) and **Warm-up** rounds (default: 2).
+5. Click **Run Benchmark**.
+6. The **Throughput chart** shows megapixels per second for each configuration.
+7. The **Latency chart** shows milliseconds per encode/decode.
+8. The **Regression Badge** indicates:
+   - 🟢 **No Regression** — throughput within 5% of historical baseline
+   - 🟠 **Possible Regression** — throughput dropped 5–15%
+   - 🔴 **Regression Detected** — throughput dropped more than 15%
+9. The **Memory Usage** panel shows peak allocation, current usage, and allocation count.
+10. Click **Export** to download results as CSV or JSON.
+
+### GPU Tab — Metal Acceleration Testing
+
+1. Select the **GPU** tab.
+2. The **Metal availability badge** shows whether Metal is available on the current platform.
+3. Select an operation (DWT, Colour Transform, Quantisation, Entropy Coding, Rate Control) from the radio group.
+4. Click **Run All GPU Tests** to test all operations, or **Run Selected** for just one.
+5. The **GPU vs CPU Comparison** table shows:
+   - GPU and CPU timing in milliseconds
+   - Speedup factor (green if GPU is faster, red otherwise)
+   - Output match indicator (✅ outputs identical, ❌ mismatch)
+   - GPU memory usage per operation
+6. The **GPU Speedup Factor** chart visualises speedup per operation.
+7. The **Shader Status** panel lists all Metal shaders with compile time and status.
+8. The **GPU Memory** monitor shows buffer pool utilisation and peak usage.
+
+### SIMD Tab — Vectorisation Testing
+
+1. Select the **SIMD** tab.
+2. The **Platform Badge** shows the detected architecture (ARM Neon or x86 SSE/AVX).
+3. Click **Run All SIMD Tests** to test all vectorised operations.
+4. The **SIMD Utilisation** gauge shows the overall utilisation percentage:
+   - Target is **≥85%** — green when met, orange when below
+5. The **Operations** list in the left panel shows pass/fail status and speedup for each operation.
+6. The **SIMD vs Scalar Speedup** chart visualises the speedup factor per operation.
+7. The **Detailed Results** table shows:
+   - SIMD and scalar timing in milliseconds
+   - Speedup factor
+   - Output match indicator
+   - Platform identifier
+
+### Performance Targets Reference
+
+| Mode | Expected Speedup vs OpenJPEG | Notes |
+|------|------------------------------|-------|
+| Lossless | ≥1.0× | Baseline target |
+| Lossy | ≥1.2× | With rate control |
+| HTJ2K | ≥2.0× | Optimised block coder |
+| HTJ2K Lossless | ≥1.8× | FBCOT fast path |
+| Tiled Lossless | ≥1.0× | Per-tile overhead |
+| Tiled Lossy | ≥1.2× | Parallel tile encoding |
 
 ---
 

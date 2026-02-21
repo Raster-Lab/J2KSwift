@@ -1651,4 +1651,467 @@ final class ValidationViewModelTests: XCTestCase {
         XCTAssertFalse(results.isEmpty)
     }
 }
+
+// MARK: - Benchmark Image Size Choice Tests
+
+final class BenchmarkImageSizeChoiceTests: XCTestCase {
+
+    func testAllSizesExist() {
+        let sizes = BenchmarkImageSizeChoice.allCases
+        XCTAssertEqual(sizes.count, 6)
+    }
+
+    func testSizeRawValues() {
+        XCTAssertEqual(BenchmarkImageSizeChoice.small128.rawValue, "128×128")
+        XCTAssertEqual(BenchmarkImageSizeChoice.medium256.rawValue, "256×256")
+        XCTAssertEqual(BenchmarkImageSizeChoice.medium512.rawValue, "512×512")
+        XCTAssertEqual(BenchmarkImageSizeChoice.large1024.rawValue, "1024×1024")
+        XCTAssertEqual(BenchmarkImageSizeChoice.large2048.rawValue, "2048×2048")
+        XCTAssertEqual(BenchmarkImageSizeChoice.huge4096.rawValue, "4096×4096")
+    }
+
+    func testPixelCount() {
+        XCTAssertEqual(BenchmarkImageSizeChoice.small128.pixelCount, 16384)
+        XCTAssertEqual(BenchmarkImageSizeChoice.medium256.pixelCount, 65536)
+        XCTAssertEqual(BenchmarkImageSizeChoice.medium512.pixelCount, 262144)
+        XCTAssertEqual(BenchmarkImageSizeChoice.large1024.pixelCount, 1048576)
+        XCTAssertEqual(BenchmarkImageSizeChoice.large2048.pixelCount, 4194304)
+        XCTAssertEqual(BenchmarkImageSizeChoice.huge4096.pixelCount, 16777216)
+    }
+}
+
+// MARK: - Benchmark Coding Mode Choice Tests
+
+final class BenchmarkCodingModeChoiceTests: XCTestCase {
+
+    func testAllModesExist() {
+        let modes = BenchmarkCodingModeChoice.allCases
+        XCTAssertEqual(modes.count, 6)
+    }
+
+    func testModeRawValues() {
+        XCTAssertEqual(BenchmarkCodingModeChoice.lossless.rawValue, "Lossless")
+        XCTAssertEqual(BenchmarkCodingModeChoice.lossy.rawValue, "Lossy")
+        XCTAssertEqual(BenchmarkCodingModeChoice.htj2k.rawValue, "HTJ2K")
+        XCTAssertEqual(BenchmarkCodingModeChoice.htj2kLossless.rawValue, "HTJ2K Lossless")
+        XCTAssertEqual(BenchmarkCodingModeChoice.tiledLossless.rawValue, "Tiled Lossless")
+        XCTAssertEqual(BenchmarkCodingModeChoice.tiledLossy.rawValue, "Tiled Lossy")
+    }
+}
+
+// MARK: - Benchmark Run Result Tests
+
+final class BenchmarkRunResultTests: XCTestCase {
+
+    func testResultCreation() {
+        let result = BenchmarkRunResult(
+            imageSize: .medium512,
+            codingMode: .lossless,
+            throughputMPPerSecond: 5.0,
+            latencyMs: 200.0,
+            peakMemoryBytes: 1024,
+            allocationCount: 10,
+            iterationCount: 10
+        )
+        XCTAssertEqual(result.imageSize, .medium512)
+        XCTAssertEqual(result.codingMode, .lossless)
+        XCTAssertEqual(result.throughputMPPerSecond, 5.0, accuracy: 0.001)
+        XCTAssertEqual(result.latencyMs, 200.0, accuracy: 0.001)
+        XCTAssertEqual(result.peakMemoryBytes, 1024)
+        XCTAssertEqual(result.allocationCount, 10)
+        XCTAssertEqual(result.iterationCount, 10)
+    }
+
+    func testResultEquality() {
+        let id = UUID()
+        let a = BenchmarkRunResult(
+            id: id,
+            imageSize: .medium512,
+            codingMode: .lossless,
+            throughputMPPerSecond: 5.0,
+            latencyMs: 200.0,
+            peakMemoryBytes: 1024,
+            allocationCount: 10,
+            iterationCount: 10
+        )
+        let b = BenchmarkRunResult(
+            id: id,
+            imageSize: .medium512,
+            codingMode: .lossless,
+            throughputMPPerSecond: 5.0,
+            latencyMs: 200.0,
+            peakMemoryBytes: 1024,
+            allocationCount: 10,
+            iterationCount: 10
+        )
+        XCTAssertEqual(a.id, b.id)
+    }
+}
+
+// MARK: - Regression Status Tests
+
+final class RegressionStatusTests: XCTestCase {
+
+    func testRegressionRawValues() {
+        XCTAssertEqual(RegressionStatus.green.rawValue, "No Regression")
+        XCTAssertEqual(RegressionStatus.amber.rawValue, "Possible Regression")
+        XCTAssertEqual(RegressionStatus.red.rawValue, "Regression Detected")
+    }
+}
+
+// MARK: - Performance View Model Tests
+
+final class PerformanceViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = PerformanceViewModel()
+        XCTAssertTrue(vm.selectedSizes.contains(.medium512))
+        XCTAssertTrue(vm.selectedModes.contains(.lossless))
+        XCTAssertEqual(vm.iterationCount, 10)
+        XCTAssertEqual(vm.warmUpRounds, 2)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertTrue(vm.currentResults.isEmpty)
+        XCTAssertEqual(vm.regressionStatus, .green)
+        XCTAssertEqual(vm.peakMemoryBytes, 0)
+        XCTAssertEqual(vm.currentMemoryBytes, 0)
+        XCTAssertEqual(vm.allocationCount, 0)
+        XCTAssertEqual(vm.exportFormat, "CSV")
+    }
+
+    func testClearResults() {
+        let vm = PerformanceViewModel()
+        vm.peakMemoryBytes = 999
+        vm.allocationCount = 42
+        vm.progress = 0.5
+        vm.statusMessage = "Done"
+        vm.clearResults()
+        XCTAssertTrue(vm.currentResults.isEmpty)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertEqual(vm.peakMemoryBytes, 0)
+        XCTAssertEqual(vm.allocationCount, 0)
+    }
+
+    func testRunBenchmark() async {
+        let vm = PerformanceViewModel()
+        vm.selectedSizes = [.small128]
+        vm.selectedModes = [.lossless]
+        let session = TestSession()
+        await vm.runBenchmark(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertFalse(vm.currentResults.isEmpty)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+        XCTAssertGreaterThan(vm.peakMemoryBytes, 0)
+    }
+
+    func testRunBenchmarkRecordsSession() async {
+        let vm = PerformanceViewModel()
+        vm.selectedSizes = [.small128]
+        vm.selectedModes = [.lossless]
+        let session = TestSession()
+        await vm.runBenchmark(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testExportResultsEmpty() {
+        let vm = PerformanceViewModel()
+        let csv = vm.exportResults()
+        XCTAssertTrue(csv.contains("Size"))
+    }
+
+    func testExportResultsWithData() async {
+        let vm = PerformanceViewModel()
+        vm.selectedSizes = [.small128]
+        vm.selectedModes = [.lossless]
+        let session = TestSession()
+        await vm.runBenchmark(session: session)
+        let csv = vm.exportResults()
+        XCTAssertFalse(csv.isEmpty)
+        XCTAssertTrue(csv.contains("Size"))
+    }
+
+    func testMultipleSizesAndModes() async {
+        let vm = PerformanceViewModel()
+        vm.selectedSizes = [.small128, .medium256]
+        vm.selectedModes = [.lossless, .lossy]
+        let session = TestSession()
+        await vm.runBenchmark(session: session)
+        XCTAssertEqual(vm.currentResults.count, 4)
+    }
+}
+
+// MARK: - GPU Operation Tests
+
+final class GPUOperationTests: XCTestCase {
+
+    func testAllOperationsExist() {
+        let operations = GPUOperation.allCases
+        XCTAssertEqual(operations.count, 5)
+    }
+
+    func testOperationRawValues() {
+        XCTAssertEqual(GPUOperation.dwt.rawValue, "DWT")
+        XCTAssertEqual(GPUOperation.colourTransform.rawValue, "Colour Transform")
+        XCTAssertEqual(GPUOperation.quantisation.rawValue, "Quantisation")
+        XCTAssertEqual(GPUOperation.entropyCoding.rawValue, "Entropy Coding")
+        XCTAssertEqual(GPUOperation.rateControl.rawValue, "Rate Control")
+    }
+}
+
+// MARK: - GPU Test Result Tests
+
+final class GPUTestResultTests: XCTestCase {
+
+    func testResultCreation() {
+        let result = GPUTestResult(
+            operation: .dwt,
+            gpuTimeMs: 0.5,
+            cpuTimeMs: 2.0,
+            outputsMatch: true,
+            gpuMemoryBytes: 1024
+        )
+        XCTAssertEqual(result.operation, .dwt)
+        XCTAssertEqual(result.gpuTimeMs, 0.5, accuracy: 0.001)
+        XCTAssertEqual(result.cpuTimeMs, 2.0, accuracy: 0.001)
+        XCTAssertTrue(result.outputsMatch)
+        XCTAssertEqual(result.gpuMemoryBytes, 1024)
+    }
+
+    func testSpeedupFactor() {
+        let result = GPUTestResult(
+            operation: .dwt,
+            gpuTimeMs: 0.5,
+            cpuTimeMs: 2.0,
+            outputsMatch: true,
+            gpuMemoryBytes: 1024
+        )
+        XCTAssertEqual(result.speedupFactor, 4.0, accuracy: 0.001)
+    }
+
+    func testSpeedupFactorZeroGPU() {
+        let result = GPUTestResult(
+            operation: .dwt,
+            gpuTimeMs: 0,
+            cpuTimeMs: 2.0,
+            outputsMatch: true,
+            gpuMemoryBytes: 1024
+        )
+        XCTAssertEqual(result.speedupFactor, 0)
+    }
+}
+
+// MARK: - Shader Compilation Info Tests
+
+final class ShaderCompilationInfoTests: XCTestCase {
+
+    func testShaderCreation() {
+        let shader = ShaderCompilationInfo(
+            shaderName: "dwt_forward",
+            compileTimeMs: 1.5,
+            status: "Compiled",
+            isCompiled: true
+        )
+        XCTAssertEqual(shader.shaderName, "dwt_forward")
+        XCTAssertEqual(shader.compileTimeMs, 1.5, accuracy: 0.001)
+        XCTAssertEqual(shader.status, "Compiled")
+        XCTAssertTrue(shader.isCompiled)
+    }
+
+    func testShaderNotCompiled() {
+        let shader = ShaderCompilationInfo(
+            shaderName: "test_shader",
+            compileTimeMs: 0,
+            status: "Failed",
+            isCompiled: false
+        )
+        XCTAssertFalse(shader.isCompiled)
+    }
+}
+
+// MARK: - GPU Test View Model Tests
+
+final class GPUTestViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = GPUTestViewModel()
+        XCTAssertEqual(vm.selectedOperation, .dwt)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertTrue(vm.results.isEmpty)
+        XCTAssertTrue(vm.shaders.isEmpty)
+        XCTAssertEqual(vm.bufferPoolUtilisation, 0)
+        XCTAssertEqual(vm.peakGPUMemoryBytes, 0)
+        XCTAssertFalse(vm.isMetalAvailable)
+    }
+
+    func testCheckMetalAvailability() {
+        let vm = GPUTestViewModel()
+        vm.checkMetalAvailability()
+        XCTAssertNotEqual(vm.statusMessage, "Ready")
+    }
+
+    func testRunGPUTest() async {
+        let vm = GPUTestViewModel()
+        let session = TestSession()
+        await vm.runGPUTest(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertFalse(vm.results.isEmpty)
+        XCTAssertFalse(vm.shaders.isEmpty)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testRunGPUTestRecordsSession() async {
+        let vm = GPUTestViewModel()
+        let session = TestSession()
+        await vm.runGPUTest(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testRunSingleOperation() async {
+        let vm = GPUTestViewModel()
+        let session = TestSession()
+        await vm.runSingleOperation(session: session)
+        XCTAssertEqual(vm.results.count, 1)
+    }
+
+    func testBufferPoolUtilisation() async {
+        let vm = GPUTestViewModel()
+        let session = TestSession()
+        await vm.runGPUTest(session: session)
+        XCTAssertGreaterThan(vm.bufferPoolUtilisation, 0)
+    }
+
+    func testPeakGPUMemory() async {
+        let vm = GPUTestViewModel()
+        let session = TestSession()
+        await vm.runGPUTest(session: session)
+        XCTAssertGreaterThan(vm.peakGPUMemoryBytes, 0)
+    }
+}
+
+// MARK: - SIMD Operation Type Tests
+
+final class SIMDOperationTypeTests: XCTestCase {
+
+    func testAllOperationsExist() {
+        let operations = SIMDOperationType.allCases
+        XCTAssertEqual(operations.count, 7)
+    }
+
+    func testOperationRawValues() {
+        XCTAssertEqual(SIMDOperationType.waveletLifting53.rawValue, "Wavelet Lifting 5/3")
+        XCTAssertEqual(SIMDOperationType.waveletLifting97.rawValue, "Wavelet Lifting 9/7")
+        XCTAssertEqual(SIMDOperationType.ictTransform.rawValue, "ICT Colour Transform")
+        XCTAssertEqual(SIMDOperationType.rctTransform.rawValue, "RCT Colour Transform")
+        XCTAssertEqual(SIMDOperationType.quantisation.rawValue, "Quantisation")
+        XCTAssertEqual(SIMDOperationType.dequantisation.rawValue, "Dequantisation")
+        XCTAssertEqual(SIMDOperationType.entropy.rawValue, "Entropy Coding")
+    }
+}
+
+// MARK: - SIMD Test Result Tests
+
+final class SIMDTestResultTests: XCTestCase {
+
+    func testResultCreation() {
+        let result = SIMDTestResult(
+            operation: .waveletLifting53,
+            simdTimeMs: 0.3,
+            scalarTimeMs: 1.2,
+            outputsMatch: true,
+            platform: "ARM Neon"
+        )
+        XCTAssertEqual(result.operation, .waveletLifting53)
+        XCTAssertEqual(result.simdTimeMs, 0.3, accuracy: 0.001)
+        XCTAssertEqual(result.scalarTimeMs, 1.2, accuracy: 0.001)
+        XCTAssertTrue(result.outputsMatch)
+        XCTAssertEqual(result.platform, "ARM Neon")
+    }
+
+    func testSpeedup() {
+        let result = SIMDTestResult(
+            operation: .waveletLifting53,
+            simdTimeMs: 0.3,
+            scalarTimeMs: 1.2,
+            outputsMatch: true,
+            platform: "ARM Neon"
+        )
+        XCTAssertEqual(result.speedup, 4.0, accuracy: 0.001)
+    }
+
+    func testSpeedupZeroSIMD() {
+        let result = SIMDTestResult(
+            operation: .waveletLifting53,
+            simdTimeMs: 0,
+            scalarTimeMs: 1.2,
+            outputsMatch: true,
+            platform: "ARM Neon"
+        )
+        XCTAssertEqual(result.speedup, 0)
+    }
+}
+
+// MARK: - SIMD Test View Model Tests
+
+final class SIMDTestViewModelTests: XCTestCase {
+
+    func testInitialState() {
+        let vm = SIMDTestViewModel()
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertTrue(vm.results.isEmpty)
+        XCTAssertEqual(vm.utilisationPercentage, 0)
+        XCTAssertEqual(vm.targetUtilisation, 85.0, accuracy: 0.001)
+    }
+
+    func testDetectPlatform() {
+        let vm = SIMDTestViewModel()
+        vm.detectPlatform()
+        XCTAssertTrue(vm.isARM || vm.isX86 || vm.statusMessage != "Ready")
+    }
+
+    func testRunAllTests() async {
+        let vm = SIMDTestViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        XCTAssertFalse(vm.isRunning)
+        XCTAssertFalse(vm.results.isEmpty)
+        XCTAssertEqual(vm.results.count, 7)
+        XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+        XCTAssertGreaterThan(vm.utilisationPercentage, 0)
+    }
+
+    func testRunAllTestsRecordsSession() async {
+        let vm = SIMDTestViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        let results = await session.results
+        XCTAssertFalse(results.isEmpty)
+    }
+
+    func testClearResults() {
+        let vm = SIMDTestViewModel()
+        vm.progress = 0.5
+        vm.statusMessage = "Done"
+        vm.clearResults()
+        XCTAssertTrue(vm.results.isEmpty)
+        XCTAssertEqual(vm.progress, 0)
+        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertEqual(vm.utilisationPercentage, 0)
+    }
+
+    func testUtilisationCalculation() async {
+        let vm = SIMDTestViewModel()
+        let session = TestSession()
+        await vm.runAllTests(session: session)
+        XCTAssertGreaterThanOrEqual(vm.utilisationPercentage, 0)
+        XCTAssertLessThanOrEqual(vm.utilisationPercentage, 100)
+    }
+}
 #endif

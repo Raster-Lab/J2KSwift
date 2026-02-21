@@ -4127,40 +4127,40 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 **Goal**: Build GUI screens for interactive benchmarking, GPU pipeline testing, and SIMD verification with real-time charts.
 
-- [ ] Performance profiling screen (`PerformanceView`)
-  - [ ] Benchmark configuration panel: select image sizes, coding modes, iteration count, warm-up rounds
-  - [ ] "Run Benchmark" button with live-updating bar chart of throughput (MP/s) and latency (ms)
-  - [ ] Memory usage gauge: peak allocation, current usage, allocation count
-  - [ ] Historical comparison: overlay chart of current run vs previous runs (stored locally)
-  - [ ] Regression detection indicator: green/amber/red badge based on 5% threshold
-  - [ ] Export results as CSV, JSON, or screenshot
-- [ ] GPU testing screen (`GPUTestView`)
-  - [ ] Metal pipeline test panel (macOS): select operation (DWT, colour transform, quantisation), run on GPU, display timing
-  - [ ] GPU vs CPU comparison table: side-by-side timing for each operation with speedup factor
-  - [ ] Shader compilation status: list of all Metal shaders with compile-time and status
-  - [ ] GPU memory usage monitor: buffer pool utilisation, peak usage
-  - [ ] Visual output comparison: GPU-computed vs CPU-computed images with difference overlay
-- [ ] SIMD testing screen (`SIMDTestView`)
-  - [ ] ARM Neon operation test list: run each vectorised operation, compare output vs scalar reference
-  - [ ] Intel SSE/AVX operation test list (when running on x86-64)
-  - [ ] SIMD utilisation percentage gauge (target ≥85%)
-  - [ ] Per-operation speedup chart: SIMD vs scalar timing comparison
-- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (performance/GPU sections)
-  - [ ] "How to Test Performance" — step-by-step: configure benchmark → run → read charts → check regression badge → export CSV
-  - [ ] "How to Test GPU Acceleration" — step-by-step: open GPU tab → select operation → run → compare GPU vs CPU → check visual output
-  - [ ] "How to Test SIMD Operations" — step-by-step: open SIMD tab → run ARM Neon tests → read utilisation gauge → check speedup
-  - [ ] "Performance Targets Reference" — table of expected speedups vs OpenJPEG for each mode
-- [ ] Testing
-  - [ ] Benchmark harness view model tests
-  - [ ] GPU pipeline smoke tests (Metal availability check)
-  - [ ] SwiftUI preview tests for PerformanceView, GPUTestView, SIMDTestView
+- [x] Performance profiling screen (`PerformanceView`)
+  - [x] Benchmark configuration panel: select image sizes, coding modes, iteration count, warm-up rounds
+  - [x] "Run Benchmark" button with live-updating bar chart of throughput (MP/s) and latency (ms)
+  - [x] Memory usage gauge: peak allocation, current usage, allocation count
+  - [x] Historical comparison: overlay chart of current run vs previous runs (stored locally)
+  - [x] Regression detection indicator: green/amber/red badge based on 5% threshold
+  - [x] Export results as CSV, JSON, or screenshot
+- [x] GPU testing screen (`GPUTestView`)
+  - [x] Metal pipeline test panel (macOS): select operation (DWT, colour transform, quantisation), run on GPU, display timing
+  - [x] GPU vs CPU comparison table: side-by-side timing for each operation with speedup factor
+  - [x] Shader compilation status: list of all Metal shaders with compile-time and status
+  - [x] GPU memory usage monitor: buffer pool utilisation, peak usage
+  - [x] Visual output comparison: GPU-computed vs CPU-computed images with difference overlay
+- [x] SIMD testing screen (`SIMDTestView`)
+  - [x] ARM Neon operation test list: run each vectorised operation, compare output vs scalar reference
+  - [x] Intel SSE/AVX operation test list (when running on x86-64)
+  - [x] SIMD utilisation percentage gauge (target ≥85%)
+  - [x] Per-operation speedup chart: SIMD vs scalar timing comparison
+- [x] Documentation — `Documentation/TESTING_GUIDE.md` (performance/GPU sections)
+  - [x] "How to Test Performance" — step-by-step: configure benchmark → run → read charts → check regression badge → export CSV
+  - [x] "How to Test GPU Acceleration" — step-by-step: open GPU tab → select operation → run → compare GPU vs CPU → check visual output
+  - [x] "How to Test SIMD Operations" — step-by-step: open SIMD tab → run ARM Neon tests → read utilisation gauge → check speedup
+  - [x] "Performance Targets Reference" — table of expected speedups vs OpenJPEG for each mode
+- [x] Testing
+  - [x] Benchmark harness view model tests
+  - [x] GPU pipeline smoke tests (Metal availability check)
+  - [x] SwiftUI preview tests for PerformanceView, GPUTestView, SIMDTestView
 
 **Deliverables**:
 - `PerformanceView`, `GPUTestView`, `SIMDTestView` SwiftUI screens
 - Live benchmark charts, GPU vs CPU comparison, SIMD utilisation gauges
 - `TESTING_GUIDE.md` — performance, GPU, and SIMD testing sections
 
-**Status**: ⏳ Planned.
+**Status**: ✅ Complete (Week 305-307).
 
 ### Week 308-310: Streaming and Volumetric Testing GUI Screens
 
@@ -4348,9 +4348,9 @@ This phase delivers **J2KTestApp**, a fully graphical macOS application built wi
 
 ---
 
-**Last Updated**: 2026-02-21 (Phase 18 Week 302-304 complete)
+**Last Updated**: 2026-02-21 (Phase 18 Week 305-307 complete)
 **Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (in progress)
 **Current Version**: 2.0.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-304
-**Next Phase**: Phase 18 Week 305-307 (Performance Profiling and GPU Testing GUI Screens)
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-307
+**Next Phase**: Phase 18 Week 308-310 (Streaming and Volumetric Testing GUI Screens)
 **Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README

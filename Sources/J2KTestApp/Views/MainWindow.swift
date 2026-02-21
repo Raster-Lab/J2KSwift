@@ -136,13 +136,29 @@ struct MainWindowView: View {
     }
 }
 
+// MARK: - Performance Tab
+
+/// Tab selection within the Performance category.
+enum PerformanceTab: String, CaseIterable, Identifiable {
+    /// Benchmark throughput and latency profiling.
+    case benchmark = "Benchmark"
+    /// GPU acceleration testing with Metal.
+    case gpu = "GPU"
+    /// SIMD vectorisation testing.
+    case simd = "SIMD"
+
+    var id: String { rawValue }
+}
+
 // MARK: - Category Detail View
 
 /// Detail view for a single test category.
 ///
-/// Routes `.encode`, `.decode`, `.conformance`, and `.validation` to their
-/// dedicated GUI screens. All other categories fall back to the generic
-/// results-table layout until their dedicated screens are implemented.
+/// Routes `.encode`, `.decode`, `.conformance`, `.validation`, and
+/// `.performance` to their dedicated GUI screens. The performance
+/// category uses tabbed sub-screens for Benchmark, GPU, and SIMD.
+/// All other categories fall back to the generic results-table layout
+/// until their dedicated screens are implemented.
 struct CategoryDetailView: View {
     /// View model for this category.
     @State var viewModel: TestCategoryViewModel
@@ -162,9 +178,18 @@ struct CategoryDetailView: View {
     @State private var interopViewModel = InteropViewModel()
     /// View model for the Validation screen.
     @State private var validationViewModel = ValidationViewModel()
+    /// View model for the Performance screen.
+    @State private var performanceViewModel = PerformanceViewModel()
+    /// View model for the GPU Testing screen.
+    @State private var gpuTestViewModel = GPUTestViewModel()
+    /// View model for the SIMD Testing screen.
+    @State private var simdTestViewModel = SIMDTestViewModel()
 
     /// Log messages for the console.
     @State private var logMessages: [LogMessage] = []
+
+    /// Selected tab within the Performance screen.
+    @State private var performanceTab: PerformanceTab = .benchmark
 
     var body: some View {
         switch viewModel.category {
@@ -176,8 +201,38 @@ struct CategoryDetailView: View {
             ConformanceView(viewModel: conformanceViewModel, session: session)
         case .validation:
             ValidationView(viewModel: validationViewModel, session: session)
+        case .performance:
+            performanceDetailView
         default:
             genericDetailView
+        }
+    }
+
+    // MARK: - Performance Detail View (tabbed)
+
+    @ViewBuilder
+    private var performanceDetailView: some View {
+        VStack(spacing: 0) {
+            // Tab selector
+            Picker("Performance Tab", selection: $performanceTab) {
+                ForEach(PerformanceTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            switch performanceTab {
+            case .benchmark:
+                PerformanceView(viewModel: performanceViewModel, session: session)
+            case .gpu:
+                GPUTestView(viewModel: gpuTestViewModel, session: session)
+            case .simd:
+                SIMDTestView(viewModel: simdTestViewModel, session: session)
+            }
         }
     }
 
