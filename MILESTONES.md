@@ -3996,213 +3996,279 @@ This is the **v2.0 release** — a ground-up refactoring of the entire codebase 
 
 ---
 
-## Phase 18: Interactive Testing Application (v2.1, Weeks 296-315)
+## Phase 18: GUI Testing Application for J2KSwift (v2.1, Weeks 296-315)
 
-**Goal**: Build an interactive application for testing J2KSwift, providing a hands-on environment for exercising encoding, decoding, visualisation, and validation workflows across all supported JPEG 2000 features.
+**Goal**: Build a native macOS GUI application (SwiftUI) that provides a complete graphical environment for testing every feature of J2KSwift, with clear step-by-step documentation explaining how to test encoding, decoding, conformance, streaming, GPU acceleration, and volumetric workflows through the GUI.
 
-This phase delivers a cross-platform interactive testing tool that enables developers and testers to explore J2KSwift capabilities in real time. The application provides immediate visual feedback for encoding/decoding pipelines, supports all JPEG 2000 parts (1, 2, 3, 10, 15), and serves as both a testing harness and a demonstration of the library's API surface. It is built entirely on the existing J2KSwift modules with no external UI framework dependencies beyond Foundation and platform-native APIs.
+This phase delivers **J2KTestApp**, a fully graphical macOS application built with SwiftUI that lets developers and testers visually exercise all J2KSwift capabilities. The GUI provides drag-and-drop image loading, real-time visual feedback for encode/decode pipelines, side-by-side image comparisons, interactive conformance dashboards, performance charts, and JPIP streaming visualisation. Every GUI screen is accompanied by a corresponding section in the `TESTING_GUIDE.md` documentation with annotated screenshots, step-by-step instructions, and expected results — so anyone can pick up the application and immediately know how to test J2KSwift.
 
-**Target Platform**: macOS (primary, SwiftUI), Linux/Windows (terminal-based fallback).
+**Target Platform**: macOS (SwiftUI, primary GUI experience).
 
-### Week 296-298: Interactive Testing Application Architecture
+### Week 296-298: GUI Application Architecture and Main Window
 
-**Goal**: Design and scaffold the interactive testing application with core navigation and module structure.
+**Goal**: Design and scaffold the SwiftUI macOS application with the main window layout, sidebar navigation, and core GUI infrastructure.
 
-- [ ] Application architecture
-  - [ ] Define `J2KTestApp` entry point with SwiftUI lifecycle (macOS) and terminal fallback (Linux)
-  - [ ] Implement `TestSession` actor for managing test state and results
-  - [ ] Create `TestCategory` enum covering all JPEG 2000 parts and modules
-  - [ ] Design `TestResult` model with pass/fail/skip/error states and timing data
-  - [ ] Implement `TestRunner` protocol for pluggable test execution
-- [ ] Navigation and discovery
-  - [ ] Implement module browser listing all J2KSwift modules and their public APIs
-  - [ ] Create test catalogue with categorised test scenarios
-  - [ ] Add search and filtering for test discovery
-  - [ ] Implement test history with persistent storage
+- [ ] SwiftUI application scaffold
+  - [ ] Create `J2KTestApp` macOS application target in `Package.swift` (SwiftUI App lifecycle)
+  - [ ] Implement main window with sidebar navigation (`NavigationSplitView`) and detail area
+  - [ ] Design sidebar with categorised test sections: Encode, Decode, Conformance, Performance, Streaming, Volumetric, Validation
+  - [ ] Implement toolbar with global actions: Run All, Stop, Export Results, Settings
+  - [ ] Add application menu bar with keyboard shortcuts for common operations
+- [ ] GUI state management
+  - [ ] Implement `TestSession` actor for thread-safe test state across all GUI views
+  - [ ] Create `@Observable` view models for each test category screen
+  - [ ] Design `TestResult` model with pass/fail/skip/error states, timing, and thumbnail previews
+  - [ ] Implement persistent settings storage (tile size defaults, quality presets, output directory)
+  - [ ] Add `TestRunner` protocol for pluggable test execution from any GUI screen
+- [ ] Common GUI components
+  - [ ] Image preview panel with zoom, pan, and pixel-level inspection
+  - [ ] Image comparison view (side-by-side, overlay, and difference modes)
+  - [ ] Progress indicator bar with per-stage breakdown (colour transform → DWT → quantise → entropy)
+  - [ ] Results table with sortable columns (test name, status, duration, metrics)
+  - [ ] Log console panel showing real-time encoder/decoder output
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (initial)
+  - [ ] "Getting Started" section: how to build and launch J2KTestApp
+  - [ ] "Main Window Overview" section with annotated screenshot of sidebar, detail area, toolbar
+  - [ ] "Navigation" section explaining each sidebar category and what it tests
 - [ ] Testing
-  - [ ] Unit tests for `TestSession`, `TestResult`, and `TestRunner`
-  - [ ] Verify application scaffolding builds on macOS and Linux
+  - [ ] Unit tests for `TestSession`, `TestResult`, view models
+  - [ ] SwiftUI preview tests for main window layout
+  - [ ] Verify application target builds and launches on macOS
 
 **Deliverables**:
-- `J2KTestApp` application target in `Package.swift`
-- `TestSession` actor and `TestRunner` protocol
-- Module browser and test catalogue
+- `J2KTestApp` SwiftUI macOS application target
+- Main window with sidebar navigation and common GUI components
+- `Documentation/TESTING_GUIDE.md` — Getting Started, Main Window Overview, Navigation sections
 
 **Status**: ⏳ Planned.
 
-### Week 299-301: Encoding and Decoding Test Workflows
+### Week 299-301: Encoding and Decoding GUI Screens
 
-**Goal**: Implement interactive workflows for testing encoding and decoding pipelines with real-time feedback.
+**Goal**: Build dedicated GUI screens for testing JPEG 2000 encoding and decoding with visual feedback and guided workflows.
 
-- [ ] Encoding test workflows
-  - [ ] Interactive encoder configuration (quality, tile size, progression, wavelet, MCT)
-  - [ ] Real-time encoding with progress reporting and timing
-  - [ ] Side-by-side comparison of encoding configurations
-  - [ ] Batch encoding with summary statistics
-  - [ ] Support lossless, lossy, HTJ2K, and visually lossless modes
-- [ ] Decoding test workflows
-  - [ ] Interactive decoder with region-of-interest selection
-  - [ ] Progressive decoding visualisation (resolution and quality layers)
-  - [ ] Multi-component image decoding and channel inspection
-  - [ ] Codestream header and marker inspection
-- [ ] Round-trip validation
-  - [ ] Encode-decode round-trip with PSNR/SSIM metrics
-  - [ ] Bit-exact verification for lossless mode
-  - [ ] Configurable image generators (gradients, patterns, noise, natural)
+- [ ] Encoding screen (`EncodeView`)
+  - [ ] Drag-and-drop image input (PNG, TIFF, BMP) with thumbnail preview
+  - [ ] Configuration panel with controls: quality slider, tile size picker, progression order dropdown, wavelet selector (5/3, 9/7), MCT toggle, HTJ2K toggle
+  - [ ] Preset buttons: Lossless, Lossy High Quality, Visually Lossless, Maximum Compression
+  - [ ] "Encode" button with real-time progress bar and per-stage timing breakdown
+  - [ ] Output panel showing encoded file size, compression ratio, and encoding time
+  - [ ] Side-by-side comparison of multiple encoding configurations in a split view
+  - [ ] Batch encoding: select a folder of images, encode all with chosen settings, display summary table
+- [ ] Decoding screen (`DecodeView`)
+  - [ ] File picker for JP2/J2K/JPX input files with codestream header summary
+  - [ ] Decode button with progress bar and decoded image preview
+  - [ ] Region-of-interest selector: draw a rectangle on the image to decode only that region
+  - [ ] Resolution level stepper: decode at each resolution level with side-by-side comparison
+  - [ ] Quality layer slider: progressively add quality layers and show visual improvement
+  - [ ] Component channel selector for multi-component images (view individual channels)
+  - [ ] Marker inspector panel: expandable tree view of all codestream markers (SOC, SIZ, COD, QCD, SOT, etc.)
+- [ ] Round-trip validation screen (`RoundTripView`)
+  - [ ] One-click encode → decode → compare workflow
+  - [ ] Automatic PSNR, SSIM, and MSE computation with colour-coded pass/fail thresholds
+  - [ ] Bit-exact verification badge for lossless round-trips
+  - [ ] Difference image view highlighting pixel-level discrepancies
+  - [ ] Test image generator panel: create synthetic test images (gradients, checkerboards, noise, Lena-style)
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (encoding/decoding sections)
+  - [ ] "How to Test Encoding" — step-by-step guide with screenshots: load image → configure → encode → inspect output
+  - [ ] "How to Test Decoding" — step-by-step guide: open J2K file → decode → inspect → use ROI selector
+  - [ ] "How to Test Round-Trip" — step-by-step guide: select image → one-click round-trip → read PSNR/SSIM → check lossless badge
+  - [ ] "Encoding Presets Reference" — table of all presets with expected compression ratios
 - [ ] Testing
-  - [ ] Integration tests for encoding/decoding workflows
-  - [ ] Verify round-trip metrics computation
+  - [ ] Integration tests for encode/decode GUI workflows (programmatic view model testing)
+  - [ ] Verify round-trip metrics computation matches expected values
+  - [ ] SwiftUI preview tests for EncodeView, DecodeView, RoundTripView
 
 **Deliverables**:
-- Encoding and decoding interactive workflow views/commands
-- Round-trip validation with quality metrics
-- Configurable test image generators
+- `EncodeView`, `DecodeView`, `RoundTripView` SwiftUI screens
+- Drag-and-drop input, real-time progress, visual comparison, marker inspector
+- `TESTING_GUIDE.md` — encoding, decoding, and round-trip testing sections with step-by-step instructions
 
 **Status**: ⏳ Planned.
 
-### Week 302-304: Conformance and Interoperability Testing Interface
+### Week 302-304: Conformance and Interoperability GUI Screens
 
-**Goal**: Provide interactive access to Part 4 conformance suites and OpenJPEG interoperability testing.
+**Goal**: Build GUI screens for ISO/IEC 15444-4 conformance testing and OpenJPEG interoperability comparison with visual dashboards.
 
-- [ ] Conformance test interface
-  - [ ] Interactive Part 1 conformance test runner with per-test detail
-  - [ ] Part 2, 3, 10, and 15 conformance test execution
-  - [ ] Conformance matrix visualisation (pass/fail/skip per requirement)
-  - [ ] Exportable conformance reports (JSON, text)
-- [ ] OpenJPEG interoperability interface
-  - [ ] Bidirectional encode/decode comparison with OpenJPEG
-  - [ ] Visual diff for decoded image comparison
-  - [ ] Performance comparison dashboard (J2KSwift vs OpenJPEG)
-  - [ ] Codestream structure comparison
-- [ ] Validation tools
-  - [ ] Codestream syntax validator with detailed error reporting
-  - [ ] File format validator (JP2, JPX, JPM box structure)
-  - [ ] Marker segment inspector with hex dump
+- [ ] Conformance dashboard screen (`ConformanceView`)
+  - [ ] Conformance matrix grid: rows = standard requirements, columns = parts (1, 2, 3, 10, 15), cells = pass/fail/skip with colour coding (green/red/grey)
+  - [ ] Click any cell to expand the detailed test log for that requirement
+  - [ ] "Run All Conformance Tests" button with aggregate progress bar
+  - [ ] Per-part tab selector: Part 1, Part 2, Part 3/10, Part 15 — each showing relevant tests
+  - [ ] Export conformance report as JSON, HTML, or PDF
+  - [ ] Conformance summary banner: "304/304 tests passed" with percentage bar
+- [ ] OpenJPEG interoperability screen (`InteropView`)
+  - [ ] Side-by-side decode comparison: J2KSwift output vs OpenJPEG output for the same codestream
+  - [ ] Pixel difference overlay with configurable tolerance threshold
+  - [ ] Performance comparison chart: bar graph of J2KSwift vs OpenJPEG encode/decode times
+  - [ ] Codestream structure comparison: expandable tree diff of marker segments
+  - [ ] Bidirectional test: encode with J2KSwift → decode with OpenJPEG, and vice versa
+- [ ] Validation tools screen (`ValidationView`)
+  - [ ] Codestream syntax validator: drag-and-drop a J2K file, see pass/fail with detailed error list
+  - [ ] File format validator: JP2/JPX/JPM box structure tree with validity indicators
+  - [ ] Marker segment inspector: hex dump with highlighted marker boundaries and decoded field values
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (conformance/interop sections)
+  - [ ] "How to Test Conformance" — step-by-step: open Conformance tab → run all → read matrix → export report
+  - [ ] "How to Test OpenJPEG Interoperability" — step-by-step: load codestream → compare outputs → check pixel diff → read performance chart
+  - [ ] "How to Validate a Codestream" — step-by-step: drag file → read syntax errors → inspect markers → export findings
+  - [ ] "Conformance Matrix Reference" — explanation of each requirement and what it verifies
 - [ ] Testing
-  - [ ] Tests for conformance report generation
-  - [ ] Tests for interoperability comparison logic
+  - [ ] Tests for conformance matrix data model and report export
+  - [ ] Tests for interoperability comparison view model
+  - [ ] SwiftUI preview tests for ConformanceView, InteropView, ValidationView
 
 **Deliverables**:
-- Conformance test runner with matrix visualisation
-- OpenJPEG interoperability comparison interface
-- Codestream and file format validation tools
+- `ConformanceView`, `InteropView`, `ValidationView` SwiftUI screens
+- Conformance matrix dashboard, OpenJPEG comparison charts, codestream validators
+- `TESTING_GUIDE.md` — conformance, interoperability, and validation testing sections
 
 **Status**: ⏳ Planned.
 
-### Week 305-307: Performance Profiling and GPU Testing Interface
+### Week 305-307: Performance Profiling and GPU Testing GUI Screens
 
-**Goal**: Interactive performance profiling, benchmarking, and GPU pipeline testing.
+**Goal**: Build GUI screens for interactive benchmarking, GPU pipeline testing, and SIMD verification with real-time charts.
 
-- [ ] Performance profiling
-  - [ ] Interactive benchmark runner with configurable parameters
-  - [ ] Real-time throughput and latency display
-  - [ ] Memory usage tracking and allocation audit
-  - [ ] Historical performance comparison (run-over-run)
-- [ ] GPU testing interface
-  - [ ] Metal pipeline interactive testing (macOS)
-  - [ ] Vulkan pipeline interactive testing (Linux)
-  - [ ] GPU vs CPU comparison with speedup metrics
-  - [ ] Shader compilation and dispatch verification
-- [ ] SIMD testing interface
-  - [ ] ARM Neon operation verification and benchmarking
-  - [ ] Intel SSE/AVX operation verification and benchmarking
-  - [ ] SIMD utilisation reporting
+- [ ] Performance profiling screen (`PerformanceView`)
+  - [ ] Benchmark configuration panel: select image sizes, coding modes, iteration count, warm-up rounds
+  - [ ] "Run Benchmark" button with live-updating bar chart of throughput (MP/s) and latency (ms)
+  - [ ] Memory usage gauge: peak allocation, current usage, allocation count
+  - [ ] Historical comparison: overlay chart of current run vs previous runs (stored locally)
+  - [ ] Regression detection indicator: green/amber/red badge based on 5% threshold
+  - [ ] Export results as CSV, JSON, or screenshot
+- [ ] GPU testing screen (`GPUTestView`)
+  - [ ] Metal pipeline test panel (macOS): select operation (DWT, colour transform, quantisation), run on GPU, display timing
+  - [ ] GPU vs CPU comparison table: side-by-side timing for each operation with speedup factor
+  - [ ] Shader compilation status: list of all Metal shaders with compile-time and status
+  - [ ] GPU memory usage monitor: buffer pool utilisation, peak usage
+  - [ ] Visual output comparison: GPU-computed vs CPU-computed images with difference overlay
+- [ ] SIMD testing screen (`SIMDTestView`)
+  - [ ] ARM Neon operation test list: run each vectorised operation, compare output vs scalar reference
+  - [ ] Intel SSE/AVX operation test list (when running on x86-64)
+  - [ ] SIMD utilisation percentage gauge (target ≥85%)
+  - [ ] Per-operation speedup chart: SIMD vs scalar timing comparison
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (performance/GPU sections)
+  - [ ] "How to Test Performance" — step-by-step: configure benchmark → run → read charts → check regression badge → export CSV
+  - [ ] "How to Test GPU Acceleration" — step-by-step: open GPU tab → select operation → run → compare GPU vs CPU → check visual output
+  - [ ] "How to Test SIMD Operations" — step-by-step: open SIMD tab → run ARM Neon tests → read utilisation gauge → check speedup
+  - [ ] "Performance Targets Reference" — table of expected speedups vs OpenJPEG for each mode
 - [ ] Testing
-  - [ ] Benchmark harness tests
-  - [ ] GPU pipeline smoke tests
+  - [ ] Benchmark harness view model tests
+  - [ ] GPU pipeline smoke tests (Metal availability check)
+  - [ ] SwiftUI preview tests for PerformanceView, GPUTestView, SIMDTestView
 
 **Deliverables**:
-- Interactive benchmark runner with historical comparison
-- GPU pipeline testing interface (Metal and Vulkan)
-- SIMD verification and benchmarking tools
+- `PerformanceView`, `GPUTestView`, `SIMDTestView` SwiftUI screens
+- Live benchmark charts, GPU vs CPU comparison, SIMD utilisation gauges
+- `TESTING_GUIDE.md` — performance, GPU, and SIMD testing sections
 
 **Status**: ⏳ Planned.
 
-### Week 308-310: Streaming and Volumetric Testing Interface
+### Week 308-310: Streaming and Volumetric Testing GUI Screens
 
-**Goal**: Interactive testing for JPIP streaming and JP3D volumetric workflows.
+**Goal**: Build GUI screens for JPIP streaming visualisation, JP3D volumetric navigation, and Motion JPEG 2000 frame inspection.
 
-- [ ] JPIP streaming test interface
-  - [ ] Interactive JPIP client with session management
-  - [ ] Progressive image loading visualisation
-  - [ ] Window-of-interest selection and request monitoring
-  - [ ] Session statistics and network metrics
-- [ ] JP3D volumetric test interface
-  - [ ] Volume data loading and slice navigation
-  - [ ] 3D wavelet transform parameter exploration
-  - [ ] Volumetric encoding/decoding with quality metrics
-  - [ ] Slice-by-slice comparison for round-trip validation
-- [ ] Motion JPEG 2000 test interface
-  - [ ] Frame sequence encoding/decoding
-  - [ ] Frame-by-frame quality inspection
-  - [ ] Temporal navigation and playback controls
+- [ ] JPIP streaming screen (`JPIPTestView`)
+  - [ ] Server connection panel: enter JPIP server URL, connect/disconnect buttons, session status indicator
+  - [ ] Progressive image canvas: image renders progressively as data arrives, with resolution/quality indicators
+  - [ ] Window-of-interest selector: draw a rectangle on the image canvas to request a specific region
+  - [ ] Network metrics panel: bytes received, latency, request count, session duration
+  - [ ] Request log: scrollable list of all JPIP requests and responses with timing
+- [ ] JP3D volumetric screen (`VolumetricTestView`)
+  - [ ] Volume loader: open a volumetric dataset (multi-slice DICOM, raw volume)
+  - [ ] Slice navigator: slider to scroll through axial/coronal/sagittal slices with live image preview
+  - [ ] 3D wavelet parameter panel: decomposition levels, wavelet type, z-axis transform options
+  - [ ] Volumetric encode/decode with per-slice quality metrics table
+  - [ ] Slice comparison view: original vs decoded slice with difference overlay
+- [ ] Motion JPEG 2000 screen (`MJ2TestView`)
+  - [ ] Frame sequence loader: open an MJ2 file or image sequence folder
+  - [ ] Playback controls: play, pause, step forward/backward, frame slider
+  - [ ] Per-frame quality inspector: click any frame to see PSNR/SSIM and full-size decode
+  - [ ] Frame encoding configuration: apply different settings per frame or uniformly
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (streaming/volumetric sections)
+  - [ ] "How to Test JPIP Streaming" — step-by-step: enter server URL → connect → view progressive load → select region → read metrics
+  - [ ] "How to Test Volumetric (JP3D)" — step-by-step: load volume → navigate slices → encode → decode → compare slices
+  - [ ] "How to Test Motion JPEG 2000" — step-by-step: load MJ2 → playback → inspect frame quality → re-encode
 - [ ] Testing
-  - [ ] JPIP session management tests
-  - [ ] Volumetric round-trip tests
+  - [ ] JPIP session view model tests
+  - [ ] Volumetric slice navigation tests
+  - [ ] MJ2 playback controller tests
 
 **Deliverables**:
-- JPIP streaming test client with visualisation
-- JP3D volumetric testing tools
-- Motion JPEG 2000 frame inspection interface
+- `JPIPTestView`, `VolumetricTestView`, `MJ2TestView` SwiftUI screens
+- Progressive streaming canvas, slice navigator, frame playback controls
+- `TESTING_GUIDE.md` — JPIP, volumetric, and MJ2 testing sections
 
 **Status**: ⏳ Planned.
 
-### Week 311-313: Test Reporting and Automation
+### Week 311-313: Test Reporting Dashboard and Automation
 
-**Goal**: Comprehensive test reporting, CI integration, and automated test suite management.
+**Goal**: Build a GUI reporting dashboard with charts and summaries, plus headless/CLI mode for CI/CD automation.
 
-- [ ] Test reporting
-  - [ ] HTML report generation with charts and summaries
-  - [ ] JSON/CSV export for CI/CD integration
-  - [ ] Test coverage mapping to JPEG 2000 standard sections
-  - [ ] Regression detection with configurable thresholds
-- [ ] Automation
-  - [ ] Scriptable test execution via CLI arguments
-  - [ ] Headless mode for CI/CD pipelines
-  - [ ] Test playlist support (save/load test configurations)
-  - [ ] Scheduled test execution with notification
-- [ ] CI/CD integration
-  - [ ] GitHub Actions workflow for interactive test suite
-  - [ ] Artifact collection for test reports
-  - [ ] Performance regression gating
+- [ ] Reporting dashboard screen (`ReportView`)
+  - [ ] Summary dashboard: total tests run, pass/fail/skip counts, overall duration, pie chart
+  - [ ] Category breakdown: expandable sections per test category with individual results
+  - [ ] Trend chart: line graph of pass rate over time (across multiple sessions)
+  - [ ] Test coverage heatmap: grid mapping test coverage to JPEG 2000 standard sections
+  - [ ] One-click export: HTML report with embedded charts, JSON data export, CSV spreadsheet
+- [ ] Test playlist management
+  - [ ] Create/save/load test playlists (named sets of tests to run together)
+  - [ ] Preset playlists: "Quick Smoke Test", "Full Conformance", "Performance Suite", "Encode/Decode Only"
+  - [ ] Drag-and-drop reordering of tests within a playlist
+  - [ ] Schedule periodic test execution with macOS notification on completion
+- [ ] Headless/CLI automation mode
+  - [ ] `j2ktestapp --headless --playlist <name> --output <report.json>` for CI/CD integration
+  - [ ] Exit code 0 (all pass) / 1 (any failure) for CI gating
+  - [ ] GitHub Actions workflow `interactive-testing.yml` for automated runs
+  - [ ] Artifact upload of HTML reports and screenshots
+- [ ] Documentation — `Documentation/TESTING_GUIDE.md` (reporting/automation sections)
+  - [ ] "How to Read Test Reports" — guide to the summary dashboard, trend charts, and heatmap
+  - [ ] "How to Create Test Playlists" — step-by-step: create playlist → add tests → save → run
+  - [ ] "How to Run Tests in CI/CD" — headless mode usage, GitHub Actions setup, report artifacts
+  - [ ] "Preset Playlists Reference" — what each preset covers and when to use it
 - [ ] Testing
-  - [ ] Report generation tests
-  - [ ] CLI automation tests
+  - [ ] Report data model and export format tests
+  - [ ] Playlist serialisation/deserialisation tests
+  - [ ] Headless mode exit code tests
 
 **Deliverables**:
-- HTML/JSON/CSV test report generation
-- Scriptable headless mode for CI/CD
-- GitHub Actions workflow integration
+- `ReportView` SwiftUI dashboard with charts, heatmap, and export
+- Test playlist management with presets
+- Headless CLI mode and GitHub Actions workflow
+- `TESTING_GUIDE.md` — reporting, playlists, and CI/CD automation sections
 
 **Status**: ⏳ Planned.
 
-### Week 314-315: Polish, Documentation and v2.1 Release Preparation
+### Week 314-315: GUI Polish, Complete Testing Guide and v2.1 Release
 
-**Goal**: Final polish, documentation, and v2.1 release preparation for the interactive testing application.
+**Goal**: Polish the GUI application, complete the testing guide documentation, and prepare the v2.1 release.
 
-- [ ] Polish
-  - [ ] UI/UX refinement (macOS SwiftUI)
-  - [ ] Terminal UI refinement (Linux)
-  - [ ] Error handling and graceful degradation
-  - [ ] Accessibility review
-- [ ] Documentation
-  - [ ] Interactive testing application user guide
-  - [ ] Developer guide for extending test scenarios
-  - [ ] API documentation for test framework types
-  - [ ] Example test configurations and playlists
+- [ ] GUI polish
+  - [ ] Consistent visual design: colour palette, typography, spacing across all screens
+  - [ ] Dark mode and light mode support
+  - [ ] Keyboard navigation and accessibility (VoiceOver labels, focus management)
+  - [ ] Error state handling: friendly error messages with suggested actions in all screens
+  - [ ] Window state persistence: remember window size, sidebar selection, last-used settings
+  - [ ] Application icon and about screen
+- [ ] Complete `Documentation/TESTING_GUIDE.md`
+  - [ ] Table of contents with links to all sections
+  - [ ] "Quick Start" one-page summary: build → launch → run smoke test → read results
+  - [ ] "Troubleshooting" section: common issues and solutions
+  - [ ] "Extending the Test App" — developer guide for adding new test scenarios and GUI screens
+  - [ ] "Keyboard Shortcuts Reference" — complete list of shortcuts
+  - [ ] "Glossary" — JPEG 2000 terms used in the GUI (DWT, MCT, HTJ2K, PSNR, SSIM, etc.)
+  - [ ] Final review of all annotated screenshots for accuracy
 - [ ] Release preparation
   - [ ] Update `VERSION` file to 2.1.0
-  - [ ] `RELEASE_NOTES_v2.1.0.md` — release notes
-  - [ ] Update `README.md` with interactive testing application section
+  - [ ] `RELEASE_NOTES_v2.1.0.md` — release notes highlighting the GUI testing application
+  - [ ] Update `README.md` with GUI testing application section and screenshot
   - [ ] Update `MILESTONES.md` with completion status
 - [ ] Testing
-  - [ ] Full integration test pass
-  - [ ] Cross-platform verification (macOS, Linux)
-  - [ ] Clean install test
+  - [ ] Full integration test pass across all GUI screens
+  - [ ] Accessibility audit on macOS
+  - [ ] Clean build test from fresh checkout
 
 **Deliverables**:
-- Polished interactive testing application
-- User and developer documentation
+- Polished `J2KTestApp` with dark/light mode, accessibility, and window persistence
+- Complete `Documentation/TESTING_GUIDE.md` with all sections, screenshots, and troubleshooting
 - v2.1.0 release preparation
 
 **Status**: ⏳ Planned.
@@ -4212,34 +4278,78 @@ This phase delivers a cross-platform interactive testing tool that enables devel
 #### Phase 18 Summary
 
 **Expected Benefits**:
-- Hands-on interactive environment for exploring all J2KSwift capabilities
-- Real-time visual feedback for encoding/decoding/streaming pipelines
-- Integrated conformance and interoperability testing with OpenJPEG
-- Performance profiling with historical comparison and regression detection
-- Scriptable and CI/CD-ready for automated testing workflows
-- Comprehensive test reporting in HTML, JSON, and CSV formats
+- Native macOS GUI application for visually testing every J2KSwift feature
+- Drag-and-drop image loading, real-time progress, and visual comparison for encode/decode
+- Interactive conformance dashboard with colour-coded matrix and exportable reports
+- Live performance charts, GPU vs CPU comparison, and SIMD utilisation gauges
+- JPIP progressive streaming canvas with window-of-interest selection
+- Volumetric slice navigation and MJ2 frame playback for advanced workflows
+- Complete `TESTING_GUIDE.md` with step-by-step instructions and annotated screenshots for every screen
+- Headless CLI mode and GitHub Actions workflow for CI/CD automation
 
 **Architecture Principles**:
-- **SwiftUI on macOS**: Native interactive experience with live previews
-- **Terminal Fallback**: Full functionality via terminal interface on Linux/Windows
+- **SwiftUI-Native GUI**: Full macOS application with `NavigationSplitView`, toolbars, and native controls
+- **@Observable View Models**: SwiftUI view models for each screen with reactive data binding
 - **Actor-Based State**: `TestSession` actor for thread-safe test state management
 - **Pluggable Tests**: `TestRunner` protocol for extensible test scenarios
-- **Headless Mode**: CI/CD integration without GUI dependencies
-- **British English**: Consistent terminology throughout
+- **Documented Testing**: Every GUI screen has a corresponding `TESTING_GUIDE.md` section with step-by-step instructions
+- **Headless Mode**: CI/CD integration via `--headless` CLI flag
+- **British English**: Consistent terminology throughout GUI and documentation
+
+**GUI Screens**:
+- `EncodeView` — drag-and-drop encoding with configuration panel and presets
+- `DecodeView` — file-based decoding with ROI selector, resolution stepper, marker inspector
+- `RoundTripView` — one-click encode/decode/compare with PSNR/SSIM metrics
+- `ConformanceView` — Part 1/2/3/10/15 conformance matrix dashboard
+- `InteropView` — OpenJPEG side-by-side comparison and performance charts
+- `ValidationView` — codestream syntax and file format validators
+- `PerformanceView` — benchmark runner with live charts and regression detection
+- `GPUTestView` — Metal pipeline testing with GPU vs CPU comparison
+- `SIMDTestView` — ARM Neon/Intel SSE verification with utilisation gauges
+- `JPIPTestView` — progressive streaming canvas with network metrics
+- `VolumetricTestView` — JP3D slice navigation with encode/decode comparison
+- `MJ2TestView` — Motion JPEG 2000 frame playback and quality inspection
+- `ReportView` — summary dashboard, trend charts, heatmap, and export
+
+**Documentation Deliverables**:
+- `Documentation/TESTING_GUIDE.md` — complete guide with the following sections:
+  - Getting Started (build, launch, overview)
+  - How to Test Encoding (step-by-step with screenshots)
+  - How to Test Decoding (step-by-step with screenshots)
+  - How to Test Round-Trip (step-by-step with screenshots)
+  - How to Test Conformance (step-by-step with screenshots)
+  - How to Test OpenJPEG Interoperability (step-by-step with screenshots)
+  - How to Validate a Codestream (step-by-step with screenshots)
+  - How to Test Performance (step-by-step with screenshots)
+  - How to Test GPU Acceleration (step-by-step with screenshots)
+  - How to Test SIMD Operations (step-by-step with screenshots)
+  - How to Test JPIP Streaming (step-by-step with screenshots)
+  - How to Test Volumetric (JP3D) (step-by-step with screenshots)
+  - How to Test Motion JPEG 2000 (step-by-step with screenshots)
+  - How to Read Test Reports (step-by-step with screenshots)
+  - How to Create Test Playlists
+  - How to Run Tests in CI/CD
+  - Encoding Presets Reference
+  - Conformance Matrix Reference
+  - Performance Targets Reference
+  - Preset Playlists Reference
+  - Keyboard Shortcuts Reference
+  - Troubleshooting
+  - Glossary
 
 **Test Coverage Goals**:
-- Application scaffolding and navigation tests: 20+
-- Encoding/decoding workflow tests: 30+
-- Conformance and interoperability tests: 20+
-- Performance profiling tests: 15+
-- Streaming and volumetric tests: 15+
+- GUI scaffolding and navigation tests: 20+
+- Encoding/decoding screen tests: 30+
+- Conformance and interoperability screen tests: 20+
+- Performance and GPU screen tests: 15+
+- Streaming and volumetric screen tests: 15+
 - Reporting and automation tests: 20+
 - Total new tests: 120+
 
 ---
 
 **Last Updated**: 2026-02-21 (Phase 18 planned)
-**Current Phase**: Phase 18 — Interactive Testing Application (planned)
+**Current Phase**: Phase 18 — GUI Testing Application for J2KSwift (planned)
 **Current Version**: 2.0.0
 **Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0)
 **Next Phase**: Phase 18 (v2.1, Weeks 296-315)
