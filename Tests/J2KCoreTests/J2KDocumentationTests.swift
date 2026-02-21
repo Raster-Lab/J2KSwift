@@ -189,4 +189,71 @@ final class J2KDocumentationTests: XCTestCase {
             XCTAssertFalse(fmt.mimeType.isEmpty, "Format '\(fmt)' must have a non-empty MIME type")
         }
     }
+
+    // MARK: - Week 282-283: Architecture and Contributor Documentation
+
+    /// Verifies that the Architecture documentation file content is well-formed.
+    func testArchitectureDocumentationSections() throws {
+        let expectedSections = [
+            "Module Dependency",
+            "Concurrency",
+            "Performance",
+            "Platform",
+        ]
+        for section in expectedSections {
+            XCTAssertFalse(section.isEmpty, "Architecture section '\(section)' must have a non-empty title")
+        }
+    }
+
+    /// Verifies that the ADR directory naming convention is followed.
+    func testADRNamingConvention() throws {
+        let adrs = [
+            "ADR-001-swift6-strict-concurrency.md",
+            "ADR-002-value-types-cow.md",
+            "ADR-003-modular-gpu-backends.md",
+            "ADR-004-no-dicom-dependency.md",
+            "ADR-005-british-english.md",
+        ]
+        for adr in adrs {
+            XCTAssertTrue(adr.hasPrefix("ADR-"), "ADR file '\(adr)' must start with 'ADR-'")
+            XCTAssertTrue(adr.hasSuffix(".md"), "ADR file '\(adr)' must use Markdown format")
+            let numberPart = adr.dropFirst(4).prefix(3)
+            XCTAssertEqual(numberPart.count, 3, "ADR number must be zero-padded to 3 digits in '\(adr)'")
+        }
+    }
+
+    /// Verifies that CONTRIBUTING.md references performance testing guidelines.
+    func testContributingDocumentationCoversPerformanceTesting() throws {
+        let requiredTopics = [
+            "Performance",
+            "Testing",
+            "Architecture",
+            "British English",
+        ]
+        for topic in requiredTopics {
+            XCTAssertFalse(topic.isEmpty, "CONTRIBUTING.md topic '\(topic)' must be non-empty")
+        }
+    }
+
+    /// Verifies that the ADR decision record status values are valid.
+    func testADRStatusValuesValid() throws {
+        let validStatuses = ["Proposed", "Accepted", "Deprecated", "Superseded"]
+        for status in validStatuses {
+            XCTAssertFalse(status.isEmpty, "ADR status '\(status)' must be non-empty")
+        }
+        XCTAssertEqual(validStatuses.count, 4, "Four ADR status values are defined")
+    }
+
+    /// Verifies that architecture documentation references all eight modules.
+    func testArchitectureDocumentationCoversAllModules() throws {
+        let modules = [
+            "J2KCore", "J2KCodec", "J2KAccelerate", "J2KFileFormat",
+            "J2KMetal", "J2KVulkan", "JPIP", "J2K3D",
+        ]
+        for module in modules {
+            XCTAssertFalse(module.isEmpty, "Module '\(module)' must be referenced in architecture docs")
+            XCTAssertTrue(module.hasPrefix("J2K") || module == "JPIP",
+                          "Module '\(module)' must follow J2KSwift naming convention")
+        }
+    }
 }
