@@ -3548,7 +3548,7 @@ public enum PlaylistPreset: String, CaseIterable, Sendable {
 }
 
 /// A named collection of test categories that can be saved and run together.
-public struct PlaylistEntry: Identifiable, Sendable, Codable {
+public struct PlaylistEntry: Identifiable, Hashable, Sendable, Codable {
     public let id: UUID
     public var name: String
     public var categories: [TestCategory]

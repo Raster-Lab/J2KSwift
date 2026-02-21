@@ -314,9 +314,8 @@ struct DecodeView: View {
     }
 
     /// Creates a recursive marker tree row.
-    @ViewBuilder
-    private func markerRow(_ marker: CodestreamMarkerInfo, depth: Int) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private func markerRow(_ marker: CodestreamMarkerInfo, depth: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 // Indent
                 if depth > 0 {
@@ -372,7 +371,7 @@ struct DecodeView: View {
                         .padding(.leading, 16)
                 }
             }
-        }
+        })
     }
 
     // MARK: - Helpers

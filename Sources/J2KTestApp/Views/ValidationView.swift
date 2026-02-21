@@ -223,9 +223,9 @@ struct ValidationView: View {
         }
     }
 
-    @ViewBuilder
-    private func boxRow(box: FileFormatBoxInfo, indent: Int) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+
+    private func boxRow(box: FileFormatBoxInfo, indent: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: box.isValid ? "checkmark.square.fill" : "xmark.square.fill")
                     .foregroundStyle(box.isValid ? .green : .red)
@@ -250,7 +250,7 @@ struct ValidationView: View {
             ForEach(box.children) { child in
                 boxRow(box: child, indent: indent + 1)
             }
-        }
+        })
     }
 
     // MARK: - Marker Inspector
