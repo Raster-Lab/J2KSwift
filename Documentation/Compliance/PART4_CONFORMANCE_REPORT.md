@@ -127,8 +127,8 @@ The Part 4 conformance test suite contains 23 structured test cases:
 | Encoder Class-0          | 3     | ✅ Pass   |
 | Encoder Class-1          | 3     | ✅ Pass   |
 | Cross-Part               | 5     | ✅ Pass   |
-| OpenJPEG Cross-Validation| 3     | ✅ Pass   |
-| **Total**                | **22**| ✅ Pass   |
+| OpenJPEG Cross-Validation | 3     | ✅ Pass   |
+| **Total**                 | **22** | ✅ Pass   |
 
 XCTest coverage: **41 test methods** across 9 test classes.
 
