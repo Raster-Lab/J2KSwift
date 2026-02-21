@@ -5,6 +5,25 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-09-15
+
+**Phase 19 — Multi-Spectral JP3D and Vulkan JP3D Acceleration**
+
+### Added
+- `JP3DMultiSpectralTypes` — spectral band definitions, wavelength mapping, multi-spectral volume type, and spectral configuration for JP3D multi-spectral/hyperspectral imaging
+- `JP3DMultiSpectralEncoder` — actor-based encoder for multi-spectral volumetric data with inter-band prediction and per-band quality layers
+- `JP3DMultiSpectralDecoder` — actor-based decoder with selective band loading and spectral pixel classification
+- `JP3DSpectralAnalysis` — spectral index computation (NDVI, NDWI, NDBI) and inter-band correlation matrix analysis
+- `J2KVulkanJP3DDWT` — Vulkan-accelerated 3D discrete wavelet transform with spectral-axis support, GPU/CPU auto-selection, and transform statistics
+- `J2KXSTypes` — JPEG XS (ISO/IEC 21122) exploration types: profiles, levels, slice heights, configuration presets, and capabilities discovery
+- 30+ new tests in `JP3DMultiSpectralTests`, `J2KVulkanJP3DDWTTests`, and `J2KXSTypesTests` covering all new types and actors
+
+### Changed
+- `VERSION` bumped from `2.1.0` to `2.2.0`
+- `getVersion()` now returns `"2.2.0"`
+- `README.md` updated with Phase 19 features and v2.2.0 status
+- `MILESTONES.md` Phase 19 added and marked complete
+
 ## [2.1.0] — 2026-07-15
 
 **Phase 18 — Native macOS GUI Testing Application (J2KTestApp)**
