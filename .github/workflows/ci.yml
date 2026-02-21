@@ -102,6 +102,44 @@ jobs:
       - name: Build (release)
         run: swift build -c release
 
+  integration-testing:
+    name: Integration Tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: swift:6.2
+    needs: build-linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Run regression tests
+        continue-on-error: true
+        run: swift test --filter "J2KCoreTests.J2KRegressionTests"
+        timeout-minutes: 10
+
+      - name: Run end-to-end pipeline tests
+        continue-on-error: true
+        run: swift test --filter "J2KCodecTests.J2KEndToEndPipelineTests"
+        timeout-minutes: 15
+
+      - name: Run extended stress tests
+        continue-on-error: true
+        run: swift test --filter "J2KCoreTests.J2KExtendedStressTests"
+        timeout-minutes: 15
+
   lint:
     name: SwiftLint
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/heads/release/'))
