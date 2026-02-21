@@ -5,7 +5,27 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.0] — 2026-09-15
+## [2.3.0] — 2026-11-29
+
+**Phase 20 — JPEG XS Core Codec**
+
+### Added
+- New `J2KXS` module — foundational JPEG XS (ISO/IEC 21122) codec library
+- `J2KXSImageTypes` — `J2KXSPixelFormat` (5 formats with `planeCount`), `J2KXSImage` (planar image with dimension clamping), `J2KXSError` (5 error cases), `J2KXSEncodeResult`, `J2KXSDecodeResult`
+- `J2KXSDWTEngine` actor — slice-based forward and inverse DWT with Haar lifting scaffold, orientation subbands (`J2KXSDWTOrientation`), `J2KXSSubband`, `J2KXSDecompositionResult`
+- `J2KXSQuantiser` actor — uniform scalar quantisation and mid-point dequantisation with configurable step size and dead-zone offset (`J2KXSQuantisationParameters`, `J2KXSQuantisedCoefficients`)
+- `J2KXSPacketiser` actor — packs/unpacks encoded slices (`J2KXSEncodedSlice`) into a binary codestream with per-slice `J2KXSPacketHeader` (magic `0xFF10`); supports both `significanceRange` and `varianceAdaptive` entropy modes
+- `J2KXSEncoder` actor — full slice pipeline: validates profile and plane count, runs per-component slice DWT → quantise → serialise → packetise
+- `J2KXSDecoder` actor — unpacks codestream, dequantises, applies inverse DWT, and reassembles component planes
+- 52 new tests in `Tests/J2KXSTests/J2KXSTests.swift` covering all types, actors, error paths, and round-trip encode/decode
+
+### Changed
+- `J2KXSCapabilities.current` — `isAvailable` updated to `true`, `supportedProfiles` extended to include `.high`, `version` updated to `"2.3.0"`
+- `Package.swift` — added `J2KXS` library product, target, and `J2KXSTests` test target
+- `VERSION` bumped from `2.2.0` to `2.3.0`
+- `MILESTONES.md` Phase 20 added and marked complete
+
+
 
 **Phase 19 — Multi-Spectral JP3D and Vulkan JP3D Acceleration**
 
