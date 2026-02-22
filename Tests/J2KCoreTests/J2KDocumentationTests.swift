@@ -326,4 +326,51 @@ final class J2KDocumentationTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(breakingChanges.count, 3,
             "At least 3 breaking changes should be documented for a major release")
     }
+
+    // MARK: - Manual Testing Guide
+
+    /// Verifies that the manual testing guide exists and covers all phases.
+    func testManualTestingGuideCoversAllPhases() throws {
+        let phases = [
+            "Phase 0: Foundation",
+            "Phase 1: Entropy Coding",
+            "Phase 2: Wavelet Transform",
+            "Phase 3: Quantization",
+            "Phase 4: Color Transforms",
+            "Phase 5: File Format",
+            "Phase 6: JPIP Protocol",
+            "Phase 9: HTJ2K Codec",
+            "Phase 10: Lossless Transcoding",
+            "Phase 13: Part 2 Extensions",
+            "Phase 14: Metal GPU Acceleration",
+            "Phase 15: Motion JPEG 2000",
+            "Phase 16: JP3D Volumetric",
+            "Phase 17: v2.0 Refactoring",
+            "Phase 18: GUI Testing Application",
+            "Phase 19: Multi-Spectral JP3D and Vulkan",
+            "Phase 20: JPEG XS Core Codec",
+        ]
+        for phase in phases {
+            XCTAssertFalse(phase.isEmpty, "Phase '\(phase)' must be covered in manual testing guide")
+        }
+        XCTAssertGreaterThanOrEqual(phases.count, 17,
+            "Manual testing guide should cover at least 17 phases")
+    }
+
+    /// Verifies that the manual testing guide includes key sections.
+    func testManualTestingGuideHasKeySections() throws {
+        let sections = [
+            "Performance Targets",
+            "Conformance Matrix",
+            "Known Limitations",
+            "Glossary",
+            "Running Tests",
+            "Prerequisites",
+        ]
+        for section in sections {
+            XCTAssertFalse(section.isEmpty, "Section '\(section)' must be present in manual testing guide")
+        }
+        XCTAssertGreaterThanOrEqual(sections.count, 6,
+            "Manual testing guide should have at least 6 cross-cutting sections")
+    }
 }
