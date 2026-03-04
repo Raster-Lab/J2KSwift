@@ -14,7 +14,7 @@ This guide gets you up and running in under five minutes.
 Add J2KSwift to your `Package.swift`:
 
 ```swift
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(

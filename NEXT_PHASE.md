@@ -308,7 +308,7 @@ This feature allows converting between encoding formats without quality loss or 
 
 ### Development Infrastructure
 
-- Swift 6.0+ toolchain
+- Swift 6.2+ toolchain
 - ISO/IEC 15444-15 specification document
 - HTJ2K conformance test vectors
 - Reference HTJ2K implementations for validation
