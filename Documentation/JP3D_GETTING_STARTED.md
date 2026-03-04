@@ -98,7 +98,7 @@ Ensure your target device has sufficient RAM before encoding large volumes.
 
 ```swift
 // Package.swift
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 
 import PackageDescription
 

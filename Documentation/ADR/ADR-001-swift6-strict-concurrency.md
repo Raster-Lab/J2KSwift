@@ -24,7 +24,7 @@ Adopting this mode at the outset forces every type to be explicitly safe.
 
 J2KSwift adopts **Swift 6 strict concurrency** throughout the entire codebase:
 
-- The `swift-tools-version` in `Package.swift` is set to `6.0`, which enables
+- The `swift-tools-version` in `Package.swift` is set to `6.2`, which enables
   strict concurrency by default for all targets.
 - Every public type is explicitly `Sendable` (or the synthesised `Sendable`
   conformance is verified by the compiler).

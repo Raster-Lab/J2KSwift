@@ -145,7 +145,7 @@ The decoding speedup is significantly greater than the encoding speedup (57-70×
 ### x86_64 Linux (Current Results)
 
 - **CPU**: GitHub Actions runner (Intel Xeon)
-- **Compiler**: Swift 6.0
+- **Compiler**: Swift 6.2
 - **Optimization**: Debug build (benchmarks still show excellent speedup)
 - **Expected improvement with Release build**: Additional 2-3× faster
 
