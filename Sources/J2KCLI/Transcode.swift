@@ -43,12 +43,19 @@ extension J2KCLI {
             exit(1)
         }
 
-        guard let outputPath = options["o"] ?? options["output"] else {
-            print("Error: Missing -o/--output argument")
-            exit(1)
+        let pipeInput  = (inputPath == "-")
+        let pipeOutput: Bool
+        let outputPath: String
+
+        if let o = options["o"] ?? options["output"] {
+            pipeOutput = (o == "-")
+            outputPath = o
+        } else {
+            pipeOutput = false
+            outputPath = deriveOutputPath(inputPath: inputPath, command: "transcode", options: options)
         }
 
-        try await transcodeFile(inputPath, to: outputPath, options: options, verbose: verbose, quiet: quiet)
+        try await transcodeFile(inputPath, to: outputPath, options: options, verbose: verbose, quiet: quiet, pipeInput: pipeInput, pipeOutput: pipeOutput)
     }
 
     // MARK: - Single-file transcode
@@ -58,11 +65,18 @@ extension J2KCLI {
         to outputPath: String,
         options: [String: String],
         verbose: Bool,
-        quiet: Bool
+        quiet: Bool,
+        pipeInput: Bool = false,
+        pipeOutput: Bool = false
     ) async throws {
-        if verbose { print("Transcoding: \(inputPath) -> \(outputPath)") }
+        if verbose { printInfo("Transcoding: \(inputPath) -> \(outputPath)", pipeMode: pipeOutput) }
 
-        let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        let inputData: Data
+        if pipeInput {
+            inputData = FileHandle.standardInput.readDataToEndOfFile()
+        } else {
+            inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        }
         let containerFormat = detectContainerFormat(inputData)
         let codestreamData  = extractCodestream(from: inputData, format: containerFormat)
 
@@ -117,7 +131,11 @@ extension J2KCLI {
             }
         }
 
-        try outputData.write(to: URL(fileURLWithPath: outputPath))
+        if pipeOutput {
+            FileHandle.standardOutput.write(outputData)
+        } else {
+            try outputData.write(to: URL(fileURLWithPath: outputPath))
+        }
 
         // Verification if requested
         let verify = options["verify"] != nil
@@ -146,20 +164,20 @@ extension J2KCLI {
                 }
 
                 if verbose || !quiet {
-                    print("  Verification: \(verificationResult)")
+                    printInfo("  Verification: \(verificationResult)", pipeMode: pipeOutput)
                 }
             } catch {
                 verificationResult = "FAIL (\(error.localizedDescription))"
-                if !quiet { print("  Verification: \(verificationResult)") }
+                if !quiet { printInfo("  Verification: \(verificationResult)", pipeMode: pipeOutput) }
             }
         }
 
         let elapsed = Date().timeIntervalSince(startTime) * 1000
         if !quiet {
-            print("Transcoded: \(inputPath) -> \(outputPath) (\(String(format: "%.1f", elapsed)) ms)")
+            printInfo("Transcoded: \(inputPath) -> \(outputPath) (\(String(format: "%.1f", elapsed)) ms)", pipeMode: pipeOutput)
             let ratio = Double(inputData.count) / Double(outputData.count)
-            print("  Input:  \(formatBytes(inputData.count))  Output: \(formatBytes(outputData.count))  ratio \(String(format: "%.2f", ratio)):1")
-            if isHTJ2KSource { print("  Source: HTJ2K") }
+            printInfo("  Input:  \(formatBytes(inputData.count))  Output: \(formatBytes(outputData.count))  ratio \(String(format: "%.2f", ratio)):1", pipeMode: pipeOutput)
+            if isHTJ2KSource { printInfo("  Source: HTJ2K", pipeMode: pipeOutput) }
         }
     }
 
@@ -219,12 +237,12 @@ extension J2KCLI {
         j2k transcode - Transcode between JPEG 2000 formats
 
         USAGE:
-            j2k transcode -i <input> -o <output> [options]
+            j2k transcode -i <input> [-o <output>] [options]
             j2k transcode --batch <dir> --output-dir <dir> [options]
 
         OPTIONS:
             -i, --input PATH            Input JPEG 2000 file
-            -o, --output PATH           Output JPEG 2000 file
+            -o, --output PATH           Output file (optional; derived from input name if omitted)
             --to-htj2k                  Transcode to HTJ2K (Part 15)
             --from-htj2k                Transcode from HTJ2K to Part 1
             --format j2k|jp2|jpx        Output container format
@@ -236,6 +254,11 @@ extension J2KCLI {
             --output-dir DIR            Output directory for batch mode
             --verbose                   Verbose output
             --quiet                     Suppress non-error output
+
+        PIPING:
+            -i -                        Read input from stdin
+            -o -                        Write output to stdout
+            When piping, diagnostic messages are sent to stderr.
         """)
     }
 }

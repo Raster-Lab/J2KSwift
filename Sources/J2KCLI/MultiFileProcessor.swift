@@ -106,7 +106,8 @@ extension J2KCLI {
         exclude: String? = nil
     ) throws -> [String] {
         let fm = FileManager.default
-        let supportedExtensions = Set(["pgm", "ppm", "pnm", "raw", "j2k", "jp2", "jpx", "jpc", "jph", "j2c"])
+        let supportedExtensions = Set(["pgm", "ppm", "pnm", "raw", "j2k", "jp2", "jpx", "jpc", "jph", "j2c",
+                                       "tiff", "tif", "png", "dcm", "dicom"])
 
         var results: [String] = []
 
@@ -290,6 +291,65 @@ extension J2KCLI {
             totalInputBytes: results.reduce(0) { $0 + $1.inputSize },
             totalOutputBytes: results.reduce(0) { $0 + $1.outputSize }
         )
+    }
+
+    /// Derive an output file path from the input path when `-o` is omitted.
+    ///
+    /// Replaces the input extension with one appropriate to the command and its
+    /// options (e.g. `--format`, `--htj2k`, `--output-format`).
+    ///
+    /// - Parameters:
+    ///   - inputPath: The input file path.
+    ///   - command: The CLI command name (`"encode"`, `"decode"`, `"transcode"`, `"convert"`).
+    ///   - options: The parsed CLI options dictionary.
+    ///   - componentCount: Number of image components (used only by `decode` to choose `.pgm` vs `.ppm`).
+    /// - Returns: A path in the same directory as the input, with the appropriate extension.
+    static func deriveOutputPath(
+        inputPath: String,
+        command: String,
+        options: [String: String],
+        componentCount: Int = 1
+    ) -> String {
+        let inputURL = URL(fileURLWithPath: inputPath)
+        let baseName = inputURL.deletingPathExtension().lastPathComponent
+        let dir = inputURL.deletingLastPathComponent().path
+
+        let ext: String
+        switch command {
+        case "encode":
+            if let fmt = options["format"] {
+                ext = fmt  // jp2, jpx, j2k
+            } else if options["htj2k"] != nil {
+                ext = "jph"
+            } else {
+                ext = "j2k"
+            }
+        case "decode":
+            if let fmt = options["output-format"] {
+                ext = fmt  // pgm, ppm, tiff, png, etc.
+            } else {
+                ext = componentCount >= 3 ? "ppm" : "pgm"
+            }
+        case "transcode":
+            if let fmt = options["format"] {
+                ext = fmt
+            } else if options["to-htj2k"] != nil {
+                ext = "jph"
+            } else {
+                ext = "j2k"
+            }
+        case "convert":
+            if let fmt = options["output-format"] {
+                ext = fmt
+            } else {
+                // Fall back to pgm for greyscale, ppm for colour
+                ext = componentCount >= 3 ? "ppm" : "pgm"
+            }
+        default:
+            ext = "out"
+        }
+
+        return (dir as NSString).appendingPathComponent(baseName + "." + ext)
     }
 
     /// Compute the output path for a file given output directory and suffix options.

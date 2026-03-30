@@ -118,9 +118,24 @@ struct J2KCLI {
             version     Print version information
             help        Show this help message
 
+        SUPPORTED INPUT FORMATS:
+            PGM, PPM, TIFF, PNG, DICOM (.dcm), RAW
+
+        SUPPORTED OUTPUT FORMATS:
+            PGM, PPM, TIFF, PNG
+
+        OUTPUT FILE:
+            -o / --output is optional. When omitted, the output file name is
+            derived from the input file name with an appropriate extension.
+
+        PIPING:
+            Use '-' as input (-i -) to read from stdin.
+            Use '-' as output (-o -) to write to stdout.
+            When piping, diagnostics are sent to stderr.
+
         ENCODE OPTIONS:
-            -i, --input PATH            Input image file (PGM, PPM, PNM, RAW)
-            -o, --output PATH           Output J2K/JP2/JPX file
+            -i, --input PATH            Input image file (PGM, PPM, TIFF, PNG, DICOM)
+            -o, --output PATH           Output J2K/JP2/JPX file (optional)
             -q, --quality FLOAT         Quality (0.0-1.0, default: 1.0)
             --lossless                  Use lossless compression
             --bitrate BPP               Target bit-rate in bits per pixel
@@ -145,7 +160,8 @@ struct J2KCLI {
 
         DECODE OPTIONS:
             -i, --input PATH            Input J2K/JP2/JPX file
-            -o, --output PATH           Output image file (PGM, PPM, RAW)
+            -o, --output PATH           Output image file (optional)
+            --output-format FORMAT      Output format: pgm, ppm, tiff, png
             --level N                   Resolution level for partial decoding
             --layer N                   Quality layer for partial decoding
             --component N               Single component to decode
@@ -166,7 +182,7 @@ struct J2KCLI {
 
         TRANSCODE OPTIONS:
             -i, --input PATH            Input JPEG 2000 file
-            -o, --output PATH           Output JPEG 2000 file
+            -o, --output PATH           Output JPEG 2000 file (optional)
             --to-htj2k                  Transcode to HTJ2K
             --from-htj2k                Transcode from HTJ2K to Part 1
             --format j2k|jp2|jpx        Output format
@@ -204,11 +220,14 @@ struct J2KCLI {
 
         EXAMPLES:
             j2k encode -i input.pgm -o output.j2k --lossless
-            j2k encode -i input.ppm -o output.jp2 --quality 0.9 --progression RPCL
-            j2k decode -i input.j2k -o output.pgm
+            j2k encode -i input.tiff --htj2k
+            j2k encode -i scan.dcm -o output.jp2 --format jp2
+            j2k decode -i input.j2k -o output.png
+            j2k decode -i input.j2k
             j2k info image.jp2 --boxes
-            j2k transcode -i old.j2k -o new.j2k --to-htj2k
-            j2k validate image.jp2 --part1 --json
+            j2k transcode -i old.j2k --to-htj2k
+            j2k convert -i input.dcm -o output.tiff
+            j2k decode -i input.j2k -o - | j2k encode -i - -o output.jph --htj2k
             j2k benchmark -i test.pgm -r 10 --format csv -o results.csv
         """)
     }
