@@ -76,7 +76,7 @@ final class J2KAppleMemoryTests: XCTestCase {
 
     // MARK: - Memory-Mapped File I/O Tests
 
-    func testMemoryMappedFileReadOnly() throws {
+    func testMemoryMappedFileReadOnly() async throws {
         #if os(macOS) || os(iOS)
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("test_mmap_\(UUID().uuidString).dat")
@@ -88,19 +88,19 @@ final class J2KAppleMemoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         let mappedFile = J2KMemoryMappedFile()
-        try mappedFile.mapFile(at: tempURL, mode: .readOnly, useNoCache: false)
+        try await mappedFile.mapFile(at: tempURL, mode: .readOnly, useNoCache: false)
 
         // Read data
-        let readData = try mappedFile.read(offset: 0, length: 4096)
+        let readData = try await mappedFile.read(offset: 0, length: 4096)
         XCTAssertEqual(readData, testData)
 
-        try mappedFile.unmapFile()
+        try await mappedFile.unmapFile()
         #else
         throw XCTSkip("Memory-mapped I/O tests require Darwin")
         #endif
     }
 
-    func testMemoryMappedFilePartialRead() throws {
+    func testMemoryMappedFilePartialRead() async throws {
         #if os(macOS) || os(iOS)
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("test_mmap_partial_\(UUID().uuidString).dat")
@@ -111,20 +111,20 @@ final class J2KAppleMemoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         let mappedFile = J2KMemoryMappedFile()
-        try mappedFile.mapFile(at: tempURL, mode: .readOnly)
+        try await mappedFile.mapFile(at: tempURL, mode: .readOnly)
 
         // Read partial data
-        let readData = try mappedFile.read(offset: 1024, length: 1024)
+        let readData = try await mappedFile.read(offset: 1024, length: 1024)
         XCTAssertEqual(readData.count, 1024)
         XCTAssertEqual(readData, testData.subdata(in: 1024..<2048))
 
-        try mappedFile.unmapFile()
+        try await mappedFile.unmapFile()
         #else
         throw XCTSkip("Memory-mapped I/O tests require Darwin")
         #endif
     }
 
-    func testMemoryMappedFileReadWrite() throws {
+    func testMemoryMappedFileReadWrite() async throws {
         #if os(macOS) || os(iOS)
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("test_mmap_rw_\(UUID().uuidString).dat")
@@ -136,17 +136,17 @@ final class J2KAppleMemoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         let mappedFile = J2KMemoryMappedFile()
-        try mappedFile.mapFile(at: tempURL, mode: .readWrite)
+        try await mappedFile.mapFile(at: tempURL, mode: .readWrite)
 
         // Write data
         let newData = Data([1, 2, 3, 4, 5])
-        try mappedFile.write(newData, at: 100)
+        try await mappedFile.write(newData, at: 100)
 
         // Read it back
-        let readData = try mappedFile.read(offset: 100, length: 5)
+        let readData = try await mappedFile.read(offset: 100, length: 5)
         XCTAssertEqual(readData, newData)
 
-        try mappedFile.unmapFile()
+        try await mappedFile.unmapFile()
         #else
         throw XCTSkip("Memory-mapped I/O tests require Darwin")
         #endif

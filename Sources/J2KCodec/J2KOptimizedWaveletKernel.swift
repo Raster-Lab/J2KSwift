@@ -7,6 +7,7 @@
 
 import Foundation
 import J2KCore
+import Synchronization
 
 // MARK: - Pre-computed Filter Properties
 
@@ -300,12 +301,11 @@ public final class J2KWaveletKernelCache: @unchecked Sendable {
         public let dwtFilter: J2KDWT1D.Filter
     }
 
-    private var cache: [String: CachedKernelState]
-    private let lock = NSLock()
+    private let _state: Mutex<[String: CachedKernelState]>
 
     /// Creates an empty kernel cache.
     public init() {
-        self.cache = [:]
+        self._state = Mutex([:])
     }
 
     /// Retrieves or computes cached state for the specified kernel.
@@ -317,8 +317,7 @@ public final class J2KWaveletKernelCache: @unchecked Sendable {
     /// - Parameter kernel: The wavelet kernel to look up or cache.
     /// - Returns: The cached or newly computed kernel state.
     public func getOrCompute(for kernel: J2KWaveletKernel) -> CachedKernelState {
-        lock.lock()
-        defer { lock.unlock() }
+        _state.withLock { cache in
 
         if let cached = cache[kernel.name] {
             return cached
@@ -338,20 +337,22 @@ public final class J2KWaveletKernelCache: @unchecked Sendable {
 
         cache[kernel.name] = state
         return state
+
+        }
     }
 
     /// Removes all cached kernel states.
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
+        _state.withLock { cache in
         cache.removeAll()
+        }
     }
 
     /// The number of cached kernel states.
     public var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return cache.count
+        _state.withLock { cache in
+        cache.count
+        }
     }
 }
 

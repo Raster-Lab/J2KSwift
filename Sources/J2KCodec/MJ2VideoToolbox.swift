@@ -179,6 +179,8 @@ public struct MJ2VideoToolboxCapabilities: Sendable {
 /// VideoToolbox-based encoder for converting J2KImage frames to H.264/H.265.
 public actor MJ2VideoToolboxEncoder {
     private let configuration: MJ2VideoToolboxEncoderConfiguration
+    // nonisolated(unsafe) is required because deinit is nonisolated in actors.
+    // Safe: only mutated within actor-isolated methods; deinit runs with exclusive access.
     private nonisolated(unsafe) var compressionSession: VTCompressionSession?
     private var frameCount: Int = 0
     private var encodedFrames: [CMSampleBuffer] = []
@@ -459,6 +461,8 @@ public actor MJ2VideoToolboxEncoder {
 /// VideoToolbox-based decoder for converting H.264/H.265 to J2KImage frames.
 public actor MJ2VideoToolboxDecoder {
     private let configuration: MJ2VideoToolboxDecoderConfiguration
+    // nonisolated(unsafe) is required because deinit is nonisolated in actors.
+    // Safe: only mutated within actor-isolated methods; deinit runs with exclusive access.
     private nonisolated(unsafe) var decompressionSession: VTDecompressionSession?
     private var isConfigured: Bool = false
 

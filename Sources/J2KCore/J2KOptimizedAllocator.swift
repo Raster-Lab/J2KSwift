@@ -10,6 +10,7 @@
 /// and batch allocation to reduce overhead in the encoding/decoding pipeline.
 
 import Foundation
+import Synchronization
 
 /// An arena-based allocator that amortizes allocation costs.
 ///
@@ -69,11 +70,11 @@ final class J2KArenaAllocator: @unchecked Sendable {
     /// All allocated blocks.
     private var blocks: [Block] = []
 
-    /// Lock for thread safety.
-    private let lock = NSLock()
-
     /// Total bytes allocated from this arena.
     private var totalAllocated: Int = 0
+
+    /// Mutex for thread safety.
+    private let _lock = Mutex(())
 
     /// Creates a new arena allocator.
     ///
@@ -89,8 +90,7 @@ final class J2KArenaAllocator: @unchecked Sendable {
     ///   - alignment: Required alignment (default: 8).
     /// - Returns: Pointer to the allocated memory.
     func allocate(byteCount: Int, alignment: Int = MemoryLayout<UInt64>.alignment) -> UnsafeMutableRawPointer {
-        lock.lock()
-        defer { lock.unlock() }
+        _lock.withLock { _ in
 
         // Try allocating from the current (last) block
         if let block = blocks.last, let ptr = block.allocate(byteCount: byteCount, alignment: alignment) {
@@ -112,28 +112,30 @@ final class J2KArenaAllocator: @unchecked Sendable {
         }
         totalAllocated += byteCount
         return ptr
+
+        }
     }
 
     /// Resets the arena, making all previously allocated memory available for reuse.
     ///
     /// After reset, all pointers previously returned by `allocate` are invalid.
     func reset() {
-        lock.lock()
-        defer { lock.unlock() }
+        _lock.withLock { _ in
         // Keep the first block for reuse, drop the rest
         if let first = blocks.first {
             first.offset = 0
             blocks = [first]
         }
         totalAllocated = 0
+        }
     }
 
     /// Returns statistics about the arena.
     var statistics: (blockCount: Int, totalCapacity: Int, totalAllocated: Int) {
-        lock.lock()
-        defer { lock.unlock() }
+        _lock.withLock { _ in
         let totalCapacity = blocks.reduce(0) { $0 + $1.capacity }
         return (blockCount: blocks.count, totalCapacity: totalCapacity, totalAllocated: totalAllocated)
+        }
     }
 }
 
@@ -169,8 +171,8 @@ final class J2KScratchBuffers: @unchecked Sendable {
     /// Pre-allocated temporary buffer for general use.
     private let tempBuffer: UnsafeMutableBufferPointer<UInt8>
 
-    /// Lock for thread safety.
-    private let lock = NSLock()
+    /// Mutex for thread safety.
+    private let _lock = Mutex(())
 
     /// Creates pre-allocated scratch buffers for the given tile dimensions.
     ///
@@ -213,9 +215,9 @@ final class J2KScratchBuffers: @unchecked Sendable {
     func withDWTBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<Float>) throws -> Result
     ) rethrows -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(dwtBuffer)
+        try _lock.withLock { _ in
+        try body(dwtBuffer)
+        }
     }
 
     /// Provides access to the quantization scratch buffer.
@@ -226,9 +228,9 @@ final class J2KScratchBuffers: @unchecked Sendable {
     func withQuantizationBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<Int32>) throws -> Result
     ) rethrows -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(quantBuffer)
+        try _lock.withLock { _ in
+        try body(quantBuffer)
+        }
     }
 
     /// Provides access to the temporary scratch buffer.
@@ -239,9 +241,9 @@ final class J2KScratchBuffers: @unchecked Sendable {
     func withTempBuffer<Result>(
         _ body: (UnsafeMutableBufferPointer<UInt8>) throws -> Result
     ) rethrows -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(tempBuffer)
+        try _lock.withLock { _ in
+        try body(tempBuffer)
+        }
     }
 
     /// Returns the total memory allocated by these scratch buffers.

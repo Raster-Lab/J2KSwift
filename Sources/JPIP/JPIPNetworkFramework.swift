@@ -11,6 +11,7 @@
 
 import Foundation
 import J2KCore
+import Synchronization
 
 #if canImport(Network)
 import Network
@@ -139,23 +140,26 @@ public actor JPIPNetworkTransport {
 
         // Start connection
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            nonisolated(unsafe) var resumed = false
+            let resumed = Mutex(false)
 
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    if !resumed {
-                        resumed = true
+                    resumed.withLock { flag in
+                        guard !flag else { return }
+                        flag = true
                         continuation.resume()
                     }
                 case .failed(let error):
-                    if !resumed {
-                        resumed = true
+                    resumed.withLock { flag in
+                        guard !flag else { return }
+                        flag = true
                         continuation.resume(throwing: J2KError.networkError("Connection failed: \(error)"))
                     }
                 case .cancelled:
-                    if !resumed {
-                        resumed = true
+                    resumed.withLock { flag in
+                        guard !flag else { return }
+                        flag = true
                         continuation.resume(throwing: J2KError.networkError("Connection cancelled"))
                     }
                 default:

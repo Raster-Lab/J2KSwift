@@ -153,11 +153,11 @@ public actor J2KUnifiedMemoryManager {
 /// Example:
 /// ```swift
 /// let manager = J2KMemoryMappedFile()
-/// try manager.mapFile(at: url, mode: .readOnly)
-/// let data = try manager.read(offset: 0, length: 1024)
-/// try manager.unmapFile()
+/// try await manager.mapFile(at: url, mode: .readOnly)
+/// let data = try await manager.read(offset: 0, length: 1024)
+/// try await manager.unmapFile()
 /// ```
-public final class J2KMemoryMappedFile: @unchecked Sendable {
+public actor J2KMemoryMappedFile {
     /// Memory mapping mode.
     public enum MappingMode: Sendable {
         case readOnly
@@ -271,6 +271,7 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
 
     /// Unmaps the file and closes the file descriptor.
     ///
+    /// This must be called explicitly before the actor is deallocated.
     /// - Throws: ``J2KError`` if unmapping fails.
     public func unmapFile() throws {
         #if canImport(Darwin)
@@ -287,10 +288,6 @@ public final class J2KMemoryMappedFile: @unchecked Sendable {
             fileDescriptor = nil
         }
         #endif
-    }
-
-    deinit {
-        try? unmapFile()
     }
 }
 

@@ -601,9 +601,8 @@ public protocol TestRunnerProtocol: Sendable {
 ///
 /// The registry maintains a collection of ``TestRunnerProtocol`` instances
 /// that can be looked up by category or runner ID.
-public final class TestRunnerRegistry: @unchecked Sendable {
+public actor TestRunnerRegistry {
     private var runners: [String: any TestRunnerProtocol] = [:]
-    private let lock = NSLock()
 
     /// Shared registry instance.
     public static let shared = TestRunnerRegistry()
@@ -614,15 +613,11 @@ public final class TestRunnerRegistry: @unchecked Sendable {
     ///
     /// - Parameter runner: The test runner to register.
     public func register(_ runner: any TestRunnerProtocol) {
-        lock.lock()
-        defer { lock.unlock() }
         runners[runner.runnerID] = runner
     }
 
     /// Returns all registered runners.
     public func allRunners() -> [any TestRunnerProtocol] {
-        lock.lock()
-        defer { lock.unlock() }
         return Array(runners.values)
     }
 
@@ -631,8 +626,6 @@ public final class TestRunnerRegistry: @unchecked Sendable {
     /// - Parameter category: The test category to filter by.
     /// - Returns: Array of runners for the category.
     public func runners(for category: TestCategory) -> [any TestRunnerProtocol] {
-        lock.lock()
-        defer { lock.unlock() }
         return runners.values.filter { $0.category == category }
     }
 
@@ -641,8 +634,6 @@ public final class TestRunnerRegistry: @unchecked Sendable {
     /// - Parameter runnerID: The unique runner identifier.
     /// - Returns: The runner, or nil if not found.
     public func runner(withID runnerID: String) -> (any TestRunnerProtocol)? {
-        lock.lock()
-        defer { lock.unlock() }
         return runners[runnerID]
     }
 }
@@ -700,7 +691,8 @@ import Observation
 /// and controls for a specific ``TestCategory``. Uses the `@Observable`
 /// macro on supported platforms for SwiftUI integration.
 @Observable
-public final class TestCategoryViewModel: @unchecked Sendable {
+@MainActor
+public final class TestCategoryViewModel {
     /// The test category this view model represents.
     public let category: TestCategory
 
@@ -739,7 +731,7 @@ public final class TestCategoryViewModel: @unchecked Sendable {
         statusMessage = "Running \(category.displayName) tests..."
         progress = 0
 
-        let runners = TestRunnerRegistry.shared.runners(for: category)
+        let runners = await TestRunnerRegistry.shared.runners(for: category)
 
         for runner in runners {
             let runnerResults = await runner.runAll { _ in
@@ -779,7 +771,8 @@ public final class TestCategoryViewModel: @unchecked Sendable {
 /// Manages sidebar selection, global actions, and coordination
 /// between category view models.
 @Observable
-public final class MainViewModel: @unchecked Sendable {
+@MainActor
+public final class MainViewModel {
     /// The currently selected sidebar category.
     public var selectedCategory: TestCategory? = nil
 
@@ -1044,7 +1037,8 @@ public struct EncodeOperationResult: Sendable, Equatable {
 /// and output results. Supports single-image encoding, batch encoding,
 /// and multi-configuration comparison.
 @Observable
-public final class EncodeViewModel: @unchecked Sendable {
+@MainActor
+public final class EncodeViewModel {
     /// URL of the selected input image.
     public var inputImageURL: URL?
     /// Raw data of the selected input image.
@@ -1337,7 +1331,8 @@ public struct DecodeOperationResult: Sendable, Equatable {
 /// Manages input file selection, decoding configuration, progress,
 /// marker tree population, and output image data.
 @Observable
-public final class DecodeViewModel: @unchecked Sendable {
+@MainActor
+public final class DecodeViewModel {
     /// URL of the selected JP2/J2K/JPX input file.
     public var inputFileURL: URL?
     /// Current decoding configuration.
@@ -1491,7 +1486,8 @@ public struct RoundTripMetrics: Sendable, Equatable {
 /// metrics (PSNR, SSIM, MSE), verifies bit-exact lossless round-trips,
 /// and displays a difference image.
 @Observable
-public final class RoundTripViewModel: @unchecked Sendable {
+@MainActor
+public final class RoundTripViewModel {
     /// The encode view model used as input.
     public var encodeViewModel: EncodeViewModel = EncodeViewModel()
     /// Whether the round-trip pipeline is running.
@@ -1747,7 +1743,8 @@ public enum ConformanceExportFormat: String, CaseIterable, Sendable {
 /// and report export. Each row in the matrix is a requirement; columns
 /// are standard parts with colour-coded pass/fail/skip cells.
 @Observable
-public final class ConformanceViewModel: @unchecked Sendable {
+@MainActor
+public final class ConformanceViewModel {
     /// All conformance requirements forming the matrix rows.
     public var requirements: [ConformanceRequirement] = []
     /// Currently selected part tab filter (nil = show all).
@@ -1975,7 +1972,8 @@ public struct CodestreamDiffNode: Identifiable, Sendable, Equatable {
 /// performance comparison, and codestream structure diff between
 /// J2KSwift and OpenJPEG outputs.
 @Observable
-public final class InteropViewModel: @unchecked Sendable {
+@MainActor
+public final class InteropViewModel {
     /// URL of the input codestream file.
     public var inputFileURL: URL?
     /// Whether comparison is in progress.
@@ -2181,7 +2179,8 @@ public struct FileFormatBoxInfo: Identifiable, Sendable, Equatable {
 /// Manages codestream syntax validation, JP2/JPX/JPM file format
 /// validation, and marker segment inspection with hex dump.
 @Observable
-public final class ValidationViewModel: @unchecked Sendable {
+@MainActor
+public final class ValidationViewModel {
     /// URL of the input file.
     public var inputFileURL: URL?
     /// Currently selected validation mode.
@@ -2427,7 +2426,8 @@ public enum RegressionStatus: String, Sendable, Equatable {
 /// Manages benchmark configuration, execution, regression detection,
 /// and CSV export of throughput and latency results.
 @Observable
-public final class PerformanceViewModel: @unchecked Sendable {
+@MainActor
+public final class PerformanceViewModel {
     /// Image sizes selected for benchmarking.
     public var selectedSizes: Set<BenchmarkImageSizeChoice> = [.medium512]
     /// Coding modes selected for benchmarking.
@@ -2648,7 +2648,8 @@ public struct ShaderCompilationInfo: Identifiable, Sendable, Equatable {
 /// Manages Metal availability checks, GPU vs CPU comparisons,
 /// shader compilation tracking, and buffer pool utilisation.
 @Observable
-public final class GPUTestViewModel: @unchecked Sendable {
+@MainActor
+public final class GPUTestViewModel {
     /// Currently selected GPU operation.
     public var selectedOperation: GPUOperation = .dwt
     /// Whether a GPU test is running.
@@ -2824,7 +2825,8 @@ public struct SIMDTestResult: Identifiable, Sendable, Equatable {
 /// Manages platform detection, SIMD vs scalar comparisons,
 /// and utilisation tracking for vectorised JPEG 2000 operations.
 @Observable
-public final class SIMDTestViewModel: @unchecked Sendable {
+@MainActor
+public final class SIMDTestViewModel {
     /// Whether a SIMD test is running.
     public var isRunning: Bool = false
     /// Overall progress (0.0–1.0).
@@ -2989,7 +2991,8 @@ public struct JPIPNetworkMetrics: Sendable {
 
 /// View model for the JPIP streaming test screen.
 @Observable
-public final class JPIPViewModel: @unchecked Sendable {
+@MainActor
+public final class JPIPViewModel {
     /// The URL of the JPIP server.
     public var serverURL: String = "jpip://localhost:8080/image.jp2"
     /// Current connection status.
@@ -3149,7 +3152,8 @@ public struct VolumeSlice: Identifiable, Sendable {
 
 /// View model for the JP3D volumetric testing screen.
 @Observable
-public final class VolumetricTestViewModel: @unchecked Sendable {
+@MainActor
+public final class VolumetricTestViewModel {
     /// Whether a volumetric encode/decode is running.
     public var isRunning: Bool = false
     /// Overall progress (0.0–1.0).
@@ -3274,7 +3278,8 @@ public struct MJ2Frame: Identifiable, Sendable {
 
 /// View model for the Motion JPEG 2000 testing screen.
 @Observable
-public final class MJ2TestViewModel: @unchecked Sendable {
+@MainActor
+public final class MJ2TestViewModel {
     /// Whether a load/encode operation is running.
     public var isRunning: Bool = false
     /// Overall progress (0.0–1.0).
@@ -3443,7 +3448,8 @@ public enum ReportExportFormat: String, CaseIterable, Sendable {
 
 /// View model for the reporting dashboard.
 @Observable
-public final class ReportViewModel: @unchecked Sendable {
+@MainActor
+public final class ReportViewModel {
     public var trendPoints: [ReportTrendPoint] = []
     public var coverageGrid: [CoverageCell] = []
     public var exportFormat: ReportExportFormat = .html
@@ -3564,7 +3570,8 @@ public struct PlaylistEntry: Identifiable, Hashable, Sendable, Codable {
 
 /// View model for playlist management.
 @Observable
-public final class PlaylistViewModel: @unchecked Sendable {
+@MainActor
+public final class PlaylistViewModel {
     public var playlists: [PlaylistEntry] = []
     public var selectedPlaylist: PlaylistEntry? = nil
     public var isRunning: Bool = false
@@ -3650,6 +3657,7 @@ public final class HeadlessRunner: Sendable {
     /// Runs the playlist matching `config.playlistName` and writes a synthetic report.
     ///
     /// - Returns: `.success` if all tests passed, `.failure` otherwise.
+    @MainActor
     public static func run(config: HeadlessRunConfig, session: TestSession) async -> HeadlessExitCode {
         let playlistVM = PlaylistViewModel()
         playlistVM.loadPresets()
@@ -3736,17 +3744,18 @@ public struct J2KDesignSystem: Sendable {
 
 /// Persists window size, sidebar selection, and last-used tab across launches.
 @Observable
-public final class WindowPreferences: Sendable {
+@MainActor
+public final class WindowPreferences {
     private static let widthKey  = "j2k.window.width"
     private static let heightKey = "j2k.window.height"
     private static let sidebarKey = "j2k.window.sidebarSelection"
 
     /// Saved window width in points.
-    public nonisolated(unsafe) var savedWidth: CGFloat
+    public var savedWidth: CGFloat
     /// Saved window height in points.
-    public nonisolated(unsafe) var savedHeight: CGFloat
+    public var savedHeight: CGFloat
     /// Identifier of the last-selected sidebar item.
-    public nonisolated(unsafe) var savedSidebarSelection: String
+    public var savedSidebarSelection: String
 
     public init() {
         let ud = UserDefaults.standard

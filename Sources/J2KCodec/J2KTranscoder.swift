@@ -30,6 +30,7 @@
 
 import Foundation
 import J2KCore
+import Synchronization
 
 // MARK: - Transcoding Configuration
 
@@ -588,22 +589,23 @@ public struct J2KTranscoder: Sendable {
         direction: TranscodingDirection,
         progress: (@Sendable (TranscodingProgressUpdate) -> Void)? = nil
     ) throws -> TranscodingResult {
-        // Use task with unsafe continuation for sync-to-async bridging
-        nonisolated(unsafe) var capturedResult: Result<TranscodingResult, Error>?
+        // Use task with Mutex for sync-to-async bridging
+        let capturedResult = Mutex<Result<TranscodingResult, Error>?>(nil)
         let group = DispatchGroup()
         group.enter()
 
         Task { @Sendable in
             do {
-                capturedResult = .success(try await transcodeAsync(data, direction: direction, progress: progress))
+                let result = try await transcodeAsync(data, direction: direction, progress: progress)
+                capturedResult.withLock { $0 = .success(result) }
             } catch {
-                capturedResult = .failure(error)
+                capturedResult.withLock { $0 = .failure(error) }
             }
             group.leave()
         }
 
         group.wait()
-        return try capturedResult!.get()
+        return try capturedResult.withLock { $0! }.get()
     }
 
     /// Asynchronously transcodes a JPEG 2000 codestream between legacy and HTJ2K formats.
@@ -740,25 +742,25 @@ public struct J2KTranscoder: Sendable {
         targetMode: HTCodingMode,
         progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Data {
-        // Use task with unsafe continuation for sync-to-async bridging
-        nonisolated(unsafe) var capturedResult: Result<Data, Error>?
+        // Use task with Mutex for sync-to-async bridging
+        let capturedResult = Mutex<Result<Data, Error>?>(nil)
         let group = DispatchGroup()
         group.enter()
 
         Task { @Sendable in
             do {
-                capturedResult = .success(
-                    try await encodeFromCoefficientsAsync(
-                        coefficients, targetMode: targetMode,
-                        progress: progress))
+                let result = try await encodeFromCoefficientsAsync(
+                    coefficients, targetMode: targetMode,
+                    progress: progress)
+                capturedResult.withLock { $0 = .success(result) }
             } catch {
-                capturedResult = .failure(error)
+                capturedResult.withLock { $0 = .failure(error) }
             }
             group.leave()
         }
 
         group.wait()
-        return try capturedResult!.get()
+        return try capturedResult.withLock { $0! }.get()
     }
 
     /// Asynchronously re-encodes intermediate coefficients with the specified Tier-1 coder.

@@ -9,6 +9,7 @@
 /// Covers ISO/IEC 15444-10 (JP3D) Part 10 conformance and Part 4 compliance,
 /// interoperability, error resilience, edge cases, and compliance automation.
 
+import Synchronization
 import XCTest
 @testable import J2KCore
 @testable import J2K3D
@@ -16,10 +17,9 @@ import XCTest
 // MARK: - Thread-Safe Helpers
 
 private final class ComplianceCounter: @unchecked Sendable {
-    private var _value: Int = 0
-    private let lock = NSLock()
-    var value: Int { lock.withLock { _value } }
-    func increment() { lock.withLock { _value += 1 } }
+    private let _value = Mutex(0)
+    var value: Int { _value.withLock { $0 } }
+    func increment() { _value.withLock { $0 += 1 } }
 }
 
 // MARK: - JP3DComplianceTests

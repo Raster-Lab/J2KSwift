@@ -8,23 +8,23 @@
 /// round-trip encode→decode, ROI decoding, progressive decoding, multi-resolution
 /// support, and edge case / error handling.
 
+import Synchronization
 import XCTest
 @testable import J2KCore
 @testable import J2K3D
 
 /// Thread-safe storage for use in Sendable closures.
 private final class SendableStorage<T: Sendable>: @unchecked Sendable {
-    private var _value: T
-    private let lock = NSLock()
+    private let _value: Mutex<T>
 
-    init(_ initial: T) { _value = initial }
+    init(_ initial: T) { _value = Mutex(initial) }
 
     var value: T {
-        lock.withLock { _value }
+        _value.withLock { $0 }
     }
 
     func set(_ newValue: T) {
-        lock.withLock { _value = newValue }
+        _value.withLock { $0 = newValue }
     }
 }
 

@@ -461,6 +461,7 @@ final class LogMessageTests: XCTestCase {
 
 // MARK: - Test Runner Registry Tests
 
+@MainActor
 final class TestRunnerRegistryTests: XCTestCase {
 
     /// A mock test runner for testing the registry.
@@ -481,7 +482,7 @@ final class TestRunnerRegistryTests: XCTestCase {
         }
     }
 
-    func testRegistryRegisterAndRetrieve() {
+    func testRegistryRegisterAndRetrieve() async {
         let registry = TestRunnerRegistry.shared
         let runner = MockTestRunner(
             runnerID: "mock-encode",
@@ -489,14 +490,14 @@ final class TestRunnerRegistryTests: XCTestCase {
             category: .encode,
             availableTests: ["test1", "test2"]
         )
-        registry.register(runner)
+        await registry.register(runner)
 
-        let retrieved = registry.runner(withID: "mock-encode")
+        let retrieved = await registry.runner(withID: "mock-encode")
         XCTAssertNotNil(retrieved)
         XCTAssertEqual(retrieved?.runnerID, "mock-encode")
     }
 
-    func testRegistryRunnersByCategory() {
+    func testRegistryRunnersByCategory() async {
         let registry = TestRunnerRegistry.shared
         let runner1 = MockTestRunner(
             runnerID: "mock-decode-1",
@@ -510,14 +511,14 @@ final class TestRunnerRegistryTests: XCTestCase {
             category: .decode,
             availableTests: ["d2"]
         )
-        registry.register(runner1)
-        registry.register(runner2)
+        await registry.register(runner1)
+        await registry.register(runner2)
 
-        let decodeRunners = registry.runners(for: .decode)
+        let decodeRunners = await registry.runners(for: .decode)
         XCTAssertGreaterThanOrEqual(decodeRunners.count, 2)
     }
 
-    func testRegistryAllRunners() {
+    func testRegistryAllRunners() async {
         let registry = TestRunnerRegistry.shared
         // Register a runner to ensure there's at least one
         let runner = MockTestRunner(
@@ -526,8 +527,8 @@ final class TestRunnerRegistryTests: XCTestCase {
             category: .validation,
             availableTests: ["v1"]
         )
-        registry.register(runner)
-        let runners = registry.allRunners()
+        await registry.register(runner)
+        let runners = await registry.allRunners()
         XCTAssertGreaterThan(runners.count, 0)
     }
 }
@@ -569,6 +570,7 @@ final class PipelineStageTests: XCTestCase {
 #if canImport(Observation)
 // MARK: - View Model Tests
 
+@MainActor
 final class TestCategoryViewModelTests: XCTestCase {
 
     func testViewModelCreation() {
@@ -610,6 +612,7 @@ final class TestCategoryViewModelTests: XCTestCase {
     }
 }
 
+@MainActor
 final class MainViewModelTests: XCTestCase {
 
     func testMainViewModelCreation() {
@@ -768,6 +771,7 @@ final class EncodeOperationResultTests: XCTestCase {
 
 // MARK: - Encode View Model Tests
 
+@MainActor
 final class EncodeViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -926,6 +930,7 @@ final class CodestreamMarkerInfoTests: XCTestCase {
 
 // MARK: - Decode View Model Tests
 
+@MainActor
 final class DecodeViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1044,6 +1049,7 @@ final class RoundTripMetricsTests: XCTestCase {
 
 // MARK: - Round-Trip View Model Tests
 
+@MainActor
 final class RoundTripViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1247,6 +1253,7 @@ final class ConformanceExportFormatTests: XCTestCase {
 
 // MARK: - Conformance View Model Tests
 
+@MainActor
 final class ConformanceViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1434,6 +1441,7 @@ final class CodestreamDiffNodeTests: XCTestCase {
 
 // MARK: - Interop View Model Tests
 
+@MainActor
 final class InteropViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1566,6 +1574,7 @@ final class FileFormatBoxInfoTests: XCTestCase {
 
 // MARK: - Validation View Model Tests
 
+@MainActor
 final class ValidationViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1761,6 +1770,7 @@ final class RegressionStatusTests: XCTestCase {
 
 // MARK: - Performance View Model Tests
 
+@MainActor
 final class PerformanceViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -1933,6 +1943,7 @@ final class ShaderCompilationInfoTests: XCTestCase {
 
 // MARK: - GPU Test View Model Tests
 
+@MainActor
 final class GPUTestViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -2058,6 +2069,7 @@ final class SIMDTestResultTests: XCTestCase {
 
 // MARK: - SIMD Test View Model Tests
 
+@MainActor
 final class SIMDTestViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -2167,6 +2179,7 @@ final class JPIPNetworkMetricsTests: XCTestCase {
 
 // MARK: - JPIP View Model Tests
 
+@MainActor
 final class JPIPViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -2272,6 +2285,7 @@ final class VolumeSliceTests: XCTestCase {
 
 // MARK: - Volumetric Test View Model Tests
 
+@MainActor
 final class VolumetricTestViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -2363,6 +2377,7 @@ final class MJ2FrameTests: XCTestCase {
 
 // MARK: - MJ2 Test View Model Tests
 
+@MainActor
 final class MJ2TestViewModelTests: XCTestCase {
 
     func testInitialState() {
@@ -2539,6 +2554,7 @@ final class ReportExportFormatTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ReportViewModelTests: XCTestCase {
 
     func testLoadTrendPopulatesFivePoints() async {
@@ -2634,6 +2650,7 @@ final class PlaylistEntryTests: XCTestCase {
     }
 }
 
+@MainActor
 final class PlaylistViewModelTests: XCTestCase {
 
     func testLoadPresetsPopulatesFourPlaylists() {
@@ -2701,6 +2718,7 @@ final class HeadlessRunConfigTests: XCTestCase {
     }
 }
 
+@MainActor
 final class HeadlessRunnerTests: XCTestCase {
 
     func testParseArgsValidReturnsConfig() {
@@ -2801,6 +2819,7 @@ final class J2KDesignSystemTests: XCTestCase {
 
 // MARK: - WindowPreferences Tests
 
+@MainActor
 final class WindowPreferencesTests: XCTestCase {
 
     /// Use a unique suite name so tests don't pollute standard user defaults.

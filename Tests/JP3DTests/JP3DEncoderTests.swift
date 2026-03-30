@@ -8,27 +8,23 @@
 /// wavelet transform, quantization, rate control, packet formation,
 /// streaming encoder, and edge cases.
 
+import Synchronization
 import XCTest
 @testable import J2KCore
 @testable import J2K3D
 
 /// Thread-safe counter for use in Sendable closures.
 private final class ThreadSafeCounter: @unchecked Sendable {
-    private var _value: Int
-    private let lock = NSLock()
+    private let _value: Mutex<Int>
 
-    init(_ initial: Int) { _value = initial }
+    init(_ initial: Int) { _value = Mutex(initial) }
 
     var value: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _value
+        _value.withLock { $0 }
     }
 
     func increment() {
-        lock.lock()
-        _value += 1
-        lock.unlock()
+        _value.withLock { $0 += 1 }
     }
 }
 
