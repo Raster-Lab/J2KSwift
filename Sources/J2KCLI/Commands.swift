@@ -56,9 +56,12 @@ extension J2KCLI {
         // --colour -> --color
         case "colour":                  return "color"
         case "colour-space":            return "color-space"
+        case "no-colour":               return "no-color"
         // --optimise -> --optimize
         case "optimise":                return "optimize"
         case "optimise-progressive":    return "optimize-progressive"
+        // --normalise -> --normalize
+        case "normalise":               return "normalize"
         default:                        return key
         }
     }
@@ -149,6 +152,33 @@ extension J2KCLI {
         }
         if options["htj2k"] != nil { config.useHTJ2K = true }
         if options["no-mct"] != nil { config.mctConfiguration = .disabled }
+
+        // Codec variant selection
+        if let codec = options["codec"] {
+            applyCodecOption(codec, to: &config)
+        }
+
+        // Compression ratio / percentage
+        if let ratioStr = options["compression-ratio"] {
+            // Parse "N:1" format
+            let parts = ratioStr.split(separator: ":")
+            if let ratio = parts.first.flatMap({ Double($0) }) {
+                let bpp = Double(image.componentCount * image.components[0].bitDepth) / ratio
+                config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+            }
+        }
+        if let pctStr = options["compression-percent"], let pct = Double(pctStr) {
+            // N% size reduction => ratio = 100 / (100 - N)
+            let ratio = 100.0 / max(1, 100.0 - pct)
+            let bpp = Double(image.componentCount * image.components[0].bitDepth) / ratio
+            config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+        }
+        if let sizeStr = options["target-size"], let targetBytes = Int(sizeStr) {
+            let totalPixels = image.width * image.height
+            let bpp = Double(targetBytes * 8) / Double(totalPixels)
+            config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+        }
+
         // Note: enabling MCT via --mct uses the default configuration from preset
         // GPU toggle is noted but has no effect on this platform
         if verbose, options["gpu"] != nil { print("Note: GPU acceleration requested (not available on this platform)") }
@@ -275,6 +305,12 @@ extension J2KCLI {
         // Partial-decoding options (informational – passed to decoder when supported)
         let resolutionLevel = options["level"].flatMap { Int($0) }
         let qualityLayer    = options["layer"].flatMap { Int($0) }
+        let headerOnly      = options["header-only"] != nil
+        let stripAlpha      = options["strip-alpha"] != nil
+        let scale           = options["scale"].flatMap { Int($0) }
+        let regionStr       = options["region"]
+        let outputFormat    = options["output-format"]
+        let bitDepthConvert = options["bit-depth"].flatMap { Int($0) }
 
         if verbose {
             print("Loading: \(inputPath)")
@@ -290,8 +326,25 @@ extension J2KCLI {
         // Decode
         let decoder = J2KDecoder()
         let startDecode = Date()
-        let image = try decoder.decode(encodedData)
+        let decodedImage = try decoder.decode(encodedData)
         let decodeTime = Date().timeIntervalSince(startDecode)
+
+        // Header-only mode: print info and exit
+        if headerOnly {
+            print("Codestream Info:")
+            print("  Dimensions: \(decodedImage.width)×\(decodedImage.height)")
+            print("  Components: \(decodedImage.componentCount)")
+            for c in decodedImage.components {
+                print("  [\(c.index)] \(c.width)×\(c.height), \(c.bitDepth)-bit \(c.signed ? "signed" : "unsigned")")
+            }
+            return
+        }
+
+        // Post-processing: bit depth conversion
+        var image = decodedImage
+        if let targetBD = bitDepthConvert {
+            image = convertBitDepth(image, to: targetBD)
+        }
 
         // Write output
         if verbose { print("Writing: \(outputPath)") }

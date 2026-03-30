@@ -39,11 +39,38 @@ struct J2KCLI {
             case "benchmark":
                 try await benchmarkCommand(commandArgs)
             case "info":
-                try await infoCommand(commandArgs)
+                if commandArgs.first == "--capabilities" || commandArgs.contains("--capabilities") {
+                    try await capabilitiesCommand(commandArgs)
+                } else if commandArgs.contains("--list-gpus") {
+                    listGPUs()
+                } else {
+                    try await infoCommand(commandArgs)
+                }
             case "transcode":
                 try await transcodeCommand(commandArgs)
             case "validate":
                 try await validateCommand(commandArgs)
+            case "encode3d":
+                try await encode3DCommand(commandArgs)
+            case "decode3d":
+                try await decode3DCommand(commandArgs)
+            case "jpip":
+                if commandArgs.first == "server" {
+                    try await jpipServerCommand(Array(commandArgs.dropFirst()))
+                } else if commandArgs.first == "client" {
+                    try await jpipClientCommand(Array(commandArgs.dropFirst()))
+                } else {
+                    print("Error: Unknown jpip subcommand. Expected: server, client")
+                    exit(1)
+                }
+            case "batch":
+                try await batchCommand(commandArgs)
+            case "compare":
+                try await compareCommand(commandArgs)
+            case "convert":
+                try await convertCommand(commandArgs)
+            case "completions":
+                try await completionsCommand(commandArgs)
             case "testapp":
                 try await testappCommand(commandArgs)
             case "version":
@@ -71,15 +98,22 @@ struct J2KCLI {
         J2KSwift - JPEG 2000 Encoder/Decoder CLI
 
         USAGE:
-            j2k <command> [options]
+            j2k <command> [subcommand] [options]
 
         COMMANDS:
-            encode      Encode an image to JPEG 2000
-            decode      Decode a JPEG 2000 image
-            info        Display codestream information
-            transcode   Transcode between JPEG 2000 formats
-            validate    Validate a JPEG 2000 codestream
-            benchmark   Run encoding/decoding benchmarks
+            encode      Compress image(s) to JPEG 2000 / HTJ2K
+            decode      Decompress JPEG 2000 / HTJ2K image(s)
+            transcode   Lossless transcoding between J2K ↔ HTJ2K
+            info        Display codestream / file-format metadata
+            validate    Conformance validation
+            benchmark   Performance benchmarking
+            encode3d    Compress volumetric / 3D data (JP3D)
+            decode3d    Decompress volumetric / 3D data (JP3D)
+            jpip        JPIP streaming (server/client)
+            batch       Batch-process files in a directory
+            compare     Compare two images (PSNR, MSE, MAE)
+            convert     Convert between image formats
+            completions Generate shell completions (bash/zsh/fish)
             testapp     Run test app in headless mode (CI/CD)
             version     Print version information
             help        Show this help message

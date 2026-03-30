@@ -121,7 +121,7 @@ let package = Package(
             dependencies: ["J2KCore"]),
         .executableTarget(
             name: "J2KCLI",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP"],
             path: "Sources/J2KCLI",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])

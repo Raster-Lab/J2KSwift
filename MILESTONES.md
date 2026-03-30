@@ -4503,9 +4503,50 @@ Phase 20 (Weeks 326–335) delivers the `J2KXS` module — a new Swift 6 strict-
 
 ---
 
-**Last Updated**: 2026-11-29 (Phase 20 Week 335 complete)
-**Current Phase**: Phase 20 — JPEG XS Core Codec (complete)
-**Current Version**: 2.3.0
-**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0), Phase 19 Weeks 316-325 (v2.2.0), Phase 20 Weeks 326-335 (v2.3.0)
-**Next Phase**: Phase 21 (planned)
-**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; complete CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark`) with dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite (GETTING_STARTED.md, ENCODING_GUIDE.md, DECODING_GUIDE.md, HTJ2K_GUIDE.md, METAL_GPU_GUIDE.md, JPIP_GUIDE.md, JP3D_GUIDE.md, DICOM_INTEGRATION.md) and 8 runnable Swift example files; v2.0.0 release preparation with comprehensive release notes, migration guide, and updated README; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens, design system, accessibility, window state persistence, headless CI mode, complete TESTING_GUIDE.md, and v2.1.0 release; multi-spectral JP3D encoding/decoding with inter-band prediction, Vulkan-accelerated 3D DWT, and JPEG XS (ISO/IEC 21122) exploration types; JPEG XS Core Codec (`J2KXS` module) with slice-based DWT, scalar quantisation, entropy packetisation, encoder/decoder actors (v2.3.0)
+**Last Updated**: 2027-03-30 (Phase 21 Week 365 complete)
+**Current Phase**: Phase 21 — Comprehensive CLI Enhancement (complete)
+**Current Version**: 2.4.0
+**Completed Phases**: Phases 0-16 (Weeks 1-235, v1.0-v1.9.0), Phase 17 Weeks 236-295 (v2.0.0), Phase 18 Weeks 296-315 (v2.1.0), Phase 19 Weeks 316-325 (v2.2.0), Phase 20 Weeks 326-335 (v2.3.0), Phase 21 Weeks 336-365 (v2.4.0)
+**Next Phase**: Phase 22 (planned)
+**Achievement**: Complete JPEG 2000 Parts 1, 2, 3, 10, 15 implementation; all modules concurrency-clean under Swift 6.2 strict mode; zero `@unchecked Sendable` outside J2KCore; ARM NEON SIMD optimisation for entropy coding, wavelet transforms, and colour transforms; deep Accelerate framework integration (vDSP, vImage 16-bit, BLAS/LAPACK eigendecomposition, memory optimisation); Vulkan GPU compute backend for Linux/Windows with CPU fallback; Intel x86-64 SSE4.2/AVX2 SIMD optimisation for entropy coding (MQ-coder, bit-plane coding), wavelet lifting (5/3 and 9/7 with FMA), ICT/RCT colour transforms, batch quantisation, and L1/L2 cache-blocked DWT; full ISO/IEC 15444-4 conformance hardening across Parts 1, 2, 3, 10, and 15 with 304 conformance tests, conformance matrix, automated conformance runner script, and updated CI/CD gating workflow; OpenJPEG interoperability infrastructure with bidirectional testing pipeline, 165 interoperability tests, CLI wrapper, test corpus, corrupt codestream generator, and CI integration; comprehensive CLI toolset (`j2k encode/decode/info/transcode/validate/benchmark/encode3d/decode3d/jpip/batch/compare/convert/completions`) with 3D volumetric, JPIP streaming, batch processing, cross-library syntax consistency, dual British/American spelling support, shell completions (bash/zsh/fish), and comprehensive documentation; complete library usage documentation suite and 8 runnable Swift example files; native macOS SwiftUI GUI testing application (J2KTestApp) with 13 screens; multi-spectral JP3D encoding/decoding; JPEG XS Core Codec (`J2KXS` module) with slice-based DWT, scalar quantisation, entropy packetisation, encoder/decoder actors (v2.4.0)
+
+---
+
+### Phase 21 — Comprehensive CLI Enhancement (Weeks 336–365)
+
+Phase 21 transforms the `j2k` command-line tool into a full-featured interface exercising every major capability of the J2KSwift library. The CLI is designed with cross-library syntax consistency for reuse across Raster-Lab compression tools.
+
+#### Phase 21a: Codec Variant CLI Commands (Weeks 336–340)
+- [x] Enhanced `encode` with `--htj2k`, `--lossless`, `--lossy` shortcuts
+- [x] Enhanced `decode` with component selection, marker inspection
+- [x] Enhanced `transcode` with lossless J2K ↔ HTJ2K
+- [x] CodecVariantTests, DecodeEnhancedTests, TranscodeLosslessTests, TranscodeBatchTests
+
+#### Phase 21b: 3D Volumetric CLI (Weeks 341–348)
+- [x] `encode3d` command for JP3D volume encoding (Encode3D.swift, 239 lines)
+- [x] `decode3d` command for JP3D volume decoding
+- [x] 3D tile size, codeblock size, slice ordering, region-based decoding
+- [x] Encode3DTests, Decode3DTests, Batch3DTests, MultiSpectralCLITests
+
+#### Phase 21c: JPIP Network Streaming CLI (Weeks 349–356)
+- [x] `jpip server` with session management and signal handling (JPIPServer.swift, 172 lines)
+- [x] `jpip client` with interactive mode and progressive delivery (JPIPClient.swift, 277 lines)
+- [x] JPIPClientTests, JPIPServerTests, JPIPEndToEndTests
+
+#### Phase 21d: Batch Processing and Utilities (Weeks 357–362)
+- [x] `batch` command with parallel processing (MultiFileProcessor.swift, 342 lines)
+- [x] `compare` command with PSNR/SSIM/MSE metrics
+- [x] `convert` command for format conversion
+- [x] `completions` command for shell completion generation
+- [x] BatchCommandTests, CompareCommandTests, ConvertCommandTests, CompletionTests, MultiFileInputTests, ErrorHandlingTests, DiagnosticsTests
+
+#### Phase 21e: Documentation and Release (Weeks 363–365)
+- [x] CLI_REFERENCE.md, CLI_JPIP_GUIDE.md, CLI_3D_GUIDE.md, CLI_BATCH_GUIDE.md, CLI_CROSS_LIBRARY_SYNTAX.md
+- [x] RELEASE_NOTES_v2.4.0.md, RELEASE_CHECKLIST_v2.4.0.md
+- [x] CHANGELOG.md, MILESTONES.md, README.md updated
+
+### Phase 21 Summary
+
+Phase 21 (Weeks 336–365) delivers a comprehensive CLI enhancement adding 8 new commands (`encode3d`, `decode3d`, `jpip server`, `jpip client`, `batch`, `compare`, `convert`, `completions`), enhancing 6 existing commands, and adding 4 new source files (1,030 lines). The implementation includes 193 new tests across 18 test suites with zero failures. Cross-library syntax consistency is established for reuse across Raster-Lab compression tools. A Swift 6 Sendable compliance fix was applied to `J2KUnifiedMemoryManager` using a new `MemoryHandle` struct.
+
+**Status**: ✅ Complete (v2.4.0)

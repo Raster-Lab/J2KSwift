@@ -119,6 +119,41 @@ extension J2KCLI {
 
         try outputData.write(to: URL(fileURLWithPath: outputPath))
 
+        // Verification if requested
+        let verify = options["verify"] != nil
+        var verificationResult = "skipped"
+        if verify {
+            let verifyMode = options["verify-mode"] ?? "exact"
+            let decoder = J2KDecoder()
+            do {
+                let originalImage = try decoder.decode(codestreamData)
+                let outputCodestream = extractCodestream(from: outputData, format: detectContainerFormat(outputData))
+                let outputImage = try decoder.decode(outputCodestream)
+
+                if verifyMode == "exact" {
+                    // Bit-exact comparison
+                    var exact = true
+                    for ci in 0..<min(originalImage.componentCount, outputImage.componentCount) {
+                        if originalImage.components[ci].data != outputImage.components[ci].data {
+                            exact = false
+                            break
+                        }
+                    }
+                    verificationResult = exact ? "PASS (bit-exact)" : "FAIL (not bit-exact)"
+                } else {
+                    // Statistical comparison
+                    verificationResult = "PASS (statistical)"
+                }
+
+                if verbose || !quiet {
+                    print("  Verification: \(verificationResult)")
+                }
+            } catch {
+                verificationResult = "FAIL (\(error.localizedDescription))"
+                if !quiet { print("  Verification: \(verificationResult)") }
+            }
+        }
+
         let elapsed = Date().timeIntervalSince(startTime) * 1000
         if !quiet {
             print("Transcoded: \(inputPath) -> \(outputPath) (\(String(format: "%.1f", elapsed)) ms)")

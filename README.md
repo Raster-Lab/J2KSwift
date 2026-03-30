@@ -8,20 +8,21 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 2.1.0  
-**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (3,000+ tests, 100% pass rate)  
-**Previous Release**: 2.0.0 (Performance Refactoring, Full Conformance, CLI Toolset)
+**Current Version**: 2.4.0  
+**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (3,100+ tests, 100% pass rate)  
+**Previous Release**: 2.3.0 (JPEG XS Core Codec)
 
 ## 📦 Release Status
 
-**v2.2.0** delivers Phase 19 — multi-spectral JP3D imaging, Vulkan 3D DWT acceleration, and JPEG XS exploration:
-- 🌈 **Multi-Spectral JP3D** — spectral band types, wavelength mapping, multi-spectral volumes, inter-band prediction
-- 🎛️ **JP3D Encoder/Decoder** — actor-based multi-spectral JP3D encoder and decoder with selective band loading
-- 📡 **Spectral Analysis** — NDVI, NDWI, NDBI index computation and inter-band Pearson correlation matrix
-- ⚡ **Vulkan JP3D DWT** — Vulkan-accelerated 3D DWT with spectral-axis support and GPU/CPU auto-selection
-- 🔬 **JPEG XS Exploration** — ISO/IEC 21122 profile, level, slice-height, and capabilities scaffold types
+**v2.4.0** delivers Phase 21 — Comprehensive CLI Enhancement:
+- 🖥️ **8 New CLI Commands** — `encode3d`, `decode3d`, `jpip server`, `jpip client`, `batch`, `compare`, `convert`, `completions`
+- 🧊 **3D Volumetric CLI** — encode/decode JP3D volumes from the command line with full tile/codeblock/region support
+- 📡 **JPIP Streaming CLI** — server with session management and client with interactive mode
+- ⚡ **Batch Processing** — parallel encode/decode/transcode of entire directories
+- 🔗 **Cross-Library Syntax** — unified flag naming for reuse across Raster-Lab compression tools
+- 🐚 **Shell Completions** — Bash, Zsh, and Fish completion generation
 
-See [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for v2.1.0 details, or [RELEASE_NOTES_v2.0.0.md](RELEASE_NOTES_v2.0.0.md) for the previous release.
+See [RELEASE_NOTES_v2.4.0.md](RELEASE_NOTES_v2.4.0.md) for v2.4.0 details, or [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for the previous release.
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
@@ -71,7 +72,7 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 - **Modern API**: Async/await based APIs with comprehensive error handling
 - **Well Documented**: DocC catalogues for 8 modules, 50+ guides, tutorials, and API documentation
 - **High Quality**: 100% test pass rate (2,900+ tests) with comprehensive test coverage
-- **CLI Toolset**: Complete command-line tools for encoding, decoding, transcoding, validation, and benchmarking
+- **CLI Toolset**: Complete command-line tools for encoding, decoding, transcoding, 3D volumetric, JPIP streaming, batch processing, image comparison, format conversion, validation, and benchmarking
 
 ## 🚀 Quick Start
 
@@ -687,16 +688,18 @@ This project represents a 295-week development effort following a comprehensive 
 | JP3D Volumetric | ✅ Complete | 100% | ISO/IEC 15444-10 compliant |
 | Motion JPEG 2000 | ✅ Complete | 100% | ISO/IEC 15444-3 compliant |
 | CLI Tools | ✅ Complete | 100% | Dual British/American spelling |
+| **CLI Enhancement** | ✅ Complete | 193 tests | 8 new commands, 3D/JPIP/batch (Phase 21) |
 | Conformance | ✅ Complete | 304 tests | Parts 1, 2, 3, 10, 15 |
 | **J2KTestApp** | ✅ Complete | 309 tests | GUI testing application (Phase 18) |
 | **Multi-Spectral JP3D** | ✅ Complete | 30+ tests | Spectral bands, encoder, decoder (Phase 19) |
 | **Vulkan JP3D DWT** | ✅ Complete | 15+ tests | 3D DWT with spectral axis (Phase 19) |
 | **JPEG XS Exploration** | ✅ Scaffolded | 10+ tests | ISO/IEC 21122 exploration types (Phase 19) |
+| **JPEG XS Codec** | ✅ Complete | 52 tests | J2KXS module, full pipeline (Phase 20) |
 
 ---
 
-**J2KSwift v2.2.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
-**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, multi-spectral JP3D, Vulkan 3D DWT, JPEG XS exploration  
+**J2KSwift v2.4.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
+**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, comprehensive CLI toolset, JPEG XS codec, multi-spectral JP3D  
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
 For detailed information, see [CHANGELOG.md](CHANGELOG.md)

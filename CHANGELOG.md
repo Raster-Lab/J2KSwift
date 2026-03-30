@@ -5,6 +5,38 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] — 2027-03-30
+
+**Phase 21 — Comprehensive CLI Enhancement**
+
+### Added
+- `encode3d` command for compressing volumetric / 3D data to JP3D format
+- `decode3d` command for decompressing JP3D volumes to slices or raw binary
+- `jpip server` command for JPIP streaming with session management and graceful shutdown
+- `jpip client` command with single-request and interactive modes for JPIP streaming
+- `batch` command for parallel encoding, decoding, and transcoding of entire directories
+- `compare` command for image comparison with PSNR, SSIM, and MSE metrics
+- `convert` command for converting between image formats (PGM, PPM, raw, JP2, J2K, JPH)
+- `completions` command for generating shell completions (Bash, Zsh, Fish)
+- `Encode3D.swift` — 3D volumetric encoding command (239 lines)
+- `JPIPClient.swift` — JPIP client with interactive mode (277 lines)
+- `JPIPServer.swift` — JPIP server with signal handling (172 lines)
+- `MultiFileProcessor.swift` — parallel batch file processing engine (342 lines)
+- `MemoryHandle` Sendable struct in `J2KUnifiedMemoryManager` for safe cross-actor memory handle transfer
+- 193 new CLI tests across 18 test suites (0 failures)
+- Documentation: CLI_REFERENCE.md, CLI_JPIP_GUIDE.md, CLI_3D_GUIDE.md, CLI_BATCH_GUIDE.md, CLI_CROSS_LIBRARY_SYNTAX.md
+
+### Changed
+- Enhanced `encode` with `--htj2k` / `--format jph` shortcuts and multi-spectral support
+- Enhanced `decode` with region-of-interest, component selection, and marker inspection
+- Enhanced `transcode` with lossless J2K ↔ HTJ2K and `--lossless` flag
+- Enhanced `info` with JP3D metadata and JPIP capability reporting
+- Enhanced `validate` with `--strict` mode, JP3D and HTJ2K validation
+- Enhanced `benchmark` with JPIP and 3D volumetric benchmarking modes
+- Redesigned `J2KUnifiedMemoryManager` to use `MemoryHandle` instead of raw `UnsafeMutableRawPointer` for Swift 6 Sendable compliance
+- `VERSION` bumped from `2.3.0` to `2.4.0`
+- `MILESTONES.md` Phase 21 added and marked complete
+
 ## [2.3.0] — 2026-11-29
 
 **Phase 20 — JPEG XS Core Codec**

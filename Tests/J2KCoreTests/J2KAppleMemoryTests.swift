@@ -17,17 +17,17 @@ final class J2KAppleMemoryTests: XCTestCase {
         let manager = J2KUnifiedMemoryManager()
 
         let size = 1024 * 1024 // 1 MB
-        let ptr = try await manager.allocateShared(size: size)
+        let handle = try await manager.allocateShared(size: size)
 
         // Verify pointer is valid
-        XCTAssertNotEqual(ptr, UnsafeMutableRawPointer(bitPattern: 0))
+        XCTAssertNotEqual(handle.address, 0)
 
         // Verify we can write to the memory
-        ptr.storeBytes(of: UInt32(0x12345678), as: UInt32.self)
-        let value = ptr.load(as: UInt32.self)
+        handle.pointer.storeBytes(of: UInt32(0x12345678), as: UInt32.self)
+        let value = handle.pointer.load(as: UInt32.self)
         XCTAssertEqual(value, 0x12345678)
 
-        await manager.deallocate(ptr)
+        await manager.deallocate(handle)
 
         let stats = await manager.statistics()
         XCTAssertEqual(stats["totalAllocated"], 0)
@@ -39,20 +39,20 @@ final class J2KAppleMemoryTests: XCTestCase {
         #endif
         let manager = J2KUnifiedMemoryManager()
 
-        var pointers: [UnsafeMutableRawPointer] = []
+        var handles: [J2KUnifiedMemoryManager.MemoryHandle] = []
 
         // Allocate multiple buffers
         for _ in 0..<5 {
-            let ptr = try await manager.allocateShared(size: 4096)
-            pointers.append(ptr)
+            let handle = try await manager.allocateShared(size: 4096)
+            handles.append(handle)
         }
 
         let stats = await manager.statistics()
         XCTAssertEqual(stats["allocationCount"], 5)
 
         // Deallocate all
-        for ptr in pointers {
-            await manager.deallocate(ptr)
+        for handle in handles {
+            await manager.deallocate(handle)
         }
 
         let finalStats = await manager.statistics()
@@ -66,13 +66,12 @@ final class J2KAppleMemoryTests: XCTestCase {
         let config = J2KUnifiedMemoryManager.Configuration(alignment: 64)
         let manager = J2KUnifiedMemoryManager(configuration: config)
 
-        let ptr = try await manager.allocateShared(size: 100)
+        let handle = try await manager.allocateShared(size: 100)
 
         // Verify 64-byte alignment
-        let address = UInt(bitPattern: ptr)
-        XCTAssertEqual(address % 64, 0, "Pointer should be 64-byte aligned")
+        XCTAssertEqual(handle.address % 64, 0, "Pointer should be 64-byte aligned")
 
-        await manager.deallocate(ptr)
+        await manager.deallocate(handle)
     }
 
     // MARK: - Memory-Mapped File I/O Tests

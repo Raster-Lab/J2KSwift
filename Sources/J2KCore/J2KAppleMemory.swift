@@ -64,6 +64,24 @@ public actor J2KUnifiedMemoryManager {
     private var allocations: [UInt: Int] = [:]
     private var totalAllocated: Int = 0
 
+    /// A Sendable handle representing an allocated memory region.
+    ///
+    /// Use ``pointer`` to access the underlying raw pointer for read/write operations.
+    /// This handle can safely cross actor boundaries.
+    public struct MemoryHandle: Sendable {
+        /// The address of the allocated memory.
+        public let address: UInt
+
+        /// The raw pointer to the allocated memory.
+        public var pointer: UnsafeMutableRawPointer {
+            UnsafeMutableRawPointer(bitPattern: address)!
+        }
+
+        init(_ pointer: UnsafeMutableRawPointer) {
+            self.address = UInt(bitPattern: pointer)
+        }
+    }
+
     /// Creates a new unified memory manager.
     ///
     /// - Parameter configuration: The memory management configuration.
@@ -77,9 +95,9 @@ public actor J2KUnifiedMemoryManager {
     /// between CPU and GPU without copying.
     ///
     /// - Parameter size: The size in bytes to allocate.
-    /// - Returns: A pointer to the allocated memory.
+    /// - Returns: A handle to the allocated memory.
     /// - Throws: ``J2KError`` if allocation fails.
-    public func allocateShared(size: Int) throws -> UnsafeMutableRawPointer {
+    public func allocateShared(size: Int) throws -> MemoryHandle {
         #if canImport(Darwin)
         let alignedSize = (size + configuration.alignment - 1) & ~(configuration.alignment - 1)
 
@@ -96,7 +114,7 @@ public actor J2KUnifiedMemoryManager {
         // Prefault pages to improve first access performance
         memset(allocatedPtr, 0, alignedSize)
 
-        return allocatedPtr
+        return MemoryHandle(allocatedPtr)
         #else
         throw J2KError.internalError("Unified memory allocation is only available on Apple platforms")
         #endif
@@ -104,14 +122,13 @@ public actor J2KUnifiedMemoryManager {
 
     /// Deallocates a previously allocated shared memory buffer.
     ///
-    /// - Parameter pointer: The pointer to deallocate.
-    public func deallocate(_ pointer: UnsafeMutableRawPointer) {
+    /// - Parameter handle: The memory handle to deallocate.
+    public func deallocate(_ handle: MemoryHandle) {
         #if canImport(Darwin)
-        let address = UInt(bitPattern: pointer)
-        if let size = allocations.removeValue(forKey: address) {
+        if let size = allocations.removeValue(forKey: handle.address) {
             totalAllocated -= size
         }
-        free(pointer)
+        free(handle.pointer)
         #endif
     }
 
