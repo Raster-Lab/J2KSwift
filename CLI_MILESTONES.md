@@ -13,7 +13,7 @@ The work is organised as **Phase 21** of the J2KSwift project, targeting version
 1. **Built on the library** — every operation delegates to public APIs in J2KCore, J2KCodec, J2KFileFormat, J2K3D, and JPIP; the CLI contains no independent codec logic.
 2. **Cross-library syntax consistency** — the command structure (`<tool> <verb> [options]`) and common flags (`-i`, `-o`, `--lossless`, `--quality`, `--format`, `--verbose`, `--json`, `--timing`, `--quiet`, `--progress`) are designed to be reusable across future compression CLIs (e.g., for JPEG XS, DICOM-specific tools).
 3. **Shared version** — the CLI reports the same version as the library (`VERSION` file).
-4. **British/American spelling parity** — all long flags accept both spellings (e.g., `--colour-space` / `--color-space`, `--optimise` / `--optimize`).
+4. **British/American spelling parity** — all long flags accept both spellings (e.g., `--colour-space` / `--color-space`, `--no-colour` / `--no-color`), consistent with the existing `normaliseKey` mechanism in `Commands.swift`.
 5. **Machine-readable output** — every command supports `--json` for scripted pipelines.
 6. **Progressive disclosure** — simple tasks require few flags; advanced features are opt-in.
 
@@ -750,5 +750,5 @@ Phase 21 (Weeks 336–365) transforms the `j2k` CLI from a basic encode/decode t
 
 **Target Version**: 2.4.0
 **Estimated Duration**: 30 weeks (Weeks 336–365)
-**Prerequisites**: Phase 20 complete (v2.3.0), all modules functional (J2KCore, J2KCodec, J2KFileFormat, J2K3D, JPIP)
+**Prerequisites**: Phase 20 complete (v2.3.0); all referenced modules must already exist and be functional — J2KCore (Phase 0), J2KCodec (Phases 1–4), J2KFileFormat (Phase 5), J2K3D (Phase 16, v1.9.0), JPIP (Phase 6). No new library modules are created in this phase; all CLI commands build exclusively on existing public APIs.
 **Dependencies**: J2KCore, J2KCodec, J2KFileFormat, J2K3D, JPIP (all existing modules)
