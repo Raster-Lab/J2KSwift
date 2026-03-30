@@ -3,6 +3,9 @@
 Corrections to the `j2k` CLI addressing optional output file names and additional
 file format support (TIFF, PNG, DICOM).
 
+All changes are scoped to the `J2KCLI` target only — no modifications to
+`J2KCore`, `J2KCodec`, `J2KFileFormat`, or `Package.swift`.
+
 ---
 
 ## 1. Optional Output File Names
@@ -24,18 +27,18 @@ one appropriate to the operation and format requested.
 
 #### Default Extension Rules
 
-| Command     | Condition                          | Default Extension |
-|-------------|------------------------------------|-------------------|
-| `encode`    | `--format jp2`                     | `.jp2`            |
-| `encode`    | `--format jpx`                     | `.jpx`            |
-| `encode`    | `--htj2k` (no explicit `--format`) | `.jph`            |
-| `encode`    | default (no `--format`, no `--htj2k`) | `.j2k`         |
-| `decode`    | greyscale, 1 component             | `.pgm`            |
-| `decode`    | color, ≥ 3 components              | `.ppm`            |
-| `decode`    | explicit `--output-format tiff`    | `.tiff`           |
-| `decode`    | explicit `--output-format png`     | `.png`            |
-| `transcode` | determined by target `--format`    | `.j2k` / `.jph` / `.jp2` |
-| `convert`   | determined by `--output-format`    | matches format    |
+| Command     | Condition                             | Default Extension |
+|-------------|---------------------------------------|-------------------|
+| `encode`    | `--format jp2`                        | `.jp2`            |
+| `encode`    | `--format jpx`                        | `.jpx`            |
+| `encode`    | `--htj2k` (no explicit `--format`)    | `.jph`            |
+| `encode`    | default (no `--format`, no `--htj2k`) | `.j2k`            |
+| `decode`    | greyscale, 1 component                | `.pgm`            |
+| `decode`    | colour, ≥ 3 components               | `.ppm`            |
+| `decode`    | explicit `--output-format tiff`       | `.tiff`           |
+| `decode`    | explicit `--output-format png`        | `.png`            |
+| `transcode` | determined by target `--format`       | `.j2k` / `.jph` / `.jp2` |
+| `convert`   | determined by `--output-format`       | matches format    |
 
 #### Algorithm
 
@@ -48,20 +51,21 @@ one appropriate to the operation and format requested.
    d. Place the output in the same directory as the input.
 ```
 
-#### Files to Modify
+#### Changes Required
 
 | File | Change |
 |------|--------|
-| `Commands.swift` | Replace the `guard let outputPath` blocks in `encodeCommand` and `decodeCommand` with fallback logic that derives the output path using the helper below. |
-| `Transcode.swift` | Same change in `transcodeCommand`. |
-| `Convert.swift` | Same change in `convertCommand`. |
-| `MultiFileProcessor.swift` | Extract a shared `deriveOutputPath(input:options:componentCount:)` helper that accepts the full parsed options dictionary (to inspect `--format`, `--htj2k`, `--output-format`, etc.) and is reused by all commands alongside the existing `resolveOutputPath` batch helper. |
-| `Batch.swift` | No change required — batch mode already uses `--output-suffix` and `resolveOutputPath`. |
+| `MultiFileProcessor.swift` | Add a new `deriveOutputPath(inputPath:command:options:componentCount:)` static method. This helper inspects the parsed options dictionary (`--format`, `--htj2k`, `--output-format`, `--to-htj2k`) and the command name to select the correct extension. It sits alongside the existing `resolveOutputPath` used by batch mode. |
+| `Commands.swift` | In `encodeCommand`: replace the `guard let outputPath` block with a fallback that calls `deriveOutputPath` when `-o` is absent. The encode path can derive immediately since the format is known before loading. In `decodeCommand`: move the output path resolution to *after* decoding so the component count is available for choosing `.pgm` vs `.ppm`. |
+| `Transcode.swift` | In `transcodeCommand` single-file mode: replace the `guard let outputPath` block with a fallback to `deriveOutputPath`. |
+| `Convert.swift` | In `convertCommand`: replace the `guard let outputPath` block with a fallback to `deriveOutputPath`. |
+| `Batch.swift` | No change — batch mode already uses `--output-suffix` and `resolveOutputPath`. |
 
 #### Help Text Updates
 
-Update the `--output` description in every help printer to indicate the flag is
-optional, for example:
+Update the `--output` description in every help printer (`printEncodeHelp`,
+`printDecodeHelp`, `printTranscodeHelp`, `printConvertHelp`) and in
+`main.swift`'s `printUsage` to indicate the flag is optional:
 
 ```
 -o, --output PATH   Output file (optional; derived from input name if omitted)
@@ -71,99 +75,134 @@ optional, for example:
 
 ## 2. Additional File Format Support
 
-### 2.1 TIFF (Input and Output)
+### 2.1 TIFF (Input and Output — maintaining high bit depth)
 
 #### Scope
 
-- Read **uncompressed** TIFF files (little-endian and big-endian byte order).
-- Support 8-bit, 16-bit, and 32-bit samples — preserving the full bit depth
-  through the encode/decode pipeline.
-- Write TIFF files with the same bit depth as the decoded image.
+- Read **uncompressed** TIFF files (little-endian `II` and big-endian `MM`
+  byte order).
+- Support **8-bit, 16-bit, and 32-bit** samples — preserving the full bit
+  depth through the encode/decode pipeline so no precision is lost.
+- Write TIFF files with the same bit depth as the image being saved.
 - Greyscale (1 component), RGB (3 components), and RGBA (4 components).
 
 #### Design
 
-Implement a minimal TIFF reader/writer inside the CLI (`ImageIO.swift` or a new
-`TIFFSupport.swift` file). The implementation should:
+Create a new file `TIFFSupport.swift` in `Sources/J2KCLI/` containing a
+minimal TIFF reader/writer with **no dependency on libtiff or any external
+library**. The parser handles only the uncompressed baseline subset used in
+medical and scientific imaging.
 
-1. Parse the 8-byte TIFF header (`II` / `MM` byte-order mark, magic `42`,
-   offset to first IFD).
-2. Walk the IFD entries to extract the tags required for raw pixel access:
+**Reading (`loadTIFF(_ data: Data) throws -> J2KImage`):**
+
+1. Parse the 8-byte TIFF header:
+   - Bytes 0–1: byte-order mark (`II` = little-endian, `MM` = big-endian).
+   - Bytes 2–3: magic number `42`.
+   - Bytes 4–7: offset to first IFD.
+2. Walk the IFD entries to extract the tags required for pixel access:
    - `ImageWidth` (256), `ImageLength` (257)
    - `BitsPerSample` (258), `SamplesPerPixel` (277)
-   - `PhotometricInterpretation` (262)
+   - `PhotometricInterpretation` (262) — 0/1 = greyscale, 2 = RGB
    - `StripOffsets` (273), `RowsPerStrip` (278), `StripByteCounts` (279)
-   - `SampleFormat` (339) — to distinguish unsigned / signed / float
-3. Read the pixel strips into a contiguous buffer, de-interleave into separate
-   `J2KComponent` planes exactly as `loadPPM` does today.
-4. For writing, emit a minimal single-strip TIFF with interleaved samples.
+   - `Compression` (259) — must be 1 (uncompressed); reject otherwise
+   - `SampleFormat` (339) — 1 = unsigned int, 2 = signed int (default 1)
+   - `PlanarConfiguration` (284) — 1 = interleaved (default), 2 = planar
+3. Read pixel strips into a contiguous buffer. If big-endian and sample size
+   > 8 bits, byte-swap to host order.
+4. De-interleave multi-sample data into separate `J2KComponent` planes
+   (same approach as `loadPPM`).
+5. Set `J2KImage.colorSpace` based on `PhotometricInterpretation`.
 
-**No dependency on libtiff or any external library** — the parser handles only
-the uncompressed baseline subset that medical and scientific imaging commonly
-uses.
+**Writing (`saveTIFF(_ image: J2KImage, to url: URL) throws`):**
 
-#### Files to Create / Modify
+1. Emit a little-endian TIFF header.
+2. Write pixel data as a single contiguous strip with interleaved samples.
+   For multi-component images, interleave from the separate `J2KComponent`
+   planes. Preserve the original bit depth (8/16/32).
+3. Write an IFD with the minimal required tags:
+   `ImageWidth`, `ImageLength`, `BitsPerSample`, `Compression` (1),
+   `PhotometricInterpretation`, `StripOffsets`, `RowsPerStrip`,
+   `StripByteCounts`, `SamplesPerPixel`, `SampleFormat`.
+4. Update the header's IFD offset to point to the IFD.
+
+**Validation / error handling:**
+
+- Compressed TIFF → error: "Only uncompressed TIFF is supported."
+- Tiled TIFF → error: "Tiled TIFF is not supported; use strip-based TIFF."
+- Float samples (SampleFormat = 3) → error: "Floating-point TIFF samples are
+  not supported."
+
+#### Wiring into the CLI
 
 | File | Change |
 |------|--------|
-| `ImageIO.swift` | Add `.tiff` / `.tif` cases to `loadImage(from:)` and `saveImage(_:to:)` switch statements. |
-| `TIFFSupport.swift` *(new)* | `loadTIFF(_ data: Data) throws -> J2KImage` and `saveTIFF(_ image: J2KImage, to url: URL) throws`. |
-| `Convert.swift` | Add `tiff` / `tif` to the `printConvertHelp` supported-formats list. |
-| `Commands.swift` | Add `tiff` to decode `--output-format` help text. |
+| `TIFFSupport.swift` *(new)* | `loadTIFF` and `saveTIFF` as described above. |
+| `ImageIO.swift` | Add `case "tiff", "tif"` to `loadImage(from:)` calling `loadTIFF`, and to `saveImage(_:to:)` calling `saveTIFF`. |
+| `Commands.swift` | Update `printEncodeHelp` input format list and `printDecodeHelp` `--output-format` list to include `tiff`. |
+| `Convert.swift` | Add `tiff` / `tif` to `printConvertHelp` supported-formats list. |
+| `MultiFileProcessor.swift` | Add `"tiff"`, `"tif"` to `supportedExtensions` in `resolveDirectory`. |
 
----
-
-### 2.2 PNG (Input and Output)
+### 2.1 (continued) PNG (Input and Output — maintaining high bit depth)
 
 #### Scope
 
-- Read PNG files: 8-bit greyscale, 8-bit RGB (24-bit), and 8-bit RGBA (32-bit).
-- Write PNG files under the same bit-depth constraints.
-- Higher bit depths (16-bit PNG) are outside scope for now because the
-  requirement limits PNG to 8-bit (greyscale) and 24/32-bit (colour).
+- Read PNG files: **8-bit and 16-bit** greyscale, RGB, and RGBA.
+- Write PNG files preserving bit depth: 8-bit and 16-bit per channel.
+- This maintains high bit depth through the pipeline — 16-bit PNG is losslessly
+  round-tripped.
 
 #### Design
 
-Implement a minimal PNG reader/writer, or use the system-provided facilities:
+Create a new file `PNGSupport.swift` in `Sources/J2KCLI/`. Use a cross-platform
+pure-Swift implementation using zlib (available on all supported platforms via
+`import Foundation` or `Glibc`/`Musl`).
 
-- **macOS / iOS**: Use `CGImage` via `ImageIO.framework` (`CGImageSource` /
-  `CGImageDestination`) behind `#if canImport(CoreGraphics)`.
-- **Linux / cross-platform fallback**: Implement a minimal PNG decoder/encoder
-  using the zlib `compress` / `uncompress` functions available through
-  `import Foundation` (or `Glibc`). The subset required is small:
-  1. Parse the PNG signature, IHDR, IDAT, and IEND chunks.
-  2. Decompress the IDAT payload with zlib inflate.
-  3. Reverse the per-row filter (Sub, Up, Average, Paeth).
-  4. De-interleave into `J2KComponent` planes.
-  5. For writing, apply Sub filter, compress with zlib deflate, emit chunks.
+**Reading (`loadPNG(_ data: Data) throws -> J2KImage`):**
 
-#### Bit-Depth / Component Validation
+1. Verify the 8-byte PNG signature (`\x89PNG\r\n\x1a\n`).
+2. Parse chunks sequentially:
+   - **IHDR**: extract width, height, bit depth (8 or 16), colour type
+     (0 = greyscale, 2 = RGB, 4 = greyscale+alpha, 6 = RGBA).
+   - **IDAT**: concatenate all IDAT chunk payloads.
+   - **IEND**: stop.
+3. Decompress the concatenated IDAT payload with zlib inflate.
+4. Reverse the per-row filter byte (None, Sub, Up, Average, Paeth).
+5. De-interleave into separate `J2KComponent` planes.
+6. Set `J2KImage.colorSpace` based on colour type.
+7. Reject interlaced PNG (interlace method ≠ 0) with a clear error.
 
-When **saving** to PNG, validate the image before writing:
+**Writing (`savePNG(_ image: J2KImage, to url: URL) throws`):**
 
-| Components | Bit Depth | PNG Colour Type | Allowed |
-|------------|-----------|-----------------|---------|
-| 1          | 8         | Greyscale (0)   | ✅       |
-| 3          | 8         | RGB (2)         | ✅       |
-| 4          | 8         | RGBA (6)        | ✅       |
-| Any other combination | — | —         | ❌ Error: "PNG output requires 8-bit greyscale (1 component), 24-bit RGB (3 components), or 32-bit RGBA (4 components)." |
+1. Validate: components must be 1, 2 (greyscale+alpha), 3 (RGB), or 4 (RGBA);
+   bit depth must be 8 or 16.
+2. Write PNG signature.
+3. Write IHDR chunk.
+4. Interleave component data into scanlines with a filter byte (Sub filter for
+   simplicity and reasonable compression).
+5. Compress with zlib deflate.
+6. Write IDAT chunk(s) (split at 32 KB boundaries).
+7. Write IEND chunk.
 
-When **loading** a PNG with bit depth > 8, either:
-- Down-convert to 8-bit and warn, or
-- Reject with a clear error message.
+**Validation / error handling:**
 
-#### Files to Create / Modify
+- Bit depth not 8 or 16 → error with descriptive message.
+- Interlaced PNG → error: "Interlaced PNG is not supported."
+- Palette-based PNG (colour type 3) → error: "Indexed-colour PNG is not
+  supported; convert to RGB first."
+
+#### Wiring into the CLI
 
 | File | Change |
 |------|--------|
-| `ImageIO.swift` | Add `.png` case to `loadImage(from:)` and `saveImage(_:to:)`. |
-| `PNGSupport.swift` *(new)* | `loadPNG(_ data: Data) throws -> J2KImage` and `savePNG(_ image: J2KImage, to url: URL) throws`. |
-| `Convert.swift` | Add `png` to the help text. |
-| `Commands.swift` | Add `png` to decode `--output-format` help text. |
+| `PNGSupport.swift` *(new)* | `loadPNG` and `savePNG` as described above. |
+| `ImageIO.swift` | Add `case "png"` to `loadImage(from:)` calling `loadPNG`, and to `saveImage(_:to:)` calling `savePNG`. |
+| `Commands.swift` | Update `printEncodeHelp` input format list and `printDecodeHelp` `--output-format` list to include `png`. |
+| `Convert.swift` | Add `png` to `printConvertHelp` supported-formats list. |
+| `MultiFileProcessor.swift` | Add `"png"` to `supportedExtensions` in `resolveDirectory`. |
 
 ---
 
-### 2.3 DICOM (Input Only)
+### 2.2 DICOM (Input Only — strip metadata)
 
 #### Scope
 
@@ -183,72 +222,95 @@ is a thin metadata-stripping parser, not a general-purpose DICOM toolkit.
 
 #### Design
 
-Implement a minimal DICOM pixel-data extractor:
+Create a new file `DICOMSupport.swift` in `Sources/J2KCLI/`.
+
+**`loadDICOM(_ data: Data) throws -> J2KImage`:**
 
 1. **Parse the DICOM preamble** — skip the 128-byte preamble and verify the
-   `DICM` magic at offset 132.
-2. **Determine the transfer syntax** by reading the File Meta Information group
-   (`0002,0010` Transfer Syntax UID):
-   - `1.2.840.10008.1.2` — Implicit VR Little Endian
-   - `1.2.840.10008.1.2.1` — Explicit VR Little Endian
-   - `1.2.840.10008.1.2.2` — Explicit VR Big Endian
-   - Any JPEG 2000 transfer syntax → error: "Input is already JPEG 2000
-     compressed; use `j2k decode` instead."
-3. **Walk the dataset** to extract the tags needed for pixel interpretation:
+   `DICM` magic at byte offset 128 (4 bytes).
+2. **Read File Meta Information** (group `0002`), always explicit VR
+   little-endian:
+   - `(0002,0010)` Transfer Syntax UID — determines VR encoding and byte order
+     for the rest of the dataset:
+     - `1.2.840.10008.1.2` — Implicit VR Little Endian
+     - `1.2.840.10008.1.2.1` — Explicit VR Little Endian
+     - `1.2.840.10008.1.2.2` — Explicit VR Big Endian
+     - Any JPEG 2000 TS (`1.2.840.10008.1.2.4.90` – `.203`) → error:
+       "Input is already JPEG 2000 compressed; use `j2k decode` instead."
+     - Any other compressed TS → error: "Compressed DICOM transfer syntax
+       is not supported."
+3. **Walk the dataset** to extract pixel-interpretation tags:
    - `(0028,0010)` Rows
    - `(0028,0011)` Columns
-   - `(0028,0100)` Bits Allocated
+   - `(0028,0100)` Bits Allocated (8 or 16)
    - `(0028,0101)` Bits Stored
    - `(0028,0102)` High Bit
    - `(0028,0103)` Pixel Representation (0 = unsigned, 1 = signed)
    - `(0028,0002)` Samples Per Pixel
    - `(0028,0004)` Photometric Interpretation
    - `(0028,0006)` Planar Configuration (if samples > 1)
-   - `(7FE0,0010)` Pixel Data
-4. **Handle byte ordering** — if the transfer syntax is big-endian, byte-swap
-   16-bit samples to the host order after extraction.
-5. **De-interleave** multi-component data (if Planar Configuration = 0) into
-   separate `J2KComponent` planes.
-6. **Return** a `J2KImage` with the correct dimensions, bit depth, signedness,
-   and colour space inferred from `PhotometricInterpretation`:
+   - `(7FE0,0010)` Pixel Data — the raw pixel bytes.
+4. **Handle byte ordering** — if the transfer syntax is big-endian and
+   Bits Allocated > 8, byte-swap each 16-bit sample to host order.
+5. **De-interleave** multi-component data (Planar Configuration = 0, i.e.
+   interleaved by pixel) into separate `J2KComponent` planes.
+   If Planar Configuration = 1 (interleaved by plane), split the data
+   directly into per-component slices.
+6. **Map colour space** from `PhotometricInterpretation`:
    - `MONOCHROME1` / `MONOCHROME2` → `.grayscale`
    - `RGB` → `.sRGB`
    - `YBR_FULL` / `YBR_FULL_422` → convert to RGB (`.sRGB`) during loading
      so downstream commands always receive RGB component data.
+7. **Return** a `J2KImage` with the correct dimensions, bit depth per
+   component (`Bits Stored`), signedness, and colour space.
 
-#### Unsupported / Out of Scope
+**Tag parsing helper:**
 
-- Encapsulated (compressed) pixel data — reject with a descriptive error.
-- Multi-frame DICOM — extract only the first frame and warn if additional
-  frames are present. A future `--all-frames` flag could output each frame as
-  a separate numbered file (e.g. `input_001.j2k`, `input_002.j2k`), but this
-  is out of scope for the initial implementation.
-- Sequence items (SQ VR) — skip without error.
-- DICOM-dir, network (DIMSE), or any non-file-based DICOM source.
+- Implement a small `readTag` helper that reads a (group, element) pair,
+  determines VR (from the explicit bytes, or from a minimal implicit-VR
+  dictionary for the tags listed above), reads the value length, and returns
+  the value bytes.
+- Skip sequence items (`SQ` VR) by reading their defined or undefined length
+  and advancing past them.
+- Stop parsing once `(7FE0,0010)` Pixel Data is found (the remaining bytes
+  after the value-length header are the pixel data).
 
-#### Files to Create / Modify
+**Validation / error handling:**
+
+- Missing `DICM` magic → error: "Not a valid DICOM file (missing DICM
+  prefix). Ensure the file includes the 128-byte preamble."
+- Encapsulated (compressed) pixel data (undefined length with item
+  delimiters) → error: "Encapsulated pixel data is not supported; only
+  uncompressed DICOM files can be read."
+- Missing required tags → error naming the missing tag.
+- Multi-frame: extract only the first frame, warn if `(0028,0008)`
+  Number of Frames > 1.
+
+#### Wiring into the CLI
 
 | File | Change |
 |------|--------|
-| `ImageIO.swift` | Add `.dcm` / `.dicom` case to `loadImage(from:)` (input only). |
-| `DICOMSupport.swift` *(new)* | `loadDICOM(_ data: Data) throws -> J2KImage` — the minimal parser described above. |
-| `Commands.swift` | Add `dcm` / `dicom` to encode `--input` help text. |
-| `Convert.swift` | Add `dcm` / `dicom` to the help text as an input format. |
+| `DICOMSupport.swift` *(new)* | `loadDICOM` as described above. |
+| `ImageIO.swift` | Add `case "dcm", "dicom"` to `loadImage(from:)` calling `loadDICOM`. No save case — DICOM is input only. |
+| `Commands.swift` | Update `printEncodeHelp` input format list to include `dcm`/`dicom`. |
+| `Convert.swift` | Add `dcm` / `dicom` to `printConvertHelp` as an input-only format. |
+| `MultiFileProcessor.swift` | Add `"dcm"`, `"dicom"` to `supportedExtensions` in `resolveDirectory`. |
 
 ---
 
-## 3. Summary of New and Modified Files
+## 3. Summary of All File Changes
 
 | File | Status | Purpose |
 |------|--------|---------|
-| `Commands.swift` | Modify | Optional output path logic for encode/decode; help text updates. |
-| `Transcode.swift` | Modify | Optional output path logic for transcode. |
-| `Convert.swift` | Modify | Optional output path logic for convert; help text updates. |
-| `MultiFileProcessor.swift` | Modify | Shared `deriveOutputPath` helper function. |
-| `ImageIO.swift` | Modify | Route new extensions (`.tiff`, `.tif`, `.png`, `.dcm`, `.dicom`) to loaders/savers. |
-| `TIFFSupport.swift` | **New** | Minimal uncompressed TIFF reader/writer. |
-| `PNGSupport.swift` | **New** | Minimal 8-bit PNG reader/writer. |
-| `DICOMSupport.swift` | **New** | Minimal DICOM pixel-data extractor (input only). |
+| `MultiFileProcessor.swift` | Modify | Add `deriveOutputPath` helper; add new extensions to `supportedExtensions`. |
+| `Commands.swift` | Modify | Optional output path logic for encode/decode; update help text with new formats. |
+| `Transcode.swift` | Modify | Optional output path logic for transcode; update help text. |
+| `Convert.swift` | Modify | Optional output path logic for convert; update help text with new formats. |
+| `ImageIO.swift` | Modify | Route `.tiff`/`.tif`, `.png`, `.dcm`/`.dicom` to new loaders/savers. |
+| `main.swift` | Modify | Update `printUsage` to reflect new format support and optional `-o`. |
+| `TIFFSupport.swift` | **New** | Minimal uncompressed TIFF reader/writer (8/16/32-bit). |
+| `PNGSupport.swift` | **New** | PNG reader/writer using zlib (8/16-bit). |
+| `DICOMSupport.swift` | **New** | Minimal DICOM pixel-data extractor (input only, strips metadata). |
 
 No changes to `J2KCore`, `J2KCodec`, `J2KFileFormat`, or `Package.swift` are
 required — all new code lives in the `J2KCLI` target.
@@ -259,19 +321,37 @@ required — all new code lives in the `J2KCLI` target.
 
 | Area | Test Approach |
 |------|---------------|
-| Optional output names | Unit tests verifying `deriveOutputPath` produces correct extensions for each command and format combination. |
-| TIFF round-trip | Encode a synthetic `J2KImage` to TIFF, reload, and compare pixel values. Test 8-bit, 16-bit, greyscale, and RGB. Test both little-endian and big-endian TIFF. |
-| PNG round-trip | Encode/decode 8-bit greyscale, RGB, and RGBA. Verify rejection of unsupported bit depths. |
-| DICOM input | Prepare minimal DICOM test files (little-endian explicit VR, big-endian explicit VR, implicit VR). Verify pixel data extraction matches expected values. Verify compressed DICOM is rejected with a clear message. |
-| Regression | Run existing `swift test` suite to confirm no breakage. |
+| Optional output names | Unit tests verifying `deriveOutputPath` produces correct extensions for each command × format combination (encode default `.j2k`, encode `--htj2k` → `.jph`, encode `--format jp2` → `.jp2`, decode greyscale → `.pgm`, decode RGB → `.ppm`, decode `--output-format tiff` → `.tiff`, transcode default → `.j2k`, transcode `--to-htj2k` → `.jph`, convert `--output-format png` → `.png`). |
+| TIFF round-trip | Create synthetic `J2KImage` instances (8-bit greyscale, 16-bit greyscale, 8-bit RGB, 16-bit RGB, RGBA). Save via `saveTIFF`, reload via `loadTIFF`, compare pixel values are identical. Test both LE and BE TIFF input. |
+| PNG round-trip | Create synthetic images (8-bit greyscale, 8-bit RGB, 8-bit RGBA, 16-bit greyscale, 16-bit RGB). Save via `savePNG`, reload via `loadPNG`, compare pixel values. Verify rejection of interlaced and palette-based PNG. |
+| DICOM input | Prepare minimal synthetic DICOM test files: LE Explicit VR (8-bit mono, 16-bit mono, 8-bit RGB), BE Explicit VR (16-bit mono), Implicit VR (16-bit mono). Verify pixel data extraction matches expected values. Verify compressed DICOM is rejected. Verify JPEG 2000–compressed DICOM produces guidance message. |
+| Integration | End-to-end: `j2k encode -i test.tiff` (no `-o`) → verify output `test.j2k` created. `j2k decode -i test.j2k` → verify output `test.pgm` or `test.ppm`. `j2k encode -i scan.dcm --lossless` → verify J2K output. |
+| Regression | Run existing `swift test` suite to confirm no breakage. Build with `swift build` to verify compilation. |
 
 ---
 
 ## 5. Implementation Order
 
 1. **`deriveOutputPath` helper + optional output in all commands** — smallest
-   change, unblocks other work.
-2. **TIFF support** — straightforward binary format, no compression dependency.
-3. **PNG support** — requires zlib; slightly more complex.
+   change, unblocks other work, no new dependencies.
+2. **TIFF support** — straightforward binary format, no compression dependency,
+   validates the high-bit-depth pipeline.
+3. **PNG support** — requires zlib; slightly more complex but uses
+   platform-available zlib.
 4. **DICOM support** — most complex parser; benefits from TIFF/PNG work
    stabilising `ImageIO.swift` first.
+
+---
+
+## 6. Design Decisions & Rationale
+
+| Decision | Rationale |
+|----------|-----------|
+| No external dependencies for TIFF/PNG/DICOM | Keeps the CLI self-contained; avoids pulling in libtiff, libpng, or DICOM libraries. The subset needed is small. |
+| DICOM in CLI only, not in library | Respects ADR-004 (no DICOM dependency in J2KSwift library). The CLI parser is a thin pixel-data extractor. |
+| PNG supports 16-bit | The requirement says "maintaining high bit rate" — 16-bit PNG is commonly used in medical/scientific imaging and should be preserved. |
+| TIFF supports 32-bit | 32-bit integer TIFF samples are used in scientific imaging; JPEG 2000 supports up to 38-bit components. |
+| `deriveOutputPath` uses options dict | Avoids a complex parameter list; the helper reads `--format`, `--htj2k`, `--output-format`, `--to-htj2k` directly from the parsed options. |
+| Decode derives path after decoding | Component count is only known after decoding, so the default extension (`.pgm` vs `.ppm`) must be chosen post-decode. |
+| Little-endian TIFF output | Nearly all modern software reads LE TIFF; no need to add a `--tiff-endian` flag. |
+| Sub filter for PNG writing | Simple, effective, and widely compatible. Optimal filtering adds complexity with marginal benefit for a CLI tool. |
