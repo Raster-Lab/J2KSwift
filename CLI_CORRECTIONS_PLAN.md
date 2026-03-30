@@ -31,7 +31,7 @@ one appropriate to the operation and format requested.
 | `encode`    | `--htj2k` (no explicit `--format`) | `.jph`            |
 | `encode`    | default (no `--format`, no `--htj2k`) | `.j2k`         |
 | `decode`    | greyscale, 1 component             | `.pgm`            |
-| `decode`    | colour, ≥ 3 components            | `.ppm`            |
+| `decode`    | color, ≥ 3 components              | `.ppm`            |
 | `decode`    | explicit `--output-format tiff`    | `.tiff`           |
 | `decode`    | explicit `--output-format png`     | `.png`            |
 | `transcode` | determined by target `--format`    | `.j2k` / `.jph` / `.jp2` |
@@ -55,7 +55,7 @@ one appropriate to the operation and format requested.
 | `Commands.swift` | Replace the `guard let outputPath` blocks in `encodeCommand` and `decodeCommand` with fallback logic that derives the output path using the helper below. |
 | `Transcode.swift` | Same change in `transcodeCommand`. |
 | `Convert.swift` | Same change in `convertCommand`. |
-| `MultiFileProcessor.swift` | Extract a shared `deriveOutputPath(input:format:componentCount:)` helper used by all commands and the existing `resolveOutputPath` batch helper. |
+| `MultiFileProcessor.swift` | Extract a shared `deriveOutputPath(input:options:componentCount:)` helper that accepts the full parsed options dictionary (to inspect `--format`, `--htj2k`, `--output-format`, etc.) and is reused by all commands alongside the existing `resolveOutputPath` batch helper. |
 | `Batch.swift` | No change required — batch mode already uses `--output-suffix` and `resolveOutputPath`. |
 
 #### Help Text Updates
@@ -77,7 +77,7 @@ optional, for example:
 
 - Read **uncompressed** TIFF files (little-endian and big-endian byte order).
 - Support 8-bit, 16-bit, and 32-bit samples — preserving the full bit depth
-  through the encode/decode pipeline ("high bit rate").
+  through the encode/decode pipeline.
 - Write TIFF files with the same bit depth as the decoded image.
 - Greyscale (1 component), RGB (3 components), and RGBA (4 components).
 
@@ -213,13 +213,16 @@ Implement a minimal DICOM pixel-data extractor:
    and colour space inferred from `PhotometricInterpretation`:
    - `MONOCHROME1` / `MONOCHROME2` → `.grayscale`
    - `RGB` → `.sRGB`
-   - `YBR_FULL` / `YBR_FULL_422` → `.YCbCr` (or convert to RGB)
+   - `YBR_FULL` / `YBR_FULL_422` → convert to RGB (`.sRGB`) during loading
+     so downstream commands always receive RGB component data.
 
 #### Unsupported / Out of Scope
 
 - Encapsulated (compressed) pixel data — reject with a descriptive error.
-- Multi-frame DICOM — extract only the first frame (or all frames as separate
-  images if `--all-frames` is passed; optional stretch goal).
+- Multi-frame DICOM — extract only the first frame and warn if additional
+  frames are present. A future `--all-frames` flag could output each frame as
+  a separate numbered file (e.g. `input_001.j2k`, `input_002.j2k`), but this
+  is out of scope for the initial implementation.
 - Sequence items (SQ VR) — skip without error.
 - DICOM-dir, network (DIMSE), or any non-file-based DICOM source.
 
