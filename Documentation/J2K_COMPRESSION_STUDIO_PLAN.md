@@ -1,4 +1,4 @@
-# DICOM Codec Studio — Plan & Milestones
+# J2K Compression Studio — Plan & Milestones
 
 **Last Updated**: March 30, 2026
 **Status**: Planning
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The **DICOM Codec Studio** is a planned application layer built on top of J2KSwift
+The **J2K Compression Studio** is a planned application layer built on top of J2KSwift
 that provides a complete, production-ready DICOM JPEG 2000 codec toolkit. While
 J2KSwift is intentionally DICOM-independent (it implements ISO/IEC 15444 only),
 the Codec Studio adds the DICOM-aware convenience layer that medical imaging
@@ -36,7 +36,7 @@ compression into their DICOM pipelines with minimal effort.
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                  DICOM Codec Studio                  │
+│               J2K Compression Studio                 │
 │  ┌──────────────┐  ┌────────────┐  ┌──────────────┐ │
 │  │ DICOMCodec   │  │ Validation │  │ CLI / Batch  │ │
 │  │   Manager    │  │   Engine   │  │   Processor  │ │
@@ -278,7 +278,7 @@ release preparation.
 
 #### Week 31–32: Documentation
 
-- [ ] API reference for all public DICOM Codec Studio types
+- [ ] API reference for all public J2K Compression Studio types
 - [ ] Integration guide: J2KSwift + DCMTK
 - [ ] Integration guide: J2KSwift + fo-dicom
 - [ ] Integration guide: J2KSwift + cornerstone.js (via WASM)
@@ -351,7 +351,7 @@ release preparation.
 
 ## Non-Goals
 
-The DICOM Codec Studio intentionally does **not**:
+The J2K Compression Studio intentionally does **not**:
 
 - Parse or generate DICOM datasets (use DCMTK, fo-dicom, etc.)
 - Read or write DICOM tags
