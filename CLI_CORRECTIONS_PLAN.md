@@ -1,7 +1,8 @@
 # J2KSwift CLI Corrections Plan
 
-Corrections to the `j2k` CLI addressing optional output file names and additional
-file format support (TIFF, PNG, DICOM).
+Corrections to the `j2k` CLI addressing optional output file names, additional
+file format support (TIFF, PNG, DICOM), and piped inter-library format
+conversion.
 
 All changes are scoped to the `J2KCLI` target only — no modifications to
 `J2KCore`, `J2KCodec`, `J2KFileFormat`, or `Package.swift`.
@@ -298,16 +299,169 @@ Create a new file `DICOMSupport.swift` in `Sources/J2KCLI/`.
 
 ---
 
-## 3. Summary of All File Changes
+## 3. Piped Inter-Library Format Conversion
+
+### Current State
+
+The CLI currently has **no stdin/stdout piping support** for image data. All
+encode, decode, transcode, and convert commands require file paths for both
+input and output. The only stdin usage is reading a **list of file paths** via
+`--input-list -` in batch mode.
+
+However, the underlying library APIs (`J2KEncoder.encode(_:)` and
+`J2KDecoder.decode(_:)`) operate entirely on in-memory `Data` objects, making
+piping feasible without architectural changes to the library.
+
+### Goal
+
+Enable piping between compression tools so a user can convert from one format
+to another **without writing the intermediate uncompressed file to disk**.
+
+Example use cases:
+```bash
+# Decode a JPEG XS file and pipe the raw image to J2K encoder
+jxs decode -i input.jxs -o - | j2k encode -i - -o output.j2k
+
+# Pipe a DICOM file through J2K encoding
+j2k encode -i input.dcm -o - | other-tool process -i -
+
+# Chain decode → re-encode without intermediate file
+j2k decode -i input.j2k -o - --output-format raw | \
+  other-codec encode -i - -o output.ext
+
+# Pipe between two J2KSwift commands (e.g. decode then re-encode as HTJ2K)
+j2k decode -i legacy.j2k -o - --output-format raw | \
+  j2k encode -i - -o modern.jph --htj2k --lossless
+```
+
+### Design
+
+#### Convention: `-` means stdin / stdout
+
+Follow the widespread Unix convention:
+- `-i -` or `--input -` → read image data from **stdin**.
+- `-o -` or `--output -` → write output data to **stdout**.
+
+When either is used, all informational/diagnostic output (`Encoded:`,
+`Decoded:`, timing, etc.) must be redirected to **stderr** so it does not
+contaminate the data stream.
+
+#### Wire Format for Piped Image Data
+
+When piping **uncompressed image data** between tools, the CLI needs a
+self-describing wire format so the receiving end knows the dimensions, bit
+depth, and component count without a separate header file. Two approaches:
+
+**Option A — PNM passthrough (recommended):**
+
+Use the existing PGM (P5) / PPM (P6) format as the wire format:
+- Greyscale → PGM (P5) header + pixel data.
+- RGB → PPM (P6) header + pixel data.
+- Supports 8-bit and 16-bit.
+- Any Unix tool that understands PNM can participate in the pipeline.
+- The `--output-format` flag on `decode` already implies the format; for
+  pipe mode, default to `pgm`/`ppm` based on component count.
+- Higher bit depths (> 16-bit) can use the raw format with a minimal header
+  (see Option B) or TIFF written to stdout.
+
+**Option B — Raw with J2K header (alternative):**
+
+Define a minimal binary header: `J2KR` magic (4 bytes) + width (4 bytes BE) +
+height (4 bytes BE) + component count (2 bytes BE) + bit depth per component
+(1 byte each) + signedness flags + pixel data. This is more compact and
+supports arbitrary bit depths but requires both ends to understand the header.
+
+**Recommendation:** Use **Option A (PNM passthrough)** as the default piped
+format and add `--pipe-format raw` for the custom header as a future
+extension. PNM is universally understood, simple, and already implemented.
+
+#### Implementation Details
+
+**Reading from stdin (`-i -`):**
+
+```
+1. Read all data from FileHandle.standardInput into a Data buffer.
+2. Auto-detect the format from the data content:
+   a. PGM/PPM: check for "P5" or "P6" magic at start.
+   b. JPEG 2000: check for SOC marker (0xFF4F) or JP2 signature.
+   c. TIFF: check for "II" or "MM" byte-order mark + magic 42.
+   d. PNG: check for PNG signature (89 50 4E 47).
+   e. DICOM: check for DICM magic at offset 128.
+   f. If none match, treat as raw data (requires --width, --height,
+      --components, --bit-depth flags).
+3. Route to the appropriate loader (loadPGM, loadPPM, J2KDecoder, etc.)
+```
+
+**Writing to stdout (`-o -`):**
+
+```
+1. Determine the output format:
+   - encode/transcode: write the encoded J2K/JP2 data directly.
+   - decode: write PGM/PPM (or the format specified by --output-format)
+     to stdout.
+   - convert: write the target format to stdout.
+2. Write the data to FileHandle.standardOutput.
+3. Redirect all informational output to stderr.
+```
+
+**Diagnostic output to stderr:**
+
+When `-o -` is active, all `print()` calls for status messages must go to
+stderr. Add a helper:
+
+```swift
+static func printInfo(_ message: String) {
+    // Write to stderr when stdout is used for data
+    if outputIsStdout {
+        FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+    } else {
+        print(message)
+    }
+}
+```
+
+Or more simply, detect at the start of each command whether `-o -` is in use
+and set a flag that routes print calls.
+
+#### Changes Required
+
+| File | Change |
+|------|--------|
+| `Commands.swift` | In `encodeCommand`: detect `-i -` and read from stdin; detect `-o -` and write to stdout; redirect diagnostics to stderr. Same for `decodeCommand`. |
+| `Transcode.swift` | Same stdin/stdout support in `transcodeCommand`. |
+| `Convert.swift` | Same stdin/stdout support in `convertCommand`. |
+| `ImageIO.swift` | Add `loadImageFromStdin() throws -> J2KImage` that reads `FileHandle.standardInput` and auto-detects format. Add `saveImageToStdout(_ image: J2KImage, format: String) throws` that writes to `FileHandle.standardOutput`. |
+| `main.swift` | Update `printUsage` examples to show piping. |
+| `Batch.swift` | No change — piping does not apply to batch mode. |
+
+#### Help Text Additions
+
+Add to each command's help:
+
+```
+PIPING:
+    -i -                        Read input from stdin
+    -o -                        Write output to stdout
+    When piping, diagnostic messages are sent to stderr.
+
+EXAMPLES:
+    jxs decode -i input.jxs -o - | j2k encode -i - -o output.j2k
+    j2k decode -i input.j2k -o - | j2k encode -i - --htj2k -o output.jph
+    cat scan.dcm | j2k encode -i - -o compressed.j2k
+```
+
+---
+
+## 4. Summary of All File Changes
 
 | File | Status | Purpose |
 |------|--------|---------|
 | `MultiFileProcessor.swift` | Modify | Add `deriveOutputPath` helper; add new extensions to `supportedExtensions`. |
-| `Commands.swift` | Modify | Optional output path logic for encode/decode; update help text with new formats. |
-| `Transcode.swift` | Modify | Optional output path logic for transcode; update help text. |
-| `Convert.swift` | Modify | Optional output path logic for convert; update help text with new formats. |
-| `ImageIO.swift` | Modify | Route `.tiff`/`.tif`, `.png`, `.dcm`/`.dicom` to new loaders/savers. |
-| `main.swift` | Modify | Update `printUsage` to reflect new format support and optional `-o`. |
+| `Commands.swift` | Modify | Optional output path; stdin/stdout piping for encode/decode; help text updates with new formats. |
+| `Transcode.swift` | Modify | Optional output path; stdin/stdout piping for transcode; help text updates. |
+| `Convert.swift` | Modify | Optional output path; stdin/stdout piping for convert; help text updates with new formats. |
+| `ImageIO.swift` | Modify | Route `.tiff`/`.tif`, `.png`, `.dcm`/`.dicom` to new loaders/savers; add `loadImageFromStdin` and `saveImageToStdout`. |
+| `main.swift` | Modify | Update `printUsage` to reflect new format support, optional `-o`, and piping examples. |
 | `TIFFSupport.swift` | **New** | Minimal uncompressed TIFF reader/writer (8/16/32-bit). |
 | `PNGSupport.swift` | **New** | PNG reader/writer using zlib (8/16-bit). |
 | `DICOMSupport.swift` | **New** | Minimal DICOM pixel-data extractor (input only, strips metadata). |
@@ -317,7 +471,7 @@ required — all new code lives in the `J2KCLI` target.
 
 ---
 
-## 4. Testing Strategy
+## 5. Testing Strategy
 
 | Area | Test Approach |
 |------|---------------|
@@ -325,12 +479,13 @@ required — all new code lives in the `J2KCLI` target.
 | TIFF round-trip | Create synthetic `J2KImage` instances (8-bit greyscale, 16-bit greyscale, 8-bit RGB, 16-bit RGB, RGBA). Save via `saveTIFF`, reload via `loadTIFF`, compare pixel values are identical. Test both LE and BE TIFF input. |
 | PNG round-trip | Create synthetic images (8-bit greyscale, 8-bit RGB, 8-bit RGBA, 16-bit greyscale, 16-bit RGB). Save via `savePNG`, reload via `loadPNG`, compare pixel values. Verify rejection of interlaced and palette-based PNG. |
 | DICOM input | Prepare minimal synthetic DICOM test files: LE Explicit VR (8-bit mono, 16-bit mono, 8-bit RGB), BE Explicit VR (16-bit mono), Implicit VR (16-bit mono). Verify pixel data extraction matches expected values. Verify compressed DICOM is rejected. Verify JPEG 2000–compressed DICOM produces guidance message. |
+| Piping | Integration tests: (a) `j2k encode -i test.pgm -o -` produces valid J2K on stdout. (b) `cat test.j2k | j2k decode -i - -o output.pgm` decodes correctly. (c) `j2k decode -i test.j2k -o - | j2k encode -i - -o roundtrip.j2k` produces a valid re-encoded file. (d) Verify diagnostics go to stderr, not stdout, when `-o -` is active. |
 | Integration | End-to-end: `j2k encode -i test.tiff` (no `-o`) → verify output `test.j2k` created. `j2k decode -i test.j2k` → verify output `test.pgm` or `test.ppm`. `j2k encode -i scan.dcm --lossless` → verify J2K output. |
 | Regression | Run existing `swift test` suite to confirm no breakage. Build with `swift build` to verify compilation. |
 
 ---
 
-## 5. Implementation Order
+## 6. Implementation Order
 
 1. **`deriveOutputPath` helper + optional output in all commands** — smallest
    change, unblocks other work, no new dependencies.
@@ -340,10 +495,12 @@ required — all new code lives in the `J2KCLI` target.
    platform-available zlib.
 4. **DICOM support** — most complex parser; benefits from TIFF/PNG work
    stabilising `ImageIO.swift` first.
+5. **Stdin/stdout piping** — builds on all the above; requires every command
+   to be updated but uses the same loader/saver infrastructure.
 
 ---
 
-## 6. Design Decisions & Rationale
+## 7. Design Decisions & Rationale
 
 | Decision | Rationale |
 |----------|-----------|
@@ -355,3 +512,7 @@ required — all new code lives in the `J2KCLI` target.
 | Decode derives path after decoding | Component count is only known after decoding, so the default extension (`.pgm` vs `.ppm`) must be chosen post-decode. |
 | Little-endian TIFF output | Nearly all modern software reads LE TIFF; no need to add a `--tiff-endian` flag. |
 | Sub filter for PNG writing | Simple, effective, and widely compatible. Optimal filtering adds complexity with marginal benefit for a CLI tool. |
+| PNM as pipe wire format | PGM/PPM is already implemented, universally understood, and self-describing. Avoids inventing a custom header. Works with any tool that speaks PNM (ImageMagick, NetPBM, etc.). |
+| `-` convention for stdin/stdout | Standard Unix convention; used by `tar`, `curl`, `ffmpeg`, `ImageMagick`, `gzip`, etc. Minimal learning curve. |
+| Diagnostics to stderr when piping | Prevents status messages from corrupting the binary data stream. Standard practice for Unix tools. |
+| Auto-detect format on stdin | Since stdin has no file extension, the CLI inspects magic bytes. All supported formats have distinctive signatures, making auto-detection reliable. |
