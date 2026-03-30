@@ -77,14 +77,12 @@ extension J2KCLI {
         var columns = 0
         var bitsAllocated = 16
         var bitsStored = 0
-        var highBit = 0
         var pixelRepresentation = 0  // 0 = unsigned, 1 = signed
         var samplesPerPixel = 1
         var photometricInterpretation = ""
         var planarConfiguration = 0
         var numberOfFrames = 1
         var pixelDataOffset = -1
-        var pixelDataLength = 0
 
         while offset + 4 <= data.count {
             let group   = dcmReadU16(data, offset: offset, bigEndian: bigEndian)
@@ -100,7 +98,6 @@ extension J2KCLI {
                     throw J2KError.invalidParameter(
                         "Encapsulated pixel data is not supported; only uncompressed DICOM files can be read.")
                 }
-                pixelDataLength = vl
                 break
             }
 
@@ -134,7 +131,7 @@ extension J2KCLI {
             case (0x0028, 0x0101):
                 bitsStored = Int(dcmReadU16(data, offset: valueStart, bigEndian: bigEndian))
             case (0x0028, 0x0102):
-                highBit = Int(dcmReadU16(data, offset: valueStart, bigEndian: bigEndian))
+                break  // High Bit — parsed but not needed
             case (0x0028, 0x0103):
                 pixelRepresentation = Int(dcmReadU16(data, offset: valueStart, bigEndian: bigEndian))
             default:
@@ -153,7 +150,9 @@ extension J2KCLI {
         }
         if bitsStored == 0 { bitsStored = bitsAllocated }
         if numberOfFrames > 1 {
-            FileHandle.standardError.write("Warning: DICOM file has \(numberOfFrames) frames; extracting first frame only.\n".data(using: .utf8)!)
+            if let warnData = "Warning: DICOM file has \(numberOfFrames) frames; extracting first frame only.\n".data(using: .utf8) {
+                FileHandle.standardError.write(warnData)
+            }
         }
 
         let signed = pixelRepresentation != 0

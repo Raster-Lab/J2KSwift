@@ -304,7 +304,7 @@ extension J2KCLI {
 
     private static func writePNGChunk(_ out: inout Data, type: String, data: Data) {
         appendBE32(&out, UInt32(data.count))
-        let typeData = type.data(using: .ascii)!
+        guard let typeData = type.data(using: .ascii) else { return }
         out.append(typeData)
         out.append(data)
         // CRC over type + data

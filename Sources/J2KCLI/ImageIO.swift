@@ -131,7 +131,9 @@ extension J2KCLI {
     /// Print a message, routing to stderr when stdout is used for data piping.
     static func printInfo(_ message: String, pipeMode: Bool) {
         if pipeMode {
-            FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+            if let msgData = (message + "\n").data(using: .utf8) {
+                FileHandle.standardError.write(msgData)
+            }
         } else {
             print(message)
         }
@@ -177,21 +179,26 @@ extension J2KCLI {
         var data = Data()
         let header = "P6\n\(image.width) \(image.height)\n\(maxValue)\n"
         data.append(header.data(using: .ascii)!)
-        let bytesPerPixel = bitDepth <= 8 ? 1 : 2
+        let bytesPerSample = bitDepth <= 8 ? 1 : 2
         for i in 0..<(image.width * image.height) {
-            let rVal = max(0, min(Int(r.data[i]), maxValue))
-            let gVal = max(0, min(Int(g.data[i]), maxValue))
-            let bVal = max(0, min(Int(b.data[i]), maxValue))
-            if bytesPerPixel == 1 {
-                data.append(UInt8(rVal))
-                data.append(UInt8(gVal))
-                data.append(UInt8(bVal))
+            if bytesPerSample == 1 {
+                let rVal = i < r.data.count ? r.data[i] : 0
+                let gVal = i < g.data.count ? g.data[i] : 0
+                let bVal = i < b.data.count ? b.data[i] : 0
+                data.append(rVal)
+                data.append(gVal)
+                data.append(bVal)
             } else {
-                data.append(UInt8(rVal >> 8))
+                let idx = i * 2
+                let rVal = idx + 1 < r.data.count ? (Int(r.data[idx]) | Int(r.data[idx + 1]) << 8) : 0
+                let gVal = idx + 1 < g.data.count ? (Int(g.data[idx]) | Int(g.data[idx + 1]) << 8) : 0
+                let bVal = idx + 1 < b.data.count ? (Int(b.data[idx]) | Int(b.data[idx + 1]) << 8) : 0
+                // PPM 16-bit is big-endian
+                data.append(UInt8((rVal >> 8) & 0xFF))
                 data.append(UInt8(rVal & 0xFF))
-                data.append(UInt8(gVal >> 8))
+                data.append(UInt8((gVal >> 8) & 0xFF))
                 data.append(UInt8(gVal & 0xFF))
-                data.append(UInt8(bVal >> 8))
+                data.append(UInt8((bVal >> 8) & 0xFF))
                 data.append(UInt8(bVal & 0xFF))
             }
         }

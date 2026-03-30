@@ -300,15 +300,17 @@ extension J2KCLI {
             IFDEntry(tag: 257, type: 4, count: 1, value: UInt32(height)),      // ImageLength
         ]
 
-        // BitsPerSample: if samplesPerPixel > 1, needs external array
-        let bpsArrayOffset: UInt32
+        // BitsPerSample: if samplesPerPixel > 1, needs external array after the IFD.
+        // Pre-compute the IFD layout to know where extra data goes.
+        let baseEntryCount = samplesPerPixel == 1 ? 9 : 9  // same count either way
+        let ifdSize = 2 + baseEntryCount * 12 + 4  // count + entries + next-IFD pointer
+        let extraDataStart = UInt32(ifdOffset) + UInt32(ifdSize)
+
         if samplesPerPixel == 1 {
             entries.append(IFDEntry(tag: 258, type: 3, count: 1, value: UInt32(bitsPerSample)))
-            bpsArrayOffset = 0
         } else {
-            // We'll store the BPS array after the IFD
-            bpsArrayOffset = 0xFFFF_FFFE  // placeholder; filled below
-            entries.append(IFDEntry(tag: 258, type: 3, count: UInt32(samplesPerPixel), value: bpsArrayOffset))
+            // BPS array will be stored at extraDataStart
+            entries.append(IFDEntry(tag: 258, type: 3, count: UInt32(samplesPerPixel), value: extraDataStart))
         }
 
         entries.append(contentsOf: [
@@ -322,19 +324,6 @@ extension J2KCLI {
         ])
 
         entries.sort { $0.tag < $1.tag }
-
-        // Compute where extra data goes (after IFD)
-        let ifdSize = 2 + entries.count * 12 + 4  // count + entries + next-IFD pointer
-        let extraDataOffset = UInt32(ifdOffset) + UInt32(ifdSize)
-
-        // Fix up BitsPerSample offset if multi-sample
-        if samplesPerPixel > 1 {
-            for i in 0..<entries.count {
-                if entries[i].tag == 258 {
-                    entries[i] = IFDEntry(tag: 258, type: 3, count: UInt32(samplesPerPixel), value: extraDataOffset)
-                }
-            }
-        }
 
         // Write IFD
         appendLE16(&out, UInt16(entries.count))
