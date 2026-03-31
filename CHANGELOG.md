@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VERSION` bumped from `2.2.0` to `2.3.0`
 - `MILESTONES.md` Phase 20 added and marked complete
 
-
+## [2.2.0] — 2026-10-01
 
 **Phase 19 — Multi-Spectral JP3D and Vulkan JP3D Acceleration**
 
@@ -268,6 +268,10 @@ See [`RELEASE_NOTES_v1.1.md`](RELEASE_NOTES_v1.1.md) for the full changelog.
 
 See [`RELEASE_NOTES_v1.0.md`](RELEASE_NOTES_v1.0.md) for the full changelog.
 
+[2.4.0]: https://github.com/Raster-Lab/J2KSwift/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/Raster-Lab/J2KSwift/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/Raster-Lab/J2KSwift/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Raster-Lab/J2KSwift/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/Raster-Lab/J2KSwift/compare/v1.9.0...v2.0.0
 [1.9.0]: https://github.com/Raster-Lab/J2KSwift/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/Raster-Lab/J2KSwift/compare/v1.7.0...v1.8.0
