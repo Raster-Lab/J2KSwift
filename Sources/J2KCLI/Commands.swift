@@ -80,9 +80,16 @@ extension J2KCLI {
             exit(1)
         }
 
-        guard let outputPath = options["o"] ?? options["output"] else {
-            print("Error: Missing required argument: -o/--output")
-            exit(1)
+        let pipeInput  = (inputPath == "-")
+        let pipeOutput: Bool
+        let outputPath: String
+
+        if let o = options["o"] ?? options["output"] {
+            pipeOutput = (o == "-")
+            outputPath = o
+        } else {
+            pipeOutput = false
+            outputPath = deriveOutputPath(inputPath: inputPath, command: "encode", options: options)
         }
 
         let showTiming  = options["timing"] != nil
@@ -91,11 +98,16 @@ extension J2KCLI {
         let quiet       = options["quiet"] != nil
 
         // Load input image
-        if verbose { print("Loading: \(inputPath)") }
+        if verbose { printInfo("Loading: \(inputPath)", pipeMode: pipeOutput) }
         let startLoad = Date()
-        let image = try loadImage(from: inputPath)
+        let image: J2KImage
+        if pipeInput {
+            image = try loadImageFromStdin()
+        } else {
+            image = try loadImage(from: inputPath)
+        }
         let loadTime = Date().timeIntervalSince(startLoad)
-        if verbose { print("  \(image.width)×\(image.height), \(image.componentCount) component(s)") }
+        if verbose { printInfo("  \(image.width)×\(image.height), \(image.componentCount) component(s)", pipeMode: pipeOutput) }
 
         // Configure encoder
         var config: J2KEncodingConfiguration
@@ -197,11 +209,15 @@ extension J2KCLI {
         }
 
         // Progress indicator for verbose mode
-        if verbose { print("Writing: \(outputPath)") }
+        if verbose { printInfo("Writing: \(outputPath)", pipeMode: pipeOutput) }
 
         // Write output
         let startWrite = Date()
-        try encodedData.write(to: URL(fileURLWithPath: outputPath))
+        if pipeOutput {
+            FileHandle.standardOutput.write(encodedData)
+        } else {
+            try encodedData.write(to: URL(fileURLWithPath: outputPath))
+        }
         let writeTime = Date().timeIntervalSince(startWrite)
 
         // Output results
@@ -228,19 +244,19 @@ extension J2KCLI {
             ]
             if let jsonData = try? JSONSerialization.data(withJSONObject: result, options: .prettyPrinted),
                let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
+                printInfo(jsonString, pipeMode: pipeOutput)
             }
         } else if !quiet {
-            print("Encoded: \(inputPath) -> \(outputPath)")
-            print("  Input:  \(image.width)×\(image.height), \(image.componentCount) component(s)")
-            print("  Output size: \(formatBytes(encodedData.count))")
-            print("  Compression ratio: \(String(format: "%.2f", compressionRatio)):1")
+            printInfo("Encoded: \(inputPath) -> \(outputPath)", pipeMode: pipeOutput)
+            printInfo("  Input:  \(image.width)×\(image.height), \(image.componentCount) component(s)", pipeMode: pipeOutput)
+            printInfo("  Output size: \(formatBytes(encodedData.count))", pipeMode: pipeOutput)
+            printInfo("  Compression ratio: \(String(format: "%.2f", compressionRatio)):1", pipeMode: pipeOutput)
             if showTiming {
-                print("  Timing:")
-                print("    Load:   \(String(format: "%7.3f", loadTime * 1000)) ms")
-                print("    Encode: \(String(format: "%7.3f", encodeTime * 1000)) ms")
-                print("    Write:  \(String(format: "%7.3f", writeTime * 1000)) ms")
-                print("    Total:  \(String(format: "%7.3f", (loadTime + encodeTime + writeTime) * 1000)) ms")
+                printInfo("  Timing:", pipeMode: pipeOutput)
+                printInfo("    Load:   \(String(format: "%7.3f", loadTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Encode: \(String(format: "%7.3f", encodeTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Write:  \(String(format: "%7.3f", writeTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Total:  \(String(format: "%7.3f", (loadTime + encodeTime + writeTime) * 1000)) ms", pipeMode: pipeOutput)
             }
         }
     }
@@ -250,11 +266,11 @@ extension J2KCLI {
         j2k encode - Encode an image to JPEG 2000
 
         USAGE:
-            j2k encode -i <input> -o <output> [options]
+            j2k encode -i <input> [-o <output>] [options]
 
         OPTIONS:
-            -i, --input PATH            Input image (PGM, PPM, PNM, RAW)
-            -o, --output PATH           Output file (.j2k, .jp2, .jpx)
+            -i, --input PATH            Input image (PGM, PPM, TIFF, PNG, DICOM)
+            -o, --output PATH           Output file (optional; derived from input name if omitted)
             -q, --quality FLOAT         Quality 0.0-1.0 (default 1.0)
             --lossless                  Lossless compression
             --bitrate BPP               Target bit-rate (bits per pixel)
@@ -275,6 +291,17 @@ extension J2KCLI {
             --quiet                     Suppress output
             --timing                    Show timing breakdown
             --json                      JSON output
+
+        PIPING:
+            -i -                        Read input from stdin
+            -o -                        Write output to stdout
+            When piping, diagnostic messages are sent to stderr.
+
+        EXAMPLES:
+            j2k encode -i input.pgm -o output.j2k --lossless
+            j2k encode -i input.tiff --htj2k
+            j2k encode -i scan.dcm -o compressed.jp2 --format jp2
+            cat image.pgm | j2k encode -i - -o output.j2k
         """)
     }
 
@@ -292,10 +319,9 @@ extension J2KCLI {
             exit(1)
         }
 
-        guard let outputPath = options["o"] ?? options["output"] else {
-            print("Error: Missing required argument: -o/--output")
-            exit(1)
-        }
+        let pipeInput  = (inputPath == "-")
+        let explicitOutput = options["o"] ?? options["output"]
+        let pipeOutput = (explicitOutput == "-")
 
         let showTiming = options["timing"] != nil
         let jsonOutput = options["json"] != nil
@@ -313,14 +339,19 @@ extension J2KCLI {
         let bitDepthConvert = options["bit-depth"].flatMap { Int($0) }
 
         if verbose {
-            print("Loading: \(inputPath)")
-            if let l = resolutionLevel { print("  Resolution level: \(l)") }
-            if let l = qualityLayer    { print("  Quality layer: \(l)") }
+            printInfo("Loading: \(inputPath)", pipeMode: pipeOutput)
+            if let l = resolutionLevel { printInfo("  Resolution level: \(l)", pipeMode: pipeOutput) }
+            if let l = qualityLayer    { printInfo("  Quality layer: \(l)", pipeMode: pipeOutput) }
         }
 
         // Load encoded data
         let startLoad = Date()
-        let encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        let encodedData: Data
+        if pipeInput {
+            encodedData = FileHandle.standardInput.readDataToEndOfFile()
+        } else {
+            encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+        }
         let loadTime = Date().timeIntervalSince(startLoad)
 
         // Decode
@@ -331,11 +362,11 @@ extension J2KCLI {
 
         // Header-only mode: print info and exit
         if headerOnly {
-            print("Codestream Info:")
-            print("  Dimensions: \(decodedImage.width)×\(decodedImage.height)")
-            print("  Components: \(decodedImage.componentCount)")
+            printInfo("Codestream Info:", pipeMode: pipeOutput)
+            printInfo("  Dimensions: \(decodedImage.width)×\(decodedImage.height)", pipeMode: pipeOutput)
+            printInfo("  Components: \(decodedImage.componentCount)", pipeMode: pipeOutput)
             for c in decodedImage.components {
-                print("  [\(c.index)] \(c.width)×\(c.height), \(c.bitDepth)-bit \(c.signed ? "signed" : "unsigned")")
+                printInfo("  [\(c.index)] \(c.width)×\(c.height), \(c.bitDepth)-bit \(c.signed ? "signed" : "unsigned")", pipeMode: pipeOutput)
             }
             return
         }
@@ -346,10 +377,22 @@ extension J2KCLI {
             image = convertBitDepth(image, to: targetBD)
         }
 
+        // Derive output path if not specified (after decoding, so component count is known)
+        let outputPath: String
+        if let o = explicitOutput {
+            outputPath = o
+        } else {
+            outputPath = deriveOutputPath(inputPath: inputPath, command: "decode", options: options, componentCount: image.componentCount)
+        }
+
         // Write output
-        if verbose { print("Writing: \(outputPath)") }
+        if verbose { printInfo("Writing: \(outputPath)", pipeMode: pipeOutput) }
         let startWrite = Date()
-        try saveImage(image, to: outputPath)
+        if pipeOutput {
+            try saveImageToStdout(image, format: outputFormat)
+        } else {
+            try saveImage(image, to: outputPath)
+        }
         let writeTime = Date().timeIntervalSince(startWrite)
 
         // Output results
@@ -372,18 +415,18 @@ extension J2KCLI {
             ]
             if let jsonData = try? JSONSerialization.data(withJSONObject: result, options: .prettyPrinted),
                let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
+                printInfo(jsonString, pipeMode: pipeOutput)
             }
         } else if !quiet {
-            print("Decoded: \(inputPath) -> \(outputPath)")
-            print("  Input size: \(formatBytes(encodedData.count))")
-            print("  Output: \(image.width)×\(image.height), \(image.componentCount) component(s)")
+            printInfo("Decoded: \(inputPath) -> \(outputPath)", pipeMode: pipeOutput)
+            printInfo("  Input size: \(formatBytes(encodedData.count))", pipeMode: pipeOutput)
+            printInfo("  Output: \(image.width)×\(image.height), \(image.componentCount) component(s)", pipeMode: pipeOutput)
             if showTiming {
-                print("  Timing:")
-                print("    Load:   \(String(format: "%7.3f", loadTime * 1000)) ms")
-                print("    Decode: \(String(format: "%7.3f", decodeTime * 1000)) ms")
-                print("    Write:  \(String(format: "%7.3f", writeTime * 1000)) ms")
-                print("    Total:  \(String(format: "%7.3f", (loadTime + decodeTime + writeTime) * 1000)) ms")
+                printInfo("  Timing:", pipeMode: pipeOutput)
+                printInfo("    Load:   \(String(format: "%7.3f", loadTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Decode: \(String(format: "%7.3f", decodeTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Write:  \(String(format: "%7.3f", writeTime * 1000)) ms", pipeMode: pipeOutput)
+                printInfo("    Total:  \(String(format: "%7.3f", (loadTime + decodeTime + writeTime) * 1000)) ms", pipeMode: pipeOutput)
             }
         }
     }
@@ -393,11 +436,12 @@ extension J2KCLI {
         j2k decode - Decode a JPEG 2000 image
 
         USAGE:
-            j2k decode -i <input> -o <output> [options]
+            j2k decode -i <input> [-o <output>] [options]
 
         OPTIONS:
             -i, --input PATH            Input file (.j2k, .jp2, .jpx)
-            -o, --output PATH           Output image (PGM, PPM, RAW)
+            -o, --output PATH           Output image (optional; derived from input if omitted)
+            --output-format FORMAT      Output format: pgm, ppm, tiff, png
             --level N                   Resolution level (0 = full)
             --layer N                   Quality layer
             --component N               Single component index
@@ -408,6 +452,17 @@ extension J2KCLI {
             --quiet                     Suppress output
             --timing                    Timing breakdown
             --json                      JSON output
+
+        PIPING:
+            -i -                        Read input from stdin
+            -o -                        Write output to stdout (PNM format)
+            When piping, diagnostic messages are sent to stderr.
+
+        EXAMPLES:
+            j2k decode -i input.j2k -o output.pgm
+            j2k decode -i input.jp2 -o output.tiff
+            j2k decode -i input.j2k
+            j2k decode -i input.j2k -o - | other-tool -i -
         """)
     }
 

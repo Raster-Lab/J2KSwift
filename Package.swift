@@ -119,9 +119,12 @@ let package = Package(
         .testTarget(
             name: "J2KTestAppTests",
             dependencies: ["J2KCore"]),
+        .systemLibrary(
+            name: "CZlib",
+            path: "Sources/CZlib"),
         .executableTarget(
             name: "J2KCLI",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib"],
             path: "Sources/J2KCLI",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])

@@ -24,30 +24,33 @@ extension J2KCLI {
             exit(1)
         }
 
-        guard let outputPath = options["o"] ?? options["output"] else {
-            print("Error: Missing required argument: -o/--output")
-            exit(1)
-        }
+        let pipeInput  = (inputPath == "-")
+        let explicitOutput = options["o"] ?? options["output"]
+        let pipeOutput = (explicitOutput == "-")
 
         let verbose = options["verbose"] != nil
         let quiet = options["quiet"] != nil
         let jsonOutput = options["json"] != nil
 
-        if verbose { print("Loading: \(inputPath)") }
+        if verbose { printInfo("Loading: \(inputPath)", pipeMode: pipeOutput) }
 
         let startTime = Date()
 
         // Load input — handle both image formats and JPEG 2000 files
-        let inputExt = URL(fileURLWithPath: inputPath).pathExtension.lowercased()
-        let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
-
         let image: J2KImage
-        if j2kExts.contains(inputExt) {
-            let data = try Data(contentsOf: URL(fileURLWithPath: inputPath))
-            let decoder = J2KDecoder()
-            image = try decoder.decode(data)
+        if pipeInput {
+            image = try loadImageFromStdin()
         } else {
-            image = try loadImage(from: inputPath)
+            let inputExt = URL(fileURLWithPath: inputPath).pathExtension.lowercased()
+            let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
+
+            if j2kExts.contains(inputExt) {
+                let data = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+                let decoder = J2KDecoder()
+                image = try decoder.decode(data)
+            } else {
+                image = try loadImage(from: inputPath)
+            }
         }
 
         // Bit depth conversion
@@ -58,11 +61,29 @@ extension J2KCLI {
             outputImage = image
         }
 
+        // Derive output path if not specified
+        let outputPath: String
+        if let o = explicitOutput {
+            outputPath = o
+        } else {
+            outputPath = deriveOutputPath(inputPath: inputPath, command: "convert", options: options, componentCount: outputImage.componentCount)
+        }
+
         // Determine output format
         let outputExt = (options["output-format"] ?? URL(fileURLWithPath: outputPath).pathExtension).lowercased()
+        let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
 
         // Save output
-        if j2kExts.contains(outputExt) {
+        if pipeOutput {
+            if j2kExts.contains(outputExt) {
+                let config = J2KEncodingConfiguration()
+                let encoder = J2KEncoder(encodingConfiguration: config)
+                let encodedData = try encoder.encode(outputImage)
+                FileHandle.standardOutput.write(encodedData)
+            } else {
+                try saveImageToStdout(outputImage, format: outputExt)
+            }
+        } else if j2kExts.contains(outputExt) {
             // Encode to JPEG 2000
             let config = J2KEncodingConfiguration()
             let encoder = J2KEncoder(encodingConfiguration: config)
@@ -85,9 +106,9 @@ extension J2KCLI {
             ]
             printJSON(result)
         } else if !quiet {
-            print("Converted: \(inputPath) -> \(outputPath)")
-            print("  Dimensions: \(outputImage.width)×\(outputImage.height), \(outputImage.componentCount) component(s)")
-            print("  Time: \(String(format: "%.1f", elapsed * 1000)) ms")
+            printInfo("Converted: \(inputPath) -> \(outputPath)", pipeMode: pipeOutput)
+            printInfo("  Dimensions: \(outputImage.width)×\(outputImage.height), \(outputImage.componentCount) component(s)", pipeMode: pipeOutput)
+            printInfo("  Time: \(String(format: "%.1f", elapsed * 1000)) ms", pipeMode: pipeOutput)
         }
     }
 
@@ -164,13 +185,13 @@ extension J2KCLI {
         j2k convert - Convert between image formats
 
         USAGE:
-            j2k convert -i <input> -o <output> [options]
+            j2k convert -i <input> [-o <output>] [options]
 
         OPTIONS:
             -i, --input PATH            Input image
-            -o, --output PATH           Output image
+            -o, --output PATH           Output image (optional; derived from input name if omitted)
             --bit-depth N               Target bit depth (8 or 16)
-            --output-format FORMAT      Output format: pgm, ppm, pnm, raw
+            --output-format FORMAT      Output format: pgm, ppm, tiff, png
             --verbose                   Verbose output
             --quiet                     Suppress output
             --json                      JSON output
@@ -178,15 +199,24 @@ extension J2KCLI {
         SUPPORTED FORMATS:
             PGM     Portable GrayMap (grayscale)
             PPM     Portable PixMap (RGB)
+            TIFF    Uncompressed TIFF (8/16/32-bit)
+            PNG     PNG (8/16-bit)
+            DICOM   DICOM (input only, metadata stripped)
             J2K     JPEG 2000 codestream
             JP2     JPEG 2000 Part 1 container
             JPX     JPEG 2000 Part 2 container
             JPH     HTJ2K codestream
 
+        PIPING:
+            -i -                        Read input from stdin
+            -o -                        Write output to stdout
+            When piping, diagnostic messages are sent to stderr.
+
         EXAMPLES:
-            j2k convert -i input.pgm -o output.ppm
+            j2k convert -i input.pgm -o output.tiff
+            j2k convert -i scan.dcm -o output.png
             j2k convert -i input.j2k -o output.pgm
-            j2k convert -i input.pgm -o output.pgm --bit-depth 16
+            j2k convert -i input.tiff -o output.pgm --bit-depth 8
         """)
     }
 }

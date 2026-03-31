@@ -2,13 +2,14 @@
 // ImageIO.swift
 // J2KSwift
 //
-/// Image I/O utilities for loading and saving PGM/PPM/RAW files
+/// Image I/O utilities for loading and saving PGM/PPM/RAW/TIFF/PNG/DICOM files
 
 import Foundation
 import J2KCore
+import J2KCodec
 
 extension J2KCLI {
-    /// Load an image from a file (PGM, PPM, or RAW format)
+    /// Load an image from a file (PGM, PPM, TIFF, PNG, DICOM, or RAW format)
     static func loadImage(from path: String) throws -> J2KImage {
         let url = URL(fileURLWithPath: path)
         let data = try Data(contentsOf: url)
@@ -20,12 +21,188 @@ extension J2KCLI {
             return try loadPGM(data)
         case "ppm":
             return try loadPPM(data)
+        case "tiff", "tif":
+            return try loadTIFF(data)
+        case "png":
+            return try loadPNG(data)
+        case "dcm", "dicom":
+            return try loadDICOM(data)
         case "raw":
             // For RAW files, we need dimensions in filename or separate config
             throw J2KError.invalidParameter("RAW format requires explicit dimensions (not yet implemented)")
         default:
             throw J2KError.invalidParameter("Unsupported image format: \(ext)")
         }
+    }
+
+    /// Load an image from stdin, auto-detecting the format from magic bytes.
+    static func loadImageFromStdin() throws -> J2KImage {
+        let data = FileHandle.standardInput.readDataToEndOfFile()
+        guard !data.isEmpty else {
+            throw J2KError.invalidParameter("No data received on stdin")
+        }
+        return try loadImageFromData(data)
+    }
+
+    /// Load an image from raw `Data`, auto-detecting the format from magic bytes.
+    static func loadImageFromData(_ data: Data) throws -> J2KImage {
+        // Auto-detect format via magic bytes
+        if data.count >= 2 {
+            let b0 = data[0], b1 = data[1]
+
+            // PGM (P5)
+            if b0 == 0x50 && b1 == 0x35 { return try loadPGM(data) }
+            // PPM (P6)
+            if b0 == 0x50 && b1 == 0x36 { return try loadPPM(data) }
+            // JPEG 2000 codestream (SOC marker 0xFF4F)
+            if b0 == 0xFF && b1 == 0x4F {
+                let decoder = J2KDecoder()
+                return try decoder.decode(data)
+            }
+            // TIFF LE
+            if b0 == 0x49 && b1 == 0x49 { return try loadTIFF(data) }
+            // TIFF BE
+            if b0 == 0x4D && b1 == 0x4D { return try loadTIFF(data) }
+            // PNG signature
+            if b0 == 0x89 && b1 == 0x50 { return try loadPNG(data) }
+        }
+        // JP2 container (starts with 0x0000000C 6A502020)
+        if data.count >= 12 {
+            let jp2Sig: [UInt8] = [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20]
+            if data.prefix(8).elementsEqual(jp2Sig) {
+                let decoder = J2KDecoder()
+                return try decoder.decode(data)
+            }
+        }
+        // DICOM (DICM at offset 128)
+        if data.count >= 136 {
+            let dicm = String(data: data.subdata(in: 128..<132), encoding: .ascii)
+            if dicm == "DICM" { return try loadDICOM(data) }
+        }
+
+        throw J2KError.invalidParameter(
+            "Cannot auto-detect format from stdin. " +
+            "Provide a file with a recognised extension or use a supported format (PGM, PPM, TIFF, PNG, DICOM, J2K, JP2).")
+    }
+
+    /// Save an image to a file (PGM, PPM, TIFF, or PNG format)
+    static func saveImage(_ image: J2KImage, to path: String) throws {
+        let url = URL(fileURLWithPath: path)
+        let ext = url.pathExtension.lowercased()
+
+        switch ext {
+        case "pgm":
+            try savePGM(image, to: url)
+        case "ppm":
+            try savePPM(image, to: url)
+        case "tiff", "tif":
+            try saveTIFF(image, to: url)
+        case "png":
+            try savePNG(image, to: url)
+        case "raw":
+            throw J2KError.invalidParameter("RAW format output not yet implemented")
+        default:
+            throw J2KError.invalidParameter("Unsupported output format: \(ext)")
+        }
+    }
+
+    /// Save image data to stdout in the specified format (PNM passthrough for piping).
+    static func saveImageToStdout(_ image: J2KImage, format: String?) throws {
+        let fmt = (format ?? (image.componentCount >= 3 ? "ppm" : "pgm")).lowercased()
+
+        switch fmt {
+        case "pgm":
+            let data = try buildPGMData(image)
+            FileHandle.standardOutput.write(data)
+        case "ppm":
+            let data = try buildPPMData(image)
+            FileHandle.standardOutput.write(data)
+        default:
+            // For TIFF/PNG, write to a temporary file then read and pipe
+            // This is a fallback; PNM is the recommended pipe format
+            let tmpURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("j2k_pipe.\(fmt)")
+            try saveImage(image, to: tmpURL.path)
+            let data = try Data(contentsOf: tmpURL)
+            FileHandle.standardOutput.write(data)
+            try? FileManager.default.removeItem(at: tmpURL)
+        }
+    }
+
+    /// Print a message, routing to stderr when stdout is used for data piping.
+    static func printInfo(_ message: String, pipeMode: Bool) {
+        if pipeMode {
+            if let msgData = (message + "\n").data(using: .utf8) {
+                FileHandle.standardError.write(msgData)
+            }
+        } else {
+            print(message)
+        }
+    }
+
+    /// Build PGM data in memory (for piping to stdout).
+    static func buildPGMData(_ image: J2KImage) throws -> Data {
+        guard image.componentCount == 1 else {
+            throw J2KError.invalidParameter("PGM format requires single component (grayscale)")
+        }
+        let component = image.components[0]
+        let maxValue = (1 << component.bitDepth) - 1
+        var data = Data()
+        let header = "P5\n\(image.width) \(image.height)\n\(maxValue)\n"
+        data.append(header.data(using: .ascii)!)
+        let bytesPerPixel = component.bitDepth <= 8 ? 1 : 2
+        component.data.withUnsafeBytes { buffer in
+            if bytesPerPixel == 1 {
+                data.append(contentsOf: buffer)
+            } else {
+                for i in 0..<(image.width * image.height) {
+                    let offset = i * 2
+                    if offset + 1 < buffer.count {
+                        data.append(buffer[offset])
+                        data.append(buffer[offset + 1])
+                    }
+                }
+            }
+        }
+        return data
+    }
+
+    /// Build PPM data in memory (for piping to stdout).
+    static func buildPPMData(_ image: J2KImage) throws -> Data {
+        guard image.componentCount >= 3 else {
+            throw J2KError.invalidParameter("PPM format requires at least 3 components (RGB)")
+        }
+        let r = image.components[0]
+        let g = image.components[1]
+        let b = image.components[2]
+        let bitDepth = max(r.bitDepth, g.bitDepth, b.bitDepth)
+        let maxValue = (1 << bitDepth) - 1
+        var data = Data()
+        let header = "P6\n\(image.width) \(image.height)\n\(maxValue)\n"
+        data.append(header.data(using: .ascii)!)
+        let bytesPerSample = bitDepth <= 8 ? 1 : 2
+        for i in 0..<(image.width * image.height) {
+            if bytesPerSample == 1 {
+                let rVal = i < r.data.count ? r.data[i] : 0
+                let gVal = i < g.data.count ? g.data[i] : 0
+                let bVal = i < b.data.count ? b.data[i] : 0
+                data.append(rVal)
+                data.append(gVal)
+                data.append(bVal)
+            } else {
+                let idx = i * 2
+                let rVal = idx + 1 < r.data.count ? (Int(r.data[idx]) | Int(r.data[idx + 1]) << 8) : 0
+                let gVal = idx + 1 < g.data.count ? (Int(g.data[idx]) | Int(g.data[idx + 1]) << 8) : 0
+                let bVal = idx + 1 < b.data.count ? (Int(b.data[idx]) | Int(b.data[idx + 1]) << 8) : 0
+                // PPM 16-bit is big-endian
+                data.append(UInt8((rVal >> 8) & 0xFF))
+                data.append(UInt8(rVal & 0xFF))
+                data.append(UInt8((gVal >> 8) & 0xFF))
+                data.append(UInt8(gVal & 0xFF))
+                data.append(UInt8((bVal >> 8) & 0xFF))
+                data.append(UInt8(bVal & 0xFF))
+            }
+        }
+        return data
     }
 
     /// Load a PGM (Portable GrayMap) file
@@ -174,23 +351,6 @@ extension J2KCLI {
             components: components,
             colorSpace: .sRGB
         )
-    }
-
-    /// Save an image to a file (PGM or PPM format)
-    static func saveImage(_ image: J2KImage, to path: String) throws {
-        let url = URL(fileURLWithPath: path)
-        let ext = url.pathExtension.lowercased()
-
-        switch ext {
-        case "pgm":
-            try savePGM(image, to: url)
-        case "ppm":
-            try savePPM(image, to: url)
-        case "raw":
-            throw J2KError.invalidParameter("RAW format output not yet implemented")
-        default:
-            throw J2KError.invalidParameter("Unsupported output format: \(ext)")
-        }
     }
 
     /// Save image as PGM
