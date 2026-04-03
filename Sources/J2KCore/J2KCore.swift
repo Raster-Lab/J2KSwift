@@ -477,6 +477,15 @@ public struct J2KCodeBlock: Sendable {
     /// The subband this code-block belongs to.
     public let subband: J2KSubband
 
+    /// The component index this code-block belongs to.
+    public let componentIndex: Int
+
+    /// The JPEG 2000 resolution level this code-block belongs to.
+    ///
+    /// Resolution 0 contains only the LL subband. Resolution r (1..NL) contains
+    /// the HL, LH, HH subbands at decomposition level (NL - r + 1).
+    public let resolutionLevel: Int
+
     /// The encoded data for this code-block.
     public var data: Data
 
@@ -506,6 +515,8 @@ public struct J2KCodeBlock: Sendable {
     ///   - width: The width.
     ///   - height: The height.
     ///   - subband: The subband.
+    ///   - componentIndex: The component index (default: 0).
+    ///   - resolutionLevel: The JPEG 2000 resolution level (default: 0).
     ///   - data: The encoded data.
     ///   - passeCount: The number of coding passes (default: 0). (Note: historical spelling preserved for API compatibility.)
     ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
@@ -517,6 +528,8 @@ public struct J2KCodeBlock: Sendable {
         width: Int,
         height: Int,
         subband: J2KSubband,
+        componentIndex: Int = 0,
+        resolutionLevel: Int = 0,
         data: Data = Data(),
         passeCount: Int = 0,
         zeroBitPlanes: Int = 0,
@@ -528,6 +541,8 @@ public struct J2KCodeBlock: Sendable {
         self.width = width
         self.height = height
         self.subband = subband
+        self.componentIndex = componentIndex
+        self.resolutionLevel = resolutionLevel
         self.data = data
         self.passeCount = passeCount
         self.zeroBitPlanes = zeroBitPlanes
