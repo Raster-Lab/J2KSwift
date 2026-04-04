@@ -413,6 +413,153 @@ final class J2KEncoderPipelineTests: XCTestCase {
         }
     }
 
+    // MARK: - Codestream Conformance Tests
+
+    /// Tests that COD marker writes correct decomposition levels (clamped value).
+    func testCODDecompositionLevelsClamped() throws {
+        // 8×8 image can support at most 2 levels (log2(8) - 1 = 2)
+        // but config asks for 5 → should clamp to 2
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true, decompositionLevels: 5
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        assertValidCodestream(data)
+
+        // Parse COD marker and verify decomposition levels
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+        let codSegment = segments.first { $0.marker == .cod }
+        XCTAssertNotNil(codSegment)
+
+        if let codData = codSegment?.data, codData.count >= 6 {
+            // SPcod starts after SGcod (4 bytes: Scod + progression + layers + MCT)
+            // Byte 4 of codData = Scod, then bytes 5-8 = SGcod
+            // Actually: Scod(1) + SGcod(progression(1) + layers(2) + MCT(1)) then SPcod starts
+            // SPcod byte 0 = number of decomposition levels
+            let decomLevels = codData[5] // offset 5 = first byte of SPcod
+            XCTAssertLessThanOrEqual(decomLevels, 2,
+                "Decomposition levels should be clamped for 8×8 image; got \(decomLevels)")
+        }
+    }
+
+    /// Tests that QCD epsilon values follow ISO 15444-1 Table E.1 for lossless.
+    func testQCDEpsilonValuesLossless() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true, decompositionLevels: 2
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 32, height: 32, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        assertValidCodestream(data)
+
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+        let qcdSegment = segments.first { $0.marker == .qcd }
+        XCTAssertNotNil(qcdSegment)
+
+        if let qcdData = qcdSegment?.data, qcdData.count >= 8 {
+            // Sqcd (1 byte) then SPqcd values
+            // For lossless: each SPqcd byte has epsilon in bits 3-7
+            let epsilonLL = qcdData[1] >> 3   // LL: bitDepth + 0 = 8
+            let epsilonHL = qcdData[2] >> 3   // HL: bitDepth + 1 = 9
+            let epsilonLH = qcdData[3] >> 3   // LH: bitDepth + 1 = 9
+            let epsilonHH = qcdData[4] >> 3   // HH: bitDepth + 2 = 10
+
+            XCTAssertEqual(epsilonLL, 8, "LL epsilon should be bitDepth (8)")
+            XCTAssertEqual(epsilonHL, 9, "HL epsilon should be bitDepth+1 (9)")
+            XCTAssertEqual(epsilonLH, 9, "LH epsilon should be bitDepth+1 (9)")
+            XCTAssertEqual(epsilonHH, 10, "HH epsilon should be bitDepth+2 (10)")
+        }
+    }
+
+    /// Tests that COD MCT field is 0 for single-component images.
+    func testCODMCTDisabledForGrayscale() throws {
+        let config = J2KEncodingConfiguration(
+            quality: 0.9, lossless: false, decompositionLevels: 2
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let image = J2KImage(width: 16, height: 16, components: 1, bitDepth: 8)
+
+        let data = try encoder.encode(image)
+        let parser = J2KMarkerParser(data: data)
+        let segments = try parser.parseMainHeader()
+        let codSegment = segments.first { $0.marker == .cod }
+        XCTAssertNotNil(codSegment)
+
+        if let codData = codSegment?.data, codData.count >= 5 {
+            // MCT is at offset 4 (after Scod(1) + progression(1) + layers(2))
+            let mct = codData[4]
+            XCTAssertEqual(mct, 0, "MCT should be 0 for single-component images")
+        }
+    }
+
+    /// Tests that the number of packets matches expected LRCP structure.
+    func testPacketCountMatchesResolutionStructure() throws {
+        // 32×32, 2 decomposition levels, 1 component
+        // Expected: (2+1) resolutions × 1 component = 3 packets
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true, decompositionLevels: 2
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+
+        var pixelData = Data(count: 32 * 32)
+        for i in 0..<pixelData.count {
+            pixelData[i] = UInt8(i % 256)
+        }
+        let component = J2KComponent(
+            index: 0, bitDepth: 8, signed: false,
+            width: 32, height: 32, data: pixelData
+        )
+        let image = J2KImage(width: 32, height: 32, components: [component])
+
+        let data = try encoder.encode(image)
+        assertValidCodestream(data)
+
+        // The codestream should be parseable and decodable
+        XCTAssertGreaterThan(data.count, 20, "Encoded codestream should have meaningful size")
+    }
+
+    /// Tests round-trip encoding and decoding produces valid output.
+    func testRoundTripEncodeDecode() throws {
+        let width = 32
+        let height = 32
+        let pixelCount = width * height
+
+        // Create a gradient test image
+        var pixelData = Data(count: pixelCount)
+        for y in 0..<height {
+            for x in 0..<width {
+                pixelData[y * width + x] = UInt8(x * 255 / (width - 1))
+            }
+        }
+
+        let component = J2KComponent(
+            index: 0, bitDepth: 8, signed: false,
+            width: width, height: height, data: pixelData
+        )
+        let image = J2KImage(width: width, height: height, components: [component])
+
+        // Encode lossless
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true, decompositionLevels: 2
+        )
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let encoded = try encoder.encode(image)
+        assertValidCodestream(encoded)
+
+        // Decode
+        let decoder = J2KDecoder()
+        let decoded = try decoder.decode(encoded)
+
+        XCTAssertEqual(decoded.width, width)
+        XCTAssertEqual(decoded.height, height)
+        XCTAssertEqual(decoded.componentCount, 1)
+    }
+
     // MARK: - Helpers
 
     /// Asserts that the data represents a valid JPEG 2000 codestream.

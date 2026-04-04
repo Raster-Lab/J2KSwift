@@ -1039,6 +1039,11 @@ public struct EncodeOperationResult: Sendable, Equatable {
 @Observable
 @MainActor
 public final class EncodeViewModel {
+    /// Injectable encoder closure: (pixelData, width, height, componentCount, config) -> encodedData.
+    public var encoderFunction: (@Sendable (Data, Int, Int, Int, EncodeConfiguration) throws -> Data)?
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// URL of the selected input image.
     public var inputImageURL: URL?
     /// Raw data of the selected input image.
@@ -1333,6 +1338,9 @@ public struct DecodeOperationResult: Sendable, Equatable {
 @Observable
 @MainActor
 public final class DecodeViewModel {
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// URL of the selected JP2/J2K/JPX input file.
     public var inputFileURL: URL?
     /// Current decoding configuration.
@@ -1488,6 +1496,9 @@ public struct RoundTripMetrics: Sendable, Equatable {
 @Observable
 @MainActor
 public final class RoundTripViewModel {
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// The encode view model used as input.
     public var encodeViewModel: EncodeViewModel = EncodeViewModel()
     /// Whether the round-trip pipeline is running.

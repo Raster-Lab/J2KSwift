@@ -134,7 +134,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
-        let decompositions = try applyWaveletTransform(
+        let (decompositions, actualDecompositionLevels) = try applyWaveletTransform(
             transformedData, width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
@@ -159,7 +159,8 @@ struct EncoderPipeline: Sendable {
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
         let codestream = try generateCodestream(
-            image: image, codeBlocks: codeBlocks, layers: layers
+            image: image, codeBlocks: codeBlocks, layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
@@ -373,9 +374,11 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Applies the forward wavelet transform to all components.
+    ///
+    /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
         _ components: [[Int32]], width: Int, height: Int
-    ) throws -> [[SubbandInfo]] {
+    ) throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
         switch config.waveletKernelConfiguration {
@@ -487,7 +490,7 @@ struct EncoderPipeline: Sendable {
             allSubbands.append(subbands)
         }
 
-        return allSubbands
+        return (allSubbands, levels)
     }
 
     // MARK: - Stage 4: Quantization
@@ -815,7 +818,8 @@ struct EncoderPipeline: Sendable {
     private func generateCodestream(
         image: J2KImage,
         codeBlocks: [J2KCodeBlock],
-        layers: [QualityLayer]
+        layers: [QualityLayer],
+        actualDecompositionLevels: Int
     ) throws -> Data {
         var writer = J2KBitWriter()
 
@@ -834,14 +838,18 @@ struct EncoderPipeline: Sendable {
         }
 
         // COD — Coding Style Default
-        try writeCODMarker(&writer, image: image)
+        try writeCODMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
 
         // QCD — Quantization Default
-        try writeQCDMarker(&writer, image: image)
+        try writeQCDMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
-        let tileData = try generateTileData(codeBlocks: codeBlocks, layers: layers)
+        let tileData = try generateTileData(
+            codeBlocks: codeBlocks, layers: layers,
+            decompositionLevels: actualDecompositionLevels,
+            componentCount: image.components.count
+        )
         try writeSOTMarker(&writer, tileIndex: 0, tilePartLength: tileData.count)
 
         // SOD — Start of Data
@@ -950,7 +958,7 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the COD marker segment (Coding Style Default).
-    private func writeCODMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
+    private func writeCODMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
@@ -973,7 +981,7 @@ struct EncoderPipeline: Sendable {
 
         // SPcod — Coding parameters
         // Number of decomposition levels
-        segment.writeUInt8(UInt8(config.decompositionLevels))
+        segment.writeUInt8(UInt8(decompositionLevels))
 
         // Code-block width exponent (offset by 2)
         let cbWidthExp = Int(log2(Double(config.codeBlockSize.width)))
@@ -1083,7 +1091,7 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the QCD marker segment (Quantization Default).
-    private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
+    private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
         var segment = J2KBitWriter()
 
         // Sqcd byte layout: guard bits (bits 5-7) | quantization style (bits 0-4)
@@ -1106,7 +1114,7 @@ struct EncoderPipeline: Sendable {
             segment.writeUInt8(epsilonLL << 3) // Exponent in bits 3-7
 
             // Detail subbands (HL, LH, HH) at each level (from coarsest to finest)
-            for _ in 0..<config.decompositionLevels {
+            for _ in 0..<decompositionLevels {
                 let epsilonHL = UInt8(bitDepth + 1) // G_HL = 1
                 let epsilonLH = UInt8(bitDepth + 1) // G_LH = 1
                 let epsilonHH = UInt8(bitDepth + 2) // G_HH = 2
@@ -1122,7 +1130,7 @@ struct EncoderPipeline: Sendable {
             // SPqcd: Step size values for each subband (2 bytes each)
             let stepSizes = J2KStepSizeCalculator.calculateAllStepSizes(
                 baseStepSize: 1.0 - config.quality,
-                totalLevels: config.decompositionLevels,
+                totalLevels: decompositionLevels,
                 reversible: false
             )
 
@@ -1132,8 +1140,8 @@ struct EncoderPipeline: Sendable {
             segment.writeUInt16(UInt16((llExp & 0x1F) << 11 | (llMant & 0x7FF)))
 
             // Detail subbands
-            if config.decompositionLevels > 0 {
-                for level in 1...config.decompositionLevels {
+            if decompositionLevels > 0 {
+                for level in 1...decompositionLevels {
                     for subband in [J2KSubband.hl, .lh, .hh] {
                         let key = "\(subband.rawValue)_\(level)"
                         let step = stepSizes[key] ?? 1.0
@@ -1172,14 +1180,10 @@ struct EncoderPipeline: Sendable {
     /// Uses LRCP progression: Layer → Resolution → Component → Precinct.
     /// Each packet uses raw bit packet headers per ISO/IEC 15444-1 Annex B.
     private func generateTileData(
-        codeBlocks: [J2KCodeBlock], layers: [QualityLayer]
+        codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
+        decompositionLevels: Int, componentCount: Int
     ) throws -> Data {
         var data = Data()
-
-        guard !codeBlocks.isEmpty else {
-            data.append(0x00)
-            return data
-        }
 
         // Group code blocks by (resolutionLevel, componentIndex, subband)
         struct BandKey: Hashable {
@@ -1191,8 +1195,11 @@ struct EncoderPipeline: Sendable {
             blocksByBand[key, default: []].append(block)
         }
 
-        let numResolutions = (codeBlocks.map { $0.resolutionLevel }.max() ?? 0) + 1
-        let numComponents = (codeBlocks.map { $0.componentIndex }.max() ?? 0) + 1
+        // Use actual decomposition levels and component count from the pipeline,
+        // not from code blocks, to ensure every expected packet is emitted even
+        // when subbands contain all-zero code blocks.
+        let numResolutions = decompositionLevels + 1
+        let numComponents = componentCount
 
         // LRCP: 1 layer, iterate Resolution → Component
         for resLevel in 0..<numResolutions {
@@ -1258,29 +1265,32 @@ struct EncoderPipeline: Sendable {
                 writer.writeBit(true)
             }
 
-            // 3. Number of coding passes for included blocks in this band
+            // 3. Number of coding passes per ISO 15444-1 Table B.4
             for block in band where !block.data.isEmpty && block.passeCount > 0 {
                 let passes = block.passeCount
                 if passes == 1 {
-                    writer.writeBit(true)
-                } else if passes == 2 {
-                    writer.writeBit(false); writer.writeBit(true)
+                    // 0
                     writer.writeBit(false)
-                } else if passes == 3 {
-                    writer.writeBit(false); writer.writeBit(true)
-                    writer.writeBit(true)
+                } else if passes == 2 {
+                    // 10
+                    writer.writeBit(true); writer.writeBit(false)
                 } else if passes <= 5 {
-                    writer.writeBit(false); writer.writeBit(false); writer.writeBit(true)
-                    let val = passes - 4
-                    writer.writeBit(val >= 2)
-                    writer.writeBit((val % 2) != 0)
+                    // 11 + 2-bit value (passes - 3)
+                    writer.writeBit(true); writer.writeBit(true)
+                    let val = passes - 3
+                    writer.writeBit(val & 0x02 != 0)
+                    writer.writeBit(val & 0x01 != 0)
                 } else if passes <= 36 {
-                    writer.writeBit(false); writer.writeBit(false)
-                    writer.writeBit(false); writer.writeBit(true)
+                    // 1111 0 + 5-bit value (passes - 6)
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(false)
                     try writer.writeBits(UInt32(passes - 6), count: 5)
                 } else {
-                    writer.writeBit(false); writer.writeBit(false)
-                    writer.writeBit(false); writer.writeBit(false); writer.writeBit(true)
+                    // 1111 1 + 7-bit value (passes - 37)
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(true)
                     try writer.writeBits(UInt32(passes - 37), count: 7)
                 }
             }
