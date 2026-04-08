@@ -10,6 +10,7 @@
 
 #if canImport(SwiftUI) && os(macOS)
 import Foundation
+import AppKit
 import J2KCore
 import J2KCodec
 
@@ -26,8 +27,8 @@ enum CodecService {
     /// The closure takes raw planar pixel data (R...G...B...), image
     /// dimensions, component count, and UI configuration, then returns
     /// the encoded JPEG 2000 codestream.
-    static var encoderFunction: @Sendable (Data, Int, Int, Int, EncodeConfiguration) throws -> Data {
-        { pixelData, width, height, componentCount, uiConfig in
+    static var encoderFunction: @Sendable (Data, Int, Int, Int, EncodeConfiguration, @Sendable (String, Double) -> Void) throws -> Data {
+        { pixelData, width, height, componentCount, uiConfig, progressCallback in
             let encodingConfig = Self.makeEncodingConfiguration(from: uiConfig)
             let image = Self.makeJ2KImage(
                 pixelData: pixelData,
@@ -38,7 +39,13 @@ enum CodecService {
                 tileHeight: uiConfig.tileHeight
             )
             let encoder = J2KEncoder(encodingConfiguration: encodingConfig)
-            return try encoder.encode(image)
+            // Bridge the @Sendable progress callback into the encoder's
+            // synchronous, non-escaping progress closure.
+            return try withoutActuallyEscaping({ (update: EncoderProgressUpdate) in
+                progressCallback(update.stage.rawValue, update.progress)
+            }) { escapableCb in
+                try encoder.encode(image, progress: escapableCb)
+            }
         }
     }
 
@@ -98,7 +105,7 @@ enum CodecService {
             quality: ui.quality,
             lossless: isLossless,
             decompositionLevels: ui.decompositionLevels,
-            codeBlockSize: (width: 32, height: 32),
+            codeBlockSize: (width: 64, height: 64),
             qualityLayers: ui.qualityLayers,
             progressionOrder: progressionOrder,
             tileSize: (width: ui.tileWidth, height: ui.tileHeight),
@@ -150,6 +157,51 @@ enum CodecService {
         )
     }
 
+    // MARK: - Image Parser
+
+    /// Returns a closure that parses image file data (PNG/TIFF/BMP) into
+    /// planar pixel data suitable for the encoder.
+    ///
+    /// Output format: `(planarRGBData, width, height, componentCount)`.
+    static var imageParserFunction: @Sendable (Data) throws -> (Data, Int, Int, Int) {
+        { fileData in
+            guard let nsImage = NSImage(data: fileData),
+                  let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                throw J2KError.invalidParameter("Could not decode image file")
+            }
+
+            let w = cgImage.width
+            let h = cgImage.height
+            let bytesPerRow = w * 4
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let bitmapInfo = CGImageAlphaInfo.noneSkipLast.rawValue
+
+            guard let context = CGContext(
+                data: nil, width: w, height: h,
+                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                space: colorSpace, bitmapInfo: bitmapInfo
+            ), let pixelData = context.data else {
+                throw J2KError.internalError("Failed to create bitmap context")
+            }
+
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+            let pixelCount = w * h
+            let componentCount = 3
+            var planar = Data(count: pixelCount * componentCount)
+            planar.withUnsafeMutableBytes { outBuf in
+                let outPtr = outBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let inPtr = pixelData.assumingMemoryBound(to: UInt8.self)
+                for i in 0..<pixelCount {
+                    outPtr[i] = inPtr[i * 4]                        // R
+                    outPtr[pixelCount + i] = inPtr[i * 4 + 1]       // G
+                    outPtr[pixelCount * 2 + i] = inPtr[i * 4 + 2]   // B
+                }
+            }
+            return (planar, w, h, componentCount)
+        }
+    }
+
     // MARK: - View Model Wiring
 
     /// Injects real codec functions into all view models.
@@ -161,6 +213,7 @@ enum CodecService {
     ) {
         encode.encoderFunction = encoderFunction
         encode.decoderFunction = decoderFunction
+        encode.imageParserFunction = imageParserFunction
         decode.decoderFunction = decoderFunction
         roundTrip.decoderFunction = decoderFunction
         roundTrip.encodeViewModel.encoderFunction = encoderFunction

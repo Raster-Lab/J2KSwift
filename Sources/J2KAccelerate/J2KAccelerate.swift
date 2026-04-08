@@ -140,7 +140,7 @@ public struct J2KDWTAccelerated: Sendable {
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
-        let k = 1.149604398
+        let k = 1.230174105
 
         // Predict 1: odd[n] += alpha * (even[n] + even[n+1])
         try applyLiftingStep(&odd, reference: even, coefficient: alpha, isPredict: true, extension: boundaryExtension)
@@ -154,14 +154,14 @@ public struct J2KDWTAccelerated: Sendable {
         // Update 2: even[n] += delta * (odd[n-1] + odd[n])
         try applyLiftingStep(&even, reference: odd, coefficient: delta, isPredict: false, extension: boundaryExtension)
 
-        // Scaling using vDSP for vectorised operations
+        // Scaling: lowpass /= K, highpass *= K (per ISO/IEC 15444-1)
         even.withUnsafeMutableBufferPointer { evenPtr in
-            var scalar = k
+            var scalar = 1.0 / k
             vDSP_vsmulD(evenPtr.baseAddress!, 1, &scalar, evenPtr.baseAddress!, 1, vDSP_Length(lowpassSize))
         }
 
         odd.withUnsafeMutableBufferPointer { oddPtr in
-            var scalar = 1.0 / k
+            var scalar = k
             vDSP_vsmulD(oddPtr.baseAddress!, 1, &scalar, oddPtr.baseAddress!, 1, vDSP_Length(highpassSize))
         }
 
@@ -219,16 +219,16 @@ public struct J2KDWTAccelerated: Sendable {
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
-        let k = 1.149604398
+        let k = 1.230174105
 
-        // Undo scaling using vDSP
+        // Undo scaling: lowpass *= K, highpass /= K (inverse of forward)
         even.withUnsafeMutableBufferPointer { evenPtr in
-            var scalar = 1.0 / k
+            var scalar = k
             vDSP_vsmulD(evenPtr.baseAddress!, 1, &scalar, evenPtr.baseAddress!, 1, vDSP_Length(lowpassSize))
         }
 
         odd.withUnsafeMutableBufferPointer { oddPtr in
-            var scalar = k
+            var scalar = 1.0 / k
             vDSP_vsmulD(oddPtr.baseAddress!, 1, &scalar, oddPtr.baseAddress!, 1, vDSP_Length(highpassSize))
         }
 

@@ -64,9 +64,9 @@ final class J2KQuantizationTests: XCTestCase {
     func testParametersFromQualityHigh() throws {
         let params = J2KQuantizationParameters.fromQuality(1.0)
         XCTAssertEqual(params.mode, .deadzone)
-        // High quality should have small step size (near 0.1)
-        XCTAssertLessThan(params.baseStepSize, 0.2)
-        XCTAssertGreaterThan(params.baseStepSize, 0.05)
+        // High quality should have small step size (near 0.03, matches wavelet norms)
+        XCTAssertLessThan(params.baseStepSize, 0.1)
+        XCTAssertGreaterThan(params.baseStepSize, 0.01)
     }
 
     func testParametersFromQualityLow() throws {

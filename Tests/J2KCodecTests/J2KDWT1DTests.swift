@@ -549,10 +549,11 @@ final class J2KDWT1DTests: XCTestCase {
         let transformedEnergy = lowpass.map { $0 * $0 }.reduce(0, +) +
                                highpass.map { $0 * $0 }.reduce(0, +)
 
-        // 9/7 filter changes energy due to scaling (K = 1.149604398)
-        // The energy should be within a reasonable range (5-20% difference is expected)
-        XCTAssertGreaterThan(transformedEnergy, originalEnergy * 0.8)
-        XCTAssertLessThan(transformedEnergy, originalEnergy * 1.2)
+        // 9/7 filter changes energy due to K normalization (K = 1.230174105)
+        // Energy is not conserved; lowpass /= K reduces dominant coefficients
+        // The energy should be in a reasonable range
+        XCTAssertGreaterThan(transformedEnergy, originalEnergy * 0.3)
+        XCTAssertLessThan(transformedEnergy, originalEnergy * 2.0)
 
         // But reconstruction should still be accurate
         let reconstructed = try J2KDWT1D.inverseTransform97(

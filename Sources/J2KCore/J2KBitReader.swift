@@ -37,6 +37,12 @@ public struct J2KBitReader: Sendable {
     /// The current bit position within the current byte (0-7, where 0 is MSB).
     private var bitPosition: Int
 
+    /// Whether JPEG 2000 byte stuffing is enabled (for packet headers).
+    ///
+    /// Per ISO/IEC 15444-1 B.10.1, after a 0xFF byte in a packet header,
+    /// the next byte's MSB is a stuffed 0 bit (only 7 data bits).
+    private var byteStuffingEnabled: Bool
+
     /// Creates a new bit reader from the specified data.
     ///
     /// - Parameter data: The data to read from.
@@ -44,6 +50,12 @@ public struct J2KBitReader: Sendable {
         self.data = data
         self.bytePosition = 0
         self.bitPosition = 0
+        self.byteStuffingEnabled = false
+    }
+
+    /// Enables or disables JPEG 2000 byte stuffing for packet headers.
+    public mutating func setByteStuffing(_ enabled: Bool) {
+        byteStuffingEnabled = enabled
     }
 
     /// The total number of bytes in the data.
@@ -178,7 +190,9 @@ public struct J2KBitReader: Sendable {
 
         bitPosition += 1
         if bitPosition >= 8 {
-            bitPosition = 0
+            // After 0xFF, MSB of next byte is stuffed: start at position 1
+            let isFF = byteStuffingEnabled && (byte == 0xFF)
+            bitPosition = isFF ? 1 : 0
             bytePosition += 1
         }
 
@@ -216,7 +230,9 @@ public struct J2KBitReader: Sendable {
 
             bitPosition += bitsThisIteration
             if bitPosition >= 8 {
-                bitPosition = 0
+                // After 0xFF, MSB of next byte is stuffed: start at position 1
+                let isFF = byteStuffingEnabled && (byte == 0xFF)
+                bitPosition = isFF ? 1 : 0
                 bytePosition += 1
             }
 
@@ -232,10 +248,16 @@ public struct J2KBitReader: Sendable {
     ///
     /// If already at a byte boundary, this method does nothing.
     /// Otherwise, it skips the remaining bits in the current byte.
+    /// When byte stuffing is enabled, also skips the stuffed byte after 0xFF.
     public mutating func alignToByte() throws {
         if bitPosition != 0 {
+            let wasFF = byteStuffingEnabled && bytePosition < data.count && data[bytePosition] == 0xFF
             bitPosition = 0
             bytePosition += 1
+            // After 0xFF, the encoder appended a stuffed 0x00 byte - skip it
+            if wasFF && bytePosition < data.count {
+                bytePosition += 1
+            }
         }
     }
 

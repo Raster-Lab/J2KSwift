@@ -37,6 +37,12 @@ public struct J2KBitWriter: Sendable {
     /// The current bit position within the current byte (0-7, where 0 is MSB).
     private var bitPosition: Int
 
+    /// Whether JPEG 2000 byte stuffing is enabled (for packet headers).
+    ///
+    /// Per ISO/IEC 15444-1 B.10.1, after a 0xFF byte in a packet header,
+    /// the next byte's MSB must be 0 (only 7 data bits available).
+    private var byteStuffingEnabled: Bool
+
     /// Creates a new bit writer with an optional initial capacity.
     ///
     /// - Parameter capacity: The initial capacity in bytes (default: 1024).
@@ -45,6 +51,15 @@ public struct J2KBitWriter: Sendable {
         self.buffer.reserveCapacity(capacity)
         self.currentByte = 0
         self.bitPosition = 0
+        self.byteStuffingEnabled = false
+    }
+
+    /// Enables or disables JPEG 2000 byte stuffing for packet headers.
+    ///
+    /// When enabled, after outputting a 0xFF byte, the next byte's MSB
+    /// is forced to 0 and only 7 data bit positions are available.
+    public mutating func setByteStuffing(_ enabled: Bool) {
+        byteStuffingEnabled = enabled
     }
 
     /// The data written so far.
@@ -148,8 +163,10 @@ public struct J2KBitWriter: Sendable {
         bitPosition += 1
         if bitPosition >= 8 {
             buffer.append(currentByte)
+            // After 0xFF, MSB of next byte is stuffed as 0: start at position 1
+            let isFF = byteStuffingEnabled && (currentByte == 0xFF)
             currentByte = 0
-            bitPosition = 0
+            bitPosition = isFF ? 1 : 0
         }
     }
 
@@ -182,8 +199,10 @@ public struct J2KBitWriter: Sendable {
             bitPosition += bitsThisIteration
             if bitPosition >= 8 {
                 buffer.append(currentByte)
+                // After 0xFF, MSB of next byte is stuffed as 0: start at position 1
+                let isFF = byteStuffingEnabled && (currentByte == 0xFF)
                 currentByte = 0
-                bitPosition = 0
+                bitPosition = isFF ? 1 : 0
             }
 
             bitsToWrite -= bitsThisIteration
@@ -196,11 +215,17 @@ public struct J2KBitWriter: Sendable {
     ///
     /// If already at a byte boundary, this method does nothing.
     /// Otherwise, it pads the remaining bits with zeros.
+    /// When byte stuffing is enabled, ensures proper stuffing after 0xFF.
     public mutating func alignToByte() {
         if bitPosition != 0 {
             buffer.append(currentByte)
+            let wasFF = byteStuffingEnabled && (currentByte == 0xFF)
             currentByte = 0
             bitPosition = 0
+            // After a 0xFF byte, append a stuffed 0x00 byte per ISO 15444-1 B.10.1
+            if wasFF {
+                buffer.append(0x00)
+            }
         }
     }
 

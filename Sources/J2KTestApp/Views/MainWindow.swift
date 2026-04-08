@@ -291,21 +291,30 @@ struct CategoryDetailView: View {
     @State private var streamingTab: StreamingTab = .jpip
 
     var body: some View {
-        switch viewModel.category {
-        case .encode:
-            EncodeView(viewModel: encodeViewModel, session: session)
-        case .decode:
-            DecodeView(viewModel: decodeViewModel, session: session)
-        case .conformance:
-            ConformanceView(viewModel: conformanceViewModel, session: session)
-        case .validation:
-            ValidationView(viewModel: validationViewModel, session: session)
-        case .performance:
-            performanceDetailView
-        case .streaming:
-            streamingDetailView
-        case .volumetric:
-            VolumetricTestView(viewModel: volumetricViewModel, session: session)
+        Group {
+            switch viewModel.category {
+            case .encode:
+                EncodeView(viewModel: encodeViewModel, session: session)
+            case .decode:
+                DecodeView(viewModel: decodeViewModel, session: session)
+            case .conformance:
+                ConformanceView(viewModel: conformanceViewModel, session: session)
+            case .validation:
+                ValidationView(viewModel: validationViewModel, session: session)
+            case .performance:
+                performanceDetailView
+            case .streaming:
+                streamingDetailView
+            case .volumetric:
+                VolumetricTestView(viewModel: volumetricViewModel, session: session)
+            }
+        }
+        .onAppear {
+            CodecService.wireViewModels(
+                encode: encodeViewModel,
+                decode: decodeViewModel,
+                roundTrip: roundTripViewModel
+            )
         }
     }
 

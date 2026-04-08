@@ -111,9 +111,13 @@ struct J2KTagTree: Sendable {
 
     /// Encodes a tag tree value for the given leaf node.
     ///
-    /// Traverses from root to leaf, emitting bits at each node:
-    /// - "0" if value > current low (value not yet reached)
-    /// - "1" if value <= current low (value known, first time only)
+    /// Traverses from root to leaf, emitting bits at each node per
+    /// ISO/IEC 15444-1 B.10.2 and OpenJPEG's `opj_tgt_encode()`:
+    /// - "0" bits while the current low has not reached the node's value
+    /// - "1" bit when the node's value is reached (first time only via `known` flag)
+    ///
+    /// The decoder mirrors this: at each node it reads bits until either
+    /// the threshold is reached (giving up) or a "1" is read (value discovered).
     ///
     /// - Parameters:
     ///   - writer: Bit writer to emit bits to.
@@ -123,9 +127,7 @@ struct J2KTagTree: Sendable {
         guard leafIndex >= 0 && leafIndex < leafWidth * leafHeight,
               !nodes.isEmpty else { return }
 
-        // Build path from root to leaf
         let path = rootToLeafPath(leafIndex)
-
         var low: Int32 = 0
 
         for nodeIdx in path {
@@ -137,12 +139,14 @@ struct J2KTagTree: Sendable {
 
             while low < threshold {
                 if low >= nodes[nodeIdx].value {
+                    // Value reached — output "1" if first time at this node
                     if !nodes[nodeIdx].known {
                         writer.writeBit(true)
                         nodes[nodeIdx].known = true
                     }
                     break
                 }
+                // Value not yet reached — output "0"
                 writer.writeBit(false)
                 low += 1
             }

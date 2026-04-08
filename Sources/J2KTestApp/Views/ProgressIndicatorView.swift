@@ -51,7 +51,7 @@ struct ProgressIndicatorView: View {
                                 .progressViewStyle(.linear)
                                 .frame(maxWidth: .infinity)
                             if let duration = stageProgress.duration {
-                                Text(String(format: "%.1f ms", duration * 1000))
+                                Text(EncodeViewModel.formatDuration(duration))
                                     .font(.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)

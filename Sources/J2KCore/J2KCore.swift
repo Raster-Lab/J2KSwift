@@ -506,6 +506,27 @@ public struct J2KCodeBlock: Sendable {
     /// (default/non-predictable termination mode).
     public var passSegmentLengths: [Int]
 
+    /// Cumulative byte counts after each coding pass.
+    ///
+    /// Used by rate control for per-pass truncation. Each element represents
+    /// the total encoded bytes after `i+1` coding passes. When empty, rate
+    /// control falls back to proportional estimation.
+    public var cumulativePassBytes: [Int]
+
+    /// Sum of squared magnitudes of the quantized coefficients in this code block.
+    ///
+    /// Used by rate control for accurate distortion estimation. The initial
+    /// distortion (all coefficients zeroed) equals this value times the
+    /// quantization step size squared.
+    public var coefficientSquaredSum: Double
+
+    /// Per-bit-plane population counts.
+    ///
+    /// Element `i` is the number of coefficients whose most significant bit
+    /// is at bit-plane `i` (0-indexed from the MSB of the maximum magnitude).
+    /// Used by rate control for accurate per-pass distortion reduction.
+    public var bitPlanePopulation: [Int]
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -521,6 +542,9 @@ public struct J2KCodeBlock: Sendable {
     ///   - passeCount: The number of coding passes (default: 0). (Note: historical spelling preserved for API compatibility.)
     ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
     ///   - passSegmentLengths: Byte lengths per pass segment (default: empty).
+    ///   - cumulativePassBytes: Cumulative bytes after each pass (default: empty).
+    ///   - coefficientSquaredSum: Sum of squared quantized coefficient magnitudes (default: 0).
+    ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -533,7 +557,10 @@ public struct J2KCodeBlock: Sendable {
         data: Data = Data(),
         passeCount: Int = 0,
         zeroBitPlanes: Int = 0,
-        passSegmentLengths: [Int] = []
+        passSegmentLengths: [Int] = [],
+        cumulativePassBytes: [Int] = [],
+        coefficientSquaredSum: Double = 0,
+        bitPlanePopulation: [Int] = []
     ) {
         self.index = index
         self.x = x
@@ -547,6 +574,9 @@ public struct J2KCodeBlock: Sendable {
         self.passeCount = passeCount
         self.zeroBitPlanes = zeroBitPlanes
         self.passSegmentLengths = passSegmentLengths
+        self.cumulativePassBytes = cumulativePassBytes
+        self.coefficientSquaredSum = coefficientSquaredSum
+        self.bitPlanePopulation = bitPlanePopulation
     }
 }
 

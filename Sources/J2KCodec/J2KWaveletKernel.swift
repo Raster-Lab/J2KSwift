@@ -522,8 +522,8 @@ public enum J2KWaveletKernelLibrary: Sendable {
                 J2KDWT1D.LiftingStep(coefficients: [0.8829110762], isPredict: true),
                 J2KDWT1D.LiftingStep(coefficients: [0.4435068522], isPredict: false),
             ],
-            lowpassScale: 1.149604398,
-            highpassScale: 1.0 / 1.149604398
+            lowpassScale: 1.0 / 1.230174105,
+            highpassScale: 1.230174105
         )
     }()
 

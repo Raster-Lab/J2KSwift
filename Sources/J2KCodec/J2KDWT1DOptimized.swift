@@ -249,95 +249,63 @@ public struct J2KDWT2DOptimizer: Sendable {
             )
         }
 
-        // For lossless, use optimised 1D transforms
-        // Apply inverse 1D DWT to columns first
-        var columnInversed = [[Int32]]()
+        // Per JPEG 2000 standard: inverse applies rows (horizontal) first, then columns (vertical)
 
-        // Process low-frequency columns (LL + HL -> L)
-        for col in 0..<llWidth {
-            var llColumn = [Int32]()
-            var hlColumn = [Int32]()
+        // Step 1: Apply inverse 1D DWT to rows (horizontal pass)
+        // LL + HL → col-low rows, LH + HH → col-high rows
 
-            llColumn.reserveCapacity(llHeight)
-            hlColumn.reserveCapacity(hlHeight)
-
-            for row in 0..<llHeight {
-                llColumn.append(ll[row][col])
-            }
-            for row in 0..<hlHeight {
-                hlColumn.append(hl[row][col])
-            }
-
-            // Use optimised transform
-            let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
-                lowpass: llColumn,
-                highpass: hlColumn,
-                boundaryExtension: boundaryExtension
-            )
-
-            if columnInversed.isEmpty {
-                columnInversed = Array(repeating: [Int32](), count: reconstructedColumn.count)
-            }
-            for i in 0..<reconstructedColumn.count {
-                columnInversed[i].append(reconstructedColumn[i])
-            }
-        }
-
-        // Process high-frequency columns (LH + HH -> H)
-        for col in 0..<lhWidth {
-            var lhColumn = [Int32]()
-            var hhColumn = [Int32]()
-
-            lhColumn.reserveCapacity(lhHeight)
-            hhColumn.reserveCapacity(hhHeight)
-
-            for row in 0..<lhHeight {
-                lhColumn.append(lh[row][col])
-            }
-            for row in 0..<hhHeight {
-                hhColumn.append(hh[row][col])
-            }
-
-            // Use optimised transform
-            let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
-                lowpass: lhColumn,
-                highpass: hhColumn,
-                boundaryExtension: boundaryExtension
-            )
-
-            for i in 0..<reconstructedColumn.count {
-                columnInversed[i].append(reconstructedColumn[i])
-            }
-        }
-
-        // Apply inverse 1D DWT to rows
-        var result = [[Int32]]()
-        result.reserveCapacity(columnInversed.count)
-
-        for row in columnInversed {
-            let lowpassSize = (row.count + 1) / 2
-            let highpassSize = row.count / 2
-
-            var lowpass = [Int32]()
-            var highpass = [Int32]()
-            lowpass.reserveCapacity(lowpassSize)
-            highpass.reserveCapacity(highpassSize)
-
-            for i in 0..<lowpassSize {
-                lowpass.append(row[i])
-            }
-            for i in lowpassSize..<row.count {
-                highpass.append(row[i])
-            }
-
-            // Use optimised transform
+        var colLow = [[Int32]]()
+        colLow.reserveCapacity(llHeight)
+        for row in 0..<llHeight {
             let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
+                lowpass: ll[row],
+                highpass: hl[row],
+                boundaryExtension: boundaryExtension
+            )
+            colLow.append(reconstructedRow)
+        }
+
+        var colHigh = [[Int32]]()
+        colHigh.reserveCapacity(lhHeight)
+        for row in 0..<lhHeight {
+            let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
+                lowpass: lh[row],
+                highpass: hh[row],
+                boundaryExtension: boundaryExtension
+            )
+            colHigh.append(reconstructedRow)
+        }
+
+        // Step 2: Apply inverse 1D DWT to columns (vertical pass)
+        let outputWidth = colLow[0].count
+        let colLowHeight = colLow.count
+        let colHighHeight = colHigh.count
+        let outputHeight = colLowHeight + colHighHeight
+
+        var result = Array(repeating: [Int32](repeating: 0, count: outputWidth), count: outputHeight)
+
+        for col in 0..<outputWidth {
+            var lowpass = [Int32]()
+            lowpass.reserveCapacity(colLowHeight)
+            for row in 0..<colLowHeight {
+                lowpass.append(colLow[row][col])
+            }
+
+            var highpass = [Int32]()
+            highpass.reserveCapacity(colHighHeight)
+            for row in 0..<colHighHeight {
+                highpass.append(colHigh[row][col])
+            }
+
+            let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
                 lowpass: lowpass,
                 highpass: highpass,
                 boundaryExtension: boundaryExtension
             )
 
-            result.append(reconstructedRow)
+            for i in 0..<reconstructedColumn.count {
+                result[i][col] = reconstructedColumn[i]
+            }
         }
 
         return result

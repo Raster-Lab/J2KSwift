@@ -9,6 +9,7 @@
 
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
+import AppKit
 import J2KCore
 
 // MARK: - Encode View
@@ -37,10 +38,17 @@ struct EncodeView: View {
             configurationPanel
                 .frame(minWidth: 260, maxWidth: 320)
 
-            VStack(spacing: 0) {
-                tabBar
-                Divider()
-                tabContent
+            ZStack {
+                VStack(spacing: 0) {
+                    tabBar
+                    Divider()
+                    tabContent
+                }
+
+                // Encoding overlay
+                if viewModel.isEncoding {
+                    encodingOverlay
+                }
             }
         }
         .navigationTitle("Encode")
@@ -68,14 +76,11 @@ struct EncodeView: View {
 
             Spacer()
 
-            Button(action: {
-                Task { await viewModel.encode(session: session) }
-            }) {
-                Label("Encode", systemImage: "arrow.up.doc")
+            Button(action: browseForInputImage) {
+                Label("Browse…", systemImage: "folder")
             }
-            .disabled(viewModel.isEncoding || viewModel.inputImageData == nil)
-            .keyboardShortcut(.return, modifiers: [.command])
-            .help("Encode the selected image (⌘↵)")
+            .disabled(viewModel.isEncoding)
+            .help("Select an input image file")
             .padding(.trailing)
         }
         .padding(.vertical, 8)
@@ -93,6 +98,36 @@ struct EncodeView: View {
         case .batch:
             batchTab
         }
+    }
+
+    // MARK: - Encoding Overlay
+
+    @ViewBuilder
+    private var encodingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                    .scaleEffect(1.5)
+
+                Text(viewModel.statusMessage.isEmpty ? "Encoding…" : viewModel.statusMessage)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                if viewModel.progress > 0 && viewModel.progress < 1 {
+                    ProgressView(value: viewModel.progress)
+                        .frame(width: 200)
+                        .tint(.white)
+                }
+            }
+            .padding(32)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.isEncoding)
     }
 
     // MARK: - Single Tab
@@ -200,14 +235,7 @@ struct EncodeView: View {
                 Text("Batch Encoding")
                     .font(.headline)
                 Spacer()
-                Button(action: {
-                    // In a real app this would open NSOpenPanel for folder selection.
-                    // Here we populate a placeholder list for demonstration.
-                    let placeholders = (1...3).map { i in
-                        URL(fileURLWithPath: "/tmp/image\(i).png")
-                    }
-                    viewModel.setBatchInputURLs(placeholders)
-                }) {
+                Button(action: browseForBatchFolder) {
                     Label("Select Folder…", systemImage: "folder")
                 }
                 Button(action: {
@@ -391,13 +419,13 @@ struct EncodeView: View {
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
                     ForEach(PipelineStage.allCases, id: \.self) { stage in
-                        if let duration = result.stageTiming[stage] {
+                        if let duration = result.stageTiming[stage], duration > 0 {
                             HStack {
                                 Text(stage.rawValue)
                                     .font(.caption)
                                     .frame(width: 140, alignment: .leading)
                                 Spacer()
-                                Text(String(format: "%.1f ms", duration * 1000))
+                                Text(EncodeViewModel.formatDuration(duration))
                                     .font(.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
@@ -421,11 +449,20 @@ struct EncodeView: View {
                 GroupBox("Presets") {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                         ForEach(EncodeConfiguration.Preset.allCases, id: \.rawValue) { preset in
-                            Button(preset.rawValue) {
+                            let isSelected = viewModel.selectedPreset == preset
+                            Button(action: {
                                 viewModel.applyPreset(preset)
+                            }) {
+                                Text(preset.rawValue)
+                                    .font(.caption)
+                                    .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.bordered)
-                            .font(.caption)
+                            .tint(isSelected ? .accentColor : nil)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
+                            )
                         }
                     }
                 }
@@ -506,8 +543,38 @@ struct EncodeView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                 }
+
+                // Action Buttons
+                VStack(spacing: 8) {
+                    Button(action: {
+                        Task { await viewModel.encode(session: session) }
+                    }) {
+                        Label("Encode", systemImage: "arrow.up.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.isEncoding || viewModel.inputImageData == nil)
+                    .keyboardShortcut(.return, modifiers: [.command])
+                    .help("Encode the selected image (⌘↵)")
+
+                    Button(action: saveEncodedOutput) {
+                        Label("Save…", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.outputData == nil)
+                    .help("Save encoded output to file")
+                }
+                .padding(.top, 8)
             }
             .padding()
+            .onChange(of: viewModel.configuration) { _, _ in
+                if !viewModel.isApplyingPreset {
+                    viewModel.selectedPreset = nil
+                }
+            }
         }
     }
 
@@ -548,6 +615,63 @@ struct EncodeView: View {
             return String(format: "%.1f KB", kb)
         }
         return String(format: "%.2f MB", kb / 1024)
+    }
+
+    // MARK: - File Dialogs
+
+    /// Opens an NSOpenPanel to select an input image for encoding.
+    private func browseForInputImage() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Image"
+        panel.allowedContentTypes = [
+            .png, .tiff, .bmp,
+        ]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.setInputImage(url: url)
+    }
+
+    /// Opens an NSSavePanel to save the encoded JPEG 2000 output.
+    private func saveEncodedOutput() {
+        guard let data = viewModel.outputData else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save Encoded Output"
+        panel.nameFieldStringValue = suggestedOutputFilename()
+        panel.allowedContentTypes = [.data]
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            viewModel.statusMessage = "Saved to \(url.lastPathComponent)"
+        } catch {
+            viewModel.statusMessage = "Save failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Opens an NSOpenPanel to select a folder for batch encoding.
+    private func browseForBatchFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Image Folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let imageExtensions: Set<String> = ["png", "tiff", "tif", "bmp"]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: nil
+        ).filter { imageExtensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }) ?? []
+        viewModel.setBatchInputURLs(urls)
+    }
+
+    /// Suggests an output filename based on the input name and configuration.
+    private func suggestedOutputFilename() -> String {
+        let base = viewModel.inputImageURL?.deletingPathExtension().lastPathComponent ?? "encoded"
+        let ext = viewModel.configuration.htj2kEnabled ? "jph" : "j2k"
+        return "\(base).\(ext)"
     }
 }
 #endif

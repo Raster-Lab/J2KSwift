@@ -96,17 +96,21 @@ enum EBCOTContext: UInt8, Sendable, CaseIterable {
     case uniform = 18
 
     /// The initial context state index for this context label.
+    ///
+    /// Per ISO 15444-1 and OpenJPEG's `opj_mqc_reset_enc`:
+    /// Only context 0 (ZC), 17 (AGG), and 18 (UNI) get non-zero initial states.
+    /// All other contexts default to state 0.
     var initialState: UInt8 {
         switch self {
-        case .sigPropLL_LH_0, .sigPropLL_LH_1h, .sigPropLL_LH_1v, .sigPropLL_LH_2,
+        case .sigPropLL_LH_0:
+            return 4 // T1_CTXNO_ZC initialized to state 4
+        case .sigPropLL_LH_1h, .sigPropLL_LH_1v, .sigPropLL_LH_2,
              .sigPropLL_LH_1d, .sigPropHL_h, .sigPropHL_v, .sigPropHH_h, .sigPropHH_v:
-            return 4 // Low probability initial state
+            return 0 // Default state
         case .signHnegVneg, .signH0Vneg, .signHposVneg, .signHnegV0, .signH0V0:
-            return 0 // Uniform initial state for sign
-        case .magRef1:
-            return 6 // Higher probability for first refinement
-        case .magRef2noSig, .magRef2sig:
-            return 3 // Medium probability
+            return 0 // Default state
+        case .magRef1, .magRef2noSig, .magRef2sig:
+            return 0 // Default state
         case .runLength:
             return 3 // Medium probability for run-length
         case .uniform:
@@ -229,87 +233,90 @@ struct ContextModeler: Sendable {
     }
 
     /// Context formation for HL subband (horizontal details).
-    /// Optimised to remove redundant branches and simplify logic.
+    /// ISO 15444-1 Table D.1 for HL: vertical neighbors have priority.
     private func significanceContextHL(h: Int, v: Int, d: Int) -> EBCOTContext {
-        // Vertical neighbor presence has priority in HL subband
-        if v >= 1 {
-            // Any vertical neighbor: use HL_v context (or HL_h if horizontal also present)
-            return h >= 1 ? .sigPropHL_h : .sigPropHL_v
-        } else if h >= 2 {
-            return .sigPropHL_h
-        } else if h == 1 {
-            return d >= 1 ? .sigPropHL_h : .sigPropLL_LH_1d
-        } else if d >= 2 {
-            return .sigPropLL_LH_2
-        } else if d == 1 {
-            return .sigPropLL_LH_1d
-        } else {
-            return .sigPropLL_LH_0
+        if v >= 2 {
+            return .sigPropHH_v           // context 8
+        } else if v == 1 {
+            if h >= 1 {
+                return .sigPropHH_h       // context 7
+            } else if d >= 1 {
+                return .sigPropHL_v       // context 6
+            } else {
+                return .sigPropHL_h       // context 5
+            }
+        } else {  // v == 0
+            if h >= 2 {
+                return .sigPropLL_LH_1d   // context 4
+            } else if h == 1 {
+                return .sigPropLL_LH_2    // context 3
+            } else if d >= 2 {
+                return .sigPropLL_LH_1v   // context 2
+            } else if d == 1 {
+                return .sigPropLL_LH_1h   // context 1
+            } else {
+                return .sigPropLL_LH_0    // context 0
+            }
         }
     }
 
     /// Context formation for LH (and LL) subband (vertical details).
-    /// Optimised to remove redundant branches and simplify logic.
+    /// ISO 15444-1 Table D.1 for LL/LH: horizontal neighbors have priority.
     private func significanceContextLH(h: Int, v: Int, d: Int) -> EBCOTContext {
-        // Horizontal neighbor presence has priority in LH subband
-        if h >= 1 {
-            // Horizontal neighbor present
-            return v >= 1 ? .sigPropLL_LH_2 : .sigPropLL_LH_1h
-        } else if v >= 2 {
-            return .sigPropLL_LH_2
-        } else if v == 1 {
-            // Single vertical neighbor, same context regardless of diagonal
-            return .sigPropLL_LH_1v
-        } else if d >= 2 {
-            return .sigPropLL_LH_2
-        } else if d == 1 {
-            return .sigPropLL_LH_1d
-        } else {
-            return .sigPropLL_LH_0
+        if h >= 2 {
+            return .sigPropHH_v           // context 8
+        } else if h == 1 {
+            if v >= 1 {
+                return .sigPropHH_h       // context 7
+            } else if d >= 1 {
+                return .sigPropHL_v       // context 6
+            } else {
+                return .sigPropHL_h       // context 5
+            }
+        } else {  // h == 0
+            if v >= 2 {
+                return .sigPropLL_LH_1d   // context 4
+            } else if v == 1 {
+                return .sigPropLL_LH_2    // context 3
+            } else if d >= 2 {
+                return .sigPropLL_LH_1v   // context 2
+            } else if d == 1 {
+                return .sigPropLL_LH_1h   // context 1
+            } else {
+                return .sigPropLL_LH_0    // context 0
+            }
         }
     }
 
     /// Context formation for HH subband.
-    ///
-    /// Per ISO/IEC 15444-1, Table D.1, orient=3 (HH):
-    /// The context depends on diagonal count (d) as primary key
-    /// and h+v sum as secondary key.
+    /// ISO 15444-1 Table D.1 for HH: diagonal neighbors have priority.
     private func significanceContextHH(h: Int, v: Int, d: Int) -> EBCOTContext {
         let hv = h + v
 
         if d >= 3 {
-            // d >= 3 → context 8
-            return .sigPropHH_v
+            return .sigPropHH_v           // context 8
         } else if d == 2 {
             if hv >= 1 {
-                // d=2, hv>=1 → context 7
-                return .sigPropHH_h
+                return .sigPropHH_h       // context 7
             } else {
-                // d=2, hv=0 → context 6
-                return .sigPropHL_v
+                return .sigPropHL_v       // context 6
             }
         } else if d == 1 {
             if hv >= 2 {
-                // d=1, hv>=2 → context 5
-                return .sigPropHL_h
+                return .sigPropHL_h       // context 5
             } else if hv == 1 {
-                // d=1, hv=1 → context 4
-                return .sigPropLL_LH_1d
+                return .sigPropLL_LH_1d   // context 4
             } else {
-                // d=1, hv=0 → context 3
-                return .sigPropLL_LH_2
+                return .sigPropLL_LH_2    // context 3
             }
         } else {
             // d == 0
             if hv >= 2 {
-                // d=0, hv>=2 → context 2
-                return .sigPropLL_LH_1v
+                return .sigPropLL_LH_1v   // context 2
             } else if hv == 1 {
-                // d=0, hv=1 → context 1
-                return .sigPropLL_LH_1h
+                return .sigPropLL_LH_1h   // context 1
             } else {
-                // d=0, hv=0 → context 0
-                return .sigPropLL_LH_0
+                return .sigPropLL_LH_0    // context 0
             }
         }
     }
@@ -326,46 +333,44 @@ struct ContextModeler: Sendable {
         let hSign = neighbors.horizontalSign
         let vSign = neighbors.verticalSign
 
-        // XOR prediction is true when exactly one contribution is negative
-        let xorBit = (hSign < 0) != (vSign < 0)
-
-        // Normalise contributions to -1, 0, +1 and map to context
+        // Normalise contributions to -1, 0, +1
         let hContrib = hSign == 0 ? 0 : (hSign > 0 ? 1 : -1)
         let vContrib = vSign == 0 ? 0 : (vSign > 0 ? 1 : -1)
+
+        // XOR sign prediction per ISO 15444-1 Table D.3:
+        // Flip when h < 0, or when h == 0 and v < 0
+        let xorBit = hContrib < 0 || (hContrib == 0 && vContrib < 0)
 
         let context = signContextFromContributions(h: hContrib, v: vContrib)
 
         return (context, xorBit)
     }
 
-    /// Maps sign contributions to context label.
+    /// Maps sign contributions to context label per ISO 15444-1 Table D.3.
+    ///
+    /// Canonicalizes by flipping signs so h >= 0 (and if h == 0, v >= 0),
+    /// then maps to one of five sign contexts (raw values 9-13).
     private func signContextFromContributions(h: Int, v: Int) -> EBCOTContext {
-        // Context is symmetric around (0,0)
-        // We use absolute values and track the XOR prediction separately
+        // Canonicalize: flip so h >= 0, and if h == 0 then v >= 0
+        var hc = h, vc = v
+        if hc < 0 { hc = -hc; vc = -vc }
+        if hc == 0 && vc < 0 { vc = -vc }
 
-        if h == 0 {
-            if v == 0 {
-                return .signH0V0
+        // Map canonical (hc, vc) to context
+        if hc == 0 {
+            if vc == 0 {
+                return .signHnegVneg   // context 9: both zero
             } else {
-                // v is non-zero, already normalised
-                return .signH0Vneg
-            }
-        } else if h > 0 {
-            if v > 0 {
-                return .signH0V0 // Both positive, symmetric to both negative
-            } else if v < 0 {
-                return .signHposVneg
-            } else {
-                return .signHnegV0 // Symmetric
+                return .signH0Vneg     // context 10: h=0, v nonzero
             }
         } else {
-            // h < 0
-            if v > 0 {
-                return .signHposVneg // Symmetric to HnegVneg
-            } else if v < 0 {
-                return .signHnegVneg
+            // hc >= 1
+            if vc > 0 {
+                return .signH0V0       // context 13: same-sign nonzero
+            } else if vc < 0 {
+                return .signHposVneg   // context 11: opposite-sign nonzero
             } else {
-                return .signHnegV0
+                return .signHnegV0     // context 12: h nonzero, v=0
             }
         }
     }
@@ -383,12 +388,12 @@ struct ContextModeler: Sendable {
         firstRefinement: Bool,
         neighborsWereSignificant: Bool
     ) -> EBCOTContext {
-        if firstRefinement {
-            return .magRef1
+        if !firstRefinement {
+            return .magRef2sig       // context 16: subsequent refinement (always)
         } else if neighborsWereSignificant {
-            return .magRef2sig
+            return .magRef2noSig     // context 15: first refinement with significant neighbors
         } else {
-            return .magRef2noSig
+            return .magRef1          // context 14: first refinement without significant neighbors
         }
     }
 }
@@ -557,7 +562,10 @@ struct ContextStateArray: Sendable {
 
     /// Accesses the MQ context for the specified EBCOT context label.
     subscript(context: EBCOTContext) -> MQContext {
-        get { contexts[Int(context.rawValue)] }
+        get {
+            EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue)
+            return contexts[Int(context.rawValue)]
+        }
         set { contexts[Int(context.rawValue)] = newValue }
     }
 
