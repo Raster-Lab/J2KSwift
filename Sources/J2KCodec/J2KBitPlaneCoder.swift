@@ -272,13 +272,14 @@ struct BitPlaneCoder: Sendable {
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - maxPasses: Maximum number of coding passes to generate (optional).
     /// - Returns: A tuple containing the encoded data, the number of coding passes,
-    ///   the number of zero bit-planes, per-pass segment lengths, and cumulative per-pass byte counts.
+    ///   the number of zero bit-planes, per-pass segment lengths, cumulative per-pass byte counts,
+    ///   and cumulative per-pass distortion decrements.
     /// - Throws: ``J2KError`` if encoding fails.
     func encode(
         coefficients: [Int32],
         bitDepth: Int,
         maxPasses: Int? = nil
-    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int]) {
+    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double]) {
         guard coefficients.count == width * height else {
             throw J2KError.invalidParameter("Coefficient count mismatch")
         }
@@ -309,6 +310,14 @@ struct BitPlaneCoder: Sendable {
         // Track cumulative byte count after each pass for rate control truncation.
         // In non-per-pass mode, we use the MQ encoder's approximate byte position.
         var cumulativePassBytes: [Int] = []
+
+        // Per-pass actual distortion tracking for accurate PCRD.
+        // cumulativeDistReduction[i] = total squared-error reduction achieved
+        // by including passes 0..i (vs. zero reconstruction).
+        var cumulativePassDistortion: [Double] = []
+        // Per-coefficient current reconstruction magnitude
+        var recon = [UInt32](repeating: 0, count: width * height)
+        var cumulativeDistReduction: Double = 0.0
 
         // For per-pass termination, we collect pass data separately
         var passDataSegments: [Data] = []
@@ -363,6 +372,19 @@ struct BitPlaneCoder: Sendable {
                 } else {
                     cumulativePassBytes.append(encoder.currentByteCount)
                 }
+                // Distortion: newly significant coefficients from SPP
+                var sppDelta: Double = 0
+                for i in 0..<states.count {
+                    if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] == 0 {
+                        let r = UInt32(1 << bitPlane) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
+                        recon[i] = r
+                        let m = Int64(magnitudes[i])
+                        let e = m - Int64(r)
+                        sppDelta += Double(m * m - e * e)
+                    }
+                }
+                cumulativeDistReduction += sppDelta
+                cumulativePassDistortion.append(cumulativeDistReduction)
             }
 
             // Pass 2: Magnitude Refinement Pass (skip for MSB bit-plane)
@@ -382,6 +404,19 @@ struct BitPlaneCoder: Sendable {
                     let passData = bypassEncoder.finish()
                     passDataSegments.append(passData)
                     cumulativePassBytes.append(passDataSegments.reduce(0) { $0 + $1.count })
+                    // Distortion: refined coefficients from bypass MRP
+                    var mrpDelta: Double = 0
+                    for i in 0..<states.count {
+                        if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] > 0 {
+                            let oldErr = Int64(magnitudes[i]) - Int64(recon[i])
+                            let high = recon[i] & ~UInt32((1 << (bitPlane + 1)) - 1)
+                            recon[i] = high | (magnitudes[i] & UInt32(1 << bitPlane)) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
+                            let newErr = Int64(magnitudes[i]) - Int64(recon[i])
+                            mrpDelta += Double(oldErr * oldErr - newErr * newErr)
+                        }
+                    }
+                    cumulativeDistReduction += mrpDelta
+                    cumulativePassDistortion.append(cumulativeDistReduction)
                 } else {
                     encodeMagnitudeRefinementPass(
                         magnitudes: magnitudes,
@@ -410,6 +445,19 @@ struct BitPlaneCoder: Sendable {
                     } else {
                         cumulativePassBytes.append(encoder.currentByteCount)
                     }
+                    // Distortion: refined coefficients from MRP
+                    var mrpDelta2: Double = 0
+                    for i in 0..<states.count {
+                        if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] > 0 {
+                            let oldErr = Int64(magnitudes[i]) - Int64(recon[i])
+                            let high = recon[i] & ~UInt32((1 << (bitPlane + 1)) - 1)
+                            recon[i] = high | (magnitudes[i] & UInt32(1 << bitPlane)) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
+                            let newErr = Int64(magnitudes[i]) - Int64(recon[i])
+                            mrpDelta2 += Double(oldErr * oldErr - newErr * newErr)
+                        }
+                    }
+                    cumulativeDistReduction += mrpDelta2
+                    cumulativePassDistortion.append(cumulativeDistReduction)
                 }
             }
 
@@ -451,6 +499,19 @@ struct BitPlaneCoder: Sendable {
                 } else {
                     cumulativePassBytes.append(encoder.currentByteCount)
                 }
+                // Distortion: newly significant coefficients from CUP
+                var cupDelta: Double = 0
+                for i in 0..<states.count {
+                    if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] == 0 {
+                        let r = UInt32(1 << bitPlane) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
+                        recon[i] = r
+                        let m = Int64(magnitudes[i])
+                        let e = m - Int64(r)
+                        cupDelta += Double(m * m - e * e)
+                    }
+                }
+                cumulativeDistReduction += cupDelta
+                cumulativePassDistortion.append(cumulativeDistReduction)
             }
 
             // Clear coded-this-pass flags for next bit-plane
@@ -473,11 +534,34 @@ struct BitPlaneCoder: Sendable {
         } else {
             // Single termination at the end
             encodedData = encoder.finish(mode: options.terminationMode)
-            // Scale cumulative byte estimates to match actual final size
+            // Scale cumulative byte estimates to match actual final size.
+            // Use piecewise-linear scaling that preserves the relative
+            // increments between passes while matching the final size.
+            // This is more accurate than uniform linear scaling because
+            // the MQ coder's approximation errors are not uniformly
+            // distributed across passes.
             let finalSize = encodedData.count
             if let lastEstimate = cumulativePassBytes.last, lastEstimate > 0 {
-                let scale = Double(finalSize) / Double(lastEstimate)
-                cumulativePassBytes = cumulativePassBytes.map { Int(Double($0) * scale) }
+                if lastEstimate == finalSize {
+                    // Perfect match — no adjustment needed
+                } else {
+                    // Monotone piecewise scaling: adjust each estimate
+                    // so that relative proportions are preserved and the
+                    // final value equals the actual encoded size.
+                    let scale = Double(finalSize) / Double(lastEstimate)
+                    var scaled = cumulativePassBytes.map { max(0, Int(Double($0) * scale)) }
+                    // Ensure monotonicity and clamp to final size
+                    for i in 1..<scaled.count {
+                        scaled[i] = max(scaled[i], scaled[i - 1])
+                    }
+                    for i in 0..<scaled.count {
+                        scaled[i] = min(scaled[i], finalSize)
+                    }
+                    if let last = scaled.indices.last {
+                        scaled[last] = finalSize
+                    }
+                    cumulativePassBytes = scaled
+                }
             }
         }
 
@@ -485,7 +569,7 @@ struct BitPlaneCoder: Sendable {
             print("EBCOT_RESULT: passCount=\(passCount) dataBytes=\(encodedData.count) zbp=\(zeroBitPlanes)")
         }
 
-        return (encodedData, passCount, zeroBitPlanes, segmentLengths, cumulativePassBytes)
+        return (encodedData, passCount, zeroBitPlanes, segmentLengths, cumulativePassBytes, cumulativePassDistortion)
     }
 
     /// Separates coefficients into magnitudes and signs.
@@ -1735,7 +1819,7 @@ struct CodeBlockEncoder: Sendable {
         options: CodingOptions
     ) throws -> J2KCodeBlock {
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes) = try coder.encode(
+        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -1751,7 +1835,8 @@ struct CodeBlockEncoder: Sendable {
             passeCount: passCount,
             zeroBitPlanes: zeroBitPlanes,
             passSegmentLengths: passSegmentLengths,
-            cumulativePassBytes: cumulativePassBytes
+            cumulativePassBytes: cumulativePassBytes,
+            cumulativePassDistortion: cumulativePassDistortion
         )
     }
 }

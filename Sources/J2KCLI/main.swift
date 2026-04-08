@@ -141,6 +141,8 @@ struct J2KCLI {
             --bitrate BPP               Target bit-rate in bits per pixel
             --psnr VALUE                Target PSNR (dB)
             --visually-lossless         Visually lossless mode
+            --reversible                Use 5/3 reversible DWT (default, best for medical)
+            --irreversible              Use 9/7 irreversible DWT
             --preset NAME               Use preset: fast, balanced, quality
             --levels N                  Decomposition levels (0-10, default: 5)
             --blocksize WxH             Code block size (default: 32x32)

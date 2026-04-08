@@ -1015,8 +1015,13 @@ struct DecoderPipeline: Sendable {
         let levels = metadata.configuration.decompositionLevels
         var componentData: [[Double]] = []
 
-        // Group subbands by component
-        let maxComponent = subbands.map { $0.componentIndex }.max() ?? 0
+        // Use the component count from the SIZ marker, not from the data.
+        // Some components may have all-empty packets (e.g., aggressive rate
+        // control). They should still produce zero-filled output.
+        let maxComponent = max(
+            metadata.componentCount - 1,
+            subbands.map { $0.componentIndex }.max() ?? 0
+        )
 
         for compIdx in 0...maxComponent {
             // Select filter for this component
@@ -1038,18 +1043,40 @@ struct DecoderPipeline: Sendable {
             let compSubbands = subbands.filter { $0.componentIndex == compIdx }
 
             if compSubbands.isEmpty {
-                // Empty component
-                componentData.append([])
+                // Component has no data (e.g., all code blocks were zeroed by
+                // rate control). Fill with neutral values so downstream stages
+                // (color transform, reconstruction) have the expected shape.
+                componentData.append([Double](repeating: 0.0, count: metadata.width * metadata.height))
                 continue
             }
 
-            // Find LL subband
-            guard let llSubband = compSubbands.first(where: { $0.subband == .ll }) else {
-                throw J2KError.decodingError("Missing LL subband for component \(compIdx)")
+            // Find LL subband.  When rate control truncates aggressively the
+            // LL code blocks may all be empty, so synthesise a zero-filled
+            // subband with the standard dimensions for the deepest level.
+            let llSubband: SubbandInfo
+            let width: Int
+            let height: Int
+            if let found = compSubbands.first(where: { $0.subband == .ll }) {
+                llSubband = found
+                width = found.width
+                height = found.height
+            } else {
+                let cW = metadata.width / metadata.components[compIdx].subsamplingX
+                let cH = metadata.height / metadata.components[compIdx].subsamplingY
+                var w = cW; var h = cH
+                for _ in 0..<levels { w = (w + 1) / 2; h = (h + 1) / 2 }
+                llSubband = SubbandInfo(
+                    componentIndex: compIdx,
+                    level: levels,
+                    subband: .ll,
+                    coefficients: [Int32](repeating: 0, count: w * h),
+                    doubleCoefficients: nil,
+                    width: w,
+                    height: h
+                )
+                width = w
+                height = h
             }
-
-            let width = llSubband.width
-            let height = llSubband.height
 
             // For now, if no decomposition levels, just return LL subband
             if levels == 0 {
@@ -1115,6 +1142,54 @@ struct DecoderPipeline: Sendable {
                 levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
             }
 
+            // Helper: convert 1D Int32 array to 2D padded to standard dimensions.
+            // When rate control truncates code blocks, the actual subband data may
+            // be smaller than the standard dimension. Zero-pad to the expected size.
+            func paddedInt(_ coeffs: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [[Int32]] {
+                var result = [[Int32]](repeating: [Int32](repeating: 0, count: dstW), count: dstH)
+                let copyW = min(srcW, dstW)
+                let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    for col in 0..<copyW {
+                        let idx = row * srcW + col
+                        if idx < coeffs.count {
+                            result[row][col] = coeffs[idx]
+                        }
+                    }
+                }
+                return result
+            }
+
+            func paddedDoubleFromInt(_ coeffs: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [[Double]] {
+                var result = [[Double]](repeating: [Double](repeating: 0, count: dstW), count: dstH)
+                let copyW = min(srcW, dstW)
+                let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    for col in 0..<copyW {
+                        let idx = row * srcW + col
+                        if idx < coeffs.count {
+                            result[row][col] = Double(coeffs[idx])
+                        }
+                    }
+                }
+                return result
+            }
+
+            func paddedDouble(_ coeffs: [Double], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [[Double]] {
+                var result = [[Double]](repeating: [Double](repeating: 0, count: dstW), count: dstH)
+                let copyW = min(srcW, dstW)
+                let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    for col in 0..<copyW {
+                        let idx = row * srcW + col
+                        if idx < coeffs.count {
+                            result[row][col] = coeffs[idx]
+                        }
+                    }
+                }
+                return result
+            }
+
             // Full multi-level IDWT reconstruction
             // For 9/7 irreversible, use Double precision throughout all levels to
             // avoid accumulated rounding error from Int32 truncation at each level.
@@ -1129,11 +1204,13 @@ struct DecoderPipeline: Sendable {
                 // Double-precision path for 9/7 irreversible wavelet.
                 // Use doubleCoefficients (from dequantization) to preserve
                 // fractional precision that would be lost by Int32 rounding.
+                let expectedLLW = levelSizes[levels].width
+                let expectedLLH = levelSizes[levels].height
                 var currentLLDouble: [[Double]]
                 if let dc = llSubband.doubleCoefficients {
-                    currentLLDouble = to2DDoubleFromDoubles(dc, width: width, height: height)
+                    currentLLDouble = paddedDouble(dc, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
                 } else {
-                    currentLLDouble = to2DDouble(llSubband.coefficients, width: width, height: height)
+                    currentLLDouble = paddedDoubleFromInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
                 }
 
                 for level in (1...levels).reversed() {
@@ -1141,15 +1218,19 @@ struct DecoderPipeline: Sendable {
                     let parentH = levelSizes[level - 1].height
                     let llW = levelSizes[level].width
                     let llH = levelSizes[level].height
-                    let hlW = parentW - llW
-                    let lhH = parentH - llH
+                    // Standard JPEG 2000 subband dimensions:
+                    // HL: floor(parentW/2) x ceil(parentH/2)
+                    // LH: ceil(parentW/2) x floor(parentH/2)
+                    // HH: floor(parentW/2) x floor(parentH/2)
+                    let hlW = parentW - llW  // = floor(parentW/2)
+                    let lhH = parentH - llH  // = floor(parentH/2)
 
                     let hlSub = compSubbands.first(where: { $0.level == level && $0.subband == .hl })
                     let hl2D: [[Double]]
                     if let hs = hlSub, let dc = hs.doubleCoefficients {
-                        hl2D = to2DDoubleFromDoubles(dc, width: hs.width, height: hs.height)
+                        hl2D = paddedDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
                     } else if let hs = hlSub {
-                        hl2D = to2DDouble(hs.coefficients, width: hs.width, height: hs.height)
+                        hl2D = paddedDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
                     } else {
                         hl2D = [[Double]](repeating: [Double](repeating: 0, count: hlW), count: llH)
                     }
@@ -1157,9 +1238,9 @@ struct DecoderPipeline: Sendable {
                     let lhSub = compSubbands.first(where: { $0.level == level && $0.subband == .lh })
                     let lh2D: [[Double]]
                     if let ls = lhSub, let dc = ls.doubleCoefficients {
-                        lh2D = to2DDoubleFromDoubles(dc, width: ls.width, height: ls.height)
+                        lh2D = paddedDouble(dc, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
                     } else if let ls = lhSub {
-                        lh2D = to2DDouble(ls.coefficients, width: ls.width, height: ls.height)
+                        lh2D = paddedDoubleFromInt(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
                     } else {
                         lh2D = [[Double]](repeating: [Double](repeating: 0, count: llW), count: lhH)
                     }
@@ -1167,9 +1248,9 @@ struct DecoderPipeline: Sendable {
                     let hhSub = compSubbands.first(where: { $0.level == level && $0.subband == .hh })
                     let hh2D: [[Double]]
                     if let hs = hhSub, let dc = hs.doubleCoefficients {
-                        hh2D = to2DDoubleFromDoubles(dc, width: hs.width, height: hs.height)
+                        hh2D = paddedDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
                     } else if let hs = hhSub {
-                        hh2D = to2DDouble(hs.coefficients, width: hs.width, height: hs.height)
+                        hh2D = paddedDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
                     } else {
                         hh2D = [[Double]](repeating: [Double](repeating: 0, count: hlW), count: lhH)
                     }
@@ -1188,7 +1269,9 @@ struct DecoderPipeline: Sendable {
                 componentData.append(flattened)
             } else {
                 // Int32 path for 5/3 reversible wavelet (exact integer arithmetic)
-                var currentLL = to2D(llSubband.coefficients, width: width, height: height)
+                let expectedLLW = levelSizes[levels].width
+                let expectedLLH = levelSizes[levels].height
+                var currentLL = paddedInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
 
                 for level in (1...levels).reversed() {
                     let parentW = levelSizes[level - 1].width
@@ -1198,15 +1281,24 @@ struct DecoderPipeline: Sendable {
                     let hlW = parentW - llW
                     let lhH = parentH - llH
 
-                    let hl2D = compSubbands.first(where: { $0.level == level && $0.subband == .hl })
-                        .map { to2D($0.coefficients, width: $0.width, height: $0.height) }
-                        ?? [[Int32]](repeating: [Int32](repeating: 0, count: hlW), count: llH)
-                    let lh2D = compSubbands.first(where: { $0.level == level && $0.subband == .lh })
-                        .map { to2D($0.coefficients, width: $0.width, height: $0.height) }
-                        ?? [[Int32]](repeating: [Int32](repeating: 0, count: llW), count: lhH)
-                    let hh2D = compSubbands.first(where: { $0.level == level && $0.subband == .hh })
-                        .map { to2D($0.coefficients, width: $0.width, height: $0.height) }
-                        ?? [[Int32]](repeating: [Int32](repeating: 0, count: hlW), count: lhH)
+                    let hl2D: [[Int32]]
+                    if let hs = compSubbands.first(where: { $0.level == level && $0.subband == .hl }) {
+                        hl2D = paddedInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                    } else {
+                        hl2D = [[Int32]](repeating: [Int32](repeating: 0, count: hlW), count: llH)
+                    }
+                    let lh2D: [[Int32]]
+                    if let ls = compSubbands.first(where: { $0.level == level && $0.subband == .lh }) {
+                        lh2D = paddedInt(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                    } else {
+                        lh2D = [[Int32]](repeating: [Int32](repeating: 0, count: llW), count: lhH)
+                    }
+                    let hh2D: [[Int32]]
+                    if let hhs = compSubbands.first(where: { $0.level == level && $0.subband == .hh }) {
+                        hh2D = paddedInt(hhs.coefficients, srcW: hhs.width, srcH: hhs.height, dstW: hlW, dstH: lhH)
+                    } else {
+                        hh2D = [[Int32]](repeating: [Int32](repeating: 0, count: hlW), count: lhH)
+                    }
 
                     let optimizer = J2KDWT2DOptimizer()
                     currentLL = try optimizer.inverseTransform2DOptimized(

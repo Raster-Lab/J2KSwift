@@ -24,7 +24,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
     ) throws -> (mismatches: Int, total: Int) {
         let coefficients = makeCoefficients(width: width, height: height)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients, bitDepth: bitDepth
         )
         let decoder = BitPlaneDecoder(width: width, height: height, subband: subband, options: options)
@@ -96,7 +96,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
             
             let options = CodingOptions.default
             let coder = BitPlaneCoder(width: size, height: size, subband: .ll, options: options)
-            let (encoded, passCount, zeroBP, segLens, _) = try coder.encode(
+            let (encoded, passCount, zeroBP, segLens, _, _) = try coder.encode(
                 coefficients: coefficients, bitDepth: 12
             )
             let decoder = BitPlaneDecoder(width: size, height: size, subband: .ll, options: options)
@@ -124,7 +124,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
             
             let options = CodingOptions.default
             let coder = BitPlaneCoder(width: size, height: size, subband: .ll, options: options)
-            let (encoded, passCount, zeroBP, segLens, _) = try coder.encode(
+            let (encoded, passCount, zeroBP, segLens, _, _) = try coder.encode(
                 coefficients: coefficients, bitDepth: 12
             )
             let decoder = BitPlaneDecoder(width: size, height: size, subband: .ll, options: options)
@@ -149,7 +149,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
                 coefficients[i] = -1
             }
             let coder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (encoded, passCount, zeroBP, segLens, _) = try coder.encode(
+            let (encoded, passCount, zeroBP, segLens, _, _) = try coder.encode(
                 coefficients: coefficients, bitDepth: 12
             )
             let decoder = BitPlaneDecoder(width: width, height: height, subband: .ll)
@@ -174,7 +174,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
             var coefficients = [Int32](repeating: 1, count: width * height)
             for i in stride(from: 0, to: coefficients.count, by: 3) { coefficients[i] = -1 }
             let coder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (encoded, pc, zbp, sl, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
+            let (encoded, pc, zbp, sl, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
             let decoder = BitPlaneDecoder(width: width, height: height, subband: .ll)
             let decoded = try decoder.decode(data: encoded, passCount: pc, bitDepth: 12, zeroBitPlanes: zbp, passSegmentLengths: sl)
             var m = 0
@@ -188,7 +188,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
             var coefficients = [Int32](repeating: 1, count: width * height)
             for i in stride(from: 0, to: coefficients.count, by: 3) { coefficients[i] = -1 }
             let coder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (encoded, pc, zbp, sl, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
+            let (encoded, pc, zbp, sl, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
             let decoder = BitPlaneDecoder(width: width, height: height, subband: .ll)
             let decoded = try decoder.decode(data: encoded, passCount: pc, bitDepth: 12, zeroBitPlanes: zbp, passSegmentLengths: sl)
             var m = 0
@@ -202,7 +202,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
         var coefficients = [Int32](repeating: 1, count: width * height)
         for i in stride(from: 0, to: coefficients.count, by: 3) { coefficients[i] = -1 }
         let coder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (encoded, pc, zbp, sl, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
+        let (encoded, pc, zbp, sl, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 12)
         let decoder = BitPlaneDecoder(width: width, height: height, subband: .ll)
         let decoded = try decoder.decode(data: encoded, passCount: pc, bitDepth: 12, zeroBitPlanes: zbp, passSegmentLengths: sl)
         for i in 0..<coefficients.count {
@@ -226,7 +226,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
             
             let options = CodingOptions.default
             let coder = BitPlaneCoder(width: size, height: size, subband: .ll, options: options)
-            let (encoded, passCount, encoderZeroBP, _, _) = try coder.encode(
+            let (encoded, passCount, encoderZeroBP, _, _, _) = try coder.encode(
                 coefficients: coefficients, bitDepth: 12
             )
             
@@ -261,7 +261,7 @@ final class J2KRLCDiagnosticTest: XCTestCase {
         
         let options = CodingOptions.default
         let coder = BitPlaneCoder(width: size, height: size, subband: .ll, options: options)
-        let (encoded, passCount, zeroBP, segLens, _) = try coder.encode(
+        let (encoded, passCount, zeroBP, segLens, _, _) = try coder.encode(
             coefficients: coefficients, bitDepth: 12
         )
         let decoder = BitPlaneDecoder(width: size, height: size, subband: .ll, options: options)

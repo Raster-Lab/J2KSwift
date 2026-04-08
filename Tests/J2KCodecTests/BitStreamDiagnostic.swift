@@ -39,7 +39,7 @@ final class BitStreamDiagnosticTests: XCTestCase {
         print(String(repeating: "-", count: 80))
 
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
@@ -118,7 +118,7 @@ final class BitStreamDiagnosticTests: XCTestCase {
             printBlock(original, width: width, height: height)
 
             let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
                 coefficients: original,
                 bitDepth: bitDepth
             )
@@ -170,7 +170,7 @@ final class BitStreamDiagnosticTests: XCTestCase {
         print("  Pos[10] = 16 = 0b00010000 (bit 4)")
 
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )

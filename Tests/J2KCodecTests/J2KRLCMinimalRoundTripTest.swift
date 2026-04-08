@@ -19,7 +19,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         // Test with default termination first
         let defOpts = CodingOptions()
         let defCoder = BitPlaneCoder(width: width, height: height, subband: subband, options: defOpts)
-        let (defData, defPC, defZBP, defSL, _) = try defCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        let (defData, defPC, defZBP, defSL, _, _) = try defCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
         let defDecoder = BitPlaneDecoder(width: width, height: height, subband: subband, options: defOpts)
         let defResult = try defDecoder.decode(data: defData, passCount: defPC, bitDepth: bitDepth, zeroBitPlanes: defZBP, passSegmentLengths: defSL)
         print("Default termination: input=\(coefficients) decoded=\(defResult)")
@@ -27,7 +27,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         // Test with predictable termination
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -112,7 +112,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -148,7 +148,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -223,7 +223,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         
         let isoOpts = CodingOptions(useISOPositionEncoding: true)
         let isoCoder = BitPlaneCoder(width: width, height: height, subband: subband, options: isoOpts)
-        let (isoData, isoPC, isoZBP, isoSL, _) = try isoCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        let (isoData, isoPC, isoZBP, isoSL, _, _) = try isoCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
         
         let encSymbols = EBCOTDebugTrace.shared.encoderSymbols
         EBCOTDebugTrace.shared.decoderSymbols = []
@@ -407,7 +407,7 @@ final class J2KRLCMinimalRoundTripTest: XCTestCase {
         
         let options = CodingOptions.default
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )

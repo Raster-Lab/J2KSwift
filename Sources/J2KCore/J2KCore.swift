@@ -527,6 +527,14 @@ public struct J2KCodeBlock: Sendable {
     /// Used by rate control for accurate per-pass distortion reduction.
     public var bitPlanePopulation: [Int]
 
+    /// Cumulative actual distortion reduction after each coding pass.
+    ///
+    /// Element `i` is the total squared-error reduction (vs. zero reconstruction)
+    /// achieved by including coding passes 0 through `i`. Computed during EBCOT
+    /// encoding from the actual coefficient values and reconstruction state.
+    /// Used by rate control for accurate PCRD slope computation.
+    public var cumulativePassDistortion: [Double]
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -545,6 +553,7 @@ public struct J2KCodeBlock: Sendable {
     ///   - cumulativePassBytes: Cumulative bytes after each pass (default: empty).
     ///   - coefficientSquaredSum: Sum of squared quantized coefficient magnitudes (default: 0).
     ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
+    ///   - cumulativePassDistortion: Per-pass distortion decrements (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -560,7 +569,8 @@ public struct J2KCodeBlock: Sendable {
         passSegmentLengths: [Int] = [],
         cumulativePassBytes: [Int] = [],
         coefficientSquaredSum: Double = 0,
-        bitPlanePopulation: [Int] = []
+        bitPlanePopulation: [Int] = [],
+        cumulativePassDistortion: [Double] = []
     ) {
         self.index = index
         self.x = x
@@ -577,6 +587,7 @@ public struct J2KCodeBlock: Sendable {
         self.cumulativePassBytes = cumulativePassBytes
         self.coefficientSquaredSum = coefficientSquaredSum
         self.bitPlanePopulation = bitPlanePopulation
+        self.cumulativePassDistortion = cumulativePassDistortion
     }
 }
 

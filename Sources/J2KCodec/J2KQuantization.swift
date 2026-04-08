@@ -346,15 +346,15 @@ public struct J2KSubbandGain: Sendable {
 struct CDF97Norms: Sendable {
     /// LL subband norms by decomposition depth (index 0 = 1 level, etc.)
     private static let ll: [Double] = [
-        1.000, 1.965, 4.177, 8.403, 16.90, 33.84, 67.69, 135.3, 270.6, 541.2
+        1.000, 1.965, 4.177, 8.403, 16.90, 33.84, 67.69, 135.3, 270.6, 540.9
     ]
     /// HL (and LH) subband norms by decomposition level index (0 = finest)
     private static let hl: [Double] = [
-        2.022, 3.989, 8.355, 16.73, 33.47, 66.95, 133.9, 267.8, 535.6, 1071
+        2.022, 3.989, 8.355, 17.04, 34.27, 68.63, 137.3, 274.6, 549.0
     ]
     /// HH subband norms by decomposition level index (0 = finest)
     private static let hh: [Double] = [
-        2.080, 3.758, 8.285, 16.54, 33.09, 66.18, 132.4, 264.7, 529.4, 1059
+        2.080, 3.865, 8.307, 17.18, 34.71, 69.59, 139.3, 278.6, 557.2
     ]
 
     /// Returns the synthesis basis function L2 norm for a subband.

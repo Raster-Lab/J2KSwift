@@ -220,6 +220,25 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: false (use legacy EBCOT block coding)
     public var useHTJ2K: Bool
 
+    /// Whether to use the reversible (5/3) wavelet filter and RCT colour transform
+    /// even in lossy mode.
+    ///
+    /// When `true`, the encoder uses the reversible 5/3 DWT and integer RCT, with
+    /// no quantization (step size = 1.0). Quality is controlled solely through
+    /// PCRD rate truncation of coding passes. This produces better quality at the
+    /// same bitrate for medical/diagnostic imaging because there is no DWT or
+    /// quantization noise — only truncation of least-significant bit planes.
+    ///
+    /// When `false`, uses the irreversible 9/7 DWT, floating-point ICT, and
+    /// deadzone quantization (traditional lossy JPEG 2000).
+    ///
+    /// This property is forced to `true` when `lossless` is `true`.
+    /// For lossy encoding, set this to `true` to match OpenJPEG's default
+    /// behaviour (5/3 reversible DWT + rate truncation).
+    ///
+    /// - Default: `true`
+    public var useReversibleFilter: Bool
+
     /// Whether to enable parallel code-block encoding.
     ///
     /// When enabled, independent code-blocks within a tile are encoded in parallel
@@ -344,7 +363,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - quality: Overall quality factor (default: 0.9).
     ///   - lossless: Whether to use lossless compression (default: false).
     ///   - decompositionLevels: Number of wavelet decomposition levels (default: 5).
-    ///   - codeBlockSize: Code block dimensions (default: 32×32).
+    ///   - codeBlockSize: Code block dimensions (default: 64×64).
     ///   - qualityLayers: Number of quality layers (default: 5).
     ///   - progressionOrder: Packet progression order (default: .rpcl).
     ///   - enableVisualWeighting: Enable perceptual weighting (default: false).
@@ -352,6 +371,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - bitrateMode: Bitrate control mode (default: .constantQuality).
     ///   - maxThreads: Maximum encoding threads, 0 for auto (default: 0).
     ///   - useHTJ2K: Use HTJ2K block coding (default: false).
+    ///   - useReversibleFilter: Use 5/3 reversible filter for lossy mode (default: true).
     ///   - enableParallelCodeBlocks: Enable parallel code-block encoding (default: true).
     ///   - enableFastMEL: Enable fast MEL encoding for HTJ2K (default: true).
     ///   - enableVLCOptimization: Enable VLC table optimisation for HTJ2K (default: true).
@@ -366,7 +386,7 @@ public struct J2KEncodingConfiguration: Sendable {
         quality: Double = 0.9,
         lossless: Bool = false,
         decompositionLevels: Int = 5,
-        codeBlockSize: (width: Int, height: Int) = (32, 32),
+        codeBlockSize: (width: Int, height: Int) = (64, 64),
         qualityLayers: Int = 5,
         progressionOrder: J2KProgressionOrder = .rpcl,
         enableVisualWeighting: Bool = false,
@@ -374,6 +394,7 @@ public struct J2KEncodingConfiguration: Sendable {
         bitrateMode: J2KBitrateMode = .constantQuality,
         maxThreads: Int = 0,
         useHTJ2K: Bool = false,
+        useReversibleFilter: Bool = true,
         enableParallelCodeBlocks: Bool = true,
         enableFastMEL: Bool = true,
         enableVLCOptimization: Bool = true,
@@ -402,6 +423,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.bitrateMode = bitrateMode
         self.maxThreads = max(0, maxThreads)
         self.useHTJ2K = useHTJ2K
+        self.useReversibleFilter = lossless ? true : useReversibleFilter
         self.enableParallelCodeBlocks = enableParallelCodeBlocks
         self.enableFastMEL = enableFastMEL
         self.enableVLCOptimization = enableVLCOptimization

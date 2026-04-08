@@ -29,7 +29,7 @@ final class J2KRLCTraceTest: XCTestCase {
         // Encode with per-pass to isolate
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -148,7 +148,7 @@ final class J2KRLCTraceTest: XCTestCase {
         }
         
         let coder = BitPlaneCoder(width: width, height: height, subband: subband)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -193,7 +193,7 @@ final class J2KRLCTraceTest: XCTestCase {
         // Encode with per-pass segments (predictable termination)
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -247,7 +247,7 @@ final class J2KRLCTraceTest: XCTestCase {
         // Full encode (all passes) then decode
         let options = CodingOptions(terminationMode: .predictable)
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (encoded, passCount, zeroBitPlanes, segmentLengths, _) = try coder.encode(
+        let (encoded, passCount, zeroBitPlanes, segmentLengths, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -345,13 +345,13 @@ final class J2KRLCTraceTest: XCTestCase {
         
         // Test with HL (should pass with both old and new code)
         let coderHL = BitPlaneCoder(width: width, height: height, subband: .hl)
-        let (encodedHL, passCountHL, zeroBitPlanesHL, segHL, _) = try coderHL.encode(
+        let (encodedHL, passCountHL, zeroBitPlanesHL, segHL, _, _) = try coderHL.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
         
         let coderLL = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (encodedLL, passCountLL, zeroBitPlanesLL, segLL, _) = try coderLL.encode(
+        let (encodedLL, passCountLL, zeroBitPlanesLL, segLL, _, _) = try coderLL.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )

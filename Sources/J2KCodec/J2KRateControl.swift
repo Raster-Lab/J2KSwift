@@ -134,6 +134,13 @@ public struct RateControlConfiguration: Sendable {
     /// Number of image components for MCT distortion estimation.
     public let componentCount: Int
 
+    /// Whether the encoder uses the reversible (5/3) wavelet filter.
+    ///
+    /// Controls which wavelet synthesis norm table is used for PCRD
+    /// distortion weighting. For 9/7 irreversible, the quantization
+    /// step sizes already incorporate the norms, so weighting is not applied.
+    public let useReversibleFilter: Bool
+
     /// Creates a new rate control configuration.
     ///
     /// - Parameters:
@@ -143,13 +150,15 @@ public struct RateControlConfiguration: Sendable {
     ///   - distortionEstimation: Distortion estimation method (default: .normBased).
     ///   - mctConfiguration: Optional MCT configuration for distortion adjustment (default: nil).
     ///   - componentCount: Number of image components (default: 3).
+    ///   - useReversibleFilter: Whether using the 5/3 reversible wavelet (default: true).
     public init(
         mode: RateControlMode,
         layerCount: Int = 1,
         strictRateMatching: Bool = true,
         distortionEstimation: DistortionEstimationMethod = .normBased,
         mctConfiguration: J2KMCTEncodingConfiguration? = nil,
-        componentCount: Int = 3
+        componentCount: Int = 3,
+        useReversibleFilter: Bool = true
     ) {
         self.mode = mode
         self.layerCount = layerCount
@@ -157,6 +166,7 @@ public struct RateControlConfiguration: Sendable {
         self.distortionEstimation = distortionEstimation
         self.mctConfiguration = mctConfiguration
         self.componentCount = componentCount
+        self.useReversibleFilter = useReversibleFilter
     }
 
     /// Creates a configuration for lossless encoding.
@@ -327,21 +337,94 @@ public struct J2KRateControl: Sendable {
 
     // MARK: - Private Methods
 
+    /// L2 norms of the 5/3 (reversible) wavelet synthesis basis functions.
+    ///
+    /// Indexed by [orient][decomposition_level] where orient: 0=LL, 1=HL, 2=LH, 3=HH
+    /// and decomposition_level 0=finest detail up to 9 (max 10 DWT levels).
+    /// Values sourced from ISO/IEC 15444-1 Annex E / OpenJPEG reference implementation.
+    private static let dwtNorms53: [[Double]] = [
+        // LL
+        [1.000, 1.500, 2.750, 5.375, 10.688, 21.344, 42.656, 85.281, 170.531, 341.031],
+        // HL
+        [1.038, 1.592, 2.919, 5.703, 11.330, 22.607, 45.183, 90.335, 180.637, 361.243],
+        // LH
+        [1.038, 1.592, 2.919, 5.703, 11.330, 22.607, 45.183, 90.335, 180.637, 361.243],
+        // HH
+        [0.7186, 0.966, 1.649, 3.079, 5.969, 11.777, 23.410, 46.684, 93.233, 186.331],
+    ]
+
+    /// L2 norms of the 9/7 (irreversible) wavelet synthesis basis functions.
+    private static let dwtNorms97: [[Double]] = [
+        // LL
+        [1.000, 1.965, 4.177, 8.403, 16.811, 33.622, 67.244, 134.489, 268.978, 537.957],
+        // HL
+        [2.022, 3.989, 8.355, 17.004, 34.027, 68.054, 136.108, 272.216, 544.432, 1088.864],
+        // LH
+        [2.022, 3.989, 8.355, 17.004, 34.027, 68.054, 136.108, 272.216, 544.432, 1088.864],
+        // HH
+        [2.080, 3.865, 8.307, 17.187, 34.726, 69.453, 138.905, 277.810, 555.621, 1111.242],
+    ]
+
     /// Computes coding pass information with rate-distortion slopes.
     private func computeCodingPassInfo(
         codeBlocks: [J2KCodeBlock]
     ) throws -> [CodingPassInfo] {
         var passInfos = [CodingPassInfo]()
 
+        // Determine the total number of decomposition levels (NL) from
+        // the maximum resolution level across all code blocks.
+        let maxResLevel = codeBlocks.map { $0.resolutionLevel }.max() ?? 0
+
         for codeBlock in codeBlocks {
             guard codeBlock.passeCount > 0 else { continue }
+
+            // Wavelet synthesis norm weighting for PCRD (WMSE model).
+            //
+            // For the 5/3 reversible wavelet: coefficient-domain distortion
+            // does NOT equal pixel-domain MSE because (a) the wavelet is
+            // biorthogonal (not orthogonal) and (b) integer coefficients have
+            // no quantization step normalization. Weight each code block's
+            // distortion by the squared L2 norm of the synthesis basis to
+            // convert to pixel-domain MSE.
+            //
+            // For the 9/7 irreversible wavelet: the quantization step sizes
+            // already incorporate the wavelet norms (Δ_b = Δ / norm_b), so
+            // the quantized coefficients are already normalized. No additional
+            // weighting is needed.
+            let subbandWeight: Double
+            if maxResLevel > 0 && configuration.useReversibleFilter {
+                let resLevel = codeBlock.resolutionLevel
+                let orient: Int
+                let dwtLevel: Int  // 0-indexed decomposition level (0 = finest detail)
+
+                if resLevel == 0 {
+                    // LL subband at the coarsest level
+                    orient = 0  // LL
+                    dwtLevel = maxResLevel - 1
+                } else {
+                    // Detail subband: DWT level = NL - resolutionLevel (0-indexed)
+                    dwtLevel = maxResLevel - resLevel
+                    switch codeBlock.subband {
+                    case .ll: orient = 0
+                    case .hl: orient = 1
+                    case .lh: orient = 2
+                    case .hh: orient = 3
+                    }
+                }
+
+                let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
+                let norm = Self.dwtNorms53[orient][clampedLevel]
+                subbandWeight = norm * norm  // squared L2 norm for MSE domain
+            } else {
+                subbandWeight = 1.0
+            }
 
             // Use tracked per-pass byte counts when available, otherwise estimate
             let hasPerPassBytes = !codeBlock.cumulativePassBytes.isEmpty
                 && codeBlock.cumulativePassBytes.count >= codeBlock.passeCount
 
             var previousCumulativeBytes = 0
-            var previousDistortion = estimateInitialDistortion(codeBlock: codeBlock)
+            var previousDistortion = estimateInitialDistortion(codeBlock: codeBlock) * subbandWeight
 
             for passNum in 0..<codeBlock.passeCount {
                 let cumulativeBytes: Int
@@ -355,12 +438,12 @@ public struct J2KRateControl: Sendable {
 
                 let passBytes = max(1, cumulativeBytes - previousCumulativeBytes)
 
-                // Estimate distortion after including this pass
+                // Estimate distortion after including this pass (weighted)
                 let distortion = estimateDistortion(
                     codeBlock: codeBlock,
                     passNumber: passNum,
                     totalPasses: codeBlock.passeCount
-                )
+                ) * subbandWeight
 
                 // Compute rate-distortion slope
                 let deltaDistortion = previousDistortion - distortion
@@ -406,10 +489,14 @@ public struct J2KRateControl: Sendable {
 
     /// Estimates distortion for a code-block after a given number of passes.
     ///
-    /// Uses the EBCOT bit-plane model: each group of 3 passes codes one
-    /// bit plane, each reducing MSE by a factor of 4 (6 dB).
-    /// The initial distortion is based on actual coefficient data when
-    /// available, providing accurate relative weighting between code blocks.
+    /// When `bitPlanePopulation` data is available (count of coefficients per
+    /// MSB position), uses population-weighted distortion that accurately
+    /// reflects the actual coefficient distribution. This is far more accurate
+    /// than the generic 4× per plane model for natural images where most
+    /// coefficients are small (heavy-tailed distribution).
+    ///
+    /// Falls back to the generic exponential model when population data is
+    /// unavailable.
     private func estimateDistortion(
         codeBlock: J2KCodeBlock,
         passNumber: Int,
@@ -417,12 +504,112 @@ public struct J2KRateControl: Sendable {
     ) -> Double {
         let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock)
 
+        // Use population-based model when available
+        let pop = codeBlock.bitPlanePopulation
+        if !pop.isEmpty {
+            return estimateDistortionFromPopulation(
+                population: pop,
+                passNumber: passNumber,
+                totalPasses: totalPasses,
+                zeroBitPlanes: codeBlock.zeroBitPlanes,
+                initialDistortion: initialDistortion
+            )
+        }
+
+        // Fallback: generic exponential model
         // Each 3 coding passes ≈ 1 bit plane
         // Each bit plane reduces distortion by factor of 4
         let bitPlanesCoded = Double(passNumber + 1) / 3.0
         let distortionReduction = pow(4.0, -bitPlanesCoded)
 
         return initialDistortion * distortionReduction
+    }
+
+    /// Population-weighted distortion estimation.
+    ///
+    /// Uses the actual coefficient magnitude distribution (from
+    /// `bitPlanePopulation`) to compute remaining distortion after coding
+    /// a given number of passes.
+    ///
+    /// The population array has `population[p]` = count of coefficients
+    /// whose quantized magnitude has MSB at bit position p. Bit planes
+    /// are coded from the highest MSB downward; each 3 passes code one
+    /// bit plane.
+    ///
+    /// After coding k bit planes from the top:
+    /// - Coefficients with MSB in the coded range have been (partially) refined.
+    ///   Their remaining error ≈ 4^(lowestCodedPlane) / 3 per coefficient.
+    /// - Coefficients with MSB below the coded range are still unknown.
+    ///   Their distortion ≈ (1.5 × 2^p)² per coefficient (expected magnitude²).
+    private func estimateDistortionFromPopulation(
+        population: [Int],
+        passNumber: Int,
+        totalPasses: Int,
+        zeroBitPlanes: Int,
+        initialDistortion: Double
+    ) -> Double {
+        let numBitPlanes = population.count
+        guard numBitPlanes > 0 else {
+            return initialDistortion * pow(4.0, -Double(passNumber + 1) / 3.0)
+        }
+
+        // Bit planes are coded from MSB down. The top 'zeroBitPlanes' are
+        // all-zero (no coefficients there), so actual coding starts from
+        // plane (numBitPlanes - 1 - zeroBitPlanes) and goes down.
+        let topCodedPlane = numBitPlanes - 1 - zeroBitPlanes
+        guard topCodedPlane >= 0 else {
+            return 0.0
+        }
+
+        // Number of bit planes coded so far (3 passes per plane, fractional allowed)
+        let codedPlanes = Int((passNumber + 1) / 3)
+        let lowestCodedPlane = max(0, topCodedPlane - codedPlanes + 1)
+
+        var remainingDistortion = 0.0
+
+        for p in 0..<numBitPlanes {
+            let count = population[p]
+            guard count > 0 else { continue }
+
+            if p >= lowestCodedPlane && p <= topCodedPlane {
+                // This plane has been coded. Remaining error per coefficient
+                // is approximately (2^lowestCodedPlane)² / 3, representing
+                // the uncoded bits below the lowest coded plane.
+                let errorPerCoeff = pow(4.0, Double(lowestCodedPlane)) / 3.0
+                remainingDistortion += Double(count) * errorPerCoeff
+            } else if p < lowestCodedPlane {
+                // This plane has NOT been coded. Coefficients are still
+                // unknown to the decoder → full magnitude error.
+                // Expected magnitude² ≈ 2.25 × 4^p for uniform dist in [2^p, 2^(p+1))
+                let errorPerCoeff = 2.25 * pow(4.0, Double(p))
+                remainingDistortion += Double(count) * errorPerCoeff
+            }
+            // Planes above topCodedPlane are all-zero (zeroBitPlanes), no contribution
+        }
+
+        // Normalize: the ratio of remaining distortion to initial should
+        // give the distortion fraction. Using the population-derived
+        // initial distortion for consistency.
+        let popInitial = populationBasedInitialDistortion(population: population)
+        if popInitial > 0 {
+            // Scale to match the actual initial distortion
+            return initialDistortion * (remainingDistortion / popInitial)
+        }
+
+        return remainingDistortion
+    }
+
+    /// Computes initial distortion from population data (for normalization).
+    private func populationBasedInitialDistortion(population: [Int]) -> Double {
+        var total = 0.0
+        for p in 0..<population.count {
+            let count = population[p]
+            guard count > 0 else { continue }
+            // Expected magnitude² for coefficients with MSB at p:
+            // magnitude ∈ [2^p, 2^(p+1)), expected(m²) ≈ 2.25 × 4^p
+            total += Double(count) * 2.25 * pow(4.0, Double(p))
+        }
+        return total
     }
 
     /// Computes target rates for each quality layer.
@@ -515,9 +702,17 @@ public struct J2KRateControl: Sendable {
                 continue
             }
 
-            // Add this pass
-            contributions[passInfo.codeBlockIndex] = passInfo.passNumber + 1
-            blockCumulativeBytes[passInfo.codeBlockIndex] = passInfo.cumulativeBytes
+            // Add this pass — use max to prevent out-of-order pass selection
+            // from regressing contributions (e.g., a zero-cost late pass sorted
+            // first should not be overwritten by a lower pass number later).
+            contributions[passInfo.codeBlockIndex] = max(
+                contributions[passInfo.codeBlockIndex] ?? 0,
+                passInfo.passNumber + 1
+            )
+            blockCumulativeBytes[passInfo.codeBlockIndex] = max(
+                blockCumulativeBytes[passInfo.codeBlockIndex] ?? 0,
+                passInfo.cumulativeBytes
+            )
             currentBytes += incrementalBytes
             selectedPasses.insert(passKey)
 

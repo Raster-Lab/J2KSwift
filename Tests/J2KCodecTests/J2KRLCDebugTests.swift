@@ -23,7 +23,7 @@ final class J2KRLCDebugTests: XCTestCase {
         ]
         
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: coefficients, bitDepth: 1
         )
         
@@ -54,7 +54,7 @@ final class J2KRLCDebugTests: XCTestCase {
         ]
         
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: coefficients, bitDepth: 2
         )
         
@@ -83,7 +83,7 @@ final class J2KRLCDebugTests: XCTestCase {
             }
             
             let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
                 coefficients: coefficients, bitDepth: bitDepth
             )
             
@@ -132,7 +132,7 @@ final class J2KRLCDebugTests: XCTestCase {
             }
             
             let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
                 coefficients: clamped, bitDepth: bitDepth
             )
             
@@ -168,7 +168,7 @@ final class J2KRLCDebugTests: XCTestCase {
             let coefficients = [Int32](repeating: val, count: width * height)
             
             let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
                 coefficients: coefficients, bitDepth: bitDepth
             )
             

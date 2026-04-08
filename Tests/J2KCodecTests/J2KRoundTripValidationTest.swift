@@ -32,7 +32,7 @@ final class J2KRoundTripValidationTest: XCTestCase {
 
         let options = CodingOptions()
         let encoder = BitPlaneCoder(width: w, height: h, subband: .ll, options: options)
-        let (data, passCount, zeroBitPlanes, segLengths, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, segLengths, _, _) = try encoder.encode(
             coefficients: coefficients, bitDepth: bitDepth)
         print("[EBCOT_RT] encoded: \(data.count) bytes, passes=\(passCount), zbp=\(zeroBitPlanes)")
 

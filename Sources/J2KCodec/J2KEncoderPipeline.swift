@@ -160,11 +160,12 @@ struct EncoderPipeline: Sendable {
 
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
-        // totalPixels must account for all components so the PCRD budget
-        // covers the full multi-component codestream, not just one plane.
-        let componentCount = max(1, image.components.count)
+        // totalPixels is the number of spatial locations (W × H).
+        // bpp (bits per pixel) already accounts for all components —
+        // e.g. 1.2 bpp for RGB means 1.2 total bits per spatial location.
+        // The PCRD budget is: targetBytes = bpp × totalPixels / 8.
         let layers = try applyRateControl(
-            codeBlocks: codeBlocks, totalPixels: image.width * image.height * componentCount
+            codeBlocks: codeBlocks, totalPixels: image.width * image.height
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
 
@@ -274,7 +275,7 @@ struct EncoderPipeline: Sendable {
         // Colour transform only applies to 3+ component images
         guard components.count >= 3 else { return components }
 
-        let mode: J2KColorTransformMode = config.lossless ? .reversible : .irreversible
+        let mode: J2KColorTransformMode = config.useReversibleFilter ? .reversible : .irreversible
         let ctConfig = J2KColorTransformConfiguration(mode: mode)
         let transform = J2KColorTransform(configuration: ctConfig)
 
@@ -282,7 +283,7 @@ struct EncoderPipeline: Sendable {
         let cb: [Int32]
         let cr: [Int32]
 
-        if config.lossless {
+        if config.useReversibleFilter {
             // Use RCT (integer-based, perfectly reversible)
             (y, cb, cr) = try transform.forwardRCT(
                 red: components[0], green: components[1], blue: components[2]
@@ -418,13 +419,13 @@ struct EncoderPipeline: Sendable {
         switch config.waveletKernelConfiguration {
         case .standard:
             // Use standard Part 1 wavelets
-            filter = config.lossless ? .reversible53 : .irreversible97
+            filter = config.useReversibleFilter ? .reversible53 : .irreversible97
         case .arbitrary(let kernel):
             // Use arbitrary kernel for all components
             filter = kernel.toDWTFilter()
         case .perTileComponent:
             // Per-tile-component selection handled below
-            filter = config.lossless ? .reversible53 : .irreversible97
+            filter = config.useReversibleFilter ? .reversible53 : .irreversible97
         }
 
         // Clamp decomposition levels to what the image dimensions can support
@@ -444,7 +445,7 @@ struct EncoderPipeline: Sendable {
                     componentFilter = kernel.toDWTFilter()
                 } else {
                     // Fall back to standard filter
-                    componentFilter = config.lossless ? .reversible53 : .irreversible97
+                    componentFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
                 }
             } else {
                 componentFilter = filter
@@ -603,7 +604,7 @@ struct EncoderPipeline: Sendable {
     private func applyQuantization(
         _ componentSubbands: [[SubbandInfo]]
     ) throws -> [[SubbandInfo]] {
-        let params: J2KQuantizationParameters = config.lossless
+        let params: J2KQuantizationParameters = config.useReversibleFilter
             ? .lossless
             : .fromQuality(config.quality)
         let quantizer = J2KQuantizer(parameters: params)
@@ -704,9 +705,7 @@ struct EncoderPipeline: Sendable {
                 // Compute band-level Kb = ε_b + G from QCD parameters.
                 // This must match what we write in the QCD marker.
                 let bandKb: Int
-                if config.lossless {
-                    // Lossless: Kb = ε_b + G
-                    // Per QCD marker: ε_LL = bitDepth, ε_HL/LH = bitDepth+1, ε_HH = bitDepth+2
+                if config.useReversibleFilter {
                     let gainExponent: Int
                     switch info.subband {
                     case .ll: gainExponent = 0
@@ -849,7 +848,8 @@ struct EncoderPipeline: Sendable {
                 passSegmentLengths: codeBlock.passSegmentLengths,
                 cumulativePassBytes: codeBlock.cumulativePassBytes,
                 coefficientSquaredSum: pending.coefficientSquaredSum,
-                bitPlanePopulation: pending.bitPlanePopulation
+                bitPlanePopulation: pending.bitPlanePopulation,
+                cumulativePassDistortion: codeBlock.cumulativePassDistortion
             )
 
             results.append(codeBlock)
@@ -909,7 +909,8 @@ struct EncoderPipeline: Sendable {
                         passSegmentLengths: codeBlock.passSegmentLengths,
                         cumulativePassBytes: codeBlock.cumulativePassBytes,
                         coefficientSquaredSum: pending.coefficientSquaredSum,
-                        bitPlanePopulation: pending.bitPlanePopulation
+                        bitPlanePopulation: pending.bitPlanePopulation,
+                        cumulativePassDistortion: codeBlock.cumulativePassDistortion
                     )
 
                     localResults.append((pending.index, codeBlock))
@@ -996,11 +997,23 @@ struct EncoderPipeline: Sendable {
         } else {
             switch config.bitrateMode {
             case .constantBitrate(let bpp):
-                rateConfig = .targetBitrate(bpp, layerCount: config.qualityLayers)
+                rateConfig = RateControlConfiguration(
+                    mode: .targetBitrate(bpp),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
             case .constantQuality:
-                rateConfig = .constantQuality(config.quality, layerCount: config.qualityLayers)
+                rateConfig = RateControlConfiguration(
+                    mode: .constantQuality(max(0.0, min(1.0, config.quality))),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
             case .variableBitrate(_, let maxBpp):
-                rateConfig = .targetBitrate(maxBpp, layerCount: config.qualityLayers)
+                rateConfig = RateControlConfiguration(
+                    mode: .targetBitrate(maxBpp),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
             case .lossless:
                 rateConfig = .lossless
             }
@@ -1150,7 +1163,7 @@ struct EncoderPipeline: Sendable {
 
         // Pcpf (2 bytes): Profile selection
         // Select profile based on compression mode
-        let pcpf: UInt16 = config.lossless ? 0 : 1
+        let pcpf: UInt16 = config.useReversibleFilter ? 0 : 1
 
         segment.writeUInt16(pcpf)
 
@@ -1206,7 +1219,7 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt8(codeBlockStyle)
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
-        segment.writeUInt8(config.lossless ? 1 : 0)
+        segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
 
         // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
         if config.useHTJ2K {
@@ -1272,7 +1285,7 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt8(codeBlockStyle)
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
-        segment.writeUInt8(config.lossless ? 1 : 0)
+        segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
 
         // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
         if config.useHTJ2K {
@@ -1298,7 +1311,7 @@ struct EncoderPipeline: Sendable {
         // Use extended guard bits from Part 2 configuration if applicable
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
 
-        if config.lossless {
+        if config.useReversibleFilter {
             // No quantization (style = 0) for reversible transforms
             let sqcd = quantExt.encodeSqcd(quantizationStyle: 0x00)
             segment.writeUInt8(sqcd)
@@ -1370,12 +1383,12 @@ struct EncoderPipeline: Sendable {
                             totalLevels: decompositionLevels,
                             reversible: false
                         )
-                        // For 9/7 irreversible wavelet, the ENCODER must use
-                        // subband gains {LL=0, HL=1, LH=1, HH=2} in Rb.
-                        // OPJ's decoder uses gain=0 (BUG_WEIRD_TWO_INVK), which
-                        // halves/quarters the decoded step size. The decoder's
-                        // inverse DWT compensates by using two_invK (=2/K) instead
-                        // of invK (=1/K), exactly canceling the step size ratio.
+                        // Include subband gain in R_b as required by ISO 15444-1
+                        // Eq. E.4: R_b = I + G_b where G_b is subband gain exponent.
+                        // OpenJPEG's decoder uses gain=0 internally but compensates
+                        // with adjusted DWT normalization (two_invK), so the net
+                        // result is the same either way for OPJ decoding. Our own
+                        // decoder expects the standard gains.
                         let subbandGain: Int
                         switch subband {
                         case .ll: subbandGain = 0
@@ -1425,11 +1438,22 @@ struct EncoderPipeline: Sendable {
     private func applyLayerTruncation(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer]
     ) -> [J2KCodeBlock] {
-        // Step 1: Apply PCRD layer truncation if available
+        // Step 1: Apply PCRD layer truncation if available.
+        // Merge contributions from ALL layers — each layer's contributions
+        // only contains blocks updated in that layer, so we need to take
+        // the maximum pass count across all layers for each block.
         var truncated: [J2KCodeBlock]
-        if let layer = layers.last, !layer.codeBlockContributions.isEmpty {
+        var mergedContributions = [Int: Int]()
+        for layer in layers {
+            for (blockIdx, passes) in layer.codeBlockContributions {
+                mergedContributions[blockIdx] = max(
+                    mergedContributions[blockIdx] ?? 0, passes
+                )
+            }
+        }
+        if !mergedContributions.isEmpty {
             truncated = codeBlocks.map { block in
-                let maxPasses = layer.codeBlockContributions[block.index]
+                let maxPasses = mergedContributions[block.index]
                 if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
                     print("TRUNCATION: block=\(block.index) passes=\(block.passeCount) layer_maxPasses=\(String(describing: maxPasses)) data=\(block.data.count)")
                 }
@@ -1488,40 +1512,45 @@ struct EncoderPipeline: Sendable {
         // was NOT applied. When PCRD has already optimized the allocation,
         // a secondary heuristic truncation degrades quality.
         if !config.lossless, case .constantQuality = config.bitrateMode,
-           layers.last.map({ $0.codeBlockContributions.isEmpty }) ?? true {
+           mergedContributions.isEmpty {
             let quality = config.quality
             guard quality < 1.0 else { return truncated }
 
             // Target bits per pixel: quadratic mapping matching J2KRateControl
             let bpp = 0.1 + 7.9 * pow(quality, 1.5)
-            // Compute total sample count (pixels × components) so the budget
-            // covers the full multi-component image, matching the PCRD fix.
+            // bpp already accounts for all components. Estimate spatial
+            // pixel count by dividing total code block samples by components.
             let componentCount = max(1, Set(truncated.map { $0.componentIndex }).count)
             let codeBlockPixels = truncated.reduce(0) { $0 + $1.width * $1.height }
             let imagePixels = codeBlockPixels / componentCount
-            let targetBytes = Int(bpp * Double(imagePixels) * Double(componentCount) / 8.0)
+            let targetBytes = Int(bpp * Double(imagePixels) / 8.0)
             let actualBytes = truncated.reduce(0) { $0 + $1.data.count }
 
             guard actualBytes > targetBytes, targetBytes > 0 else { return truncated }
 
-            // Resolution-aware truncation: protect LL/low-resolution data,
-            // truncate high-frequency detail subbands more aggressively.
-            // Weight: res 0 (LL) = 1.0 (no truncation), higher res = more truncation.
+            // Resolution-aware truncation: distribute truncation more
+            // uniformly across resolution levels. LL (res 0) gets light
+            // protection but NOT full immunity, while higher-frequency
+            // subbands get proportionally more truncation.
+            // This prevents the previous issue of destroying all edge detail
+            // while leaving LL completely untouched.
             let maxRes = truncated.map { $0.resolutionLevel }.max() ?? 0
             let bytesToRemove = actualBytes - targetBytes
 
             // Calculate how much each resolution level contributes
             struct ResInfo {
                 var bytes: Int = 0
-                var weight: Double = 0.0  // truncation aggressiveness: 0=no truncation, 1=max truncation
+                var weight: Double = 0.0  // truncation aggressiveness
             }
             var resInfos = [Int: ResInfo]()
             for block in truncated where block.data.count > 0 {
                 let res = block.resolutionLevel
                 resInfos[res, default: ResInfo()].bytes += block.data.count
-                // LL (res 0) gets weight 0 (protected), highest res gets weight 1.0
+                // Uniform truncation weight with mild LL protection:
+                // LL (res 0) = 0.3, mid res = 0.6-0.8, highest res = 1.0
+                // This distributes truncation more evenly for better quality
                 resInfos[res, default: ResInfo()].weight = maxRes > 0
-                    ? Double(res) / Double(maxRes) : 0.0
+                    ? 0.3 + 0.7 * Double(res) / Double(maxRes) : 1.0
             }
 
             // Compute weighted total for distributing truncation

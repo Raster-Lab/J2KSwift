@@ -26,7 +26,7 @@ final class J2KBitPlaneDecoderDiagnostic: XCTestCase {
         print("\nOriginal coefficients:")
         printBlock(original, width: width, height: height)
 
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
@@ -78,7 +78,7 @@ final class J2KBitPlaneDecoderDiagnostic: XCTestCase {
         print("\nTesting single value:")
         printBlock(original, width: width, height: height)
 
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
@@ -109,7 +109,7 @@ final class J2KBitPlaneDecoderDiagnostic: XCTestCase {
         print("\nTesting two values:")
         printBlock(original, width: width, height: height)
 
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
@@ -141,7 +141,7 @@ final class J2KBitPlaneDecoderDiagnostic: XCTestCase {
         print("\nTesting three values:")
         printBlock(original, width: width, height: height)
 
-        let (data, passCount, zeroBitPlanes, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
