@@ -310,6 +310,23 @@ public struct J2KRateControl: Sendable {
         // Sort by descending slope (best quality-per-bit first)
         let sortedPasses = passInfos.sorted { $0.slope > $1.slope }
 
+        // Debug: dump PCRD pass info
+        if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+            print("PCRD_DEBUG: totalPixels=\(totalPixels), codeBlocks=\(codeBlocks.count)")
+            // Group passes by code block index
+            var blockPassInfos: [Int: [CodingPassInfo]] = [:]
+            for pi in passInfos {
+                blockPassInfos[pi.codeBlockIndex, default: []].append(pi)
+            }
+            for (idx, passes) in blockPassInfos.sorted(by: { $0.key < $1.key }) {
+                let cb = codeBlocks.first { $0.index == idx }!
+                let firstSlope = passes.first?.slope ?? 0
+                let maxSlope = passes.map { $0.slope }.max() ?? 0
+                let totalBytes = passes.last?.cumulativeBytes ?? 0
+                print("  block=\(idx) sub=\(cb.subband) res=\(cb.resolutionLevel) comp=\(cb.componentIndex) passes=\(passes.count) bytes=\(totalBytes) maxSlope=\(String(format: "%.2f", maxSlope)) firstSlope=\(String(format: "%.2f", firstSlope)) sqSum=\(String(format: "%.1f", cb.coefficientSquaredSum))")
+            }
+        }
+
         // Generate target rates for each layer
         let targetRates = try computeLayerTargetRates(totalPixels: totalPixels)
 
@@ -319,6 +336,10 @@ public struct J2KRateControl: Sendable {
 
         for (layerIndex, targetRate) in targetRates.enumerated() {
             let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
+
+            if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+                print("PCRD_LAYER: layer=\(layerIndex) targetRate=\(String(format: "%.3f", targetRate)) targetBytes=\(targetBytes)")
+            }
 
             let (layer, selectedPasses) = try formLayerPCRDOpt(
                 layerIndex: layerIndex,
@@ -423,8 +444,17 @@ public struct J2KRateControl: Sendable {
             let hasPerPassBytes = !codeBlock.cumulativePassBytes.isEmpty
                 && codeBlock.cumulativePassBytes.count >= codeBlock.passeCount
 
+            // Use actual per-pass distortion from EBCOT when available.
+            // cumulativePassDistortion[i] = total squared-error reduction
+            // after passes 0..i, so remaining distortion after pass i =
+            // initialDistortion - cumulativePassDistortion[i].
+            let hasActualDistortion = !codeBlock.cumulativePassDistortion.isEmpty
+                && codeBlock.cumulativePassDistortion.count >= codeBlock.passeCount
+
+            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock) * subbandWeight
+
             var previousCumulativeBytes = 0
-            var previousDistortion = estimateInitialDistortion(codeBlock: codeBlock) * subbandWeight
+            var previousDistortion = initialDistortion
 
             for passNum in 0..<codeBlock.passeCount {
                 let cumulativeBytes: Int
@@ -438,12 +468,22 @@ public struct J2KRateControl: Sendable {
 
                 let passBytes = max(1, cumulativeBytes - previousCumulativeBytes)
 
-                // Estimate distortion after including this pass (weighted)
-                let distortion = estimateDistortion(
-                    codeBlock: codeBlock,
-                    passNumber: passNum,
-                    totalPasses: codeBlock.passeCount
-                ) * subbandWeight
+                let distortion: Double
+                if hasActualDistortion {
+                    // Actual remaining distortion from EBCOT encoder.
+                    // The EBCOT cumulativePassDistortion values are in the
+                    // quantised coefficient domain (sum of m²−e² reductions).
+                    // Apply the same subbandWeight to convert to pixel MSE.
+                    let remaining = max(0.0, codeBlock.coefficientSquaredSum - codeBlock.cumulativePassDistortion[passNum])
+                    distortion = remaining * subbandWeight
+                } else {
+                    // Fallback: model-based estimate
+                    distortion = estimateDistortion(
+                        codeBlock: codeBlock,
+                        passNumber: passNum,
+                        totalPasses: codeBlock.passeCount
+                    ) * subbandWeight
+                }
 
                 // Compute rate-distortion slope
                 let deltaDistortion = previousDistortion - distortion
@@ -699,6 +739,9 @@ public struct J2KRateControl: Sendable {
             if configuration.strictRateMatching &&
                currentBytes + incrementalBytes > targetBytes &&
                !contributions.isEmpty {
+                if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+                    print("PCRD_SKIP: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(String(format: "%.2f", passInfo.slope)) incBytes=\(incrementalBytes) cumBytes=\(passInfo.cumulativeBytes) current=\(currentBytes) target=\(targetBytes)")
+                }
                 continue
             }
 

@@ -535,6 +535,14 @@ public struct J2KCodeBlock: Sendable {
     /// Used by rate control for accurate PCRD slope computation.
     public var cumulativePassDistortion: [Double]
 
+    /// Properly terminated MQ data for each prefix of coding passes.
+    ///
+    /// Element `i` contains a correctly terminated MQ byte stream encoding
+    /// passes 0 through `i`. Used during PCRD truncation to avoid using a
+    /// prefix of the final encoded stream which may contain carry-corrupted
+    /// bytes from later passes.
+    public var perPassSnapshotData: [Data]
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -554,6 +562,7 @@ public struct J2KCodeBlock: Sendable {
     ///   - coefficientSquaredSum: Sum of squared quantized coefficient magnitudes (default: 0).
     ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
     ///   - cumulativePassDistortion: Per-pass distortion decrements (default: empty).
+    ///   - perPassSnapshotData: Terminated MQ data at each pass boundary (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -570,7 +579,8 @@ public struct J2KCodeBlock: Sendable {
         cumulativePassBytes: [Int] = [],
         coefficientSquaredSum: Double = 0,
         bitPlanePopulation: [Int] = [],
-        cumulativePassDistortion: [Double] = []
+        cumulativePassDistortion: [Double] = [],
+        perPassSnapshotData: [Data] = []
     ) {
         self.index = index
         self.x = x
@@ -588,6 +598,7 @@ public struct J2KCodeBlock: Sendable {
         self.coefficientSquaredSum = coefficientSquaredSum
         self.bitPlanePopulation = bitPlanePopulation
         self.cumulativePassDistortion = cumulativePassDistortion
+        self.perPassSnapshotData = perPassSnapshotData
     }
 }
 

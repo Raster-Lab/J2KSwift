@@ -242,20 +242,25 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// - Parameter quality: Quality factor (0.0 = lowest, 1.0 = highest).
     /// - Returns: Quantization parameters suitable for the quality level.
     public static func fromQuality(_ quality: Double) -> J2KQuantizationParameters {
-        // Map quality to step size (higher quality = smaller step)
-        // Quality 1.0 -> step size ~0.03 (near lossless, matches wavelet norms)
-        // Quality 0.0 -> step size ~16.0 (high compression)
-        // The base step at q=1.0 is calibrated to produce step sizes comparable
-        // to the 9/7 wavelet analysis filter L2 norms, so that high-quality
-        // encoding preserves nearly all coefficient information and quality is
-        // controlled predominantly through PCRD pass truncation.
-        let clampedQuality = max(0.0, min(1.0, quality))
-        let stepSize = 16.0 * pow(0.03 / 16.0, clampedQuality)
+        // Map quality to step size (higher quality = smaller step).
+        //
+        // This is only used for the irreversible (9/7) path — the reversible
+        // (5/3) path always uses `.lossless` parameters.
+        //
+        // Use a fixed base step size of 1.0, matching OpenJPEG's approach.
+        // This keeps quantised coefficient magnitudes at full precision,
+        // producing ~10-12 bit planes per code block for maximum PCRD
+        // flexibility.  Rate control (PCRD pass truncation) exclusively
+        // determines the final quality/bitrate trade-off.
+        let stepSize = 1.0
 
+        // Use scalar mode which implements the standard JPEG 2000 quantization
+        // formula: q = sign(c) × floor(|c| / Δ). This naturally creates a
+        // deadzone of width 2Δ centred at zero (from the floor operation),
+        // matching ISO/IEC 15444-1 Annex E and OpenJPEG behaviour.
         return J2KQuantizationParameters(
-            mode: .deadzone,
-            baseStepSize: stepSize,
-            deadzoneWidth: 1.0
+            mode: .scalar,
+            baseStepSize: stepSize
         )
     }
 }

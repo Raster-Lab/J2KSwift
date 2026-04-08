@@ -149,7 +149,13 @@ public struct J2KEncodingConfiguration: Sendable {
     ///
     /// When true, the encoder uses the reversible colour transform (RCT)
     /// and reversible wavelet filter (5/3), ensuring perfect reconstruction.
-    public var lossless: Bool
+    public var lossless: Bool {
+        didSet {
+            if lossless {
+                useReversibleFilter = true
+            }
+        }
+    }
 
     /// Number of wavelet decomposition levels.
     ///
@@ -371,7 +377,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - bitrateMode: Bitrate control mode (default: .constantQuality).
     ///   - maxThreads: Maximum encoding threads, 0 for auto (default: 0).
     ///   - useHTJ2K: Use HTJ2K block coding (default: false).
-    ///   - useReversibleFilter: Use 5/3 reversible filter for lossy mode (default: true).
+    ///   - useReversibleFilter: Use 5/3 reversible filter (default: true for lossless, false for lossy).
     ///   - enableParallelCodeBlocks: Enable parallel code-block encoding (default: true).
     ///   - enableFastMEL: Enable fast MEL encoding for HTJ2K (default: true).
     ///   - enableVLCOptimization: Enable VLC table optimisation for HTJ2K (default: true).
@@ -394,7 +400,7 @@ public struct J2KEncodingConfiguration: Sendable {
         bitrateMode: J2KBitrateMode = .constantQuality,
         maxThreads: Int = 0,
         useHTJ2K: Bool = false,
-        useReversibleFilter: Bool = true,
+        useReversibleFilter: Bool = false,
         enableParallelCodeBlocks: Bool = true,
         enableFastMEL: Bool = true,
         enableVLCOptimization: Bool = true,

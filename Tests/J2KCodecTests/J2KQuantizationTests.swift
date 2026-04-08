@@ -63,25 +63,22 @@ final class J2KQuantizationTests: XCTestCase {
 
     func testParametersFromQualityHigh() throws {
         let params = J2KQuantizationParameters.fromQuality(1.0)
-        XCTAssertEqual(params.mode, .deadzone)
-        // High quality should have small step size (near 0.03, matches wavelet norms)
-        XCTAssertLessThan(params.baseStepSize, 0.1)
-        XCTAssertGreaterThan(params.baseStepSize, 0.01)
+        XCTAssertEqual(params.mode, .scalar)
+        // High quality should have step size = 1.0 (16^(1-1) = 1)
+        XCTAssertEqual(params.baseStepSize, 1.0, accuracy: 1e-10)
     }
 
     func testParametersFromQualityLow() throws {
         let params = J2KQuantizationParameters.fromQuality(0.0)
-        XCTAssertEqual(params.mode, .deadzone)
-        // Low quality should have large step size (near 16.0)
-        XCTAssertGreaterThan(params.baseStepSize, 10.0)
-        XCTAssertLessThan(params.baseStepSize, 20.0)
+        XCTAssertEqual(params.mode, .scalar)
+        // Low quality should have large step size = 16.0 (16^(1-0) = 16)
+        XCTAssertEqual(params.baseStepSize, 16.0, accuracy: 1e-10)
     }
 
     func testParametersFromQualityMedium() throws {
         let params = J2KQuantizationParameters.fromQuality(0.5)
-        // Medium quality should have intermediate step size
-        XCTAssertGreaterThan(params.baseStepSize, 0.5)
-        XCTAssertLessThan(params.baseStepSize, 5.0)
+        // Medium quality: 16^0.5 = 4.0
+        XCTAssertEqual(params.baseStepSize, 4.0, accuracy: 1e-10)
     }
 
     func testParametersFromQualityClamping() throws {

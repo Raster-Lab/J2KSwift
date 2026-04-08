@@ -138,13 +138,14 @@ struct EncoderPipeline: Sendable {
 
         // Stage 2: Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
-        let transformedData = try applyColorTransform(componentData, image: image)
+        let (transformedData, transformedDoubleData) = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
 
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
         let (decompositions, actualDecompositionLevels) = try applyWaveletTransform(
-            transformedData, width: image.width, height: image.height
+            transformedData, doubleComponents: transformedDoubleData,
+            width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
@@ -155,7 +156,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(quantizedSubbands)
+        let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         // Stage 6: Rate Control
@@ -236,13 +237,13 @@ struct EncoderPipeline: Sendable {
     ///   - components: The component data.
     ///   - image: The source image.
     ///   - tileIndex: The tile index (default: 0 for non-tiled images).
-    /// - Returns: Transformed component data.
+    /// - Returns: Transformed component data as Int32 and optionally as Double (for ICT lossy path).
     private func applyColorTransform(
         _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // Check for per-tile MCT override first
         if let tileMatrix = config.mctConfiguration.perTileMCT[tileIndex] {
-            return try applyArrayBasedMCT(components, matrix: tileMatrix, image: image)
+            return (try applyArrayBasedMCT(components, matrix: tileMatrix, image: image), nil)
         }
 
         // Check if MCT is enabled in configuration
@@ -253,11 +254,11 @@ struct EncoderPipeline: Sendable {
 
         case .arrayBased(let matrix):
             // Use array-based MCT with specified matrix
-            return try applyArrayBasedMCT(components, matrix: matrix, image: image)
+            return (try applyArrayBasedMCT(components, matrix: matrix, image: image), nil)
 
         case .dependency(let depConfig):
             // Use dependency-based MCT
-            return try applyDependencyMCT(components, configuration: depConfig, image: image)
+            return (try applyDependencyMCT(components, configuration: depConfig, image: image), nil)
 
         case let .adaptive(candidates, criteria):
             // Select best matrix adaptively based on criteria
@@ -271,9 +272,9 @@ struct EncoderPipeline: Sendable {
     /// Applies standard Part 1 colour transform (RCT/ICT).
     private func applyStandardColorTransform(
         _ components: [[Int32]], image: J2KImage
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // Colour transform only applies to 3+ component images
-        guard components.count >= 3 else { return components }
+        guard components.count >= 3 else { return (components, nil) }
 
         let mode: J2KColorTransformMode = config.useReversibleFilter ? .reversible : .irreversible
         let ctConfig = J2KColorTransformConfiguration(mode: mode)
@@ -282,6 +283,7 @@ struct EncoderPipeline: Sendable {
         let y: [Int32]
         let cb: [Int32]
         let cr: [Int32]
+        var doubleResult: [[Double]]? = nil
 
         if config.useReversibleFilter {
             // Use RCT (integer-based, perfectly reversible)
@@ -299,6 +301,12 @@ struct EncoderPipeline: Sendable {
             y = yD.map { Int32($0.rounded()) }
             cb = cbD.map { Int32($0.rounded()) }
             cr = crD.map { Int32($0.rounded()) }
+            // Keep double-precision ICT output for 9/7 DWT path
+            var dbl = [yD, cbD, crD]
+            if components.count > 3 {
+                dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
+            }
+            doubleResult = dbl
         }
 
         var result = [y, cb, cr]
@@ -306,7 +314,7 @@ struct EncoderPipeline: Sendable {
         if components.count > 3 {
             result.append(contentsOf: components[3...])
         }
-        return result
+        return (result, doubleResult)
     }
 
     /// Applies array-based MCT using a transformation matrix.
@@ -372,7 +380,7 @@ struct EncoderPipeline: Sendable {
         criteria: J2KMCTEncodingConfiguration.AdaptiveSelectionCriteria,
         image: J2KImage,
         tileIndex: Int = 0
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // For now, use a simple heuristic: correlation-based selection
         // In a full implementation, this would evaluate each candidate matrix
         // and select based on the specified criteria
@@ -389,7 +397,7 @@ struct EncoderPipeline: Sendable {
         }
 
         // Apply the selected matrix
-        return try applyArrayBasedMCT(components, matrix: selectedMatrix, image: image)
+        return (try applyArrayBasedMCT(components, matrix: selectedMatrix, image: image), nil)
     }
 
     // MARK: - Stage 3: Wavelet Transform
@@ -412,7 +420,8 @@ struct EncoderPipeline: Sendable {
     ///
     /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
-        _ components: [[Int32]], width: Int, height: Int
+        _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
+        width: Int, height: Int
     ) throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
@@ -488,8 +497,22 @@ struct EncoderPipeline: Sendable {
             }
 
             if use97DoublePrecision {
-                // Double-precision path: avoids rounding at intermediate levels
-                let doubleImage = image2D.map { $0.map { Double($0) } }
+                // Double-precision path: avoids rounding at intermediate levels.
+                // Use ICT double output directly when available to preserve
+                // sub-pixel colour transform precision through the DWT.
+                let doubleImage: [[Double]]
+                if let dc = doubleComponents, compIdx < dc.count {
+                    var img2D: [[Double]] = []
+                    img2D.reserveCapacity(height)
+                    for row in 0..<height {
+                        let rowStart = row * width
+                        let rowEnd = rowStart + width
+                        img2D.append(Array(dc[compIdx][rowStart..<rowEnd]))
+                    }
+                    doubleImage = img2D
+                } else {
+                    doubleImage = image2D.map { $0.map { Double($0) } }
+                }
                 let decomposition = try J2KDWT2D.forwardDecompositionDouble(
                     image: doubleImage, levels: levels, filter: componentFilter
                 )
@@ -669,7 +692,8 @@ struct EncoderPipeline: Sendable {
 
     /// Applies EBCOT entropy coding to all subbands, producing code blocks.
     private func applyEntropyCoding(
-        _ componentSubbands: [[SubbandInfo]]
+        _ componentSubbands: [[SubbandInfo]],
+        image: J2KImage
     ) throws -> [J2KCodeBlock] {
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
@@ -682,7 +706,6 @@ struct EncoderPipeline: Sendable {
         // Guard bits and range bits for Kb computation (must match QCD marker)
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
         let guardBits = Int(quantExt.extendedGuardBits)
-        let imageBitDepth = 8  // TODO: get from image
 
         // First pass: collect all pending code-blocks with their metadata
         var pendingBlocks: [PendingCodeBlock] = []
@@ -691,6 +714,9 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             for info in subbands {
                 guard info.width > 0 && info.height > 0 else { continue }
+
+                // Use actual component bit depth instead of hardcoded 8
+                let imageBitDepth = image.components[info.componentIndex].bitDepth
 
                 // Compute JPEG 2000 resolution level:
                 // Resolution 0 = LL subband only
@@ -849,7 +875,8 @@ struct EncoderPipeline: Sendable {
                 cumulativePassBytes: codeBlock.cumulativePassBytes,
                 coefficientSquaredSum: pending.coefficientSquaredSum,
                 bitPlanePopulation: pending.bitPlanePopulation,
-                cumulativePassDistortion: codeBlock.cumulativePassDistortion
+                cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                perPassSnapshotData: codeBlock.perPassSnapshotData
             )
 
             results.append(codeBlock)
@@ -910,7 +937,8 @@ struct EncoderPipeline: Sendable {
                         cumulativePassBytes: codeBlock.cumulativePassBytes,
                         coefficientSquaredSum: pending.coefficientSquaredSum,
                         bitPlanePopulation: pending.bitPlanePopulation,
-                        cumulativePassDistortion: codeBlock.cumulativePassDistortion
+                        cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                        perPassSnapshotData: codeBlock.perPassSnapshotData
                     )
 
                     localResults.append((pending.index, codeBlock))
@@ -1477,16 +1505,25 @@ struct EncoderPipeline: Sendable {
                     return block
                 }
 
-                let truncatedLength: Int
-                if !block.cumulativePassBytes.isEmpty && maxPasses <= block.cumulativePassBytes.count {
-                    truncatedLength = min(block.cumulativePassBytes[maxPasses - 1], block.data.count)
-                } else if !block.passSegmentLengths.isEmpty && maxPasses <= block.passSegmentLengths.count {
-                    truncatedLength = block.passSegmentLengths.prefix(maxPasses).reduce(0, +)
+                // Use the properly terminated snapshot data if available.
+                // A prefix of the final MQ stream may contain carry-corrupted
+                // bytes from later passes, causing decoders to misinterpret
+                // the truncated data.
+                let truncatedData: Data
+                if !block.perPassSnapshotData.isEmpty && maxPasses <= block.perPassSnapshotData.count {
+                    truncatedData = block.perPassSnapshotData[maxPasses - 1]
                 } else {
-                    truncatedLength = Int(Double(block.data.count) * Double(maxPasses) / Double(block.passeCount))
+                    let truncatedLength: Int
+                    if !block.cumulativePassBytes.isEmpty && maxPasses <= block.cumulativePassBytes.count {
+                        truncatedLength = min(block.cumulativePassBytes[maxPasses - 1], block.data.count)
+                    } else if !block.passSegmentLengths.isEmpty && maxPasses <= block.passSegmentLengths.count {
+                        truncatedLength = block.passSegmentLengths.prefix(maxPasses).reduce(0, +)
+                    } else {
+                        truncatedLength = Int(Double(block.data.count) * Double(maxPasses) / Double(block.passeCount))
+                    }
+                    let safeLength = min(max(0, truncatedLength), block.data.count)
+                    truncatedData = block.data.prefix(safeLength)
                 }
-
-                let safeLength = min(max(0, truncatedLength), block.data.count)
 
                 return J2KCodeBlock(
                     index: block.index,
@@ -1495,7 +1532,7 @@ struct EncoderPipeline: Sendable {
                     subband: block.subband,
                     componentIndex: block.componentIndex,
                     resolutionLevel: block.resolutionLevel,
-                    data: block.data.prefix(safeLength),
+                    data: truncatedData,
                     passeCount: maxPasses,
                     zeroBitPlanes: block.zeroBitPlanes,
                     passSegmentLengths: block.passSegmentLengths.isEmpty

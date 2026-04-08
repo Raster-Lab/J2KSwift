@@ -624,7 +624,6 @@ struct DecoderPipeline: Sendable {
         let tileWidth = metadata.tileSize.width
         let tileHeight = metadata.tileSize.height
         let numComponents = metadata.components.count
-
         var reader = J2KBitReader(data: tileData)
         // Enable JPEG 2000 byte stuffing for packet headers (ISO 15444-1 B.10.1)
         reader.setByteStuffing(true)
@@ -636,7 +635,13 @@ struct DecoderPipeline: Sendable {
                 // Read non-empty packet flag
                 guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
                 let notEmpty = try reader.readBit()
-                guard notEmpty else { continue }
+                guard notEmpty else {
+                    // Empty packet: align to byte boundary per ISO 15444-1 B.10.
+                    // Each packet starts on a byte boundary. The encoder writes the
+                    // empty flag bit and then pads to the next byte boundary.
+                    try reader.alignToByte()
+                    continue
+                }
 
                 let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
 
