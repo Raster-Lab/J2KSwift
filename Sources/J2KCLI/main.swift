@@ -95,7 +95,7 @@ struct J2KCLI {
 
     static func printUsage() {
         print("""
-        J2KSwift - JPEG 2000 Encoder/Decoder CLI
+        J2KSwift - JPEG 2000 Encoder/Decoder CLI (v\(getVersion()))
 
         USAGE:
             j2k <command> [subcommand] [options]
@@ -105,7 +105,7 @@ struct J2KCLI {
             decode      Decompress JPEG 2000 / HTJ2K image(s)
             transcode   Lossless transcoding between J2K ↔ HTJ2K
             info        Display codestream / file-format metadata
-            validate    Conformance validation
+            validate    Conformance validation (ISO/IEC 15444)
             benchmark   Performance benchmarking
             encode3d    Compress volumetric / 3D data (JP3D)
             decode3d    Decompress volumetric / 3D data (JP3D)
@@ -135,38 +135,44 @@ struct J2KCLI {
 
         ENCODE OPTIONS:
             -i, --input PATH            Input image file (PGM, PPM, TIFF, PNG, DICOM)
-            -o, --output PATH           Output J2K/JP2/JPX file (optional)
-            -q, --quality FLOAT         Quality (0.0-1.0, default: 1.0)
-            --lossless                  Use lossless compression
+            -o, --output PATH           Output J2K/JP2/JPX/JPH file (optional)
+            -q, --quality FLOAT         Quality (0.0–1.0, default: 0.9)
+            --lossless                  Use lossless compression (5/3 wavelet, RCT)
             --bitrate BPP               Target bit-rate in bits per pixel
-            --psnr VALUE                Target PSNR (dB)
-            --visually-lossless         Visually lossless mode
-            --preset NAME               Use preset: fast, balanced, quality
-            --levels N                  Decomposition levels (0-10, default: 5)
-            --blocksize WxH             Code block size (default: 32x32)
-            --layers N                  Quality layers (1-20, default: 5)
-            --format FORMAT             Output format: j2k, jp2, or jpx (default: j2k)
+            --compression-ratio N:1     Target compression ratio (e.g. 20:1)
+            --compression-percent N     Target size reduction percentage
+            --target-size BYTES         Exact output size target in bytes
+            --visually-lossless         Visually lossless mode (quality ≈ 0.99)
+            --preset NAME               Preset: fast, balanced, quality
+            --codec VARIANT             j2k-lossless, j2k-lossy, htj2k-lossless, htj2k-lossy
+            --levels N                  Decomposition levels (0–10, default: 5)
+            --blocksize WxH             Code-block size (default: 64x64)
+            --layers N                  Quality layers (1–20, default: 5)
+            --format FORMAT             Output format: j2k, jp2, jpx, jph
             --progression ORDER         Progression order: LRCP, RLCP, RPCL, PCRL, CPRL
-            --tile-size WxH             Tile size (e.g. 256x256)
+            --tile-size WxH             Tile size (e.g. 512x512)
+            --precincts S1,S2,...        Precinct ladder (e.g. 256x256,128x128,64x64)
             --roi x,y,w,h               Region of interest
             --htj2k                     Enable HTJ2K (Part 15) encoding
             --mct / --no-mct            Enable/disable multi-component transform
             --gpu / --no-gpu            Enable/disable GPU acceleration
-            --colour-space / --color-space CS  Colour space
+            --colour-space CS           Colour space (synonym: --color-space)
             --verbose                   Verbose output
             --quiet                     Suppress non-error output
             --timing                    Show detailed timing information
             --json                      Output results as JSON
 
         DECODE OPTIONS:
-            -i, --input PATH            Input J2K/JP2/JPX file
+            -i, --input PATH            Input J2K/JP2/JPX/JPH file
             -o, --output PATH           Output image file (optional)
             --output-format FORMAT      Output format: pgm, ppm, tiff, png
             --level N                   Resolution level for partial decoding
             --layer N                   Quality layer for partial decoding
             --component N               Single component to decode
             --components N,M,...        Components to decode
-            --colour-space / --color-space  Convert colour space
+            --header-only               Print codestream info without decoding
+            --bit-depth N               Output bit depth (8 or 16)
+            --colour-space CS           Convert colour space (synonym: --color-space)
             --gpu / --no-gpu            Enable/disable GPU acceleration
             --verbose                   Verbose output
             --quiet                     Suppress non-error output
@@ -176,16 +182,18 @@ struct J2KCLI {
         INFO OPTIONS:
             <file>                      JPEG 2000 file to inspect
             --markers                   List codestream marker segments
-            --boxes                     List JP2/JPX file format boxes
+            --boxes                     List JP2/JPX file-format boxes
             --json                      Output as JSON
             --validate                  Perform quick conformance check
+            --capabilities              Display library capabilities
 
         TRANSCODE OPTIONS:
             -i, --input PATH            Input JPEG 2000 file
             -o, --output PATH           Output JPEG 2000 file (optional)
             --to-htj2k                  Transcode to HTJ2K
             --from-htj2k                Transcode from HTJ2K to Part 1
-            --format j2k|jp2|jpx        Output format
+            --format j2k|jp2|jpx|jph    Output format
+            --verify                    Verify lossless transcoding
             --quality VALUE             Re-quality setting
             --bitrate BPP               Target bit-rate
             --layers N                  Quality layers
@@ -212,22 +220,38 @@ struct J2KCLI {
             --format text|json|csv      Output format (default: text)
             --encode-only               Only benchmark encoding
             --decode-only               Only benchmark decoding
-            --preset NAME               Use preset: fast, balanced, quality
+            --preset NAME               Preset: fast, balanced, quality
             --compare-openjpeg          Compare with OpenJPEG (if available)
 
         GLOBAL FLAGS:
             --version                   Print version and exit
 
+        RECOMMENDED PRESETS:
+            Archival / medical (lossless):
+              j2k encode -i scan.dcm -o scan.jp2 --lossless --format jp2
+
+            Professional photography:
+              j2k encode -i photo.ppm -o photo.jp2 --preset quality \\
+                  --quality 0.95 --progression RPCL --format jp2
+
+            Web delivery (HTJ2K):
+              j2k encode -i photo.ppm -o photo.jph --codec htj2k-lossy \\
+                  --quality 0.85 --preset balanced
+
+            High-throughput pipeline:
+              j2k encode -i frame.ppm -o frame.jph --codec htj2k-lossless
+
         EXAMPLES:
             j2k encode -i input.pgm -o output.j2k --lossless
-            j2k encode -i input.tiff --htj2k
+            j2k encode -i input.ppm --preset quality --quality 0.95
+            j2k encode -i input.tiff --codec htj2k-lossless
             j2k encode -i scan.dcm -o output.jp2 --format jp2
             j2k decode -i input.j2k -o output.png
-            j2k decode -i input.j2k
+            j2k decode -i input.j2k --header-only --json
             j2k info image.jp2 --boxes
-            j2k transcode -i old.j2k --to-htj2k
-            j2k convert -i input.dcm -o output.tiff
-            j2k decode -i input.j2k -o - | j2k encode -i - -o output.jph --htj2k
+            j2k transcode -i old.j2k --to-htj2k --verify
+            j2k compare --reference orig.ppm --distorted decoded.ppm --bit-exact
+            j2k batch encode -i ./images/ --output-dir ./encoded/ --recursive
             j2k benchmark -i test.pgm -r 10 --format csv -o results.csv
         """)
     }

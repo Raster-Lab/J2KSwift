@@ -71,6 +71,14 @@ struct CodingOptions: Sendable {
         terminationMode == .predictable
     }
 
+    /// Whether per-pass segment lengths should be recorded.
+    ///
+    /// Required for PCRD-opt rate control (to know byte boundaries per pass)
+    /// and for bypass mode (to separate MQ-coded and raw-coded data).
+    var recordPerPassSegments: Bool {
+        resetOnEachPass || bypassEnabled || terminationMode == .nearOptimal
+    }
+
     /// Creates new coding options.
     ///
     /// - Parameters:
@@ -105,6 +113,12 @@ struct CodingOptions: Sendable {
     ///
     /// Uses a tighter termination sequence to minimise wasted bits.
     static let optimalCompression = CodingOptions(terminationMode: .nearOptimal)
+
+    /// Near-optimal termination configured for PCRD-opt rate control.
+    ///
+    /// Produces per-pass segment lengths needed for truncation point
+    /// selection without the overhead of full predictable termination.
+    static let pcrdOptimal = CodingOptions(terminationMode: .nearOptimal)
 }
 
 // MARK: - Bit-Plane Coder
@@ -192,7 +206,8 @@ struct BitPlaneCoder: Sendable {
 
         // When bypass mode is enabled, per-pass segments are required for bypass
         // bit-planes to separate MQ-coded and raw-coded data per JPEG 2000 standard.
-        let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
+        // Also needed for near-optimal termination (PCRD-opt rate control).
+        let usePerPassSegments = options.recordPerPassSegments
 
         // For per-pass termination, we collect pass data separately
         var passDataSegments: [Data] = []

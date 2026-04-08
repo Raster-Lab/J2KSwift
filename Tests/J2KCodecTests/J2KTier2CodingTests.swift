@@ -107,7 +107,7 @@ final class J2KTier2CodingTests: XCTestCase {
     // MARK: - Packet Header Writer Tests
 
     func testPacketHeaderWriterEmptyPacket() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let header = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 0,
@@ -124,7 +124,7 @@ final class J2KTier2CodingTests: XCTestCase {
     }
 
     func testPacketHeaderWriterSingleCodeBlock() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let header = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 0,
@@ -143,7 +143,7 @@ final class J2KTier2CodingTests: XCTestCase {
 
     func testPacketHeaderWriterMultipleCodeBlocks() throws {
         throw XCTSkip("Known CI failure: data length assertion")
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let header = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 0,
@@ -163,7 +163,7 @@ final class J2KTier2CodingTests: XCTestCase {
     }
 
     func testPacketHeaderWriterMultipleHeaders() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let headers = [
             PacketHeader(
                 layerIndex: 0,
@@ -194,7 +194,7 @@ final class J2KTier2CodingTests: XCTestCase {
 
     func testPacketHeaderWriterInvalidData() throws {
         throw XCTSkip("Known CI failure: does not throw expected error")
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
 
         // Mismatched inclusions and passes
         let header = PacketHeader(
@@ -220,7 +220,7 @@ final class J2KTier2CodingTests: XCTestCase {
 
     func testPacketHeaderReaderEmptyPacket() throws {
         // Create an empty packet
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let originalHeader = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 0,
@@ -247,7 +247,7 @@ final class J2KTier2CodingTests: XCTestCase {
     }
 
     func testPacketHeaderReaderSingleCodeBlock() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let originalHeader = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 0,
@@ -404,7 +404,7 @@ final class J2KTier2CodingTests: XCTestCase {
     // MARK: - Integration Tests
 
     func testPacketHeaderRoundTrip() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         let originalHeader = PacketHeader(
             layerIndex: 0,
             resolutionLevel: 1,
@@ -470,7 +470,7 @@ final class J2KTier2CodingTests: XCTestCase {
         XCTAssertEqual(layers.count, 2)
 
         // Create packet headers for each layer
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
         for layer in layers {
             let inclusions = codeBlocks.map { layer.codeBlockContributions[$0.index] != nil }
             let passes = codeBlocks.compactMap { layer.codeBlockContributions[$0.index] }
@@ -497,7 +497,7 @@ final class J2KTier2CodingTests: XCTestCase {
     // MARK: - Performance Tests
 
     func testPacketHeaderEncodingPerformance() throws {
-        let writer = PacketHeaderWriter()
+        var writer = PacketHeaderWriter()
 
         // Create a realistic packet header with many code-blocks
         let codeBlockCount = 256

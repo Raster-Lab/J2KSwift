@@ -167,6 +167,12 @@ public struct PacketHeader: Sendable {
     /// Only valid for code-blocks where `codeBlockInclusions` is true.
     public var dataLengths: [Int]
 
+    /// Number of zero bit-planes for each included code-block.
+    ///
+    /// Only used for the first inclusion of a code-block. Subsequent
+    /// layers ignore this field.
+    public var zeroBitPlanes: [Int]
+
     /// Creates a new packet header.
     ///
     /// - Parameters:
@@ -178,6 +184,7 @@ public struct PacketHeader: Sendable {
     ///   - codeBlockInclusions: Code-block inclusion flags.
     ///   - codingPasses: Number of coding passes per code-block.
     ///   - dataLengths: Data lengths per code-block.
+    ///   - zeroBitPlanes: Zero bit-plane counts per code-block.
     public init(
         layerIndex: Int,
         resolutionLevel: Int,
@@ -186,7 +193,8 @@ public struct PacketHeader: Sendable {
         isEmpty: Bool = false,
         codeBlockInclusions: [Bool] = [],
         codingPasses: [Int] = [],
-        dataLengths: [Int] = []
+        dataLengths: [Int] = [],
+        zeroBitPlanes: [Int] = []
     ) {
         self.layerIndex = layerIndex
         self.resolutionLevel = resolutionLevel
@@ -196,6 +204,7 @@ public struct PacketHeader: Sendable {
         self.codeBlockInclusions = codeBlockInclusions
         self.codingPasses = codingPasses
         self.dataLengths = dataLengths
+        self.zeroBitPlanes = zeroBitPlanes
     }
 }
 
@@ -203,85 +212,258 @@ public struct PacketHeader: Sendable {
 
 /// Writes packet headers to the JPEG 2000 codestream.
 ///
-/// The packet header writer encodes packet information using tag trees
-/// and arithmetic coding for efficient compression.
+/// Encodes packet headers using the raw bitstream format defined in
+/// ISO/IEC 15444-1 Annex B.10. Each packet header contains:
+/// 1. Non-empty flag (1 bit)
+/// 2. Code-block inclusion bits (1 bit per block; simplified tag-tree)
+/// 3. Zero bit-plane information (for first inclusion only)
+/// 4. Number of coding passes (Table B.4 prefix code)
+/// 5. Data lengths (Lblock + length bits per Table B.5)
 ///
-/// ## Example
-///
-/// ```swift
-/// let writer = PacketHeaderWriter()
-/// let header = PacketHeader(layerIndex: 0, resolutionLevel: 0, ...)
-/// let encodedHeader = try writer.encode(header)
-/// ```
+/// The writer tracks per-block state across layers so that subsequent
+/// packets only encode incremental information.
 public struct PacketHeaderWriter: Sendable {
+    /// Per-block state tracking across layers.
+    ///
+    /// Tracks whether a block has been included before and the current
+    /// Lblock value (initial length exponent) for length coding.
+    private var blockIncluded: [Int: Bool]
+
+    /// Current Lblock value per block (initial = 3).
+    private var blockLblock: [Int: Int]
+
     /// Creates a new packet header writer.
-    public init() {}
+    public init() {
+        self.blockIncluded = [:]
+        self.blockLblock = [:]
+    }
+
+    /// Resets per-block state for a new tile or codestream.
+    public mutating func reset() {
+        blockIncluded.removeAll()
+        blockLblock.removeAll()
+    }
 
     /// Encodes a packet header.
     ///
-    /// - Parameter header: The packet header to encode.
+    /// - Parameters:
+    ///   - header: The packet header to encode.
+    ///   - blockIndices: The code-block indices corresponding to each
+    ///     position in `codeBlockInclusions`, used for state tracking.
+    ///     When nil, sequential indices (0, 1, 2 ...) are assumed.
     /// - Returns: The encoded packet header data.
     /// - Throws: ``J2KError`` if encoding fails.
-    public func encode(_ header: PacketHeader) throws -> Data {
+    public mutating func encode(
+        _ header: PacketHeader,
+        blockIndices: [Int]? = nil
+    ) throws -> Data {
         var writer = J2KBitWriter()
 
-        // Write empty packet flag (1 bit)
+        // 1. Non-empty flag (1 bit): 0 = empty, 1 = has data
         if header.isEmpty {
             writer.writeBit(false)
+            writer.alignToByte()
             return writer.data
         }
         writer.writeBit(true)
 
-        // Initialise MQ encoder for tag tree and other packet header elements
-        var encoder = MQEncoder()
-        var context = MQContext()
+        // Build sequential block indices if not provided
+        let indices = blockIndices ?? Array(0..<header.codeBlockInclusions.count)
 
-        // Encode code-block inclusions
-        for included in header.codeBlockInclusions {
-            encoder.encode(symbol: included, context: &context)
+        // Track which blocks are first-included in THIS packet
+        var blockFirstIncludedThisPacket = Set<Int>()
+
+        // 2. Code-block inclusion bits
+        //    First inclusion uses tag-tree coding (simplified to 1-bit here
+        //    since we treat the whole precinct as a single leaf).
+        //    Subsequent inclusions use 1 bit: 1 = included, 0 = not.
+        for (i, included) in header.codeBlockInclusions.enumerated() {
+            let blockIdx = i < indices.count ? indices[i] : i
+            let firstTime = !(blockIncluded[blockIdx] ?? false)
+
+            if firstTime {
+                // Tag-tree coded first inclusion: write 1 if included, 0 if not.
+                writer.writeBit(included)
+                if included {
+                    blockIncluded[blockIdx] = true
+                    blockFirstIncludedThisPacket.insert(blockIdx)
+                }
+            } else {
+                // Already included in a previous layer: 1-bit flag.
+                writer.writeBit(included)
+            }
         }
 
-        // For included code-blocks, encode number of coding passes
+        // 3. For newly included blocks: encode the number of zero bit-planes
+        //    using a simplified tag-tree (unary: emit P zeros then a one).
+        var zbpIndex = 0
+        for (i, included) in header.codeBlockInclusions.enumerated() {
+            let blockIdx = i < indices.count ? indices[i] : i
+            let wasFirstInclusion = included && blockFirstIncludedThisPacket.contains(blockIdx)
+            if wasFirstInclusion {
+                let P = zbpIndex < header.zeroBitPlanes.count
+                    ? header.zeroBitPlanes[zbpIndex] : 0
+                // Unary code: P zeros followed by a one
+                for _ in 0..<P {
+                    writer.writeBit(false)
+                }
+                writer.writeBit(true)
+            }
+            if included {
+                zbpIndex += 1
+            }
+        }
+
+        // 4. Number of coding passes (Table B.4):
+        //    1        →  0
+        //    2        →  10
+        //    3-5      →  1100 + (n-3) in 2 bits
+        //    6-36     →  1101 + (n-6) in 5 bits
+        //    37-164   →  1110 + (n-37) in 7 bits
+        //    We use a simpler compatible prefix code:
+        //    1    → 0
+        //    2    → 10
+        //    3-5  → 1100 .. 1110 (2-bit suffix)
+        //    ≥6   → 1111 + (n-6) in remaining bits
         var passIndex = 0
         for included in header.codeBlockInclusions where included {
-            guard passIndex < header.dataLengths.count else {
-                throw J2KError.invalidData("Missing data length information")
+            guard passIndex < header.codingPasses.count else {
+                throw J2KError.invalidData("Missing coding pass count")
             }
-            let length = header.dataLengths[passIndex]
-
-            // Encode length in a simple way (this is simplified)
-            // In real JPEG 2000, this uses a more sophisticated encoding
-            var remaining = length
-            while remaining > 0 {
-                encoder.encode(symbol: (remaining & 1) != 0, context: &context)
-                remaining >>= 1
-            }
-            encoder.encode(symbol: false, context: &context) // Terminator
-
+            let nPasses = header.codingPasses[passIndex]
+            try encodeCodingPasses(&writer, count: nPasses)
             passIndex += 1
         }
 
-        // Finish MQ encoding
-        let mqData = encoder.finish()
+        // 5. Data length for each included code-block.
+        //    Uses Lblock (initial = 3) with possible increment bits.
+        //    Length is encoded in (Lblock + floor(log2(nPasses))) bits.
+        var dataIndex = 0
+        for (i, included) in header.codeBlockInclusions.enumerated() where included {
+            guard dataIndex < header.dataLengths.count else {
+                throw J2KError.invalidData("Missing data length")
+            }
+            let blockIdx = i < indices.count ? indices[i] : i
+            let length = header.dataLengths[dataIndex]
+            let nPasses = dataIndex < header.codingPasses.count
+                ? header.codingPasses[dataIndex] : 1
 
-        // Write MQ encoded data
-        writer.writeBytes(mqData)
+            try encodeDataLength(&writer, length: length, nPasses: nPasses,
+                                 blockIdx: blockIdx)
+            dataIndex += 1
+        }
+
+        // Byte-align the header
+        writer.alignToByte()
 
         return writer.data
     }
 
     /// Encodes multiple packet headers in sequence.
     ///
-    /// - Parameter headers: The packet headers to encode.
+    /// - Parameters:
+    ///   - headers: The packet headers to encode.
+    ///   - blockIndices: Block indices (shared across all headers).
     /// - Returns: The encoded packet headers data.
     /// - Throws: ``J2KError`` if encoding fails.
-    public func encodeMultiple(_ headers: [PacketHeader]) throws -> Data {
+    public mutating func encodeMultiple(
+        _ headers: [PacketHeader],
+        blockIndices: [Int]? = nil
+    ) throws -> Data {
         var allData = Data()
         for header in headers {
-            let headerData = try encode(header)
+            let headerData = try encode(header, blockIndices: blockIndices)
             allData.append(headerData)
         }
         return allData
+    }
+
+    // MARK: - Private Encoding Helpers
+
+    /// Encodes the number of coding passes using the Table B.4 prefix code.
+    ///
+    /// | Passes | Codeword          |
+    /// |--------|-------------------|
+    /// | 1      | 0                 |
+    /// | 2      | 10                |
+    /// | 3–5    | 1100 + (n-3) 2b   |
+    /// | 6–36   | 1101 + (n-6) 5b   |
+    /// | 37–164 | 1110 + (n-37) 7b  |
+    private func encodeCodingPasses(
+        _ writer: inout J2KBitWriter, count: Int
+    ) throws {
+        switch count {
+        case 1:
+            writer.writeBit(false) // 0
+        case 2:
+            writer.writeBit(true)  // 1
+            writer.writeBit(false) // 0
+        case 3...5:
+            // 1100 prefix + 2-bit suffix
+            writer.writeBit(true)
+            writer.writeBit(true)
+            writer.writeBit(false)
+            writer.writeBit(false)
+            try writer.writeBits(UInt32(count - 3), count: 2)
+        case 6...36:
+            // 1101 prefix + 5-bit suffix
+            writer.writeBit(true)
+            writer.writeBit(true)
+            writer.writeBit(false)
+            writer.writeBit(true)
+            try writer.writeBits(UInt32(count - 6), count: 5)
+        case 37...164:
+            // 1110 prefix + 7-bit suffix
+            writer.writeBit(true)
+            writer.writeBit(true)
+            writer.writeBit(true)
+            writer.writeBit(false)
+            try writer.writeBits(UInt32(count - 37), count: 7)
+        default:
+            throw J2KError.invalidParameter(
+                "Unsupported coding pass count: \(count)")
+        }
+    }
+
+    /// Encodes a data length using the Lblock mechanism (Annex B.10.5).
+    ///
+    /// Each block starts with Lblock = 3. The encoder writes increment bits
+    /// (1 = increase Lblock by 1, 0 = stop) followed by the length value
+    /// in (Lblock + floor(log2(nPasses))) bits.
+    private mutating func encodeDataLength(
+        _ writer: inout J2KBitWriter,
+        length: Int,
+        nPasses: Int,
+        blockIdx: Int
+    ) throws {
+        let lblock = blockLblock[blockIdx] ?? 3
+        let passLog = nPasses > 1 ? Int(log2(Double(nPasses))) : 0
+        let totalBits = lblock + passLog
+
+        // Check if length fits in current Lblock
+        var neededBits = totalBits
+        if length > 0 {
+            let bitsRequired = Int(log2(Double(length))) + 1
+            if bitsRequired > totalBits {
+                neededBits = bitsRequired
+            }
+        }
+
+        // Write increment bits if we need more than current Lblock allows
+        let increments = max(0, neededBits - totalBits)
+        for _ in 0..<increments {
+            writer.writeBit(true) // increment Lblock
+        }
+        writer.writeBit(false) // stop incrementing
+
+        let finalLblock = lblock + increments
+        let finalBits = finalLblock + passLog
+        blockLblock[blockIdx] = finalLblock
+
+        // Write the length value
+        if finalBits > 0 {
+            try writer.writeBits(UInt32(length), count: finalBits)
+        }
     }
 }
 

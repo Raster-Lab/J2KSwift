@@ -111,11 +111,11 @@ func encodeHTJ2KForDICOM(rows: Int, columns: Int, bitsStored: Int, rawPixels: Da
                              colorSpace: .grayscale)
 
     // RPCL is required by Transfer Syntax 1.2.840.10008.1.2.4.203
-    let progression: J2KProgressionOrder = progressionOrder == "RPCL" ? .RPCL : .LRCP
+    let progression: J2KProgressionOrder = progressionOrder == "RPCL" ? .rpcl : .lrcp
     let htConfig = J2KEncodingConfiguration(
-        progressionOrder: progression,
-        qualityLayers: 1,
         decompositionLevels: 5,
+        qualityLayers: 1,
+        progressionOrder: progression,
         useHTJ2K: true
     )
     let encoder  = J2KEncoder(encodingConfiguration: htConfig)

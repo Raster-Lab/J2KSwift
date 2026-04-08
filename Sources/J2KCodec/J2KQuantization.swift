@@ -180,7 +180,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// Explicit step sizes for each subband (optional).
     ///
     /// Only used when `implicitStepSizes` is false.
-    /// Keys should be subband names at specific levels (e.g., "HL1", "HH2").
+    /// Keys should be subband names at specific levels (e.g., "HL_1", "HH_2", "LL_0").
     public let explicitStepSizes: [String: Double]
 
     /// TCQ configuration (only used when mode is .trellis).
@@ -338,10 +338,16 @@ public struct J2KSubbandGain: Sendable {
 public struct J2KStepSizeCalculator: Sendable {
     /// Calculates the step size for a specific subband.
     ///
-    /// The step size is computed as:
+    /// The step size follows the JPEG 2000 standard convention:
     /// ```
-    /// Δ_b = Δ_base × 2^(R-r) × G_b
+    /// Δ_b = base_step × 2^(decompositionLevel) × G_b
     /// ```
+    /// where G_b is the subband gain (1 for LL, √2/2 for LH/HL, 2/4 for HH).
+    ///
+    /// This ensures:
+    /// - **LL (approximation)**: Smallest step → highest fidelity
+    /// - **LH/HL (detail)**: Moderate step → moderate quantization
+    /// - **HH (diagonal)**: Largest step → strongest quantization
     ///
     /// - Parameters:
     ///   - baseStepSize: The base step size from configuration.
@@ -357,15 +363,29 @@ public struct J2KStepSizeCalculator: Sendable {
         totalLevels: Int,
         reversible: Bool
     ) -> Double {
-        // Level scaling: coarser levels (higher decomposition) get larger steps
-        // decompositionLevel 0 is finest, totalLevels-1 is coarsest
-        let levelScale = pow(2.0, Double(decompositionLevel))
+        if reversible {
+            // Lossless: step size is 1.0 (no quantization)
+            return 1.0
+        }
 
-        // Subband gain
+        // Subband-aware step size: larger gain → larger step → more quantization
+        // LL gets the smallest step (highest fidelity)
+        // HH gets the largest step (most aggressive)
         let gain = J2KSubbandGain.gain(for: subband, reversible: reversible)
 
-        // Final step size
-        return baseStepSize * levelScale / gain
+        // Scale step by resolution level — coarser levels scaled down
+        // so the LL band (highest level) gets relative protection
+        let levelFactor: Double
+        if subband == .ll {
+            // LL: protect the approximation signal strongly
+            levelFactor = 1.0
+        } else {
+            // Detail subbands: finer levels have larger coefficients typically
+            // Scale by 2^level so coarser detail bands get larger steps
+            levelFactor = pow(2.0, Double(decompositionLevel))
+        }
+
+        return baseStepSize * gain * levelFactor
     }
 
     /// Calculates step sizes for all subbands in a multi-level decomposition.
@@ -375,6 +395,7 @@ public struct J2KStepSizeCalculator: Sendable {
     ///   - totalLevels: Number of decomposition levels.
     ///   - reversible: Whether using the reversible filter.
     /// - Returns: Dictionary mapping subband identifiers to step sizes.
+    ///            Keys use format "SUBBAND_LEVEL" (e.g. "HL_1", "LL_0").
     public static func calculateAllStepSizes(
         baseStepSize: Double,
         totalLevels: Int,
@@ -382,12 +403,10 @@ public struct J2KStepSizeCalculator: Sendable {
     ) -> [String: Double] {
         var stepSizes: [String: Double] = [:]
 
-        // For each level, calculate step sizes for LH, HL, HH
+        // Detail subbands at each level (1-indexed in key for QCD marker convention)
         for level in 0..<totalLevels {
-            let levelName = "\(level + 1)" // 1-indexed for naming
-
-            for subband in [J2KSubband.lh, .hl, .hh] {
-                let key = "\(subband.rawValue)\(levelName)"
+            for subband in [J2KSubband.hl, .lh, .hh] {
+                let key = "\(subband.rawValue)_\(level + 1)"
                 stepSizes[key] = calculateStepSize(
                     baseStepSize: baseStepSize,
                     subband: subband,
@@ -398,11 +417,11 @@ public struct J2KStepSizeCalculator: Sendable {
             }
         }
 
-        // LL subband at the coarsest level
-        stepSizes["LL\(totalLevels)"] = calculateStepSize(
+        // LL subband at coarsest level (key "LL_0" by convention)
+        stepSizes["LL_0"] = calculateStepSize(
             baseStepSize: baseStepSize,
             subband: .ll,
-            decompositionLevel: totalLevels - 1,
+            decompositionLevel: totalLevels > 0 ? totalLevels - 1 : 0,
             totalLevels: totalLevels,
             reversible: reversible
         )
@@ -412,13 +431,14 @@ public struct J2KStepSizeCalculator: Sendable {
 
     /// Encodes step size as JPEG 2000 exponent/mantissa pair.
     ///
-    /// In JPEG 2000, step sizes are encoded as:
+    /// In JPEG 2000 (ISO/IEC 15444-1 Table A.29), step sizes are encoded as:
     /// ```
-    /// Δ = 2^(ε_b - B) × (1 + μ/2^11)
+    /// Δ = 2^(ε_b - E) × (1 + μ/2^11)
     /// ```
-    /// where ε_b is the exponent (5 bits), μ is the mantissa (11 bits), and B is a bias.
-    /// For simplicity, we use a normalised encoding where step sizes are stored
-    /// with sufficient precision for typical use cases.
+    /// where ε_b is the exponent (5 bits), μ is the mantissa (11 bits),
+    /// and E is the number of bits used for the representation.
+    ///
+    /// We use a bias of 16 so the exponent field is non-negative.
     ///
     /// - Parameter stepSize: The step size to encode.
     /// - Returns: Tuple of (exponent, mantissa).
@@ -427,36 +447,27 @@ public struct J2KStepSizeCalculator: Sendable {
             return (0, 0)
         }
 
-        // Find the exponent such that stepSize is in range [1, 2) × 2^e
-        // i.e., e = floor(log2(stepSize))
         let log2Step = log2(stepSize)
         let floatExponent = floor(log2Step)
+        let exponent = max(0, min(31, Int(floatExponent) + 16))
 
-        // The exponent in JPEG 2000 is stored as a 5-bit value
-        // We need to encode it in a way that allows reconstruction
-        // Exponent represents the power of 2 for the step size
-        // We use signed representation: positive exponents for step > 1
-        let exponent = Int(floatExponent) + 16 // Bias of 16 to handle both > 1 and < 1
-        let clampedExponent = max(0, min(31, exponent))
-
-        // Calculate mantissa: stepSize = 2^(e) × (1 + μ/2048)
-        // So μ = (stepSize / 2^e - 1) × 2048
         let baseValue = pow(2.0, floatExponent)
         let normalizedValue = stepSize / baseValue
         let mantissa = max(0, min(2047, Int((normalizedValue - 1.0) * 2048.0)))
 
-        return (clampedExponent, mantissa)
+        return (exponent, mantissa)
     }
 
     /// Decodes JPEG 2000 exponent/mantissa pair to step size.
+    ///
+    /// Inverse of ``encodeStepSize(_:)``. Uses the same bias of 16.
     ///
     /// - Parameters:
     ///   - exponent: The exponent value (0-31).
     ///   - mantissa: The mantissa value (0-2047).
     /// - Returns: The decoded step size.
     public static func decodeStepSize(exponent: Int, mantissa: Int) -> Double {
-        // Reverse the encoding: stepSize = 2^(e-bias) × (1 + μ/2048)
-        let actualExponent = Double(exponent - 16) // Remove bias
+        let actualExponent = Double(exponent - 16)
         let base = pow(2.0, actualExponent)
         return base * (1.0 + Double(mantissa) / 2048.0)
     }
@@ -671,8 +682,12 @@ public struct J2KQuantizer: Sendable {
             throw J2KError.invalidParameter("Step size must be positive")
         }
 
-        return coefficients.map { coefficient in
-            quantizeCoefficient(coefficient, stepSize: stepSize)
+        // Use optimised bulk quantisation
+        switch parameters.mode {
+        case .noQuantization:
+            return coefficients.map { Int32($0.rounded()) }
+        case .scalar, .expounded, .trellis, .deadzone:
+            return J2KOptimizedQuantisation.quantizeScalar(coefficients, stepSize: stepSize)
         }
     }
 
@@ -705,9 +720,15 @@ public struct J2KQuantizer: Sendable {
             throw J2KError.invalidParameter("Step size must be positive")
         }
 
-        // Directly quantize Int32 values using specialized Int32 method
-        return coefficients.map { coefficient in
-            quantizeCoefficient(coefficient, stepSize: stepSize)
+        // Use optimised bulk quantisation for common modes
+        switch parameters.mode {
+        case .noQuantization:
+            return coefficients
+        case .scalar, .expounded, .trellis:
+            return J2KOptimizedQuantisation.quantizeScalar(coefficients, stepSize: stepSize)
+        case .deadzone:
+            return J2KOptimizedQuantisation.quantizeDeadzone(
+                coefficients, stepSize: stepSize, deadzoneWidth: parameters.deadzoneWidth)
         }
     }
 
@@ -770,9 +791,18 @@ public struct J2KQuantizer: Sendable {
             throw J2KError.invalidParameter("Step size must be positive")
         }
 
-        return coefficients.map { row in
-            row.map { coefficient in
-                quantizeCoefficient(Double(coefficient), stepSize: stepSize)
+        // Use optimised row-by-row quantisation
+        switch parameters.mode {
+        case .noQuantization:
+            return coefficients
+        case .scalar, .expounded, .trellis:
+            return coefficients.map { row in
+                J2KOptimizedQuantisation.quantizeScalar(row, stepSize: stepSize)
+            }
+        case .deadzone:
+            return coefficients.map { row in
+                J2KOptimizedQuantisation.quantizeDeadzone(
+                    row, stepSize: stepSize, deadzoneWidth: parameters.deadzoneWidth)
             }
         }
     }
@@ -933,8 +963,13 @@ public struct J2KQuantizer: Sendable {
         totalLevels: Int
     ) -> Double {
         if !parameters.implicitStepSizes {
-            // Look up explicit step size
-            let key = "\(subband.rawValue)\(decompositionLevel + 1)"
+            // Look up explicit step size using "SUBBAND_LEVEL" format
+            let key: String
+            if subband == .ll {
+                key = "LL_0"
+            } else {
+                key = "\(subband.rawValue)_\(decompositionLevel + 1)"
+            }
             if let explicit = parameters.explicitStepSizes[key] {
                 return explicit
             }

@@ -165,6 +165,19 @@ extension J2KCLI {
         if options["htj2k"] != nil { config.useHTJ2K = true }
         if options["no-mct"] != nil { config.mctConfiguration = .disabled }
 
+        // Precinct sizes (comma-separated, highest-resolution first, e.g. "256x256,128x128,64x64")
+        if let precinctStr = options["precincts"] {
+            var sizes: [(width: Int, height: Int)] = []
+            for entry in precinctStr.split(separator: ",") {
+                let dims = entry.split(separator: "x").compactMap { Int($0) }
+                if dims.count == 2 {
+                    sizes.append((width: dims[0], height: dims[1]))
+                }
+            }
+            // Store lowest-resolution first (reverse the user-friendly order)
+            config.precinctSizes = sizes.reversed()
+        }
+
         // Codec variant selection
         if let codec = options["codec"] {
             applyCodecOption(codec, to: &config)
@@ -268,25 +281,35 @@ extension J2KCLI {
         USAGE:
             j2k encode -i <input> [-o <output>] [options]
 
-        OPTIONS:
-            -i, --input PATH            Input image (PGM, PPM, TIFF, PNG, DICOM)
-            -o, --output PATH           Output file (optional; derived from input name if omitted)
-            -q, --quality FLOAT         Quality 0.0-1.0 (default 1.0)
-            --lossless                  Lossless compression
+        QUALITY MODES (mutually exclusive):
+            --lossless                  Lossless (reversible 5/3 wavelet, RCT)
+            -q, --quality FLOAT         Quality 0.0–1.0 (default 0.9)
             --bitrate BPP               Target bit-rate (bits per pixel)
-            --psnr VALUE                Target PSNR (dB)
-            --visually-lossless         Near-lossless preset
+            --compression-ratio N:1     Target ratio (e.g. 20:1)
+            --compression-percent N     Target size reduction %
+            --target-size BYTES         Exact output size in bytes
+            --visually-lossless         Near-lossless (quality ≈ 0.99)
+
+        STRUCTURAL OPTIONS:
             --preset fast|balanced|quality  Encoding preset
-            --levels N                  DWT decomposition levels
+            --codec VARIANT             j2k-lossless, j2k-lossy,
+                                        htj2k-lossless, htj2k-lossy
+            --levels N                  DWT decomposition levels (0–10)
             --blocksize WxH             Code-block size (e.g. 64x64)
-            --layers N                  Quality layers
-            --format j2k|jp2|jpx        Output container format
+            --layers N                  Quality layers (1–20)
+            --format j2k|jp2|jpx|jph    Output container format
             --progression ORDER         LRCP|RLCP|RPCL|PCRL|CPRL
-            --tile-size WxH             Tile size
+            --tile-size WxH             Tile size (e.g. 512x512)
+            --precincts S1,S2,...        Precinct ladder (e.g. 256x256,128x128,64x64)
+            --roi x,y,w,h               Region of interest
             --htj2k                     Use HTJ2K (Part 15)
             --mct / --no-mct            Multi-component transform
-            --gpu / --no-gpu            GPU acceleration
-            --colour-space CS           Set colour space
+
+        I/O OPTIONS:
+            -i, --input PATH            Input image (PGM, PPM, TIFF, PNG, DICOM)
+            -o, --output PATH           Output file (optional; auto-derived if omitted)
+            --colour-space CS           Set colour space (synonym: --color-space)
+            --gpu / --no-gpu            GPU acceleration (platform-dependent)
             --verbose                   Verbose output
             --quiet                     Suppress output
             --timing                    Show timing breakdown
@@ -297,11 +320,28 @@ extension J2KCLI {
             -o -                        Write output to stdout
             When piping, diagnostic messages are sent to stderr.
 
+        RECOMMENDED PRESETS:
+            Archival / medical (lossless):
+              j2k encode -i scan.dcm -o scan.jp2 --lossless --format jp2
+
+            Professional photography:
+              j2k encode -i photo.ppm -o photo.jp2 --preset quality \\
+                  --quality 0.95 --progression RPCL --format jp2
+
+            Web delivery (HTJ2K, fast decode):
+              j2k encode -i photo.ppm -o photo.jph --codec htj2k-lossy \\
+                  --quality 0.85 --preset balanced
+
+            High-throughput pipeline:
+              j2k encode -i frame.ppm -o frame.jph --codec htj2k-lossless
+
         EXAMPLES:
             j2k encode -i input.pgm -o output.j2k --lossless
-            j2k encode -i input.tiff --htj2k
+            j2k encode -i input.ppm --preset quality --quality 0.95
+            j2k encode -i input.tiff --codec htj2k-lossless
             j2k encode -i scan.dcm -o compressed.jp2 --format jp2
-            cat image.pgm | j2k encode -i - -o output.j2k
+            j2k encode -i input.ppm --compression-ratio 20:1
+            cat image.pgm | j2k encode -i - -o output.j2k --lossless
         """)
     }
 
@@ -439,14 +479,17 @@ extension J2KCLI {
             j2k decode -i <input> [-o <output>] [options]
 
         OPTIONS:
-            -i, --input PATH            Input file (.j2k, .jp2, .jpx)
-            -o, --output PATH           Output image (optional; derived from input if omitted)
+            -i, --input PATH            Input file (.j2k, .jp2, .jpx, .jph)
+            -o, --output PATH           Output image (optional; auto-derived if omitted)
             --output-format FORMAT      Output format: pgm, ppm, tiff, png
             --level N                   Resolution level (0 = full)
             --layer N                   Quality layer
             --component N               Single component index
             --components N,M,...        Component indices
-            --colour-space              Convert colour space
+            --header-only               Print codestream info without decoding
+            --bit-depth N               Output bit depth (8 or 16)
+            --strip-alpha               Discard alpha channel
+            --colour-space CS           Convert colour space (synonym: --color-space)
             --gpu / --no-gpu            GPU acceleration
             --verbose                   Verbose output
             --quiet                     Suppress output
@@ -461,7 +504,8 @@ extension J2KCLI {
         EXAMPLES:
             j2k decode -i input.j2k -o output.pgm
             j2k decode -i input.jp2 -o output.tiff
-            j2k decode -i input.j2k
+            j2k decode -i input.j2k --header-only --json
+            j2k decode -i input.j2k --level 2 -o thumb.pgm
             j2k decode -i input.j2k -o - | other-tool -i -
         """)
     }

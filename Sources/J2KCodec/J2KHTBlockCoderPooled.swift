@@ -78,42 +78,43 @@ internal struct HTBlockEncoderPooled: Sendable {
 
         // Process in 4-row stripes
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
-            let stripeHeight = min(4, height - stripe * 4)
-            for col in stride(from: 0, to: width, by: 2) {
-                let pairWidth = min(2, width - col)
+        let w = width
 
-                for row in 0..<stripeHeight {
-                    let y = stripe * 4 + row
-                    let x0 = col
-                    let idx0 = y * width + x0
+        coefficients.withUnsafeBufferPointer { coeffPtr in
+            for stripe in 0..<numStripes {
+                let stripeHeight = min(4, height - stripe * 4)
+                let stripeBase = stripe * 4 * w
+                for col in stride(from: 0, to: w, by: 2) {
+                    let pairWidth = min(2, w - col)
 
-                    let coeff0 = coefficients[idx0]
-                    let sig0 = (abs(coeff0) >> bitPlane) & 1
+                    for row in 0..<stripeHeight {
+                        let rowBase = stripeBase + row * w + col
 
-                    var sig1 = 0
-                    var coeff1 = 0
-                    if pairWidth > 1 {
-                        let idx1 = y * width + x0 + 1
-                        coeff1 = coefficients[idx1]
-                        sig1 = (abs(coeff1) >> bitPlane) & 1
-                    }
+                        let coeff0 = coeffPtr[rowBase]
+                        let abs0 = coeff0 < 0 ? -coeff0 : coeff0
+                        let sig0 = (abs0 >> bitPlane) & 1
 
-                    // Encode significance
-                    let pattern = sig0 | (sig1 << 1)
-                    mel.encode(bit: (pattern == 0) ? 0 : 1)
-                    vlc.encodeSignificance(pattern: pattern)
+                        var sig1 = 0
+                        var abs1 = 0
+                        var coeff1 = 0
+                        if pairWidth > 1 {
+                            coeff1 = coeffPtr[rowBase + 1]
+                            abs1 = coeff1 < 0 ? -coeff1 : coeff1
+                            sig1 = (abs1 >> bitPlane) & 1
+                        }
 
-                    // Encode magnitude/sign
-                    if sig0 != 0 {
-                        let mag = abs(coeff0)
-                        let sign = coeff0 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
-                    }
-                    if sig1 != 0 {
-                        let mag = abs(coeff1)
-                        let sign = coeff1 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
+                        // Encode significance
+                        let pattern = sig0 | (sig1 << 1)
+                        mel.encode(bit: pattern != 0 ? 1 : 0)
+                        vlc.encodeSignificance(pattern: pattern)
+
+                        // Encode magnitude/sign
+                        if sig0 != 0 {
+                            magsgn.encode(magnitude: abs0, sign: coeff0 < 0 ? 1 : 0, bitPlane: bitPlane)
+                        }
+                        if sig1 != 0 {
+                            magsgn.encode(magnitude: abs1, sign: coeff1 < 0 ? 1 : 0, bitPlane: bitPlane)
+                        }
                     }
                 }
             }
@@ -125,10 +126,17 @@ internal struct HTBlockEncoderPooled: Sendable {
         let magsgnData = magsgn.flush()
 
         // Combine data
-        var codedData = Data()
+        let totalSize = melData.count + magsgnData.count + vlcData.count
+        var codedData = Data(capacity: totalSize)
         codedData.append(melData)
         codedData.append(magsgnData)
-        codedData.append(Data(vlcData.reversed()))
+        // Reverse VLC data directly into output
+        vlcData.withUnsafeBytes { vlcBytes in
+            let vlcPtr = vlcBytes.bindMemory(to: UInt8.self)
+            for i in stride(from: vlcPtr.count - 1, through: 0, by: -1) {
+                codedData.append(vlcPtr[i])
+            }
+        }
 
         return HTEncodedBlock(
             codedData: codedData,

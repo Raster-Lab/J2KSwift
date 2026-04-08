@@ -297,29 +297,27 @@ public struct J2KRateControl: Sendable {
         // Compute coding pass information with R-D slopes
         let passInfos = try computeCodingPassInfo(codeBlocks: codeBlocks)
 
-        // Sort by descending slope (best quality-per-bit first)
-        let sortedPasses = passInfos.sorted { $0.slope > $1.slope }
-
         // Generate target rates for each layer
         let targetRates = try computeLayerTargetRates(totalPixels: totalPixels)
 
         // Form layers using PCRD-opt
         var layers = [QualityLayer]()
-        var previousLayerPasses = Set<String>()
+        // Track cumulative pass counts per block across layers
+        var cumulativePassCounts = [Int: Int]() // blockIndex → total passes so far
 
         for (layerIndex, targetRate) in targetRates.enumerated() {
             let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
 
-            let (layer, selectedPasses) = try formLayerPCRDOpt(
+            let (layer, updatedCounts) = try formLayerPCRDOpt(
                 layerIndex: layerIndex,
                 targetBytes: targetBytes,
-                sortedPasses: sortedPasses,
-                previousPasses: previousLayerPasses,
+                passInfos: passInfos,
+                previousPassCounts: cumulativePassCounts,
                 codeBlocks: codeBlocks
             )
 
             layers.append(layer)
-            previousLayerPasses = selectedPasses
+            cumulativePassCounts = updatedCounts
         }
 
         return layers
@@ -328,6 +326,10 @@ public struct J2KRateControl: Sendable {
     // MARK: - Private Methods
 
     /// Computes coding pass information with rate-distortion slopes.
+    ///
+    /// Uses actual per-pass byte counts from EBCOT encoding and a
+    /// bit-plane distortion model where each bit-plane contributes
+    /// distortion proportional to `(2^bitPlane)^2` per sample.
     private func computeCodingPassInfo(
         codeBlocks: [J2KCodeBlock]
     ) throws -> [CodingPassInfo] {
@@ -336,95 +338,63 @@ public struct J2KRateControl: Sendable {
         for codeBlock in codeBlocks {
             guard codeBlock.passeCount > 0 else { continue }
 
-            // Estimate bytes per pass (simplified)
-            let bytesPerPass = max(1, codeBlock.data.count / codeBlock.passeCount)
+            let samples = Double(codeBlock.width * codeBlock.height)
+
+            // Compute per-pass byte increments from passSegmentLengths.
+            // If segment lengths are available, use them directly (each entry
+            // is the incremental byte count for that pass).
+            // Otherwise, distribute total bytes evenly across passes.
+            let passBytes: [Int]
+            if !codeBlock.passSegmentLengths.isEmpty &&
+               codeBlock.passSegmentLengths.count == codeBlock.passeCount {
+                passBytes = codeBlock.passSegmentLengths
+            } else {
+                // Fallback: evenly distribute
+                let avg = max(1, codeBlock.data.count / max(1, codeBlock.passeCount))
+                passBytes = [Int](repeating: avg, count: codeBlock.passeCount)
+            }
+
+            // Each coding pass refines one bit-plane in a 3-pass cycle:
+            //   pass 0,1,2 → bit-plane (activeBitPlanes - 1)  [MSB]
+            //   pass 3,4,5 → bit-plane (activeBitPlanes - 2)
+            //   ...
+            // The distortion contribution of a single bit-plane p is
+            //   D_p ≈ samples × (2^p)^2 / 3
+            // (divided by 3 because the bit-plane has 3 sub-passes).
+            let activeBitPlanes = max(1, (codeBlock.passeCount + 2) / 3)
 
             var cumulativeBytes = 0
-            var previousDistortion = estimateInitialDistortion(codeBlock: codeBlock)
+            var cumulativeDistortionReduction = 0.0
 
             for passNum in 0..<codeBlock.passeCount {
-                cumulativeBytes += bytesPerPass
+                let deltaBytes = passBytes[passNum]
+                cumulativeBytes += deltaBytes
 
-                // Estimate distortion after including this pass
-                let distortion = estimateDistortion(
-                    codeBlock: codeBlock,
-                    passNumber: passNum,
-                    totalPasses: codeBlock.passeCount
-                )
+                // Which bit-plane does this pass refine?
+                let bitPlane = activeBitPlanes - 1 - (passNum / 3)
+                let safeBitPlane = max(0, bitPlane)
 
-                // Compute rate-distortion slope
-                let deltaDistortion = previousDistortion - distortion
-                let deltaRate = Double(bytesPerPass * 8) // bits
+                // Distortion reduction for this pass
+                let bitPlaneValue = pow(2.0, Double(safeBitPlane))
+                let deltaDistortion = samples * bitPlaneValue * bitPlaneValue / 3.0
 
-                let slope = deltaRate > 0 ? deltaDistortion / deltaRate : 0.0
+                cumulativeDistortionReduction += deltaDistortion
+
+                // R-D slope = ΔD / ΔR (distortion reduction per bit)
+                let deltaBits = Double(deltaBytes) * 8.0
+                let slope = deltaBits > 0 ? deltaDistortion / deltaBits : 0.0
 
                 passInfos.append(CodingPassInfo(
                     codeBlockIndex: codeBlock.index,
                     passNumber: passNum,
                     cumulativeBytes: cumulativeBytes,
-                    distortion: distortion,
+                    distortion: deltaDistortion,
                     slope: slope
                 ))
-
-                previousDistortion = distortion
             }
         }
 
         return passInfos
-    }
-
-    /// Estimates the initial distortion (before any coding passes).
-    ///
-    /// If MCT configuration is provided, adjusts the distortion estimate
-    /// to account for improved compression efficiency from decorrelation.
-    private func estimateInitialDistortion(codeBlock: J2KCodeBlock) -> Double {
-        let samples = codeBlock.width * codeBlock.height
-
-        // Estimate based on bit-planes
-        // More missing bit-planes = higher initial distortion
-        let bitPlaneWeight = pow(2.0, Double(codeBlock.zeroBitPlanes * 2))
-
-        var distortion = Double(samples) * bitPlaneWeight
-
-        // Apply MCT distortion adjustment if configured
-        if let mctConfig = configuration.mctConfiguration {
-            let mctAdjustment = J2KMCTDistortionAdjustment(
-                configuration: mctConfig,
-                componentCount: configuration.componentCount
-            )
-            distortion = mctAdjustment.adjustDistortion(distortion)
-        }
-
-        return distortion
-    }
-
-    /// Estimates distortion for a code-block after a given number of passes.
-    private func estimateDistortion(
-        codeBlock: J2KCodeBlock,
-        passNumber: Int,
-        totalPasses: Int
-    ) -> Double {
-        switch configuration.distortionEstimation {
-        case .normBased:
-            // Exponential decay model: each pass reduces distortion
-            let passRatio = Double(passNumber + 1) / Double(totalPasses)
-            let decayFactor = 1.0 - pow(passRatio, 2.0)
-            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock)
-            return initialDistortion * decayFactor
-
-        case .mseBased:
-            // For MSE-based, we would need actual reconstruction
-            // For now, use a similar model but with linear decay
-            let passRatio = Double(passNumber + 1) / Double(totalPasses)
-            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock)
-            return initialDistortion * (1.0 - passRatio)
-
-        case .simplified:
-            // Very simple model: uniform reduction per pass
-            let remainingPasses = totalPasses - (passNumber + 1)
-            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock)
-            return initialDistortion * Double(remainingPasses) / Double(totalPasses)
-        }
     }
 
     /// Computes target rates for each quality layer.
@@ -471,54 +441,126 @@ public struct J2KRateControl: Sendable {
     }
 
     /// Forms a single quality layer using PCRD-opt algorithm.
+    ///
+    /// Uses bisection search on the distortion slope threshold to find
+    /// the optimal set of coding passes that fits within the target byte
+    /// budget. All passes with slope ≥ threshold are included; those
+    /// below are excluded.
+    ///
+    /// Layer contributions are cumulative: each layer's `codeBlockContributions`
+    /// maps blockIndex → total passes up to and including this layer.
+    /// The caller (generateTileData) computes incremental data per layer
+    /// by subtracting previous layer passes.
     private func formLayerPCRDOpt(
         layerIndex: Int,
         targetBytes: Int,
-        sortedPasses: [CodingPassInfo],
-        previousPasses: Set<String>,
+        passInfos: [CodingPassInfo],
+        previousPassCounts: [Int: Int],
         codeBlocks: [J2KCodeBlock]
-    ) throws -> (QualityLayer, Set<String>) {
-        var contributions = [Int: Int]()
-        var currentBytes = 0
-        var selectedPasses = previousPasses
+    ) throws -> (QualityLayer, [Int: Int]) {
+        // Build a lookup: blockIndex → [passNumber → CodingPassInfo]
+        // for efficient cumulative byte retrieval.
+        var passLookup = [Int: [Int: CodingPassInfo]]()
+        for info in passInfos {
+            passLookup[info.codeBlockIndex, default: [:]][info.passNumber] = info
+        }
 
-        // Select passes in order of descending slope until budget is exhausted
-        for passInfo in sortedPasses {
-            let passKey = "\(passInfo.codeBlockIndex)_\(passInfo.passNumber)"
+        // Candidate passes: only those beyond what previous layers included.
+        let candidates = passInfos.filter { pass in
+            let prev = previousPassCounts[pass.codeBlockIndex] ?? 0
+            return pass.passNumber >= prev
+        }
 
-            // Skip if already included in a previous layer
-            if selectedPasses.contains(passKey) {
-                continue
+        guard !candidates.isEmpty else {
+            // No new passes available; carry forward previous counts
+            let layer = QualityLayer(
+                index: layerIndex,
+                targetRate: nil,
+                codeBlockContributions: previousPassCounts
+            )
+            return (layer, previousPassCounts)
+        }
+
+        // Compute bytes already committed by previous layers
+        var previousBytes = 0
+        for (blockIdx, prevPasses) in previousPassCounts {
+            if prevPasses > 0, let info = passLookup[blockIdx]?[prevPasses - 1] {
+                previousBytes += info.cumulativeBytes
+            }
+        }
+
+        // Bisection search on slope threshold.
+        let maxSlope = candidates.max(by: { $0.slope < $1.slope })?.slope ?? 0
+        var lo = 0.0
+        var hi = maxSlope * 1.1
+
+        // For a given threshold, determine which passes to select and
+        // total cumulative bytes (including previous layers).
+        func evaluate(threshold: Double) -> (bytes: Int, counts: [Int: Int]) {
+            var counts = previousPassCounts // start with prior layer passes
+            var totalBytes = previousBytes
+
+            for pass in candidates {
+                if pass.slope >= threshold {
+                    let blockIdx = pass.codeBlockIndex
+                    let passEnd = pass.passNumber + 1
+
+                    // Keep the highest sequential pass per block
+                    if let existing = counts[blockIdx] {
+                        if passEnd > existing {
+                            counts[blockIdx] = passEnd
+                        }
+                    } else {
+                        counts[blockIdx] = passEnd
+                    }
+                }
             }
 
-            // Check if adding this pass exceeds budget
-            let additionalBytes = passInfo.cumulativeBytes
-
-            // For strict rate matching, check budget (but always add at least one contribution)
-            if configuration.strictRateMatching &&
-               currentBytes + additionalBytes > targetBytes &&
-               !contributions.isEmpty {
-                continue
+            // Recompute total bytes from cumulative counts
+            totalBytes = 0
+            for (blockIdx, passCount) in counts {
+                if passCount > 0, let info = passLookup[blockIdx]?[passCount - 1] {
+                    totalBytes += info.cumulativeBytes
+                }
             }
 
-            // Add this pass
-            contributions[passInfo.codeBlockIndex] = passInfo.passNumber + 1
-            currentBytes += additionalBytes
-            selectedPasses.insert(passKey)
+            return (totalBytes, counts)
+        }
 
-            // Stop if we've met the target (with some tolerance)
-            if currentBytes >= Int(Double(targetBytes) * 0.95) {
-                break
+        // Binary search for optimal threshold
+        var bestCounts = previousPassCounts
+        for _ in 0..<40 {
+            let mid = (lo + hi) / 2.0
+            let result = evaluate(threshold: mid)
+
+            if result.bytes <= targetBytes {
+                bestCounts = result.counts
+                hi = mid // try to include more passes (lower threshold)
+            } else {
+                lo = mid // exclude more passes (higher threshold)
+            }
+        }
+
+        // If nothing was added beyond previous (very tight budget),
+        // at least keep the previous layer contributions
+        let hasNewPasses = bestCounts.contains { key, value in
+            value > (previousPassCounts[key] ?? 0)
+        }
+        if !hasNewPasses {
+            // Try including everything to see if it fits
+            let allResult = evaluate(threshold: 0.0)
+            if allResult.bytes <= targetBytes {
+                bestCounts = allResult.counts
             }
         }
 
         let layer = QualityLayer(
             index: layerIndex,
-            targetRate: Double(targetBytes * 8) / Double(codeBlocks.count),
-            codeBlockContributions: contributions
+            targetRate: Double(targetBytes * 8) / Double(max(1, passInfos.count)),
+            codeBlockContributions: bestCounts
         )
 
-        return (layer, selectedPasses)
+        return (layer, bestCounts)
     }
 
     /// Creates a lossless quality layer with all coding passes.
@@ -535,6 +577,127 @@ public struct J2KRateControl: Sendable {
             codeBlockContributions: contributions
         )
     }
+
+    /// Optimizes quality layers and returns metrics alongside layers.
+    ///
+    /// - Parameters:
+    ///   - codeBlocks: The encoded code-blocks.
+    ///   - totalPixels: Total number of pixels in the image.
+    /// - Returns: A tuple of (layers, metrics).
+    /// - Throws: ``J2KError`` if optimisation fails.
+    public func optimizeLayersWithMetrics(
+        codeBlocks: [J2KCodeBlock],
+        totalPixels: Int
+    ) throws -> (layers: [QualityLayer], metrics: PCRDMetrics) {
+        let layers = try optimizeLayers(codeBlocks: codeBlocks, totalPixels: totalPixels)
+
+        // Compute metrics per layer
+        var layerMetrics = [PCRDLayerMetrics]()
+        for layer in layers {
+            var layerBytes = 0
+            var contributingBlocks = 0
+
+            for (blockIdx, passCount) in layer.codeBlockContributions {
+                contributingBlocks += 1
+                if let block = codeBlocks.first(where: { $0.index == blockIdx }) {
+                    layerBytes += truncatedSize(block: block, passes: passCount)
+                }
+            }
+
+            let actualBpp = totalPixels > 0
+                ? Double(layerBytes * 8) / Double(totalPixels) : 0.0
+
+            layerMetrics.append(PCRDLayerMetrics(
+                layerIndex: layer.index,
+                targetBpp: layer.targetRate.map { $0 / Double(max(1, codeBlocks.count)) * Double(totalPixels) / 8.0 },
+                actualBytes: layerBytes,
+                actualBpp: actualBpp,
+                contributingBlocks: contributingBlocks,
+                totalBlocks: codeBlocks.count
+            ))
+        }
+
+        let totalCodedBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        let selectedBytes = layerMetrics.last?.actualBytes ?? totalCodedBytes
+
+        let metrics = PCRDMetrics(
+            totalCodedBytes: totalCodedBytes,
+            selectedBytes: selectedBytes,
+            totalPixels: totalPixels,
+            layerMetrics: layerMetrics,
+            compressionRatio: totalPixels > 0
+                ? Double(totalPixels) / Double(max(1, selectedBytes)) : 1.0
+        )
+
+        return (layers, metrics)
+    }
+
+    /// Computes truncated byte count for a given number of passes.
+    private func truncatedSize(block: J2KCodeBlock, passes: Int) -> Int {
+        if passes >= block.passeCount {
+            return block.data.count
+        }
+        if !block.passSegmentLengths.isEmpty && block.passSegmentLengths.count >= passes {
+            return block.passSegmentLengths.prefix(passes).reduce(0, +)
+        }
+        return block.data.count * passes / max(1, block.passeCount)
+    }
+}
+
+// MARK: - PCRD Metrics
+
+/// Metrics from post-compression rate-distortion optimisation.
+///
+/// Contains target vs actual size information and per-layer details
+/// for evaluating PCRD-opt effectiveness.
+public struct PCRDMetrics: Sendable {
+    /// Total bytes from all code-blocks before truncation.
+    public let totalCodedBytes: Int
+
+    /// Total bytes selected after PCRD-opt truncation.
+    public let selectedBytes: Int
+
+    /// Total pixel count of the image.
+    public let totalPixels: Int
+
+    /// Per-layer metrics.
+    public let layerMetrics: [PCRDLayerMetrics]
+
+    /// Overall compression ratio (pixels / selected bytes).
+    public let compressionRatio: Double
+
+    /// Savings as a percentage: (1 - selected/total) × 100.
+    public var savingsPercent: Double {
+        guard totalCodedBytes > 0 else { return 0 }
+        return (1.0 - Double(selectedBytes) / Double(totalCodedBytes)) * 100.0
+    }
+
+    /// Actual bits per pixel.
+    public var actualBpp: Double {
+        guard totalPixels > 0 else { return 0 }
+        return Double(selectedBytes * 8) / Double(totalPixels)
+    }
+}
+
+/// Per-layer metrics from PCRD-opt.
+public struct PCRDLayerMetrics: Sendable {
+    /// The layer index.
+    public let layerIndex: Int
+
+    /// Target bits per pixel for this layer (nil for lossless).
+    public let targetBpp: Double?
+
+    /// Actual bytes in this layer.
+    public let actualBytes: Int
+
+    /// Actual bits per pixel achieved.
+    public let actualBpp: Double
+
+    /// Number of code-blocks contributing to this layer.
+    public let contributingBlocks: Int
+
+    /// Total number of code-blocks in the image.
+    public let totalBlocks: Int
 }
 
 // MARK: - Rate-Distortion Statistics

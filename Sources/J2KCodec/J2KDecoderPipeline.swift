@@ -76,6 +76,12 @@ struct DecoderConfiguration: Sendable {
     /// Whether HTJ2K block coding is used (from COD marker bit 6).
     var useHTJ2K: Bool = false
 
+    /// Whether multi-component transform is enabled (MCT byte in COD).
+    var useMCT: Bool = true
+
+    /// Precinct sizes per resolution level (from COD marker, lowest first).
+    var precinctSizes: [(width: Int, height: Int)] = []
+
     /// Per-component DC offset values from DCO marker segment (Part 2).
     ///
     /// When non-nil, the decoder applies these offsets after inverse wavelet
@@ -184,7 +190,11 @@ struct DecoderPipeline: Sendable {
 
         // Stage 6: Inverse colour transform
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 0.0)
-        let rgbData = try applyInverseColorTransform(spatialData, metadata: metadata)
+        let colorData = try applyInverseColorTransform(spatialData, metadata: metadata)
+
+        // Inverse DC level shift (ISO/IEC 15444-1, Annex G.1.1):
+        // For unsigned components, add 2^(bitDepth-1) to restore the original range.
+        let rgbData = applyInverseDCLevelShift(colorData, metadata: metadata)
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
 
         // Stage 7: Image reconstruction
@@ -332,6 +342,7 @@ struct DecoderPipeline: Sendable {
 
         // Scod — Coding style flags
         let scod = try reader.readUInt8()
+        let hasPrecincts = (scod & 0x01) != 0
         // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
         let htSetBits = (scod >> 3) & 0x03
         let hasHTSets = htSetBits != 0
@@ -350,9 +361,9 @@ struct DecoderPipeline: Sendable {
         // Number of layers
         config.qualityLayers = Int(try reader.readUInt16())
 
-        // Multiple component transform
+        // Multiple component transform (1 = MCT enabled, 0 = none)
         let mct = try reader.readUInt8()
-        config.useReversibleTransform = (mct == 1)
+        config.useMCT = (mct == 1)
 
         // Number of decomposition levels
         config.decompositionLevels = Int(try reader.readUInt8())
@@ -367,9 +378,11 @@ struct DecoderPipeline: Sendable {
         let codeBlockStyle = try reader.readUInt8()
         config.useHTJ2K = (codeBlockStyle & 0x40) != 0
 
-        // Wavelet transform type
+        // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         let transformType = try reader.readUInt8()
         config.waveletFilter = (transformType == 1) ? .reversible53 : .irreversible97
+        // Reversible colour transform follows the wavelet choice
+        config.useReversibleTransform = (transformType == 1)
 
         // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
         // If HT sets are signaled, the configuration byte must be read regardless of useHTJ2K flag
@@ -377,6 +390,17 @@ struct DecoderPipeline: Sendable {
             // Read HT set configuration byte
             _ = try reader.readUInt8()
             // We read and ignore for now - parameters are advisory
+        }
+
+        // Precinct sizes — one byte per resolution level (if Scod bit 0 is set)
+        if hasPrecincts {
+            let levels = config.decompositionLevels
+            for _ in 0...levels {
+                let precinctByte = try reader.readUInt8()
+                let ppx = Int(precinctByte & 0x0F)
+                let ppy = Int((precinctByte >> 4) & 0x0F)
+                config.precinctSizes.append((width: 1 << ppx, height: 1 << ppy))
+            }
         }
 
         // Verify we read the expected amount
@@ -492,8 +516,8 @@ struct DecoderPipeline: Sendable {
             // Read step size values (2 bytes each)
             func decodeStepSize(_ value: UInt16) -> Double {
                 let exp = Int((value >> 11) & 0x1F)
-                let mant = Double(value & 0x7FF)
-                return pow(2.0, Double(exp) - 11.0) * (1.0 + mant / 2048.0)
+                let mant = Int(value & 0x7FF)
+                return J2KStepSizeCalculator.decodeStepSize(exponent: exp, mantissa: mant)
             }
 
             let llValue = try reader.readUInt16()
@@ -836,15 +860,22 @@ struct DecoderPipeline: Sendable {
         _ subbands: [SubbandInfo],
         metadata: CodestreamMetadata
     ) throws -> [SubbandInfo] {
+        // Use the same quantizer parameters as the encoder for proper reconstruction
+        let isReversible = metadata.configuration.useReversibleTransform
+        let params: J2KQuantizationParameters = isReversible
+            ? .lossless
+            : .lossy  // mode matters for midpoint reconstruction logic
+        let quantizer = J2KQuantizer(parameters: params, reversible: isReversible)
+
         var result: [SubbandInfo] = []
 
         for info in subbands {
             let key = "\(info.subband.rawValue)_\(info.level)"
             let stepSize = metadata.quantizationSteps[key] ?? 1.0
 
-            // Dequantize coefficients
+            // Use proper midpoint reconstruction via J2KQuantizer
             let dequantized = info.coefficients.map { coeff in
-                Int32(Double(coeff) * stepSize)
+                Int32(quantizer.dequantizeIndex(coeff, stepSize: stepSize).rounded())
             }
 
             result.append(SubbandInfo(
@@ -999,8 +1030,10 @@ struct DecoderPipeline: Sendable {
         _ components: [[Int32]],
         metadata: CodestreamMetadata
     ) throws -> [[Int32]] {
-        // Only apply if 3+ components
-        guard components.count >= 3 else { return components }
+        // Only apply if 3+ components and MCT was signalled
+        guard components.count >= 3, metadata.configuration.useMCT else {
+            return components
+        }
 
         // Apply inverse RCT/ICT based on configuration
         if metadata.configuration.useReversibleTransform {
@@ -1017,9 +1050,39 @@ struct DecoderPipeline: Sendable {
             }
             return result
         } else {
-            // ICT not yet implemented in pipeline
-            return components
+            // ICT — floating-point inverse colour transform for lossy mode
+            let transform = J2KColorTransform(configuration: J2KColorTransformConfiguration(mode: .irreversible))
+            let y = components[0].map { Double($0) }
+            let cb = components[1].map { Double($0) }
+            let cr = components[2].map { Double($0) }
+            let (red, green, blue) = try transform.inverseICT(y: y, cb: cb, cr: cr)
+
+            var result = [
+                red.map { Int32($0.rounded()) },
+                green.map { Int32($0.rounded()) },
+                blue.map { Int32($0.rounded()) },
+            ]
+            if components.count > 3 {
+                result.append(contentsOf: components[3...])
+            }
+            return result
         }
+    }
+
+    /// Applies inverse DC level shift to unsigned components (ISO/IEC 15444-1, Annex G.1.1).
+    ///
+    /// For each unsigned component, adds 2^(bitDepth-1) to restore the original
+    /// unsigned range after inverse colour transform and inverse wavelet.
+    /// Signed components are left unchanged.
+    private func applyInverseDCLevelShift(
+        _ components: [[Int32]], metadata: CodestreamMetadata
+    ) -> [[Int32]] {
+        var result = components
+        for (idx, compInfo) in metadata.components.enumerated() {
+            guard idx < result.count, !compInfo.signed else { continue }
+            J2KOptimizedColour.applyInverseDCLevelShift(&result[idx], bitDepth: compInfo.bitDepth)
+        }
+        return result
     }
 
     // MARK: - Stage 7: Image Reconstruction

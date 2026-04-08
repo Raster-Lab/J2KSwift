@@ -151,20 +151,32 @@ public struct J2KColorTransform: Sendable {
         var cb = [Int32](repeating: 0, count: count)
         var cr = [Int32](repeating: 0, count: count)
 
-        // Apply RCT transform
-        for i in 0..<count {
-            let r = red[i]
-            let g = green[i]
-            let b = blue[i]
+        // Apply RCT transform using buffer pointers for performance
+        red.withUnsafeBufferPointer { r in
+            green.withUnsafeBufferPointer { g in
+                blue.withUnsafeBufferPointer { b in
+                    y.withUnsafeMutableBufferPointer { yp in
+                        cb.withUnsafeMutableBufferPointer { cbp in
+                            cr.withUnsafeMutableBufferPointer { crp in
+                                for i in 0..<count {
+                                    let rv = r[i]
+                                    let gv = g[i]
+                                    let bv = b[i]
 
-            // Y = ⌊(R + 2G + B) / 4⌋
-            y[i] = (r &+ (g &<< 1) &+ b) >> 2
+                                    // Y = ⌊(R + 2G + B) / 4⌋
+                                    yp[i] = (rv &+ (gv &<< 1) &+ bv) >> 2
 
-            // Cb = B - G
-            cb[i] = b &- g
+                                    // Cb = B - G
+                                    cbp[i] = bv &- gv
 
-            // Cr = R - G
-            cr[i] = r &- g
+                                    // Cr = R - G
+                                    crp[i] = rv &- gv
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return (y, cb, cr)
@@ -202,20 +214,33 @@ public struct J2KColorTransform: Sendable {
         var green = [Int32](repeating: 0, count: count)
         var blue = [Int32](repeating: 0, count: count)
 
-        // Apply inverse RCT transform
-        for i in 0..<count {
-            let yVal = y[i]
-            let cbVal = cb[i]
-            let crVal = cr[i]
+        // Apply inverse RCT transform using buffer pointers for performance
+        y.withUnsafeBufferPointer { yp in
+            cb.withUnsafeBufferPointer { cbp in
+                cr.withUnsafeBufferPointer { crp in
+                    red.withUnsafeMutableBufferPointer { rp in
+                        green.withUnsafeMutableBufferPointer { gp in
+                            blue.withUnsafeMutableBufferPointer { bp in
+                                for i in 0..<count {
+                                    let yVal = yp[i]
+                                    let cbVal = cbp[i]
+                                    let crVal = crp[i]
 
-            // G = Y - ⌊(Cb + Cr) / 4⌋
-            green[i] = yVal &- ((cbVal &+ crVal) >> 2)
+                                    // G = Y - ⌊(Cb + Cr) / 4⌋
+                                    let g = yVal &- ((cbVal &+ crVal) >> 2)
+                                    gp[i] = g
 
-            // R = Cr + G
-            red[i] = crVal &+ green[i]
+                                    // R = Cr + G
+                                    rp[i] = crVal &+ g
 
-            // B = Cb + G
-            blue[i] = cbVal &+ green[i]
+                                    // B = Cb + G
+                                    bp[i] = cbVal &+ g
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return (red, green, blue)

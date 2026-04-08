@@ -1,0 +1,190 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-04-08",
+  "description": "Regression benchmark baselines for J2KSwift CI. Values are updated after each release.",
+  "thresholds": {
+    "maxPSNRDrop": 0.5,
+    "maxSizeIncrease": 0.05,
+    "maxEncodeTimeIncrease": 0.20,
+    "maxDecodeTimeIncrease": 0.20,
+    "requireLosslessExact": true
+  },
+  "datasets": [
+    {
+      "id": "gradient-256",
+      "description": "256x256 RGB gradient",
+      "width": 256,
+      "height": 256,
+      "components": 3,
+      "bitDepth": 8,
+      "pattern": "gradient",
+      "testLossless": true,
+      "testLossy": true
+    },
+    {
+      "id": "bars-256",
+      "description": "256x256 SMPTE colour bars",
+      "width": 256,
+      "height": 256,
+      "components": 3,
+      "bitDepth": 8,
+      "pattern": "colourBars",
+      "testLossless": true,
+      "testLossy": true
+    },
+    {
+      "id": "checker-128",
+      "description": "128x128 RGB checkerboard",
+      "width": 128,
+      "height": 128,
+      "components": 3,
+      "bitDepth": 8,
+      "pattern": "checkerboard",
+      "testLossless": true,
+      "testLossy": true
+    },
+    {
+      "id": "flat-512",
+      "description": "512x512 flat mid-grey",
+      "width": 512,
+      "height": 512,
+      "components": 3,
+      "bitDepth": 8,
+      "pattern": "flat",
+      "testLossless": true,
+      "testLossy": true
+    },
+    {
+      "id": "noise-256",
+      "description": "256x256 pseudo-random noise",
+      "width": 256,
+      "height": 256,
+      "components": 3,
+      "bitDepth": 8,
+      "pattern": "noise",
+      "testLossless": true,
+      "testLossy": true
+    },
+    {
+      "id": "grey-gradient-256",
+      "description": "256x256 greyscale gradient",
+      "width": 256,
+      "height": 256,
+      "components": 1,
+      "bitDepth": 8,
+      "pattern": "gradient",
+      "testLossless": true,
+      "testLossy": true
+    }
+  ],
+  "baselines": [
+    {
+      "datasetID": "gradient-256",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "gradient-256",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "bars-256",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "bars-256",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "checker-128",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "checker-128",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "flat-512",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "flat-512",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "noise-256",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "noise-256",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "grey-gradient-256",
+      "mode": "lossless",
+      "compressedSize": 0,
+      "psnr": "Infinity",
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    },
+    {
+      "datasetID": "grey-gradient-256",
+      "mode": "lossy",
+      "compressedSize": 0,
+      "psnr": 0,
+      "maxAbsoluteError": 0,
+      "encodeTime": 0,
+      "decodeTime": 0
+    }
+  ]
+}

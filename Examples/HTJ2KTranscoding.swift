@@ -29,9 +29,9 @@ func htj2kEncodeExample() throws {
     let image = makeSyntheticImage(width: 128, height: 128)
 
     let htConfig = J2KEncodingConfiguration(
-        progressionOrder: .LRCP,
-        qualityLayers: 1,
         decompositionLevels: 5,
+        qualityLayers: 1,
+        progressionOrder: .lrcp,
         useHTJ2K: true,
         enableFastMEL: true,
         enableVLCOptimization: true,
@@ -58,9 +58,9 @@ func compareJ2KvsHTJ2K() throws {
 
     // HTJ2K
     let htConfig = J2KEncodingConfiguration(
-        progressionOrder: .LRCP,
-        qualityLayers: 1,
         decompositionLevels: 5,
+        qualityLayers: 1,
+        progressionOrder: .lrcp,
         useHTJ2K: true
     )
     let htEncoder = J2KEncoder(encodingConfiguration: htConfig)

@@ -37,7 +37,7 @@ j2k encode -i <input> -o <output> [options]
 
 | Option | Description |
 |--------|-------------|
-| `-i`, `--input PATH` | Input image file (PGM, PPM, PNM, RAW) |
+| `-i`, `--input PATH` | Input image file (PGM, PPM, PNM, TIFF, PNG, DICOM, RAW) |
 | `-o`, `--output PATH` | Output file (`.j2k`, `.jp2`, `.jpx`) |
 | `--format j2k\|jp2\|jpx` | Output container format (default: `j2k`) |
 
@@ -57,13 +57,18 @@ j2k encode -i <input> -o <output> [options]
 |--------|-------------|
 | `--preset fast\|balanced\|quality` | Encoding preset |
 | `--levels N` | DWT decomposition levels, 0–10 (default: `5`) |
-| `--blocksize WxH` | Code-block size, e.g. `64x64` (default: `32x32`) |
+| `--blocksize WxH` | Code-block size, e.g. `64x64` (default: `64x64`) |
 | `--layers N` | Quality layers, 1–20 (default: `5`) |
 | `--progression ORDER` | `LRCP` · `RLCP` · `RPCL` · `PCRL` · `CPRL` |
 | `--tile-size WxH` | Tile dimensions, e.g. `256x256` |
+| `--precincts WxH` | Precinct size, e.g. `128x128` |
 | `--roi x,y,w,h` | Region of interest |
 | `--htj2k` | Enable HTJ2K (Part 15) block coder |
+| `--codec VARIANT` | Codec variant: `j2k-lossless`, `j2k-lossy`, `htj2k-lossless`, `htj2k-lossy`, `htj2k-lossless-rpcl` |
 | `--mct` / `--no-mct` | Enable / disable multi-component transform |
+| `--compression-ratio N` | Target compression ratio (e.g. `20` for 20:1) |
+| `--compression-percent N` | Target compression as a percentage |
+| `--target-size BYTES` | Target compressed size in bytes |
 
 #### Platform / Output Options
 
@@ -95,11 +100,14 @@ j2k decode -i <input> -o <output> [options]
 | Option | Description |
 |--------|-------------|
 | `-i`, `--input PATH` | Input JPEG 2000 file (`.j2k`, `.jp2`, `.jpx`) |
-| `-o`, `--output PATH` | Output image file (`.pgm`, `.ppm`, `.raw`) |
+| `-o`, `--output PATH` | Output image file (`.pgm`, `.ppm`, `.tiff`, `.png`) |
 | `--level N` | Resolution level (0 = full; higher = lower resolution) |
 | `--layer N` | Maximum quality layer to decode |
 | `--component N` | Decode a single component by index |
 | `--components N,M,...` | Comma-separated component indices |
+| `--header-only` | Print codestream header information without decoding |
+| `--bit-depth N` | Override output bit depth |
+| `--strip-alpha` | Remove alpha channel from output |
 | `--colour-space` | Perform colour-space conversion |
 | `--gpu` / `--no-gpu` | GPU acceleration |
 | `--verbose` | Verbose output |
@@ -123,6 +131,7 @@ j2k info <file> [options]
 |--------|-------------|
 | `--markers` | List all codestream marker segments |
 | `--boxes` | List JP2/JPX file-format boxes |
+| `--capabilities` | Show supported features and platform capabilities |
 | `--json` | Output as JSON |
 | `--validate` | Quick conformance check (exits 0 if valid, 1 if not) |
 
@@ -162,6 +171,7 @@ j2k transcode --batch <dir> --output-dir <dir> [options]
 | `-o`, `--output PATH` | Output JPEG 2000 file |
 | `--to-htj2k` | Transcode to HTJ2K (Part 15) via coefficient-domain resampling |
 | `--from-htj2k` | Transcode from HTJ2K to Part 1 |
+| `--verify` | Verify output by decoding and comparing against input |
 | `--format j2k\|jp2\|jpx` | Output container format |
 | `--quality VALUE` | Output quality (0.0–1.0) |
 | `--bitrate BPP` | Target bit-rate |
@@ -259,17 +269,22 @@ j2k --version
 
 | Format | Extension | Notes |
 |--------|-----------|-------|
-| PGM | `.pgm` | 8-bit and 16-bit grayscale |
+| PGM | `.pgm` | 8-bit and 16-bit greyscale |
 | PPM | `.ppm` | 8-bit and 16-bit colour |
 | PNM | `.pnm` | Auto-detected |
+| TIFF | `.tiff`, `.tif` | 8-bit and 16-bit, greyscale and colour |
+| PNG | `.png` | 8-bit and 16-bit, greyscale and colour |
+| DICOM | `.dcm` | Medical imaging format |
 | RAW | `.raw` | Requires explicit dimensions |
 
 ### Supported output formats (decode)
 
 | Format | Extension | Notes |
 |--------|-----------|-------|
-| PGM | `.pgm` | Grayscale output |
+| PGM | `.pgm` | Greyscale output |
 | PPM | `.ppm` | Colour output |
+| TIFF | `.tiff`, `.tif` | Greyscale and colour output |
+| PNG | `.png` | Greyscale and colour output |
 
 ### Supported JPEG 2000 formats
 

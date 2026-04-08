@@ -1,0 +1,88 @@
+name: Regression Gate
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  regression-gate:
+    name: Regression Benchmarks
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: '6.2'
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-regression-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-regression-
+
+      - name: Run regression gate
+        run: ./Scripts/regression_gate.sh --report-dir regression-reports
+
+      - name: Upload regression reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-reports
+          path: regression-reports/
+          retention-days: 30
+
+      - name: Post summary to PR
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          if [ -f regression-reports/regression-report.md ]; then
+            echo "## Regression Gate Results" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat regression-reports/regression-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  regression-gate-linux:
+    name: Regression Benchmarks (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: swift:6.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache SPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-regression-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-regression-
+
+      - name: Run regression gate
+        run: ./Scripts/regression_gate.sh --report-dir regression-reports
+
+      - name: Upload regression reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-reports-linux
+          path: regression-reports/
+          retention-days: 30

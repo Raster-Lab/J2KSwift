@@ -189,87 +189,10 @@ public struct J2KDWT2D: Sendable {
             throw J2KError.invalidParameter("All rows must have the same length")
         }
 
-        // Step 1: Apply 1D DWT to each row
-        var rowTransformed = [[Int32]]()
-        var rowLowCount = 0
-        var rowHighCount = 0
-
-        for row in image {
-            let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: row,
-                filter: filter,
-                boundaryExtension: boundaryExtension
-            )
-            rowLowCount = low.count
-            rowHighCount = high.count
-
-            // Interleave low and high for easier column processing
-            var transformedRow = [Int32]()
-            transformedRow.reserveCapacity(width)
-            transformedRow.append(contentsOf: low)
-            transformedRow.append(contentsOf: high)
-            rowTransformed.append(transformedRow)
-        }
-
-        // Step 2: Apply 1D DWT to each column of the row-transformed data
-        var ll = [[Int32]]()
-        var lh = [[Int32]]()
-        var hl = [[Int32]]()
-        var hh = [[Int32]]()
-
-        // Process low-frequency columns (from row transform)
-        for col in 0..<rowLowCount {
-            var column = [Int32]()
-            column.reserveCapacity(height)
-            for row in 0..<height {
-                column.append(rowTransformed[row][col])
-            }
-
-            let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: column,
-                filter: filter,
-                boundaryExtension: boundaryExtension
-            )
-
-            // low -> LL subband, high -> HL subband
-            if ll.isEmpty {
-                ll = Array(repeating: [Int32](), count: low.count)
-                hl = Array(repeating: [Int32](), count: high.count)
-            }
-            for i in 0..<low.count {
-                ll[i].append(low[i])
-            }
-            for i in 0..<high.count {
-                hl[i].append(high[i])
-            }
-        }
-
-        // Process high-frequency columns (from row transform)
-        for col in rowLowCount..<(rowLowCount + rowHighCount) {
-            var column = [Int32]()
-            column.reserveCapacity(height)
-            for row in 0..<height {
-                column.append(rowTransformed[row][col])
-            }
-
-            let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: column,
-                filter: filter,
-                boundaryExtension: boundaryExtension
-            )
-
-            // low -> LH subband, high -> HH subband
-            if lh.isEmpty {
-                lh = Array(repeating: [Int32](), count: low.count)
-                hh = Array(repeating: [Int32](), count: high.count)
-            }
-            for i in 0..<low.count {
-                lh[i].append(low[i])
-            }
-            for i in 0..<high.count {
-                hh[i].append(high[i])
-            }
-        }
+        // Use optimised 2D transform with column-major intermediate buffer
+        // for cache-friendly column processing
+        let (ll, lh, hl, hh) = try J2KOptimizedDWT.forwardTransform2D(
+            image: image, filter: filter, boundaryExtension: boundaryExtension)
 
         return DecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh)
     }

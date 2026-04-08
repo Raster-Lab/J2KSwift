@@ -2,7 +2,7 @@
 
 A beginner-friendly guide to using J2KSwift for JPEG 2000 image encoding and decoding.
 
-**Version**: 1.1.0  
+**Version**: 2.4.0  
 **Status**: Fully Functional Codec
 
 ## Table of Contents
@@ -20,7 +20,7 @@ A beginner-friendly guide to using J2KSwift for JPEG 2000 image encoding and dec
 ## Introduction
 
 J2KSwift is a pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) that provides:
-- **Complete encoder and decoder pipelines** (v1.1.0)
+- **Complete encoder and decoder pipelines** (v2.4.0)
 - Modern async/await API
 - Type-safe error handling
 - Hardware acceleration on Apple platforms (2-8× speedup)
@@ -38,7 +38,7 @@ Add J2KSwift to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "1.1.0")
+    .package(url: "https://github.com/Raster-Lab/J2KSwift.git", from: "2.4.0")
 ]
 ```
 
@@ -71,7 +71,7 @@ Then add the modules you need to your target:
 import J2KCodec
 
 let image = J2KImage(width: 512, height: 512, components: 3)
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 let j2kData = try encoder.encode(image)
 ```
 
@@ -116,10 +116,9 @@ Controls encoding parameters with convenient presets:
 import J2KCodec
 
 // Use a preset (recommended)
-let lossless = J2KEncodingConfiguration.lossless      // Perfect quality
-let fast = J2KEncodingConfiguration.fast              // Quick encoding
-let balanced = J2KEncodingConfiguration.balanced      // Good balance (default)
-let quality = J2KEncodingConfiguration.quality        // Best quality
+let config = J2KEncodingPreset.fast.configuration()      // Quick encoding
+let balanced = J2KEncodingPreset.balanced.configuration() // Good balance
+let quality = J2KEncodingPreset.quality.configuration()   // Best quality
 ```
 
 ### Color Spaces
@@ -151,7 +150,7 @@ let image = J2KImage(width: 256, height: 256, components: 3, bitDepth: 8)
 // ... fill image.components[0].data, etc. with your pixel data ...
 
 // Encode with balanced preset (recommended)
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 let j2kData = try encoder.encode(image)
 
 print("Encoded \(j2kData.count) bytes")
@@ -161,22 +160,22 @@ print("Encoded \(j2kData.count) bytes")
 
 ```swift
 // Lossless encoding (perfect quality, larger file)
-let losslessEncoder = J2KEncoder(encodingConfiguration: .lossless)
+let losslessEncoder = J2KEncoder(configuration: .lossless)
 let losslessData = try losslessEncoder.encode(image)
 
 // Fast encoding (quick, smaller file)
-let fastEncoder = J2KEncoder(encodingConfiguration: .fast)
+let fastEncoder = J2KEncoder(configuration: .fast)
 let fastData = try fastEncoder.encode(image)
 
 // Quality encoding (best quality, slower)
-let qualityEncoder = J2KEncoder(encodingConfiguration: .quality)
+let qualityEncoder = J2KEncoder(configuration: .highQuality)
 let qualityData = try qualityEncoder.encode(image)
 ```
 
 ### Encoding with Progress Tracking
 
 ```swift
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 
 let data = try encoder.encode(image) { progress in
     print("\(progress.stage.rawValue): \(progress.percentage)% complete")
@@ -267,7 +266,7 @@ let image = try decoder.decode(j2kData) { progress in
 import J2KFileFormat
 
 // Encode and save to JP2 file
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 let j2kData = try encoder.encode(image)
 
 let writer = J2KFileWriter(format: .jp2)
@@ -301,7 +300,7 @@ let original = J2KImage(width: 512, height: 512, components: 3, bitDepth: 8)
 // ... fill with pixel data ...
 
 // 2. Encode it
-let encoder = J2KEncoder(encodingConfiguration: .lossless)
+let encoder = J2KEncoder(configuration: .lossless)
 let j2kData = try encoder.encode(original)
 
 // 3. Save to file
@@ -356,7 +355,7 @@ Hardware acceleration is enabled automatically on Apple platforms:
 // J2KSwift automatically uses vDSP and SIMD when available
 // No configuration needed - just use the encoder/decoder as normal
 
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 // This will use hardware acceleration if available (2-8× speedup)
 let data = try encoder.encode(image)
 ```
@@ -368,13 +367,13 @@ For fine-grained control, create a custom configuration:
 ```swift
 import J2KCodec
 
-var config = J2KEncodingConfiguration.balanced
+var config = J2KEncodingPreset.balanced.configuration()
 
-// Customize settings
+// Customise settings
 config.decompositionLevels = 6
 config.qualityLayers = 10
-config.codeBlockSize = (width: 32, height: 32)
-config.progressionOrder = .LRCP
+config.codeBlockSize = (width: 64, height: 64)
+config.progressionOrder = .lrcp
 
 let encoder = J2KEncoder(encodingConfiguration: config)
 let data = try encoder.encode(image)
@@ -428,7 +427,7 @@ struct J2KTool {
         case "encode":
             // Load image, encode, save
             let image = try loadImage(from: inputPath)
-            let encoder = J2KEncoder(encodingConfiguration: .balanced)
+            let encoder = J2KEncoder(configuration: .balanced)
             let data = try encoder.encode(image)
             try data.write(to: URL(fileURLWithPath: outputPath))
             print("Encoded: \(data.count) bytes")
@@ -463,7 +462,7 @@ struct J2KTool {
 
 ```swift
 func processImages(in directory: URL) async throws {
-    let encoder = J2KEncoder(encodingConfiguration: .balanced)
+    let encoder = J2KEncoder(configuration: .balanced)
     let decoder = J2KDecoder()
     let fileManager = FileManager.default
     

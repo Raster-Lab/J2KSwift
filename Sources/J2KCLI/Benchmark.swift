@@ -11,6 +11,12 @@ import J2KCodec
 extension J2KCLI {
     /// Benchmark command: measure encoding/decoding performance
     static func benchmarkCommand(_ args: [String]) async throws {
+        // If --compare is present, delegate to quality benchmark
+        if args.contains("--compare") || args.contains("-c") {
+            try await qualityBenchmarkCommand(args)
+            return
+        }
+
         let options = parseArguments(args)
 
         if options["help"] != nil {

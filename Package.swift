@@ -82,7 +82,8 @@ let package = Package(
             dependencies: ["J2KCore", "J2KFileFormat"]),
         .testTarget(
             name: "J2KCodecTests",
-            dependencies: ["J2KCodec", "J2KFileFormat", "J2KAccelerate"]),
+            dependencies: ["J2KCodec", "J2KFileFormat", "J2KAccelerate"],
+            exclude: ["regression-baselines.json"]),
         .testTarget(
             name: "J2KAccelerateTests",
             dependencies: ["J2KAccelerate"]),
@@ -131,7 +132,7 @@ let package = Package(
             ]),
         .executableTarget(
             name: "J2KTestApp",
-            dependencies: ["J2KCore"],
+            dependencies: ["J2KCore", "J2KCodec"],
             path: "Sources/J2KTestApp",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])

@@ -109,13 +109,14 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
                 quality: quality,
                 lossless: lossless,
                 decompositionLevels: 5,
-                codeBlockSize: (width: 32, height: 32),
+                codeBlockSize: (width: 64, height: 64),
                 qualityLayers: 5,
-                progressionOrder: .rpcl,  // Resolution-position-component-layer (good for streaming)
+                progressionOrder: .lrcp,  // Layer-resolution-component-position (best for quality)
                 enableVisualWeighting: quality < 1.0,  // Enable for lossy
-                tileSize: (width: 1024, height: 1024),
+                tileSize: (width: 0, height: 0),  // Single tile
                 bitrateMode: .constantQuality,
-                maxThreads: 0  // Auto-detect
+                maxThreads: 0,  // Auto-detect
+                precinctSizes: [(width: 64, height: 64), (width: 128, height: 128), (width: 256, height: 256)]
             )
 
         case .quality:
@@ -123,13 +124,14 @@ public enum J2KEncodingPreset: String, Sendable, CaseIterable {
                 quality: quality,
                 lossless: lossless,
                 decompositionLevels: 6,
-                codeBlockSize: (width: 32, height: 32),
+                codeBlockSize: (width: 64, height: 64),
                 qualityLayers: 10,
-                progressionOrder: .rpcl,
+                progressionOrder: .lrcp,
                 enableVisualWeighting: quality < 1.0,
-                tileSize: (width: 2048, height: 2048),
+                tileSize: (width: 0, height: 0),  // Single tile
                 bitrateMode: .constantQuality,
-                maxThreads: 0
+                maxThreads: 0,
+                precinctSizes: [(width: 64, height: 64), (width: 128, height: 128), (width: 256, height: 256)]
             )
         }
     }
@@ -161,7 +163,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// Size of code blocks for entropy coding.
     ///
     /// - Valid range: 4-1024 for each dimension
-    /// - Default: 32×32 (balanced), 64×64 (fast)
+    /// - Default: 64×64 (JPEG 2000 standard best practice)
     /// - Larger blocks = faster encoding, smaller blocks = better quality
     public var codeBlockSize: (width: Int, height: Int)
 
@@ -175,7 +177,7 @@ public struct J2KEncodingConfiguration: Sendable {
     /// Progression order for packet organization.
     ///
     /// Determines the order in which image data is encoded and streamed:
-    /// - LRCP: Layer-Resolution-Component-Position (simple, good for quality)
+    /// - LRCP: Layer-Resolution-Component-Position (default, simplest, good for quality)
     /// - RLCP: Resolution-Layer-Component-Position (progressive resolution)
     /// - RPCL: Resolution-Position-Component-Layer (best for streaming)
     /// - PCRL: Position-Component-Resolution-Layer (spatial locality)
@@ -338,15 +340,31 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: `.disabled` (Part 1 compatible RCT/ICT transforms)
     public var mctConfiguration: J2KMCTEncodingConfiguration
 
+    /// Precinct sizes per resolution level (lowest resolution first).
+    ///
+    /// When non-empty, user-defined precinct sizes are signalled in the COD
+    /// marker. Each entry is a (width, height) pair expressed in samples;
+    /// both dimensions must be powers of two. If fewer entries are provided
+    /// than the number of resolution levels, the last entry is repeated.
+    ///
+    /// A typical JPEG 2000 precinct ladder (highest-to-lowest resolution):
+    /// ```
+    /// [(256, 256), (128, 128), (64, 64)]
+    /// ```
+    /// Note: entries are stored lowest-resolution-first internally.
+    ///
+    /// - Default: `[]` (ISO default: full tile precincts)
+    public var precinctSizes: [(width: Int, height: Int)]
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
     ///   - quality: Overall quality factor (default: 0.9).
     ///   - lossless: Whether to use lossless compression (default: false).
     ///   - decompositionLevels: Number of wavelet decomposition levels (default: 5).
-    ///   - codeBlockSize: Code block dimensions (default: 32×32).
+    ///   - codeBlockSize: Code block dimensions (default: 64×64).
     ///   - qualityLayers: Number of quality layers (default: 5).
-    ///   - progressionOrder: Packet progression order (default: .rpcl).
+    ///   - progressionOrder: Packet progression order (default: .lrcp).
     ///   - enableVisualWeighting: Enable perceptual weighting (default: false).
     ///   - tileSize: Tile dimensions, (0,0) for no tiling (default: no tiling).
     ///   - bitrateMode: Bitrate control mode (default: .constantQuality).
@@ -362,13 +380,14 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   - extendedPrecisionConfiguration: Part 2 extended precision configuration (default: .default).
     ///   - waveletKernelConfiguration: Part 2 wavelet kernel configuration (default: .standard).
     ///   - mctConfiguration: Part 2 multi-component transform configuration (default: .disabled).
+    ///   - precinctSizes: Precinct sizes per resolution level, lowest first (default: empty).
     public init(
         quality: Double = 0.9,
         lossless: Bool = false,
         decompositionLevels: Int = 5,
-        codeBlockSize: (width: Int, height: Int) = (32, 32),
+        codeBlockSize: (width: Int, height: Int) = (64, 64),
         qualityLayers: Int = 5,
-        progressionOrder: J2KProgressionOrder = .rpcl,
+        progressionOrder: J2KProgressionOrder = .lrcp,
         enableVisualWeighting: Bool = false,
         tileSize: (width: Int, height: Int) = (0, 0),
         bitrateMode: J2KBitrateMode = .constantQuality,
@@ -383,7 +402,8 @@ public struct J2KEncodingConfiguration: Sendable {
         dcOffsetConfiguration: J2KDCOffsetConfiguration = .disabled,
         extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
         waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard,
-        mctConfiguration: J2KMCTEncodingConfiguration = .disabled
+        mctConfiguration: J2KMCTEncodingConfiguration = .disabled,
+        precinctSizes: [(width: Int, height: Int)] = []
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -412,6 +432,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.extendedPrecisionConfiguration = extendedPrecisionConfiguration
         self.waveletKernelConfiguration = waveletKernelConfiguration
         self.mctConfiguration = mctConfiguration
+        self.precinctSizes = precinctSizes
     }
 
     /// Validates the configuration parameters.

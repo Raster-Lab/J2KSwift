@@ -121,7 +121,7 @@ let encoder = J2KEncoder()
 let j2kData = try encoder.encode(image)
 
 // Or use a preset
-let encoder = J2KEncoder(encodingConfiguration: .lossless)
+let encoder = J2KEncoder(configuration: .lossless)
 let losslessData = try encoder.encode(image)
 ```
 

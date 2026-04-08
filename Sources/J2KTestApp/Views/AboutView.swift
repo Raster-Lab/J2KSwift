@@ -85,7 +85,7 @@ struct AboutView: View {
     }
 }
 
-#if DEBUG
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     AboutView(viewModel: AboutViewModel())
 }

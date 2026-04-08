@@ -25,9 +25,9 @@ func makeImage(width: Int = 128, height: Int = 128) -> J2KImage {
 
 func encodeLayered(image: J2KImage, layers: Int) throws -> Data {
     let config = J2KEncodingConfiguration(
-        progressionOrder: .LRCP,
+        decompositionLevels: 5,
         qualityLayers: layers,
-        decompositionLevels: 5
+        progressionOrder: .lrcp
     )
     return try J2KEncoder(encodingConfiguration: config).encode(image)
 }

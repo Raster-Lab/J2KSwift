@@ -25,6 +25,8 @@ extension J2KCLI {
             return try loadTIFF(data)
         case "png":
             return try loadPNG(data)
+        case "bmp":
+            return try loadBMP(data)
         case "dcm", "dicom":
             return try loadDICOM(data)
         case "raw":
@@ -65,6 +67,8 @@ extension J2KCLI {
             if b0 == 0x4D && b1 == 0x4D { return try loadTIFF(data) }
             // PNG signature
             if b0 == 0x89 && b1 == 0x50 { return try loadPNG(data) }
+            // BMP signature
+            if b0 == 0x42 && b1 == 0x4D { return try loadBMP(data) }
         }
         // JP2 container (starts with 0x0000000C 6A502020)
         if data.count >= 12 {
@@ -99,6 +103,8 @@ extension J2KCLI {
             try saveTIFF(image, to: url)
         case "png":
             try savePNG(image, to: url)
+        case "bmp":
+            try saveBMP(image, to: url)
         case "raw":
             throw J2KError.invalidParameter("RAW format output not yet implemented")
         default:

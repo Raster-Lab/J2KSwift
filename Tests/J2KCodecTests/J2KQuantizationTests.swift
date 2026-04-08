@@ -155,16 +155,16 @@ final class J2KQuantizationTests: XCTestCase {
         )
 
         // Should have step sizes for all subbands
-        XCTAssertNotNil(allSteps["LH1"])
-        XCTAssertNotNil(allSteps["HL1"])
-        XCTAssertNotNil(allSteps["HH1"])
-        XCTAssertNotNil(allSteps["LH2"])
-        XCTAssertNotNil(allSteps["HL2"])
-        XCTAssertNotNil(allSteps["HH2"])
-        XCTAssertNotNil(allSteps["LH3"])
-        XCTAssertNotNil(allSteps["HL3"])
-        XCTAssertNotNil(allSteps["HH3"])
-        XCTAssertNotNil(allSteps["LL3"])
+        XCTAssertNotNil(allSteps["LH_1"])
+        XCTAssertNotNil(allSteps["HL_1"])
+        XCTAssertNotNil(allSteps["HH_1"])
+        XCTAssertNotNil(allSteps["LH_2"])
+        XCTAssertNotNil(allSteps["HL_2"])
+        XCTAssertNotNil(allSteps["HH_2"])
+        XCTAssertNotNil(allSteps["LH_3"])
+        XCTAssertNotNil(allSteps["HL_3"])
+        XCTAssertNotNil(allSteps["HH_3"])
+        XCTAssertNotNil(allSteps["LL_0"])
     }
 
     func testStepSizeEncodeDecodeRoundtrip() throws {
@@ -339,10 +339,10 @@ final class J2KQuantizationTests: XCTestCase {
 
     func testExpoundedModeWithExplicitStepSizes() throws {
         let explicitSteps: [String: Double] = [
-            "LL1": 1.0,
-            "LH1": 2.0,
-            "HL1": 2.0,
-            "HH1": 4.0
+            "LL_0": 1.0,
+            "LH_1": 2.0,
+            "HL_1": 2.0,
+            "HH_1": 4.0
         ]
 
         let params = J2KQuantizationParameters(
@@ -627,5 +627,207 @@ final class J2KQuantizationTests: XCTestCase {
     func testQuantizationModeEquality() throws {
         XCTAssertEqual(J2KQuantizationMode.scalar, J2KQuantizationMode.scalar)
         XCTAssertNotEqual(J2KQuantizationMode.scalar, J2KQuantizationMode.deadzone)
+    }
+
+    // MARK: - Subband-Aware Quantization Tests
+
+    func testSubbandStepSizeOrdering() throws {
+        // For irreversible (9/7) filter:
+        // LL should get smallest step (highest fidelity)
+        // LH/HL should get moderate step
+        // HH should get largest step (strongest quantization)
+        let baseStep = 1.0
+        let totalLevels = 3
+
+        let stepLL = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .ll,
+            decompositionLevel: totalLevels - 1, totalLevels: totalLevels, reversible: false
+        )
+        let stepLH = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .lh,
+            decompositionLevel: 0, totalLevels: totalLevels, reversible: false
+        )
+        let stepHL = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .hl,
+            decompositionLevel: 0, totalLevels: totalLevels, reversible: false
+        )
+        let stepHH = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .hh,
+            decompositionLevel: 0, totalLevels: totalLevels, reversible: false
+        )
+
+        // LL < LH == HL < HH
+        XCTAssertLessThan(stepLL, stepLH)
+        XCTAssertEqual(stepLH, stepHL, accuracy: 1e-10)
+        XCTAssertLessThan(stepLH, stepHH)
+    }
+
+    func testSubbandStepSizeValues() throws {
+        // Verify exact step size formula: baseStep * gain * levelFactor
+        let baseStep = 2.0
+
+        // LL: gain=1.0, levelFactor=1.0 → step = 2.0
+        let stepLL = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .ll,
+            decompositionLevel: 2, totalLevels: 3, reversible: false
+        )
+        XCTAssertEqual(stepLL, 2.0, accuracy: 1e-10)
+
+        // LH at level 0: gain=2.0, levelFactor=2^0=1.0 → step = 4.0
+        let stepLH0 = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .lh,
+            decompositionLevel: 0, totalLevels: 3, reversible: false
+        )
+        XCTAssertEqual(stepLH0, 4.0, accuracy: 1e-10)
+
+        // HH at level 1: gain=4.0, levelFactor=2^1=2.0 → step = 16.0
+        let stepHH1 = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .hh,
+            decompositionLevel: 1, totalLevels: 3, reversible: false
+        )
+        XCTAssertEqual(stepHH1, 16.0, accuracy: 1e-10)
+
+        // HH at level 2: gain=4.0, levelFactor=2^2=4.0 → step = 32.0
+        let stepHH2 = J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: baseStep, subband: .hh,
+            decompositionLevel: 2, totalLevels: 3, reversible: false
+        )
+        XCTAssertEqual(stepHH2, 32.0, accuracy: 1e-10)
+    }
+
+    func testReversibleStepSizeAlwaysOne() throws {
+        // Reversible mode: all step sizes should be 1.0
+        for subband in [J2KSubband.ll, .lh, .hl, .hh] {
+            for level in 0..<5 {
+                let step = J2KStepSizeCalculator.calculateStepSize(
+                    baseStepSize: 0.5, subband: subband,
+                    decompositionLevel: level, totalLevels: 5, reversible: true
+                )
+                XCTAssertEqual(step, 1.0, accuracy: 1e-10,
+                              "Reversible step should be 1.0 for \(subband) level \(level)")
+            }
+        }
+    }
+
+    func testStepSizeEncodeDecodeConsistency() throws {
+        // Encoder and decoder must use same bias → roundtrip must be accurate
+        let testSteps: [Double] = [0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
+        for step in testSteps {
+            let (exp, mant) = J2KStepSizeCalculator.encodeStepSize(step)
+            let decoded = J2KStepSizeCalculator.decodeStepSize(exponent: exp, mantissa: mant)
+            XCTAssertEqual(decoded, step, accuracy: step * 0.005,
+                          "Encode/decode roundtrip failed for step \(step): got \(decoded)")
+        }
+    }
+
+    func testCalculateAllStepSizesKeyFormat() throws {
+        let steps = J2KStepSizeCalculator.calculateAllStepSizes(
+            baseStepSize: 1.0, totalLevels: 3, reversible: false
+        )
+
+        // Must use "SUBBAND_LEVEL" format with underscore
+        XCTAssertNotNil(steps["LL_0"], "LL_0 key must exist")
+        XCTAssertNotNil(steps["HL_1"], "HL_1 key must exist")
+        XCTAssertNotNil(steps["LH_1"], "LH_1 key must exist")
+        XCTAssertNotNil(steps["HH_1"], "HH_1 key must exist")
+        XCTAssertNotNil(steps["HL_2"], "HL_2 key must exist")
+        XCTAssertNotNil(steps["HH_3"], "HH_3 key must exist")
+
+        // Old format without underscore must NOT exist
+        XCTAssertNil(steps["LL3"])
+        XCTAssertNil(steps["HH1"])
+        XCTAssertNil(steps["LH2"])
+    }
+
+    func testQCDMarkerStepSizeConsistencyWithQuantizer() throws {
+        // The QCD marker writer and quantizer must use the same step sizes
+        // Both now use J2KQuantizationParameters.fromQuality() → same base step
+        let quality = 0.75
+        let params = J2KQuantizationParameters.fromQuality(quality)
+        let totalLevels = 5
+
+        let markerSteps = J2KStepSizeCalculator.calculateAllStepSizes(
+            baseStepSize: params.baseStepSize,
+            totalLevels: totalLevels,
+            reversible: false
+        )
+
+        let quantizer = J2KQuantizer(parameters: params, reversible: false)
+
+        // Verify step sizes match between the two code paths
+        for level in 0..<totalLevels {
+            for subband in [J2KSubband.hl, .lh, .hh] {
+                let key = "\(subband.rawValue)_\(level + 1)"
+                let markerStep = markerSteps[key]!
+                let quantizerStep = quantizer.getStepSize(
+                    for: subband, decompositionLevel: level, totalLevels: totalLevels
+                )
+                XCTAssertEqual(markerStep, quantizerStep, accuracy: 1e-10,
+                              "Step size mismatch for \(key)")
+            }
+        }
+
+        // Also verify LL
+        let llMarkerStep = markerSteps["LL_0"]!
+        let llQuantizerStep = quantizer.getStepSize(
+            for: .ll, decompositionLevel: totalLevels - 1, totalLevels: totalLevels
+        )
+        XCTAssertEqual(llMarkerStep, llQuantizerStep, accuracy: 1e-10,
+                      "Step size mismatch for LL_0")
+    }
+
+    func testDequantizeMidpointReconstruction() throws {
+        // Verify midpoint reconstruction: dequantized value should be
+        // in the center of the quantization bin, not at the edge
+        let params = J2KQuantizationParameters(mode: .scalar, baseStepSize: 1.0)
+        let quantizer = J2KQuantizer(parameters: params)
+        let stepSize = 4.0
+
+        // Quantize value 6.0 with step 4.0 → index = floor(6/4) = 1
+        let idx = quantizer.quantizeCoefficient(6.0, stepSize: stepSize)
+        XCTAssertEqual(idx, 1)
+
+        // Dequantize index 1 with scalar midpoint → (1 + 0.5) * 4.0 = 6.0
+        let reconstructed = quantizer.dequantizeIndex(idx, stepSize: stepSize)
+        XCTAssertEqual(reconstructed, 6.0, accuracy: 1e-10)
+
+        // Quantize value -10.0 with step 4.0 → index = -floor(10/4) = -2
+        let idxNeg = quantizer.quantizeCoefficient(-10.0, stepSize: stepSize)
+        XCTAssertEqual(idxNeg, -2)
+
+        // Dequantize index -2 → -(2 + 0.5) * 4.0 = -10.0
+        let reconNeg = quantizer.dequantizeIndex(idxNeg, stepSize: stepSize)
+        XCTAssertEqual(reconNeg, -10.0, accuracy: 1e-10)
+    }
+
+    func testDeadzoneQuantizationRoundtrip() throws {
+        // Deadzone should zero out small coefficients
+        let params = J2KQuantizationParameters(mode: .deadzone, baseStepSize: 1.0, deadzoneWidth: 1.0)
+        let quantizer = J2KQuantizer(parameters: params)
+        let stepSize = 4.0
+        let threshold = stepSize * 0.5 // deadzoneWidth * 0.5 * stepSize = 2.0
+
+        // Value within deadzone → quantized to 0
+        let smallIdx = quantizer.quantizeCoefficient(1.5, stepSize: stepSize)
+        XCTAssertEqual(smallIdx, 0)
+        let smallRecon = quantizer.dequantizeIndex(smallIdx, stepSize: stepSize)
+        XCTAssertEqual(smallRecon, 0.0, accuracy: 1e-10)
+
+        // Value outside deadzone
+        let largeIdx = quantizer.quantizeCoefficient(5.0, stepSize: stepSize)
+        XCTAssertGreaterThan(largeIdx, 0)
+        let largeRecon = quantizer.dequantizeIndex(largeIdx, stepSize: stepSize)
+        XCTAssertGreaterThan(largeRecon, threshold)
+    }
+
+    func testFromQualityStepSizeMonotonicity() throws {
+        // Higher quality → smaller step size
+        var prevStep = Double.infinity
+        for q in stride(from: 0.0, through: 1.0, by: 0.1) {
+            let params = J2KQuantizationParameters.fromQuality(q)
+            XCTAssertLessThan(params.baseStepSize, prevStep,
+                             "Step size should decrease as quality increases (q=\(q))")
+            prevStep = params.baseStepSize
+        }
     }
 }

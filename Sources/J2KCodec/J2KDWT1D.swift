@@ -206,13 +206,22 @@ public struct J2KDWT1D: Sendable {
 
         switch filter {
         case .reversible53:
+            // Use optimised path for the common symmetric boundary case
+            if boundaryExtension == .symmetric && J2KPerformanceDispatch.useOptimisedKernels {
+                return J2KOptimizedDWT.forwardLift53(signal: signal)
+            }
             return try forwardTransform53(signal: signal, boundaryExtension: boundaryExtension)
         case .irreversible97:
             // Convert Int32 to Double, apply 9/7 filter, then round back to Int32
             let doubleSignal = signal.map { Double($0) }
-            let (lowDouble, highDouble) = try forwardTransform97(
-                signal: doubleSignal,
-                boundaryExtension: boundaryExtension)
+            let (lowDouble, highDouble): ([Double], [Double])
+            if boundaryExtension == .symmetric && J2KPerformanceDispatch.useOptimisedKernels {
+                (lowDouble, highDouble) = J2KOptimizedDWT.forwardLift97(signal: doubleSignal)
+            } else {
+                (lowDouble, highDouble) = try forwardTransform97(
+                    signal: doubleSignal,
+                    boundaryExtension: boundaryExtension)
+            }
             let lowpass = lowDouble.map { Int32($0.rounded()) }
             let highpass = highDouble.map { Int32($0.rounded()) }
             return (lowpass: lowpass, highpass: highpass)
@@ -271,14 +280,23 @@ public struct J2KDWT1D: Sendable {
 
         switch filter {
         case .reversible53:
+            // Use optimised path for the common symmetric boundary case
+            if boundaryExtension == .symmetric && J2KPerformanceDispatch.useOptimisedKernels {
+                return J2KOptimizedDWT.inverseLift53(lowpass: lowpass, highpass: highpass)
+            }
             return try inverseTransform53(lowpass: lowpass, highpass: highpass, boundaryExtension: boundaryExtension)
         case .irreversible97:
             // Convert Int32 to Double, apply inverse 9/7 filter, then round back to Int32
             let lowDouble = lowpass.map { Double($0) }
             let highDouble = highpass.map { Double($0) }
-            let resultDouble = try inverseTransform97(
-                lowpass: lowDouble, highpass: highDouble,
-                boundaryExtension: boundaryExtension)
+            let resultDouble: [Double]
+            if boundaryExtension == .symmetric && J2KPerformanceDispatch.useOptimisedKernels {
+                resultDouble = J2KOptimizedDWT.inverseLift97(lowpass: lowDouble, highpass: highDouble)
+            } else {
+                resultDouble = try inverseTransform97(
+                    lowpass: lowDouble, highpass: highDouble,
+                    boundaryExtension: boundaryExtension)
+            }
             return resultDouble.map { Int32($0.rounded()) }
         case .custom(let customFilter):
             // Convert Int32 to Double, apply inverse custom filter, then round back to Int32

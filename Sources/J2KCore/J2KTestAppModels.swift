@@ -1061,10 +1061,20 @@ public final class EncodeViewModel {
     public var lastResult: EncodeOperationResult?
     /// Encoded output data.
     public var outputData: Data?
+    /// Processed image data for preview (decoded round-trip result).
+    public var processedImageData: Data?
     /// Results from batch encoding.
     public var batchResults: [EncodeOperationResult] = []
     /// Whether batch encoding mode is active.
     public var isBatchMode: Bool = false
+
+    /// Encoding handler that performs the actual JPEG 2000 encoding.
+    ///
+    /// Set this to provide a real encoding implementation. The closure
+    /// receives the input image data and current configuration, and
+    /// returns the encoded codestream data.
+    /// When `nil`, encoding is simulated.
+    public var encodingHandler: (@Sendable (Data, EncodeConfiguration) throws -> Data)?
 
     /// Human-readable encoded file size string.
     public var encodedSizeString: String {
@@ -1140,10 +1150,73 @@ public final class EncodeViewModel {
         isEncoding = true
         progress = 0
         outputData = nil
+        processedImageData = nil
         lastResult = nil
 
         stageProgress = PipelineStage.allCases.map { StageProgress(stage: $0) }
 
+        let inputFileName = inputImageURL?.lastPathComponent ?? "image"
+        let encodeStart = Date()
+
+        // Use real encoding when handler is available, otherwise simulate.
+        if let handler = encodingHandler {
+            // Update progress: colour transform
+            stageProgress[0] = StageProgress(stage: .colourTransform, progress: 0, isActive: true)
+            statusMessage = "Encoding: \(PipelineStage.colourTransform.rawValue)…"
+            progress = 0.1
+
+            do {
+                let encoded = try handler(imageData, configuration)
+                let totalTime = Date().timeIntervalSince(encodeStart)
+
+                // Mark all stages complete
+                let stageTime = totalTime / Double(PipelineStage.allCases.count)
+                var stageTiming: [PipelineStage: TimeInterval] = [:]
+                for (index, stage) in PipelineStage.allCases.enumerated() {
+                    stageTiming[stage] = stageTime
+                    stageProgress[index] = StageProgress(
+                        stage: stage, progress: 1.0,
+                        duration: stageTime, isActive: false
+                    )
+                }
+                progress = 1.0
+
+                lastResult = EncodeOperationResult(
+                    inputFileName: inputFileName,
+                    inputSize: imageData.count,
+                    encodedSize: encoded.count,
+                    encodingTime: totalTime,
+                    stageTiming: stageTiming,
+                    succeeded: true
+                )
+                outputData = encoded
+                processedImageData = imageData
+
+                let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
+                await session.addResult(result.markPassed(duration: totalTime, metrics: [
+                    "compressionRatio": lastResult?.compressionRatio ?? 0,
+                    "encodedSize": Double(encoded.count)
+                ]))
+
+                isEncoding = false
+                statusMessage = "Encoding complete — \(encodedSizeString) at \(compressionRatioString)"
+            } catch {
+                let totalTime = Date().timeIntervalSince(encodeStart)
+                lastResult = EncodeOperationResult(
+                    inputFileName: inputFileName,
+                    inputSize: imageData.count,
+                    encodedSize: 0,
+                    encodingTime: totalTime,
+                    succeeded: false,
+                    errorMessage: error.localizedDescription
+                )
+                isEncoding = false
+                statusMessage = "Encoding failed: \(error.localizedDescription)"
+            }
+            return
+        }
+
+        // Simulated encoding fallback
         let stages = PipelineStage.allCases
         var stageTiming: [PipelineStage: TimeInterval] = [:]
         for (index, stage) in stages.enumerated() {
@@ -1160,7 +1233,6 @@ public final class EncodeViewModel {
             progress = Double(index + 1) / Double(stages.count)
         }
 
-        let inputFileName = inputImageURL?.lastPathComponent ?? "image"
         let simulatedEncodedSize = max(1, Int(Double(imageData.count) * (1.0 - configuration.quality * 0.9)))
         let totalTime = stageTiming.values.reduce(0, +)
 
@@ -1173,6 +1245,9 @@ public final class EncodeViewModel {
             succeeded: true
         )
         outputData = Data(count: simulatedEncodedSize)
+        // Store the input image as the processed preview (simulated round-trip).
+        // A real encoder would decode the output to produce an actual round-trip image.
+        processedImageData = imageData
 
         let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
         await session.addResult(result.markPassed(duration: totalTime, metrics: [
@@ -1210,6 +1285,18 @@ public final class EncodeViewModel {
 
         isEncoding = false
         statusMessage = "Batch complete — \(batchResults.count) image(s) encoded"
+    }
+
+    /// Saves the encoded output data to the given file URL.
+    ///
+    /// - Parameter url: Destination file URL.
+    /// - Throws: An error if the write fails.
+    public func saveOutputData(to url: URL) throws {
+        guard let data = outputData, !data.isEmpty else {
+            throw J2KError.invalidParameter("No encoded data to save.")
+        }
+        try data.write(to: url)
+        statusMessage = "Saved to \(url.lastPathComponent)"
     }
 
     // MARK: - Private Helpers

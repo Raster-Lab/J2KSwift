@@ -9,7 +9,10 @@
 
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import J2KCore
+import J2KCodec
 
 // MARK: - Encode View
 
@@ -44,6 +47,100 @@ struct EncodeView: View {
             }
         }
         .navigationTitle("Encode")
+        .onAppear {
+            viewModel.encodingHandler = Self.performEncoding
+        }
+    }
+
+    // MARK: - Real Encoding
+
+    /// Converts input image data to a J2KImage and encodes it using J2KEncoder.
+    nonisolated private static func performEncoding(_ imageData: Data, _ config: EncodeConfiguration) throws -> Data {
+        let j2kImage = try Self.imageFromData(imageData)
+
+        let lossless = config.quality >= 1.0 && config.waveletType == .fiveThree
+        let progressionOrder: J2KProgressionOrder = switch config.progressionOrder {
+        case .lrcp: .lrcp
+        case .rlcp: .rlcp
+        case .rpcl: .rpcl
+        case .pcrl: .pcrl
+        case .cprl: .cprl
+        }
+
+        let encodingConfig = J2KEncodingConfiguration(
+            quality: config.quality,
+            lossless: lossless,
+            decompositionLevels: config.decompositionLevels,
+            codeBlockSize: (64, 64),
+            qualityLayers: config.qualityLayers,
+            progressionOrder: progressionOrder,
+            tileSize: (config.tileWidth, config.tileHeight),
+            useHTJ2K: config.htj2kEnabled
+        )
+
+        let encoder = J2KEncoder(encodingConfiguration: encodingConfig)
+        return try encoder.encode(j2kImage)
+    }
+
+    /// Converts raw image file data (PNG, TIFF, BMP, etc.) to a J2KImage
+    /// by rendering through CGImage.
+    private static func imageFromData(_ data: Data) throws -> J2KImage {
+        guard let nsImage = NSImage(data: data),
+              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw J2KError.invalidParameter("Could not load the input image.")
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        let hasAlpha = cgImage.alphaInfo != .none
+            && cgImage.alphaInfo != .noneSkipFirst
+            && cgImage.alphaInfo != .noneSkipLast
+        let componentCount = hasAlpha ? 4 : 3
+
+        // Render to 8-bit RGBA bitmap
+        let bytesPerRow = width * 4
+        var pixelData = Data(count: height * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        try pixelData.withUnsafeMutableBytes { ptr in
+            guard let context = CGContext(
+                data: ptr.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                throw J2KError.invalidParameter("Could not create bitmap context.")
+            }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+
+        // De-interleave RGBA into separate component planes
+        var components: [J2KComponent] = []
+        let channelCount = hasAlpha ? 4 : 3
+        for ch in 0..<channelCount {
+            var planeData = Data(count: width * height)
+            for i in 0..<(width * height) {
+                planeData[i] = pixelData[i * 4 + ch]
+            }
+            components.append(J2KComponent(
+                index: ch,
+                bitDepth: 8,
+                signed: false,
+                width: width,
+                height: height,
+                data: planeData
+            ))
+        }
+
+        return J2KImage(
+            width: width,
+            height: height,
+            components: components,
+            colorSpace: componentCount >= 3 ? .sRGB : .grayscale
+        )
     }
 
     // MARK: - Tab Bar
@@ -117,11 +214,11 @@ struct EncodeView: View {
                 outputPanel
             }
 
-            if let originalData = viewModel.inputImageData, viewModel.outputData != nil {
+            if let originalData = viewModel.inputImageData, viewModel.processedImageData != nil {
                 Divider()
                 ImageComparisonView(
                     originalData: originalData,
-                    processedData: viewModel.outputData
+                    processedData: viewModel.processedImageData
                 )
                 .frame(minHeight: 200)
             }
@@ -329,6 +426,7 @@ struct EncodeView: View {
                             viewModel.inputImageData = nil
                             viewModel.inputImageURL = nil
                             viewModel.outputData = nil
+                            viewModel.processedImageData = nil
                             viewModel.lastResult = nil
                             viewModel.statusMessage = "Ready"
                         }
@@ -380,6 +478,12 @@ struct EncodeView: View {
                 metricView(label: "Compression Ratio", value: viewModel.compressionRatioString)
                 Divider()
                 metricView(label: "Encoding Time", value: viewModel.encodingTimeString)
+                Divider()
+                Button(action: saveEncodedImage) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .disabled(viewModel.outputData == nil)
+                .help("Save the encoded JPEG 2000 data to a file")
             }
             .padding(.vertical, 4)
 
@@ -508,6 +612,28 @@ struct EncodeView: View {
                 }
             }
             .padding()
+        }
+    }
+
+    // MARK: - Save
+
+    private func saveEncodedImage() {
+        let panel = NSSavePanel()
+        panel.title = "Save Encoded JPEG 2000"
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "j2k")!,
+            .init(filenameExtension: "jp2")!,
+        ]
+        panel.nameFieldStringValue = viewModel.inputImageURL?
+            .deletingPathExtension()
+            .appendingPathExtension("j2k")
+            .lastPathComponent ?? "encoded.j2k"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try viewModel.saveOutputData(to: url)
+        } catch {
+            viewModel.statusMessage = "Save failed: \(error.localizedDescription)"
         }
     }
 

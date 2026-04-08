@@ -124,7 +124,11 @@ struct EncoderPipeline: Sendable {
 
         // Stage 1: Preprocessing — extract component data as Int32 arrays
         reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
-        let componentData = try extractComponentData(from: image)
+        let rawComponentData = try extractComponentData(from: image)
+
+        // DC level shift (ISO/IEC 15444-1, Annex G.1.1):
+        // For unsigned components, subtract 2^(bitDepth-1) to centre around zero.
+        let componentData = applyDCLevelShift(rawComponentData, image: image)
         reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
 
         // Stage 2: Colour Transform
@@ -174,43 +178,36 @@ struct EncoderPipeline: Sendable {
 
         for component in image.components {
             let pixelCount = component.width * component.height
-            var pixels = [Int32](repeating: 0, count: pixelCount)
 
             let data = component.data
+            let pixels: [Int32]
             if component.bitDepth <= 8 {
-                let byteCount = min(data.count, pixelCount)
-                data.withUnsafeBytes { buffer in
-                    guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                        return
-                    }
-                    for i in 0..<byteCount {
-                        if component.signed {
-                            pixels[i] = Int32(Int8(bitPattern: ptr[i]))
-                        } else {
-                            pixels[i] = Int32(ptr[i])
-                        }
-                    }
-                }
+                pixels = J2KOptimizedDataIO.extractUInt8ToInt32(
+                    data, count: pixelCount, signed: component.signed)
             } else if component.bitDepth <= 16 {
-                let sampleCount = min(data.count / 2, pixelCount)
-                data.withUnsafeBytes { buffer in
-                    guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                        return
-                    }
-                    for i in 0..<sampleCount {
-                        let value = UInt16(ptr[i * 2]) << 8 | UInt16(ptr[i * 2 + 1])
-                        if component.signed {
-                            pixels[i] = Int32(Int16(bitPattern: value))
-                        } else {
-                            pixels[i] = Int32(value)
-                        }
-                    }
-                }
+                pixels = J2KOptimizedDataIO.extractUInt16BEToInt32(
+                    data, count: pixelCount, signed: component.signed)
+            } else {
+                pixels = [Int32](repeating: 0, count: pixelCount)
             }
 
             result.append(pixels)
         }
 
+        return result
+    }
+
+    /// Applies DC level shift to unsigned components (ISO/IEC 15444-1, Annex G.1.1).
+    ///
+    /// For each unsigned component, subtracts 2^(bitDepth-1) so that values are
+    /// centred around zero before the colour transform and wavelet stages.
+    /// Signed components are left unchanged.
+    private func applyDCLevelShift(_ components: [[Int32]], image: J2KImage) -> [[Int32]] {
+        var result = components
+        for (idx, component) in image.components.enumerated() {
+            guard idx < result.count, !component.signed else { continue }
+            J2KOptimizedColour.applyDCLevelShift(&result[idx], bitDepth: component.bitDepth)
+        }
         return result
     }
 
@@ -265,11 +262,26 @@ struct EncoderPipeline: Sendable {
         let ctConfig = J2KColorTransformConfiguration(mode: mode)
         let transform = J2KColorTransform(configuration: ctConfig)
 
-        let (y, cb, cr) = try transform.forwardRCT(
-            red: components[0], green: components[1], blue: components[2]
-        )
+        var result: [[Int32]]
+        if config.lossless {
+            // RCT — integer-to-integer, perfectly reversible
+            let (y, cb, cr) = try transform.forwardRCT(
+                red: components[0], green: components[1], blue: components[2]
+            )
+            result = [y, cb, cr]
+        } else {
+            // ICT — floating-point for better decorrelation in lossy mode
+            let red = components[0].map { Double($0) }
+            let green = components[1].map { Double($0) }
+            let blue = components[2].map { Double($0) }
+            let (y, cb, cr) = try transform.forwardICT(red: red, green: green, blue: blue)
+            result = [
+                y.map { Int32($0.rounded()) },
+                cb.map { Int32($0.rounded()) },
+                cr.map { Int32($0.rounded()) },
+            ]
+        }
 
-        var result = [y, cb, cr]
         // Preserve any additional components (alpha, etc.) unchanged
         if components.count > 3 {
             result.append(contentsOf: components[3...])
@@ -549,6 +561,17 @@ struct EncoderPipeline: Sendable {
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
 
+        // Use near-optimal termination when rate control needs truncation points
+        let needsPCRD: Bool
+        switch config.bitrateMode {
+        case .constantBitrate, .variableBitrate:
+            needsPCRD = true
+        case .constantQuality, .lossless:
+            // constantQuality with qualityLayers > 1 also benefits from PCRD
+            needsPCRD = config.qualityLayers > 1
+        }
+        let codingOptions: CodingOptions = needsPCRD ? .pcrdOptimal : .default
+
         // First pass: collect all pending code-blocks with their metadata
         var pendingBlocks: [PendingCodeBlock] = []
         var blockIndex = 0
@@ -600,9 +623,9 @@ struct EncoderPipeline: Sendable {
         let allCodeBlocks: [J2KCodeBlock]
 
         if useParallel {
-            allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks)
+            allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks, options: codingOptions)
         } else {
-            allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks)
+            allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks, options: codingOptions)
         }
 
         return allCodeBlocks
@@ -610,7 +633,8 @@ struct EncoderPipeline: Sendable {
 
     /// Encodes code-blocks sequentially.
     private func encodeCodeBlocksSequential(
-        _ pendingBlocks: [PendingCodeBlock]
+        _ pendingBlocks: [PendingCodeBlock],
+        options: CodingOptions
     ) throws -> [J2KCodeBlock] {
         let encoder = CodeBlockEncoder()
         var results: [J2KCodeBlock] = []
@@ -622,7 +646,8 @@ struct EncoderPipeline: Sendable {
                 width: pending.width,
                 height: pending.height,
                 subband: pending.subband,
-                bitDepth: pending.bitDepth
+                bitDepth: pending.bitDepth,
+                options: options
             )
 
             codeBlock = J2KCodeBlock(
@@ -649,7 +674,8 @@ struct EncoderPipeline: Sendable {
     /// Each code-block is an independent unit of entropy coding with its own
     /// MQ encoder state and context models, making them safe to process in parallel.
     private func encodeCodeBlocksParallel(
-        _ pendingBlocks: [PendingCodeBlock]
+        _ pendingBlocks: [PendingCodeBlock],
+        options codingOptions: CodingOptions
     ) throws -> [J2KCodeBlock] {
         let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
         let totalBlocks = pendingBlocks.count
@@ -677,7 +703,8 @@ struct EncoderPipeline: Sendable {
                         width: pending.width,
                         height: pending.height,
                         subband: pending.subband,
-                        bitDepth: pending.bitDepth
+                        bitDepth: pending.bitDepth,
+                        options: codingOptions
                     )
 
                     codeBlock = J2KCodeBlock(
@@ -811,7 +838,7 @@ struct EncoderPipeline: Sendable {
         }
 
         // COD — Coding Style Default
-        try writeCODMarker(&writer)
+        try writeCODMarker(&writer, image: image)
 
         // QCD — Quantization Default
         try writeQCDMarker(&writer, image: image)
@@ -927,12 +954,16 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the COD marker segment (Coding Style Default).
-    private func writeCODMarker(_ writer: inout J2KBitWriter) throws {
+    private func writeCODMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
         var scod: UInt8 = 0
         // Bit 0: Precincts defined (0 = default, 1 = user-defined)
+        let hasPrecincts = !config.precinctSizes.isEmpty
+        if hasPrecincts {
+            scod |= 0x01
+        }
         // Bit 1: SOP markers used (0 = no)
         // Bit 2: EPH markers used (0 = no)
         // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
@@ -960,8 +991,15 @@ struct EncoderPipeline: Sendable {
         // Number of layers
         segment.writeUInt16(UInt16(config.qualityLayers))
 
-        // Multiple component transform (1 = RCT/ICT, 0 = none)
-        segment.writeUInt8(config.lossless ? 1 : (config.quality < 1.0 ? 1 : 0))
+        // Multiple component transform (1 = RCT/ICT enabled, 0 = none)
+        // MCT is used when image has 3+ components and MCT is not explicitly disabled
+        let useMCT: Bool = image.components.count >= 3 && {
+            if case .disabled = config.mctConfiguration.mode {
+                return true  // .disabled means use standard Part 1 RCT/ICT
+            }
+            return true
+        }()
+        segment.writeUInt8(useMCT ? 1 : 0)
 
         // SPcod — Coding parameters
         // Number of decomposition levels
@@ -1003,6 +1041,25 @@ struct EncoderPipeline: Sendable {
                 htSetConfig |= 0x10 // Set bit 4 for lossless mode
             }
             segment.writeUInt8(htSetConfig)
+        }
+
+        // Precinct sizes — one byte per resolution level (if Scod bit 0 is set)
+        if hasPrecincts {
+            let levels = config.decompositionLevels
+            for resLevel in 0...levels {
+                let size: (width: Int, height: Int)
+                if resLevel < config.precinctSizes.count {
+                    size = config.precinctSizes[resLevel]
+                } else if let last = config.precinctSizes.last {
+                    size = last
+                } else {
+                    size = (width: 32768, height: 32768) // ISO default: 2^15
+                }
+                // Pack as PPx (bits 0-3) | PPy (bits 4-7)
+                let ppx = UInt8(max(0, min(15, Int(log2(Double(size.width))))))
+                let ppy = UInt8(max(0, min(15, Int(log2(Double(size.height))))))
+                segment.writeUInt8(ppx | (ppy << 4))
+            }
         }
 
         writer.writeMarkerSegment(J2KMarker.cod.rawValue, segmentData: segment.data)
@@ -1106,8 +1163,10 @@ struct EncoderPipeline: Sendable {
             segment.writeUInt8(sqcd)
 
             // SPqcd: Step size values for each subband (2 bytes each)
+            // Use the same step size formula as the quantizer (fromQuality)
+            let params = J2KQuantizationParameters.fromQuality(config.quality)
             let stepSizes = J2KStepSizeCalculator.calculateAllStepSizes(
-                baseStepSize: 1.0 - config.quality,
+                baseStepSize: params.baseStepSize,
                 totalLevels: config.decompositionLevels,
                 reversible: false
             )
@@ -1154,57 +1213,177 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Generates the tile bitstream data from code blocks and layers.
+    ///
+    /// For each quality layer, writes a packet containing the code-block
+    /// contributions selected by the rate controller. Code-block data is
+    /// truncated to the selected number of coding passes using the
+    /// per-pass segment length information.
+    ///
+    /// Currently uses a single precinct per resolution level and component
+    /// (no precinct subdivision). The number of emitted layers always
+    /// matches `config.qualityLayers` to stay consistent with the COD
+    /// marker — any surplus layers are written as empty packets.
+    ///
+    /// Packet ordering follows LRCP (the only ordering that differs with
+    /// a single resolution/component/precinct is the layer dimension).
     private func generateTileData(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer]
     ) throws -> Data {
         var data = Data()
+        var headerWriter = PacketHeaderWriter()
 
-        // Write packet data for each layer
-        // For simplicity, write all code block data in a single packet per layer
-        let headerWriter = PacketHeaderWriter()
+        let numLayers = max(config.qualityLayers, layers.count)
 
-        if layers.isEmpty || codeBlocks.isEmpty {
-            // Write an empty packet
-            let emptyHeader = PacketHeader(
-                layerIndex: 0, resolutionLevel: 0, componentIndex: 0,
-                precinctIndex: 0, isEmpty: true
-            )
-            data.append(try headerWriter.encode(emptyHeader))
-        } else {
-            // For the first layer, include all code block data
-            let inclusions = codeBlocks.map { !$0.data.isEmpty }
-            let passes = codeBlocks.map { $0.passeCount }
-            let lengths = codeBlocks.map { $0.data.count }
-
-            let header = PacketHeader(
-                layerIndex: 0,
-                resolutionLevel: 0,
-                componentIndex: 0,
-                precinctIndex: 0,
-                isEmpty: false,
-                codeBlockInclusions: inclusions,
-                codingPasses: passes,
-                dataLengths: lengths
-            )
-
-            data.append(try headerWriter.encode(header))
-
-            // Append code block bitstream data
-            for block in codeBlocks {
-                data.append(block.data)
-            }
-
-            // Write empty packets for remaining layers
-            for layerIdx in 1..<layers.count {
+        if codeBlocks.isEmpty {
+            // Emit required number of empty packets
+            for layerIdx in 0..<numLayers {
                 let emptyHeader = PacketHeader(
                     layerIndex: layerIdx, resolutionLevel: 0, componentIndex: 0,
                     precinctIndex: 0, isEmpty: true
                 )
                 data.append(try headerWriter.encode(emptyHeader))
             }
+            return data
+        }
+
+        // Build a lookup from block index to code-block for fast access
+        var blockMap = [Int: J2KCodeBlock]()
+        for block in codeBlocks {
+            blockMap[block.index] = block
+        }
+
+        // Collect ordered block indices for packet header state tracking
+        let blockIndices = codeBlocks.map { $0.index }
+
+        // Track how many passes have been emitted per block across layers
+        var emittedPasses = [Int: Int]() // blockIndex → passes written so far
+
+        for layerIdx in 0..<numLayers {
+            let layer: QualityLayer? = layerIdx < layers.count ? layers[layerIdx] : nil
+            let contributions = layer?.codeBlockContributions ?? [:]
+
+            if contributions.isEmpty {
+                let emptyHeader = PacketHeader(
+                    layerIndex: layerIdx, resolutionLevel: 0, componentIndex: 0,
+                    precinctIndex: 0, isEmpty: true
+                )
+                data.append(try headerWriter.encode(emptyHeader,
+                    blockIndices: blockIndices))
+                continue
+            }
+
+            // Build per-block inclusion, pass count, and data length arrays
+            // ordered by the original code-block index
+            var inclusions = [Bool]()
+            var passes = [Int]()
+            var lengths = [Int]()
+            var blockDataSegments = [Data]()
+
+            for block in codeBlocks {
+                guard let totalPasses = contributions[block.index] else {
+                    inclusions.append(false)
+                    continue
+                }
+
+                let previousPasses = emittedPasses[block.index] ?? 0
+                let newPasses = max(0, totalPasses - previousPasses)
+
+                if newPasses <= 0 || block.data.isEmpty {
+                    inclusions.append(false)
+                    continue
+                }
+
+                inclusions.append(true)
+                passes.append(newPasses)
+
+                // Compute the byte range for new passes
+                let blockData = truncatedBlockData(
+                    block: block,
+                    fromPass: previousPasses,
+                    toPass: totalPasses
+                )
+                lengths.append(blockData.count)
+                blockDataSegments.append(blockData)
+
+                emittedPasses[block.index] = totalPasses
+            }
+
+            // Check if anything was actually included
+            let hasData = inclusions.contains(true)
+
+            // Collect zero bit-plane counts for included blocks
+            var zeroBitPlanes = [Int]()
+            if hasData {
+                for (idx, block) in codeBlocks.enumerated() {
+                    if idx < inclusions.count && inclusions[idx] {
+                        zeroBitPlanes.append(block.zeroBitPlanes)
+                    }
+                }
+            }
+
+            let header = PacketHeader(
+                layerIndex: layerIdx,
+                resolutionLevel: 0,
+                componentIndex: 0,
+                precinctIndex: 0,
+                isEmpty: !hasData,
+                codeBlockInclusions: hasData ? inclusions : [],
+                codingPasses: hasData ? passes : [],
+                dataLengths: hasData ? lengths : [],
+                zeroBitPlanes: hasData ? zeroBitPlanes : []
+            )
+
+            data.append(try headerWriter.encode(header,
+                blockIndices: blockIndices))
+
+            if hasData {
+                for segment in blockDataSegments {
+                    data.append(segment)
+                }
+            }
         }
 
         return data
+    }
+
+    /// Extracts the slice of encoded data for passes [fromPass, toPass).
+    ///
+    /// Uses `passSegmentLengths` to compute exact byte boundaries.
+    /// Falls back to proportional splitting when per-pass lengths
+    /// are not available.
+    private func truncatedBlockData(
+        block: J2KCodeBlock,
+        fromPass: Int,
+        toPass: Int
+    ) -> Data {
+        guard toPass > fromPass, !block.data.isEmpty else {
+            return Data()
+        }
+
+        // If we have per-pass segment lengths, use exact boundaries
+        if !block.passSegmentLengths.isEmpty &&
+           block.passSegmentLengths.count >= toPass {
+            var startByte = 0
+            for i in 0..<fromPass {
+                startByte += block.passSegmentLengths[i]
+            }
+            var endByte = startByte
+            for i in fromPass..<toPass {
+                endByte += block.passSegmentLengths[i]
+            }
+            endByte = min(endByte, block.data.count)
+            startByte = min(startByte, endByte)
+            return block.data[startByte..<endByte]
+        }
+
+        // Fallback: proportional split
+        if fromPass == 0 && toPass >= block.passeCount {
+            return block.data
+        }
+        let totalPasses = max(1, block.passeCount)
+        let startByte = block.data.count * fromPass / totalPasses
+        let endByte = min(block.data.count, block.data.count * toPass / totalPasses)
+        return block.data[startByte..<endByte]
     }
 
     // MARK: - Progress Reporting

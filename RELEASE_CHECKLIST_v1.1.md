@@ -98,7 +98,7 @@ v1.1.0 brings complete encoder and decoder pipelines with:
 import J2KCodec
 
 let image = J2KImage(width: 512, height: 512, components: 3)
-let encoder = J2KEncoder(encodingConfiguration: .balanced)
+let encoder = J2KEncoder(configuration: .balanced)
 let j2kData = try encoder.encode(image)
 ```
 
@@ -163,7 +163,7 @@ J2KSwift v1.1.0 is now available! This release delivers a complete, production-r
 **Example Usage:**
 ```swift
 // Encoding
-let encoder = J2KEncoder(encodingConfiguration: .lossless)
+let encoder = J2KEncoder(configuration: .lossless)
 let j2kData = try encoder.encode(image)
 
 // Decoding

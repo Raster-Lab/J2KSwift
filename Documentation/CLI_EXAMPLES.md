@@ -268,3 +268,114 @@ info = json.load(sys.stdin)
 print(f'{info[\"width\"]}x{info[\"height\"]}')
 "
 ```
+
+---
+
+## Recommended Presets
+
+### Archival / Medical (lossless, maximum fidelity)
+
+```bash
+j2k encode -i scan.tiff -o archive.jp2 --lossless --levels 6 --layers 10 \
+    --progression RPCL --precincts 256x256
+```
+
+### Professional Photography (high quality, moderate file size)
+
+```bash
+j2k encode -i photo.png -o output.jp2 --quality 0.95 --preset quality \
+    --progression RPCL
+```
+
+### Web Delivery (small file, fast decode)
+
+```bash
+j2k encode -i image.ppm -o web.jp2 --quality 0.80 --preset fast \
+    --progression LRCP
+```
+
+### High-Throughput Pipeline (HTJ2K)
+
+```bash
+j2k encode -i frame.ppm -o output.jph --codec htj2k-lossless
+j2k encode -i frame.ppm -o output.jph --codec htj2k-lossy --quality 0.90
+```
+
+### DCI (Digital Cinema Initiative)
+
+```bash
+j2k encode -i frame.ppm -o cinema.j2k --bitrate 1.25 --levels 5 \
+    --blocksize 32x32 --progression CPRL
+```
+
+### Batch Codec Conversion
+
+```bash
+j2k transcode --batch ./legacy/ --output-dir ./htj2k/ --codec htj2k-lossless-rpcl
+```
+
+---
+
+## Best-Practice Workflows
+
+### Round-Trip Verification
+
+Encode and immediately verify lossless round-trip:
+
+```bash
+j2k encode -i original.ppm -o encoded.j2k --lossless
+j2k decode -i encoded.j2k -o decoded.ppm
+diff <(xxd original.ppm) <(xxd decoded.ppm) && echo "Round-trip OK"
+```
+
+### Quality Comparison
+
+Encode at multiple quality settings and compare:
+
+```bash
+for q in 0.70 0.80 0.90 0.95 1.0; do
+    j2k encode -i input.ppm -o "q${q}.jp2" --quality "$q" --quiet
+    echo "q=$q => $(stat -f%z "q${q}.jp2") bytes"
+done
+```
+
+### Encode + Validate + Benchmark
+
+Full pipeline for production verification:
+
+```bash
+j2k encode -i input.ppm -o output.jp2 --preset quality --timing
+j2k validate output.jp2 --strict
+j2k benchmark -i input.ppm --preset quality -r 5 --format json -o bench.json
+```
+
+### Header-Only Inspection
+
+Quickly inspect a codestream without decoding:
+
+```bash
+j2k decode -i mystery.j2k --header-only --json
+```
+
+### TIFF / PNG Workflows
+
+```bash
+# Encode from TIFF
+j2k encode -i photograph.tiff -o output.jp2 --quality 0.95
+
+# Decode to PNG
+j2k decode -i encoded.jp2 -o output.png
+
+# DICOM medical workflow
+j2k encode -i scan.dcm -o scan.jp2 --lossless --levels 6
+```
+
+### Piping (stdin/stdout)
+
+```bash
+# Pipe from another tool
+convert input.bmp ppm:- | j2k encode -i - -o output.jp2 --quality 0.9
+
+# Pipe decode output
+j2k decode -i input.jp2 -o - | display -
+```
