@@ -25,6 +25,16 @@ import J2KCore
 
 // MARK: - Debug Tracing
 
+/// Controls whether EBCOT debug tracing code is compiled in.
+/// Set to `true` only when debugging RLC / encoder-decoder mismatches.
+/// When `false`, ALL trace calls are compiled out by the optimiser (even
+/// in debug builds the branches are trivially dead-stripped).
+#if EBCOT_DEBUG_TRACE
+@usableFromInline let ebcotTraceEnabled = true
+#else
+@usableFromInline let ebcotTraceEnabled = false
+#endif
+
 /// Temporary debug tracing for RLC investigation
 final class EBCOTDebugTrace: @unchecked Sendable {
     static let shared = EBCOTDebugTrace()
@@ -327,6 +337,7 @@ struct BitPlaneCoder: Sendable {
 
         // For per-pass termination, we collect pass data separately
         var passDataSegments: [Data] = []
+        var runningSegmentTotal = 0
 
         var passCount = 0
         let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
@@ -344,7 +355,7 @@ struct BitPlaneCoder: Sendable {
 
             // Pass 1: Significance Propagation Pass (skip for MSB bit-plane)
             if !isFirstBitPlane && passCount < maxPassLimit {
-                EBCOTDebugTrace.shared.logEncode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
                 encodeSignificancePropagationPass(
                     magnitudes: magnitudes,
                     signs: signArray,
@@ -353,7 +364,7 @@ struct BitPlaneCoder: Sendable {
                     encoder: &encoder,
                     contexts: &contextStates
                 )
-                if EBCOTDebugTrace.shared.enabled {
+                if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
                     let sigCount = states.filter { $0.contains(.significant) }.count
                     var sigHash: UInt64 = 0
                     for (i, s) in states.enumerated() {
@@ -364,8 +375,10 @@ struct BitPlaneCoder: Sendable {
                     EBCOTDebugTrace.shared.logEncode("POST_SIGPROP sig=\(sigCount) hash=\(sigHash)", x: -1, y: -1)
                     EBCOTDebugTrace.shared.saveEncoderStates("sigprop_bp\(bitPlane)", states)
                 }
-                EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
-                EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                if ebcotTraceEnabled {
+                    EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
+                    EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                }
                 passCount += 1
 
                 // For per-pass mode, finish and reset after each pass
@@ -374,7 +387,8 @@ struct BitPlaneCoder: Sendable {
                     passDataSegments.append(passData)
                     encoder.reset()
                     contextStates.reset()
-                    cumulativePassBytes.append(passDataSegments.reduce(0) { $0 + $1.count })
+                    runningSegmentTotal += passData.count
+                    cumulativePassBytes.append(runningSegmentTotal)
                 } else {
                     // Snapshot the MQ encoder to get exact byte count at this
                     // truncation point. MQEncoder is a value type so the copy
@@ -402,7 +416,7 @@ struct BitPlaneCoder: Sendable {
 
             // Pass 2: Magnitude Refinement Pass (skip for MSB bit-plane)
             if !isFirstBitPlane && passCount < maxPassLimit {
-                EBCOTDebugTrace.shared.logEncode("=== MAGREF bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== MAGREF bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
                 if useBypass {
                     // Use separate raw bypass encoder for bypass mode
                     var bypassEncoder = RawBypassEncoder()
@@ -416,7 +430,8 @@ struct BitPlaneCoder: Sendable {
                     passCount += 1
                     let passData = bypassEncoder.finish()
                     passDataSegments.append(passData)
-                    cumulativePassBytes.append(passDataSegments.reduce(0) { $0 + $1.count })
+                    runningSegmentTotal += passData.count
+                    cumulativePassBytes.append(runningSegmentTotal)
                     // Distortion: refined coefficients from bypass MRP
                     var mrpDelta: Double = 0
                     for i in 0..<states.count {
@@ -440,12 +455,14 @@ struct BitPlaneCoder: Sendable {
                         contexts: &contextStates,
                         useBypass: false
                     )
-                    if EBCOTDebugTrace.shared.enabled {
+                    if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
                         let sigCount = states.filter { $0.contains(.significant) }.count
                         EBCOTDebugTrace.shared.logEncode("POST_MAGREF sig=\(sigCount)", x: -1, y: -1)
                     }
-                    EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
-                    EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                    if ebcotTraceEnabled {
+                        EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
+                        EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                    }
                     passCount += 1
 
                     // For per-pass mode, finish and reset after each pass
@@ -454,7 +471,8 @@ struct BitPlaneCoder: Sendable {
                         passDataSegments.append(passData)
                         encoder.reset()
                         contextStates.reset()
-                        cumulativePassBytes.append(passDataSegments.reduce(0) { $0 + $1.count })
+                        runningSegmentTotal += passData.count
+                        cumulativePassBytes.append(runningSegmentTotal)
                     } else {
                         var snapshot = encoder
                         let snapshotData = snapshot.finish(mode: options.terminationMode)
@@ -479,7 +497,7 @@ struct BitPlaneCoder: Sendable {
 
             // Pass 3: Cleanup Pass
             if passCount < maxPassLimit {
-                EBCOTDebugTrace.shared.logEncode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
                 encodeCleanupPass(
                     magnitudes: magnitudes,
                     signs: signArray,
@@ -489,7 +507,7 @@ struct BitPlaneCoder: Sendable {
                     contexts: &contextStates
                 )
                 // Count significant coefficients after cleanup
-                if EBCOTDebugTrace.shared.enabled {
+                if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
                     let sigCount = states.filter { $0.contains(.significant) }.count
                     let sbitCount = states.filter { $0.contains(.signBit) }.count
                     var sigHash: UInt64 = 0
@@ -501,8 +519,10 @@ struct BitPlaneCoder: Sendable {
                     EBCOTDebugTrace.shared.logEncode("POST_CLEANUP sig=\(sigCount) sbit=\(sbitCount) hash=\(sigHash)", x: -1, y: -1)
                     EBCOTDebugTrace.shared.saveEncoderStates("cleanup_bp\(bitPlane)", states)
                 }
-                EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
-                EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                if ebcotTraceEnabled {
+                    EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
+                    EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                }
                 passCount += 1
 
                 // For per-pass mode, finish and reset after each pass
@@ -511,7 +531,8 @@ struct BitPlaneCoder: Sendable {
                     passDataSegments.append(passData)
                     encoder.reset()
                     contextStates.reset()
-                    cumulativePassBytes.append(passDataSegments.reduce(0) { $0 + $1.count })
+                    runningSegmentTotal += passData.count
+                    cumulativePassBytes.append(runningSegmentTotal)
                 } else {
                     var snapshot = encoder
                     let snapshotData = snapshot.finish(mode: options.terminationMode)
@@ -533,9 +554,12 @@ struct BitPlaneCoder: Sendable {
                 cumulativePassDistortion.append(cumulativeDistReduction)
             }
 
-            // Clear coded-this-pass flags for next bit-plane
-            for i in 0..<states.count {
-                states[i].remove(.codedThisPass)
+            // Clear coded-this-pass flags for next bit-plane (batch bitwise)
+            let clearMask = ~CoefficientState.codedThisPass.rawValue
+            states.withUnsafeMutableBufferPointer { buf in
+                for i in 0..<buf.count {
+                    buf[i] = CoefficientState(rawValue: buf[i].rawValue & clearMask)
+                }
             }
         }
 
@@ -852,7 +876,7 @@ struct BitPlaneCoder: Sendable {
                     states: states
                 )
                 
-                EBCOTDebugTrace.shared.logEncode("elig=\(eligible)", x: x, y: stripeY)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("elig=\(eligible)", x: x, y: stripeY) }
 
                 if eligible {
                     // Check if any coefficient in the column becomes significant
@@ -960,7 +984,7 @@ struct BitPlaneCoder: Sendable {
 
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
-                        EBCOTDebugTrace.shared.logEncode("skip(coded/sig)", x: x, y: y)
+                        if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("skip(coded/sig)", x: x, y: y) }
                         continue
                     }
 
@@ -980,7 +1004,7 @@ struct BitPlaneCoder: Sendable {
 
                     // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
-                    EBCOTDebugTrace.shared.logEncode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y)
+                    if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y) }
 
                     if isSignificant {
                         // Encode sign
@@ -988,7 +1012,7 @@ struct BitPlaneCoder: Sendable {
                         let signBit = signs[idx]
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
-                        EBCOTDebugTrace.shared.logEncode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y)
+                        if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y) }
 
                         // Update state immediately
                         states[idx].insert(.significant)
@@ -1216,7 +1240,7 @@ struct BitPlaneDecoder: Sendable {
                     passSegmentIndex += 1
                 }
 
-                EBCOTDebugTrace.shared.logDecode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1) }
                 decodeSignificancePropagationPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -1238,14 +1262,16 @@ struct BitPlaneDecoder: Sendable {
                     EBCOTDebugTrace.shared.logDecode("POST_SIGPROP sig=\(sigCount) hash=\(sigHash)", x: -1, y: -1)
                     EBCOTDebugTrace.shared.saveDecoderStates("sigprop_bp\(bitPlane)", states)
                 }
-                EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
-                EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                if ebcotTraceEnabled {
+                    EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
+                    EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                }
                 passesDecoded += 1
             }
 
             // Pass 2: Magnitude Refinement Pass (skip for MSB bit plane)
             if !isFirstBitPlane && passesDecoded < passCount {
-                EBCOTDebugTrace.shared.logDecode("=== MAGREF bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("=== MAGREF bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1) }
                 if useBypass {
                     guard usePerPassSegments, passSegmentIndex < passSegments.count else {
                         // Not enough pass segments for bypass mode - cannot decode further
@@ -1287,8 +1313,10 @@ struct BitPlaneDecoder: Sendable {
                         useBypass: false
                     )
                 }
-                EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
-                EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                if ebcotTraceEnabled {
+                    EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
+                    EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                }
                 passesDecoded += 1
             }
 
@@ -1305,7 +1333,7 @@ struct BitPlaneDecoder: Sendable {
                     passSegmentIndex += 1
                 }
 
-                EBCOTDebugTrace.shared.logDecode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1) }
                 decodeCleanupPass(
                     magnitudes: &magnitudes,
                     signs: &signs,
@@ -1317,7 +1345,7 @@ struct BitPlaneDecoder: Sendable {
                     contexts: &contextStates
                 )
                 // Count significant coefficients after cleanup
-                if EBCOTDebugTrace.shared.enabled {
+                if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
                     let sigCount = states.filter { $0.contains(.significant) }.count
                     let sbitCount = states.filter { $0.contains(.signBit) }.count
                     var sigHash: UInt64 = 0
@@ -1329,14 +1357,19 @@ struct BitPlaneDecoder: Sendable {
                     EBCOTDebugTrace.shared.logDecode("POST_CLEANUP sig=\(sigCount) sbit=\(sbitCount) hash=\(sigHash)", x: -1, y: -1)
                     EBCOTDebugTrace.shared.saveDecoderStates("cleanup_bp\(bitPlane)", states)
                 }
-                EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
-                EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                if ebcotTraceEnabled {
+                    EBCOTDebugTrace.shared.logDecoderPassEnd(pass: passesDecoded, a: decoder.debugA, c: decoder.debugC, opCount: decoder.operationCount)
+                    EBCOTDebugTrace.shared.saveDecoderContexts(passesDecoded, contextStates)
+                }
                 passesDecoded += 1
             }
 
-            // Clear coded-this-pass flags for next bit-plane
-            for i in 0..<states.count {
-                states[i].remove(.codedThisPass)
+            // Clear coded-this-pass flags for next bit-plane (batch bitwise)
+            let decoderClearMask = ~CoefficientState.codedThisPass.rawValue
+            states.withUnsafeMutableBufferPointer { buf in
+                for i in 0..<buf.count {
+                    buf[i] = CoefficientState(rawValue: buf[i].rawValue & decoderClearMask)
+                }
             }
         }
 
@@ -1578,7 +1611,7 @@ struct BitPlaneDecoder: Sendable {
                     states: states
                 )
                 
-                EBCOTDebugTrace.shared.logDecode("elig=\(eligible)", x: x, y: stripeY)
+                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("elig=\(eligible)", x: x, y: stripeY) }
 
                 if eligible {
                     // Decode run-length flag: true if at least one becomes significant
@@ -1671,7 +1704,7 @@ struct BitPlaneDecoder: Sendable {
 
                     // Skip if already coded or significant
                     if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
-                        EBCOTDebugTrace.shared.logDecode("skip(coded/sig)", x: x, y: y)
+                        if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("skip(coded/sig)", x: x, y: y) }
                         continue
                     }
 
@@ -1688,14 +1721,14 @@ struct BitPlaneDecoder: Sendable {
 
                     // Decode significance
                     let isSignificant = decoder.decode(context: &contexts[sigContext])
-                    EBCOTDebugTrace.shared.logDecode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y)
+                    if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y) }
 
                     if isSignificant {
                         // Decode sign
                         let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
                         let codedSign = decoder.decode(context: &contexts[signContext])
                         let signBit = codedSign != xorBit
-                        EBCOTDebugTrace.shared.logDecode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y)
+                        if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y) }
 
                         // Update coefficient magnitude
                         magnitudes[idx] = magnitudes[idx] | bitMask

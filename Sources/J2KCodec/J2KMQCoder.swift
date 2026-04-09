@@ -227,16 +227,18 @@ struct MQEncoder: Sendable {
     /// Implements ISO 15444-1 C.2.4 (CODEMPS) and C.2.6 (CODELPS).
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
-        operationCount += 1
-        let preA = a
-        let preC = c
-        let preCtxState = context.stateIndex
-        if EBCOTDebugTrace.shared.enabled {
-            EBCOTDebugTrace.shared.encoderSymbols.append(
-                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
-            )
+        if ebcotTraceEnabled {
+            operationCount += 1
+            let preA = a
+            let preC = c
+            let preCtxState = context.stateIndex
+            if EBCOTDebugTrace.shared.enabled {
+                EBCOTDebugTrace.shared.encoderSymbols.append(
+                    (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+                )
+            }
         }
-        let state = context.state
+        let state = mqStateTable[context.stateIndex]
         let qe = state.qe
 
         a -= qe
@@ -538,11 +540,7 @@ struct MQDecoder: Sendable {
     /// Implements ISO 15444-1 C.3.2 (DECODE).
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
-        operationCount += 1
-        let preA = a
-        let preC = c
-        let preCtxState = context.stateIndex
-        let state = context.state
+        let state = mqStateTable[context.stateIndex]
         let qe = state.qe
 
         a -= qe
@@ -589,9 +587,10 @@ struct MQDecoder: Sendable {
             }
         }
 
-        if EBCOTDebugTrace.shared.enabled {
+        if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
+            operationCount += 1
             EBCOTDebugTrace.shared.decoderSymbols.append(
-                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+                (operationCount, 0, symbol, 0, UInt32(EBCOTDebugTrace.shared.currentContextLabel), 0)
             )
         }
 

@@ -563,7 +563,7 @@ struct ContextStateArray: Sendable {
     /// Accesses the MQ context for the specified EBCOT context label.
     subscript(context: EBCOTContext) -> MQContext {
         get {
-            EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue)
+            if ebcotTraceEnabled { EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue) }
             return contexts[Int(context.rawValue)]
         }
         set { contexts[Int(context.rawValue)] = newValue }
