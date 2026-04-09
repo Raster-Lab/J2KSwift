@@ -227,16 +227,18 @@ struct MQEncoder: Sendable {
     /// Implements ISO 15444-1 C.2.4 (CODEMPS) and C.2.6 (CODELPS).
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
-        operationCount += 1
-        let preA = a
-        let preC = c
-        let preCtxState = context.stateIndex
-        if EBCOTDebugTrace.shared.enabled {
-            EBCOTDebugTrace.shared.encoderSymbols.append(
-                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
-            )
+        if ebcotTraceEnabled {
+            operationCount += 1
+            let preA = a
+            let preC = c
+            let preCtxState = context.stateIndex
+            if EBCOTDebugTrace.shared.enabled {
+                EBCOTDebugTrace.shared.encoderSymbols.append(
+                    (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+                )
+            }
         }
-        let state = context.state
+        let state = mqStateTable[context.stateIndex]
         let qe = state.qe
 
         a -= qe
@@ -468,7 +470,8 @@ struct MQDecoder: Sendable {
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
     private var ct: Int = 0
-    private let data: Data
+    private let dataBytes: [UInt8]
+    private let dataCount: Int
     private var position: Int = 0
     private var buffer: UInt8 = 0
     private var nextBuffer: UInt8 = 0
@@ -484,7 +487,8 @@ struct MQDecoder: Sendable {
 
     /// Creates a new MQ decoder with the specified compressed data.
     init(data: Data) {
-        self.data = data
+        self.dataBytes = Array(data)
+        self.dataCount = dataBytes.count
         initializeDecoder()
     }
 
@@ -499,9 +503,10 @@ struct MQDecoder: Sendable {
     }
 
     /// Reads a byte from the input.
+    @inline(__always)
     private mutating func readByte() -> UInt8 {
-        if position < data.count {
-            let b = data[position]
+        if position < dataCount {
+            let b = dataBytes[position]
             position += 1
             return b
         }
@@ -538,11 +543,7 @@ struct MQDecoder: Sendable {
     /// Implements ISO 15444-1 C.3.2 (DECODE).
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
-        operationCount += 1
-        let preA = a
-        let preC = c
-        let preCtxState = context.stateIndex
-        let state = context.state
+        let state = mqStateTable[context.stateIndex]
         let qe = state.qe
 
         a -= qe
@@ -589,9 +590,10 @@ struct MQDecoder: Sendable {
             }
         }
 
-        if EBCOTDebugTrace.shared.enabled {
+        if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
+            operationCount += 1
             EBCOTDebugTrace.shared.decoderSymbols.append(
-                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+                (operationCount, 0, symbol, 0, UInt32(EBCOTDebugTrace.shared.currentContextLabel), 0)
             )
         }
 
@@ -650,7 +652,7 @@ struct MQDecoder: Sendable {
 
     /// Returns true if at end of data.
     var isAtEnd: Bool {
-        position >= data.count && ct == 0
+        position >= dataCount && ct == 0
     }
 
     /// Returns the current position.

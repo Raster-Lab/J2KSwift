@@ -71,14 +71,14 @@ final class J2KQuantizationTests: XCTestCase {
     func testParametersFromQualityLow() throws {
         let params = J2KQuantizationParameters.fromQuality(0.0)
         XCTAssertEqual(params.mode, .scalar)
-        // Low quality should have large step size = 16.0 (16^(1-0) = 16)
-        XCTAssertEqual(params.baseStepSize, 16.0, accuracy: 1e-10)
+        // Step size is always 1.0 — PCRD handles rate/quality trade-off
+        XCTAssertEqual(params.baseStepSize, 1.0, accuracy: 1e-10)
     }
 
     func testParametersFromQualityMedium() throws {
         let params = J2KQuantizationParameters.fromQuality(0.5)
-        // Medium quality: 16^0.5 = 4.0
-        XCTAssertEqual(params.baseStepSize, 4.0, accuracy: 1e-10)
+        // Step size is always 1.0 — PCRD handles rate/quality trade-off
+        XCTAssertEqual(params.baseStepSize, 1.0, accuracy: 1e-10)
     }
 
     func testParametersFromQualityClamping() throws {

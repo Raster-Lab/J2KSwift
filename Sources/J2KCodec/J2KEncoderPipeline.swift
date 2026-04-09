@@ -496,10 +496,122 @@ struct EncoderPipeline: Sendable {
                 use97DoublePrecision = false
             }
 
-            if use97DoublePrecision {
-                // Double-precision path: avoids rounding at intermediate levels.
-                // Use ICT double output directly when available to preserve
-                // sub-pixel colour transform precision through the DWT.
+            // Determine if we can use the accelerated flat-buffer DWT path.
+            // The accelerated path avoids [[Double]]/[[Int32]] array-of-arrays
+            // overhead and uses vDSP on Apple platforms.
+            let useAcceleratedPath: Bool
+            switch componentFilter {
+            case .irreversible97, .reversible53:
+                useAcceleratedPath = true
+            case .custom:
+                useAcceleratedPath = false
+            }
+
+            if use97DoublePrecision && useAcceleratedPath {
+                // Accelerated Double-precision CDF 9/7 path.
+                let flatDouble: [Double]
+                if let dc = doubleComponents, compIdx < dc.count {
+                    flatDouble = dc[compIdx]
+                } else {
+                    flatDouble = compData.map { Double($0) }
+                }
+
+                let decomposition = AcceleratedDWT2D.forwardDecomposition(
+                    data: flatDouble, width: width, height: height, levels: levels
+                )
+
+                for (levelIdx, level) in decomposition.levels.enumerated() {
+                    let decomLevel = levelIdx + 1
+
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hl,
+                        coefficients: level.hl.map { Int32($0.rounded()) },
+                        doubleCoefficients: level.hl,
+                        width: level.hlW,
+                        height: level.hlH
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .lh,
+                        coefficients: level.lh.map { Int32($0.rounded()) },
+                        doubleCoefficients: level.lh,
+                        width: level.lhW,
+                        height: level.lhH
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hh,
+                        coefficients: level.hh.map { Int32($0.rounded()) },
+                        doubleCoefficients: level.hh,
+                        width: level.hhW,
+                        height: level.hhH
+                    ))
+                }
+
+                subbands.insert(SubbandInfo(
+                    componentIndex: compIdx,
+                    level: 0,
+                    subband: .ll,
+                    coefficients: decomposition.coarsestLL.map { Int32($0.rounded()) },
+                    doubleCoefficients: decomposition.coarsestLL,
+                    width: decomposition.llW,
+                    height: decomposition.llH
+                ), at: 0)
+
+            } else if !use97DoublePrecision && useAcceleratedPath {
+                // Accelerated Int32 Le Gall 5/3 path.
+                let decomposition = AcceleratedDWT2D.forwardDecomposition53(
+                    data: compData, width: width, height: height, levels: levels
+                )
+
+                for (levelIdx, level) in decomposition.levels.enumerated() {
+                    let decomLevel = levelIdx + 1
+
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hl,
+                        coefficients: level.hl,
+                        doubleCoefficients: nil,
+                        width: level.hlW,
+                        height: level.hlH
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .lh,
+                        coefficients: level.lh,
+                        doubleCoefficients: nil,
+                        width: level.lhW,
+                        height: level.lhH
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hh,
+                        coefficients: level.hh,
+                        doubleCoefficients: nil,
+                        width: level.hhW,
+                        height: level.hhH
+                    ))
+                }
+
+                subbands.insert(SubbandInfo(
+                    componentIndex: compIdx,
+                    level: 0,
+                    subband: .ll,
+                    coefficients: decomposition.coarsestLL,
+                    doubleCoefficients: nil,
+                    width: decomposition.llW,
+                    height: decomposition.llH
+                ), at: 0)
+
+            } else if use97DoublePrecision {
+                // Fallback: original [[Double]] path for custom filters
                 let doubleImage: [[Double]]
                 if let dc = doubleComponents, compIdx < dc.count {
                     var img2D: [[Double]] = []
@@ -565,7 +677,7 @@ struct EncoderPipeline: Sendable {
                     height: coarsestLL.count
                 ), at: 0)
             } else {
-                // Int32 path for reversible 5/3 (exact integer arithmetic)
+                // Fallback: original Int32 path for custom filters
                 let decomposition = try J2KDWT2D.forwardDecomposition(
                     image: image2D, levels: levels, filter: componentFilter
                 )

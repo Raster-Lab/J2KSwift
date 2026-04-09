@@ -541,6 +541,99 @@ struct NeighborCalculator: Sendable {
 
         return contribution
     }
+
+    /// High-performance neighbor calculation using unsafe buffer pointers.
+    ///
+    /// This avoids array bounds checking overhead in the inner decoding loops.
+    @inline(__always)
+    func calculateUnsafe(
+        x: Int,
+        y: Int,
+        states: UnsafePointer<CoefficientState>,
+        signs: UnsafePointer<Bool>?,
+        hasSigns: Bool
+    ) -> NeighborContribution {
+        var contribution = NeighborContribution()
+
+        let currentRowOffset = y &* width
+        let topRowOffset = (y &- 1) &* width
+        let bottomRowOffset = (y &+ 1) &* width
+
+        let hasLeft = x > 0
+        let hasRight = x < width &- 1
+        let hasTop = y > 0
+        let hasBottom = y < height &- 1
+
+        if hasSigns, let signs = signs {
+            if hasLeft {
+                let idx = currentRowOffset &+ (x &- 1)
+                if states[idx].contains(.significant) {
+                    contribution.horizontal &+= 1
+                    contribution.horizontalSign &+= signs[idx] ? -1 : 1
+                }
+            }
+            if hasRight {
+                let idx = currentRowOffset &+ (x &+ 1)
+                if states[idx].contains(.significant) {
+                    contribution.horizontal &+= 1
+                    contribution.horizontalSign &+= signs[idx] ? -1 : 1
+                }
+            }
+            if hasTop {
+                let idx = topRowOffset &+ x
+                if states[idx].contains(.significant) {
+                    contribution.vertical &+= 1
+                    contribution.verticalSign &+= signs[idx] ? -1 : 1
+                }
+            }
+            if hasBottom {
+                let idx = bottomRowOffset &+ x
+                if states[idx].contains(.significant) {
+                    contribution.vertical &+= 1
+                    contribution.verticalSign &+= signs[idx] ? -1 : 1
+                }
+            }
+            if hasTop && hasLeft && states[topRowOffset &+ (x &- 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasTop && hasRight && states[topRowOffset &+ (x &+ 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasBottom && hasLeft && states[bottomRowOffset &+ (x &- 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasBottom && hasRight && states[bottomRowOffset &+ (x &+ 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+        } else {
+            if hasLeft && states[currentRowOffset &+ (x &- 1)].contains(.significant) {
+                contribution.horizontal &+= 1
+            }
+            if hasRight && states[currentRowOffset &+ (x &+ 1)].contains(.significant) {
+                contribution.horizontal &+= 1
+            }
+            if hasTop && states[topRowOffset &+ x].contains(.significant) {
+                contribution.vertical &+= 1
+            }
+            if hasBottom && states[bottomRowOffset &+ x].contains(.significant) {
+                contribution.vertical &+= 1
+            }
+            if hasTop && hasLeft && states[topRowOffset &+ (x &- 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasTop && hasRight && states[topRowOffset &+ (x &+ 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasBottom && hasLeft && states[bottomRowOffset &+ (x &- 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+            if hasBottom && hasRight && states[bottomRowOffset &+ (x &+ 1)].contains(.significant) {
+                contribution.diagonal &+= 1
+            }
+        }
+
+        return contribution
+    }
 }
 
 // MARK: - Context State Array
@@ -561,9 +654,10 @@ struct ContextStateArray: Sendable {
     }
 
     /// Accesses the MQ context for the specified EBCOT context label.
+    @inline(__always)
     subscript(context: EBCOTContext) -> MQContext {
         get {
-            EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue)
+            if ebcotTraceEnabled { EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue) }
             return contexts[Int(context.rawValue)]
         }
         set { contexts[Int(context.rawValue)] = newValue }

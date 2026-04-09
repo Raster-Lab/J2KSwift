@@ -93,81 +93,63 @@ public struct J2KDWT1DOptimizer: Sendable {
     /// Optimised inverse transform with symmetric boundary extension.
     ///
     /// This is the most common case and is heavily optimised with:
-    /// - Pre-computed boundary values
-    /// - Minimal branching
-    /// - Better instruction-level parallelism
+    /// - Single output allocation (no intermediate even/odd arrays)
+    /// - Unsafe pointer access throughout
+    /// - Boundary handling split from inner loop (no branches)
     private func inverseTransform53Symmetric(
         lowpass: [Int32],
         highpass: [Int32]
     ) throws -> [Int32] {
-        let lowpassSize = lowpass.count
-        let highpassSize = highpass.count
-        let n = lowpassSize + highpassSize
+        let lpSize = lowpass.count
+        let hpSize = highpass.count
+        let n = lpSize + hpSize
 
-        // Pre-allocate result arrays
-        var even = lowpass
-        var odd = [Int32](repeating: 0, count: highpassSize)
-
-        // Pre-compute boundary-extended values for highpass
-        let highLeft = highpass.first ?? 0
-        let highRight = highpass.last ?? 0
-
-        // Undo update step: even[n] = s[n] - floor((d[n-1] + d[n]) / 4)
-        // Optimised with reduced branching
-        for i in 0..<lowpassSize {
-            let left: Int32
-            let right: Int32
-
-            if i == 0 {
-                // Symmetric extension: d[-1] mirrors to d[0]
-                left = highLeft
-            } else {
-                left = highpass[i - 1]
-            }
-
-            if i < highpassSize {
-                right = highpass[i]
-            } else {
-                // Symmetric extension: d[n] mirrors to d[n-1]
-                right = highRight
-            }
-
-            // Use bit shift for division by 4 (floor division)
-            even[i] = lowpass[i] - ((left + right + 2) >> 2)
-        }
-
-        // Undo predict step: odd[n] = d[n] + floor((even[n] + even[n+1]) / 2)
-        // Optimised with bounds pre-checking
-        if highpassSize > 0 {
-            for i in 0..<(highpassSize - 1) {
-                let left = even[i]
-                let right = even[i + 1]
-                odd[i] = highpass[i] + ((left + right) >> 1)
-            }
-
-            // Handle last odd sample with boundary extension
-            let lastIdx = highpassSize - 1
-            let left = even[lastIdx]
-            let right = even[min(lastIdx + 1, lowpassSize - 1)]  // Symmetric extension
-            odd[lastIdx] = highpass[lastIdx] + ((left + right) >> 1)
-        }
-
-        // Merge even and odd samples
-        // Optimised interleaving with explicit loop unrolling hint
+        // Single allocation - compute even/odd directly into result positions
         var result = [Int32](repeating: 0, count: n)
 
-        // Process in pairs for better instruction-level parallelism
-        let pairs = min(lowpassSize, highpassSize)
-        for i in 0..<pairs {
-            let evenIdx = i * 2
-            let oddIdx = evenIdx + 1
-            result[evenIdx] = even[i]
-            result[oddIdx] = odd[i]
-        }
+        result.withUnsafeMutableBufferPointer { resBuf in
+            lowpass.withUnsafeBufferPointer { lpBuf in
+                highpass.withUnsafeBufferPointer { hpBuf in
+                    let rp = resBuf.baseAddress!
+                    let lp = lpBuf.baseAddress!
+                    let hp = hpBuf.baseAddress!
 
-        // Handle remaining even sample if odd length
-        if lowpassSize > highpassSize {
-            result[n - 1] = even[lowpassSize - 1]
+                    // Step 1: Undo update - write even samples to positions 0, 2, 4, ...
+                    // even[i] = lowpass[i] - ((hp[i-1] + hp[i] + 2) >> 2)
+                    // Boundary: hp[-1] = hp[0] (symmetric), hp[hpSize] = hp[hpSize-1]
+
+                    // First element (left boundary: symmetric hp[-1] = hp[0])
+                    rp[0] = lp[0] &- ((hp[0] &+ hp[0] &+ 2) >> 2)
+
+                    // Interior elements - no boundary checks needed
+                    for i in 1..<min(lpSize, hpSize) {
+                        rp[i &* 2] = lp[i] &- ((hp[i &- 1] &+ hp[i] &+ 2) >> 2)
+                    }
+
+                    // Last element if lpSize > hpSize (right boundary: symmetric)
+                    if lpSize > hpSize {
+                        let lastHP = hp[hpSize &- 1]
+                        rp[(lpSize &- 1) &* 2] = lp[lpSize &- 1] &- ((lastHP &+ lastHP &+ 2) >> 2)
+                    }
+
+                    // Step 2: Undo predict - write odd samples to positions 1, 3, 5, ...
+                    // odd[i] = highpass[i] + ((even[i] + even[i+1]) >> 1)
+                    // even values are already at rp[0], rp[2], rp[4], ...
+
+                    // Interior elements
+                    let lastOdd = hpSize &- 1
+                    for i in 0..<lastOdd {
+                        rp[i &* 2 &+ 1] = hp[i] &+ ((rp[i &* 2] &+ rp[(i &+ 1) &* 2]) >> 1)
+                    }
+
+                    // Last odd sample (boundary: even[hpSize] uses symmetric extension)
+                    if hpSize > 0 {
+                        let evenLeft = rp[lastOdd &* 2]
+                        let evenRight = rp[min((lastOdd &+ 1) &* 2, (lpSize &- 1) &* 2)]
+                        rp[lastOdd &* 2 &+ 1] = hp[lastOdd] &+ ((evenLeft &+ evenRight) >> 1)
+                    }
+                }
+            }
         }
 
         return result
@@ -254,26 +236,44 @@ public struct J2KDWT2DOptimizer: Sendable {
         // Step 1: Apply inverse 1D DWT to rows (horizontal pass)
         // LL + HL → col-low rows, LH + HH → col-high rows
 
-        var colLow = [[Int32]]()
-        colLow.reserveCapacity(llHeight)
-        for row in 0..<llHeight {
-            let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
-                lowpass: ll[row],
-                highpass: hl[row],
-                boundaryExtension: boundaryExtension
-            )
-            colLow.append(reconstructedRow)
-        }
+        var colLow = [[Int32]](repeating: [], count: llHeight)
+        var colHigh = [[Int32]](repeating: [], count: lhHeight)
 
-        var colHigh = [[Int32]]()
-        colHigh.reserveCapacity(lhHeight)
-        for row in 0..<lhHeight {
-            let reconstructedRow = try optimizer1D.inverseTransform53Optimized(
-                lowpass: lh[row],
-                highpass: hh[row],
-                boundaryExtension: boundaryExtension
-            )
-            colHigh.append(reconstructedRow)
+        let totalRows = llHeight + lhHeight
+        if totalRows >= 8 {
+            // Parallel row transforms for large images
+            colLow.withUnsafeMutableBufferPointer { lowBuf in
+                colHigh.withUnsafeMutableBufferPointer { highBuf in
+                    DispatchQueue.concurrentPerform(iterations: totalRows) { i in
+                        if i < llHeight {
+                            if let row = try? optimizer1D.inverseTransform53Optimized(
+                                lowpass: ll[i], highpass: hl[i],
+                                boundaryExtension: boundaryExtension) {
+                                lowBuf[i] = row
+                            }
+                        } else {
+                            let j = i - llHeight
+                            if let row = try? optimizer1D.inverseTransform53Optimized(
+                                lowpass: lh[j], highpass: hh[j],
+                                boundaryExtension: boundaryExtension) {
+                                highBuf[j] = row
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Sequential path for small images
+            for row in 0..<llHeight {
+                colLow[row] = try optimizer1D.inverseTransform53Optimized(
+                    lowpass: ll[row], highpass: hl[row],
+                    boundaryExtension: boundaryExtension)
+            }
+            for row in 0..<lhHeight {
+                colHigh[row] = try optimizer1D.inverseTransform53Optimized(
+                    lowpass: lh[row], highpass: hh[row],
+                    boundaryExtension: boundaryExtension)
+            }
         }
 
         // Step 2: Apply inverse 1D DWT to columns (vertical pass)
@@ -284,27 +284,62 @@ public struct J2KDWT2DOptimizer: Sendable {
 
         var result = Array(repeating: [Int32](repeating: 0, count: outputWidth), count: outputHeight)
 
-        for col in 0..<outputWidth {
-            var lowpass = [Int32]()
-            lowpass.reserveCapacity(colLowHeight)
-            for row in 0..<colLowHeight {
-                lowpass.append(colLow[row][col])
+        // Pre-allocate reusable column buffers to avoid per-column heap allocations
+        if outputWidth >= 8 {
+            // Parallel column transforms using flat buffer for thread-safe writes
+            var flatResult = [Int32](repeating: 0, count: outputWidth * outputHeight)
+
+            flatResult.withUnsafeMutableBufferPointer { flatBuf in
+                DispatchQueue.concurrentPerform(iterations: outputWidth) { col in
+                    // Each thread gets its own column buffers
+                    var lowpassBuf = [Int32](repeating: 0, count: colLowHeight)
+                    var highpassBuf = [Int32](repeating: 0, count: colHighHeight)
+
+                    for row in 0..<colLowHeight {
+                        lowpassBuf[row] = colLow[row][col]
+                    }
+                    for row in 0..<colHighHeight {
+                        highpassBuf[row] = colHigh[row][col]
+                    }
+
+                    if let reconstructedColumn = try? optimizer1D.inverseTransform53Optimized(
+                        lowpass: lowpassBuf, highpass: highpassBuf,
+                        boundaryExtension: boundaryExtension) {
+                        for i in 0..<min(reconstructedColumn.count, outputHeight) {
+                            flatBuf[i &* outputWidth &+ col] = reconstructedColumn[i]
+                        }
+                    }
+                }
             }
 
-            var highpass = [Int32]()
-            highpass.reserveCapacity(colHighHeight)
-            for row in 0..<colHighHeight {
-                highpass.append(colHigh[row][col])
+            // Reshape flat buffer to [[Int32]]
+            result.reserveCapacity(outputHeight)
+            flatResult.withUnsafeBufferPointer { flatBuf in
+                for row in 0..<outputHeight {
+                    let start = row &* outputWidth
+                    result[row] = Array(UnsafeBufferPointer(start: flatBuf.baseAddress! + start, count: outputWidth))
+                }
             }
+        } else {
+            // Sequential path for narrow images
+            var lowpassBuf = [Int32](repeating: 0, count: colLowHeight)
+            var highpassBuf = [Int32](repeating: 0, count: colHighHeight)
 
-            let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
-                lowpass: lowpass,
-                highpass: highpass,
-                boundaryExtension: boundaryExtension
-            )
+            for col in 0..<outputWidth {
+                for row in 0..<colLowHeight {
+                    lowpassBuf[row] = colLow[row][col]
+                }
+                for row in 0..<colHighHeight {
+                    highpassBuf[row] = colHigh[row][col]
+                }
 
-            for i in 0..<reconstructedColumn.count {
-                result[i][col] = reconstructedColumn[i]
+                let reconstructedColumn = try optimizer1D.inverseTransform53Optimized(
+                    lowpass: lowpassBuf, highpass: highpassBuf,
+                    boundaryExtension: boundaryExtension)
+
+                for i in 0..<reconstructedColumn.count {
+                    result[i][col] = reconstructedColumn[i]
+                }
             }
         }
 
