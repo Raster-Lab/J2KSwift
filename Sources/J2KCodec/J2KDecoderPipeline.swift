@@ -853,47 +853,115 @@ struct DecoderPipeline: Sendable {
         }
         var subbandBlocks: [String: [DecodedBlock]] = [:]
 
-        // Decode each code block
-        for block in blocks {
+        let blockCount = blocks.count
 
-            let codeBlock = J2KCodeBlock(
-                index: 0,
-                x: block.x,
-                y: block.y,
-                width: block.width,
-                height: block.height,
-                subband: block.subband,
-                data: block.data,
-                passeCount: block.passCount,
-                zeroBitPlanes: block.zeroBitPlanes
-            )
+        if blockCount >= 4 {
+            // === Parallel code block decoding ===
+            // Each code block is independent (own MQ state + context models).
+            // Use DispatchQueue.concurrentPerform for cross-platform parallelism
+            // (macOS Intel/ARM, Linux).
+            let componentBitDepths = metadata.components.map { $0.bitDepth }
 
-            let compInfo = metadata.components[block.componentIndex]
-            let coeffs = try decoder.decode(
-                codeBlock: codeBlock,
-                bitDepth: block.bandKb > 0 ? block.bandKb : compInfo.bitDepth,
-                irreversible: isIrreversible
-            )
-
-            let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
-
-            // Track maximum extent for subband dimensions
-            let currentWidth = subbandDims[key]?.width ?? 0
-            let currentHeight = subbandDims[key]?.height ?? 0
-            subbandDims[key] = (
-                width: max(currentWidth, block.x + block.width),
-                height: max(currentHeight, block.y + block.height)
-            )
-
-            // Store decoded block with its position
-            if subbandBlocks[key] == nil {
-                subbandBlocks[key] = []
+            // Thread-safe result storage: each thread writes to its unique index
+            let resultsPtr = UnsafeMutablePointer<[Int32]>.allocate(capacity: blockCount)
+            for idx in 0..<blockCount {
+                resultsPtr.advanced(by: idx).initialize(to: [])
             }
-            subbandBlocks[key]?.append(DecodedBlock(
-                x: block.x, y: block.y,
-                width: block.width, height: block.height,
-                coefficients: coeffs
-            ))
+            defer {
+                resultsPtr.deinitialize(count: blockCount)
+                resultsPtr.deallocate()
+            }
+
+            DispatchQueue.concurrentPerform(iterations: blockCount) { i in
+                let block = blocks[i]
+                let blockDecoder = CodeBlockDecoder()
+                let codeBlock = J2KCodeBlock(
+                    index: 0,
+                    x: block.x,
+                    y: block.y,
+                    width: block.width,
+                    height: block.height,
+                    subband: block.subband,
+                    data: block.data,
+                    passeCount: block.passCount,
+                    zeroBitPlanes: block.zeroBitPlanes
+                )
+                let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
+                if let coeffs = try? blockDecoder.decode(
+                    codeBlock: codeBlock,
+                    bitDepth: bitDepth,
+                    irreversible: isIrreversible
+                ) {
+                    resultsPtr[i] = coeffs
+                }
+            }
+
+            // Collect results sequentially
+            for i in 0..<blockCount {
+                let block = blocks[i]
+                var coeffs = resultsPtr[i]
+                if coeffs.isEmpty {
+                    coeffs = [Int32](repeating: 0, count: block.width * block.height)
+                }
+
+                let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
+
+                let currentWidth = subbandDims[key]?.width ?? 0
+                let currentHeight = subbandDims[key]?.height ?? 0
+                subbandDims[key] = (
+                    width: max(currentWidth, block.x + block.width),
+                    height: max(currentHeight, block.y + block.height)
+                )
+
+                if subbandBlocks[key] == nil {
+                    subbandBlocks[key] = []
+                }
+                subbandBlocks[key]?.append(DecodedBlock(
+                    x: block.x, y: block.y,
+                    width: block.width, height: block.height,
+                    coefficients: coeffs
+                ))
+            }
+        } else {
+            // Sequential path for small block counts
+            for block in blocks {
+                let codeBlock = J2KCodeBlock(
+                    index: 0,
+                    x: block.x,
+                    y: block.y,
+                    width: block.width,
+                    height: block.height,
+                    subband: block.subband,
+                    data: block.data,
+                    passeCount: block.passCount,
+                    zeroBitPlanes: block.zeroBitPlanes
+                )
+
+                let compInfo = metadata.components[block.componentIndex]
+                let coeffs = try decoder.decode(
+                    codeBlock: codeBlock,
+                    bitDepth: block.bandKb > 0 ? block.bandKb : compInfo.bitDepth,
+                    irreversible: isIrreversible
+                )
+
+                let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
+
+                let currentWidth = subbandDims[key]?.width ?? 0
+                let currentHeight = subbandDims[key]?.height ?? 0
+                subbandDims[key] = (
+                    width: max(currentWidth, block.x + block.width),
+                    height: max(currentHeight, block.y + block.height)
+                )
+
+                if subbandBlocks[key] == nil {
+                    subbandBlocks[key] = []
+                }
+                subbandBlocks[key]?.append(DecodedBlock(
+                    x: block.x, y: block.y,
+                    width: block.width, height: block.height,
+                    coefficients: coeffs
+                ))
+            }
         }
 
         // Scatter code block coefficients into proper 2D subband positions
@@ -909,13 +977,16 @@ struct DecoderPipeline: Sendable {
 
             // Create subband buffer and place each code block at its correct position
             var subbandCoeffs = [Int32](repeating: 0, count: dims.width * dims.height)
-            for db in decodedBlocks {
-                for row in 0..<db.height {
-                    let srcStart = row * db.width
-                    let dstStart = (db.y + row) * dims.width + db.x
-                    for col in 0..<db.width {
-                        if srcStart + col < db.coefficients.count {
-                            subbandCoeffs[dstStart + col] = db.coefficients[srcStart + col]
+            subbandCoeffs.withUnsafeMutableBufferPointer { dstBuf in
+                for db in decodedBlocks {
+                    db.coefficients.withUnsafeBufferPointer { srcBuf in
+                        for row in 0..<db.height {
+                            let srcStart = row * db.width
+                            let dstStart = (db.y + row) * dims.width + db.x
+                            let copyCount = min(db.width, srcBuf.count - srcStart)
+                            guard copyCount > 0, dstStart + copyCount <= dstBuf.count else { continue }
+                            dstBuf.baseAddress!.advanced(by: dstStart)
+                                .update(from: srcBuf.baseAddress!.advanced(by: srcStart), count: copyCount)
                         }
                     }
                 }
@@ -1154,11 +1225,12 @@ struct DecoderPipeline: Sendable {
                 var result = [[Int32]](repeating: [Int32](repeating: 0, count: dstW), count: dstH)
                 let copyW = min(srcW, dstW)
                 let copyH = min(srcH, dstH)
-                for row in 0..<copyH {
-                    for col in 0..<copyW {
-                        let idx = row * srcW + col
-                        if idx < coeffs.count {
-                            result[row][col] = coeffs[idx]
+                coeffs.withUnsafeBufferPointer { srcBuf in
+                    for row in 0..<copyH {
+                        let srcOffset = row * srcW
+                        guard srcOffset + copyW <= srcBuf.count else { return }
+                        result[row].withUnsafeMutableBufferPointer { dstBuf in
+                            dstBuf.baseAddress!.update(from: srcBuf.baseAddress! + srcOffset, count: copyW)
                         }
                     }
                 }
@@ -1169,11 +1241,14 @@ struct DecoderPipeline: Sendable {
                 var result = [[Double]](repeating: [Double](repeating: 0, count: dstW), count: dstH)
                 let copyW = min(srcW, dstW)
                 let copyH = min(srcH, dstH)
-                for row in 0..<copyH {
-                    for col in 0..<copyW {
-                        let idx = row * srcW + col
-                        if idx < coeffs.count {
-                            result[row][col] = Double(coeffs[idx])
+                coeffs.withUnsafeBufferPointer { srcBuf in
+                    for row in 0..<copyH {
+                        let srcOffset = row * srcW
+                        guard srcOffset + copyW <= srcBuf.count else { return }
+                        result[row].withUnsafeMutableBufferPointer { dstBuf in
+                            for col in 0..<copyW {
+                                dstBuf[col] = Double(srcBuf[srcOffset + col])
+                            }
                         }
                     }
                 }
@@ -1184,11 +1259,12 @@ struct DecoderPipeline: Sendable {
                 var result = [[Double]](repeating: [Double](repeating: 0, count: dstW), count: dstH)
                 let copyW = min(srcW, dstW)
                 let copyH = min(srcH, dstH)
-                for row in 0..<copyH {
-                    for col in 0..<copyW {
-                        let idx = row * srcW + col
-                        if idx < coeffs.count {
-                            result[row][col] = coeffs[idx]
+                coeffs.withUnsafeBufferPointer { srcBuf in
+                    for row in 0..<copyH {
+                        let srcOffset = row * srcW
+                        guard srcOffset + copyW <= srcBuf.count else { return }
+                        result[row].withUnsafeMutableBufferPointer { dstBuf in
+                            dstBuf.baseAddress!.update(from: srcBuf.baseAddress! + srcOffset, count: copyW)
                         }
                     }
                 }
@@ -1315,7 +1391,16 @@ struct DecoderPipeline: Sendable {
                     )
                 }
 
-                let flattened = currentLL.flatMap { $0.map { Double($0) } }
+                let rowCount = currentLL.count
+                let colCount = rowCount > 0 ? currentLL[0].count : 0
+                var flattened = [Double](repeating: 0.0, count: rowCount * colCount)
+                for r in 0..<rowCount {
+                    let row = currentLL[r]
+                    let offset = r * colCount
+                    for c in 0..<colCount {
+                        flattened[offset + c] = Double(row[c])
+                    }
+                }
                 componentData.append(flattened)
             }
         }
@@ -1384,27 +1469,41 @@ struct DecoderPipeline: Sendable {
             let height = metadata.height / compInfo.subsamplingY
 
             // Convert Double array to Data with final rounding and clamping
-            var data = Data()
-            if compInfo.bitDepth <= 8 {
-                for value in compData {
-                    let rounded = Int32(value.rounded())
+            // Pre-allocate the exact size needed
+            let bytesPerPixel = compInfo.bitDepth <= 8 ? 1 : 2
+            let pixelCount = compData.count
+            var data = Data(count: pixelCount * bytesPerPixel)
+
+            data.withUnsafeMutableBytes { rawBuf in
+                let ptr = rawBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                if compInfo.bitDepth <= 8 {
                     if compInfo.signed {
-                        data.append(UInt8(bitPattern: Int8(clamping: rounded)))
+                        for i in 0..<pixelCount {
+                            let rounded = Int32(compData[i].rounded())
+                            ptr[i] = UInt8(bitPattern: Int8(clamping: rounded))
+                        }
                     } else {
-                        data.append(UInt8(clamping: max(0, rounded)))
+                        for i in 0..<pixelCount {
+                            let rounded = Int32(compData[i].rounded())
+                            ptr[i] = UInt8(clamping: max(0, rounded))
+                        }
                     }
-                }
-            } else {
-                for value in compData {
-                    let rounded = Int32(value.rounded())
-                    let uint16Value: UInt16
+                } else {
                     if compInfo.signed {
-                        uint16Value = UInt16(bitPattern: Int16(clamping: rounded))
+                        for i in 0..<pixelCount {
+                            let rounded = Int32(compData[i].rounded())
+                            let v = UInt16(bitPattern: Int16(clamping: rounded))
+                            ptr[i * 2] = UInt8(v >> 8)
+                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
+                        }
                     } else {
-                        uint16Value = UInt16(clamping: max(0, rounded))
+                        for i in 0..<pixelCount {
+                            let rounded = Int32(compData[i].rounded())
+                            let v = UInt16(clamping: max(0, rounded))
+                            ptr[i * 2] = UInt8(v >> 8)
+                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
+                        }
                     }
-                    data.append(UInt8(uint16Value >> 8))
-                    data.append(UInt8(uint16Value & 0xFF))
                 }
             }
 

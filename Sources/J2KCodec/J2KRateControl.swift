@@ -333,6 +333,7 @@ public struct J2KRateControl: Sendable {
         // Form layers using PCRD-opt
         var layers = [QualityLayer]()
         var previousLayerPasses = Set<String>()
+        var previousBlockCumulativeBytes = [Int: Int]()
 
         for (layerIndex, targetRate) in targetRates.enumerated() {
             let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
@@ -341,16 +342,18 @@ public struct J2KRateControl: Sendable {
                 print("PCRD_LAYER: layer=\(layerIndex) targetRate=\(String(format: "%.3f", targetRate)) targetBytes=\(targetBytes)")
             }
 
-            let (layer, selectedPasses) = try formLayerPCRDOpt(
+            let (layer, selectedPasses, blockCumBytes) = try formLayerPCRDOpt(
                 layerIndex: layerIndex,
                 targetBytes: targetBytes,
                 sortedPasses: sortedPasses,
                 previousPasses: previousLayerPasses,
-                codeBlocks: codeBlocks
+                codeBlocks: codeBlocks,
+                previousBlockCumulativeBytes: previousBlockCumulativeBytes
             )
 
             layers.append(layer)
             previousLayerPasses = selectedPasses
+            previousBlockCumulativeBytes = blockCumBytes
         }
 
         return layers
@@ -682,18 +685,27 @@ public struct J2KRateControl: Sendable {
 
     /// Estimates bitrate required for a given quality level.
     ///
-    /// Calibrated to match industry JPEG 2000 codecs (OpenJPEG, Apple ImageIO):
-    /// - q=0.9 → ~6.0 bpp (high visual quality)
-    /// - q=0.5 → ~1.5 bpp (medium quality)
-    /// - q=0.3 → ~0.6 bpp (low quality)
+    /// Calibrated to match industry JPEG 2000 codecs (OpenJPEG):
+    /// - q=0.9 → ~1.2 bpp (high visual quality)
+    /// - q=0.5 → ~0.3 bpp (medium quality)
+    /// - q=0.3 → ~0.15 bpp (low quality)
     private func qualityToBitrate(_ quality: Double) -> Double {
         if quality >= 1.0 {
-            return 24.0 // Lossless
+            return 8.0 // Near-lossless
         }
-        // Quadratic mapping: better bitrate allocation across quality range
-        let minRate = 0.1
-        let maxRate = 8.0
-        return minRate + (maxRate - minRate) * pow(quality, 1.5)
+        // Piecewise mapping calibrated against OpenJPEG output sizes.
+        // Medical images at q=0.9 produce ~1 bpp, not 6.8 bpp.
+        if quality >= 0.95 {
+            return 2.0 + (quality - 0.95) * 120.0   // 2.0→8.0 for q 0.95→1.0
+        }
+        if quality >= 0.80 {
+            return 0.5 + (quality - 0.80) * 10.0    // 0.5→2.0 for q 0.80→0.95
+        }
+        if quality >= 0.50 {
+            return 0.15 + (quality - 0.50) * 1.167  // 0.15→0.5 for q 0.50→0.80
+        }
+        // Low quality range
+        return 0.05 + quality * 0.2                 // 0.05→0.15 for q 0→0.50
     }
 
     /// Forms a single quality layer using PCRD-opt algorithm.
@@ -702,25 +714,22 @@ public struct J2KRateControl: Sendable {
         targetBytes: Int,
         sortedPasses: [CodingPassInfo],
         previousPasses: Set<String>,
-        codeBlocks: [J2KCodeBlock]
-    ) throws -> (QualityLayer, Set<String>) {
+        codeBlocks: [J2KCodeBlock],
+        previousBlockCumulativeBytes: [Int: Int]
+    ) throws -> (QualityLayer, Set<String>, [Int: Int]) {
         var contributions = [Int: Int]()
         var selectedPasses = previousPasses
         // Track per-block cumulative bytes to compute incremental cost correctly
-        var blockCumulativeBytes = [Int: Int]()
+        var blockCumulativeBytes = previousBlockCumulativeBytes
 
         // Account for bytes already included in previous layers (targetBytes is cumulative)
-        var currentBytes = 0
-        for passInfo in sortedPasses {
-            let passKey = "\(passInfo.codeBlockIndex)_\(passInfo.passNumber)"
-            if previousPasses.contains(passKey) {
-                blockCumulativeBytes[passInfo.codeBlockIndex] = max(
-                    blockCumulativeBytes[passInfo.codeBlockIndex] ?? 0,
-                    passInfo.cumulativeBytes
-                )
-            }
-        }
-        currentBytes = blockCumulativeBytes.values.reduce(0, +)
+        var currentBytes = blockCumulativeBytes.values.reduce(0, +)
+
+        // Track consecutive budget-exceeding passes for early termination.
+        // Since passes are sorted by descending slope, if many consecutive
+        // passes exceed the budget, remaining passes are unlikely to fit.
+        var consecutiveSkips = 0
+        let maxConsecutiveSkips = 64
 
         // Select passes in order of descending slope until budget is exhausted
         for passInfo in sortedPasses {
@@ -742,8 +751,14 @@ public struct J2KRateControl: Sendable {
                 if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
                     print("PCRD_SKIP: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(String(format: "%.2f", passInfo.slope)) incBytes=\(incrementalBytes) cumBytes=\(passInfo.cumulativeBytes) current=\(currentBytes) target=\(targetBytes)")
                 }
+                consecutiveSkips += 1
+                if consecutiveSkips >= maxConsecutiveSkips {
+                    break
+                }
                 continue
             }
+
+            consecutiveSkips = 0
 
             // Add this pass — use max to prevent out-of-order pass selection
             // from regressing contributions (e.g., a zero-cost late pass sorted
@@ -771,7 +786,7 @@ public struct J2KRateControl: Sendable {
             codeBlockContributions: contributions
         )
 
-        return (layer, selectedPasses)
+        return (layer, selectedPasses, blockCumulativeBytes)
     }
 
     /// Creates a lossless quality layer with all coding passes.

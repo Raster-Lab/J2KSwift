@@ -470,7 +470,8 @@ struct MQDecoder: Sendable {
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
     private var ct: Int = 0
-    private let data: Data
+    private let dataBytes: [UInt8]
+    private let dataCount: Int
     private var position: Int = 0
     private var buffer: UInt8 = 0
     private var nextBuffer: UInt8 = 0
@@ -486,7 +487,8 @@ struct MQDecoder: Sendable {
 
     /// Creates a new MQ decoder with the specified compressed data.
     init(data: Data) {
-        self.data = data
+        self.dataBytes = Array(data)
+        self.dataCount = dataBytes.count
         initializeDecoder()
     }
 
@@ -501,9 +503,10 @@ struct MQDecoder: Sendable {
     }
 
     /// Reads a byte from the input.
+    @inline(__always)
     private mutating func readByte() -> UInt8 {
-        if position < data.count {
-            let b = data[position]
+        if position < dataCount {
+            let b = dataBytes[position]
             position += 1
             return b
         }
@@ -649,7 +652,7 @@ struct MQDecoder: Sendable {
 
     /// Returns true if at end of data.
     var isAtEnd: Bool {
-        position >= data.count && ct == 0
+        position >= dataCount && ct == 0
     }
 
     /// Returns the current position.
