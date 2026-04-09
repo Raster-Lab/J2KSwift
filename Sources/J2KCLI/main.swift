@@ -69,6 +69,12 @@ struct J2KCLI {
                 try await compareCommand(commandArgs)
             case "convert":
                 try await convertCommand(commandArgs)
+            case "compress":
+                try await opjCompressCommand(commandArgs)
+            case "decompress":
+                try await opjDecompressCommand(commandArgs)
+            case "dump":
+                try await opjDumpCommand(commandArgs)
             case "completions":
                 try await completionsCommand(commandArgs)
             case "testapp":
@@ -113,6 +119,9 @@ struct J2KCLI {
             batch       Batch-process files in a directory
             compare     Compare two images (PSNR, MSE, MAE)
             convert     Convert between image formats
+            compress    OpenJPEG-compatible compress (opj_compress)
+            decompress  OpenJPEG-compatible decompress (opj_decompress)
+            dump        OpenJPEG-compatible dump (opj_dump)
             completions Generate shell completions (bash/zsh/fish)
             testapp     Run test app in headless mode (CI/CD)
             version     Print version information

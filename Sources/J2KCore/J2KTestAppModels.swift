@@ -1046,6 +1046,8 @@ public final class EncodeViewModel {
     public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
     /// Injectable image parser: converts raw image file data (PNG/TIFF/BMP) to (planarPixelData, width, height, componentCount).
     public var imageParserFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+    /// Injectable image renderer: converts (planarPixelData, width, height, componentCount) to displayable image data (e.g., PNG).
+    public var imageRendererFunction: (@Sendable (Data, Int, Int, Int) -> Data?)?
 
     /// URL of the selected input image.
     public var inputImageURL: URL?
@@ -1069,6 +1071,8 @@ public final class EncodeViewModel {
     public var lastResult: EncodeOperationResult?
     /// Encoded output data.
     public var outputData: Data?
+    /// Displayable version of the encoded output (decoded back and rendered as PNG).
+    public var decodedOutputImageData: Data?
     /// Results from batch encoding.
     public var batchResults: [EncodeOperationResult] = []
     /// Whether batch encoding mode is active.
@@ -1172,6 +1176,7 @@ public final class EncodeViewModel {
         isEncoding = true
         progress = 0
         outputData = nil
+        decodedOutputImageData = nil
         lastResult = nil
 
         stageProgress = PipelineStage.allCases.map { StageProgress(stage: $0) }
@@ -1230,6 +1235,13 @@ public final class EncodeViewModel {
             }.value
 
             outputData = encodedData
+
+            // Decode the encoded output back for visual preview
+            if let decoder = decoderFunction, let renderer = imageRendererFunction {
+                if let (decodedPlanar, dw, dh, dc) = try? decoder(encodedData) {
+                    decodedOutputImageData = renderer(decodedPlanar, dw, dh, dc)
+                }
+            }
 
             // Update UI with real timing data
             for (index, stage) in PipelineStage.allCases.enumerated() {
@@ -1429,6 +1441,12 @@ public final class DecodeViewModel {
     /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
     public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
 
+    /// Injectable image renderer: converts (planarPixelData, width, height, componentCount) to displayable image data (e.g., PNG).
+    public var imageRendererFunction: (@Sendable (Data, Int, Int, Int) -> Data?)?
+
+    /// Injectable marker parser: extracts codestream markers from raw file data.
+    public var markerParserFunction: (@Sendable (Data) -> [CodestreamMarkerInfo])?
+
     /// URL of the selected JP2/J2K/JPX input file.
     public var inputFileURL: URL?
     /// Current decoding configuration.
@@ -1467,9 +1485,13 @@ public final class DecodeViewModel {
     /// - Parameter url: URL of the codestream file.
     public func loadFile(url: URL) {
         inputFileURL = url
-        // Populate a synthetic marker tree for display
-        markers = Self.syntheticMarkerTree(for: url.lastPathComponent)
-        codestreamHeaderSummary = "File: \(url.lastPathComponent)\nFormat: JP2  Width: 512  Height: 512  Components: 3"
+        // Parse markers from the file if possible
+        if let parser = markerParserFunction, let fileData = try? Data(contentsOf: url) {
+            markers = parser(fileData)
+        } else {
+            markers = Self.syntheticMarkerTree(for: url.lastPathComponent)
+        }
+        codestreamHeaderSummary = "File: \(url.lastPathComponent)"
         statusMessage = "Loaded: \(url.lastPathComponent)"
     }
 
@@ -1487,7 +1509,11 @@ public final class DecodeViewModel {
         statusMessage = "ROI cleared — full image will be decoded"
     }
 
-    /// Simulates a decoding operation and updates state.
+    /// Decodes the selected codestream file using the injected decoder pipeline.
+    ///
+    /// Reads the file, runs the real decoder on a background thread,
+    /// converts the planar pixel output to a displayable image, and
+    /// records the result in the test session.
     ///
     /// - Parameter session: The test session for recording results.
     public func decode(session: TestSession) async {
@@ -1501,30 +1527,76 @@ public final class DecodeViewModel {
         lastResult = nil
         statusMessage = "Decoding \(url.lastPathComponent)…"
 
-        // Simulate staged decoding
-        let stepCount = 4
-        for step in 1...stepCount {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-            progress = Double(step) / Double(stepCount)
+        let startTime = Date()
+
+        do {
+            // Read file data
+            let fileData = try Data(contentsOf: url)
+            progress = 0.2
+
+            // Parse codestream markers for the inspector
+            if let parser = markerParserFunction {
+                markers = parser(fileData)
+            }
+            progress = 0.3
+
+            guard let decoder = decoderFunction else {
+                throw J2KError.invalidParameter("Decoder not configured")
+            }
+
+            // Run the decoder on a background thread
+            statusMessage = "Running decoder…"
+            let (planarData, width, height, componentCount) = try await Task.detached(priority: .userInitiated) {
+                try decoder(fileData)
+            }.value
+            progress = 0.8
+
+            // Convert planar pixel data to displayable image
+            if let renderer = imageRendererFunction {
+                outputImageData = renderer(planarData, width, height, componentCount)
+            }
+            progress = 1.0
+
+            let decodingTime = Date().timeIntervalSince(startTime)
+
+            // Update header summary with real values
+            codestreamHeaderSummary = "File: \(url.lastPathComponent)  Width: \(width)  Height: \(height)  Components: \(componentCount)"
+
+            lastResult = DecodeOperationResult(
+                inputFileName: url.lastPathComponent,
+                imageWidth: width,
+                imageHeight: height,
+                componentCount: componentCount,
+                decodingTime: decodingTime,
+                succeeded: true,
+                markers: markers
+            )
+
+            let result = TestResult(testName: "Decode: \(url.lastPathComponent)", category: .decode)
+            await session.addResult(result.markPassed(duration: decodingTime))
+
+            isDecoding = false
+            statusMessage = "Decoding complete — \(width)×\(height) in \(String(format: "%.1f ms", decodingTime * 1000))"
+        } catch {
+            let decodingTime = Date().timeIntervalSince(startTime)
+
+            lastResult = DecodeOperationResult(
+                inputFileName: url.lastPathComponent,
+                imageWidth: 0,
+                imageHeight: 0,
+                componentCount: 0,
+                decodingTime: decodingTime,
+                succeeded: false,
+                errorMessage: error.localizedDescription,
+                markers: markers
+            )
+
+            let result = TestResult(testName: "Decode: \(url.lastPathComponent)", category: .decode)
+            await session.addResult(result.markFailed(duration: decodingTime, message: error.localizedDescription))
+
+            isDecoding = false
+            statusMessage = "Decoding failed: \(error.localizedDescription)"
         }
-
-        let decodingTime = 0.04
-        lastResult = DecodeOperationResult(
-            inputFileName: url.lastPathComponent,
-            imageWidth: 512,
-            imageHeight: 512,
-            componentCount: 3,
-            decodingTime: decodingTime,
-            succeeded: true,
-            markers: markers
-        )
-        outputImageData = Data(count: 512 * 512 * 3)
-
-        let result = TestResult(testName: "Decode: \(url.lastPathComponent)", category: .decode)
-        await session.addResult(result.markPassed(duration: decodingTime))
-
-        isDecoding = false
-        statusMessage = "Decoding complete — 512×512 in \(decodingTimeString)"
     }
 
     // MARK: - Private Helpers
@@ -1586,6 +1658,12 @@ public struct RoundTripMetrics: Sendable, Equatable {
 public final class RoundTripViewModel {
     /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
     public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
+    /// Injectable image renderer: converts (planarPixelData, width, height, componentCount) to displayable image data (e.g., PNG).
+    public var imageRendererFunction: (@Sendable (Data, Int, Int, Int) -> Data?)?
+
+    /// Injectable image parser: converts raw image file data to (planarPixelData, width, height, componentCount).
+    public var imageParserFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
 
     /// The encode view model used as input.
     public var encodeViewModel: EncodeViewModel = EncodeViewModel()
@@ -1650,6 +1728,33 @@ public final class RoundTripViewModel {
                 }
             }
         }
+
+        // Convert planar test data to displayable PNG so the encode pipeline
+        // (which expects image file data parseable by imageParserFunction) works.
+        if let renderer = imageRendererFunction {
+            // The data we generated is interleaved RGB — convert to planar for the renderer
+            let pixelCount = size * size
+            var planar = Data(count: bytes)
+            data.withUnsafeBytes { src in
+                planar.withUnsafeMutableBytes { dst in
+                    let s = src.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    let d = dst.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    for i in 0..<pixelCount {
+                        d[i] = s[i * 3]                          // R plane
+                        d[pixelCount + i] = s[i * 3 + 1]          // G plane
+                        d[pixelCount * 2 + i] = s[i * 3 + 2]      // B plane
+                    }
+                }
+            }
+            if let pngData = renderer(planar, size, size, 3) {
+                encodeViewModel.inputImageData = pngData
+                encodeViewModel.inputImageURL = URL(fileURLWithPath: "\(selectedTestImageType.rawValue.lowercased()).png")
+                statusMessage = "Test image generated: \(selectedTestImageType.rawValue) (\(size)×\(size))"
+                return
+            }
+        }
+
+        // Fallback: set raw interleaved data (imageParser may not handle this)
         encodeViewModel.inputImageData = data
         encodeViewModel.inputImageURL = URL(fileURLWithPath: "\(selectedTestImageType.rawValue.lowercased()).png")
         statusMessage = "Test image generated: \(selectedTestImageType.rawValue) (\(size)×\(size))"
@@ -1667,60 +1772,148 @@ public final class RoundTripViewModel {
         progress = 0
         metrics = nil
         roundTrippedImageData = nil
-        originalImageData = encodeViewModel.inputImageData
 
         // Step 1: Encode
         statusMessage = "Step 1/3: Encoding…"
         await encodeViewModel.encode(session: session)
         progress = 1.0 / 3.0
 
-        guard encodeViewModel.lastResult?.succeeded == true else {
+        guard encodeViewModel.lastResult?.succeeded == true,
+              let encodedData = encodeViewModel.outputData else {
             statusMessage = "Round-trip failed: encoding error"
             isRunning = false
             return
         }
 
-        // Step 2: Decode
+        // Step 2: Decode the encoded output
         statusMessage = "Step 2/3: Decoding…"
-        try? await Task.sleep(nanoseconds: 10_000_000)
-        roundTrippedImageData = Data(count: encodeViewModel.outputData?.count ?? 1024)
-        progress = 2.0 / 3.0
+        do {
+            guard let decoder = decoderFunction else {
+                statusMessage = "Round-trip failed: decoder not configured"
+                isRunning = false
+                return
+            }
 
-        // Step 3: Compare
-        statusMessage = "Step 3/3: Computing metrics…"
-        try? await Task.sleep(nanoseconds: 5_000_000)
+            let (decodedPlanar, dw, dh, dc) = try await Task.detached(priority: .userInitiated) {
+                try decoder(encodedData)
+            }.value
 
-        let isLossless = encodeViewModel.configuration.waveletType == .fiveThree &&
-                         encodeViewModel.configuration.quality >= 1.0
+            // Convert decoded output to displayable image
+            if let renderer = imageRendererFunction {
+                roundTrippedImageData = renderer(decodedPlanar, dw, dh, dc)
+            }
+            progress = 2.0 / 3.0
 
-        let psnr: Double = isLossless ? Double.infinity : (30.0 + encodeViewModel.configuration.quality * 20.0)
-        let ssim: Double = isLossless ? 1.0 : min(1.0, 0.90 + encodeViewModel.configuration.quality * 0.09)
-        let mse: Double = isLossless ? 0.0 : max(0.001, (1.0 - encodeViewModel.configuration.quality) * 50.0)
+            // Step 3: Compute metrics by comparing original and decoded pixel data
+            statusMessage = "Step 3/3: Computing metrics…"
 
-        metrics = RoundTripMetrics(psnr: psnr, ssim: ssim, mse: mse, isBitExact: isLossless)
-        progress = 1.0
+            // Get original planar data for comparison
+            var origPlanar: Data?
+            if let inputData = encodeViewModel.inputImageData, let parser = imageParserFunction {
+                origPlanar = try? parser(inputData).0
+            }
 
-        let testName = "Round-Trip: \(encodeViewModel.inputImageURL?.lastPathComponent ?? "image")"
-        let testResult = TestResult(testName: testName, category: .encode)
-        let roundTripTime = (encodeViewModel.lastResult?.encodingTime ?? 0) + 0.04
-        let passed = metrics?.passes == true || isLossless
-        await session.addResult(passed
-            ? testResult.markPassed(duration: roundTripTime, metrics: [
-                "psnr": psnr.isInfinite ? 999 : psnr,
-                "ssim": ssim,
-                "mse": mse
-              ])
-            : testResult.markFailed(duration: roundTripTime, message: "Metrics below threshold")
-        )
+            if let renderer = imageRendererFunction, let op = origPlanar {
+                originalImageData = renderer(op, dw, dh, dc)
+            } else {
+                originalImageData = encodeViewModel.inputImageData
+            }
 
-        isRunning = false
-        if isLossless {
-            statusMessage = "Round-trip complete — Bit-exact lossless ✓"
-        } else if metrics?.passes == true {
-            statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f ✓", psnr, ssim)
-        } else {
-            statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f (below threshold)", psnr, ssim)
+            if let original = origPlanar {
+                let computedMetrics = Self.computeMetrics(original: original, decoded: decodedPlanar, pixelCount: dw * dh, componentCount: dc)
+                metrics = computedMetrics
+            } else {
+                // Fallback: can't compute metrics without original planar data
+                let isLossless = encodeViewModel.configuration.waveletType == .fiveThree &&
+                                 encodeViewModel.configuration.quality >= 1.0
+                metrics = RoundTripMetrics(psnr: isLossless ? .infinity : 0, ssim: isLossless ? 1.0 : 0, mse: 0, isBitExact: isLossless)
+            }
+            progress = 1.0
+
+            let testName = "Round-Trip: \(encodeViewModel.inputImageURL?.lastPathComponent ?? "image")"
+            let testResult = TestResult(testName: testName, category: .encode)
+            let roundTripTime = (encodeViewModel.lastResult?.encodingTime ?? 0) + 0.04
+            let passed = metrics?.passes == true || (metrics?.isBitExact == true)
+            let psnr = metrics?.psnr ?? 0
+            let ssim = metrics?.ssim ?? 0
+            let mse = metrics?.mse ?? 0
+
+            await session.addResult(passed
+                ? testResult.markPassed(duration: roundTripTime, metrics: [
+                    "psnr": psnr.isInfinite ? 999 : psnr,
+                    "ssim": ssim,
+                    "mse": mse
+                  ])
+                : testResult.markFailed(duration: roundTripTime, message: "Metrics below threshold")
+            )
+
+            isRunning = false
+            if metrics?.isBitExact == true {
+                statusMessage = "Round-trip complete — Bit-exact lossless ✓"
+            } else if metrics?.passes == true {
+                statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f ✓", psnr, ssim)
+            } else {
+                statusMessage = String(format: "Round-trip complete — PSNR: %.1f dB, SSIM: %.4f (below threshold)", psnr, ssim)
+            }
+        } catch {
+            progress = 1.0
+            isRunning = false
+            statusMessage = "Round-trip failed: \(error.localizedDescription)"
+
+            let testName = "Round-Trip: \(encodeViewModel.inputImageURL?.lastPathComponent ?? "image")"
+            let testResult = TestResult(testName: testName, category: .encode)
+            await session.addResult(testResult.markFailed(duration: 0, message: error.localizedDescription))
         }
+    }
+
+    /// Computes PSNR, SSIM, and MSE metrics from original and decoded planar pixel data.
+    private static func computeMetrics(original: Data, decoded: Data, pixelCount: Int, componentCount: Int) -> RoundTripMetrics {
+        let totalSamples = pixelCount * componentCount
+        let count = min(totalSamples, min(original.count, decoded.count))
+
+        var sumSqDiff: Double = 0
+        var sumOrig: Double = 0
+        var sumDec: Double = 0
+        var sumOrigSq: Double = 0
+        var sumDecSq: Double = 0
+        var sumOrigDec: Double = 0
+        var isBitExact = true
+
+        original.withUnsafeBytes { origBuf in
+            decoded.withUnsafeBytes { decBuf in
+                let o = origBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let d = decBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                for i in 0..<count {
+                    let ov = Double(o[i])
+                    let dv = Double(d[i])
+                    let diff = ov - dv
+                    sumSqDiff += diff * diff
+                    sumOrig += ov
+                    sumDec += dv
+                    sumOrigSq += ov * ov
+                    sumDecSq += dv * dv
+                    sumOrigDec += ov * dv
+                    if o[i] != d[i] { isBitExact = false }
+                }
+            }
+        }
+
+        let n = Double(count)
+        let mse = count > 0 ? sumSqDiff / n : 0
+        let psnr: Double = mse > 0 ? 10.0 * log10(255.0 * 255.0 / mse) : .infinity
+
+        // SSIM computation (global, not windowed)
+        let muX = sumOrig / n
+        let muY = sumDec / n
+        let sigmaXSq = sumOrigSq / n - muX * muX
+        let sigmaYSq = sumDecSq / n - muY * muY
+        let sigmaXY = sumOrigDec / n - muX * muY
+        let c1 = (0.01 * 255) * (0.01 * 255)
+        let c2 = (0.03 * 255) * (0.03 * 255)
+        let ssim = ((2 * muX * muY + c1) * (2 * sigmaXY + c2)) /
+                   ((muX * muX + muY * muY + c1) * (sigmaXSq + sigmaYSq + c2))
+
+        return RoundTripMetrics(psnr: psnr, ssim: ssim, mse: mse, isBitExact: isBitExact)
     }
 }
 

@@ -152,11 +152,11 @@ struct EncodeView: View {
                 outputPanel
             }
 
-            if let originalData = viewModel.inputImageData, viewModel.outputData != nil {
+            if let originalData = viewModel.inputImageData, viewModel.decodedOutputImageData != nil {
                 Divider()
                 ImageComparisonView(
                     originalData: originalData,
-                    processedData: viewModel.outputData
+                    processedData: viewModel.decodedOutputImageData
                 )
                 .frame(minHeight: 200)
             }
@@ -377,7 +377,7 @@ struct EncodeView: View {
                             .foregroundStyle(.secondary)
                         Text("Drop an image here")
                             .font(.headline)
-                        Text("PNG, TIFF, BMP supported")
+                        Text("PNG, TIFF, BMP, DICOM supported")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -624,11 +624,12 @@ struct EncodeView: View {
         let panel = NSOpenPanel()
         panel.title = "Select Image"
         panel.allowedContentTypes = [
-            .png, .tiff, .bmp,
+            .png, .tiff, .bmp, .data,
         ]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        panel.allowsOtherFileTypes = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         viewModel.setInputImage(url: url)
     }
@@ -658,7 +659,7 @@ struct EncodeView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let imageExtensions: Set<String> = ["png", "tiff", "tif", "bmp"]
+        let imageExtensions: Set<String> = ["png", "tiff", "tif", "bmp", "dcm", "dicom"]
         let urls = (try? FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: nil

@@ -9,6 +9,7 @@
 
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
+import AppKit
 import J2KCore
 
 // MARK: - Decode View
@@ -50,12 +51,7 @@ struct DecodeView: View {
     @ViewBuilder
     private var toolBar: some View {
         HStack {
-            Button(action: {
-                // In a real app this would open NSOpenPanel.
-                // Simulate loading a file for demonstration.
-                let url = URL(fileURLWithPath: "/tmp/sample.jp2")
-                viewModel.loadFile(url: url)
-            }) {
+            Button(action: browseForInputFile) {
                 Label("Open File…", systemImage: "doc.badge.plus")
             }
             .help("Open a JP2/J2K/JPX file for decoding")
@@ -375,6 +371,25 @@ struct DecodeView: View {
     }
 
     // MARK: - Helpers
+
+    /// Opens an NSOpenPanel to select a JP2/J2K/JPX codestream file for decoding.
+    private func browseForInputFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Select JPEG 2000 File"
+        panel.allowedContentTypes = [.data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        // Allow common JPEG 2000 extensions
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let validExtensions: Set<String> = ["jp2", "j2k", "j2c", "jpc", "jpx", "jpm", "jph", "jhc"]
+        let ext = url.pathExtension.lowercased()
+        if !validExtensions.contains(ext) {
+            viewModel.statusMessage = "Warning: '\(ext)' may not be a JPEG 2000 file"
+        }
+        viewModel.loadFile(url: url)
+    }
 
     @ViewBuilder
     private func metricRow(label: String, value: String) -> some View {
