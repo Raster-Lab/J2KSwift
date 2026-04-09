@@ -183,6 +183,53 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
     ///   - height: Height of the code block.
     ///   - subband: Subband type (default: .ll).
     ///   - bitDepth: Bit depth (default: 8).
+    /// Test with the exact data that fails in practice (seed=3000 random).
+    func testFailingDataSeed3() throws {
+        // Pixels: [64, 159, 42, 143, 157, 72, 226, 155, 112, 94, 109, 108, 160, 217, 215, 145]
+        // Level-shifted by -128:
+        let coefficients: [Int32] = [-64, 31, -86, 15, 29, -56, 98, 27, -16, -34, -19, -20, 32, 89, 87, 17]
+        try testRoundTrip(allCoefficients: coefficients, width: 4, height: 4, bitDepth: 9)
+    }
+
+    /// Test with another known-failing data pattern (seed=53000 random).
+    func testFailingDataSeed53() throws {
+        // Pixels: [203, 87, 164, 17, 35, 219, 221, 165, 81, 62, 199, 117, 237, 70, 251, 180]
+        let coefficients: [Int32] = [75, -41, 36, -111, -93, 91, 93, 37, -47, -66, 71, -11, 109, -58, 123, 52]
+        try testRoundTrip(allCoefficients: coefficients, width: 4, height: 4, bitDepth: 9)
+    }
+
+    private func testRoundTrip(
+        allCoefficients: [Int32],
+        width: Int,
+        height: Int,
+        subband: J2KSubband = .ll,
+        bitDepth: Int = 8
+    ) throws {
+        let encoder = BitPlaneCoder(width: width, height: height, subband: subband)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
+            coefficients: allCoefficients,
+            bitDepth: bitDepth
+        )
+        let decoder = BitPlaneDecoder(width: width, height: height, subband: subband)
+        let decoded = try decoder.decode(
+            data: data,
+            passCount: passCount,
+            bitDepth: bitDepth,
+            zeroBitPlanes: zeroBitPlanes
+        )
+        XCTAssertEqual(decoded.count, allCoefficients.count, "Array size mismatch")
+        var mismatches: [(Int, Int32, Int32)] = []
+        for i in 0..<allCoefficients.count where decoded[i] != allCoefficients[i] {
+            mismatches.append((i, allCoefficients[i], decoded[i]))
+        }
+        if !mismatches.isEmpty {
+            let details = mismatches
+                .map { "Index \($0.0) [\($0.0/width),\($0.0%width)]: expected \($0.1), got \($0.2)" }
+                .joined(separator: "\n")
+            XCTFail("Round-trip mismatch:\n\(details)")
+        }
+    }
+
     private func testRoundTrip(
         values: [(Int, Int32)],
         width: Int,
@@ -198,7 +245,7 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
 
         // Encode
         let encoder = BitPlaneCoder(width: width, height: height, subband: subband)
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )

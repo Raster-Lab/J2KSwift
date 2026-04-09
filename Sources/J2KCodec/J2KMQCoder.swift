@@ -190,6 +190,22 @@ struct MQEncoder: Sendable {
     private var ct: Int = initialCounterBits
     private var buffer: Int = -1
     private var output: [UInt8] = []
+    
+    /// Debug access to internal state for trace verification
+    var debugA: UInt32 { a }
+    var debugC: UInt32 { c }
+    var debugCT: Int { ct }
+    var debugBuffer: Int { buffer }
+    var debugOutputCount: Int { output.count }
+
+    /// The current number of output bytes flushed so far (approximate byte position).
+    ///
+    /// This is used by rate control to estimate per-pass byte boundaries
+    /// without requiring full MQ termination after each pass.
+    var currentByteCount: Int { output.count + (buffer >= 0 ? 1 : 0) }
+    
+    /// Debug operation counter
+    var operationCount: Int = 0
 
     /// Creates a new MQ encoder.
     init() {
@@ -207,27 +223,44 @@ struct MQEncoder: Sendable {
     }
 
     /// Encodes a binary symbol using the specified context.
+    ///
+    /// Implements ISO 15444-1 C.2.4 (CODEMPS) and C.2.6 (CODELPS).
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
+        operationCount += 1
+        let preA = a
+        let preC = c
+        let preCtxState = context.stateIndex
+        if EBCOTDebugTrace.shared.enabled {
+            EBCOTDebugTrace.shared.encoderSymbols.append(
+                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+            )
+        }
         let state = context.state
         let qe = state.qe
 
         a -= qe
 
         if symbol == context.mps {
-            // MPS path - most common case
-            if a < 0x8000 {
+            // CODEMPS (ISO 15444-1 C.2.4)
+            if (a & 0x8000) == 0 {
                 if a < qe {
-                    c += a
+                    // Conditional exchange
                     a = qe
+                } else {
+                    c += qe
                 }
                 context.stateIndex = state.nextMPS
                 renormalize()
+            } else {
+                c += qe
             }
         } else {
-            // LPS path - less common
-            if a >= qe {
-                c += a
+            // CODELPS (ISO 15444-1 C.2.6)
+            if a < qe {
+                // Conditional exchange
+                c += qe
+            } else {
                 a = qe
             }
             if state.switchMPS {
@@ -277,14 +310,16 @@ struct MQEncoder: Sendable {
 
     /// Emits a byte to the output.
     ///
-    /// Implements the BYTEOUT procedure from ISO/IEC 15444-1 Annex C.
-    /// Handles carry propagation and 0xFF byte stuffing.
+    /// Implements the BYTEOUT procedure per ISO/IEC 15444-1 Annex C.2.8.
+    /// When the buffer byte is or becomes 0xFF (either originally or through
+    /// carry propagation), the next byte uses 7-bit mode to prevent accidental
+    /// marker sequences (0xFFxx where xx >= 0x90).
     private mutating func emitByte() {
         if buffer >= 0 {
             if buffer == 0xFF {
-                // After 0xFF, use only 7 bits to avoid marker conflicts
+                // Buffer was already 0xFF — emit it and enter 7-bit mode.
                 output.append(0xFF)
-                buffer = Int((c >> 20) & 0x7F)
+                buffer = Int((c >> 20) & 0xFF)
                 c &= 0x000FFFFF
                 ct = 7
             } else {
@@ -293,9 +328,10 @@ struct MQEncoder: Sendable {
                 c &= 0x07FFFFFF
                 // Emit the buffer byte
                 output.append(UInt8(buffer & 0xFF))
+                // Per ISO 15444-1 C.2.8: if carry made buffer 0xFF,
+                // enter 7-bit mode for the next byte.
                 if buffer == 0xFF {
-                    // After carry made buffer 0xFF, use 7-bit mode
-                    buffer = Int((c >> 20) & 0x7F)
+                    buffer = Int((c >> 20) & 0xFF)
                     c &= 0x000FFFFF
                     ct = 7
                 } else {
@@ -305,6 +341,9 @@ struct MQEncoder: Sendable {
                 }
             }
         } else {
+            // First byte — no previous byte to carry into.
+            // Clear carry (equivalent to OpenJPEG's dummy byte absorbing it).
+            c &= 0x07FFFFFF
             buffer = Int((c >> 19) & 0xFF)
             c &= 0x0007FFFF
             ct = 8
@@ -350,9 +389,16 @@ struct MQEncoder: Sendable {
         c <<= ct
         emitByte()
 
-        // Emit the final buffer byte
-        if buffer >= 0 {
+        // Emit the final buffer byte only if it's not 0xFF.
+        // Per ISO/IEC 15444-1 C.2.9 FLUSH: a trailing 0xFF is dropped
+        // because it carries no information (matches OpenJPEG behavior).
+        if buffer >= 0 && buffer != 0xFF {
             output.append(UInt8(buffer & 0xFF))
+        }
+
+        // Drop any trailing 0xFF from the output (per FLUSH procedure)
+        while let last = output.last, last == 0xFF {
+            output.removeLast()
         }
 
         return Data(output)
@@ -362,52 +408,18 @@ struct MQEncoder: Sendable {
     ///
     /// This mode produces a termination sequence that allows each coding pass
     /// to be independently truncated and decoded. It follows the ERTERM
-    /// (error resilience termination) approach.
+    /// (error resilience termination) approach from ISO/IEC 15444-1 Annex D.
+    ///
+    /// The ERTERM termination uses the same FLUSH procedure as default termination
+    /// (SETBITS + BYTEOUT), which ensures the decoder can correctly recover
+    /// all encoded symbols when each pass is decoded independently.
     private mutating func finishPredictable() -> Data {
-        // The predictable termination sequence follows JPEG 2000 Annex D
-        // It ensures that the encoder state is reset-compatible
-
-        // Calculate the number of bits to output to reach a clean state
-        // We need to ensure the decoder can synchronise at this point
-
-        // Step 1: Add the current interval to C
-        c += a
-
-        // Step 2: Shift out remaining bits with proper bit stuffing
-        // We need to emit enough bytes to guarantee decodability
-
-        // First, renormalize to ensure we have bits to emit
-        var bitsToFlush = Self.initialCounterBits - ct
-        if bitsToFlush < 0 {
-            bitsToFlush = 0
-        }
-
-        // Emit the C register with additional bytes for predictable termination
-        c <<= ct
-        emitByte()
-
-        // For predictable mode, we emit an extra byte if the last byte was 0xFF
-        // This ensures proper byte alignment and marker avoidance
-        if buffer == 0xFF {
-            c <<= 7
-            ct = 7
-        } else {
-            c <<= 8
-            ct = 8
-        }
-        emitByte()
-
-        // Emit any remaining buffer
-        if buffer >= 0 && buffer <= 0xFF {
-            output.append(UInt8(buffer & 0xFF))
-            // For predictable mode, if we emitted 0xFF, add a stuffing byte
-            // to avoid marker confusion (JPEG 2000 markers start with 0xFF 0x90+)
-            if buffer == 0xFF {
-                output.append(Self.stuffingByte)
-            }
-        }
-
-        return Data(output)
+        // Use the same FLUSH procedure as default termination.
+        // The "predictable" aspect comes from resetting the MQ coder
+        // between passes (handled by the caller), not from a different
+        // termination sequence. The FLUSH procedure guarantees that all
+        // encoded symbols are recoverable from the output bytes.
+        return finishDefault()
     }
 
     /// Near-optimal termination - minimises wasted bits.
@@ -460,6 +472,15 @@ struct MQDecoder: Sendable {
     private var position: Int = 0
     private var buffer: UInt8 = 0
     private var nextBuffer: UInt8 = 0
+    
+    /// Debug access to internal state for trace verification
+    var debugA: UInt32 { a }
+    var debugC: UInt32 { c }
+    var debugCT: Int { ct }
+    var debugPosition: Int { position }
+    
+    /// Debug operation counter
+    var operationCount: Int = 0
 
     /// Creates a new MQ decoder with the specified compressed data.
     init(data: Data) {
@@ -513,8 +534,14 @@ struct MQDecoder: Sendable {
     }
 
     /// Decodes a binary symbol using the specified context.
+    ///
+    /// Implements ISO 15444-1 C.3.2 (DECODE).
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
+        operationCount += 1
+        let preA = a
+        let preC = c
+        let preCtxState = context.stateIndex
         let state = context.state
         let qe = state.qe
 
@@ -523,17 +550,36 @@ struct MQDecoder: Sendable {
         let mps = context.mps
         let symbol: Bool
 
-        if (c >> 16) < a {
-            // MPS region - most common case
-            if a < 0x8000 {
+        if (c >> 16) < qe {
+            // LPS region (ISO 15444-1 C.3.2)
+            if a < qe {
+                // Conditional exchange — return MPS
+                a = qe
+                symbol = mps
+                context.stateIndex = state.nextMPS
+            } else {
+                // Normal LPS
+                a = qe
+                symbol = !mps
+                if state.switchMPS {
+                    context.mps.toggle()
+                }
+                context.stateIndex = state.nextLPS
+            }
+            renormalizeDecoder()
+        } else {
+            // MPS region (ISO 15444-1 C.3.2)
+            c -= qe << 16
+            if (a & 0x8000) == 0 {
                 if a < qe {
-                    // Conditional exchange
+                    // Conditional exchange — return LPS
                     symbol = !mps
                     if state.switchMPS {
                         context.mps.toggle()
                     }
                     context.stateIndex = state.nextLPS
                 } else {
+                    // Normal MPS
                     symbol = mps
                     context.stateIndex = state.nextMPS
                 }
@@ -541,22 +587,12 @@ struct MQDecoder: Sendable {
             } else {
                 symbol = mps
             }
-        } else {
-            // LPS region - less common
-            c -= a << 16
-            if a < qe {
-                // Conditional exchange
-                symbol = mps
-                context.stateIndex = state.nextMPS
-            } else {
-                symbol = !mps
-                if state.switchMPS {
-                    context.mps.toggle()
-                }
-                context.stateIndex = state.nextLPS
-            }
-            a = qe
-            renormalizeDecoder()
+        }
+
+        if EBCOTDebugTrace.shared.enabled {
+            EBCOTDebugTrace.shared.decoderSymbols.append(
+                (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
+            )
         }
 
         return symbol

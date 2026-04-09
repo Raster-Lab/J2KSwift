@@ -139,7 +139,9 @@ final class J2KExtendedPrecisionIntegrationTests: XCTestCase {
             ],
             tileSize: (width: 256, height: 256),
             configuration: DecoderConfiguration(),
-            quantizationSteps: [:]
+            quantizationSteps: [:],
+            quantizationGuardBits: 2,
+            bandKbValues: [:]
         )
 
         XCTAssertNil(metadata.dcoMarkerSegment)

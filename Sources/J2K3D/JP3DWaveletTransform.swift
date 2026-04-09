@@ -566,7 +566,7 @@ public actor JP3DWaveletTransform {
     private let beta97: Float = -0.052980118
     private let gamma97: Float = 0.882911075
     private let delta97: Float = 0.443506852
-    private let k97: Float = 1.149604398   // scaling factor
+    private let k97: Float = 1.230174105   // scaling factor
 
     /// Forward CDF 9/7 lifting transform.
     ///

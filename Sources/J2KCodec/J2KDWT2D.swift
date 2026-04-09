@@ -189,86 +189,68 @@ public struct J2KDWT2D: Sendable {
             throw J2KError.invalidParameter("All rows must have the same length")
         }
 
-        // Step 1: Apply 1D DWT to each row
-        var rowTransformed = [[Int32]]()
-        var rowLowCount = 0
-        var rowHighCount = 0
+        // Per JPEG 2000 standard (ISO 15444-1 Annex F): apply columns (vertical) first, then rows (horizontal)
 
-        for row in image {
+        // Step 1: Apply 1D DWT to each column (vertical pass)
+        // Transpose → row-wise DWT → un-transpose for cache-friendly access
+        var colLowHeight = 0
+        var colHighHeight = 0
+        var colTransformed = Array(repeating: [Int32](repeating: 0, count: width), count: height)
+
+        // Transpose: columns become rows for cache-friendly sequential access
+        var transposed = Array(repeating: [Int32](repeating: 0, count: height), count: width)
+        for row in 0..<height {
+            for col in 0..<width {
+                transposed[col][row] = image[row][col]
+            }
+        }
+
+        // Apply 1D DWT to each transposed row (= original column)
+        for col in 0..<width {
             let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: row,
+                signal: transposed[col],
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-            rowLowCount = low.count
-            rowHighCount = high.count
+            colLowHeight = low.count
+            colHighHeight = high.count
 
-            // Interleave low and high for easier column processing
-            var transformedRow = [Int32]()
-            transformedRow.reserveCapacity(width)
-            transformedRow.append(contentsOf: low)
-            transformedRow.append(contentsOf: high)
-            rowTransformed.append(transformedRow)
+            for i in 0..<low.count {
+                colTransformed[i][col] = low[i]
+            }
+            for i in 0..<high.count {
+                colTransformed[colLowHeight + i][col] = high[i]
+            }
         }
 
-        // Step 2: Apply 1D DWT to each column of the row-transformed data
+        // Step 2: Apply 1D DWT to each row of the column-transformed data (horizontal pass)
         var ll = [[Int32]]()
         var lh = [[Int32]]()
         var hl = [[Int32]]()
         var hh = [[Int32]]()
 
-        // Process low-frequency columns (from row transform)
-        for col in 0..<rowLowCount {
-            var column = [Int32]()
-            column.reserveCapacity(height)
-            for row in 0..<height {
-                column.append(rowTransformed[row][col])
-            }
-
+        // Process column-low rows → LL and HL subbands
+        for row in 0..<colLowHeight {
             let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: column,
+                signal: colTransformed[row],
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-
-            // low -> LL subband, high -> HL subband
-            if ll.isEmpty {
-                ll = Array(repeating: [Int32](), count: low.count)
-                hl = Array(repeating: [Int32](), count: high.count)
-            }
-            for i in 0..<low.count {
-                ll[i].append(low[i])
-            }
-            for i in 0..<high.count {
-                hl[i].append(high[i])
-            }
+            // low → LL (row-low, col-low), high → HL (row-high, col-low)
+            ll.append(low)
+            hl.append(high)
         }
 
-        // Process high-frequency columns (from row transform)
-        for col in rowLowCount..<(rowLowCount + rowHighCount) {
-            var column = [Int32]()
-            column.reserveCapacity(height)
-            for row in 0..<height {
-                column.append(rowTransformed[row][col])
-            }
-
+        // Process column-high rows → LH and HH subbands
+        for row in colLowHeight..<(colLowHeight + colHighHeight) {
             let (low, high) = try J2KDWT1D.forwardTransform(
-                signal: column,
+                signal: colTransformed[row],
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
-
-            // low -> LH subband, high -> HH subband
-            if lh.isEmpty {
-                lh = Array(repeating: [Int32](), count: low.count)
-                hh = Array(repeating: [Int32](), count: high.count)
-            }
-            for i in 0..<low.count {
-                lh[i].append(low[i])
-            }
-            for i in 0..<high.count {
-                hh[i].append(high[i])
-            }
+            // low → LH (row-low, col-high), high → HH (row-high, col-high)
+            lh.append(low)
+            hh.append(high)
         }
 
         return DecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh)
@@ -333,6 +315,137 @@ public struct J2KDWT2D: Sendable {
         }
 
         return MultiLevelDecomposition(levels: results)
+    }
+
+    // MARK: - Double-Precision Forward Transform
+
+    /// Result of a single-level 2D DWT decomposition in Double precision.
+    ///
+    /// Used by the irreversible 9-7 path to avoid accumulated rounding error
+    /// from intermediate Int32 truncation between column and row passes.
+    public struct DoubleDecompositionResult: Sendable {
+        public let ll: [[Double]]
+        public let lh: [[Double]]
+        public let hl: [[Double]]
+        public let hh: [[Double]]
+    }
+
+    /// Result of a multi-level 2D DWT decomposition in Double precision.
+    public struct DoubleMultiLevelDecomposition: Sendable {
+        public let levels: [DoubleDecompositionResult]
+
+        public var coarsestLL: [[Double]] {
+            levels.last?.ll ?? []
+        }
+
+        public var levelCount: Int { levels.count }
+    }
+
+    /// Performs 2D forward DWT on Double-precision data (no intermediate rounding).
+    public static func forwardTransformDouble(
+        image: [[Double]],
+        filter: J2KDWT1D.Filter,
+        boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
+    ) throws -> DoubleDecompositionResult {
+        guard !image.isEmpty else {
+            throw J2KError.invalidParameter("Image cannot be empty")
+        }
+
+        let height = image.count
+        let width = image[0].count
+
+        guard width >= 2 && height >= 2 else {
+            throw J2KError.invalidParameter("Image dimensions must be at least 2x2, got \(width)x\(height)")
+        }
+
+        // Per JPEG 2000 standard: columns (vertical) first, then rows (horizontal)
+
+        // Step 1: Apply 1D DWT to each column
+        // Transpose → row-wise DWT → un-transpose for cache-friendly access
+        var colLowHeight = 0
+        var colHighHeight = 0
+        var colTransformed = Array(repeating: [Double](repeating: 0, count: width), count: height)
+
+        // Transpose for cache-friendly column access
+        var transposed = Array(repeating: [Double](repeating: 0, count: height), count: width)
+        for row in 0..<height {
+            for col in 0..<width {
+                transposed[col][row] = image[row][col]
+            }
+        }
+
+        for col in 0..<width {
+            let (low, high) = try J2KDWT1D.forwardTransformDouble(
+                signal: transposed[col], filter: filter, boundaryExtension: boundaryExtension
+            )
+            colLowHeight = low.count
+            colHighHeight = high.count
+
+            for i in 0..<low.count {
+                colTransformed[i][col] = low[i]
+            }
+            for i in 0..<high.count {
+                colTransformed[colLowHeight + i][col] = high[i]
+            }
+        }
+
+        // Step 2: Apply 1D DWT to each row of the column-transformed data
+        var ll = [[Double]]()
+        var lh = [[Double]]()
+        var hl = [[Double]]()
+        var hh = [[Double]]()
+
+        for row in 0..<colLowHeight {
+            let (low, high) = try J2KDWT1D.forwardTransformDouble(
+                signal: colTransformed[row], filter: filter, boundaryExtension: boundaryExtension
+            )
+            ll.append(low)
+            hl.append(high)
+        }
+
+        for row in colLowHeight..<(colLowHeight + colHighHeight) {
+            let (low, high) = try J2KDWT1D.forwardTransformDouble(
+                signal: colTransformed[row], filter: filter, boundaryExtension: boundaryExtension
+            )
+            lh.append(low)
+            hh.append(high)
+        }
+
+        return DoubleDecompositionResult(ll: ll, lh: lh, hl: hl, hh: hh)
+    }
+
+    /// Performs multi-level 2D forward DWT in Double precision.
+    public static func forwardDecompositionDouble(
+        image: [[Double]],
+        levels: Int,
+        filter: J2KDWT1D.Filter,
+        boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
+    ) throws -> DoubleMultiLevelDecomposition {
+        guard levels >= 1 else {
+            throw J2KError.invalidParameter("Number of levels must be at least 1, got \(levels)")
+        }
+
+        var results = [DoubleDecompositionResult]()
+        var currentImage = image
+
+        for level in 0..<levels {
+            let height = currentImage.count
+            let width = currentImage[0].count
+
+            guard width >= 2 && height >= 2 else {
+                throw J2KError.invalidParameter(
+                    "Cannot decompose level \(level + 1): image size \(width)x\(height) is too small"
+                )
+            }
+
+            let result = try forwardTransformDouble(
+                image: currentImage, filter: filter, boundaryExtension: boundaryExtension
+            )
+            results.append(result)
+            currentImage = result.ll
+        }
+
+        return DoubleMultiLevelDecomposition(levels: results)
     }
 
     // MARK: - Inverse Transform
@@ -401,84 +514,71 @@ public struct J2KDWT2D: Sendable {
             throw J2KError.invalidParameter("All subband rows must have consistent lengths")
         }
 
-        // Step 1: Apply inverse 1D DWT to columns
-        var columnInversed = [[Int32]]()
+        // Per JPEG 2000 standard: inverse applies rows (horizontal) first, then columns (vertical)
+        // This is the reverse of the forward transform (columns first, then rows)
 
-        // Reconstruct low-frequency columns (LL + HL -> L)
-        for col in 0..<llWidth {
-            var llColumn = [Int32]()
-            var hlColumn = [Int32]()
+        // Step 1: Apply inverse 1D DWT to rows (horizontal pass)
+        // Undo the horizontal DWT that was applied second in the forward transform
+        // LL + HL → col-low rows, LH + HH → col-high rows
 
-            llColumn.reserveCapacity(llHeight)
-            hlColumn.reserveCapacity(hlHeight)
-
-            for row in 0..<llHeight {
-                llColumn.append(ll[row][col])
-            }
-            for row in 0..<hlHeight {
-                hlColumn.append(hl[row][col])
-            }
-
-            let reconstructedColumn = try J2KDWT1D.inverseTransform(
-                lowpass: llColumn,
-                highpass: hlColumn,
-                filter: filter,
-                boundaryExtension: boundaryExtension
-            )
-
-            if columnInversed.isEmpty {
-                columnInversed = Array(repeating: [Int32](), count: reconstructedColumn.count)
-            }
-            for i in 0..<reconstructedColumn.count {
-                columnInversed[i].append(reconstructedColumn[i])
-            }
-        }
-
-        // Reconstruct high-frequency columns (LH + HH -> H)
-        let highFreqStartCol = columnInversed[0].count
-        for col in 0..<lhWidth {
-            var lhColumn = [Int32]()
-            var hhColumn = [Int32]()
-
-            lhColumn.reserveCapacity(lhHeight)
-            hhColumn.reserveCapacity(hhHeight)
-
-            for row in 0..<lhHeight {
-                lhColumn.append(lh[row][col])
-            }
-            for row in 0..<hhHeight {
-                hhColumn.append(hh[row][col])
-            }
-
-            let reconstructedColumn = try J2KDWT1D.inverseTransform(
-                lowpass: lhColumn,
-                highpass: hhColumn,
-                filter: filter,
-                boundaryExtension: boundaryExtension
-            )
-
-            for i in 0..<reconstructedColumn.count {
-                columnInversed[i].append(reconstructedColumn[i])
-            }
-        }
-
-        // Step 2: Apply inverse 1D DWT to rows
-        var result = [[Int32]]()
-        result.reserveCapacity(columnInversed.count)
-
-        for row in columnInversed {
-            let midPoint = highFreqStartCol
-            let lowpass = Array(row[0..<midPoint])
-            let highpass = Array(row[midPoint..<row.count])
-
+        var colLow = [[Int32]]()
+        colLow.reserveCapacity(llHeight)
+        for row in 0..<llHeight {
             let reconstructedRow = try J2KDWT1D.inverseTransform(
-                lowpass: lowpass,
-                highpass: highpass,
+                lowpass: ll[row],
+                highpass: hl[row],
+                filter: filter,
+                boundaryExtension: boundaryExtension
+            )
+            colLow.append(reconstructedRow)
+        }
+
+        var colHigh = [[Int32]]()
+        colHigh.reserveCapacity(lhHeight)
+        for row in 0..<lhHeight {
+            let reconstructedRow = try J2KDWT1D.inverseTransform(
+                lowpass: lh[row],
+                highpass: hh[row],
+                filter: filter,
+                boundaryExtension: boundaryExtension
+            )
+            colHigh.append(reconstructedRow)
+        }
+
+        // Step 2: Apply inverse 1D DWT to columns (vertical pass)
+        // Undo the vertical DWT that was applied first in the forward transform
+        let outputWidth = colLow[0].count
+        let colLowHeight = colLow.count
+        let colHighHeight = colHigh.count
+        let outputHeight = colLowHeight + colHighHeight
+
+        var result = Array(repeating: [Int32](repeating: 0, count: outputWidth), count: outputHeight)
+
+        // Transpose colLow and colHigh for cache-friendly column access
+        var transposedLow = Array(repeating: [Int32](repeating: 0, count: colLowHeight), count: outputWidth)
+        for row in 0..<colLowHeight {
+            for col in 0..<outputWidth {
+                transposedLow[col][row] = colLow[row][col]
+            }
+        }
+        var transposedHigh = Array(repeating: [Int32](repeating: 0, count: colHighHeight), count: outputWidth)
+        for row in 0..<colHighHeight {
+            for col in 0..<outputWidth {
+                transposedHigh[col][row] = colHigh[row][col]
+            }
+        }
+
+        for col in 0..<outputWidth {
+            let reconstructedColumn = try J2KDWT1D.inverseTransform(
+                lowpass: transposedLow[col],
+                highpass: transposedHigh[col],
                 filter: filter,
                 boundaryExtension: boundaryExtension
             )
 
-            result.append(reconstructedRow)
+            for i in 0..<reconstructedColumn.count {
+                result[i][col] = reconstructedColumn[i]
+            }
         }
 
         return result
@@ -837,13 +937,13 @@ extension J2KDWT2D {
 
             if ll.isEmpty {
                 ll = Array(repeating: [Double](), count: low.count)
-                hl = Array(repeating: [Double](), count: high.count)
+                lh = Array(repeating: [Double](), count: high.count)
             }
             for i in 0..<low.count {
                 ll[i].append(low[i])
             }
             for i in 0..<high.count {
-                hl[i].append(high[i])
+                lh[i].append(high[i])
             }
         }
 
@@ -860,12 +960,12 @@ extension J2KDWT2D {
                 boundaryExtension: boundaryExtension
             )
 
-            if lh.isEmpty {
-                lh = Array(repeating: [Double](), count: low.count)
+            if hl.isEmpty {
+                hl = Array(repeating: [Double](), count: low.count)
                 hh = Array(repeating: [Double](), count: high.count)
             }
             for i in 0..<low.count {
-                lh[i].append(low[i])
+                hl[i].append(low[i])
             }
             for i in 0..<high.count {
                 hh[i].append(high[i])
@@ -926,56 +1026,58 @@ extension J2KDWT2D {
         }
 
         // Step 1: Apply inverse 1D DWT to columns
+        // Transpose subbands for cache-friendly column access
+        var transposedLL = Array(repeating: [Double](repeating: 0, count: llHeight), count: llWidth)
+        for row in 0..<llHeight {
+            for col in 0..<llWidth {
+                transposedLL[col][row] = ll[row][col]
+            }
+        }
+        var transposedLH = Array(repeating: [Double](repeating: 0, count: lhHeight), count: lhWidth)
+        for row in 0..<lhHeight {
+            for col in 0..<lhWidth {
+                transposedLH[col][row] = lh[row][col]
+            }
+        }
+        var transposedHL = Array(repeating: [Double](repeating: 0, count: hlHeight), count: hlWidth)
+        for row in 0..<hlHeight {
+            for col in 0..<hlWidth {
+                transposedHL[col][row] = hl[row][col]
+            }
+        }
+        var transposedHH = Array(repeating: [Double](repeating: 0, count: hhHeight), count: hhWidth)
+        for row in 0..<hhHeight {
+            for col in 0..<hhWidth {
+                transposedHH[col][row] = hh[row][col]
+            }
+        }
+
+        // Reconstruct low-frequency columns (LL + LH → vertical IDWT)
         var columnInversed = [[Double]]()
-
-        // Reconstruct low-frequency columns
         for col in 0..<llWidth {
-            var llColumn = [Double]()
-            var hlColumn = [Double]()
-
-            llColumn.reserveCapacity(llHeight)
-            hlColumn.reserveCapacity(hlHeight)
-
-            for row in 0..<llHeight {
-                llColumn.append(ll[row][col])
-            }
-            for row in 0..<hlHeight {
-                hlColumn.append(hl[row][col])
-            }
-
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
-                lowpass: llColumn,
-                highpass: hlColumn,
+                lowpass: transposedLL[col],
+                highpass: transposedLH[col],
                 boundaryExtension: boundaryExtension
             )
 
             if columnInversed.isEmpty {
                 columnInversed = Array(repeating: [Double](), count: reconstructedColumn.count)
+                for i in 0..<columnInversed.count {
+                    columnInversed[i].reserveCapacity(llWidth + hlWidth)
+                }
             }
             for i in 0..<reconstructedColumn.count {
                 columnInversed[i].append(reconstructedColumn[i])
             }
         }
 
-        // Reconstruct high-frequency columns
+        // Reconstruct high-frequency columns (HL + HH → vertical IDWT)
         let highFreqStartCol = columnInversed[0].count
-        for col in 0..<lhWidth {
-            var lhColumn = [Double]()
-            var hhColumn = [Double]()
-
-            lhColumn.reserveCapacity(lhHeight)
-            hhColumn.reserveCapacity(hhHeight)
-
-            for row in 0..<lhHeight {
-                lhColumn.append(lh[row][col])
-            }
-            for row in 0..<hhHeight {
-                hhColumn.append(hh[row][col])
-            }
-
+        for col in 0..<hlWidth {
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
-                lowpass: lhColumn,
-                highpass: hhColumn,
+                lowpass: transposedHL[col],
+                highpass: transposedHH[col],
                 boundaryExtension: boundaryExtension
             )
 

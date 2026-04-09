@@ -477,6 +477,15 @@ public struct J2KCodeBlock: Sendable {
     /// The subband this code-block belongs to.
     public let subband: J2KSubband
 
+    /// The component index this code-block belongs to.
+    public let componentIndex: Int
+
+    /// The JPEG 2000 resolution level this code-block belongs to.
+    ///
+    /// Resolution 0 contains only the LL subband. Resolution r (1..NL) contains
+    /// the HL, LH, HH subbands at decomposition level (NL - r + 1).
+    public let resolutionLevel: Int
+
     /// The encoded data for this code-block.
     public var data: Data
 
@@ -497,6 +506,43 @@ public struct J2KCodeBlock: Sendable {
     /// (default/non-predictable termination mode).
     public var passSegmentLengths: [Int]
 
+    /// Cumulative byte counts after each coding pass.
+    ///
+    /// Used by rate control for per-pass truncation. Each element represents
+    /// the total encoded bytes after `i+1` coding passes. When empty, rate
+    /// control falls back to proportional estimation.
+    public var cumulativePassBytes: [Int]
+
+    /// Sum of squared magnitudes of the quantized coefficients in this code block.
+    ///
+    /// Used by rate control for accurate distortion estimation. The initial
+    /// distortion (all coefficients zeroed) equals this value times the
+    /// quantization step size squared.
+    public var coefficientSquaredSum: Double
+
+    /// Per-bit-plane population counts.
+    ///
+    /// Element `i` is the number of coefficients whose most significant bit
+    /// is at bit-plane `i` (0-indexed from the MSB of the maximum magnitude).
+    /// Used by rate control for accurate per-pass distortion reduction.
+    public var bitPlanePopulation: [Int]
+
+    /// Cumulative actual distortion reduction after each coding pass.
+    ///
+    /// Element `i` is the total squared-error reduction (vs. zero reconstruction)
+    /// achieved by including coding passes 0 through `i`. Computed during EBCOT
+    /// encoding from the actual coefficient values and reconstruction state.
+    /// Used by rate control for accurate PCRD slope computation.
+    public var cumulativePassDistortion: [Double]
+
+    /// Properly terminated MQ data for each prefix of coding passes.
+    ///
+    /// Element `i` contains a correctly terminated MQ byte stream encoding
+    /// passes 0 through `i`. Used during PCRD truncation to avoid using a
+    /// prefix of the final encoded stream which may contain carry-corrupted
+    /// bytes from later passes.
+    public var perPassSnapshotData: [Data]
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -506,10 +552,17 @@ public struct J2KCodeBlock: Sendable {
     ///   - width: The width.
     ///   - height: The height.
     ///   - subband: The subband.
+    ///   - componentIndex: The component index (default: 0).
+    ///   - resolutionLevel: The JPEG 2000 resolution level (default: 0).
     ///   - data: The encoded data.
     ///   - passeCount: The number of coding passes (default: 0). (Note: historical spelling preserved for API compatibility.)
     ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
     ///   - passSegmentLengths: Byte lengths per pass segment (default: empty).
+    ///   - cumulativePassBytes: Cumulative bytes after each pass (default: empty).
+    ///   - coefficientSquaredSum: Sum of squared quantized coefficient magnitudes (default: 0).
+    ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
+    ///   - cumulativePassDistortion: Per-pass distortion decrements (default: empty).
+    ///   - perPassSnapshotData: Terminated MQ data at each pass boundary (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -517,10 +570,17 @@ public struct J2KCodeBlock: Sendable {
         width: Int,
         height: Int,
         subband: J2KSubband,
+        componentIndex: Int = 0,
+        resolutionLevel: Int = 0,
         data: Data = Data(),
         passeCount: Int = 0,
         zeroBitPlanes: Int = 0,
-        passSegmentLengths: [Int] = []
+        passSegmentLengths: [Int] = [],
+        cumulativePassBytes: [Int] = [],
+        coefficientSquaredSum: Double = 0,
+        bitPlanePopulation: [Int] = [],
+        cumulativePassDistortion: [Double] = [],
+        perPassSnapshotData: [Data] = []
     ) {
         self.index = index
         self.x = x
@@ -528,10 +588,17 @@ public struct J2KCodeBlock: Sendable {
         self.width = width
         self.height = height
         self.subband = subband
+        self.componentIndex = componentIndex
+        self.resolutionLevel = resolutionLevel
         self.data = data
         self.passeCount = passeCount
         self.zeroBitPlanes = zeroBitPlanes
         self.passSegmentLengths = passSegmentLengths
+        self.cumulativePassBytes = cumulativePassBytes
+        self.coefficientSquaredSum = coefficientSquaredSum
+        self.bitPlanePopulation = bitPlanePopulation
+        self.cumulativePassDistortion = cumulativePassDistortion
+        self.perPassSnapshotData = perPassSnapshotData
     }
 }
 

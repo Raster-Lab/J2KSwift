@@ -662,8 +662,8 @@ final class EncodeConfigurationTests: XCTestCase {
     func testDefaultConfiguration() {
         let config = EncodeConfiguration()
         XCTAssertEqual(config.quality, 0.9)
-        XCTAssertEqual(config.tileWidth, 256)
-        XCTAssertEqual(config.tileHeight, 256)
+        XCTAssertEqual(config.tileWidth, 0)
+        XCTAssertEqual(config.tileHeight, 0)
         XCTAssertEqual(config.decompositionLevels, 5)
         XCTAssertEqual(config.qualityLayers, 5)
         XCTAssertEqual(config.progressionOrder, .lrcp)
@@ -695,8 +695,8 @@ final class EncodeConfigurationTests: XCTestCase {
     func testMaxCompressionPreset() {
         let config = EncodeConfiguration.Preset.maxCompression.configuration
         XCTAssertEqual(config.quality, 0.5)
-        XCTAssertEqual(config.tileWidth, 512)
-        XCTAssertEqual(config.tileHeight, 512)
+        XCTAssertEqual(config.tileWidth, 0)
+        XCTAssertEqual(config.tileHeight, 0)
         XCTAssertEqual(config.qualityLayers, 10)
     }
 
@@ -852,6 +852,14 @@ final class EncodeViewModelTests: XCTestCase {
         let vm = EncodeViewModel()
         vm.inputImageData = Data(repeating: 128, count: 1024)
         vm.inputImageURL = URL(fileURLWithPath: "/tmp/test.png")
+        vm.imageParserFunction = { data in
+            // Return synthetic 8x8 RGB planar data
+            return (Data(repeating: 128, count: 8 * 8 * 3), 8, 8, 3)
+        }
+        vm.encoderFunction = { pixelData, w, h, comps, config, _ in
+            // Return a fake codestream
+            return Data(repeating: 0xFF, count: 64)
+        }
         let session = TestSession()
         await vm.encode(session: session)
         XCTAssertFalse(vm.isEncoding)
@@ -865,6 +873,12 @@ final class EncodeViewModelTests: XCTestCase {
         let vm = EncodeViewModel()
         vm.inputImageData = Data(repeating: 0, count: 2048)
         vm.inputImageURL = URL(fileURLWithPath: "/tmp/img.png")
+        vm.imageParserFunction = { data in
+            return (Data(repeating: 0, count: 8 * 8 * 3), 8, 8, 3)
+        }
+        vm.encoderFunction = { pixelData, w, h, comps, config, _ in
+            return Data(repeating: 0xFF, count: 128)
+        }
         let session = TestSession()
         await vm.encode(session: session)
         XCTAssertNotEqual(vm.encodedSizeString, "—")

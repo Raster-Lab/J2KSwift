@@ -114,8 +114,8 @@ public struct J2KDWT1D: Sendable {
                     LiftingStep(coefficients: [0.8829110762], isPredict: true),
                     LiftingStep(coefficients: [0.4435068522], isPredict: false),
                 ],
-                lowpassScale: 1.149604398,
-                highpassScale: 1.0 / 1.149604398,
+                lowpassScale: 1.0 / 1.230174105,
+                highpassScale: 1.230174105,
                 isReversible: false
             )
         }
@@ -227,6 +227,42 @@ public struct J2KDWT1D: Sendable {
             let lowpass = lowDouble.map { Int32($0.rounded()) }
             let highpass = highDouble.map { Int32($0.rounded()) }
             return (lowpass: lowpass, highpass: highpass)
+        }
+    }
+
+    /// Performs 1D forward DWT on Double-precision data (no intermediate rounding).
+    ///
+    /// Used by the irreversible 9-7 path to maintain full floating-point precision
+    /// through multi-level decomposition, avoiding accumulated rounding error.
+    ///
+    /// - Parameters:
+    ///   - signal: Input signal as Double-precision values.
+    ///   - filter: Wavelet filter to use.
+    ///   - boundaryExtension: How to handle signal boundaries.
+    /// - Returns: A tuple of (lowpass, highpass) subbands in Double precision.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if signal is too short.
+    public static func forwardTransformDouble(
+        signal: [Double],
+        filter: Filter,
+        boundaryExtension: BoundaryExtension = .symmetric
+    ) throws -> (lowpass: [Double], highpass: [Double]) {
+        guard signal.count >= 2 else {
+            throw J2KError.invalidParameter("Signal must have at least 2 elements, got \(signal.count)")
+        }
+
+        switch filter {
+        case .reversible53:
+            let int32Signal = signal.map { Int32($0.rounded()) }
+            let (low, high) = try forwardTransform53(signal: int32Signal, boundaryExtension: boundaryExtension)
+            return (lowpass: low.map { Double($0) }, highpass: high.map { Double($0) })
+        case .irreversible97:
+            return try forwardTransform97(signal: signal, boundaryExtension: boundaryExtension)
+        case .custom(let customFilter):
+            return try forwardTransformCustom(
+                signal: signal,
+                filter: customFilter,
+                boundaryExtension: boundaryExtension
+            )
         }
     }
 
@@ -482,7 +518,7 @@ extension J2KDWT1D {
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
-        let k = 1.149604398
+        let k = 1.230174105
 
         // Predict 1: odd[n] += alpha * (even[n] + even[n+1])
         for i in 0..<highpassSize {
@@ -512,12 +548,12 @@ extension J2KDWT1D {
             even[i] += delta * (left + right)
         }
 
-        // Scaling
+        // Scaling: lowpass /= K, highpass *= K (per ISO/IEC 15444-1)
         for i in 0..<lowpassSize {
-            even[i] *= k
+            even[i] /= k
         }
         for i in 0..<highpassSize {
-            odd[i] /= k
+            odd[i] *= k
         }
 
         return (lowpass: even, highpass: odd)
@@ -558,14 +594,14 @@ extension J2KDWT1D {
         let beta = -0.05298011854
         let gamma = 0.8829110762
         let delta = 0.4435068522
-        let k = 1.149604398
+        let k = 1.230174105
 
-        // Undo scaling
+        // Undo scaling: lowpass *= K, highpass /= K (inverse of forward)
         for i in 0..<lowpassSize {
-            even[i] /= k
+            even[i] *= k
         }
         for i in 0..<highpassSize {
-            odd[i] *= k
+            odd[i] /= k
         }
 
         // Undo update 2

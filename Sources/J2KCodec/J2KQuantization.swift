@@ -242,16 +242,25 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
     /// - Parameter quality: Quality factor (0.0 = lowest, 1.0 = highest).
     /// - Returns: Quantization parameters suitable for the quality level.
     public static func fromQuality(_ quality: Double) -> J2KQuantizationParameters {
-        // Map quality to step size (higher quality = smaller step)
-        // Quality 1.0 -> step size ~0.1 (near lossless)
-        // Quality 0.0 -> step size ~16.0 (high compression)
-        let clampedQuality = max(0.0, min(1.0, quality))
-        let stepSize = 16.0 * pow(0.1 / 16.0, clampedQuality)
+        // Map quality to step size (higher quality = smaller step).
+        //
+        // This is only used for the irreversible (9/7) path — the reversible
+        // (5/3) path always uses `.lossless` parameters.
+        //
+        // Use a fixed base step size of 1.0, matching OpenJPEG's approach.
+        // This keeps quantised coefficient magnitudes at full precision,
+        // producing ~10-12 bit planes per code block for maximum PCRD
+        // flexibility.  Rate control (PCRD pass truncation) exclusively
+        // determines the final quality/bitrate trade-off.
+        let stepSize = 1.0
 
+        // Use scalar mode which implements the standard JPEG 2000 quantization
+        // formula: q = sign(c) × floor(|c| / Δ). This naturally creates a
+        // deadzone of width 2Δ centred at zero (from the floor operation),
+        // matching ISO/IEC 15444-1 Annex E and OpenJPEG behaviour.
         return J2KQuantizationParameters(
-            mode: .deadzone,
-            baseStepSize: stepSize,
-            deadzoneWidth: 1.0
+            mode: .scalar,
+            baseStepSize: stepSize
         )
     }
 }
@@ -329,6 +338,71 @@ public struct J2KSubbandGain: Sendable {
 
 // MARK: - Step Size Calculator
 
+// MARK: - CDF 9/7 Wavelet Norms
+
+/// L2 norms of CDF 9/7 synthesis basis functions for step size scaling.
+///
+/// These norms determine the quantization step size for each subband so that
+/// the reconstruction error contribution is uniform across subbands. Values
+/// match OpenJPEG's `dwt_norms_real` table.
+///
+/// Index 0 = finest decomposition level (resolution 1), increasing toward
+/// coarser levels.
+struct CDF97Norms: Sendable {
+    /// LL subband norms by decomposition depth (index 0 = 1 level, etc.)
+    private static let ll: [Double] = [
+        1.000, 1.965, 4.177, 8.403, 16.90, 33.84, 67.69, 135.3, 270.6, 540.9
+    ]
+    /// HL (and LH) subband norms by decomposition level index (0 = finest)
+    private static let hl: [Double] = [
+        2.022, 3.989, 8.355, 17.04, 34.27, 68.63, 137.3, 274.6, 549.0
+    ]
+    /// HH subband norms by decomposition level index (0 = finest)
+    private static let hh: [Double] = [
+        2.080, 3.865, 8.307, 17.18, 34.71, 69.59, 139.3, 278.6, 557.2
+    ]
+
+    /// Returns the synthesis basis function L2 norm for a subband.
+    ///
+    /// - Parameters:
+    ///   - subband: The subband type.
+    ///   - decompositionLevel: For LL pass 0. For detail subbands, 0 or 1-based
+    ///     both work (0 maps to finest).
+    ///   - totalLevels: Total decomposition levels.
+    static func norm(
+        subband: J2KSubband,
+        decompositionLevel: Int,
+        totalLevels: Int
+    ) -> Double {
+        switch subband {
+        case .ll:
+            // LL norm uses totalLevels as the index
+            let idx = min(totalLevels, ll.count - 1)
+            return ll[idx]
+        case .hl, .lh:
+            // Map to 0-based norms table index:
+            // decompositionLevel 0 → index 0 (finest)
+            // decompositionLevel 1 → index 0 (finest, from 1-based encoder path)
+            // decompositionLevel N → index N-1 (coarsest)
+            let idx: Int
+            if decompositionLevel <= 0 {
+                idx = 0
+            } else {
+                idx = min(decompositionLevel - 1, hl.count - 1)
+            }
+            return hl[idx]
+        case .hh:
+            let idx: Int
+            if decompositionLevel <= 0 {
+                idx = 0
+            } else {
+                idx = min(decompositionLevel - 1, hh.count - 1)
+            }
+            return hh[idx]
+        }
+    }
+}
+
 /// Calculates quantization step sizes for JPEG 2000 subbands.
 ///
 /// The step size varies by subband to account for:
@@ -338,15 +412,13 @@ public struct J2KSubbandGain: Sendable {
 public struct J2KStepSizeCalculator: Sendable {
     /// Calculates the step size for a specific subband.
     ///
-    /// The step size is computed as:
-    /// ```
-    /// Δ_b = Δ_base × 2^(R-r) × G_b
-    /// ```
+    /// For irreversible 9/7, step = base / K_b where K_b is the synthesis
+    /// basis function L2 norm from the CDF 9/7 wavelet norm tables.
     ///
     /// - Parameters:
     ///   - baseStepSize: The base step size from configuration.
     ///   - subband: The subband type.
-    ///   - decompositionLevel: The current decomposition level (0 = finest).
+    ///   - decompositionLevel: The current decomposition level (0 = LL, 1 = finest detail, N = coarsest detail).
     ///   - totalLevels: Total number of decomposition levels.
     ///   - reversible: Whether using the reversible filter.
     /// - Returns: The calculated step size for this subband.
@@ -357,15 +429,27 @@ public struct J2KStepSizeCalculator: Sendable {
         totalLevels: Int,
         reversible: Bool
     ) -> Double {
-        // Level scaling: coarser levels (higher decomposition) get larger steps
-        // decompositionLevel 0 is finest, totalLevels-1 is coarsest
-        let levelScale = pow(2.0, Double(decompositionLevel))
-
-        // Subband gain
-        let gain = J2KSubbandGain.gain(for: subband, reversible: reversible)
-
-        // Final step size
-        return baseStepSize * levelScale / gain
+        if reversible {
+            // 5/3 reversible: no quantization, step size = 1.0
+            return 1.0
+        } else {
+            // 9/7 irreversible: norm-based step size scaling.
+            //
+            // The step size for each subband is derived from the L2 norm of
+            // the 2D synthesis basis function for that subband position.
+            // step_b = base / K_b
+            //
+            // K_b values come from the CDF 9/7 wavelet filter norms
+            // (identical to OpenJPEG's dwt_norms_real table).
+            // Larger K_b → smaller step → finer quantization (more bits
+            // allocated to perceptually important subbands).
+            let norm = CDF97Norms.norm(
+                subband: subband,
+                decompositionLevel: decompositionLevel,
+                totalLevels: totalLevels
+            )
+            return baseStepSize / norm
+        }
     }
 
     /// Calculates step sizes for all subbands in a multi-level decomposition.

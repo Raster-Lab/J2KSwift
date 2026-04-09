@@ -233,8 +233,13 @@ extension J2KCLI {
             throw J2KError.invalidParameter("Invalid PGM file: missing max value")
         }
 
-        // Determine bit depth
-        let bitDepth = maxValue <= 255 ? 8 : 16
+        // Determine bit depth from max value: ceil(log2(maxValue + 1))
+        let bitDepth: Int = {
+            if maxValue <= 255 { return 8 }
+            var bits = 0; var v = maxValue
+            while v > 0 { v >>= 1; bits += 1 }
+            return bits
+        }()
 
         // Read pixel data
         let bytesPerPixel = bitDepth <= 8 ? 1 : 2
@@ -294,8 +299,13 @@ extension J2KCLI {
             throw J2KError.invalidParameter("Invalid PPM file: missing max value")
         }
 
-        // Determine bit depth
-        let bitDepth = maxValue <= 255 ? 8 : 16
+        // Determine bit depth from max value: ceil(log2(maxValue + 1))
+        let bitDepth: Int = {
+            if maxValue <= 255 { return 8 }
+            var bits = 0; var v = maxValue
+            while v > 0 { v >>= 1; bits += 1 }
+            return bits
+        }()
 
         // Read pixel data (interleaved RGB)
         let bytesPerPixel = bitDepth <= 8 ? 1 : 2

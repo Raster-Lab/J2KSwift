@@ -139,6 +139,13 @@ extension J2KCLI {
             config.quality = 0.99
         }
 
+        // Filter selection: --irreversible forces 9/7 DWT, --reversible forces 5/3
+        if options["irreversible"] != nil {
+            config.useReversibleFilter = false
+        } else if options["reversible"] != nil {
+            config.useReversibleFilter = true
+        }
+
         // Structural options
         if let levelsStr = options["levels"], let levels = Int(levelsStr) {
             config.decompositionLevels = levels
@@ -276,6 +283,8 @@ extension J2KCLI {
             --bitrate BPP               Target bit-rate (bits per pixel)
             --psnr VALUE                Target PSNR (dB)
             --visually-lossless         Near-lossless preset
+            --reversible                Use 5/3 reversible DWT (default, best for medical)
+            --irreversible              Use 9/7 irreversible DWT
             --preset fast|balanced|quality  Encoding preset
             --levels N                  DWT decomposition levels
             --blocksize WxH             Code-block size (e.g. 64x64)

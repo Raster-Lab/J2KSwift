@@ -124,18 +124,28 @@ struct EncoderPipeline: Sendable {
 
         // Stage 1: Preprocessing — extract component data as Int32 arrays
         reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
-        let componentData = try extractComponentData(from: image)
+        var componentData = try extractComponentData(from: image)
         reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
+
+        // DC level shift: for unsigned components, subtract 2^(bitDepth-1) to
+        // center values around zero, as required by ISO 15444-1 Annex F.
+        for (compIdx, component) in image.components.enumerated() {
+            if !component.signed {
+                let dcOffset = Int32(1 << (component.bitDepth - 1))
+                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+            }
+        }
 
         // Stage 2: Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
-        let transformedData = try applyColorTransform(componentData, image: image)
+        let (transformedData, transformedDoubleData) = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
 
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
-        let decompositions = try applyWaveletTransform(
-            transformedData, width: image.width, height: image.height
+        let (decompositions, actualDecompositionLevels) = try applyWaveletTransform(
+            transformedData, doubleComponents: transformedDoubleData,
+            width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
@@ -146,11 +156,15 @@ struct EncoderPipeline: Sendable {
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(quantizedSubbands)
+        let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
+        // totalPixels is the number of spatial locations (W × H).
+        // bpp (bits per pixel) already accounts for all components —
+        // e.g. 1.2 bpp for RGB means 1.2 total bits per spatial location.
+        // The PCRD budget is: targetBytes = bpp × totalPixels / 8.
         let layers = try applyRateControl(
             codeBlocks: codeBlocks, totalPixels: image.width * image.height
         )
@@ -159,7 +173,8 @@ struct EncoderPipeline: Sendable {
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
         let codestream = try generateCodestream(
-            image: image, codeBlocks: codeBlocks, layers: layers
+            image: image, codeBlocks: codeBlocks, layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
@@ -222,13 +237,13 @@ struct EncoderPipeline: Sendable {
     ///   - components: The component data.
     ///   - image: The source image.
     ///   - tileIndex: The tile index (default: 0 for non-tiled images).
-    /// - Returns: Transformed component data.
+    /// - Returns: Transformed component data as Int32 and optionally as Double (for ICT lossy path).
     private func applyColorTransform(
         _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // Check for per-tile MCT override first
         if let tileMatrix = config.mctConfiguration.perTileMCT[tileIndex] {
-            return try applyArrayBasedMCT(components, matrix: tileMatrix, image: image)
+            return (try applyArrayBasedMCT(components, matrix: tileMatrix, image: image), nil)
         }
 
         // Check if MCT is enabled in configuration
@@ -239,11 +254,11 @@ struct EncoderPipeline: Sendable {
 
         case .arrayBased(let matrix):
             // Use array-based MCT with specified matrix
-            return try applyArrayBasedMCT(components, matrix: matrix, image: image)
+            return (try applyArrayBasedMCT(components, matrix: matrix, image: image), nil)
 
         case .dependency(let depConfig):
             // Use dependency-based MCT
-            return try applyDependencyMCT(components, configuration: depConfig, image: image)
+            return (try applyDependencyMCT(components, configuration: depConfig, image: image), nil)
 
         case let .adaptive(candidates, criteria):
             // Select best matrix adaptively based on criteria
@@ -257,24 +272,49 @@ struct EncoderPipeline: Sendable {
     /// Applies standard Part 1 colour transform (RCT/ICT).
     private func applyStandardColorTransform(
         _ components: [[Int32]], image: J2KImage
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // Colour transform only applies to 3+ component images
-        guard components.count >= 3 else { return components }
+        guard components.count >= 3 else { return (components, nil) }
 
-        let mode: J2KColorTransformMode = config.lossless ? .reversible : .irreversible
+        let mode: J2KColorTransformMode = config.useReversibleFilter ? .reversible : .irreversible
         let ctConfig = J2KColorTransformConfiguration(mode: mode)
         let transform = J2KColorTransform(configuration: ctConfig)
 
-        let (y, cb, cr) = try transform.forwardRCT(
-            red: components[0], green: components[1], blue: components[2]
-        )
+        let y: [Int32]
+        let cb: [Int32]
+        let cr: [Int32]
+        var doubleResult: [[Double]]? = nil
+
+        if config.useReversibleFilter {
+            // Use RCT (integer-based, perfectly reversible)
+            (y, cb, cr) = try transform.forwardRCT(
+                red: components[0], green: components[1], blue: components[2]
+            )
+        } else {
+            // Use ICT (floating-point, irreversible) for lossy mode
+            let redD = components[0].map { Double($0) }
+            let greenD = components[1].map { Double($0) }
+            let blueD = components[2].map { Double($0) }
+            let (yD, cbD, crD) = try transform.forwardICT(
+                red: redD, green: greenD, blue: blueD
+            )
+            y = yD.map { Int32($0.rounded()) }
+            cb = cbD.map { Int32($0.rounded()) }
+            cr = crD.map { Int32($0.rounded()) }
+            // Keep double-precision ICT output for 9/7 DWT path
+            var dbl = [yD, cbD, crD]
+            if components.count > 3 {
+                dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
+            }
+            doubleResult = dbl
+        }
 
         var result = [y, cb, cr]
         // Preserve any additional components (alpha, etc.) unchanged
         if components.count > 3 {
             result.append(contentsOf: components[3...])
         }
-        return result
+        return (result, doubleResult)
     }
 
     /// Applies array-based MCT using a transformation matrix.
@@ -340,7 +380,7 @@ struct EncoderPipeline: Sendable {
         criteria: J2KMCTEncodingConfiguration.AdaptiveSelectionCriteria,
         image: J2KImage,
         tileIndex: Int = 0
-    ) throws -> [[Int32]] {
+    ) throws -> ([[Int32]], [[Double]]?) {
         // For now, use a simple heuristic: correlation-based selection
         // In a full implementation, this would evaluate each candidate matrix
         // and select based on the specified criteria
@@ -357,7 +397,7 @@ struct EncoderPipeline: Sendable {
         }
 
         // Apply the selected matrix
-        return try applyArrayBasedMCT(components, matrix: selectedMatrix, image: image)
+        return (try applyArrayBasedMCT(components, matrix: selectedMatrix, image: image), nil)
     }
 
     // MARK: - Stage 3: Wavelet Transform
@@ -368,26 +408,33 @@ struct EncoderPipeline: Sendable {
         let level: Int
         let subband: J2KSubband
         let coefficients: [Int32]
+        /// Raw Double DWT coefficients for the 9/7 irreversible path.
+        /// When non-nil, quantization uses these instead of `coefficients`
+        /// to avoid precision loss from premature Int32 rounding.
+        let doubleCoefficients: [Double]?
         let width: Int
         let height: Int
     }
 
     /// Applies the forward wavelet transform to all components.
+    ///
+    /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
-        _ components: [[Int32]], width: Int, height: Int
-    ) throws -> [[SubbandInfo]] {
+        _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
+        width: Int, height: Int
+    ) throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
         switch config.waveletKernelConfiguration {
         case .standard:
             // Use standard Part 1 wavelets
-            filter = config.lossless ? .reversible53 : .irreversible97
+            filter = config.useReversibleFilter ? .reversible53 : .irreversible97
         case .arbitrary(let kernel):
             // Use arbitrary kernel for all components
             filter = kernel.toDWTFilter()
         case .perTileComponent:
             // Per-tile-component selection handled below
-            filter = config.lossless ? .reversible53 : .irreversible97
+            filter = config.useReversibleFilter ? .reversible53 : .irreversible97
         }
 
         // Clamp decomposition levels to what the image dimensions can support
@@ -407,7 +454,7 @@ struct EncoderPipeline: Sendable {
                     componentFilter = kernel.toDWTFilter()
                 } else {
                     // Fall back to standard filter
-                    componentFilter = config.lossless ? .reversible53 : .irreversible97
+                    componentFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
                 }
             } else {
                 componentFilter = filter
@@ -429,6 +476,7 @@ struct EncoderPipeline: Sendable {
                     level: 0,
                     subband: .ll,
                     coefficients: compData,
+                    doubleCoefficients: nil,
                     width: width,
                     height: height
                 )]
@@ -436,58 +484,141 @@ struct EncoderPipeline: Sendable {
                 continue
             }
 
-            let decomposition = try J2KDWT2D.forwardDecomposition(
-                image: image2D, levels: levels, filter: componentFilter
-            )
-
+            // For 9/7 irreversible wavelet, use Double-precision forward DWT to
+            // avoid accumulated rounding error from Int32 truncation at each level.
+            // For 5/3 reversible, use Int32 (exact integer arithmetic).
             var subbands: [SubbandInfo] = []
 
-            // Collect subbands from each decomposition level
-            for levelIdx in 0..<decomposition.levelCount {
-                let level = decomposition.levels[levelIdx]
-                let decomLevel = levelIdx + 1
-
-                subbands.append(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: decomLevel,
-                    subband: .hl,
-                    coefficients: level.hl.flatMap { $0 },
-                    width: level.hl.isEmpty ? 0 : level.hl[0].count,
-                    height: level.hl.count
-                ))
-                subbands.append(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: decomLevel,
-                    subband: .lh,
-                    coefficients: level.lh.flatMap { $0 },
-                    width: level.lh.isEmpty ? 0 : level.lh[0].count,
-                    height: level.lh.count
-                ))
-                subbands.append(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: decomLevel,
-                    subband: .hh,
-                    coefficients: level.hh.flatMap { $0 },
-                    width: level.hh.isEmpty ? 0 : level.hh[0].count,
-                    height: level.hh.count
-                ))
+            let use97DoublePrecision: Bool
+            if case .irreversible97 = componentFilter {
+                use97DoublePrecision = true
+            } else {
+                use97DoublePrecision = false
             }
 
-            // Add the coarsest LL subband
-            let coarsestLL = decomposition.coarsestLL
-            subbands.insert(SubbandInfo(
-                componentIndex: compIdx,
-                level: 0,
-                subband: .ll,
-                coefficients: coarsestLL.flatMap { $0 },
-                width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
-                height: coarsestLL.count
-            ), at: 0)
+            if use97DoublePrecision {
+                // Double-precision path: avoids rounding at intermediate levels.
+                // Use ICT double output directly when available to preserve
+                // sub-pixel colour transform precision through the DWT.
+                let doubleImage: [[Double]]
+                if let dc = doubleComponents, compIdx < dc.count {
+                    var img2D: [[Double]] = []
+                    img2D.reserveCapacity(height)
+                    for row in 0..<height {
+                        let rowStart = row * width
+                        let rowEnd = rowStart + width
+                        img2D.append(Array(dc[compIdx][rowStart..<rowEnd]))
+                    }
+                    doubleImage = img2D
+                } else {
+                    doubleImage = image2D.map { $0.map { Double($0) } }
+                }
+                let decomposition = try J2KDWT2D.forwardDecompositionDouble(
+                    image: doubleImage, levels: levels, filter: componentFilter
+                )
+
+                for levelIdx in 0..<decomposition.levelCount {
+                    let level = decomposition.levels[levelIdx]
+                    let decomLevel = levelIdx + 1
+
+                    let hlFlat = level.hl.flatMap { $0 }
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hl,
+                        coefficients: hlFlat.map { Int32($0.rounded()) },
+                        doubleCoefficients: hlFlat,
+                        width: level.hl.isEmpty ? 0 : level.hl[0].count,
+                        height: level.hl.count
+                    ))
+                    let lhFlat = level.lh.flatMap { $0 }
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .lh,
+                        coefficients: lhFlat.map { Int32($0.rounded()) },
+                        doubleCoefficients: lhFlat,
+                        width: level.lh.isEmpty ? 0 : level.lh[0].count,
+                        height: level.lh.count
+                    ))
+                    let hhFlat = level.hh.flatMap { $0 }
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hh,
+                        coefficients: hhFlat.map { Int32($0.rounded()) },
+                        doubleCoefficients: hhFlat,
+                        width: level.hh.isEmpty ? 0 : level.hh[0].count,
+                        height: level.hh.count
+                    ))
+                }
+
+                let coarsestLL = decomposition.coarsestLL
+                let llFlat = coarsestLL.flatMap { $0 }
+                subbands.insert(SubbandInfo(
+                    componentIndex: compIdx,
+                    level: 0,
+                    subband: .ll,
+                    coefficients: llFlat.map { Int32($0.rounded()) },
+                    doubleCoefficients: llFlat,
+                    width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
+                    height: coarsestLL.count
+                ), at: 0)
+            } else {
+                // Int32 path for reversible 5/3 (exact integer arithmetic)
+                let decomposition = try J2KDWT2D.forwardDecomposition(
+                    image: image2D, levels: levels, filter: componentFilter
+                )
+
+                for levelIdx in 0..<decomposition.levelCount {
+                    let level = decomposition.levels[levelIdx]
+                    let decomLevel = levelIdx + 1
+
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hl,
+                        coefficients: level.hl.flatMap { $0 },
+                        doubleCoefficients: nil,
+                        width: level.hl.isEmpty ? 0 : level.hl[0].count,
+                        height: level.hl.count
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .lh,
+                        coefficients: level.lh.flatMap { $0 },
+                        doubleCoefficients: nil,
+                        width: level.lh.isEmpty ? 0 : level.lh[0].count,
+                        height: level.lh.count
+                    ))
+                    subbands.append(SubbandInfo(
+                        componentIndex: compIdx,
+                        level: decomLevel,
+                        subband: .hh,
+                        coefficients: level.hh.flatMap { $0 },
+                        doubleCoefficients: nil,
+                        width: level.hh.isEmpty ? 0 : level.hh[0].count,
+                        height: level.hh.count
+                    ))
+                }
+
+                let coarsestLL = decomposition.coarsestLL
+                subbands.insert(SubbandInfo(
+                    componentIndex: compIdx,
+                    level: 0,
+                    subband: .ll,
+                    coefficients: coarsestLL.flatMap { $0 },
+                    doubleCoefficients: nil,
+                    width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
+                    height: coarsestLL.count
+                ), at: 0)
+            }
 
             allSubbands.append(subbands)
         }
 
-        return allSubbands
+        return (allSubbands, levels)
     }
 
     // MARK: - Stage 4: Quantization
@@ -496,7 +627,7 @@ struct EncoderPipeline: Sendable {
     private func applyQuantization(
         _ componentSubbands: [[SubbandInfo]]
     ) throws -> [[SubbandInfo]] {
-        let params: J2KQuantizationParameters = config.lossless
+        let params: J2KQuantizationParameters = config.useReversibleFilter
             ? .lossless
             : .fromQuality(config.quality)
         let quantizer = J2KQuantizer(parameters: params)
@@ -506,18 +637,31 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
-                // Use Int32-optimised quantize method to avoid unnecessary conversions
-                let quantized = try quantizer.quantize(
-                    coefficients: info.coefficients,
-                    subband: info.subband,
-                    decompositionLevel: info.level,
-                    totalLevels: config.decompositionLevels
-                )
+                let quantized: [Int32]
+                if let doubleCoeffs = info.doubleCoefficients {
+                    // Use Double-precision path for 9/7 irreversible to preserve fractional precision
+                    quantized = try quantizer.quantize(
+                        coefficients: doubleCoeffs,
+                        subband: info.subband,
+                        decompositionLevel: info.level,
+                        totalLevels: config.decompositionLevels
+                    )
+                } else {
+                    // Use Int32-optimised quantize method for reversible 5/3
+                    quantized = try quantizer.quantize(
+                        coefficients: info.coefficients,
+                        subband: info.subband,
+                        decompositionLevel: info.level,
+                        totalLevels: config.decompositionLevels
+                    )
+                }
+
                 quantizedSubbands.append(SubbandInfo(
                     componentIndex: info.componentIndex,
                     level: info.level,
                     subband: info.subband,
                     coefficients: quantized,
+                    doubleCoefficients: nil,
                     width: info.width,
                     height: info.height
                 ))
@@ -538,16 +682,30 @@ struct EncoderPipeline: Sendable {
         let width: Int
         let height: Int
         let subband: J2KSubband
+        let componentIndex: Int
+        let resolutionLevel: Int
         let coefficients: [Int32]
         let bitDepth: Int
+        let coefficientSquaredSum: Double
+        let bitPlanePopulation: [Int]
     }
 
     /// Applies EBCOT entropy coding to all subbands, producing code blocks.
     private func applyEntropyCoding(
-        _ componentSubbands: [[SubbandInfo]]
+        _ componentSubbands: [[SubbandInfo]],
+        image: J2KImage
     ) throws -> [J2KCodeBlock] {
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
+
+        // Determine decomposition levels actually used
+        let actualLevels = componentSubbands.first.map { subbands -> Int in
+            return subbands.count > 1 ? (subbands.count - 1) / 3 : 0
+        } ?? config.decompositionLevels
+
+        // Guard bits and range bits for Kb computation (must match QCD marker)
+        let quantExt = J2KPart2QuantizationExtensions(configuration: config)
+        let guardBits = Int(quantExt.extendedGuardBits)
 
         // First pass: collect all pending code-blocks with their metadata
         var pendingBlocks: [PendingCodeBlock] = []
@@ -556,6 +714,55 @@ struct EncoderPipeline: Sendable {
         for subbands in componentSubbands {
             for info in subbands {
                 guard info.width > 0 && info.height > 0 else { continue }
+
+                // Use actual component bit depth instead of hardcoded 8
+                let imageBitDepth = image.components[info.componentIndex].bitDepth
+
+                // Compute JPEG 2000 resolution level:
+                // Resolution 0 = LL subband only
+                // Resolution r (1..NL) = detail subbands at decomposition level (NL - r + 1)
+                let resolutionLevel: Int
+                if info.subband == .ll {
+                    resolutionLevel = 0
+                } else {
+                    resolutionLevel = actualLevels - info.level + 1
+                }
+
+                // Compute band-level Kb = ε_b + G from QCD parameters.
+                // This must match what we write in the QCD marker.
+                let bandKb: Int
+                if config.useReversibleFilter {
+                    let gainExponent: Int
+                    switch info.subband {
+                    case .ll: gainExponent = 0
+                    case .hl, .lh: gainExponent = 1
+                    case .hh: gainExponent = 2
+                    }
+                    let epsilon = imageBitDepth + gainExponent
+                    bandKb = epsilon + guardBits - 1  // Kb = εb + Gb - 1
+                } else {
+                    // Lossy (9/7 irreversible): Kb = ε_b + G where ε_b from step size
+                    // Must use subband gains {LL=0, HL=1, LH=1, HH=2} for Rb,
+                    // matching OPJ encoder convention. OPJ decoder uses gain=0
+                    // (BUG_WEIRD_TWO_INVK) with two_invK in inverse DWT.
+                    let subbandGain: Int
+                    switch info.subband {
+                    case .ll: subbandGain = 0
+                    case .hl, .lh: subbandGain = 1
+                    case .hh: subbandGain = 2
+                    }
+                    let rangeBits = imageBitDepth + subbandGain
+                    let params = J2KQuantizationParameters.fromQuality(config.quality)
+                    let step = J2KStepSizeCalculator.calculateStepSize(
+                        baseStepSize: params.baseStepSize,
+                        subband: info.subband,
+                        decompositionLevel: info.level,
+                        totalLevels: actualLevels,
+                        reversible: false
+                    )
+                    let (epsilon, _) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
+                    bandKb = epsilon + guardBits - 1  // Kb = εb + Gb - 1
+                }
 
                 let blocksX = (info.width + cbWidth - 1) / cbWidth
                 let blocksY = (info.height + cbHeight - 1) / cbHeight
@@ -575,9 +782,32 @@ struct EncoderPipeline: Sendable {
                             blockCoeffs.append(contentsOf: info.coefficients[srcStart..<srcEnd])
                         }
 
-                        // Determine bit depth from max coefficient magnitude (SIMD-optimised)
-                        let maxMag = Self.maxAbsValue(blockCoeffs)
-                        let bitDepth = maxMag > 0 ? Int(log2(Double(maxMag))) + 2 : 1
+                        // TEMP DEBUG: dump quantized coefficients
+                        if ProcessInfo.processInfo.environment["J2K_DUMP_COEFFS"] != nil {
+                            print("EBCOT_INPUT: subband=\(info.subband) comp=\(info.componentIndex) res=\(resolutionLevel) bx=\(bx) by=\(by) w=\(blockW) h=\(blockH) Kb=\(bandKb) coeffs=\(blockCoeffs)")
+                        }
+
+                        // Compute distortion statistics for rate control
+                        var sqSum: Double = 0
+                        var maxMag: UInt32 = 0
+                        for c in blockCoeffs {
+                            let mag = UInt32(abs(c))
+                            sqSum += Double(mag) * Double(mag)
+                            if mag > maxMag { maxMag = mag }
+                        }
+                        // Compute bit-plane population: count how many coefficients
+                        // have their MSB at each bit-plane
+                        let totalBitPlanes = bandKb
+                        var bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                        for c in blockCoeffs {
+                            let mag = UInt32(abs(c))
+                            if mag > 0 {
+                                let msb = 31 - mag.leadingZeroBitCount  // 0-based MSB position
+                                if msb < totalBitPlanes {
+                                    bpPop[msb] += 1
+                                }
+                            }
+                        }
 
                         pendingBlocks.append(PendingCodeBlock(
                             index: blockIndex,
@@ -586,8 +816,12 @@ struct EncoderPipeline: Sendable {
                             width: blockW,
                             height: blockH,
                             subband: info.subband,
+                            componentIndex: info.componentIndex,
+                            resolutionLevel: resolutionLevel,
                             coefficients: blockCoeffs,
-                            bitDepth: bitDepth
+                            bitDepth: bandKb,
+                            coefficientSquaredSum: sqSum,
+                            bitPlanePopulation: bpPop
                         ))
                         blockIndex += 1
                     }
@@ -632,10 +866,17 @@ struct EncoderPipeline: Sendable {
                 width: pending.width,
                 height: pending.height,
                 subband: codeBlock.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
                 data: codeBlock.data,
                 passeCount: codeBlock.passeCount,
                 zeroBitPlanes: codeBlock.zeroBitPlanes,
-                passSegmentLengths: codeBlock.passSegmentLengths
+                passSegmentLengths: codeBlock.passSegmentLengths,
+                cumulativePassBytes: codeBlock.cumulativePassBytes,
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation,
+                cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                perPassSnapshotData: codeBlock.perPassSnapshotData
             )
 
             results.append(codeBlock)
@@ -687,10 +928,17 @@ struct EncoderPipeline: Sendable {
                         width: pending.width,
                         height: pending.height,
                         subband: codeBlock.subband,
+                        componentIndex: pending.componentIndex,
+                        resolutionLevel: pending.resolutionLevel,
                         data: codeBlock.data,
                         passeCount: codeBlock.passeCount,
                         zeroBitPlanes: codeBlock.zeroBitPlanes,
-                        passSegmentLengths: codeBlock.passSegmentLengths
+                        passSegmentLengths: codeBlock.passSegmentLengths,
+                        cumulativePassBytes: codeBlock.cumulativePassBytes,
+                        coefficientSquaredSum: pending.coefficientSquaredSum,
+                        bitPlanePopulation: pending.bitPlanePopulation,
+                        cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                        perPassSnapshotData: codeBlock.perPassSnapshotData
                     )
 
                     localResults.append((pending.index, codeBlock))
@@ -771,15 +1019,32 @@ struct EncoderPipeline: Sendable {
         }
 
         let rateConfig: RateControlConfiguration
-        switch config.bitrateMode {
-        case .constantBitrate(let bpp):
-            rateConfig = .targetBitrate(bpp, layerCount: config.qualityLayers)
-        case .constantQuality:
-            rateConfig = .constantQuality(config.quality, layerCount: config.qualityLayers)
-        case .variableBitrate(_, let maxBpp):
-            rateConfig = .targetBitrate(maxBpp, layerCount: config.qualityLayers)
-        case .lossless:
+        // When lossless is true, always use lossless rate control regardless of bitrateMode
+        if config.lossless {
             rateConfig = .lossless
+        } else {
+            switch config.bitrateMode {
+            case .constantBitrate(let bpp):
+                rateConfig = RateControlConfiguration(
+                    mode: .targetBitrate(bpp),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
+            case .constantQuality:
+                rateConfig = RateControlConfiguration(
+                    mode: .constantQuality(max(0.0, min(1.0, config.quality))),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
+            case .variableBitrate(_, let maxBpp):
+                rateConfig = RateControlConfiguration(
+                    mode: .targetBitrate(maxBpp),
+                    layerCount: config.qualityLayers,
+                    useReversibleFilter: config.useReversibleFilter
+                )
+            case .lossless:
+                rateConfig = .lossless
+            }
         }
 
         let rateControl = J2KRateControl(configuration: rateConfig)
@@ -792,7 +1057,8 @@ struct EncoderPipeline: Sendable {
     private func generateCodestream(
         image: J2KImage,
         codeBlocks: [J2KCodeBlock],
-        layers: [QualityLayer]
+        layers: [QualityLayer],
+        actualDecompositionLevels: Int
     ) throws -> Data {
         var writer = J2KBitWriter()
 
@@ -811,14 +1077,18 @@ struct EncoderPipeline: Sendable {
         }
 
         // COD — Coding Style Default
-        try writeCODMarker(&writer)
+        try writeCODMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
 
         // QCD — Quantization Default
-        try writeQCDMarker(&writer, image: image)
+        try writeQCDMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
-        let tileData = try generateTileData(codeBlocks: codeBlocks, layers: layers)
+        let tileData = try generateTileData(
+            codeBlocks: codeBlocks, layers: layers,
+            decompositionLevels: actualDecompositionLevels,
+            componentCount: image.components.count
+        )
         try writeSOTMarker(&writer, tileIndex: 0, tilePartLength: tileData.count)
 
         // SOD — Start of Data
@@ -849,11 +1119,13 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt32(0)
         // YOsiz — Vertical offset (0)
         segment.writeUInt32(0)
-        // XTsiz — Tile width (image width if no tiling)
-        let tileW = config.tileSize.width > 0 ? config.tileSize.width : image.width
+        // XTsiz — Tile width (image width for single-tile mode)
+        // Note: Multi-tile encoding is not yet supported; always use full image
+        // dimensions to ensure the single SOT/SOD pair covers the entire image.
+        let tileW = image.width
         segment.writeUInt32(UInt32(tileW))
-        // YTsiz — Tile height (image height if no tiling)
-        let tileH = config.tileSize.height > 0 ? config.tileSize.height : image.height
+        // YTsiz — Tile height (image height for single-tile mode)
+        let tileH = image.height
         segment.writeUInt32(UInt32(tileH))
         // XTOsiz — Tile offset X (0)
         segment.writeUInt32(0)
@@ -919,7 +1191,7 @@ struct EncoderPipeline: Sendable {
 
         // Pcpf (2 bytes): Profile selection
         // Select profile based on compression mode
-        let pcpf: UInt16 = config.lossless ? 0 : 1
+        let pcpf: UInt16 = config.useReversibleFilter ? 0 : 1
 
         segment.writeUInt16(pcpf)
 
@@ -927,45 +1199,30 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the COD marker segment (Coding Style Default).
-    private func writeCODMarker(_ writer: inout J2KBitWriter) throws {
+    private func writeCODMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
         var scod: UInt8 = 0
-        // Bit 0: Precincts defined (0 = default, 1 = user-defined)
-        // Bit 1: SOP markers used (0 = no)
-        // Bit 2: EPH markers used (0 = no)
-        // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
-        //   00 = No HT sets
-        //   01 = HT set A (set bit 3, clear bit 4)
-        //   10 = HT set B
-        //   11 = HT sets C and D
-        // When HTJ2K mode is enabled, use default HT set A
         if config.useHTJ2K {
-            scod |= 0x08 // Set bit 3 (bits 3-4 = 01 for HT set A)
+            scod |= 0x08
         }
         segment.writeUInt8(scod)
 
-        // SGcod — Progression order
-        let progressionByte: UInt8
-        switch config.progressionOrder {
-        case .lrcp: progressionByte = 0
-        case .rlcp: progressionByte = 1
-        case .rpcl: progressionByte = 2
-        case .pcrl: progressionByte = 3
-        case .cprl: progressionByte = 4
-        }
-        segment.writeUInt8(progressionByte)
+        // SGcod — Progression order: always LRCP (0) for compatibility
+        segment.writeUInt8(0)
 
-        // Number of layers
-        segment.writeUInt16(UInt16(config.qualityLayers))
+        // Number of layers: use 1 for simple correct encoding
+        segment.writeUInt16(1)
 
         // Multiple component transform (1 = RCT/ICT, 0 = none)
-        segment.writeUInt8(config.lossless ? 1 : (config.quality < 1.0 ? 1 : 0))
+        // MCT is applied whenever the encoder performs a colour transform (3+ components)
+        let useMCT: Bool = image.components.count >= 3
+        segment.writeUInt8(useMCT ? 1 : 0)
 
         // SPcod — Coding parameters
         // Number of decomposition levels
-        segment.writeUInt8(UInt8(config.decompositionLevels))
+        segment.writeUInt8(UInt8(decompositionLevels))
 
         // Code-block width exponent (offset by 2)
         let cbWidthExp = Int(log2(Double(config.codeBlockSize.width)))
@@ -990,7 +1247,7 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt8(codeBlockStyle)
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
-        segment.writeUInt8(config.lossless ? 1 : 0)
+        segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
 
         // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
         if config.useHTJ2K {
@@ -1056,7 +1313,7 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt8(codeBlockStyle)
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
-        segment.writeUInt8(config.lossless ? 1 : 0)
+        segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
 
         // HT set parameters (ISO/IEC 15444-15) — only when HTJ2K is enabled
         if config.useHTJ2K {
@@ -1075,55 +1332,99 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the QCD marker segment (Quantization Default).
-    private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage) throws {
+    private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
         var segment = J2KBitWriter()
 
         // Sqcd byte layout: guard bits (bits 5-7) | quantization style (bits 0-4)
         // Use extended guard bits from Part 2 configuration if applicable
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
 
-        if config.lossless {
+        if config.useReversibleFilter {
             // No quantization (style = 0) for reversible transforms
             let sqcd = quantExt.encodeSqcd(quantizationStyle: 0x00)
             segment.writeUInt8(sqcd)
 
             // SPqcd: Exponent values for each subband
-            // LL subband at coarsest level
+            // Per JPEG 2000 (ISO 15444-1 Table E.1), for the reversible 5/3 filter:
+            //   epsilon_b = R_I + G_b  where R_I = bit depth, G_b = subband gain exponent
+            //   LL: G=0, HL/LH: G=1, HH: G=2
             let bitDepth = image.components.first?.bitDepth ?? 8
-            let epsilon = UInt8(bitDepth + config.decompositionLevels)
-            segment.writeUInt8(epsilon << 3) // Exponent in bits 3-7
 
-            // Detail subbands (HL, LH, HH) at each level
-            for level in 0..<config.decompositionLevels {
-                let exp = UInt8(bitDepth + config.decompositionLevels - level)
-                segment.writeUInt8(exp << 3)
-                segment.writeUInt8(exp << 3)
-                segment.writeUInt8(exp << 3)
+            // LL subband at coarsest level
+            let epsilonLL = UInt8(bitDepth)
+            segment.writeUInt8(epsilonLL << 3) // Exponent in bits 3-7
+
+            // Detail subbands (HL, LH, HH) at each level (from coarsest to finest)
+            for _ in 0..<decompositionLevels {
+                let epsilonHL = UInt8(bitDepth + 1) // G_HL = 1
+                let epsilonLH = UInt8(bitDepth + 1) // G_LH = 1
+                let epsilonHH = UInt8(bitDepth + 2) // G_HH = 2
+                segment.writeUInt8(epsilonHL << 3)
+                segment.writeUInt8(epsilonLH << 3)
+                segment.writeUInt8(epsilonHH << 3)
             }
         } else {
             // Scalar expounded quantization (style = 2) for lossy transforms
             let sqcd = quantExt.encodeSqcd(quantizationStyle: 0x02)
             segment.writeUInt8(sqcd)
 
+            // Compute step sizes using the SAME parameters as the actual quantizer
+            // in Stage 4 (applyQuantization), so the QCD marker matches encoding.
+            let params: J2KQuantizationParameters = .fromQuality(config.quality)
+            let bitDepth = image.components.first?.bitDepth ?? 8
+            let guardBits = Int(quantExt.extendedGuardBits) // Must match Sqcd guard bits
+            // R_b = image bit depth + subband gain (ISO 15444-1 Eq. E.4)
+            // Guard bits are NOT part of R_b — they only affect M_b (Eq. E.2)
+            // Subband gain G_b: LL=0, HL/LH=1, HH=2
+            let baseRangeBits = bitDepth
+
             // SPqcd: Step size values for each subband (2 bytes each)
-            let stepSizes = J2KStepSizeCalculator.calculateAllStepSizes(
-                baseStepSize: 1.0 - config.quality,
-                totalLevels: config.decompositionLevels,
+            // Per ISO 15444-1 Eq. E.3:
+            //   Δ_b = 2^(R_b - ε_b) × (1 + μ_b / 2^11)
+            // We solve for (ε_b, μ_b) given the actual step Δ_b:
+            //   ε_b = R_b - floor(log2(Δ_b))
+            //   μ_b = round((Δ_b / 2^(R_b - ε_b) - 1) × 2^11)
+
+            // LL subband (quantizer uses decompositionLevel=0 for LL, gain=0)
+            let llStep = J2KStepSizeCalculator.calculateStepSize(
+                baseStepSize: params.baseStepSize,
+                subband: .ll,
+                decompositionLevel: 0,
+                totalLevels: decompositionLevels,
                 reversible: false
             )
-
-            // LL subband
-            let llStep = stepSizes["LL_0"] ?? 1.0
-            let (llExp, llMant) = J2KStepSizeCalculator.encodeStepSize(llStep)
+            let llRangeBits = baseRangeBits + 0 // G_LL = 0
+            let (llExp, llMant) = Self.encodeJ2KStepSize(llStep, rangeBits: llRangeBits)
             segment.writeUInt16(UInt16((llExp & 0x1F) << 11 | (llMant & 0x7FF)))
 
-            // Detail subbands
-            if config.decompositionLevels > 0 {
-                for level in 1...config.decompositionLevels {
+            // Detail subbands: QCD lists from coarsest to finest.
+            // In the encoder, the quantizer uses decompositionLevel = decomLevel
+            // where decomLevel=1 is finest detail and decomLevel=NL is coarsest.
+            // QCD order: coarsest first → iterate NL down to 1.
+            if decompositionLevels > 0 {
+                for level in (1...decompositionLevels).reversed() {
                     for subband in [J2KSubband.hl, .lh, .hh] {
-                        let key = "\(subband.rawValue)_\(level)"
-                        let step = stepSizes[key] ?? 1.0
-                        let (exp, mant) = J2KStepSizeCalculator.encodeStepSize(step)
+                        let step = J2KStepSizeCalculator.calculateStepSize(
+                            baseStepSize: params.baseStepSize,
+                            subband: subband,
+                            decompositionLevel: level,
+                            totalLevels: decompositionLevels,
+                            reversible: false
+                        )
+                        // Include subband gain in R_b as required by ISO 15444-1
+                        // Eq. E.4: R_b = I + G_b where G_b is subband gain exponent.
+                        // OpenJPEG's decoder uses gain=0 internally but compensates
+                        // with adjusted DWT normalization (two_invK), so the net
+                        // result is the same either way for OPJ decoding. Our own
+                        // decoder expects the standard gains.
+                        let subbandGain: Int
+                        switch subband {
+                        case .ll: subbandGain = 0
+                        case .hl, .lh: subbandGain = 1
+                        case .hh: subbandGain = 2
+                        }
+                        let rangeBits = baseRangeBits + subbandGain
+                        let (exp, mant) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
                         segment.writeUInt16(UInt16((exp & 0x1F) << 11 | (mant & 0x7FF)))
                     }
                 }
@@ -1153,58 +1454,372 @@ struct EncoderPipeline: Sendable {
         writer.writeMarkerSegment(J2KMarker.sot.rawValue, segmentData: segment.data)
     }
 
-    /// Generates the tile bitstream data from code blocks and layers.
-    private func generateTileData(
+    /// Applies rate control layer truncation to code blocks.
+    ///
+    /// For each code block, the quality layer specifies how many coding passes
+    /// to include. Blocks not in the layer are excluded entirely. Blocks with
+    /// fewer passes than encoded are truncated using per-pass byte boundaries.
+    ///
+    /// After PCRD layer truncation, a global rate envelope is applied to ensure
+    /// the total output does not exceed the target bitrate derived from the
+    /// quality parameter.
+    private func applyLayerTruncation(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer]
+    ) -> [J2KCodeBlock] {
+        // Step 1: Apply PCRD layer truncation if available.
+        // Merge contributions from ALL layers — each layer's contributions
+        // only contains blocks updated in that layer, so we need to take
+        // the maximum pass count across all layers for each block.
+        var truncated: [J2KCodeBlock]
+        var mergedContributions = [Int: Int]()
+        for layer in layers {
+            for (blockIdx, passes) in layer.codeBlockContributions {
+                mergedContributions[blockIdx] = max(
+                    mergedContributions[blockIdx] ?? 0, passes
+                )
+            }
+        }
+        if !mergedContributions.isEmpty {
+            truncated = codeBlocks.map { block in
+                let maxPasses = mergedContributions[block.index]
+                if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
+                    print("TRUNCATION: block=\(block.index) passes=\(block.passeCount) layer_maxPasses=\(String(describing: maxPasses)) data=\(block.data.count)")
+                }
+                // Blocks not selected by PCRD should contribute zero data
+                guard let maxPasses = maxPasses, maxPasses > 0 else {
+                    return J2KCodeBlock(
+                        index: block.index,
+                        x: block.x, y: block.y,
+                        width: block.width, height: block.height,
+                        subband: block.subband,
+                        componentIndex: block.componentIndex,
+                        resolutionLevel: block.resolutionLevel,
+                        data: Data(),
+                        passeCount: 0,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    )
+                }
+                // If PCRD assigned all passes, no truncation needed
+                guard maxPasses < block.passeCount,
+                      block.passeCount > 0 else {
+                    return block
+                }
+
+                // Use the properly terminated snapshot data if available.
+                // A prefix of the final MQ stream may contain carry-corrupted
+                // bytes from later passes, causing decoders to misinterpret
+                // the truncated data.
+                let truncatedData: Data
+                if !block.perPassSnapshotData.isEmpty && maxPasses <= block.perPassSnapshotData.count {
+                    truncatedData = block.perPassSnapshotData[maxPasses - 1]
+                } else {
+                    let truncatedLength: Int
+                    if !block.cumulativePassBytes.isEmpty && maxPasses <= block.cumulativePassBytes.count {
+                        truncatedLength = min(block.cumulativePassBytes[maxPasses - 1], block.data.count)
+                    } else if !block.passSegmentLengths.isEmpty && maxPasses <= block.passSegmentLengths.count {
+                        truncatedLength = block.passSegmentLengths.prefix(maxPasses).reduce(0, +)
+                    } else {
+                        truncatedLength = Int(Double(block.data.count) * Double(maxPasses) / Double(block.passeCount))
+                    }
+                    let safeLength = min(max(0, truncatedLength), block.data.count)
+                    truncatedData = block.data.prefix(safeLength)
+                }
+
+                return J2KCodeBlock(
+                    index: block.index,
+                    x: block.x, y: block.y,
+                    width: block.width, height: block.height,
+                    subband: block.subband,
+                    componentIndex: block.componentIndex,
+                    resolutionLevel: block.resolutionLevel,
+                    data: truncatedData,
+                    passeCount: maxPasses,
+                    zeroBitPlanes: block.zeroBitPlanes,
+                    passSegmentLengths: block.passSegmentLengths.isEmpty
+                        ? [] : Array(block.passSegmentLengths.prefix(maxPasses)),
+                    cumulativePassBytes: block.cumulativePassBytes.isEmpty
+                        ? [] : Array(block.cumulativePassBytes.prefix(maxPasses))
+                )
+            }
+        } else {
+            truncated = codeBlocks
+        }
+
+        // Step 2: Global rate envelope — only apply when PCRD layer truncation
+        // was NOT applied. When PCRD has already optimized the allocation,
+        // a secondary heuristic truncation degrades quality.
+        if !config.lossless, case .constantQuality = config.bitrateMode,
+           mergedContributions.isEmpty {
+            let quality = config.quality
+            guard quality < 1.0 else { return truncated }
+
+            // Target bits per pixel: quadratic mapping matching J2KRateControl
+            let bpp = 0.1 + 7.9 * pow(quality, 1.5)
+            // bpp already accounts for all components. Estimate spatial
+            // pixel count by dividing total code block samples by components.
+            let componentCount = max(1, Set(truncated.map { $0.componentIndex }).count)
+            let codeBlockPixels = truncated.reduce(0) { $0 + $1.width * $1.height }
+            let imagePixels = codeBlockPixels / componentCount
+            let targetBytes = Int(bpp * Double(imagePixels) / 8.0)
+            let actualBytes = truncated.reduce(0) { $0 + $1.data.count }
+
+            guard actualBytes > targetBytes, targetBytes > 0 else { return truncated }
+
+            // Resolution-aware truncation: distribute truncation more
+            // uniformly across resolution levels. LL (res 0) gets light
+            // protection but NOT full immunity, while higher-frequency
+            // subbands get proportionally more truncation.
+            // This prevents the previous issue of destroying all edge detail
+            // while leaving LL completely untouched.
+            let maxRes = truncated.map { $0.resolutionLevel }.max() ?? 0
+            let bytesToRemove = actualBytes - targetBytes
+
+            // Calculate how much each resolution level contributes
+            struct ResInfo {
+                var bytes: Int = 0
+                var weight: Double = 0.0  // truncation aggressiveness
+            }
+            var resInfos = [Int: ResInfo]()
+            for block in truncated where block.data.count > 0 {
+                let res = block.resolutionLevel
+                resInfos[res, default: ResInfo()].bytes += block.data.count
+                // Uniform truncation weight with mild LL protection:
+                // LL (res 0) = 0.3, mid res = 0.6-0.8, highest res = 1.0
+                // This distributes truncation more evenly for better quality
+                resInfos[res, default: ResInfo()].weight = maxRes > 0
+                    ? 0.3 + 0.7 * Double(res) / Double(maxRes) : 1.0
+            }
+
+            // Compute weighted total for distributing truncation
+            let weightedTotal = resInfos.reduce(0.0) { $0 + $1.value.weight * Double($1.value.bytes) }
+            guard weightedTotal > 0 else { return truncated }
+
+            // Per-resolution truncation ratio
+            var resTruncRatio = [Int: Double]()
+            for (res, info) in resInfos {
+                let share = info.weight * Double(info.bytes) / weightedTotal
+                let bytesFromThisRes = Double(bytesToRemove) * share
+                resTruncRatio[res] = max(0.0, 1.0 - bytesFromThisRes / Double(info.bytes))
+            }
+
+            truncated = truncated.map { block in
+                guard block.data.count > 0, block.passeCount > 0 else { return block }
+
+                let ratio = resTruncRatio[block.resolutionLevel] ?? 1.0
+                guard ratio < 1.0 else { return block }
+
+                // Determine truncated pass count and data length
+                let newPasses = max(1, Int(ceil(Double(block.passeCount) * ratio)))
+                let newLength: Int
+                if !block.cumulativePassBytes.isEmpty && newPasses <= block.cumulativePassBytes.count {
+                    newLength = min(block.cumulativePassBytes[newPasses - 1], block.data.count)
+                } else {
+                    newLength = max(1, Int(Double(block.data.count) * ratio))
+                }
+                let safeLength = min(newLength, block.data.count)
+
+                return J2KCodeBlock(
+                    index: block.index,
+                    x: block.x, y: block.y,
+                    width: block.width, height: block.height,
+                    subband: block.subband,
+                    componentIndex: block.componentIndex,
+                    resolutionLevel: block.resolutionLevel,
+                    data: block.data.prefix(safeLength),
+                    passeCount: min(newPasses, block.passeCount),
+                    zeroBitPlanes: block.zeroBitPlanes,
+                    passSegmentLengths: block.passSegmentLengths.isEmpty
+                        ? [] : Array(block.passSegmentLengths.prefix(newPasses)),
+                    cumulativePassBytes: block.cumulativePassBytes.isEmpty
+                        ? [] : Array(block.cumulativePassBytes.prefix(newPasses))
+                )
+            }
+        }
+
+        return truncated
+    }
+
+    /// Generates the tile bitstream data from code blocks and layers.
+    ///
+    /// Uses LRCP progression: Layer → Resolution → Component → Precinct.
+    /// Each packet uses raw bit packet headers per ISO/IEC 15444-1 Annex B.
+    private func generateTileData(
+        codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
+        decompositionLevels: Int, componentCount: Int
     ) throws -> Data {
         var data = Data()
 
-        // Write packet data for each layer
-        // For simplicity, write all code block data in a single packet per layer
-        let headerWriter = PacketHeaderWriter()
+        // Apply rate control truncation: truncate code blocks per the quality layer
+        let effectiveBlocks = applyLayerTruncation(codeBlocks: codeBlocks, layers: layers)
 
-        if layers.isEmpty || codeBlocks.isEmpty {
-            // Write an empty packet
-            let emptyHeader = PacketHeader(
-                layerIndex: 0, resolutionLevel: 0, componentIndex: 0,
-                precinctIndex: 0, isEmpty: true
-            )
-            data.append(try headerWriter.encode(emptyHeader))
-        } else {
-            // For the first layer, include all code block data
-            let inclusions = codeBlocks.map { !$0.data.isEmpty }
-            let passes = codeBlocks.map { $0.passeCount }
-            let lengths = codeBlocks.map { $0.data.count }
+        // Group code blocks by (resolutionLevel, componentIndex, subband)
+        struct BandKey: Hashable {
+            let res: Int; let comp: Int; let subband: J2KSubband
+        }
+        var blocksByBand: [BandKey: [J2KCodeBlock]] = [:]
+        for block in effectiveBlocks {
+            let key = BandKey(res: block.resolutionLevel, comp: block.componentIndex, subband: block.subband)
+            blocksByBand[key, default: []].append(block)
+        }
 
-            let header = PacketHeader(
-                layerIndex: 0,
-                resolutionLevel: 0,
-                componentIndex: 0,
-                precinctIndex: 0,
-                isEmpty: false,
-                codeBlockInclusions: inclusions,
-                codingPasses: passes,
-                dataLengths: lengths
-            )
+        // Use actual decomposition levels and component count from the pipeline,
+        // not from code blocks, to ensure every expected packet is emitted even
+        // when subbands contain all-zero code blocks.
+        let numResolutions = decompositionLevels + 1
+        let numComponents = componentCount
+        let cbWidth = config.codeBlockSize.width
+        let cbHeight = config.codeBlockSize.height
 
-            data.append(try headerWriter.encode(header))
+        // LRCP: 1 layer, iterate Resolution → Component
+        for resLevel in 0..<numResolutions {
+            for compIdx in 0..<numComponents {
+                // Sub-bands for this resolution
+                let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
 
-            // Append code block bitstream data
-            for block in codeBlocks {
-                data.append(block.data)
-            }
+                var bandBlocksList: [[J2KCodeBlock]] = []
+                for sb in subbands {
+                    let key = BandKey(res: resLevel, comp: compIdx, subband: sb)
+                    bandBlocksList.append(blocksByBand[key] ?? [])
+                }
 
-            // Write empty packets for remaining layers
-            for layerIdx in 1..<layers.count {
-                let emptyHeader = PacketHeader(
-                    layerIndex: layerIdx, resolutionLevel: 0, componentIndex: 0,
-                    precinctIndex: 0, isEmpty: true
+                let packetData = try encodePacket(
+                    bandBlocks: bandBlocksList,
+                    codeBlockWidth: cbWidth,
+                    codeBlockHeight: cbHeight
                 )
-                data.append(try headerWriter.encode(emptyHeader))
+                data.append(packetData)
             }
         }
 
         return data
+    }
+
+    /// Encodes a single JPEG 2000 packet with ISO/IEC 15444-1 compliant packet header.
+    ///
+    /// Per ISO/IEC 15444-1 Annex B.10, inclusion and zero bit-plane information
+    /// are encoded using tag trees. Code-block order within each band follows
+    /// raster (row-major) scan order.
+    ///
+    /// - Parameters:
+    ///   - bandBlocks: Array of code-block arrays, one per sub-band.
+    ///   - codeBlockWidth: Nominal code-block width.
+    ///   - codeBlockHeight: Nominal code-block height.
+    private func encodePacket(
+        bandBlocks: [[J2KCodeBlock]],
+        codeBlockWidth: Int,
+        codeBlockHeight: Int
+    ) throws -> Data {
+        var writer = J2KBitWriter()
+        // Enable JPEG 2000 byte stuffing for packet headers (ISO 15444-1 B.10.1)
+        writer.setByteStuffing(true)
+
+        // Check if any code block across all bands has data
+        let anyIncluded = bandBlocks.contains { band in
+            band.contains { !$0.data.isEmpty && $0.passeCount > 0 }
+        }
+
+        if !anyIncluded {
+            writer.writeBit(false) // empty packet
+            writer.alignToByte()
+            return writer.data
+        }
+
+        // Non-empty packet
+        writer.writeBit(true)
+
+        // Collect included blocks in band order for appending data later
+        var allIncludedBlocks: [J2KCodeBlock] = []
+
+        // Process each band completely before moving to next
+        for band in bandBlocks {
+            guard !band.isEmpty else { continue }
+
+            // Compute code-block grid dimensions for this band
+            let blocksX = band.map { $0.x / codeBlockWidth }.max()! + 1
+            let blocksY = band.map { $0.y / codeBlockHeight }.max()! + 1
+
+            // Create inclusion tag tree: value = 0 (included at layer 0), 999 (not included)
+            var inclusionTree = J2KTagTree(width: blocksX, height: blocksY)
+            // Create zero bit-plane tag tree
+            var zbpTree = J2KTagTree(width: blocksX, height: blocksY)
+
+            // Set tag tree values
+            for (idx, block) in band.enumerated() {
+                let included = !block.data.isEmpty && block.passeCount > 0
+                inclusionTree.setValue(leafIndex: idx, value: included ? 0 : 999)
+                zbpTree.setValue(leafIndex: idx, value: Int32(block.zeroBitPlanes))
+            }
+
+            // Encode each code-block in raster order
+            for (idx, block) in band.enumerated() {
+                let included = !block.data.isEmpty && block.passeCount > 0
+
+                // 1. Inclusion: tag tree encode for layer 0 (threshold = 1)
+                inclusionTree.encode(writer: &writer, leafIndex: idx, threshold: 1)
+
+                guard included else { continue }
+
+                // 2. Zero bit-planes: tag tree encode (encode exact value P)
+                zbpTree.encode(writer: &writer, leafIndex: idx, threshold: Int32(block.zeroBitPlanes) + 1)
+
+                // 3. Number of coding passes per ISO 15444-1 Table B.4
+                let passes = block.passeCount
+                if passes == 1 {
+                    // 0
+                    writer.writeBit(false)
+                } else if passes == 2 {
+                    // 10
+                    writer.writeBit(true); writer.writeBit(false)
+                } else if passes <= 5 {
+                    // 11 + 2-bit value (passes - 3)
+                    writer.writeBit(true); writer.writeBit(true)
+                    let val = passes - 3
+                    writer.writeBit(val & 0x02 != 0)
+                    writer.writeBit(val & 0x01 != 0)
+                } else if passes <= 36 {
+                    // 1111 + 5-bit value (passes - 6) per ISO 15444-1 Table B.4
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(true); writer.writeBit(true)
+                    try writer.writeBits(UInt32(passes - 6), count: 5)
+                } else {
+                    // 1111 + 11111 + 7-bit value (passes - 37) per ISO 15444-1 Table B.4
+                    writer.writeBit(true); writer.writeBit(true)
+                    writer.writeBit(true); writer.writeBit(true)
+                    try writer.writeBits(31, count: 5)
+                    try writer.writeBits(UInt32(passes - 37), count: 7)
+                }
+
+                // 4. Data length per ISO 15444-1 B.10.7
+                // Total bits = Lblock + floor(log2(numpasses))
+                let length = block.data.count
+                let passLog = passes > 1 ? Int(log2(Double(passes))) : 0
+                var lblock = 3
+                var totalBits = lblock + passLog
+                let bitsNeeded = length > 0 ? (Int(log2(Double(length))) + 1) : 1
+                while totalBits < bitsNeeded {
+                    writer.writeBit(true)
+                    lblock += 1
+                    totalBits = lblock + passLog
+                }
+                writer.writeBit(false)
+                if totalBits > 0 {
+                    try writer.writeBits(UInt32(length), count: totalBits)
+                }
+                allIncludedBlocks.append(block)
+            }
+        }
+
+        // Pad to byte boundary
+        writer.alignToByte()
+
+        var packetData = writer.data
+
+        // Append code-block bitstream data in band order
+        for block in allIncludedBlocks {
+            packetData.append(block.data)
+        }
+
+        return packetData
     }
 
     // MARK: - Progress Reporting
@@ -1224,5 +1839,50 @@ struct EncoderPipeline: Sendable {
             progress: stageProgress,
             overallProgress: min(overall, 1.0)
         ))
+    }
+
+    // MARK: - JPEG 2000 Step Size Encoding
+
+    /// Encodes a quantization step size as a JPEG 2000 (ε_b, μ_b) pair.
+    ///
+    /// Per ISO/IEC 15444-1 Eq. E.3, the decoder reconstructs the step as:
+    /// ```
+    ///   Δ_b = 2^(R_b - ε_b) × (1 + μ_b / 2^11)
+    /// ```
+    /// Given the actual step `Δ_b` and `R_b` (rangeBits = bitDepth + guardBits),
+    /// we solve:
+    /// ```
+    ///   ε_b = R_b - floor(log2(Δ_b))
+    ///   μ_b = round((Δ_b / 2^(R_b - ε_b) - 1) × 2048)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - step: The actual quantization step size used during encoding.
+    ///   - rangeBits: R_b = image bit depth + guard bits.
+    /// - Returns: Tuple of (exponent, mantissa) for the QCD marker.
+    static func encodeJ2KStepSize(_ step: Double, rangeBits: Int) -> (exponent: Int, mantissa: Int) {
+        guard step > 0 else { return (0, 0) }
+
+        // floor(log2(step)) gives the power-of-2 part
+        let log2Step = Foundation.log2(step)
+        let floorLog2 = Int(Foundation.floor(log2Step))
+
+        // ε_b = R_b - floorLog2
+        let exponent = rangeBits - floorLog2
+        let clampedExponent = max(0, min(31, exponent))
+
+        // Reconstruct what 2^(R_b - ε_b) would be with clamped exponent
+        let basePow = Foundation.pow(2.0, Double(rangeBits - clampedExponent))
+
+        // μ_b = round((step / basePow - 1) × 2048)
+        let mantissa: Int
+        if basePow > 0 {
+            let normalized = step / basePow
+            mantissa = max(0, min(2047, Int((normalized - 1.0) * 2048.0 + 0.5)))
+        } else {
+            mantissa = 0
+        }
+
+        return (clampedExponent, mantissa)
     }
 }

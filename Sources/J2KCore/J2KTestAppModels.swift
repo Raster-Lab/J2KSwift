@@ -916,28 +916,28 @@ public struct EncodeConfiguration: Sendable, Equatable {
             switch self {
             case .lossless:
                 return EncodeConfiguration(
-                    quality: 1.0, tileWidth: 256, tileHeight: 256,
+                    quality: 1.0, tileWidth: 0, tileHeight: 0,
                     decompositionLevels: 5, qualityLayers: 1,
                     progressionOrder: .lrcp, waveletType: .fiveThree,
                     mctEnabled: true, htj2kEnabled: false
                 )
             case .highQuality:
                 return EncodeConfiguration(
-                    quality: 0.95, tileWidth: 256, tileHeight: 256,
+                    quality: 0.95, tileWidth: 0, tileHeight: 0,
                     decompositionLevels: 5, qualityLayers: 5,
                     progressionOrder: .lrcp, waveletType: .nineSevenFloat,
                     mctEnabled: true, htj2kEnabled: false
                 )
             case .visuallyLossless:
                 return EncodeConfiguration(
-                    quality: 0.85, tileWidth: 256, tileHeight: 256,
+                    quality: 0.85, tileWidth: 0, tileHeight: 0,
                     decompositionLevels: 5, qualityLayers: 5,
                     progressionOrder: .rlcp, waveletType: .nineSevenFloat,
                     mctEnabled: true, htj2kEnabled: false
                 )
             case .maxCompression:
                 return EncodeConfiguration(
-                    quality: 0.5, tileWidth: 512, tileHeight: 512,
+                    quality: 0.5, tileWidth: 0, tileHeight: 0,
                     decompositionLevels: 6, qualityLayers: 10,
                     progressionOrder: .cprl, waveletType: .nineSevenFloat,
                     mctEnabled: true, htj2kEnabled: false
@@ -949,8 +949,8 @@ public struct EncodeConfiguration: Sendable, Equatable {
     /// Creates a default encoding configuration.
     public init(
         quality: Double = 0.9,
-        tileWidth: Int = 256,
-        tileHeight: Int = 256,
+        tileWidth: Int = 0,
+        tileHeight: Int = 0,
         decompositionLevels: Int = 5,
         qualityLayers: Int = 5,
         progressionOrder: ProgressionOrderChoice = .lrcp,
@@ -1039,6 +1039,14 @@ public struct EncodeOperationResult: Sendable, Equatable {
 @Observable
 @MainActor
 public final class EncodeViewModel {
+    /// Injectable encoder closure: (pixelData, width, height, componentCount, config, progressCallback) -> encodedData.
+    /// The progress callback receives (stageName, stageProgress 0..1).
+    public var encoderFunction: (@Sendable (Data, Int, Int, Int, EncodeConfiguration, @Sendable (String, Double) -> Void) throws -> Data)?
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+    /// Injectable image parser: converts raw image file data (PNG/TIFF/BMP) to (planarPixelData, width, height, componentCount).
+    public var imageParserFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// URL of the selected input image.
     public var inputImageURL: URL?
     /// Raw data of the selected input image.
@@ -1065,6 +1073,10 @@ public final class EncodeViewModel {
     public var batchResults: [EncodeOperationResult] = []
     /// Whether batch encoding mode is active.
     public var isBatchMode: Bool = false
+    /// Currently active preset (nil when config is manually customized).
+    public var selectedPreset: EncodeConfiguration.Preset?
+    /// Guard flag to prevent onChange from clearing selectedPreset during applyPreset.
+    public var isApplyingPreset: Bool = false
 
     /// Human-readable encoded file size string.
     public var encodedSizeString: String {
@@ -1081,8 +1093,24 @@ public final class EncodeViewModel {
     /// Human-readable encoding time string.
     public var encodingTimeString: String {
         guard let result = lastResult else { return "—" }
-        let ms = result.encodingTime * 1000
-        return String(format: "%.1f ms", ms)
+        return Self.formatDuration(result.encodingTime)
+    }
+
+    /// Formats a duration in seconds to a human-readable string.
+    ///
+    /// - Under 1 s: "123.4 ms"
+    /// - 1–60 s: "12.3 s"
+    /// - Over 60 s: "2m 15.1s"
+    public static func formatDuration(_ seconds: TimeInterval) -> String {
+        if seconds < 1 {
+            return String(format: "%.1f ms", seconds * 1000)
+        } else if seconds < 60 {
+            return String(format: "%.1f s", seconds)
+        } else {
+            let mins = Int(seconds) / 60
+            let secs = seconds - Double(mins * 60)
+            return String(format: "%dm %04.1fs", mins, secs)
+        }
     }
 
     public init() {}
@@ -1091,7 +1119,10 @@ public final class EncodeViewModel {
     ///
     /// - Parameter preset: The preset to apply.
     public func applyPreset(_ preset: EncodeConfiguration.Preset) {
+        isApplyingPreset = true
         configuration = preset.configuration
+        selectedPreset = preset
+        isApplyingPreset = false
     }
 
     /// Sets the input image from a dropped file URL.
@@ -1126,10 +1157,11 @@ public final class EncodeViewModel {
         comparisonConfigurations.remove(at: index)
     }
 
-    /// Simulates an encoding operation and updates state.
+    /// Encodes the selected input image using the injected encoder pipeline.
     ///
-    /// In the real application this would invoke `J2KEncoder`; here it
-    /// produces plausible synthetic metrics for GUI testing purposes.
+    /// Parses the input file to planar pixel data, then runs the encoder
+    /// on a background thread with real per-stage timing from the codec's
+    /// progress callback.
     ///
     /// - Parameter session: The test session for recording results.
     public func encode(session: TestSession) async {
@@ -1144,44 +1176,105 @@ public final class EncodeViewModel {
 
         stageProgress = PipelineStage.allCases.map { StageProgress(stage: $0) }
 
-        let stages = PipelineStage.allCases
-        var stageTiming: [PipelineStage: TimeInterval] = [:]
-        for (index, stage) in stages.enumerated() {
-            stageProgress[index] = StageProgress(stage: stage, progress: 0, isActive: true)
-            statusMessage = "Encoding: \(stage.rawValue)…"
-
-            let stageStart = Date()
-            // Simulate work
-            try? await Task.sleep(nanoseconds: 10_000_000)
-            let stageDuration = Date().timeIntervalSince(stageStart)
-            stageTiming[stage] = stageDuration
-
-            stageProgress[index] = StageProgress(stage: stage, progress: 1.0, duration: stageDuration, isActive: false)
-            progress = Double(index + 1) / Double(stages.count)
-        }
-
         let inputFileName = inputImageURL?.lastPathComponent ?? "image"
-        let simulatedEncodedSize = max(1, Int(Double(imageData.count) * (1.0 - configuration.quality * 0.9)))
-        let totalTime = stageTiming.values.reduce(0, +)
+        let overallStart = Date()
 
-        lastResult = EncodeOperationResult(
-            inputFileName: inputFileName,
-            inputSize: imageData.count,
-            encodedSize: simulatedEncodedSize,
-            encodingTime: totalTime,
-            stageTiming: stageTiming,
-            succeeded: true
-        )
-        outputData = Data(count: simulatedEncodedSize)
+        do {
+            // Parse image file to planar pixel data
+            guard let parser = imageParserFunction else {
+                throw J2KError.invalidParameter("Image parser not configured")
+            }
+            guard let encoder = encoderFunction else {
+                throw J2KError.invalidParameter("Encoder not configured")
+            }
 
-        let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
-        await session.addResult(result.markPassed(duration: totalTime, metrics: [
-            "compressionRatio": lastResult?.compressionRatio ?? 0,
-            "encodedSize": Double(simulatedEncodedSize)
-        ]))
+            statusMessage = "Parsing image…"
+            let (planarData, width, height, componentCount) = try parser(imageData)
 
-        isEncoding = false
-        statusMessage = "Encoding complete — \(encodedSizeString) at \(compressionRatioString)"
+            // Map codec stage names to PipelineStage
+            let stageNameMap: [String: PipelineStage] = [
+                "Color Transform": .colourTransform,
+                "Wavelet Transform": .dwt,
+                "Quantization": .quantise,
+                "Entropy Coding": .entropyCoding,
+                "Rate Control": .rateControl,
+                "Preprocessing": .packaging,
+                "Codestream Generation": .packaging,
+            ]
+
+            // Thread-safe timing storage for the background encoder thread.
+            // The progress callback is called synchronously on the encoder
+            // thread, so these are only accessed from that single thread.
+            nonisolated(unsafe) var stageStartTimes: [PipelineStage: Date] = [:]
+            nonisolated(unsafe) var stageTiming: [PipelineStage: TimeInterval] = [:]
+            for stage in PipelineStage.allCases {
+                stageTiming[stage] = 0
+            }
+
+            let config = configuration
+
+            let progressCallback: @Sendable (String, Double) -> Void = { stageName, stageProgress in
+                guard let pipelineStage = stageNameMap[stageName] else { return }
+                if stageProgress == 0.0 {
+                    stageStartTimes[pipelineStage] = Date()
+                } else if stageProgress >= 1.0 {
+                    let duration = stageStartTimes[pipelineStage].map { Date().timeIntervalSince($0) } ?? 0
+                    let existing = stageTiming[pipelineStage] ?? 0
+                    stageTiming[pipelineStage] = existing + duration
+                }
+            }
+
+            // Run the encoder on a background thread
+            let encodedData = try await Task.detached(priority: .userInitiated) {
+                try encoder(planarData, width, height, componentCount, config, progressCallback)
+            }.value
+
+            outputData = encodedData
+
+            // Update UI with real timing data
+            for (index, stage) in PipelineStage.allCases.enumerated() {
+                let duration = stageTiming[stage]
+                stageProgress[index] = StageProgress(stage: stage, progress: 1.0, duration: duration, isActive: false)
+            }
+            progress = 1.0
+
+            let totalTime = Date().timeIntervalSince(overallStart)
+            let encodedSize = outputData?.count ?? 0
+
+            lastResult = EncodeOperationResult(
+                inputFileName: inputFileName,
+                inputSize: imageData.count,
+                encodedSize: encodedSize,
+                encodingTime: totalTime,
+                stageTiming: stageTiming,
+                succeeded: true
+            )
+
+            let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
+            await session.addResult(result.markPassed(duration: totalTime, metrics: [
+                "compressionRatio": lastResult?.compressionRatio ?? 0,
+                "encodedSize": Double(encodedSize),
+            ]))
+
+            isEncoding = false
+            statusMessage = "Encoding complete — \(encodedSizeString) at \(compressionRatioString)"
+        } catch {
+            let totalTime = Date().timeIntervalSince(overallStart)
+            lastResult = EncodeOperationResult(
+                inputFileName: inputFileName,
+                inputSize: imageData.count,
+                encodedSize: 0,
+                encodingTime: totalTime,
+                succeeded: false,
+                errorMessage: error.localizedDescription
+            )
+
+            let result = TestResult(testName: "Encode: \(inputFileName)", category: .encode)
+            await session.addResult(result.markFailed(duration: totalTime, message: error.localizedDescription))
+
+            isEncoding = false
+            statusMessage = "Encoding failed: \(error.localizedDescription)"
+        }
     }
 
     /// Runs batch encoding for all selected input URLs.
@@ -1333,6 +1426,9 @@ public struct DecodeOperationResult: Sendable, Equatable {
 @Observable
 @MainActor
 public final class DecodeViewModel {
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// URL of the selected JP2/J2K/JPX input file.
     public var inputFileURL: URL?
     /// Current decoding configuration.
@@ -1488,6 +1584,9 @@ public struct RoundTripMetrics: Sendable, Equatable {
 @Observable
 @MainActor
 public final class RoundTripViewModel {
+    /// Injectable decoder closure: (codestreamData) -> (pixelData, width, height, componentCount).
+    public var decoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int))?
+
     /// The encode view model used as input.
     public var encodeViewModel: EncodeViewModel = EncodeViewModel()
     /// Whether the round-trip pipeline is running.

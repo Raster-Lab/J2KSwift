@@ -7,6 +7,7 @@
 
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
+import AppKit
 import J2KCore
 
 // MARK: - Comparison Mode
@@ -68,14 +69,79 @@ struct ImageComparisonView: View {
                 .frame(maxWidth: 200)
             case .difference:
                 VStack {
-                    ImagePreviewView(imageData: processedData, title: "Difference")
-                    Text("Difference mode highlights pixel-level discrepancies.")
+                    if let diffImage = computeDifferenceImage() {
+                        Image(nsImage: diffImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ImagePreviewView(imageData: processedData, title: "Difference")
+                    }
+                    Text("Amplified pixel difference (10× gain, red channel).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding()
+    }
+
+    /// Computes a difference image between original and processed data.
+    ///
+    /// Returns an NSImage showing amplified absolute per-pixel differences
+    /// mapped to a heat-map (black = identical, red/yellow = large difference).
+    private func computeDifferenceImage() -> NSImage? {
+        guard let origData = originalData,
+              let procData = processedData,
+              let origImage = NSImage(data: origData),
+              let procImage = NSImage(data: procData) else { return nil }
+
+        guard let origCG = origImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let procCG = procImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+
+        let w = min(origCG.width, procCG.width)
+        let h = min(origCG.height, procCG.height)
+        guard w > 0, h > 0 else { return nil }
+
+        let bytesPerRow = w * 4
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let origCtx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                       bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo),
+              let procCtx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo) else { return nil }
+
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        origCtx.draw(origCG, in: rect)
+        procCtx.draw(procCG, in: rect)
+
+        guard let origPixels = origCtx.data?.assumingMemoryBound(to: UInt8.self),
+              let procPixels = procCtx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+
+        guard let diffCtx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                       bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo) else { return nil }
+        guard let diffPixels = diffCtx.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+
+        let gain = 10  // amplification factor
+        let totalPixels = w * h
+
+        for i in 0..<totalPixels {
+            let off = i * 4
+            let dr = abs(Int(origPixels[off]) - Int(procPixels[off]))
+            let dg = abs(Int(origPixels[off + 1]) - Int(procPixels[off + 1]))
+            let db = abs(Int(origPixels[off + 2]) - Int(procPixels[off + 2]))
+            let maxDiff = max(dr, max(dg, db))
+            let amplified = min(255, maxDiff * gain)
+            // Heat map: low diffs → dark red, high diffs → yellow/white
+            diffPixels[off]     = UInt8(min(255, amplified))           // R
+            diffPixels[off + 1] = UInt8(min(255, amplified / 2))      // G
+            diffPixels[off + 2] = 0                                     // B
+            diffPixels[off + 3] = 255                                   // A
+        }
+
+        guard let diffCG = diffCtx.makeImage() else { return nil }
+        return NSImage(cgImage: diffCG, size: NSSize(width: w, height: h))
     }
 }
 #endif

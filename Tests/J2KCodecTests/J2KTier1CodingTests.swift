@@ -202,7 +202,7 @@ final class J2KContextModelingTests: XCTestCase {
         let ctx1h = modeler.significanceContext(
             neighbors: NeighborContribution(
                 horizontal: 1, vertical: 0, diagonal: 0))
-        XCTAssertEqual(ctx1h, .sigPropLL_LH_1h)
+        XCTAssertEqual(ctx1h, .sigPropHL_h)
     }
 
     func testContextModelerHLSubband() throws {
@@ -224,9 +224,9 @@ final class J2KContextModelingTests: XCTestCase {
     func testSignContext() throws {
         let modeler = ContextModeler(subband: .ll)
 
-        // No sign information
+        // No sign information — both contributions zero → context 9 (signHnegVneg)
         let (ctx0, xor0) = modeler.signContext(neighbors: NeighborContribution())
-        XCTAssertEqual(ctx0, .signH0V0)
+        XCTAssertEqual(ctx0, .signHnegVneg)
         XCTAssertFalse(xor0)
 
         // Negative horizontal
@@ -238,15 +238,19 @@ final class J2KContextModelingTests: XCTestCase {
     func testMagnitudeRefinementContext() throws {
         let modeler = ContextModeler(subband: .ll)
 
-        // First refinement
+        // First refinement, no significant neighbors → context 14
         let ctx1 = modeler.magnitudeRefinementContext(firstRefinement: true, neighborsWereSignificant: false)
         XCTAssertEqual(ctx1, .magRef1)
 
-        // Second refinement, no neighbors
-        let ctx2no = modeler.magnitudeRefinementContext(firstRefinement: false, neighborsWereSignificant: false)
-        XCTAssertEqual(ctx2no, .magRef2noSig)
+        // First refinement, with significant neighbors → context 15
+        let ctx1sig = modeler.magnitudeRefinementContext(firstRefinement: true, neighborsWereSignificant: true)
+        XCTAssertEqual(ctx1sig, .magRef2noSig)
 
-        // Second refinement, with neighbors
+        // Subsequent refinement, no neighbors → context 16
+        let ctx2no = modeler.magnitudeRefinementContext(firstRefinement: false, neighborsWereSignificant: false)
+        XCTAssertEqual(ctx2no, .magRef2sig)
+
+        // Subsequent refinement, with neighbors → context 16 (always 16 for subsequent)
         let ctx2sig = modeler.magnitudeRefinementContext(firstRefinement: false, neighborsWereSignificant: true)
         XCTAssertEqual(ctx2sig, .magRef2sig)
     }
@@ -521,7 +525,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         let coder = BitPlaneCoder(width: 4, height: 4, subband: .ll)
         let coefficients = [Int32](repeating: 0, count: 16)
 
-        let (data, passCount, zeroBitPlanes, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
 
         XCTAssertGreaterThanOrEqual(zeroBitPlanes, 8, "All zero coefficients should have all zero bit-planes")
     }
@@ -535,7 +539,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         coefficients[5] = -50
         coefficients[10] = 25
 
-        let (data, passCount, zeroBitPlanes, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
 
         XCTAssertGreaterThan(data.count, 0, "Encoded data should not be empty")
         XCTAssertGreaterThan(passCount, 0, "Should have at least one coding pass")
@@ -567,7 +571,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
         let original = [Int32](repeating: 0, count: width * height)
 
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         // For all zeros, we should have all zero bit-planes
         XCTAssertGreaterThanOrEqual(
@@ -589,7 +593,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         original[10] = 25
         original[15] = 127
 
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         XCTAssertGreaterThan(data.count, 0, "Encoded data should not be empty")
         XCTAssertGreaterThan(passCount, 0, "Should have at least one coding pass")
@@ -609,7 +613,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         original[5] = 50
         original[6] = -50
 
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         XCTAssertGreaterThan(data.count, 0, "Encoded data should not be empty")
         XCTAssertGreaterThan(passCount, 0, "Should have at least one coding pass")
@@ -629,7 +633,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
             original[i] = sign * Int32((i * 17) % 2000)
         }
 
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(coefficients: original, bitDepth: bitDepth)
 
         XCTAssertGreaterThan(data.count, 0, "Encoded data should not be empty")
         XCTAssertGreaterThan(passCount, 0, "Should have at least one coding pass")
@@ -997,7 +1001,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
         original[10] = 25
         original[15] = -10
 
-        let (data, passCount, zeroBitPlanes, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
             coefficients: original,
             bitDepth: bitDepth
         )
@@ -1029,7 +1033,7 @@ final class J2KBitPlaneCoderTests: XCTestCase {
                 original[i] = sign * Int32((i * 11) % 512)
             }
 
-            let (data, passCount, zeroBitPlanes, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
                 coefficients: original,
                 bitDepth: bitDepth
             )
@@ -1108,7 +1112,7 @@ final class J2KBypassModeTests: XCTestCase {
             coefficients[i] = sign * Int32((i % 100) + 1)
         }
 
-        let (data, passCount, zeroBitPlanes, _) = try coder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _, _) = try coder.encode(
             coefficients: coefficients,
             bitDepth: 8
         )
@@ -1130,7 +1134,7 @@ final class J2KBypassModeTests: XCTestCase {
 
         // Encode without bypass
         let normalCoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (normalData, normalPasses, normalZero, _) = try normalCoder.encode(
+        let (normalData, normalPasses, normalZero, _, _, _, _) = try normalCoder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -1138,7 +1142,7 @@ final class J2KBypassModeTests: XCTestCase {
         // Encode with bypass
         let bypassOptions = CodingOptions(bypassEnabled: true, bypassThreshold: 5)
         let bypassCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: bypassOptions)
-        let (bypassData, bypassPasses, bypassZero, _) = try bypassCoder.encode(
+        let (bypassData, bypassPasses, bypassZero, _, _, _, _) = try bypassCoder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -1648,7 +1652,7 @@ final class J2KTerminationModeTests: XCTestCase {
             coefficients[i] = Int32((i % 50) - 25)
         }
 
-        let (data, passCount, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        let (data, passCount, _, _, _, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
 
         XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
         XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
@@ -1663,7 +1667,7 @@ final class J2KTerminationModeTests: XCTestCase {
             coefficients[i] = Int32((i % 50) - 25)
         }
 
-        let (data, passCount, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        let (data, passCount, _, _, _, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
 
         XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
         XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
@@ -1678,7 +1682,7 @@ final class J2KTerminationModeTests: XCTestCase {
             coefficients[i] = Int32((i % 50) - 25)
         }
 
-        let (data, passCount, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
+        let (data, passCount, _, _, _, _, _) = try coder.encode(coefficients: coefficients, bitDepth: 8)
 
         XCTAssertGreaterThan(data.count, 0, "Should produce encoded data")
         XCTAssertGreaterThan(passCount, 0, "Should have coding passes")
@@ -1701,12 +1705,12 @@ final class J2KTerminationModeTests: XCTestCase {
         // Default termination
         let defaultOptions = CodingOptions(terminationMode: .default)
         let defaultCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: defaultOptions)
-        let (defaultData, _, _, _) = try defaultCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        let (defaultData, _, _, _, _, _, _) = try defaultCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
 
         // Predictable termination
         let predictableOptions = CodingOptions(terminationMode: .predictable)
         let predictableCoder = BitPlaneCoder(width: width, height: height, subband: .ll, options: predictableOptions)
-        let (predictableData, _, _, _) = try predictableCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
+        let (predictableData, _, _, _, _, _, _) = try predictableCoder.encode(coefficients: coefficients, bitDepth: bitDepth)
 
         // Predictable should produce larger output due to per-pass overhead
         XCTAssertGreaterThanOrEqual(

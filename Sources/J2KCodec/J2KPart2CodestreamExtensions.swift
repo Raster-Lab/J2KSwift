@@ -341,6 +341,10 @@ public struct J2KPart2QuantizationExtensions: Sendable, Equatable {
         // Extended precision may require additional guard bits
         if configuration.extendedPrecisionConfiguration != .default {
             self.extendedGuardBits = UInt8(min(15, configuration.extendedPrecisionConfiguration.guardBits.count))
+        } else if !configuration.lossless {
+            // For lossy (9-7 irreversible) encoding, use 2 guard bits
+            // matching the standard convention (ISO 15444-1) and OpenJPEG.
+            self.extendedGuardBits = 2
         } else {
             self.extendedGuardBits = 2
         }
