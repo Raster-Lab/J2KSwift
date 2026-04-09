@@ -44,9 +44,9 @@ Or open `Package.swift` in Xcode, select the **J2KTestApp** scheme, and press **
 
 | Screen | Description |
 |--------|-------------|
-| **Encode** | Drag-and-drop encoding with configuration panel and presets |
+| **Encode** | Drag-and-drop encoding with configuration panel, presets, and DICOM support |
 | **Decode** | File-based decoding with ROI selector, resolution stepper, marker inspector |
-| **Round-Trip** | One-click encode/decode/compare with PSNR/SSIM metrics |
+| **Round-Trip** | One-click encode/decode/compare with real PSNR/SSIM/MSE metrics |
 | **Conformance** | Part 1/2/3/10/15 conformance matrix dashboard |
 | **Validation** | Codestream syntax and file format validators |
 | **Performance** | Benchmark runner with live charts and regression detection |
@@ -332,6 +332,257 @@ let encoded = try mqCoder.encode(quantized)
 
 // Result: encoded JPEG 2000 coefficient data
 ```
+
+## 🔧 Command-Line Interface (CLI)
+
+J2KSwift includes a comprehensive CLI tool (`j2k`) for encoding, decoding, transcoding, and analysing JPEG 2000 images. It also provides OpenJPEG-compatible commands for drop-in replacement.
+
+### Installation
+
+```bash
+swift build -c release
+# Binary at .build/release/j2k
+```
+
+### Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `encode` | Compress image(s) to JPEG 2000 / HTJ2K |
+| `decode` | Decompress JPEG 2000 / HTJ2K image(s) |
+| `transcode` | Lossless transcoding between J2K ↔ HTJ2K |
+| `info` | Display codestream / file-format metadata |
+| `validate` | ISO/IEC 15444-4 conformance validation |
+| `benchmark` | Performance benchmarking |
+| `encode3d` | Compress volumetric / 3D data (JP3D) |
+| `decode3d` | Decompress volumetric / 3D data (JP3D) |
+| `jpip server` | Start a JPIP streaming server |
+| `jpip client` | Start a JPIP streaming client |
+| `batch` | Batch-process files in a directory |
+| `compare` | Compare two images (PSNR, MSE, MAE) |
+| `convert` | Convert between image formats |
+| `compress` | OpenJPEG-compatible compress (opj_compress) |
+| `decompress` | OpenJPEG-compatible decompress (opj_decompress) |
+| `dump` | OpenJPEG-compatible info/dump (opj_dump) |
+| `completions` | Generate shell completions (bash/zsh/fish) |
+| `version` | Print version information |
+
+### Encoding
+
+```bash
+# Lossless encoding with 5/3 wavelet
+j2k encode -i input.png -o output.j2k --lossless
+
+# Lossy encoding with quality factor
+j2k encode -i input.png -o output.j2k -q 0.85
+
+# HTJ2K encoding for fast decoding
+j2k encode -i input.png -o output.jph --htj2k
+
+# Tiled encoding with custom parameters
+j2k encode -i input.tif -o output.j2k --tile-size 512x512 --levels 6 --layers 5
+
+# Encode from DICOM
+j2k encode -i scan.dcm -o scan.j2k -q 0.95
+```
+
+### Decoding
+
+```bash
+# Decode to PNG
+j2k decode -i input.j2k -o output.png
+
+# Decode at reduced resolution (half size)
+j2k decode -i input.j2k -o output.png --reduce 1
+
+# Decode a specific region
+j2k decode -i input.j2k -o region.png --region 100,100,400,400
+
+# Decode specific quality layers
+j2k decode -i input.j2k -o output.png --layers 3
+```
+
+### Transcoding
+
+```bash
+# Transcode J2K to HTJ2K (lossless)
+j2k transcode -i input.j2k -o output.jph
+
+# Transcode HTJ2K back to J2K
+j2k transcode -i input.jph -o output.j2k
+```
+
+### Inspection and Validation
+
+```bash
+# Show codestream metadata
+j2k info -i image.j2k
+
+# Validate conformance
+j2k validate -i image.j2k --profile baseline
+
+# Compare two images
+j2k compare -a original.png -b decoded.png
+
+# Run benchmarks
+j2k benchmark -i image.png --iterations 10
+```
+
+### 3D Volumetric (JP3D)
+
+```bash
+# Encode a volume from slice directory
+j2k encode3d -i slices/ -o volume.jp3d --slices 128
+
+# Decode and extract specific slices
+j2k decode3d -i volume.jp3d -o output_dir/ --slice-range 10-20
+```
+
+### JPIP Streaming
+
+```bash
+# Start a JPIP server
+j2k jpip server --port 8080 --image-dir ./images
+
+# Connect with JPIP client
+j2k jpip client --url http://localhost:8080/image.jp2
+```
+
+### Batch Processing
+
+```bash
+# Batch encode all images in a directory
+j2k batch -i ./images/ -o ./encoded/ --mode encode -q 0.9
+
+# Batch decode with parallel processing
+j2k batch -i ./encoded/ -o ./decoded/ --mode decode --threads 8
+```
+
+### OpenJPEG-Compatible Commands
+
+For users migrating from OpenJPEG, J2KSwift provides drop-in replacements:
+
+```bash
+# Compress (same flags as opj_compress)
+j2k compress -i input.png -o output.j2k -r 20,10,1 -n 6 -b 64,64
+
+# Decompress (same flags as opj_decompress)
+j2k decompress -i input.j2k -o output.png -r 1 -l 3
+
+# Dump codestream info (same flags as opj_dump)
+j2k dump -i input.j2k -v
+```
+
+#### Compress Flags
+
+| Flag | Description |
+|------|-------------|
+| `-i` | Input file (PNG, TIFF, BMP, PGM, PPM, RAW, DICOM) |
+| `-o` | Output file (J2K, JP2, JPH) |
+| `-r` | Compression ratios (e.g., `20,10,1`) |
+| `-q` | PSNR values per layer |
+| `-n` | Number of resolution levels (default: 6) |
+| `-b` | Code-block size (default: 64,64) |
+| `-c` | Precinct size |
+| `-t` | Tile size |
+| `-p` | Progression order (LRCP, RLCP, RPCL, PCRL, CPRL) |
+| `-I` | Use irreversible 9/7 wavelet |
+| `--htj2k` | Use HTJ2K (Part 15) encoding |
+| `-SOP` | Insert SOP markers |
+| `-EPH` | Insert EPH markers |
+| `-PLT` | Insert PLT markers |
+| `-TLM` | Insert TLM markers |
+
+#### Decompress Flags
+
+| Flag | Description |
+|------|-------------|
+| `-i` | Input file (J2K, JP2, JPH) |
+| `-o` | Output file (PNG, TIFF, PGM, PPM, BMP, RAW) |
+| `-r` | Reduce factor (0 = full, 1 = half, etc.) |
+| `-l` | Number of quality layers to decode |
+| `-d` | Decode area (x0,y0,x1,y1) |
+| `-t` | Tile index to decode |
+| `-force-rgb` | Force output to RGB |
+| `-threads` | Number of threads |
+
+### Piping and Stdin/Stdout
+
+```bash
+# Pipe from stdin to stdout
+cat image.png | j2k encode -i - -o - --format j2k > encoded.j2k
+
+# Chain encode and decode
+j2k encode -i image.png -o - | j2k decode -i - -o decoded.png
+```
+
+### Shell Completions
+
+```bash
+# Generate Bash completions
+j2k completions bash > /usr/local/etc/bash_completion.d/j2k
+
+# Generate Zsh completions
+j2k completions zsh > ~/.zfunc/_j2k
+
+# Generate Fish completions
+j2k completions fish > ~/.config/fish/completions/j2k.fish
+```
+
+## 🖥️ J2KTestApp User Manual
+
+J2KTestApp is a native macOS SwiftUI application for testing, validating, and inspecting JPEG 2000 encoding/decoding.
+
+### Running
+
+```bash
+swift run J2KTestApp
+```
+
+Or open `Package.swift` in Xcode → select the **J2KTestApp** scheme → **⌘R**.
+
+### Encode Screen
+
+1. **Select Input** — drag-and-drop an image (PNG, TIFF, BMP, DICOM) or click **Browse**.
+2. **Choose Preset** — select Lossless, Lossy High Quality, Visually Lossless, or Maximum Compression.
+3. **Configure** — adjust quality, wavelet type, tile size, decomposition levels, quality layers, progression order, MCT, and HTJ2K toggles.
+4. **Encode** — click the **Encode** button (⌘↵). Progress is shown per-stage.
+5. **Inspect Results** — view encoded size, compression ratio, encoding time, and per-stage timing.
+6. **Compare** — see original vs. encoded side-by-side, overlay, or difference views.
+7. **Save** — export the encoded J2K/JP2 file.
+
+Tabs:
+- **Single** — encode one image at a time.
+- **Compare** — add multiple configurations and compare outputs side-by-side.
+- **Batch** — select a folder and encode all images with the current configuration.
+
+### Decode Screen
+
+1. **Open File** — click **Open File…** and select a JP2, J2K, JPX, JPH, or JHC file.
+2. **Configure** — set resolution level, quality layer, component channel, and optional ROI.
+3. **Decode** — click **Decode** (⌘↵). The decoded image is displayed with actual dimensions.
+4. **Inspect Markers** — toggle the **Markers** panel to see all parsed codestream markers (SOC, SIZ, COD, QCD, SOT, etc.) with offsets and descriptions.
+
+### Round-Trip Validation
+
+1. **Generate Test Image** — choose from Gradient, Checkerboard, Noise, Solid Colour, or Lena-Style patterns.
+2. **Or Drop Image** — drag-and-drop a real image onto the encode input.
+3. **Run Round-Trip** — click **Run Round-Trip** (⌘↵). The pipeline:
+   - Encodes the image using the current configuration.
+   - Decodes the encoded output back to pixels.
+   - Computes PSNR, SSIM, and MSE metrics.
+   - Shows pass/fail badges based on quality thresholds.
+4. **Compare** — toggle Difference view to see pixel-level discrepancies.
+5. **Bit-Exact Badge** — for lossless configurations, verifies exact reconstruction.
+
+### DICOM Support
+
+J2KTestApp can directly load uncompressed DICOM (.dcm) files for encoding to JPEG 2000. This is useful for medical imaging workflows:
+
+1. Drop a DICOM file onto the Encode input area, or use **Browse**.
+2. The app extracts pixel data from the DICOM file (supports 8-bit and 16-bit, grayscale and RGB).
+3. 16-bit data is automatically windowed and scaled to 8-bit for encoding.
+4. Encode as usual — the output J2K/JP2 file is suitable for PACS and DICOM systems.
 
 
 ## ✨ Features
