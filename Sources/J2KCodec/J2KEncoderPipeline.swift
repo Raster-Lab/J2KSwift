@@ -1096,9 +1096,10 @@ struct EncoderPipeline: Sendable {
         guard activeBitPlanes > 0 else { return nil }
 
         // Quality-based limiting: sqrt curve for gentle reduction.
-        // q=0.9 → 91%, q=0.7 → 81%, q=0.5 → 70%, q=0.3 → 57%
+        // q=0.8 → 86%, q=0.7 → 81%, q=0.5 → 70%, q=0.3 → 57%
+        // High quality (q >= 0.85) lets PCRD see all passes for optimal allocation.
         let q = max(0.1, min(1.0, config.quality))
-        if q >= 0.95 { return nil }
+        if q >= 0.85 { return nil }
         let fraction = sqrt(q) * 0.85 + 0.10
         let totalPasses = 3 * activeBitPlanes
         return max(3, Int(Double(totalPasses) * fraction))
