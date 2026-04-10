@@ -1,4 +1,4 @@
-# J2KSwift Copilot Agents & Skills
+c# J2KSwift Copilot Agents & Skills
 
 ## Agents
 
@@ -11,6 +11,7 @@ Invoke agents with `@agent-name` in VS Code Copilot Chat.
 | Compliance | `@compliance` | ISO/IEC 15444-4 conformance, release gates, error tolerances |
 | CLI Dev | `@cli-dev` | `j2k` CLI commands, image I/O, OpenJPEG wrappers, batch processing |
 | GPU Dev | `@gpu-dev` | Metal shaders, Vulkan pipelines, Accelerate/vDSP, SIMD, buffer pools |
+| Benchmark | `@benchmark` | J2KSwift vs OpenJPEG benchmarking, encode/decode speed, quality metrics |
 | JP3D Dev | `@jp3d-dev` | 3D volumetric imaging, CT/MRI volumes, multispectral, Part 10 |
 | File Format Dev | `@file-format-dev` | JP2/JPX/JPM/JPH/MJ2 boxes, format detection, metadata |
 | JPIP Dev | `@jpip-dev` | JPIP client/server, WebSocket, progressive delivery, caching |
@@ -24,6 +25,8 @@ Invoke agents with `@agent-name` in VS Code Copilot Chat.
 @compliance Run the full ISO conformance suite and report results
 @cli-dev Add a --tile-size flag to the encode command
 @gpu-dev Optimize the Metal DWT kernel for Apple M4
+@benchmark Compare J2KSwift vs OpenJPEG encode speed for 4096x4096 lossless
+@benchmark Run lossy quality comparison at 20:1 compression ratio
 @jp3d-dev Implement progressive 3D decoding for CT volumes
 @file-format-dev Add JPH (HTJ2K) file format writing support
 @jpip-dev Fix WebSocket reconnection with session persistence
@@ -74,6 +77,9 @@ Profile the decoder and optimize the slowest stage
 
 @gpu-dev /gpu-benchmark
 Benchmark Metal vs CPU for all DWT modes and optimize
+
+@benchmark /cross-codec-testing
+Benchmark J2KSwift vs OpenJPEG across all sizes and report speed + quality
 
 @testing /medical-imaging-validation
 Validate 16-bit DICOM lossless roundtrip across both codecs

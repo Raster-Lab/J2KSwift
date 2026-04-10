@@ -382,6 +382,7 @@ enum J2KMetalShaderSource {
 
         uint row = gid.y;
         uint halfWidth = (width + 1) / 2;
+        uint halfWidthH = width / 2;
 
         // CDF 9/7 lifting coefficients
         const float alpha = -1.586134342f;
@@ -390,44 +391,42 @@ enum J2KMetalShaderSource {
         const float delta =  0.443506852f;
         const float K     =  1.230174105f;
 
-        // Split into even and odd samples
+        uint idx = row * width;
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+
+        // Step 1: Split into even and odd samples (no scaling yet)
         for (uint i = 0; i < halfWidth; i++) {
-            uint idx = row * width;
-            uint evenIdx = 2 * i;
-            uint oddIdx = min(2 * i + 1, width - 1);
-            lowpass[row * halfWidth + i] = input[idx + evenIdx] * K;
-            highpass[row * (width / 2) + i] = input[idx + oddIdx] / K;
+            lowpass[lBase + i] = input[idx + min(2 * i, width - 1)];
+        }
+        for (uint i = 0; i < halfWidthH; i++) {
+            highpass[hBase + i] = input[idx + 2 * i + 1];
         }
 
-        // Apply lifting steps (simplified for GPU)
-        for (uint i = 0; i < width / 2; i++) {
-            uint hIdx = row * (width / 2) + i;
-            uint lIdx = row * halfWidth;
-            uint left = i;
-            uint right = min(i + 1, halfWidth - 1);
-            highpass[hIdx] += alpha * (lowpass[lIdx + left] + lowpass[lIdx + right]);
+        // Step 2: Predict 1 — d[i] += alpha * (s[i] + s[i+1])
+        for (uint i = 0; i < halfWidthH; i++) {
+            highpass[hBase + i] += alpha * (lowpass[lBase + i] + lowpass[lBase + min(i + 1, halfWidth - 1)]);
         }
+        // Step 3: Update 1 — s[i] += beta * (d[i-1] + d[i])
         for (uint i = 0; i < halfWidth; i++) {
-            uint lIdx = row * halfWidth + i;
-            uint hBase = row * (width / 2);
-            uint left = (i > 0) ? (i - 1) : 0;
-            uint right = min(i, (width / 2) - 1);
-            lowpass[lIdx] += beta * (highpass[hBase + left] + highpass[hBase + right]);
+            float dLeft  = highpass[hBase + ((i > 0) ? (i - 1) : 0)];
+            float dRight = highpass[hBase + min(i, halfWidthH - 1)];
+            lowpass[lBase + i] += beta * (dLeft + dRight);
         }
-        for (uint i = 0; i < width / 2; i++) {
-            uint hIdx = row * (width / 2) + i;
-            uint lIdx = row * halfWidth;
-            uint left = i;
-            uint right = min(i + 1, halfWidth - 1);
-            highpass[hIdx] += gamma * (lowpass[lIdx + left] + lowpass[lIdx + right]);
+        // Step 4: Predict 2 — d[i] += gamma * (s[i] + s[i+1])
+        for (uint i = 0; i < halfWidthH; i++) {
+            highpass[hBase + i] += gamma * (lowpass[lBase + i] + lowpass[lBase + min(i + 1, halfWidth - 1)]);
         }
+        // Step 5: Update 2 — s[i] += delta * (d[i-1] + d[i])
         for (uint i = 0; i < halfWidth; i++) {
-            uint lIdx = row * halfWidth + i;
-            uint hBase = row * (width / 2);
-            uint left = (i > 0) ? (i - 1) : 0;
-            uint right = min(i, (width / 2) - 1);
-            lowpass[lIdx] += delta * (highpass[hBase + left] + highpass[hBase + right]);
+            float dLeft  = highpass[hBase + ((i > 0) ? (i - 1) : 0)];
+            float dRight = highpass[hBase + min(i, halfWidthH - 1)];
+            lowpass[lBase + i] += delta * (dLeft + dRight);
         }
+
+        // Step 6: Scale
+        for (uint i = 0; i < halfWidth; i++) { lowpass[lBase + i] *= K; }
+        for (uint i = 0; i < halfWidthH; i++) { highpass[hBase + i] /= K; }
     }
 
     // MARK: - Forward 9/7 Irreversible DWT (Vertical)
@@ -444,21 +443,53 @@ enum J2KMetalShaderSource {
 
         uint col = gid.x;
         uint halfHeight = (height + 1) / 2;
-        const float K = 1.230174105f;
+        uint halfHeightH = height / 2;
 
+        const float alpha = -1.586134342f;
+        const float beta  = -0.052980118f;
+        const float gamma =  0.882911075f;
+        const float delta =  0.443506852f;
+        const float K     =  1.230174105f;
+
+        // Step 1: Split into even and odd rows
         for (uint i = 0; i < halfHeight; i++) {
-            uint evenRow = 2 * i;
-            uint oddRow = min(2 * i + 1, height - 1);
-            lowpass[i * width + col] = input[evenRow * width + col] * K;
-            highpass[i * width + col] = input[oddRow * width + col] / K;
+            lowpass[i * width + col] = input[min(2 * i, height - 1) * width + col];
         }
+        for (uint i = 0; i < halfHeightH; i++) {
+            highpass[i * width + col] = input[(2 * i + 1) * width + col];
+        }
+
+        // Step 2: Predict 1
+        for (uint i = 0; i < halfHeightH; i++) {
+            highpass[i * width + col] += alpha * (lowpass[i * width + col] + lowpass[min(i + 1, halfHeight - 1) * width + col]);
+        }
+        // Step 3: Update 1
+        for (uint i = 0; i < halfHeight; i++) {
+            float dTop = highpass[((i > 0) ? (i - 1) : 0) * width + col];
+            float dBot = highpass[min(i, halfHeightH - 1) * width + col];
+            lowpass[i * width + col] += beta * (dTop + dBot);
+        }
+        // Step 4: Predict 2
+        for (uint i = 0; i < halfHeightH; i++) {
+            highpass[i * width + col] += gamma * (lowpass[i * width + col] + lowpass[min(i + 1, halfHeight - 1) * width + col]);
+        }
+        // Step 5: Update 2
+        for (uint i = 0; i < halfHeight; i++) {
+            float dTop = highpass[((i > 0) ? (i - 1) : 0) * width + col];
+            float dBot = highpass[min(i, halfHeightH - 1) * width + col];
+            lowpass[i * width + col] += delta * (dTop + dBot);
+        }
+
+        // Step 6: Scale
+        for (uint i = 0; i < halfHeight; i++) { lowpass[i * width + col] *= K; }
+        for (uint i = 0; i < halfHeightH; i++) { highpass[i * width + col] /= K; }
     }
 
     // MARK: - Inverse 9/7 Irreversible DWT (Horizontal)
 
     kernel void j2k_dwt_inverse_97_horizontal(
-        device const float* lowpass [[buffer(0)]],
-        device const float* highpass [[buffer(1)]],
+        device const float* lowpassIn [[buffer(0)]],
+        device const float* highpassIn [[buffer(1)]],
         device float* output [[buffer(2)]],
         constant uint& width [[buffer(3)]],
         constant uint& height [[buffer(4)]],
@@ -468,19 +499,219 @@ enum J2KMetalShaderSource {
 
         uint row = gid.y;
         uint halfWidth = (width + 1) / 2;
-        const float K = 1.230174105f;
+        uint halfWidthH = width / 2;
 
+        const float alpha = -1.586134342f;
+        const float beta  = -0.052980118f;
+        const float gamma =  0.882911075f;
+        const float delta =  0.443506852f;
+        const float K     =  1.230174105f;
+
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+
+        // Use output buffer as scratch for even/odd reconstruction
+        // First copy and undo scaling
         for (uint i = 0; i < halfWidth; i++) {
-            output[row * width + 2 * i] = lowpass[row * halfWidth + i] / K;
+            output[row * width + 2 * i] = lowpassIn[lBase + i] / K;
         }
-        for (uint i = 0; i < width / 2; i++) {
-            output[row * width + 2 * i + 1] = highpass[row * (width / 2) + i] * K;
+        for (uint i = 0; i < halfWidthH; i++) {
+            output[row * width + 2 * i + 1] = highpassIn[hBase + i] * K;
+        }
+
+        // We need even/odd arrays for lifting; re-extract them from output
+        // Use local-scope arrays via output reinterpretation
+        // For correctness, work with even[] and odd[] in output positions
+        // even = output[2*i], odd = output[2*i+1]
+
+        // Undo update 2: s[i] -= delta * (d[i-1] + d[i])
+        for (uint i = 0; i < halfWidth; i++) {
+            float dLeft  = output[row * width + 2 * ((i > 0) ? (i - 1) : 0) + 1];
+            float dRight = (i < halfWidthH) ? output[row * width + 2 * i + 1]
+                           : output[row * width + 2 * max(int(halfWidthH) - 1, 0) + 1];
+            output[row * width + 2 * i] -= delta * (dLeft + dRight);
+        }
+        // Undo predict 2: d[i] -= gamma * (s[i] + s[i+1])
+        for (uint i = 0; i < halfWidthH; i++) {
+            float sLeft  = output[row * width + 2 * i];
+            float sRight = output[row * width + 2 * min(i + 1, halfWidth - 1)];
+            output[row * width + 2 * i + 1] -= gamma * (sLeft + sRight);
+        }
+        // Undo update 1: s[i] -= beta * (d[i-1] + d[i])
+        for (uint i = 0; i < halfWidth; i++) {
+            float dLeft  = output[row * width + 2 * ((i > 0) ? (i - 1) : 0) + 1];
+            float dRight = (i < halfWidthH) ? output[row * width + 2 * i + 1]
+                           : output[row * width + 2 * max(int(halfWidthH) - 1, 0) + 1];
+            output[row * width + 2 * i] -= beta * (dLeft + dRight);
+        }
+        // Undo predict 1: d[i] -= alpha * (s[i] + s[i+1])
+        for (uint i = 0; i < halfWidthH; i++) {
+            float sLeft  = output[row * width + 2 * i];
+            float sRight = output[row * width + 2 * min(i + 1, halfWidth - 1)];
+            output[row * width + 2 * i + 1] -= alpha * (sLeft + sRight);
         }
     }
 
     // MARK: - Inverse 9/7 Irreversible DWT (Vertical)
 
     kernel void j2k_dwt_inverse_97_vertical(
+        device const float* lowpassIn [[buffer(0)]],
+        device const float* highpassIn [[buffer(1)]],
+        device float* output [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+        uint halfHeightH = height / 2;
+
+        const float alpha = -1.586134342f;
+        const float beta  = -0.052980118f;
+        const float gamma =  0.882911075f;
+        const float delta =  0.443506852f;
+        const float K     =  1.230174105f;
+
+        // Undo scaling and interleave into output
+        for (uint i = 0; i < halfHeight; i++) {
+            output[(2 * i) * width + col] = lowpassIn[i * width + col] / K;
+        }
+        for (uint i = 0; i < halfHeightH; i++) {
+            output[(2 * i + 1) * width + col] = highpassIn[i * width + col] * K;
+        }
+
+        // Undo update 2
+        for (uint i = 0; i < halfHeight; i++) {
+            float dTop = output[(2 * ((i > 0) ? (i - 1) : 0) + 1) * width + col];
+            float dBot = (i < halfHeightH) ? output[(2 * i + 1) * width + col]
+                         : output[(2 * max(int(halfHeightH) - 1, 0) + 1) * width + col];
+            output[(2 * i) * width + col] -= delta * (dTop + dBot);
+        }
+        // Undo predict 2
+        for (uint i = 0; i < halfHeightH; i++) {
+            float sTop = output[(2 * i) * width + col];
+            float sBot = output[(2 * min(i + 1, halfHeight - 1)) * width + col];
+            output[(2 * i + 1) * width + col] -= gamma * (sTop + sBot);
+        }
+        // Undo update 1
+        for (uint i = 0; i < halfHeight; i++) {
+            float dTop = output[(2 * ((i > 0) ? (i - 1) : 0) + 1) * width + col];
+            float dBot = (i < halfHeightH) ? output[(2 * i + 1) * width + col]
+                         : output[(2 * max(int(halfHeightH) - 1, 0) + 1) * width + col];
+            output[(2 * i) * width + col] -= beta * (dTop + dBot);
+        }
+        // Undo predict 1
+        for (uint i = 0; i < halfHeightH; i++) {
+            float sTop = output[(2 * i) * width + col];
+            float sBot = output[(2 * min(i + 1, halfHeight - 1)) * width + col];
+            output[(2 * i + 1) * width + col] -= alpha * (sTop + sBot);
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Horizontal)
+
+    kernel void j2k_dwt_forward_53_horizontal(
+        device const float* input [[buffer(0)]],
+        device float* lowpass [[buffer(1)]],
+        device float* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+        uint halfWidthH = width / 2;
+
+        uint idx = row * width;
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+
+        // Predict step: d[n] = x[2n+1] - (x[2n] + x[2n+2]) / 2
+        for (uint i = 0; i < halfWidthH; i++) {
+            float left = input[idx + 2 * i];
+            float right = (2 * i + 2 < width) ? input[idx + 2 * i + 2] : input[idx + 2 * i];
+            highpass[hBase + i] = input[idx + 2 * i + 1] - (left + right) / 2.0f;
+        }
+
+        // Update step: s[n] = x[2n] + (d[n-1] + d[n] + 2) / 4
+        for (uint i = 0; i < halfWidth; i++) {
+            float d_left = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+            float d_right = (i < halfWidthH) ? highpass[hBase + i] : highpass[hBase + max(int(halfWidthH) - 1, 0)];
+            lowpass[lBase + i] = input[idx + 2 * i] + (d_left + d_right + 2.0f) / 4.0f;
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Vertical)
+
+    kernel void j2k_dwt_forward_53_vertical(
+        device const float* input [[buffer(0)]],
+        device float* lowpass [[buffer(1)]],
+        device float* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+        uint halfHeightH = height / 2;
+
+        // Predict step
+        for (uint i = 0; i < halfHeightH; i++) {
+            float top = input[(2 * i) * width + col];
+            float bottom = (2 * i + 2 < height) ? input[(2 * i + 2) * width + col] : input[(2 * i) * width + col];
+            highpass[i * width + col] = input[(2 * i + 1) * width + col] - (top + bottom) / 2.0f;
+        }
+        // Update step
+        for (uint i = 0; i < halfHeight; i++) {
+            float d_top = (i > 0) ? highpass[(i - 1) * width + col] : highpass[col];
+            float d_bot = (i < halfHeightH) ? highpass[i * width + col] : highpass[max(int(halfHeightH) - 1, 0) * width + col];
+            lowpass[i * width + col] = input[(2 * i) * width + col] + (d_top + d_bot + 2.0f) / 4.0f;
+        }
+    }
+
+    // MARK: - Inverse 5/3 Reversible DWT (Horizontal)
+
+    kernel void j2k_dwt_inverse_53_horizontal(
+        device const float* lowpass [[buffer(0)]],
+        device const float* highpass [[buffer(1)]],
+        device float* output [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+        uint halfWidthH = width / 2;
+
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+        uint oBase = row * width;
+
+        // Undo update: x[2n] = s[n] - (d[n-1] + d[n] + 2) / 4
+        for (uint i = 0; i < halfWidth; i++) {
+            float d_left = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+            float d_right = (i < halfWidthH) ? highpass[hBase + i] : highpass[hBase + max(int(halfWidthH) - 1, 0)];
+            output[oBase + 2 * i] = lowpass[lBase + i] - (d_left + d_right + 2.0f) / 4.0f;
+        }
+        // Undo predict: x[2n+1] = d[n] + (x[2n] + x[2n+2]) / 2
+        for (uint i = 0; i < halfWidthH; i++) {
+            float left = output[oBase + 2 * i];
+            float right = (2 * i + 2 < width) ? output[oBase + 2 * i + 2] : output[oBase + 2 * i];
+            output[oBase + 2 * i + 1] = highpass[hBase + i] + (left + right) / 2.0f;
+        }
+    }
+
+    // MARK: - Inverse 5/3 Reversible DWT (Vertical)
+
+    kernel void j2k_dwt_inverse_53_vertical(
         device const float* lowpass [[buffer(0)]],
         device const float* highpass [[buffer(1)]],
         device float* output [[buffer(2)]],
@@ -492,130 +723,19 @@ enum J2KMetalShaderSource {
 
         uint col = gid.x;
         uint halfHeight = (height + 1) / 2;
-        const float K = 1.230174105f;
-
-        for (uint i = 0; i < halfHeight; i++) {
-            output[(2 * i) * width + col] = lowpass[i * width + col] / K;
-        }
-        for (uint i = 0; i < height / 2; i++) {
-            output[(2 * i + 1) * width + col] = highpass[i * width + col] * K;
-        }
-    }
-
-    // MARK: - Forward 5/3 Reversible DWT (Horizontal)
-
-    kernel void j2k_dwt_forward_53_horizontal(
-        device const int* input [[buffer(0)]],
-        device int* lowpass [[buffer(1)]],
-        device int* highpass [[buffer(2)]],
-        constant uint& width [[buffer(3)]],
-        constant uint& height [[buffer(4)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        if (gid.y >= height) return;
-
-        uint row = gid.y;
-        uint halfWidth = (width + 1) / 2;
-
-        // Predict step: d[n] = x[2n+1] - floor((x[2n] + x[2n+2]) / 2)
-        for (uint i = 0; i < width / 2; i++) {
-            uint idx = row * width;
-            int left = input[idx + 2 * i];
-            int right = (2 * i + 2 < width) ? input[idx + 2 * i + 2] : input[idx + 2 * i];
-            highpass[row * (width / 2) + i] = input[idx + 2 * i + 1] - ((left + right) / 2);
-        }
-
-        // Update step: s[n] = x[2n] + floor((d[n-1] + d[n]) / 4)
-        for (uint i = 0; i < halfWidth; i++) {
-            uint idx = row * width;
-            uint hBase = row * (width / 2);
-            int d_left = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
-            int d_right = (i < width / 2) ? highpass[hBase + i] : highpass[hBase + (width / 2) - 1];
-            lowpass[row * halfWidth + i] = input[idx + 2 * i] + ((d_left + d_right + 2) / 4);
-        }
-    }
-
-    // MARK: - Forward 5/3 Reversible DWT (Vertical)
-
-    kernel void j2k_dwt_forward_53_vertical(
-        device const int* input [[buffer(0)]],
-        device int* lowpass [[buffer(1)]],
-        device int* highpass [[buffer(2)]],
-        constant uint& width [[buffer(3)]],
-        constant uint& height [[buffer(4)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        if (gid.x >= width) return;
-
-        uint col = gid.x;
-        uint halfHeight = (height + 1) / 2;
-
-        for (uint i = 0; i < height / 2; i++) {
-            int top = input[(2 * i) * width + col];
-            int bottom = (2 * i + 2 < height) ? input[(2 * i + 2) * width + col] : input[(2 * i) * width + col];
-            highpass[i * width + col] = input[(2 * i + 1) * width + col] - ((top + bottom) / 2);
-        }
-        for (uint i = 0; i < halfHeight; i++) {
-            int d_top = (i > 0) ? highpass[(i - 1) * width + col] : highpass[col];
-            int d_bot = (i < height / 2) ? highpass[i * width + col] : highpass[((height / 2) - 1) * width + col];
-            lowpass[i * width + col] = input[(2 * i) * width + col] + ((d_top + d_bot + 2) / 4);
-        }
-    }
-
-    // MARK: - Inverse 5/3 Reversible DWT (Horizontal)
-
-    kernel void j2k_dwt_inverse_53_horizontal(
-        device const int* lowpass [[buffer(0)]],
-        device const int* highpass [[buffer(1)]],
-        device int* output [[buffer(2)]],
-        constant uint& width [[buffer(3)]],
-        constant uint& height [[buffer(4)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        if (gid.y >= height) return;
-
-        uint row = gid.y;
-        uint halfWidth = (width + 1) / 2;
+        uint halfHeightH = height / 2;
 
         // Undo update
-        for (uint i = 0; i < halfWidth; i++) {
-            uint hBase = row * (width / 2);
-            int d_left = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
-            int d_right = (i < width / 2) ? highpass[hBase + i] : highpass[hBase + (width / 2) - 1];
-            output[row * width + 2 * i] = lowpass[row * halfWidth + i] - ((d_left + d_right + 2) / 4);
+        for (uint i = 0; i < halfHeight; i++) {
+            float d_top = (i > 0) ? highpass[(i - 1) * width + col] : highpass[col];
+            float d_bot = (i < halfHeightH) ? highpass[i * width + col] : highpass[max(int(halfHeightH) - 1, 0) * width + col];
+            output[(2 * i) * width + col] = lowpass[i * width + col] - (d_top + d_bot + 2.0f) / 4.0f;
         }
         // Undo predict
-        for (uint i = 0; i < width / 2; i++) {
-            int left = output[row * width + 2 * i];
-            int right = (2 * i + 2 < width) ? output[row * width + 2 * i + 2] : output[row * width + 2 * i];
-            output[row * width + 2 * i + 1] = highpass[row * (width / 2) + i] + ((left + right) / 2);
-        }
-    }
-
-    // MARK: - Inverse 5/3 Reversible DWT (Vertical)
-
-    kernel void j2k_dwt_inverse_53_vertical(
-        device const int* lowpass [[buffer(0)]],
-        device const int* highpass [[buffer(1)]],
-        device int* output [[buffer(2)]],
-        constant uint& width [[buffer(3)]],
-        constant uint& height [[buffer(4)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        if (gid.x >= width) return;
-
-        uint col = gid.x;
-        uint halfHeight = (height + 1) / 2;
-
-        for (uint i = 0; i < halfHeight; i++) {
-            int d_top = (i > 0) ? highpass[(i - 1) * width + col] : highpass[col];
-            int d_bot = (i < height / 2) ? highpass[i * width + col] : highpass[((height / 2) - 1) * width + col];
-            output[(2 * i) * width + col] = lowpass[i * width + col] - ((d_top + d_bot + 2) / 4);
-        }
-        for (uint i = 0; i < height / 2; i++) {
-            int top = output[(2 * i) * width + col];
-            int bottom = (2 * i + 2 < height) ? output[(2 * i + 2) * width + col] : output[(2 * i) * width + col];
-            output[(2 * i + 1) * width + col] = highpass[i * width + col] + ((top + bottom) / 2);
+        for (uint i = 0; i < halfHeightH; i++) {
+            float top = output[(2 * i) * width + col];
+            float bottom = (2 * i + 2 < height) ? output[(2 * i + 2) * width + col] : output[(2 * i) * width + col];
+            output[(2 * i + 1) * width + col] = highpass[i * width + col] + (top + bottom) / 2.0f;
         }
     }
 

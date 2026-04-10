@@ -10,6 +10,7 @@
 
 import Foundation
 import J2KCore
+import J2KMetal
 
 // MARK: - Decoding Stage
 
@@ -204,6 +205,145 @@ struct DecoderPipeline: Sendable {
             let tileData = tiles.first?.tileData ?? Data()
             return try decodeSingleTile(metadata: metadata, tileData: tileData, progress: progress)
         }
+    }
+
+    // MARK: - GPU-Accelerated Decode
+
+    /// Decodes a JPEG 2000 codestream using GPU-accelerated inverse DWT.
+    ///
+    /// Uses Metal GPU for the CDF 9/7 inverse wavelet transform stage.
+    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    ///
+    /// - Parameters:
+    ///   - data: The JPEG 2000 codestream data.
+    ///   - progress: Optional progress callback.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    func decodeGPU(
+        _ data: Data,
+        progress: ((DecoderProgressUpdate) -> Void)? = nil
+    ) async throws -> J2KImage {
+        reportProgress(progress, stage: .codestreamParsing, stageProgress: 0.0)
+        let (metadata, tiles) = try parseCodestream(data)
+        reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
+
+        if metadata.isMultiTile {
+            return try await decodeMultiTileGPU(metadata: metadata, tiles: tiles, progress: progress)
+        } else {
+            let tileData = tiles.first?.tileData ?? Data()
+            return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
+        }
+    }
+
+    /// GPU-accelerated single-tile decode.
+    private func decodeSingleTileGPU(
+        metadata: CodestreamMetadata,
+        tileData: Data,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        // Stages 2-4: same as CPU path
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
+        let codeBlocks = try extractTileData(tileData, metadata: metadata)
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
+
+        reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
+        let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: metadata)
+        reportProgress(progress, stage: .entropyDecoding, stageProgress: 1.0)
+
+        reportProgress(progress, stage: .dequantization, stageProgress: 0.0)
+        let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: metadata)
+        reportProgress(progress, stage: .dequantization, stageProgress: 1.0)
+
+        // Stage 5: GPU inverse wavelet transform
+        reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 0.0)
+        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: metadata)
+        reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 1.0)
+
+        // Stages 6-7: GPU inverse colour transform
+        reportProgress(progress, stage: .inverseColorTransform, stageProgress: 0.0)
+        var rgbData = try await applyInverseColorTransformGPU(spatialData, metadata: metadata)
+        reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
+
+        for (compIdx, compInfo) in metadata.components.enumerated() {
+            guard compIdx < rgbData.count else { break }
+            if !compInfo.signed {
+                let dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                rgbData[compIdx] = rgbData[compIdx].map { $0 + dcOffset }
+            }
+        }
+
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        let image = try reconstructImage(rgbData, metadata: metadata)
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
+        return image
+    }
+
+    /// GPU-accelerated multi-tile decode.
+    private func decodeMultiTileGPU(
+        metadata: CodestreamMetadata,
+        tiles: [(tileIndex: Int, tileData: Data)],
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        let numComponents = metadata.componentCount
+        var fullComponents: [[Double]] = (0..<numComponents).map { compIdx in
+            let compInfo = metadata.components[compIdx]
+            let w = metadata.width / compInfo.subsamplingX
+            let h = metadata.height / compInfo.subsamplingY
+            return [Double](repeating: 0.0, count: w * h)
+        }
+
+        for (tileIdx, tile) in tiles.enumerated() {
+            let tileProgress = Double(tileIdx) / Double(tiles.count)
+            reportProgress(progress, stage: .tileExtraction, stageProgress: tileProgress)
+
+            let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tile.tileIndex)
+
+            var tileMeta = metadata
+            tileMeta.width = tileW
+            tileMeta.height = tileH
+            tileMeta.tileSize = (width: tileW, height: tileH)
+
+            let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
+            let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+            let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: tileMeta)
+
+            // GPU inverse wavelet transform for this tile
+            let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta)
+            var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
+
+            for (compIdx, compInfo) in metadata.components.enumerated() {
+                guard compIdx < tileRGB.count else { break }
+                if !compInfo.signed {
+                    let dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                    tileRGB[compIdx] = tileRGB[compIdx].map { $0 + dcOffset }
+                }
+            }
+
+            for compIdx in 0..<min(numComponents, tileRGB.count) {
+                let compInfo = metadata.components[compIdx]
+                let fullW = metadata.width / compInfo.subsamplingX
+                let compTileX = tileX / compInfo.subsamplingX
+                let compTileY = tileY / compInfo.subsamplingY
+                let compTileW = tileW / compInfo.subsamplingX
+                let compTileH = tileH / compInfo.subsamplingY
+
+                let tileCompData = tileRGB[compIdx]
+                for row in 0..<compTileH {
+                    let dstOffset = (compTileY + row) * fullW + compTileX
+                    let srcOffset = row * compTileW
+                    for col in 0..<compTileW {
+                        if srcOffset + col < tileCompData.count {
+                            fullComponents[compIdx][dstOffset + col] = tileCompData[srcOffset + col]
+                        }
+                    }
+                }
+            }
+        }
+
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        let image = try reconstructImage(fullComponents, metadata: metadata)
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
+        return image
     }
 
     /// Decodes a single-tile codestream (original path).
@@ -1542,7 +1682,193 @@ struct DecoderPipeline: Sendable {
         return componentData
     }
 
+    // MARK: - GPU Inverse Wavelet Transform
+
+    /// GPU-accelerated inverse wavelet transform using Metal.
+    ///
+    /// Uses Metal GPU for CDF 9/7 irreversible inverse DWT.
+    /// Falls back to CPU for Le Gall 5/3 reversible and custom filters.
+    private func applyInverseWaveletTransformGPU(
+        _ subbands: [SubbandInfo],
+        metadata: CodestreamMetadata
+    ) async throws -> [[Double]] {
+        // Fall back to CPU for custom wavelet kernels only
+        if metadata.configuration.waveletKernelConfiguration != nil {
+            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+        }
+
+        let levels = metadata.configuration.decompositionLevels
+        guard levels >= 1 else {
+            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+        }
+
+        // Select filter based on configuration
+        let metalFilter: J2KMetalDWTFilter
+        if case .irreversible97 = metadata.configuration.waveletFilter {
+            metalFilter = .irreversible97
+        } else {
+            metalFilter = .reversible53
+        }
+
+        let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: metalFilter, decompositionLevels: levels
+        ))
+        try await metalDWT.initialize()
+
+        var componentData: [[Double]] = []
+        let maxComponent = max(
+            metadata.componentCount - 1,
+            subbands.map { $0.componentIndex }.max() ?? 0
+        )
+
+        for compIdx in 0...maxComponent {
+            let compSubbands = subbands.filter { $0.componentIndex == compIdx }
+
+            if compSubbands.isEmpty {
+                componentData.append([Double](repeating: 0.0, count: metadata.width * metadata.height))
+                continue
+            }
+
+            // Compute expected subband dimensions at each level
+            let compW = metadata.width / metadata.components[compIdx].subsamplingX
+            let compH = metadata.height / metadata.components[compIdx].subsamplingY
+            var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
+            for _ in 0..<levels {
+                let (pw, ph) = levelSizes.last!
+                levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
+            }
+
+            // Get initial LL subband as Float
+            let llSubband = compSubbands.first(where: { $0.subband == .ll })
+            let expectedLLW = levelSizes[levels].width
+            let expectedLLH = levelSizes[levels].height
+
+            var currentLL: [Float]
+            if let ll = llSubband {
+                if let dc = ll.doubleCoefficients {
+                    currentLL = padFlatFloat(dc.map { Float($0) }, srcW: ll.width, srcH: ll.height,
+                                              dstW: expectedLLW, dstH: expectedLLH)
+                } else {
+                    currentLL = padFlatFloat(ll.coefficients.map { Float($0) }, srcW: ll.width, srcH: ll.height,
+                                              dstW: expectedLLW, dstH: expectedLLH)
+                }
+            } else {
+                currentLL = [Float](repeating: 0, count: expectedLLW * expectedLLH)
+            }
+
+            // Inverse DWT from coarsest to finest using Metal GPU
+            for level in (1...levels).reversed() {
+                let parentW = levelSizes[level - 1].width
+                let parentH = levelSizes[level - 1].height
+                let llW = levelSizes[level].width
+                let llH = levelSizes[level].height
+                let hlW = parentW - llW
+                let lhH = parentH - llH
+
+                let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
+                                                 dstW: hlW, dstH: llH)
+                let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
+                                                 dstW: llW, dstH: lhH)
+                let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
+                                                 dstW: hlW, dstH: lhH)
+
+                let subbandData = J2KMetalDWTSubbands(
+                    ll: currentLL, lh: lhFloat, hl: hlFloat, hh: hhFloat,
+                    llWidth: llW, llHeight: llH,
+                    originalWidth: parentW, originalHeight: parentH
+                )
+
+                currentLL = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
+            }
+
+            componentData.append(currentLL.map { Double($0) })
+        }
+
+        return componentData
+    }
+
+    /// Extracts a subband as a Float array with zero-padding to expected dimensions.
+    private func getSubbandAsFloat(_ subbands: [SubbandInfo], level: Int, subband: J2KSubband,
+                                    dstW: Int, dstH: Int) -> [Float] {
+        if let sb = subbands.first(where: { $0.level == level && $0.subband == subband }) {
+            let srcData: [Float]
+            if let dc = sb.doubleCoefficients {
+                srcData = dc.map { Float($0) }
+            } else {
+                srcData = sb.coefficients.map { Float($0) }
+            }
+            return padFlatFloat(srcData, srcW: sb.width, srcH: sb.height, dstW: dstW, dstH: dstH)
+        }
+        return [Float](repeating: 0, count: dstW * dstH)
+    }
+
+    /// Zero-pads a flat Float array from source to destination dimensions.
+    private func padFlatFloat(_ data: [Float], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Float] {
+        if srcW == dstW && srcH == dstH && data.count == dstW * dstH { return data }
+        var result = [Float](repeating: 0, count: dstW * dstH)
+        let copyW = min(srcW, dstW)
+        let copyH = min(srcH, dstH)
+        for row in 0..<copyH {
+            let srcOffset = row * srcW
+            let dstOffset = row * dstW
+            guard srcOffset + copyW <= data.count else { break }
+            for col in 0..<copyW {
+                result[dstOffset + col] = data[srcOffset + col]
+            }
+        }
+        return result
+    }
+
     // MARK: - Stage 6: Inverse Colour Transform
+
+    /// GPU-accelerated inverse colour transform using Metal.
+    ///
+    /// Uses Metal GPU for inverse ICT/RCT colour transforms on 3+ component images.
+    /// Falls back to CPU when Metal is unavailable.
+    private func applyInverseColorTransformGPU(
+        _ components: [[Double]],
+        metadata: CodestreamMetadata
+    ) async throws -> [[Double]] {
+        guard components.count >= 3 else { return components }
+        // useReversibleTransform indicates MCT is enabled; when false, no color transform
+        guard metadata.configuration.useReversibleTransform else { return components }
+
+        // Check if Metal is available
+        guard J2KMetalColorTransform.isAvailable else {
+            return try applyInverseColorTransform(components, metadata: metadata)
+        }
+
+        let transformType: J2KMetalColorTransformType
+        if case .reversible53 = metadata.configuration.waveletFilter {
+            transformType = .rct
+        } else {
+            transformType = .ict
+        }
+
+        let metalConfig = J2KMetalColorTransformConfiguration(transformType: transformType)
+        let metalCT = J2KMetalColorTransform(configuration: metalConfig)
+        try await metalCT.initialize()
+
+        // Convert Double to Float for Metal
+        let comp0 = components[0].map { Float($0) }
+        let comp1 = components[1].map { Float($0) }
+        let comp2 = components[2].map { Float($0) }
+
+        let result = try await metalCT.inverseTransform(
+            component0: comp0, component1: comp1, component2: comp2, backend: .auto
+        )
+
+        // Convert back to Double
+        var output: [[Double]] = [
+            result.component0.map { Double($0) },
+            result.component1.map { Double($0) },
+            result.component2.map { Double($0) }
+        ]
+        if components.count > 3 {
+            output.append(contentsOf: components[3...])
+        }
+        return output
+    }
 
     /// Applies inverse colour transform.
     private func applyInverseColorTransform(

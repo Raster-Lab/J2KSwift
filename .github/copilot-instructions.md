@@ -484,6 +484,7 @@ Specialized agents are available for focused tasks. Use `@` in chat to invoke th
 | `@compliance` | ISO/IEC 15444-4 conformance verification and release validation |
 | `@cli-dev` | CLI tool development (`j2k` commands, image I/O, OpenJPEG wrappers) |
 | `@gpu-dev` | GPU acceleration (Metal, Vulkan, Accelerate, SIMD, shader development) |
+| `@benchmark` | OpenJPEG benchmarking (encode/decode speed, quality metrics, cross-codec comparison) |
 | `@jp3d-dev` | 3D volumetric imaging (JP3D Part 10, medical volumes, multispectral) |
 | `@file-format-dev` | File format support (JP2, JPX, JPM, JPH, MJ2, box hierarchy) |
 | `@jpip-dev` | JPIP network streaming (client/server, WebSocket, progressive delivery) |

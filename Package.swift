@@ -55,7 +55,7 @@ let package = Package(
             name: "J2KCore"),
         .target(
             name: "J2KCodec",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KCore", "J2KMetal"]),
         .target(
             name: "J2KAccelerate",
             dependencies: ["J2KCore", "J2KCodec"]),

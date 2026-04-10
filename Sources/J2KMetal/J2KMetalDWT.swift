@@ -1481,7 +1481,8 @@ public actor J2KMetalDWT {
         cb1.commit()
         await cb1.completed()
 
-        // Step 2: Vertical DWT on lowpass → LL, LH
+        // Step 2 & 3: Vertical DWT on lowpass → LL, LH AND highpass → HL, HH
+        // These are independent operations, so dispatch them in a single command buffer
         let llBuffer = try await bufferPool.acquireBuffer(
             device: device,
             size: halfW * halfH * MemoryLayout<Float>.stride
@@ -1495,11 +1496,21 @@ public actor J2KMetalDWT {
             for: verticalForwardShaderFunction()
         )
 
+        let hlBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(halfWH * halfH, 1) * MemoryLayout<Float>.stride
+        )
+        let hhBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(halfWH * halfHH, 1) * MemoryLayout<Float>.stride
+        )
+
         guard let cb2 = queue.makeCommandBuffer(),
               let enc2 = cb2.makeComputeCommandEncoder() else {
             throw J2KError.internalError("Failed to create command buffer")
         }
 
+        // Encode vertical DWT on lowpass columns → LL, LH
         enc2.setComputePipelineState(vPipeline)
         enc2.setBuffer(hLowBuffer, offset: 0, index: 0)
         enc2.setBuffer(llBuffer, offset: 0, index: 1)
@@ -1511,41 +1522,24 @@ public actor J2KMetalDWT {
         let vThreads1 = MTLSize(width: halfW, height: 1, depth: 1)
         let vThreadgroup1 = MTLSize(width: min(halfW, 64), height: 1, depth: 1)
         enc2.dispatchThreads(vThreads1, threadsPerThreadgroup: vThreadgroup1)
+
+        // Encode vertical DWT on highpass columns → HL, HH (in same command buffer)
+        if halfWH > 0 {
+            enc2.setBuffer(hHighBuffer, offset: 0, index: 0)
+            enc2.setBuffer(hlBuffer, offset: 0, index: 1)
+            enc2.setBuffer(hhBuffer, offset: 0, index: 2)
+            var halfWHVal = UInt32(halfWH)
+            enc2.setBytes(&halfWHVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+
+            let vThreads2 = MTLSize(width: halfWH, height: 1, depth: 1)
+            let vThreadgroup2 = MTLSize(width: min(halfWH, 64), height: 1, depth: 1)
+            enc2.dispatchThreads(vThreads2, threadsPerThreadgroup: vThreadgroup2)
+        }
+
         enc2.endEncoding()
         cb2.commit()
         await cb2.completed()
-
-        // Step 3: Vertical DWT on highpass → HL, HH
-        let hlBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * halfH, 1) * MemoryLayout<Float>.stride
-        )
-        let hhBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * halfHH, 1) * MemoryLayout<Float>.stride
-        )
-
-        guard let cb3 = queue.makeCommandBuffer(),
-              let enc3 = cb3.makeComputeCommandEncoder() else {
-            throw J2KError.internalError("Failed to create command buffer")
-        }
-
-        enc3.setComputePipelineState(vPipeline)
-        enc3.setBuffer(hHighBuffer, offset: 0, index: 0)
-        enc3.setBuffer(hlBuffer, offset: 0, index: 1)
-        enc3.setBuffer(hhBuffer, offset: 0, index: 2)
-        var halfWHVal = UInt32(halfWH)
-        enc3.setBytes(&halfWHVal, length: MemoryLayout<UInt32>.stride, index: 3)
-        enc3.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
-
-        if halfWH > 0 {
-            let vThreads2 = MTLSize(width: halfWH, height: 1, depth: 1)
-            let vThreadgroup2 = MTLSize(width: min(halfWH, 64), height: 1, depth: 1)
-            enc3.dispatchThreads(vThreads2, threadsPerThreadgroup: vThreadgroup2)
-        }
-        enc3.endEncoding()
-        cb3.commit()
-        await cb3.completed()
 
         // Read results
         let ll = readFloatArray(from: llBuffer, elementCount: halfW * halfH)
@@ -1595,10 +1589,149 @@ public actor J2KMetalDWT {
     private func inverse2DGPU(
         subbands: J2KMetalDWTSubbands
     ) async throws -> [Float] {
-        // For GPU inverse, delegate to CPU reference (full GPU inverse
-        // requires careful reconstruction logic matching the forward path).
-        // This maintains correctness while forward transforms get GPU acceleration.
-        inverse2DCPU(subbands: subbands)
+        try await ensureInitialized()
+
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+
+        let width = subbands.originalWidth
+        let height = subbands.originalHeight
+        let halfW = subbands.llWidth
+        let halfH = subbands.llHeight
+        let halfWH = width / 2
+
+        // Allocate buffers for subbands
+        let llBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: subbands.ll.count * MemoryLayout<Float>.stride
+        )
+        let lhBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(subbands.lh.count, 1) * MemoryLayout<Float>.stride
+        )
+        let hlBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(subbands.hl.count, 1) * MemoryLayout<Float>.stride
+        )
+        let hhBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(subbands.hh.count, 1) * MemoryLayout<Float>.stride
+        )
+
+        // Copy subband data to GPU
+        subbands.ll.withUnsafeBytes { src in
+            llBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+        if !subbands.lh.isEmpty {
+            subbands.lh.withUnsafeBytes { src in
+                lhBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+        if !subbands.hl.isEmpty {
+            subbands.hl.withUnsafeBytes { src in
+                hlBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+        if !subbands.hh.isEmpty {
+            subbands.hh.withUnsafeBytes { src in
+                hhBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+
+        // Step 1: Inverse vertical DWT — LL + LH → hLow, HL + HH → hHigh
+        let hLowBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: halfW * height * MemoryLayout<Float>.stride
+        )
+        let hHighBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: max(halfWH * height, 1) * MemoryLayout<Float>.stride
+        )
+
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: verticalInverseShaderFunction()
+        )
+
+        guard let cb1 = queue.makeCommandBuffer(),
+              let enc1 = cb1.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        // Inverse vertical on LL + LH → hLow
+        enc1.setComputePipelineState(vPipeline)
+        enc1.setBuffer(llBuffer, offset: 0, index: 0)
+        enc1.setBuffer(lhBuffer, offset: 0, index: 1)
+        enc1.setBuffer(hLowBuffer, offset: 0, index: 2)
+        var halfWVal = UInt32(halfW)
+        var hVal = UInt32(height)
+        enc1.setBytes(&halfWVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc1.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+
+        let vThreads1 = MTLSize(width: halfW, height: 1, depth: 1)
+        let vThreadgroup1 = MTLSize(width: min(halfW, 64), height: 1, depth: 1)
+        enc1.dispatchThreads(vThreads1, threadsPerThreadgroup: vThreadgroup1)
+
+        // Inverse vertical on HL + HH → hHigh
+        if halfWH > 0 {
+            enc1.setBuffer(hlBuffer, offset: 0, index: 0)
+            enc1.setBuffer(hhBuffer, offset: 0, index: 1)
+            enc1.setBuffer(hHighBuffer, offset: 0, index: 2)
+            var halfWHVal = UInt32(halfWH)
+            enc1.setBytes(&halfWHVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+
+            let vThreads2 = MTLSize(width: halfWH, height: 1, depth: 1)
+            let vThreadgroup2 = MTLSize(width: min(halfWH, 64), height: 1, depth: 1)
+            enc1.dispatchThreads(vThreads2, threadsPerThreadgroup: vThreadgroup2)
+        }
+
+        enc1.endEncoding()
+        cb1.commit()
+        await cb1.completed()
+
+        // Step 2: Inverse horizontal DWT — hLow + hHigh → output
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device,
+            size: width * height * MemoryLayout<Float>.stride
+        )
+
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: horizontalInverseShaderFunction()
+        )
+
+        guard let cb2 = queue.makeCommandBuffer(),
+              let enc2 = cb2.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        enc2.setComputePipelineState(hPipeline)
+        enc2.setBuffer(hLowBuffer, offset: 0, index: 0)
+        enc2.setBuffer(hHighBuffer, offset: 0, index: 1)
+        enc2.setBuffer(outputBuffer, offset: 0, index: 2)
+        var wVal = UInt32(width)
+        enc2.setBytes(&wVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+
+        let hThreads = MTLSize(width: 1, height: height, depth: 1)
+        let hThreadgroup = MTLSize(width: 1, height: min(height, 64), depth: 1)
+        enc2.dispatchThreads(hThreads, threadsPerThreadgroup: hThreadgroup)
+        enc2.endEncoding()
+        cb2.commit()
+        await cb2.completed()
+
+        // Read result
+        let result = readFloatArray(from: outputBuffer, elementCount: width * height)
+
+        // Return buffers
+        await bufferPool.returnBuffer(llBuffer)
+        await bufferPool.returnBuffer(lhBuffer)
+        await bufferPool.returnBuffer(hlBuffer)
+        await bufferPool.returnBuffer(hhBuffer)
+        await bufferPool.returnBuffer(hLowBuffer)
+        await bufferPool.returnBuffer(hHighBuffer)
+        await bufferPool.returnBuffer(outputBuffer)
+
+        return result
     }
 
     private func ensureInitialized() async throws {

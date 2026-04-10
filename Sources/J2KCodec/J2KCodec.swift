@@ -112,6 +112,34 @@ public struct J2KEncoder: Sendable {
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try pipeline.encode(image, progress: progress)
     }
+
+    /// Encodes an image to JPEG 2000 format with GPU acceleration.
+    ///
+    /// Uses Metal GPU for the CDF 9/7 wavelet transform stage when available.
+    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    ///
+    /// - Parameter image: The image to encode.
+    /// - Returns: The encoded JPEG 2000 codestream data.
+    /// - Throws: ``J2KError`` if encoding fails.
+    public func encodeGPU(_ image: J2KImage) async throws -> Data {
+        let pipeline = EncoderPipeline(config: encodingConfiguration)
+        return try await pipeline.encodeGPU(image)
+    }
+
+    /// Encodes an image to JPEG 2000 format with GPU acceleration and progress reporting.
+    ///
+    /// - Parameters:
+    ///   - image: The image to encode.
+    ///   - progress: A callback invoked with progress updates during encoding.
+    /// - Returns: The encoded JPEG 2000 codestream data.
+    /// - Throws: ``J2KError`` if encoding fails.
+    public func encodeGPU(
+        _ image: J2KImage,
+        progress: ((EncoderProgressUpdate) -> Void)?
+    ) async throws -> Data {
+        let pipeline = EncoderPipeline(config: encodingConfiguration)
+        return try await pipeline.encodeGPU(image, progress: progress)
+    }
 }
 
 /// Decodes JPEG 2000 images.
@@ -172,5 +200,33 @@ public struct J2KDecoder: Sendable {
     ) throws -> J2KImage {
         let pipeline = DecoderPipeline()
         return try pipeline.decode(data, progress: progress)
+    }
+
+    /// Decodes JPEG 2000 data into an image with GPU acceleration.
+    ///
+    /// Uses Metal GPU for the CDF 9/7 inverse wavelet transform stage when available.
+    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    ///
+    /// - Parameter data: The JPEG 2000 codestream data to decode.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decodeGPU(_ data: Data) async throws -> J2KImage {
+        let pipeline = DecoderPipeline()
+        return try await pipeline.decodeGPU(data)
+    }
+
+    /// Decodes JPEG 2000 data into an image with GPU acceleration and progress reporting.
+    ///
+    /// - Parameters:
+    ///   - data: The JPEG 2000 codestream data to decode.
+    ///   - progress: A callback invoked with progress updates during decoding.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decodeGPU(
+        _ data: Data,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        let pipeline = DecoderPipeline()
+        return try await pipeline.decodeGPU(data, progress: progress)
     }
 }
