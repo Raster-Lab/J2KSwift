@@ -10,6 +10,7 @@
 
 import Foundation
 import J2KCore
+import J2KMetal
 import Synchronization
 
 // MARK: - Encoding Stage
@@ -179,6 +180,236 @@ struct EncoderPipeline: Sendable {
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
         return codestream
+    }
+
+    // MARK: - GPU-Accelerated Encode
+
+    /// Encodes an image through the GPU-accelerated JPEG 2000 pipeline.
+    ///
+    /// Uses Metal GPU acceleration for the CDF 9/7 wavelet transform stage.
+    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    ///
+    /// - Parameters:
+    ///   - image: The image to encode.
+    ///   - progress: Optional progress callback.
+    /// - Returns: The encoded JPEG 2000 codestream data.
+    /// - Throws: ``J2KError`` if encoding fails.
+    func encodeGPU(
+        _ image: J2KImage,
+        progress: ((EncoderProgressUpdate) -> Void)? = nil
+    ) async throws -> Data {
+        try image.validate()
+
+        // Stage 1: Preprocessing
+        reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
+        var componentData = try extractComponentData(from: image)
+        reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
+
+        for (compIdx, component) in image.components.enumerated() {
+            if !component.signed {
+                let dcOffset = Int32(1 << (component.bitDepth - 1))
+                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+            }
+        }
+
+        // Stage 2: GPU Colour Transform
+        reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
+        let (transformedData, transformedDoubleData) = try await applyColorTransformGPU(componentData, image: image)
+        reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
+
+        // Stage 3: GPU Wavelet Transform
+        reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
+        let (decompositions, actualDecompositionLevels) = try await applyWaveletTransformGPU(
+            transformedData, doubleComponents: transformedDoubleData,
+            width: image.width, height: image.height
+        )
+        reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
+
+        // Stage 4: Quantization
+        reportProgress(progress, stage: .quantization, stageProgress: 0.0)
+        let quantizedSubbands = try applyQuantization(decompositions)
+        reportProgress(progress, stage: .quantization, stageProgress: 1.0)
+
+        // Stage 5: Entropy Coding
+        reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
+        let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
+        reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
+
+        // Stage 6: Rate Control
+        reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
+        let layers = try applyRateControl(
+            codeBlocks: codeBlocks, totalPixels: image.width * image.height
+        )
+        reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
+
+        // Stage 7: Codestream Generation
+        reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
+        let codestream = try generateCodestream(
+            image: image, codeBlocks: codeBlocks, layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels
+        )
+        reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
+
+        return codestream
+    }
+
+    /// GPU-accelerated wavelet transform using Metal.
+    ///
+    /// Uses Metal GPU for both CDF 9/7 irreversible and Le Gall 5/3 reversible wavelet transforms.
+    /// Falls back to CPU for custom/arbitrary wavelet kernels.
+    private func applyWaveletTransformGPU(
+        _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
+        width: Int, height: Int
+    ) async throws -> ([[SubbandInfo]], Int) {
+        // Fall back to CPU for custom wavelet kernels only
+        if case .arbitrary = config.waveletKernelConfiguration {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+        if case .perTileComponent = config.waveletKernelConfiguration {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+
+        let maxLevels = max(0, Int(log2(Double(min(width, height)))) - 1)
+        let levels = min(config.decompositionLevels, maxLevels)
+
+        guard levels >= 1 else {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+
+        // Select filter based on configuration
+        let metalFilter: J2KMetalDWTFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
+
+        // Create Metal DWT for GPU forward transform
+        let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: metalFilter, decompositionLevels: levels
+        ))
+        try await metalDWT.initialize()
+
+        var allSubbands: [[SubbandInfo]] = []
+
+        for (compIdx, compData) in components.enumerated() {
+            // Convert to Float for Metal DWT
+            let flatFloat: [Float]
+            if let dc = doubleComponents, compIdx < dc.count {
+                flatFloat = dc[compIdx].map { Float($0) }
+            } else {
+                flatFloat = compData.map { Float($0) }
+            }
+
+            let decomposition = try await metalDWT.forwardMultiLevel(
+                data: flatFloat, width: width, height: height,
+                levels: levels, backend: J2KMetalDWTBackend.auto
+            )
+
+            var subbands: [SubbandInfo] = []
+
+            for (levelIdx, level) in decomposition.levels.enumerated() {
+                let decomLevel = levelIdx + 1
+                let hlWidth = level.originalWidth - level.llWidth
+                let lhHeight = level.originalHeight - level.llHeight
+
+                subbands.append(SubbandInfo(
+                    componentIndex: compIdx, level: decomLevel, subband: .hl,
+                    coefficients: level.hl.map { Int32($0.rounded()) },
+                    doubleCoefficients: level.hl.map { Double($0) },
+                    width: hlWidth, height: level.llHeight
+                ))
+                subbands.append(SubbandInfo(
+                    componentIndex: compIdx, level: decomLevel, subband: .lh,
+                    coefficients: level.lh.map { Int32($0.rounded()) },
+                    doubleCoefficients: level.lh.map { Double($0) },
+                    width: level.llWidth, height: lhHeight
+                ))
+                subbands.append(SubbandInfo(
+                    componentIndex: compIdx, level: decomLevel, subband: .hh,
+                    coefficients: level.hh.map { Int32($0.rounded()) },
+                    doubleCoefficients: level.hh.map { Double($0) },
+                    width: hlWidth, height: lhHeight
+                ))
+            }
+
+            subbands.insert(SubbandInfo(
+                componentIndex: compIdx, level: 0, subband: .ll,
+                coefficients: decomposition.approximation.map { Int32($0.rounded()) },
+                doubleCoefficients: decomposition.approximation.map { Double($0) },
+                width: decomposition.approximationWidth,
+                height: decomposition.approximationHeight
+            ), at: 0)
+
+            allSubbands.append(subbands)
+        }
+
+        return (allSubbands, levels)
+    }
+
+    /// GPU-accelerated colour transform using Metal.
+    ///
+    /// Uses Metal GPU for ICT/RCT colour transforms on 3+ component images.
+    /// Falls back to CPU for non-standard MCT modes.
+    private func applyColorTransformGPU(
+        _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
+    ) async throws -> ([[Int32]], [[Double]]?) {
+        // Fall back to CPU for non-standard MCT modes
+        if config.mctConfiguration.perTileMCT[tileIndex] != nil {
+            return try applyColorTransform(components, image: image, tileIndex: tileIndex)
+        }
+        switch config.mctConfiguration.mode {
+        case .arrayBased, .dependency, .adaptive:
+            return try applyColorTransform(components, image: image, tileIndex: tileIndex)
+        case .disabled:
+            break
+        }
+
+        // Standard Part 1 colour transform — use GPU for 3+ components
+        guard components.count >= 3 else { return (components, nil) }
+
+        // Check if Metal is available
+        guard J2KMetalColorTransform.isAvailable else {
+            return try applyColorTransform(components, image: image, tileIndex: tileIndex)
+        }
+
+        let transformType: J2KMetalColorTransformType = config.useReversibleFilter ? .rct : .ict
+        let metalConfig = J2KMetalColorTransformConfiguration(transformType: transformType)
+        let metalCT = J2KMetalColorTransform(configuration: metalConfig)
+        try await metalCT.initialize()
+
+        // Convert Int32 to Float for Metal
+        let redFloat = components[0].map { Float($0) }
+        let greenFloat = components[1].map { Float($0) }
+        let blueFloat = components[2].map { Float($0) }
+
+        let result = try await metalCT.forwardTransform(
+            red: redFloat, green: greenFloat, blue: blueFloat, backend: .auto
+        )
+
+        // Convert back to Int32 and optionally Double
+        let y = result.component0.map { Int32($0.rounded()) }
+        let cb = result.component1.map { Int32($0.rounded()) }
+        let cr = result.component2.map { Int32($0.rounded()) }
+
+        var intResult = [y, cb, cr]
+        if components.count > 3 {
+            intResult.append(contentsOf: components[3...])
+        }
+
+        var doubleResult: [[Double]]? = nil
+        if !config.useReversibleFilter {
+            // Keep double-precision ICT output for 9/7 DWT path
+            var dbl: [[Double]] = [
+                result.component0.map { Double($0) },
+                result.component1.map { Double($0) },
+                result.component2.map { Double($0) }
+            ]
+            if components.count > 3 {
+                dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
+            }
+            doubleResult = dbl
+        }
+
+        return (intResult, doubleResult)
     }
 
     // MARK: - Stage 1: Preprocessing
