@@ -473,6 +473,58 @@ swift format --in-place --recursive Sources Tests
 - Write self-documenting code with good naming
 - Add comments for complex algorithms or non-obvious decisions
 
+## Custom Agents
+
+Specialized agents are available for focused tasks. Use `@` in chat to invoke them:
+
+| Agent | Purpose |
+|-------|---------|
+| `@codec-dev` | Codec pipeline development (encoder, decoder, DWT, EBCOT, MQ coder) |
+| `@testing` | Writing and running tests, cross-codec validation with OpenJPEG |
+| `@compliance` | ISO/IEC 15444-4 conformance verification and release validation |
+| `@cli-dev` | CLI tool development (`j2k` commands, image I/O, OpenJPEG wrappers) |
+| `@gpu-dev` | GPU acceleration (Metal, Vulkan, Accelerate, SIMD, shader development) |
+| `@jp3d-dev` | 3D volumetric imaging (JP3D Part 10, medical volumes, multispectral) |
+| `@file-format-dev` | File format support (JP2, JPX, JPM, JPH, MJ2, box hierarchy) |
+| `@jpip-dev` | JPIP network streaming (client/server, WebSocket, progressive delivery) |
+| `@perf-dev` | Performance optimization (profiling, benchmarking, memory, concurrency) |
+
+## Skills
+
+Reusable workflows available via `/` slash commands:
+
+| Skill | Purpose |
+|-------|---------|
+| `/cross-codec-testing` | Full interoperability test matrix between J2KSwift and OpenJPEG |
+| `/conformance-testing` | Pre-release ISO/IEC 15444-4 compliance verification procedure |
+| `/medical-imaging-validation` | Medical image (DICOM/CT/MRI) lossless validation and quality metrics |
+| `/release-checklist` | Complete pre-release validation: build, test, lint, compliance gate |
+| `/performance-profiling` | Pipeline profiling, bottleneck identification, OpenJPEG comparison |
+| `/gpu-benchmark` | GPU vs CPU benchmarking across Metal, Vulkan, and Accelerate backends |
+
+## File-Specific Instructions
+
+Auto-loaded instructions based on file context:
+
+| Instruction | Applies To | Purpose |
+|-------------|-----------|---------|
+| `swift-conventions` | `**/*.swift` | Swift 6 strict concurrency, naming, error handling |
+| `codec-pipeline` | `Sources/J2KCodec/**` | Codec invariants, common pitfalls, pipeline symmetry |
+| `testing` | `Tests/**` | XCTest patterns, naming, coverage requirements |
+| `gpu-acceleration` | `Sources/J2KAccelerate/**`, `Sources/J2KMetal/**`, `Sources/J2KVulkan/**` | Platform guards, CPU fallback, buffer management, GPU correctness |
+| `file-format` | `Sources/J2KFileFormat/**` | Box parsing safety, format detection, memory-efficient I/O |
+| `jpip-networking` | `Sources/JPIP/**` | Actor isolation, session management, transport, caching |
+
+## External Tools
+
+| Tool | Location | Purpose |
+|------|----------|---------|
+| OpenJPEG v2.5.4 | `/opt/homebrew/bin/` | Reference JPEG 2000 implementation |
+| `opj_compress` | `/opt/homebrew/bin/opj_compress` | Encode to J2K/JP2 |
+| `opj_decompress` | `/opt/homebrew/bin/opj_decompress` | Decode J2K/JP2 |
+| `opj_dump` | `/opt/homebrew/bin/opj_dump` | Inspect codestream |
+| J2KSwift CLI | `.build/debug/j2k` | Native encode/decode/compare/validate |
+
 ---
 
 Remember: The goal is to create a high-quality, production-ready JPEG 2000 implementation that the Swift community can rely on. Quality over speed, correctness over convenience, clarity over cleverness.

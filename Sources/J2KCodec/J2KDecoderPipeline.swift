@@ -113,6 +113,12 @@ struct CodestreamMetadata: Sendable {
     /// Tile size.
     var tileSize: (width: Int, height: Int)
 
+    /// Image offset (XOsiz, YOsiz).
+    var imageOffset: (x: Int, y: Int) = (0, 0)
+
+    /// Tile offset (XTOsiz, YTOsiz).
+    var tileOffset: (x: Int, y: Int) = (0, 0)
+
     /// Configuration from COD marker.
     var configuration: DecoderConfiguration
 
@@ -131,6 +137,29 @@ struct CodestreamMetadata: Sendable {
     /// Present when the codestream contains a DCO marker segment (0xFF5C)
     /// signaling per-component DC offset values.
     var dcoMarkerSegment: J2KDCOMarkerSegment?
+
+    /// Number of tiles in X direction.
+    var numTilesX: Int { max(1, (width + tileSize.width - 1) / tileSize.width) }
+
+    /// Number of tiles in Y direction.
+    var numTilesY: Int { max(1, (height + tileSize.height - 1) / tileSize.height) }
+
+    /// Total number of tiles.
+    var totalTiles: Int { numTilesX * numTilesY }
+
+    /// Whether this is a multi-tile codestream.
+    var isMultiTile: Bool { totalTiles > 1 }
+
+    /// Returns the actual dimensions for a given tile index, accounting for edge tiles.
+    func tileDimensions(tileIndex: Int) -> (x: Int, y: Int, width: Int, height: Int) {
+        let col = tileIndex % numTilesX
+        let row = tileIndex / numTilesX
+        let x0 = col * tileSize.width
+        let y0 = row * tileSize.height
+        let w = min(tileSize.width, width - x0)
+        let h = min(tileSize.height, height - y0)
+        return (x0, y0, w, h)
+    }
 
     struct ComponentInfo: Sendable {
         var bitDepth: Int
@@ -166,9 +195,23 @@ struct DecoderPipeline: Sendable {
     ) throws -> J2KImage {
         // Stage 1: Parse codestream and extract metadata
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 0.0)
-        let (metadata, tileData) = try parseCodestream(data)
+        let (metadata, tiles) = try parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
 
+        if metadata.isMultiTile {
+            return try decodeMultiTile(metadata: metadata, tiles: tiles, progress: progress)
+        } else {
+            let tileData = tiles.first?.tileData ?? Data()
+            return try decodeSingleTile(metadata: metadata, tileData: tileData, progress: progress)
+        }
+    }
+
+    /// Decodes a single-tile codestream (original path).
+    private func decodeSingleTile(
+        metadata: CodestreamMetadata,
+        tileData: Data,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) throws -> J2KImage {
         // Stage 2: Extract tile data
         reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
         let codeBlocks = try extractTileData(tileData, metadata: metadata)
@@ -195,7 +238,6 @@ struct DecoderPipeline: Sendable {
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
 
         // DC level unshift: for unsigned components, add back 2^(bitDepth-1)
-        // to reverse the ISO 15444-1 Annex F DC level shift applied during encoding.
         for (compIdx, compInfo) in metadata.components.enumerated() {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
@@ -212,10 +254,91 @@ struct DecoderPipeline: Sendable {
         return image
     }
 
+    /// Decodes a multi-tile codestream by processing each tile independently
+    /// and assembling the results into the full image.
+    private func decodeMultiTile(
+        metadata: CodestreamMetadata,
+        tiles: [(tileIndex: Int, tileData: Data)],
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) throws -> J2KImage {
+        let numComponents = metadata.componentCount
+
+        // Prepare full-image component buffers
+        var fullComponents: [[Double]] = (0..<numComponents).map { compIdx in
+            let compInfo = metadata.components[compIdx]
+            let w = metadata.width / compInfo.subsamplingX
+            let h = metadata.height / compInfo.subsamplingY
+            return [Double](repeating: 0.0, count: w * h)
+        }
+
+        // Process each tile
+        for (tileIdx, tile) in tiles.enumerated() {
+            let tileProgress = Double(tileIdx) / Double(tiles.count)
+            reportProgress(progress, stage: .tileExtraction, stageProgress: tileProgress)
+
+            let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tile.tileIndex)
+
+            // Create tile-specific metadata with tile dimensions as the "image" dimensions
+            var tileMeta = metadata
+            tileMeta.width = tileW
+            tileMeta.height = tileH
+            // For tile processing, tileSize should be the actual tile dimensions
+            tileMeta.tileSize = (width: tileW, height: tileH)
+
+            // Stage 2-4: Extract, entropy decode, dequantize for this tile
+            let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
+            let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+            let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: tileMeta)
+
+            // Stage 5: Inverse wavelet transform for this tile
+            let spatialData = try applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
+
+            // Stage 6: Inverse colour transform for this tile
+            var tileRGB = try applyInverseColorTransform(spatialData, metadata: tileMeta)
+
+            // DC level unshift for this tile
+            for (compIdx, compInfo) in metadata.components.enumerated() {
+                guard compIdx < tileRGB.count else { break }
+                if !compInfo.signed {
+                    let dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                    tileRGB[compIdx] = tileRGB[compIdx].map { $0 + dcOffset }
+                }
+            }
+
+            // Place tile data into full image buffers
+            for compIdx in 0..<min(numComponents, tileRGB.count) {
+                let compInfo = metadata.components[compIdx]
+                let fullW = metadata.width / compInfo.subsamplingX
+                let compTileX = tileX / compInfo.subsamplingX
+                let compTileY = tileY / compInfo.subsamplingY
+                let compTileW = tileW / compInfo.subsamplingX
+                let compTileH = tileH / compInfo.subsamplingY
+
+                let tileCompData = tileRGB[compIdx]
+                for row in 0..<compTileH {
+                    let dstOffset = (compTileY + row) * fullW + compTileX
+                    let srcOffset = row * compTileW
+                    for col in 0..<compTileW {
+                        if srcOffset + col < tileCompData.count {
+                            fullComponents[compIdx][dstOffset + col] = tileCompData[srcOffset + col]
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stage 7: Reconstruct final image
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        let image = try reconstructImage(fullComponents, metadata: metadata)
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
+
+        return image
+    }
+
     // MARK: - Stage 1: Codestream Parsing
 
     /// Parses the JPEG 2000 codestream and extracts metadata and tile data.
-    private func parseCodestream(_ data: Data) throws -> (CodestreamMetadata, Data) {
+    private func parseCodestream(_ data: Data) throws -> (CodestreamMetadata, [(tileIndex: Int, tileData: Data)]) {
         var reader = J2KBitReader(data: data)
 
         // Verify SOC marker
@@ -226,7 +349,7 @@ struct DecoderPipeline: Sendable {
         var metadata: CodestreamMetadata?
         var configuration = DecoderConfiguration()
         var quantizationSteps: (steps: [String: Double], guardBits: Int, bandKb: [String: Int]) = ([:], 2, [:])
-        var tileData: Data?
+        var tiles: [(tileIndex: Int, tileData: Data)] = []
 
         // Parse main header markers
         while reader.position < data.count {
@@ -246,10 +369,9 @@ struct DecoderPipeline: Sendable {
                 let bitDepth = metadata?.components.first?.bitDepth ?? 8
                 quantizationSteps = try parseQCDMarker(&reader, config: configuration, bitDepth: bitDepth)
             case J2KMarker.sot.rawValue:
-                // Start of tile-part
-                let (_, tilepartData) = try parseSOTMarker(&reader)
-                tileData = tilepartData
-                // Break after first tile for now
+                // Start of tile-part — collect all tiles
+                let (tileIndex, tilepartData) = try parseSOTMarker(&reader)
+                tiles.append((tileIndex: tileIndex, tileData: tilepartData))
 
             case J2KMarker.eoc.rawValue:
                 // End of codestream
@@ -265,7 +387,7 @@ struct DecoderPipeline: Sendable {
                 }
             }
 
-            if tileData != nil {
+            if marker == J2KMarker.eoc.rawValue {
                 break
             }
         }
@@ -279,7 +401,17 @@ struct DecoderPipeline: Sendable {
         meta.quantizationGuardBits = quantizationSteps.guardBits
         meta.bandKbValues = quantizationSteps.bandKb
 
-        return (meta, tileData ?? Data())
+        // If no tiles were found via SOT, but we have remaining data,
+        // treat everything after the main header as a single tile
+        if tiles.isEmpty {
+            // Calculate remaining data after main header
+            let remaining = data.subdata(in: reader.position..<data.count)
+            if !remaining.isEmpty {
+                tiles.append((tileIndex: 0, tileData: remaining))
+            }
+        }
+
+        return (meta, tiles)
     }
 
     /// Parses the SIZ marker segment.
@@ -295,16 +427,16 @@ struct DecoderPipeline: Sendable {
         let height = Int(try reader.readUInt32())
 
         // Image offset
-        _ = try reader.readUInt32() // XOsiz
-        _ = try reader.readUInt32() // YOsiz
+        let xOsiz = Int(try reader.readUInt32())
+        let yOsiz = Int(try reader.readUInt32())
 
         // Tile dimensions
         let tileWidth = Int(try reader.readUInt32())
         let tileHeight = Int(try reader.readUInt32())
 
         // Tile offset
-        _ = try reader.readUInt32() // XTOsiz
-        _ = try reader.readUInt32() // YTOsiz
+        let xtOsiz = Int(try reader.readUInt32())
+        let ytOsiz = Int(try reader.readUInt32())
 
         // Number of components
         let componentCount = Int(try reader.readUInt16())
@@ -338,6 +470,8 @@ struct DecoderPipeline: Sendable {
             componentCount: componentCount,
             components: components,
             tileSize: (width: tileWidth, height: tileHeight),
+            imageOffset: (x: xOsiz, y: yOsiz),
+            tileOffset: (x: xtOsiz, y: ytOsiz),
             configuration: DecoderConfiguration(),
             quantizationSteps: [:],
             quantizationGuardBits: 2,

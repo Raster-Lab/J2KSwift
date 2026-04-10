@@ -480,37 +480,46 @@ public struct J2KDWT2D: Sendable {
         boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
     ) throws -> [[Int32]] {
         // Validate inputs
-        guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
-            throw J2KError.invalidParameter("All subbands must be non-empty")
+        guard !ll.isEmpty else {
+            throw J2KError.invalidParameter("LL subband cannot be empty")
+        }
+        // Handle edge tiles where subbands may be empty (tile dimension=1 in some direction)
+        if lh.isEmpty && hl.isEmpty && hh.isEmpty {
+            return ll
         }
 
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
-        let lhWidth = lh[0].count
+        let lhWidth = lh.isEmpty ? 0 : lh[0].count
         let hlHeight = hl.count
-        let hlWidth = hl[0].count
+        let hlWidth = hl.isEmpty ? 0 : hl[0].count
         let hhHeight = hh.count
-        let hhWidth = hh[0].count
+        let hhWidth = hh.isEmpty ? 0 : hh[0].count
 
         // Validate subband dimensions - allow for off-by-one due to odd dimensions
-        guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
-            )
+        // Skip width checks if high-frequency subbands are empty (edge tile)
+        if !hl.isEmpty && !hh.isEmpty {
+            guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
+                )
+            }
         }
 
-        guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
-            )
+        if !lh.isEmpty && !hh.isEmpty {
+            guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
+                )
+            }
         }
 
         // Validate all rows have consistent lengths
         guard ll.allSatisfy({ $0.count == llWidth }) &&
-              lh.allSatisfy({ $0.count == lhWidth }) &&
-              hl.allSatisfy({ $0.count == hlWidth }) &&
-              hh.allSatisfy({ $0.count == hhWidth }) else {
+              (lh.isEmpty || lh.allSatisfy({ $0.count == lhWidth })) &&
+              (hl.isEmpty || hl.allSatisfy({ $0.count == hlWidth })) &&
+              (hh.isEmpty || hh.allSatisfy({ $0.count == hhWidth })) else {
             throw J2KError.invalidParameter("All subband rows must have consistent lengths")
         }
 
@@ -993,35 +1002,43 @@ extension J2KDWT2D {
         boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
     ) throws -> [[Double]] {
         // Validate inputs (same validation as integer version)
-        guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
-            throw J2KError.invalidParameter("All subbands must be non-empty")
+        guard !ll.isEmpty else {
+            throw J2KError.invalidParameter("LL subband cannot be empty")
+        }
+        // Handle edge tiles where subbands may be empty (tile dimension=1 in some direction)
+        if lh.isEmpty && hl.isEmpty && hh.isEmpty {
+            return ll
         }
 
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
-        let lhWidth = lh[0].count
+        let lhWidth = lh.isEmpty ? 0 : lh[0].count
         let hlHeight = hl.count
-        let hlWidth = hl[0].count
+        let hlWidth = hl.isEmpty ? 0 : hl[0].count
         let hhHeight = hh.count
-        let hhWidth = hh[0].count
+        let hhWidth = hh.isEmpty ? 0 : hh[0].count
 
-        guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
-            )
+        if !hl.isEmpty && !hh.isEmpty {
+            guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
+                )
+            }
         }
 
-        guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
-            )
+        if !lh.isEmpty && !hh.isEmpty {
+            guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
+                )
+            }
         }
 
         guard ll.allSatisfy({ $0.count == llWidth }) &&
-              lh.allSatisfy({ $0.count == lhWidth }) &&
-              hl.allSatisfy({ $0.count == hlWidth }) &&
-              hh.allSatisfy({ $0.count == hhWidth }) else {
+              (lh.isEmpty || lh.allSatisfy({ $0.count == lhWidth })) &&
+              (hl.isEmpty || hl.allSatisfy({ $0.count == hlWidth })) &&
+              (hh.isEmpty || hh.allSatisfy({ $0.count == hhWidth })) else {
             throw J2KError.invalidParameter("All subband rows must have consistent lengths")
         }
 
@@ -1055,9 +1072,10 @@ extension J2KDWT2D {
         // Reconstruct low-frequency columns (LL + LH → vertical IDWT)
         var columnInversed = [[Double]]()
         for col in 0..<llWidth {
+            let highpassCol: [Double] = col < transposedLH.count ? transposedLH[col] : []
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
                 lowpass: transposedLL[col],
-                highpass: transposedLH[col],
+                highpass: highpassCol,
                 boundaryExtension: boundaryExtension
             )
 
@@ -1073,11 +1091,12 @@ extension J2KDWT2D {
         }
 
         // Reconstruct high-frequency columns (HL + HH → vertical IDWT)
-        let highFreqStartCol = columnInversed[0].count
+        let highFreqStartCol = columnInversed.isEmpty ? 0 : columnInversed[0].count
         for col in 0..<hlWidth {
+            let highpassCol: [Double] = col < transposedHH.count ? transposedHH[col] : []
             let reconstructedColumn = try J2KDWT1D.inverseTransform97(
                 lowpass: transposedHL[col],
-                highpass: transposedHH[col],
+                highpass: highpassCol,
                 boundaryExtension: boundaryExtension
             )
 
