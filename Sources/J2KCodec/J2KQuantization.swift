@@ -239,9 +239,13 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
 
     /// Creates parameters from a quality factor.
     ///
-    /// - Parameter quality: Quality factor (0.0 = lowest, 1.0 = highest).
+    /// - Parameters:
+    ///   - quality: Quality factor (0.0 = lowest, 1.0 = highest).
+    ///   - bitDepth: Bit depth of the source image (unused; step sizes are
+    ///     bit-depth-independent because the QCD marker's (ε,μ) encoding
+    ///     automatically accounts for R_b = bitDepth + subbandGain).
     /// - Returns: Quantization parameters suitable for the quality level.
-    public static func fromQuality(_ quality: Double) -> J2KQuantizationParameters {
+    public static func fromQuality(_ quality: Double, bitDepth: Int = 8) -> J2KQuantizationParameters {
         // Map quality to step size (higher quality = smaller step).
         //
         // This is only used for the irreversible (9/7) path — the reversible
@@ -252,6 +256,10 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         // producing ~10-12 bit planes per code block for maximum PCRD
         // flexibility.  Rate control (PCRD pass truncation) exclusively
         // determines the final quality/bitrate trade-off.
+        //
+        // Note: Scaling baseStepSize by bit depth is INCORRECT — the
+        // deadzone (coefficients with |c| < step quantised to 0) would
+        // destroy low-energy detail subbands at higher bit depths.
         let stepSize = 1.0
 
         // Use scalar mode which implements the standard JPEG 2000 quantization

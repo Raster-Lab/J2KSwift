@@ -646,6 +646,15 @@ extension J2KEncodingPreset: CustomStringConvertible {
 }
 
 extension J2KBitrateMode: CustomStringConvertible {
+    /// Returns the bits-per-pixel target, if one is set.
+    public var bitsPerPixel: Double? {
+        switch self {
+        case .constantBitrate(let bpp): return bpp
+        case .variableBitrate(_, let maxBpp): return maxBpp
+        default: return nil
+        }
+    }
+
     public var description: String {
         switch self {
         case .constantQuality:

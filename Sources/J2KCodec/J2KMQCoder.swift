@@ -203,6 +203,17 @@ struct MQEncoder: Sendable {
     /// This is used by rate control to estimate per-pass byte boundaries
     /// without requiring full MQ termination after each pass.
     var currentByteCount: Int { output.count + (buffer >= 0 ? 1 : 0) }
+
+    /// Returns the byte count that MQ termination would produce, without
+    /// modifying this encoder.
+    ///
+    /// More accurate than ``currentByteCount`` because it simulates the full
+    /// termination flush (SETBITS + BYTEOUT + trailing 0xFF removal).
+    /// Used by PCRD rate control for accurate per-pass byte counting.
+    func terminatedByteCount(mode: TerminationMode = .default) -> Int {
+        var copy = self
+        return copy.finish(mode: mode).count
+    }
     
     /// Debug operation counter
     var operationCount: Int = 0

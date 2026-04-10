@@ -477,8 +477,20 @@ struct HTBlockEncoder: Sendable {
         var vlc = HTVLCCoder()
         var magsgn = HTMagSgnCoder()
 
+        // Fix 6: Precompute magnitudes and signs once to avoid per-sample abs() calls
+        let count = width * height
+        let mags = [Int](unsafeUninitializedCapacity: count) { buf, initCount in
+            for i in 0..<count {
+                buf[i] = abs(coefficients[i])
+            }
+            initCount = count
+        }
+        let bitShift = bitPlane
+
         // Process in 4-row stripes (standard JPEG 2000 stripe ordering)
         let numStripes = (height + 3) / 4
+        mags.withUnsafeBufferPointer { magBuf in
+        coefficients.withUnsafeBufferPointer { coeffBuf in
         for stripe in 0..<numStripes {
             let stripeHeight = min(4, height - stripe * 4)
             for col in stride(from: 0, to: width, by: 2) {
@@ -487,18 +499,15 @@ struct HTBlockEncoder: Sendable {
                 // Process pairs of columns within the stripe
                 for row in 0..<stripeHeight {
                     let y = stripe * 4 + row
-                    let x0 = col
-                    let idx0 = y * width + x0
+                    let idx0 = y * width + col
 
-                    let coeff0 = coefficients[idx0]
-                    let sig0 = (abs(coeff0) >> bitPlane) & 1
+                    let mag0 = magBuf[idx0]
+                    let sig0 = (mag0 >> bitShift) & 1
 
                     var sig1 = 0
-                    var coeff1 = 0
                     if pairWidth > 1 {
-                        let idx1 = y * width + x0 + 1
-                        coeff1 = coefficients[idx1]
-                        sig1 = (abs(coeff1) >> bitPlane) & 1
+                        let mag1 = magBuf[idx0 + 1]
+                        sig1 = (mag1 >> bitShift) & 1
                     }
 
                     // Encode significance via MEL and VLC
@@ -508,18 +517,17 @@ struct HTBlockEncoder: Sendable {
 
                     // Encode magnitude/sign for significant samples
                     if sig0 != 0 {
-                        let mag = abs(coeff0)
-                        let sign = coeff0 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
+                        magsgn.encode(magnitude: mag0, sign: coeffBuf[idx0] < 0 ? 1 : 0, bitPlane: bitShift)
                     }
                     if sig1 != 0 {
-                        let mag = abs(coeff1)
-                        let sign = coeff1 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
+                        let idx1 = idx0 + 1
+                        magsgn.encode(magnitude: magBuf[idx1], sign: coeffBuf[idx1] < 0 ? 1 : 0, bitPlane: bitShift)
                     }
                 }
             }
         }
+        } // coeffBuf
+        } // magBuf
 
         // Flush all coding primitives
         let melData = mel.flush()
@@ -568,6 +576,30 @@ struct HTBlockEncoder: Sendable {
             throw J2KError.encodingError("Significance state count mismatch")
         }
 
+        // Fix 6: Precompute significance neighbor bitmap for O(1) lookups.
+        // For each sample, set a flag if any of its 8-connected neighbors is significant.
+        let count = width * height
+        var hasNeighbor = [Bool](repeating: false, count: count)
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = y * width + x
+                if significanceState[idx] {
+                    // Mark all neighbors of this significant sample
+                    let yMin = max(0, y - 1)
+                    let yMax = min(height - 1, y + 1)
+                    let xMin = max(0, x - 1)
+                    let xMax = min(width - 1, x + 1)
+                    for ny in yMin...yMax {
+                        for nx in xMin...xMax {
+                            if ny != y || nx != x {
+                                hasNeighbor[ny * width + nx] = true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         var output: [UInt8] = []
         var bitBuffer: UInt8 = 0
         var bitPos = 0
@@ -586,8 +618,8 @@ struct HTBlockEncoder: Sendable {
                         continue
                     }
 
-                    // Check if any neighbor is significant (significance propagation)
-                    if hasSignificantNeighbor(x: col, y: y, state: significanceState) {
+                    // Fix 6: O(1) neighbor check via precomputed bitmap
+                    if hasNeighbor[idx] {
                         let coeff = coefficients[idx]
                         let bit = (abs(coeff) >> bitPlane) & 1
 
@@ -643,6 +675,9 @@ struct HTBlockEncoder: Sendable {
         var bitBuffer: UInt8 = 0
         var bitPos = 0
 
+        // Fix 6: Use withUnsafeBufferPointer for faster access
+        coefficients.withUnsafeBufferPointer { coeffBuf in
+        significanceState.withUnsafeBufferPointer { sigBuf in
         // Process in stripe order — only already-significant samples
         let numStripes = (height + 3) / 4
         for stripe in 0..<numStripes {
@@ -652,9 +687,8 @@ struct HTBlockEncoder: Sendable {
                     let y = stripe * 4 + row
                     let idx = y * width + col
 
-                    if significanceState[idx] {
-                        let coeff = coefficients[idx]
-                        let bit = (abs(coeff) >> bitPlane) & 1
+                    if sigBuf[idx] {
+                        let bit = (abs(coeffBuf[idx]) >> bitPlane) & 1
 
                         bitBuffer |= UInt8(bit) << bitPos
                         bitPos += 1
@@ -668,6 +702,8 @@ struct HTBlockEncoder: Sendable {
                 }
             }
         }
+        } // sigBuf
+        } // coeffBuf
 
         // Flush remaining bits
         if bitPos > 0 {

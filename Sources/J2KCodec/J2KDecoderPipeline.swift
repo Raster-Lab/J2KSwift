@@ -268,7 +268,7 @@ struct DecoderPipeline: Sendable {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
                 let dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                rgbData[compIdx] = rgbData[compIdx].map { $0 + dcOffset }
+                Self.applyDCUnshiftInPlace(&rgbData[compIdx], offset: dcOffset)
             }
         }
 
@@ -315,7 +315,7 @@ struct DecoderPipeline: Sendable {
                 guard compIdx < tileRGB.count else { break }
                 if !compInfo.signed {
                     let dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                    tileRGB[compIdx] = tileRGB[compIdx].map { $0 + dcOffset }
+                    Self.applyDCUnshiftInPlace(&tileRGB[compIdx], offset: dcOffset)
                 }
             }
 
@@ -382,7 +382,7 @@ struct DecoderPipeline: Sendable {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
                 let dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                rgbData[compIdx] = rgbData[compIdx].map { $0 + dcOffset }
+                Self.applyDCUnshiftInPlace(&rgbData[compIdx], offset: dcOffset)
             }
         }
 
@@ -441,7 +441,7 @@ struct DecoderPipeline: Sendable {
                 guard compIdx < tileRGB.count else { break }
                 if !compInfo.signed {
                     let dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                    tileRGB[compIdx] = tileRGB[compIdx].map { $0 + dcOffset }
+                    Self.applyDCUnshiftInPlace(&tileRGB[compIdx], offset: dcOffset)
                 }
             }
 
@@ -1148,6 +1148,13 @@ struct DecoderPipeline: Sendable {
 
             DispatchQueue.concurrentPerform(iterations: blockCount) { i in
                 let block = blocks[i]
+
+                // Fast path: zero-pass blocks produce all-zero coefficients
+                if block.passCount == 0 || block.data.isEmpty {
+                    resultsPtr[i] = [Int32](repeating: 0, count: block.width * block.height)
+                    return
+                }
+
                 let blockDecoder = CodeBlockDecoder()
                 let codeBlock = J2KCodeBlock(
                     index: 0,
@@ -1199,24 +1206,30 @@ struct DecoderPipeline: Sendable {
         } else {
             // Sequential path for small block counts
             for block in blocks {
-                let codeBlock = J2KCodeBlock(
-                    index: 0,
-                    x: block.x,
-                    y: block.y,
-                    width: block.width,
-                    height: block.height,
-                    subband: block.subband,
-                    data: block.data,
-                    passeCount: block.passCount,
-                    zeroBitPlanes: block.zeroBitPlanes
-                )
+                // Fast path: zero-pass blocks produce all-zero coefficients
+                let coeffs: [Int32]
+                if block.passCount == 0 || block.data.isEmpty {
+                    coeffs = [Int32](repeating: 0, count: block.width * block.height)
+                } else {
+                    let codeBlock = J2KCodeBlock(
+                        index: 0,
+                        x: block.x,
+                        y: block.y,
+                        width: block.width,
+                        height: block.height,
+                        subband: block.subband,
+                        data: block.data,
+                        passeCount: block.passCount,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    )
 
-                let compInfo = metadata.components[block.componentIndex]
-                let coeffs = try decoder.decode(
-                    codeBlock: codeBlock,
-                    bitDepth: block.bandKb > 0 ? block.bandKb : compInfo.bitDepth,
-                    irreversible: isIrreversible
-                )
+                    let compInfo = metadata.components[block.componentIndex]
+                    coeffs = try decoder.decode(
+                        codeBlock: codeBlock,
+                        bitDepth: block.bandKb > 0 ? block.bandKb : compInfo.bitDepth,
+                        irreversible: isIrreversible
+                    )
+                }
 
                 let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
 
@@ -1545,9 +1558,42 @@ struct DecoderPipeline: Sendable {
                 return result
             }
 
-            // Full multi-level IDWT reconstruction
-            // For 9/7 irreversible, use Double precision throughout all levels to
-            // avoid accumulated rounding error from Int32 truncation at each level.
+            // Full multi-level IDWT reconstruction using flat-buffer
+            // AcceleratedDWT2D for standard filters (9/7 and 5/3).
+            // Falls back to nested-array path for custom/arbitrary wavelet kernels.
+
+            // Flat-buffer padding helpers
+            func paddedFlatDouble(_ coeffs: [Double], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Double] {
+                var result = [Double](repeating: 0, count: dstW * dstH)
+                let copyW = min(srcW, dstW); let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    let so = row * srcW; let d = row * dstW
+                    guard so + copyW <= coeffs.count else { break }
+                    for col in 0..<copyW { result[d + col] = coeffs[so + col] }
+                }
+                return result
+            }
+            func paddedFlatDoubleFromInt(_ coeffs: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Double] {
+                var result = [Double](repeating: 0, count: dstW * dstH)
+                let copyW = min(srcW, dstW); let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    let so = row * srcW; let d = row * dstW
+                    guard so + copyW <= coeffs.count else { break }
+                    for col in 0..<copyW { result[d + col] = Double(coeffs[so + col]) }
+                }
+                return result
+            }
+            func paddedFlatInt32(_ coeffs: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Int32] {
+                var result = [Int32](repeating: 0, count: dstW * dstH)
+                let copyW = min(srcW, dstW); let copyH = min(srcH, dstH)
+                for row in 0..<copyH {
+                    let so = row * srcW; let d = row * dstW
+                    guard so + copyW <= coeffs.count else { break }
+                    for col in 0..<copyW { result[d + col] = coeffs[so + col] }
+                }
+                return result
+            }
+
             let useDoublePrecision: Bool
             if case .irreversible97 = componentFilter {
                 useDoublePrecision = true
@@ -1555,10 +1601,136 @@ struct DecoderPipeline: Sendable {
                 useDoublePrecision = false
             }
 
+            // Standard filter accelerated path
+            let useAcceleratedInverse: Bool
+            switch componentFilter {
+            case .irreversible97, .reversible53:
+                useAcceleratedInverse = true
+            case .custom:
+                useAcceleratedInverse = false
+            }
+
+            if useAcceleratedInverse && useDoublePrecision {
+                // Accelerated 9/7 inverse via flat-buffer AcceleratedDWT2D
+                let expectedLLW = levelSizes[levels].width
+                let expectedLLH = levelSizes[levels].height
+                let llFlat: [Double]
+                if let dc = llSubband.doubleCoefficients {
+                    llFlat = paddedFlatDouble(dc, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
+                } else {
+                    llFlat = paddedFlatDoubleFromInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
+                }
+
+                var accelLevels: [AcceleratedDWT2D.LevelResult] = []
+                for level in 1...levels {
+                    let llW = levelSizes[level].width
+                    let llH = levelSizes[level].height
+                    let parentW = levelSizes[level - 1].width
+                    let parentH = levelSizes[level - 1].height
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
+
+                    let hlSub = compSubbands.first(where: { $0.level == level && $0.subband == .hl })
+                    let hlFlat: [Double]
+                    if let hs = hlSub, let dc = hs.doubleCoefficients {
+                        hlFlat = paddedFlatDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                    } else if let hs = hlSub {
+                        hlFlat = paddedFlatDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                    } else {
+                        hlFlat = [Double](repeating: 0, count: hlW * llH)
+                    }
+
+                    let lhSub = compSubbands.first(where: { $0.level == level && $0.subband == .lh })
+                    let lhFlat: [Double]
+                    if let ls = lhSub, let dc = ls.doubleCoefficients {
+                        lhFlat = paddedFlatDouble(dc, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                    } else if let ls = lhSub {
+                        lhFlat = paddedFlatDoubleFromInt(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                    } else {
+                        lhFlat = [Double](repeating: 0, count: llW * lhH)
+                    }
+
+                    let hhSub = compSubbands.first(where: { $0.level == level && $0.subband == .hh })
+                    let hhFlat: [Double]
+                    if let hs = hhSub, let dc = hs.doubleCoefficients {
+                        hhFlat = paddedFlatDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
+                    } else if let hs = hhSub {
+                        hhFlat = paddedFlatDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
+                    } else {
+                        hhFlat = [Double](repeating: 0, count: hlW * lhH)
+                    }
+
+                    accelLevels.append(AcceleratedDWT2D.LevelResult(
+                        lh: lhFlat, hl: hlFlat, hh: hhFlat,
+                        lhW: llW, lhH: lhH,
+                        hlW: hlW, hlH: llH,
+                        hhW: hlW, hhH: lhH
+                    ))
+                }
+
+                let (result, _, _) = AcceleratedDWT2D.inverseDecomposition(
+                    levels: accelLevels, coarsestLL: llFlat,
+                    llW: expectedLLW, llH: expectedLLH
+                )
+                componentData.append(result)
+                continue
+            }
+
+            if useAcceleratedInverse {
+                // Accelerated 5/3 inverse via flat-buffer AcceleratedDWT2D
+                let expectedLLW = levelSizes[levels].width
+                let expectedLLH = levelSizes[levels].height
+                let llFlat = paddedFlatInt32(
+                    llSubband.coefficients, srcW: width, srcH: height,
+                    dstW: expectedLLW, dstH: expectedLLH
+                )
+
+                var accelLevels: [AcceleratedDWT2D.Int32LevelResult] = []
+                for level in 1...levels {
+                    let llW = levelSizes[level].width
+                    let llH = levelSizes[level].height
+                    let parentW = levelSizes[level - 1].width
+                    let parentH = levelSizes[level - 1].height
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
+
+                    let hlFlat: [Int32]
+                    if let hs = compSubbands.first(where: { $0.level == level && $0.subband == .hl }) {
+                        hlFlat = paddedFlatInt32(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                    } else {
+                        hlFlat = [Int32](repeating: 0, count: hlW * llH)
+                    }
+                    let lhFlat: [Int32]
+                    if let ls = compSubbands.first(where: { $0.level == level && $0.subband == .lh }) {
+                        lhFlat = paddedFlatInt32(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                    } else {
+                        lhFlat = [Int32](repeating: 0, count: llW * lhH)
+                    }
+                    let hhFlat: [Int32]
+                    if let hhs = compSubbands.first(where: { $0.level == level && $0.subband == .hh }) {
+                        hhFlat = paddedFlatInt32(hhs.coefficients, srcW: hhs.width, srcH: hhs.height, dstW: hlW, dstH: lhH)
+                    } else {
+                        hhFlat = [Int32](repeating: 0, count: hlW * lhH)
+                    }
+
+                    accelLevels.append(AcceleratedDWT2D.Int32LevelResult(
+                        lh: lhFlat, hl: hlFlat, hh: hhFlat,
+                        lhW: llW, lhH: lhH,
+                        hlW: hlW, hlH: llH,
+                        hhW: hlW, hhH: lhH
+                    ))
+                }
+
+                let (data, _, _) = AcceleratedDWT2D.inverseDecomposition53(
+                    levels: accelLevels, coarsestLL: llFlat,
+                    llW: expectedLLW, llH: expectedLLH
+                )
+                componentData.append(data.map { Double($0) })
+                continue
+            }
+
+            // Fallback: nested-array path for custom wavelet filters
             if useDoublePrecision {
-                // Double-precision path for 9/7 irreversible wavelet.
-                // Use doubleCoefficients (from dequantization) to preserve
-                // fractional precision that would be lost by Int32 rounding.
                 let expectedLLW = levelSizes[levels].width
                 let expectedLLH = levelSizes[levels].height
                 var currentLLDouble: [[Double]]
@@ -1573,12 +1745,8 @@ struct DecoderPipeline: Sendable {
                     let parentH = levelSizes[level - 1].height
                     let llW = levelSizes[level].width
                     let llH = levelSizes[level].height
-                    // Standard JPEG 2000 subband dimensions:
-                    // HL: floor(parentW/2) x ceil(parentH/2)
-                    // LH: ceil(parentW/2) x floor(parentH/2)
-                    // HH: floor(parentW/2) x floor(parentH/2)
-                    let hlW = parentW - llW  // = floor(parentW/2)
-                    let lhH = parentH - llH  // = floor(parentH/2)
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
 
                     let hlSub = compSubbands.first(where: { $0.level == level && $0.subband == .hl })
                     let hl2D: [[Double]]
@@ -1619,11 +1787,8 @@ struct DecoderPipeline: Sendable {
                     )
                 }
 
-                // Keep Double precision through ICT and DC shift — round only at final pixel output
-                let flattened = currentLLDouble.flatMap { $0 }
-                componentData.append(flattened)
+                componentData.append(currentLLDouble.flatMap { $0 })
             } else {
-                // Int32 path for 5/3 reversible wavelet (exact integer arithmetic)
                 let expectedLLW = levelSizes[levels].width
                 let expectedLLH = levelSizes[levels].height
                 var currentLL = paddedInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
@@ -2005,5 +2170,37 @@ struct DecoderPipeline: Sendable {
             progress: stageProgress,
             overallProgress: min(overall, 1.0)
         ))
+    }
+
+    // MARK: - SIMD Helpers
+
+    /// Applies DC un-shift in-place using SIMD.
+    ///
+    /// Adds `offset` to every element without allocating a new array.
+    /// Uses SIMD4 for 4-wide vectorised addition on Double arrays.
+    ///
+    /// - Parameters:
+    ///   - data: The component data to modify in-place.
+    ///   - offset: The DC offset to add back (typically `2^(bitDepth-1)`).
+    @inline(__always)
+    static func applyDCUnshiftInPlace(_ data: inout [Double], offset: Double) {
+        let count = data.count
+        data.withUnsafeMutableBufferPointer { buf in
+            let base = buf.baseAddress!
+            let simdOffset = SIMD4<Double>(repeating: offset)
+            let simdCount = count / 4
+            for i in 0..<simdCount {
+                let off = i * 4
+                var v = SIMD4<Double>(base[off], base[off+1], base[off+2], base[off+3])
+                v += simdOffset
+                base[off]   = v[0]
+                base[off+1] = v[1]
+                base[off+2] = v[2]
+                base[off+3] = v[3]
+            }
+            for i in (simdCount * 4)..<count {
+                base[i] += offset
+            }
+        }
     }
 }

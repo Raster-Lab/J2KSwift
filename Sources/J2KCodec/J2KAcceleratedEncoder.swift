@@ -396,6 +396,261 @@ struct AcceleratedDWT2D: Sendable {
             llW: currentW, llH: currentH
         )
     }
+
+    // MARK: - Inverse CDF 9/7 (Double)
+
+    /// Inverse 1D CDF 9/7 lifting on a contiguous Double buffer.
+    ///
+    /// Input layout: [low0..lowN-1, high0..highN-1].
+    /// Output layout: interleaved full-length signal.
+    @inline(__always)
+    static func inverse97_1D(
+        _ input: UnsafePointer<Double>,
+        _ output: UnsafeMutablePointer<Double>,
+        lowCount: Int, highCount: Int
+    ) {
+        let n = lowCount + highCount
+        guard n >= 2 else {
+            if n == 1 { output[0] = input[0] }
+            return
+        }
+
+        var even = [Double](repeating: 0, count: lowCount)
+        var odd  = [Double](repeating: 0, count: highCount)
+
+        for i in 0..<lowCount  { even[i] = input[i] }
+        for i in 0..<highCount { odd[i]  = input[lowCount + i] }
+
+        // Unscale (reverse of forward scaling)
+        #if canImport(Accelerate)
+        var kVal = K
+        var invK = 1.0 / K
+        even.withUnsafeMutableBufferPointer { buf in
+            vDSP_vsmulD(buf.baseAddress!, 1, &kVal, buf.baseAddress!, 1, vDSP_Length(lowCount))
+        }
+        odd.withUnsafeMutableBufferPointer { buf in
+            vDSP_vsmulD(buf.baseAddress!, 1, &invK, buf.baseAddress!, 1, vDSP_Length(highCount))
+        }
+        #else
+        for i in 0..<lowCount  { even[i] *= K }
+        for i in 0..<highCount { odd[i]  *= 1.0 / K }
+        #endif
+
+        // Inverse lifting (reverse order, negated coefficients)
+        liftUpdate(&even, odd, coeff: -delta, evenCount: lowCount, oddCount: highCount)
+        liftPredict(&odd, even, coeff: -gamma, oddCount: highCount, evenCount: lowCount)
+        liftUpdate(&even, odd, coeff: -beta, evenCount: lowCount, oddCount: highCount)
+        liftPredict(&odd, even, coeff: -alpha, oddCount: highCount, evenCount: lowCount)
+
+        // Interleave even/odd → output
+        for i in 0..<lowCount  { output[i * 2] = even[i] }
+        for i in 0..<highCount { output[i * 2 + 1] = odd[i] }
+    }
+
+    /// Inverse 2D CDF 9/7 on flat buffers.
+    ///
+    /// Reconstructs the full-resolution image from four subbands.
+    static func inverse2D(
+        ll: [Double], lh: [Double], hl: [Double], hh: [Double],
+        llW: Int, llH: Int, lhW: Int, lhH: Int,
+        hlW: Int, hlH: Int, hhW: Int, hhH: Int
+    ) -> (data: [Double], width: Int, height: Int) {
+        let outputW = llW + hlW
+        let outputH = llH + lhH
+
+        guard outputW >= 2 && outputH >= 2 else {
+            // Degenerate case — just return LL
+            return (ll, llW, llH)
+        }
+
+        // Step 1: Row inverse DWT (horizontal reconstruction)
+        // Low rows: inverse(ll_row, hl_row) → full-width row
+        // High rows: inverse(lh_row, hh_row) → full-width row
+        var rowInversed = [Double](repeating: 0, count: outputW * outputH)
+        let rowBufCount = max(llW + hlW, lhW + hhW)
+        var rowBuf = [Double](repeating: 0, count: rowBufCount)
+        var rowOut = [Double](repeating: 0, count: outputW)
+
+        for row in 0..<llH {
+            for col in 0..<llW { rowBuf[col] = ll[row * llW + col] }
+            for col in 0..<hlW { rowBuf[llW + col] = hl[row * hlW + col] }
+            inverse97_1D(&rowBuf, &rowOut, lowCount: llW, highCount: hlW)
+            let dstOffset = row * outputW
+            for col in 0..<outputW { rowInversed[dstOffset + col] = rowOut[col] }
+        }
+
+        for row in 0..<lhH {
+            for col in 0..<lhW { rowBuf[col] = lh[row * lhW + col] }
+            for col in 0..<hhW { rowBuf[lhW + col] = hh[row * hhW + col] }
+            inverse97_1D(&rowBuf, &rowOut, lowCount: lhW, highCount: hhW)
+            let dstOffset = (llH + row) * outputW
+            for col in 0..<outputW { rowInversed[dstOffset + col] = rowOut[col] }
+        }
+
+        // Step 2: Column inverse DWT (vertical reconstruction)
+        var result = [Double](repeating: 0, count: outputW * outputH)
+        var colBuf = [Double](repeating: 0, count: outputH)
+        var colOut = [Double](repeating: 0, count: outputH)
+
+        for col in 0..<outputW {
+            // Gather column: first llH = low, next lhH = high
+            for row in 0..<outputH {
+                colBuf[row] = rowInversed[row * outputW + col]
+            }
+            inverse97_1D(&colBuf, &colOut, lowCount: llH, highCount: lhH)
+            // Scatter
+            for row in 0..<outputH {
+                result[row * outputW + col] = colOut[row]
+            }
+        }
+
+        return (result, outputW, outputH)
+    }
+
+    /// Multi-level inverse 2D CDF 9/7 decomposition (Double precision).
+    static func inverseDecomposition(
+        levels: [LevelResult], coarsestLL: [Double],
+        llW: Int, llH: Int
+    ) -> (data: [Double], width: Int, height: Int) {
+        var currentData = coarsestLL
+        var currentW = llW
+        var currentH = llH
+
+        for level in levels.reversed() {
+            let r = inverse2D(
+                ll: currentData, lh: level.lh, hl: level.hl, hh: level.hh,
+                llW: currentW, llH: currentH,
+                lhW: level.lhW, lhH: level.lhH,
+                hlW: level.hlW, hlH: level.hlH,
+                hhW: level.hhW, hhH: level.hhH
+            )
+            currentData = r.data
+            currentW = r.width
+            currentH = r.height
+        }
+
+        return (currentData, currentW, currentH)
+    }
+
+    // MARK: - Inverse Le Gall 5/3 (Int32)
+
+    /// Inverse 1D Le Gall 5/3 lifting on Int32.
+    ///
+    /// Input layout: [low0..lowN-1, high0..highN-1].
+    /// Output layout: interleaved full-length signal.
+    @inline(__always)
+    static func inverse53_1D(
+        _ input: UnsafePointer<Int32>,
+        _ output: UnsafeMutablePointer<Int32>,
+        lowCount: Int, highCount: Int
+    ) {
+        let n = lowCount + highCount
+        guard n >= 2 else {
+            if n == 1 { output[0] = input[0] }
+            return
+        }
+
+        var even = [Int32](repeating: 0, count: lowCount)
+        var odd  = [Int32](repeating: 0, count: highCount)
+
+        for i in 0..<lowCount  { even[i] = input[i] }
+        for i in 0..<highCount { odd[i]  = input[lowCount + i] }
+
+        // Inverse update: even[i] -= floor((odd[i-1] + odd[i] + 2) / 4)
+        for i in 0..<lowCount {
+            let left  = (i > 0) ? odd[i - 1] : odd[0]
+            let right = (i < highCount) ? odd[i] : odd[highCount - 1]
+            even[i] = even[i] - ((left + right + 2) >> 2)
+        }
+
+        // Inverse predict: odd[i] += floor((even[i] + even[i+1]) / 2)
+        for i in 0..<highCount {
+            let right = (i + 1 < lowCount) ? even[i + 1] : even[lowCount - 1]
+            odd[i] = odd[i] + ((even[i] + right) >> 1)
+        }
+
+        // Interleave
+        for i in 0..<lowCount  { output[i * 2] = even[i] }
+        for i in 0..<highCount { output[i * 2 + 1] = odd[i] }
+    }
+
+    /// Inverse 2D Le Gall 5/3 on flat Int32 buffers.
+    static func inverse2D_53(
+        ll: [Int32], lh: [Int32], hl: [Int32], hh: [Int32],
+        llW: Int, llH: Int, lhW: Int, lhH: Int,
+        hlW: Int, hlH: Int, hhW: Int, hhH: Int
+    ) -> (data: [Int32], width: Int, height: Int) {
+        let outputW = llW + hlW
+        let outputH = llH + lhH
+
+        guard outputW >= 2 && outputH >= 2 else {
+            return (ll, llW, llH)
+        }
+
+        // Step 1: Row inverse (horizontal)
+        var rowInversed = [Int32](repeating: 0, count: outputW * outputH)
+        let rowBufCount = max(llW + hlW, lhW + hhW)
+        var rowBuf = [Int32](repeating: 0, count: rowBufCount)
+        var rowOut = [Int32](repeating: 0, count: outputW)
+
+        for row in 0..<llH {
+            for col in 0..<llW { rowBuf[col] = ll[row * llW + col] }
+            for col in 0..<hlW { rowBuf[llW + col] = hl[row * hlW + col] }
+            inverse53_1D(&rowBuf, &rowOut, lowCount: llW, highCount: hlW)
+            let d = row * outputW
+            for col in 0..<outputW { rowInversed[d + col] = rowOut[col] }
+        }
+
+        for row in 0..<lhH {
+            for col in 0..<lhW { rowBuf[col] = lh[row * lhW + col] }
+            for col in 0..<hhW { rowBuf[lhW + col] = hh[row * hhW + col] }
+            inverse53_1D(&rowBuf, &rowOut, lowCount: lhW, highCount: hhW)
+            let d = (llH + row) * outputW
+            for col in 0..<outputW { rowInversed[d + col] = rowOut[col] }
+        }
+
+        // Step 2: Column inverse (vertical)
+        var result = [Int32](repeating: 0, count: outputW * outputH)
+        var colBuf = [Int32](repeating: 0, count: outputH)
+        var colOut = [Int32](repeating: 0, count: outputH)
+
+        for col in 0..<outputW {
+            for row in 0..<outputH {
+                colBuf[row] = rowInversed[row * outputW + col]
+            }
+            inverse53_1D(&colBuf, &colOut, lowCount: llH, highCount: lhH)
+            for row in 0..<outputH {
+                result[row * outputW + col] = colOut[row]
+            }
+        }
+
+        return (result, outputW, outputH)
+    }
+
+    /// Multi-level inverse 2D Le Gall 5/3 decomposition (Int32).
+    static func inverseDecomposition53(
+        levels: [Int32LevelResult], coarsestLL: [Int32],
+        llW: Int, llH: Int
+    ) -> (data: [Int32], width: Int, height: Int) {
+        var currentData = coarsestLL
+        var currentW = llW
+        var currentH = llH
+
+        for level in levels.reversed() {
+            let r = inverse2D_53(
+                ll: currentData, lh: level.lh, hl: level.hl, hh: level.hh,
+                llW: currentW, llH: currentH,
+                lhW: level.lhW, lhH: level.lhH,
+                hlW: level.hlW, hlH: level.hlH,
+                hhW: level.hhW, hhH: level.hhH
+            )
+            currentData = r.data
+            currentW = r.width
+            currentH = r.height
+        }
+
+        return (currentData, currentW, currentH)
+    }
 }
 
 // MARK: - Accelerated Quantization

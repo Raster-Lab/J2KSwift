@@ -10,6 +10,9 @@
 
 import Foundation
 import J2KCore
+#if canImport(Accelerate)
+import Accelerate
+#endif
 
 /// Colour transform modes supported by JPEG 2000.
 ///
@@ -380,6 +383,32 @@ public struct J2KColorTransform: Sendable {
         let coeffCr_B: Double = -0.081312
 
         // Apply ICT transform
+        #if canImport(Accelerate)
+        let n = vDSP_Length(count)
+        // Y = 0.299*R + 0.587*G + 0.114*B
+        var c = coeffY_R
+        vDSP_vsmulD(red, 1, &c, &y, 1, n)
+        c = coeffY_G
+        vDSP_vsmaD(green, 1, &c, y, 1, &y, 1, n)
+        c = coeffY_B
+        vDSP_vsmaD(blue, 1, &c, y, 1, &y, 1, n)
+
+        // Cb = -0.168736*R - 0.331264*G + 0.5*B
+        c = coeffCb_R
+        vDSP_vsmulD(red, 1, &c, &cb, 1, n)
+        c = coeffCb_G
+        vDSP_vsmaD(green, 1, &c, cb, 1, &cb, 1, n)
+        c = coeffCb_B
+        vDSP_vsmaD(blue, 1, &c, cb, 1, &cb, 1, n)
+
+        // Cr = 0.5*R - 0.418688*G - 0.081312*B
+        c = coeffCr_R
+        vDSP_vsmulD(red, 1, &c, &cr, 1, n)
+        c = coeffCr_G
+        vDSP_vsmaD(green, 1, &c, cr, 1, &cr, 1, n)
+        c = coeffCr_B
+        vDSP_vsmaD(blue, 1, &c, cr, 1, &cr, 1, n)
+        #else
         for i in 0..<count {
             let r = red[i]
             let g = green[i]
@@ -389,6 +418,7 @@ public struct J2KColorTransform: Sendable {
             cb[i] = coeffCb_R * r + coeffCb_G * g + coeffCb_B * b
             cr[i] = coeffCr_R * r + coeffCr_G * g + coeffCr_B * b
         }
+        #endif
 
         return (y, cb, cr)
     }
@@ -440,6 +470,22 @@ public struct J2KColorTransform: Sendable {
         let coeffB_Cb: Double = 1.772
 
         // Apply inverse ICT transform
+        #if canImport(Accelerate)
+        let n = vDSP_Length(count)
+        // R = Y + 1.402*Cr
+        var c = coeffR_Cr
+        vDSP_vsmaD(cr, 1, &c, y, 1, &red, 1, n)
+
+        // G = Y - 0.344136*Cb - 0.714136*Cr
+        c = coeffG_Cb
+        vDSP_vsmaD(cb, 1, &c, y, 1, &green, 1, n)
+        c = coeffG_Cr
+        vDSP_vsmaD(cr, 1, &c, green, 1, &green, 1, n)
+
+        // B = Y + 1.772*Cb
+        c = coeffB_Cb
+        vDSP_vsmaD(cb, 1, &c, y, 1, &blue, 1, n)
+        #else
         for i in 0..<count {
             let yVal = y[i]
             let cbVal = cb[i]
@@ -449,6 +495,7 @@ public struct J2KColorTransform: Sendable {
             green[i] = yVal + coeffG_Cb * cbVal + coeffG_Cr * crVal
             blue[i] = yVal + coeffB_Cb * cbVal
         }
+        #endif
 
         return (red, green, blue)
     }

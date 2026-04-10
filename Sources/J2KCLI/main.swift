@@ -224,7 +224,8 @@ struct J2KCLI {
             --encode-only               Only benchmark encoding
             --decode-only               Only benchmark decoding
             --preset NAME               Use preset: fast, balanced, quality
-            --compare-openjpeg          Compare with OpenJPEG (if available)
+            --htj2k, --compare-htj2k    Compare Legacy EBCOT vs HTJ2K FBCOT
+            --compare-openjpeg          Cross-codec comparison with OpenJPEG
 
         GLOBAL FLAGS:
             --version                   Print version and exit
@@ -240,6 +241,7 @@ struct J2KCLI {
             j2k convert -i input.dcm -o output.tiff
             j2k decode -i input.j2k -o - | j2k encode -i - -o output.jph --htj2k
             j2k benchmark -i test.pgm -r 10 --format csv -o results.csv
+            j2k benchmark -i scan.pgm --htj2k --compare-openjpeg
         """)
     }
 }

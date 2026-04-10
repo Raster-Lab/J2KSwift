@@ -12,6 +12,7 @@ Invoke agents with `@agent-name` in VS Code Copilot Chat.
 | CLI Dev | `@cli-dev` | `j2k` CLI commands, image I/O, OpenJPEG wrappers, batch processing |
 | GPU Dev | `@gpu-dev` | Metal shaders, Vulkan pipelines, Accelerate/vDSP, SIMD, buffer pools |
 | Benchmark | `@benchmark` | J2KSwift vs OpenJPEG benchmarking, encode/decode speed, quality metrics |
+| HTJ2K Dev | `@htj2k-dev` | HTJ2K (Part 15) encoding/decoding, FBCOT block coder, MEL/VLC/MagSgn, conformance |
 | JP3D Dev | `@jp3d-dev` | 3D volumetric imaging, CT/MRI volumes, multispectral, Part 10 |
 | File Format Dev | `@file-format-dev` | JP2/JPX/JPM/JPH/MJ2 boxes, format detection, metadata |
 | JPIP Dev | `@jpip-dev` | JPIP client/server, WebSocket, progressive delivery, caching |
@@ -27,6 +28,8 @@ Invoke agents with `@agent-name` in VS Code Copilot Chat.
 @gpu-dev Optimize the Metal DWT kernel for Apple M4
 @benchmark Compare J2KSwift vs OpenJPEG encode speed for 4096x4096 lossless
 @benchmark Run lossy quality comparison at 20:1 compression ratio
+@htj2k-dev Optimize the MEL coder for sparse coefficient patterns
+@htj2k-dev Fix mixed-mode encoding for HT + legacy blocks in multi-tile images
 @jp3d-dev Implement progressive 3D decoding for CT volumes
 @file-format-dev Add JPH (HTJ2K) file format writing support
 @jpip-dev Fix WebSocket reconnection with session persistence
@@ -47,6 +50,7 @@ Invoke skills with `/skill-name` in VS Code Copilot Chat.
 | Release Checklist | `/release-checklist` | Complete pre-release validation (build, test, lint, compliance) |
 | Performance Profiling | `/performance-profiling` | Pipeline profiling, bottleneck identification, OpenJPEG comparison |
 | GPU Benchmark | `/gpu-benchmark` | GPU vs CPU benchmarking across Metal, Vulkan, Accelerate |
+| HTJ2K Benchmark | `/htj2k-benchmark` | HTJ2K vs legacy throughput, quality parity, OpenJPEG HT interop |
 
 ### Example Prompts
 
@@ -77,6 +81,9 @@ Profile the decoder and optimize the slowest stage
 
 @gpu-dev /gpu-benchmark
 Benchmark Metal vs CPU for all DWT modes and optimize
+
+@htj2k-dev /htj2k-benchmark
+Benchmark HTJ2K vs legacy EBCOT across all image sizes and report speedup
 
 @benchmark /cross-codec-testing
 Benchmark J2KSwift vs OpenJPEG across all sizes and report speed + quality

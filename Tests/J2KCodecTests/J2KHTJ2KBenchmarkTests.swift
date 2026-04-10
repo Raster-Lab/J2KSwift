@@ -27,6 +27,7 @@ import XCTest
 ///
 /// Tests use identical wavelet coefficients to ensure fair comparison.
 final class J2KHTJ2KBenchmarkTests: XCTestCase {
+    // Benchmark suite disabled for CI — enable locally for performance profiling
     #if canImport(ObjectiveC)
     override class var defaultTestSuite: XCTestSuite { XCTestSuite(name: "J2KHTJ2KBenchmarkTests (Disabled)") }
     #endif

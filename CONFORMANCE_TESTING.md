@@ -4,6 +4,40 @@
 
 This document describes the conformance testing framework for J2KSwift and how to validate the implementation against ISO/IEC 15444-4 requirements.
 
+## Latest Validation Snapshot
+
+Last verified on April 10, 2026 against the `main` branch for version 2.4.0.
+
+### Mandatory Compliance Results
+
+| Suite | Result |
+|-------|--------|
+| `J2KConformanceTestingTests` | 54/54 passed |
+| `J2KSecurityTests` | 18/18 passed |
+| `J2KStressTests` | 25/25 passed |
+| `J2KInteroperabilityTests` | 24/24 passed |
+| `J2KCrossPlatformValidationTests` | 28/28 passed |
+| `J2KISOTestSuiteTests` | 33/33 passed |
+| **Total** | **182/182 passed (100%)** |
+
+### Compliance Status
+
+- **Profile 0 (Baseline): PASS**
+- **Profile 1 (Extended): PASS**
+- **HTJ2K (Part 15 coverage in ISO catalog and interoperability suites): PASS**
+- **Profile 2 / Profile 3:** no dedicated automated release gate in the current synthetic ISO suite; not claimed as separately validated in this run
+
+### Error Tolerance Status
+
+- **Lossless (5/3): PASS** - conformance validator tests enforce `MAE = 0`
+- **Near-lossless / irreversible tolerance: PASS** - validator coverage enforces `MAE <= 2` for tolerance-based cases
+- **PSNR checks: PASS** - representative 8-bit conformance metric tests remain within expected bounds
+
+### Build Status
+
+- `swift build`: **PASS**
+- Current build still emits non-fatal compiler warnings in CLI option parsing, Metal deprecations, and some concurrency capture sites. These warnings do not block conformance, but they should be cleared before any release that requires a warning-free build.
+
 ## Conformance Testing Framework
 
 J2KSwift includes a comprehensive conformance testing framework located in `Sources/J2KCore/J2KConformanceTesting.swift`.

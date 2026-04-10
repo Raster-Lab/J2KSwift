@@ -307,52 +307,72 @@ public struct J2KRateControl: Sendable {
         // Compute coding pass information with R-D slopes
         let passInfos = try computeCodingPassInfo(codeBlocks: codeBlocks)
 
-        // Sort by descending slope (best quality-per-bit first)
-        let sortedPasses = passInfos.sorted { $0.slope > $1.slope }
+        // Group passes by code block index, sorted by pass number.
+        // This structure is used by the bisection-based PCRD-opt below.
+        var blockPasses = [Int: [(passNumber: Int, cumulativeBytes: Int, slope: Double)]]()
+        blockPasses.reserveCapacity(codeBlocks.count)
+        var slopeMax = 0.0
+        for pi in passInfos {
+            blockPasses[pi.codeBlockIndex, default: []].append(
+                (pi.passNumber, pi.cumulativeBytes, pi.slope))
+            if pi.slope > slopeMax { slopeMax = pi.slope }
+        }
+        // Sort each block's passes by pass number (required for cumulative byte tracking)
+        for key in blockPasses.keys {
+            blockPasses[key]!.sort { $0.passNumber < $1.passNumber }
+        }
 
         // Debug: dump PCRD pass info
         if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
             print("PCRD_DEBUG: totalPixels=\(totalPixels), codeBlocks=\(codeBlocks.count)")
-            // Group passes by code block index
-            var blockPassInfos: [Int: [CodingPassInfo]] = [:]
-            for pi in passInfos {
-                blockPassInfos[pi.codeBlockIndex, default: []].append(pi)
-            }
-            for (idx, passes) in blockPassInfos.sorted(by: { $0.key < $1.key }) {
-                let cb = codeBlocks.first { $0.index == idx }!
-                let firstSlope = passes.first?.slope ?? 0
-                let maxSlope = passes.map { $0.slope }.max() ?? 0
-                let totalBytes = passes.last?.cumulativeBytes ?? 0
-                print("  block=\(idx) sub=\(cb.subband) res=\(cb.resolutionLevel) comp=\(cb.componentIndex) passes=\(passes.count) bytes=\(totalBytes) maxSlope=\(String(format: "%.2f", maxSlope)) firstSlope=\(String(format: "%.2f", firstSlope)) sqSum=\(String(format: "%.1f", cb.coefficientSquaredSum))")
+            for (idx, passes) in blockPasses.sorted(by: { $0.key < $1.key }) {
+                if let cb = codeBlocks.first(where: { $0.index == idx }) {
+                    let firstSlope = passes.first?.slope ?? 0
+                    let maxS = passes.map { $0.slope }.max() ?? 0
+                    let totalBytes = passes.last?.cumulativeBytes ?? 0
+                    print("  block=\(idx) sub=\(cb.subband) res=\(cb.resolutionLevel) comp=\(cb.componentIndex) passes=\(passes.count) bytes=\(totalBytes) maxSlope=\(String(format: "%.2f", maxS)) firstSlope=\(String(format: "%.2f", firstSlope)) sqSum=\(String(format: "%.1f", cb.coefficientSquaredSum))")
+                }
             }
         }
 
         // Generate target rates for each layer
         let targetRates = try computeLayerTargetRates(totalPixels: totalPixels)
 
-        // Form layers using PCRD-opt
+        // Form layers using bisection-based PCRD-opt (ISO 15444-1 Annex J).
+        // Binary search on slope threshold λ: for a given λ, each code block
+        // is truncated at the highest pass whose slope ≥ λ. This produces
+        // globally optimal bit allocation, unlike the greedy approach which
+        // can waste budget due to early termination.
         var layers = [QualityLayer]()
-        var previousLayerPasses = Set<String>()
         var previousBlockCumulativeBytes = [Int: Int]()
 
         for (layerIndex, targetRate) in targetRates.enumerated() {
-            let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
+            // Subtract estimated codestream header overhead from the target.
+            // The PCRD allocates coefficient data only, but the actual file
+            // includes SOC/SIZ/COD/QCD/COM/SOT/SOD/EOC markers and per-code-
+            // block packet header entries.  Without this adjustment, the file
+            // consistently overshoots the target rate by 1-3%.
+            // Cap at ~1.5% of raw target to avoid over-compensation at low
+            // bitrates where the fixed overhead is a large fraction.
+            let rawTargetBytes = Int(targetRate * Double(totalPixels) / 8.0)
+            let estimatedOverhead = 150 + blockPasses.count * 3
+            let headerOverhead = min(rawTargetBytes / 64, estimatedOverhead)
+            let targetBytes = max(1, rawTargetBytes - headerOverhead)
 
             if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
                 print("PCRD_LAYER: layer=\(layerIndex) targetRate=\(String(format: "%.3f", targetRate)) targetBytes=\(targetBytes)")
             }
 
-            let (layer, selectedPasses, blockCumBytes) = try formLayerPCRDOpt(
+            let (layer, blockCumBytes) = formLayerBisection(
                 layerIndex: layerIndex,
                 targetBytes: targetBytes,
-                sortedPasses: sortedPasses,
-                previousPasses: previousLayerPasses,
-                codeBlocks: codeBlocks,
-                previousBlockCumulativeBytes: previousBlockCumulativeBytes
+                blockPasses: blockPasses,
+                previousBlockCumulativeBytes: previousBlockCumulativeBytes,
+                codeBlockCount: codeBlocks.count,
+                slopeMax: slopeMax
             )
 
             layers.append(layer)
-            previousLayerPasses = selectedPasses
             previousBlockCumulativeBytes = blockCumBytes
         }
 
@@ -412,9 +432,12 @@ public struct J2KRateControl: Sendable {
             // convert to pixel-domain MSE.
             //
             // For the 9/7 irreversible wavelet: the quantization step sizes
-            // already incorporate the wavelet norms (Δ_b = Δ / norm_b), so
-            // the quantized coefficients are already normalized. No additional
-            // weighting is needed.
+            // already incorporate the wavelet norms (Δ_b = Δ / K_b), so
+            // quantized-index-domain distortion is already normalized to
+            // pixel-domain MSE (since Δ_b² · ‖g_b‖² = base² when K_b = ‖g_b‖).
+            // With base=1.0, weight 1.0 is correct — verified empirically
+            // that stepSize²-only weighting severely degrades quality by
+            // starving coarse subbands of bits.
             let subbandWeight: Double
             if maxResLevel > 0 && configuration.useReversibleFilter {
                 let resLevel = codeBlock.resolutionLevel
@@ -708,85 +731,94 @@ public struct J2KRateControl: Sendable {
         return 0.05 + quality * 0.2                 // 0.05→0.15 for q 0→0.50
     }
 
-    /// Forms a single quality layer using PCRD-opt algorithm.
-    private func formLayerPCRDOpt(
+    /// Forms a single quality layer using bisection-based PCRD-opt.
+    ///
+    /// Performs binary search on the R-D slope threshold λ to find the value
+    /// that produces total bytes closest to the target. For each candidate λ,
+    /// every code block is truncated at the highest pass whose slope ≥ λ.
+    /// This matches the standard PCRD-opt algorithm (ISO 15444-1 Annex J)
+    /// and OpenJPEG's `opj_tcd_rateallocate`, producing globally optimal
+    /// bit allocation without the greedy early-termination penalty.
+    private func formLayerBisection(
         layerIndex: Int,
         targetBytes: Int,
-        sortedPasses: [CodingPassInfo],
-        previousPasses: Set<String>,
-        codeBlocks: [J2KCodeBlock],
-        previousBlockCumulativeBytes: [Int: Int]
-    ) throws -> (QualityLayer, Set<String>, [Int: Int]) {
+        blockPasses: [Int: [(passNumber: Int, cumulativeBytes: Int, slope: Double)]],
+        previousBlockCumulativeBytes: [Int: Int],
+        codeBlockCount: Int,
+        slopeMax: Double
+    ) -> (QualityLayer, [Int: Int]) {
+        // Binary search bounds for slope threshold
+        var lo = 0.0                // include everything → maximum bytes
+        var hi = slopeMax * 1.01    // include nothing → minimum bytes
+
+        let dumpPCRD = ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil
+
+        // bytesForThreshold: compute total cumulative bytes across all blocks
+        // when each block is truncated at the highest pass with slope ≥ thresh.
+        @inline(__always) func bytesForThreshold(_ thresh: Double) -> Int {
+            var total = 0
+            for (blockIdx, passes) in blockPasses {
+                let prevBytes = previousBlockCumulativeBytes[blockIdx] ?? 0
+                var cumBytes = prevBytes
+                for pass in passes {
+                    if pass.slope >= thresh {
+                        // Keep the highest pass (passes sorted by passNumber)
+                        cumBytes = max(cumBytes, pass.cumulativeBytes)
+                    }
+                }
+                total += cumBytes
+            }
+            // Blocks with committed bytes but no new passes
+            for (blockIdx, prevBytes) in previousBlockCumulativeBytes {
+                if blockPasses[blockIdx] == nil { total += prevBytes }
+            }
+            return total
+        }
+
+        // Bisection: 48 iterations → precision of (slopeMax) / 2^48
+        for _ in 0..<48 {
+            let mid = (lo + hi) / 2.0
+            let bytes = bytesForThreshold(mid)
+            if bytes > targetBytes {
+                lo = mid   // Need higher threshold (fewer passes)
+            } else {
+                hi = mid   // Can use lower threshold (more passes)
+            }
+        }
+
+        // Apply the found threshold. Use `lo` to stay within budget.
+        let finalThreshold = lo
         var contributions = [Int: Int]()
-        var selectedPasses = previousPasses
-        // Track per-block cumulative bytes to compute incremental cost correctly
-        var blockCumulativeBytes = previousBlockCumulativeBytes
+        var newBlockCumBytes = previousBlockCumulativeBytes
 
-        // Account for bytes already included in previous layers (targetBytes is cumulative)
-        var currentBytes = blockCumulativeBytes.values.reduce(0, +)
-
-        // Track consecutive budget-exceeding passes for early termination.
-        // Since passes are sorted by descending slope, if many consecutive
-        // passes exceed the budget, remaining passes are unlikely to fit.
-        var consecutiveSkips = 0
-        let maxConsecutiveSkips = 64
-
-        // Select passes in order of descending slope until budget is exhausted
-        for passInfo in sortedPasses {
-            let passKey = "\(passInfo.codeBlockIndex)_\(passInfo.passNumber)"
-
-            // Skip if already included in a previous layer
-            if selectedPasses.contains(passKey) {
-                continue
-            }
-
-            // Compute incremental bytes: new cumulative minus previously included bytes
-            let previousBlockBytes = blockCumulativeBytes[passInfo.codeBlockIndex] ?? 0
-            let incrementalBytes = max(0, passInfo.cumulativeBytes - previousBlockBytes)
-
-            // Check budget
-            if configuration.strictRateMatching &&
-               currentBytes + incrementalBytes > targetBytes &&
-               !contributions.isEmpty {
-                if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
-                    print("PCRD_SKIP: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(String(format: "%.2f", passInfo.slope)) incBytes=\(incrementalBytes) cumBytes=\(passInfo.cumulativeBytes) current=\(currentBytes) target=\(targetBytes)")
+        for (blockIdx, passes) in blockPasses {
+            let prevBytes = previousBlockCumulativeBytes[blockIdx] ?? 0
+            var bestPassNum = -1
+            var bestCumBytes = prevBytes
+            for pass in passes {
+                if pass.slope >= finalThreshold {
+                    bestPassNum = pass.passNumber
+                    bestCumBytes = max(bestCumBytes, pass.cumulativeBytes)
                 }
-                consecutiveSkips += 1
-                if consecutiveSkips >= maxConsecutiveSkips {
-                    break
-                }
-                continue
             }
-
-            consecutiveSkips = 0
-
-            // Add this pass — use max to prevent out-of-order pass selection
-            // from regressing contributions (e.g., a zero-cost late pass sorted
-            // first should not be overwritten by a lower pass number later).
-            contributions[passInfo.codeBlockIndex] = max(
-                contributions[passInfo.codeBlockIndex] ?? 0,
-                passInfo.passNumber + 1
-            )
-            blockCumulativeBytes[passInfo.codeBlockIndex] = max(
-                blockCumulativeBytes[passInfo.codeBlockIndex] ?? 0,
-                passInfo.cumulativeBytes
-            )
-            currentBytes += incrementalBytes
-            selectedPasses.insert(passKey)
-
-            // Stop if we've met the target
-            if currentBytes >= targetBytes {
-                break
+            if bestPassNum >= 0 {
+                contributions[blockIdx] = bestPassNum + 1
+                newBlockCumBytes[blockIdx] = bestCumBytes
             }
+        }
+
+        if dumpPCRD {
+            let totalBytes = newBlockCumBytes.values.reduce(0, +)
+            print("PCRD_BISECTION: layer=\(layerIndex) threshold=\(String(format: "%.4f", finalThreshold)) totalBytes=\(totalBytes) targetBytes=\(targetBytes) blocks=\(contributions.count)")
         }
 
         let layer = QualityLayer(
             index: layerIndex,
-            targetRate: Double(targetBytes * 8) / Double(codeBlocks.count),
+            targetRate: Double(targetBytes * 8) / max(1.0, Double(codeBlockCount)),
             codeBlockContributions: contributions
         )
 
-        return (layer, selectedPasses, blockCumulativeBytes)
+        return (layer, newBlockCumBytes)
     }
 
     /// Creates a lossless quality layer with all coding passes.

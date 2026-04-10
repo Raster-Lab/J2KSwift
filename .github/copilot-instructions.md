@@ -485,6 +485,7 @@ Specialized agents are available for focused tasks. Use `@` in chat to invoke th
 | `@cli-dev` | CLI tool development (`j2k` commands, image I/O, OpenJPEG wrappers) |
 | `@gpu-dev` | GPU acceleration (Metal, Vulkan, Accelerate, SIMD, shader development) |
 | `@benchmark` | OpenJPEG benchmarking (encode/decode speed, quality metrics, cross-codec comparison) |
+| `@htj2k-dev` | HTJ2K (ISO/IEC 15444-15) encoding/decoding, FBCOT block coder, conformance, benchmarking |
 | `@jp3d-dev` | 3D volumetric imaging (JP3D Part 10, medical volumes, multispectral) |
 | `@file-format-dev` | File format support (JP2, JPX, JPM, JPH, MJ2, box hierarchy) |
 | `@jpip-dev` | JPIP network streaming (client/server, WebSocket, progressive delivery) |
@@ -502,6 +503,7 @@ Reusable workflows available via `/` slash commands:
 | `/release-checklist` | Complete pre-release validation: build, test, lint, compliance gate |
 | `/performance-profiling` | Pipeline profiling, bottleneck identification, OpenJPEG comparison |
 | `/gpu-benchmark` | GPU vs CPU benchmarking across Metal, Vulkan, and Accelerate backends |
+| `/htj2k-benchmark` | HTJ2K vs legacy JPEG 2000 throughput, quality parity, OpenJPEG HT interop |
 
 ## File-Specific Instructions
 

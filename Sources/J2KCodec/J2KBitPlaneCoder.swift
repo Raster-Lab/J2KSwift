@@ -318,14 +318,16 @@ struct BitPlaneCoder: Sendable {
         let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
 
         // Track cumulative byte count after each pass for rate control truncation.
-        // In non-per-pass mode, we use the MQ encoder's approximate byte position.
         var cumulativePassBytes: [Int] = []
 
         // Per-pass terminated MQ data for correct truncation.
         // Each entry is a properly terminated copy of the MQ byte stream
         // at that pass boundary, avoiding carry-corrupted prefixes of
-        // the final stream.
+        // the final stream. Collected for both lossless and lossy modes
+        // because MQ carry propagation makes naive prefix truncation
+        // produce corrupted data at the truncation boundary.
         var perPassSnapshotData: [Data] = []
+        let collectSnapshots = true
 
         // Per-pass actual distortion tracking for accurate PCRD.
         // cumulativeDistReduction[i] = total squared-error reduction achieved
@@ -390,14 +392,15 @@ struct BitPlaneCoder: Sendable {
                     runningSegmentTotal += passData.count
                     cumulativePassBytes.append(runningSegmentTotal)
                 } else {
-                    // Snapshot the MQ encoder to get exact byte count at this
-                    // truncation point. MQEncoder is a value type so the copy
-                    // is independent; finishing the snapshot doesn't affect
-                    // the live encoder.
-                    var snapshot = encoder
-                    let snapshotData = snapshot.finish(mode: options.terminationMode)
-                    cumulativePassBytes.append(snapshotData.count)
-                    perPassSnapshotData.append(snapshotData)
+                    if collectSnapshots {
+                        var snapshot = encoder
+                        let snapshotData = snapshot.finish(mode: options.terminationMode)
+                        cumulativePassBytes.append(snapshotData.count)
+                        perPassSnapshotData.append(snapshotData)
+                    } else {
+                        // Accurate terminated byte count for PCRD slope computation
+                        cumulativePassBytes.append(encoder.terminatedByteCount(mode: options.terminationMode))
+                    }
                 }
                 // Distortion: newly significant coefficients from SPP
                 var sppDelta: Double = 0
@@ -474,10 +477,14 @@ struct BitPlaneCoder: Sendable {
                         runningSegmentTotal += passData.count
                         cumulativePassBytes.append(runningSegmentTotal)
                     } else {
-                        var snapshot = encoder
-                        let snapshotData = snapshot.finish(mode: options.terminationMode)
-                        cumulativePassBytes.append(snapshotData.count)
-                        perPassSnapshotData.append(snapshotData)
+                        if collectSnapshots {
+                            var snapshot = encoder
+                            let snapshotData = snapshot.finish(mode: options.terminationMode)
+                            cumulativePassBytes.append(snapshotData.count)
+                            perPassSnapshotData.append(snapshotData)
+                        } else {
+                            cumulativePassBytes.append(encoder.terminatedByteCount(mode: options.terminationMode))
+                        }
                     }
                     // Distortion: refined coefficients from MRP
                     var mrpDelta2: Double = 0
@@ -534,10 +541,14 @@ struct BitPlaneCoder: Sendable {
                     runningSegmentTotal += passData.count
                     cumulativePassBytes.append(runningSegmentTotal)
                 } else {
-                    var snapshot = encoder
-                    let snapshotData = snapshot.finish(mode: options.terminationMode)
-                    cumulativePassBytes.append(snapshotData.count)
-                    perPassSnapshotData.append(snapshotData)
+                    if collectSnapshots {
+                        var snapshot = encoder
+                        let snapshotData = snapshot.finish(mode: options.terminationMode)
+                        cumulativePassBytes.append(snapshotData.count)
+                        perPassSnapshotData.append(snapshotData)
+                    } else {
+                        cumulativePassBytes.append(encoder.terminatedByteCount(mode: options.terminationMode))
+                    }
                 }
                 // Distortion: newly significant coefficients from CUP
                 var cupDelta: Double = 0
@@ -577,10 +588,10 @@ struct BitPlaneCoder: Sendable {
         } else {
             // Single termination at the end
             encodedData = encoder.finish(mode: options.terminationMode)
-            // Snapshot-based byte estimation already gives exact truncation
-            // sizes (each pass snapshot terminates a copy of the MQ encoder),
-            // so no rescaling is needed. Just clamp the last entry to the
-            // actual final size for safety.
+            // Clamp the last entry to the actual final terminated size.
+            // Intermediate entries use terminatedByteCount() which closely
+            // matches the final size, but the last entry may still differ
+            // slightly due to trailing 0xFF handling at full termination.
             if let last = cumulativePassBytes.indices.last {
                 cumulativePassBytes[last] = encodedData.count
             }
@@ -1884,7 +1895,8 @@ struct CodeBlockEncoder: Sendable {
         width: Int,
         height: Int,
         subband: J2KSubband,
-        bitDepth: Int
+        bitDepth: Int,
+        maxPasses: Int? = nil
     ) throws -> J2KCodeBlock {
         try encode(
             coefficients: coefficients,
@@ -1892,7 +1904,8 @@ struct CodeBlockEncoder: Sendable {
             height: height,
             subband: subband,
             bitDepth: bitDepth,
-            options: .default
+            options: .default,
+            maxPasses: maxPasses
         )
     }
 
@@ -1905,6 +1918,7 @@ struct CodeBlockEncoder: Sendable {
     ///   - subband: The subband type.
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - options: Coding options (bypass mode, termination, etc.).
+    ///   - maxPasses: Maximum coding passes to generate (nil = unlimited).
     /// - Returns: The encoded code-block data with metadata.
     /// - Throws: ``J2KError`` if encoding fails.
     func encode(
@@ -1913,12 +1927,14 @@ struct CodeBlockEncoder: Sendable {
         height: Int,
         subband: J2KSubband,
         bitDepth: Int,
-        options: CodingOptions
+        options: CodingOptions,
+        maxPasses: Int? = nil
     ) throws -> J2KCodeBlock {
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
         let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion, perPassSnapshotData) = try coder.encode(
             coefficients: coefficients,
-            bitDepth: bitDepth
+            bitDepth: bitDepth,
+            maxPasses: maxPasses
         )
 
         return J2KCodeBlock(

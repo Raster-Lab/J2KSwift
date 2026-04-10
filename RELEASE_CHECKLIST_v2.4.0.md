@@ -7,8 +7,9 @@
 ## Pre-Release Verification
 
 ### Code Quality
-- [x] All tests pass (193 new CLI tests, 0 failures)
-- [x] Build successful with no warnings
+- [x] All mandatory compliance suites pass (182/182 on 2026-04-10)
+- [x] Build successful
+- [ ] Build successful with no warnings
 - [x] Code review completed
 - [x] VERSION file updated to 2.4.0
 - [x] getVersion() returns "2.4.0"
@@ -100,14 +101,16 @@
 - [x] Error code propagation
 
 ### Compliance Verification (ISO/IEC 15444-4)
-- [x] All conformance tests pass (J2KConformanceTestingTests)
-- [x] Security tests pass (J2KSecurityTests)
-- [x] Stress tests pass (J2KStressTests)
-- [x] Cross-platform validation complete
-- [x] Error metrics within tolerance (lossless: MAE=0, lossy: per spec)
-- [x] Conformance report updated
+- [x] All conformance tests pass (54/54 in `J2KConformanceTestingTests`)
+- [x] Security tests pass (18/18 in `J2KSecurityTests`)
+- [x] Stress tests pass (25/25 in `J2KStressTests`)
+- [x] Interoperability tests pass (24/24 in `J2KInteroperabilityTests`)
+- [x] Cross-platform validation complete (28/28 in `J2KCrossPlatformValidationTests`)
+- [x] ISO test suite checks pass (33/33 in `J2KISOTestSuiteTests`)
+- [x] Error metrics within tolerance (lossless: MAE=0, lossy tolerance cases: MAE<=2 in validator coverage)
+- [x] Conformance report updated (`CONFORMANCE_TESTING.md`, April 10, 2026)
 - [x] Known limitations documented
-- [x] Test pass rates documented (target: >95%)
+- [x] Test pass rates documented (182/182, 100%)
 
 ### Documentation
 

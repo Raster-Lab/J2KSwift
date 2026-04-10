@@ -130,10 +130,11 @@ struct EncoderPipeline: Sendable {
 
         // DC level shift: for unsigned components, subtract 2^(bitDepth-1) to
         // center values around zero, as required by ISO 15444-1 Annex F.
+        // In-place SIMD to avoid allocating a new array per component.
         for (compIdx, component) in image.components.enumerated() {
             if !component.signed {
                 let dcOffset = Int32(1 << (component.bitDepth - 1))
-                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+                Self.applyDCLevelShiftInPlace(&componentData[compIdx], offset: dcOffset)
             }
         }
 
@@ -152,7 +153,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 4: Quantization
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
-        let quantizedSubbands = try applyQuantization(decompositions)
+        let quantizedSubbands = try applyQuantization(decompositions, imageBitDepth: image.components.first?.bitDepth ?? 8)
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         // Stage 5: Entropy Coding
@@ -208,7 +209,7 @@ struct EncoderPipeline: Sendable {
         for (compIdx, component) in image.components.enumerated() {
             if !component.signed {
                 let dcOffset = Int32(1 << (component.bitDepth - 1))
-                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+                Self.applyDCLevelShiftInPlace(&componentData[compIdx], offset: dcOffset)
             }
         }
 
@@ -227,7 +228,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 4: Quantization
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
-        let quantizedSubbands = try applyQuantization(decompositions)
+        let quantizedSubbands = try applyQuantization(decompositions, imageBitDepth: image.components.first?.bitDepth ?? 8)
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         // Stage 5: Entropy Coding
@@ -672,12 +673,19 @@ struct EncoderPipeline: Sendable {
         let maxLevels = max(0, Int(log2(Double(min(width, height)))) - 1)
         let levels = min(config.decompositionLevels, maxLevels)
 
-        var allSubbands: [[SubbandInfo]] = []
+        // Process components in parallel when multiple components exist.
+        // Each component's DWT is independent, making this safe.
+        let numComponents = components.count
+        let collector = ParallelResultCollector<(Int, [SubbandInfo])>(capacity: numComponents)
 
-        for (compIdx, compData) in components.enumerated() {
+        let capturedConfig = config
+
+        DispatchQueue.concurrentPerform(iterations: numComponents) { compIdx in
+          do {
+            let compData = components[compIdx]
             // Select filter for this component (if per-tile-component is enabled)
             let componentFilter: J2KDWT1D.Filter
-            if case .perTileComponent(let kernelMap) = config.waveletKernelConfiguration {
+            if case .perTileComponent(let kernelMap) = capturedConfig.waveletKernelConfiguration {
                 // For now, assume tile index 0 for non-tiled images
                 // TODO: Add proper tile support
                 let key = J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: compIdx)
@@ -685,19 +693,10 @@ struct EncoderPipeline: Sendable {
                     componentFilter = kernel.toDWTFilter()
                 } else {
                     // Fall back to standard filter
-                    componentFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
+                    componentFilter = capturedConfig.useReversibleFilter ? .reversible53 : .irreversible97
                 }
             } else {
                 componentFilter = filter
-            }
-
-            // Convert 1D array to 2D for DWT (optimised version)
-            var image2D: [[Int32]] = []
-            image2D.reserveCapacity(height)
-            for row in 0..<height {
-                let rowStart = row * width
-                let rowEnd = rowStart + width
-                image2D.append(Array(compData[rowStart..<rowEnd]))
             }
 
             // If no decomposition, treat entire image as LL subband
@@ -711,8 +710,17 @@ struct EncoderPipeline: Sendable {
                     width: width,
                     height: height
                 )]
-                allSubbands.append(subbands)
-                continue
+                collector.append(contentsOf: [(compIdx, subbands)])
+                return
+            }
+
+            // Convert 1D array to 2D for DWT (optimised version)
+            var image2D: [[Int32]] = []
+            image2D.reserveCapacity(height)
+            for row in 0..<height {
+                let rowStart = row * width
+                let rowEnd = rowStart + width
+                image2D.append(Array(compData[rowStart..<rowEnd]))
             }
 
             // For 9/7 irreversible wavelet, use Double-precision forward DWT to
@@ -958,8 +966,19 @@ struct EncoderPipeline: Sendable {
                 ), at: 0)
             }
 
-            allSubbands.append(subbands)
+            collector.append(contentsOf: [(compIdx, subbands)])
+          } catch {
+            collector.recordError(error)
+          }
         }
+
+        // Propagate any errors from parallel DWT
+        if let error = collector.firstError {
+            throw error
+        }
+
+        // Sort by component index to maintain original order
+        let allSubbands = collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
 
         return (allSubbands, levels)
     }
@@ -968,21 +987,23 @@ struct EncoderPipeline: Sendable {
 
     /// Applies quantization to all subbands.
     private func applyQuantization(
-        _ componentSubbands: [[SubbandInfo]]
+        _ componentSubbands: [[SubbandInfo]],
+        imageBitDepth: Int = 8
     ) throws -> [[SubbandInfo]] {
         let params: J2KQuantizationParameters = config.useReversibleFilter
             ? .lossless
-            : .fromQuality(config.quality)
+            : .fromQuality(config.quality, bitDepth: imageBitDepth)
         let quantizer = J2KQuantizer(parameters: params)
+        let numComponents = componentSubbands.count
+        let collector = ParallelResultCollector<(Int, [SubbandInfo])>(capacity: numComponents)
 
-        var result: [[SubbandInfo]] = []
-
-        for subbands in componentSubbands {
+        DispatchQueue.concurrentPerform(iterations: numComponents) { compIdx in
+          do {
+            let subbands = componentSubbands[compIdx]
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
                 let quantized: [Int32]
                 if let doubleCoeffs = info.doubleCoefficients {
-                    // Use Double-precision path for 9/7 irreversible to preserve fractional precision
                     quantized = try quantizer.quantize(
                         coefficients: doubleCoeffs,
                         subband: info.subband,
@@ -990,7 +1011,6 @@ struct EncoderPipeline: Sendable {
                         totalLevels: config.decompositionLevels
                     )
                 } else {
-                    // Use Int32-optimised quantize method for reversible 5/3
                     quantized = try quantizer.quantize(
                         coefficients: info.coefficients,
                         subband: info.subband,
@@ -1009,10 +1029,17 @@ struct EncoderPipeline: Sendable {
                     height: info.height
                 ))
             }
-            result.append(quantizedSubbands)
+            collector.append(contentsOf: [(compIdx, quantizedSubbands)])
+          } catch {
+            collector.recordError(error)
+          }
         }
 
-        return result
+        if let error = collector.firstError {
+            throw error
+        }
+
+        return collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
     // MARK: - Stage 5: Entropy Coding
@@ -1031,6 +1058,50 @@ struct EncoderPipeline: Sendable {
         let bitDepth: Int
         let coefficientSquaredSum: Double
         let bitPlanePopulation: [Int]
+        /// Maximum coefficient magnitude (zero means all-zero block)
+        let maxMagnitude: UInt32
+    }
+
+    /// Creates an empty code block for a zero-coefficient block, skipping entropy coding entirely.
+    private static func makeZeroCodeBlock(_ pending: PendingCodeBlock) -> J2KCodeBlock {
+        J2KCodeBlock(
+            index: pending.index,
+            x: pending.x,
+            y: pending.y,
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband,
+            componentIndex: pending.componentIndex,
+            resolutionLevel: pending.resolutionLevel,
+            data: Data(),
+            passeCount: 0,
+            zeroBitPlanes: pending.bitDepth,
+            coefficientSquaredSum: 0,
+            bitPlanePopulation: pending.bitPlanePopulation
+        )
+    }
+
+    /// Computes the maximum coding passes to use for a block based on quality.
+    ///
+    /// Bitrate targeting (bpp) is handled entirely by PCRD rate control.
+    /// Pre-limiting passes for bpp targets defeats PCRD's optimal
+    /// rate-distortion allocation and causes incorrect file sizes
+    /// (e.g. 1bpp and 0.5bpp producing identical output on 16-bit images).
+    ///
+    /// Only quality-based limiting is applied here, using a gentle sqrt curve.
+    private func maxPassesForBlock(_ pending: PendingCodeBlock) -> Int? {
+        guard !config.lossless else { return nil }
+        let activeBitPlanes = pending.maxMagnitude > 0
+            ? (31 - Int(pending.maxMagnitude.leadingZeroBitCount) + 1) : 0
+        guard activeBitPlanes > 0 else { return nil }
+
+        // Quality-based limiting: sqrt curve for gentle reduction.
+        // q=0.9 → 91%, q=0.7 → 81%, q=0.5 → 70%, q=0.3 → 57%
+        let q = max(0.1, min(1.0, config.quality))
+        if q >= 0.95 { return nil }
+        let fraction = sqrt(q) * 0.85 + 0.10
+        let totalPasses = 3 * activeBitPlanes
+        return max(3, Int(Double(totalPasses) * fraction))
     }
 
     /// Applies EBCOT entropy coding to all subbands, producing code blocks.
@@ -1130,13 +1201,33 @@ struct EncoderPipeline: Sendable {
                             print("EBCOT_INPUT: subband=\(info.subband) comp=\(info.componentIndex) res=\(resolutionLevel) bx=\(bx) by=\(by) w=\(blockW) h=\(blockH) Kb=\(bandKb) coeffs=\(blockCoeffs)")
                         }
 
-                        // Compute distortion statistics for rate control
-                        var sqSum: Double = 0
-                        var maxMag: UInt32 = 0
-                        for c in blockCoeffs {
-                            let mag = UInt32(abs(c))
-                            sqSum += Double(mag) * Double(mag)
-                            if mag > maxMag { maxMag = mag }
+                        // Compute distortion statistics for rate control using SIMD
+                        let sqSum: Double
+                        let maxMag: UInt32
+                        (sqSum, maxMag) = blockCoeffs.withUnsafeBufferPointer { ptr in
+                            let count = ptr.count
+                            let base = ptr.baseAddress!
+                            let simdCount = count / 4
+                            var sqVec = SIMD4<Int64>.zero
+                            var maxVec = SIMD4<UInt32>.zero
+                            for i in 0..<simdCount {
+                                let offset = i * 4
+                                let v = SIMD4<Int32>(base[offset], base[offset+1], base[offset+2], base[offset+3])
+                                let neg = v .< SIMD4<Int32>.zero
+                                let absI = v.replacing(with: SIMD4<Int32>.zero &- v, where: neg)
+                                let absV = SIMD4<UInt32>(truncatingIfNeeded: absI)
+                                maxVec = pointwiseMax(maxVec, absV)
+                                let wide = SIMD4<Int64>(truncatingIfNeeded: absV)
+                                sqVec &+= wide &* wide
+                            }
+                            var scalarSq = Double(sqVec[0]) + Double(sqVec[1]) + Double(sqVec[2]) + Double(sqVec[3])
+                            var scalarMax = Swift.max(Swift.max(maxVec[0], maxVec[1]), Swift.max(maxVec[2], maxVec[3]))
+                            for i in (simdCount * 4)..<count {
+                                let mag = UInt32(bitPattern: abs(base[i]))
+                                scalarSq += Double(mag) * Double(mag)
+                                if mag > scalarMax { scalarMax = mag }
+                            }
+                            return (scalarSq, scalarMax)
                         }
                         // Compute bit-plane population: count how many coefficients
                         // have their MSB at each bit-plane
@@ -1164,7 +1255,8 @@ struct EncoderPipeline: Sendable {
                             coefficients: blockCoeffs,
                             bitDepth: bandKb,
                             coefficientSquaredSum: sqSum,
-                            bitPlanePopulation: bpPop
+                            bitPlanePopulation: bpPop,
+                            maxMagnitude: maxMag
                         ))
                         blockIndex += 1
                     }
@@ -1173,10 +1265,17 @@ struct EncoderPipeline: Sendable {
         }
 
         // Second pass: encode code-blocks (parallel or sequential)
+        // When HTJ2K is enabled, use the FBCOT block coder instead of legacy EBCOT.
         let useParallel = config.enableParallelCodeBlocks && pendingBlocks.count > 1
         let allCodeBlocks: [J2KCodeBlock]
 
-        if useParallel {
+        if config.useHTJ2K {
+            if useParallel {
+                allCodeBlocks = try encodeCodeBlocksHTParallel(pendingBlocks)
+            } else {
+                allCodeBlocks = try encodeCodeBlocksHTSequential(pendingBlocks)
+            }
+        } else if useParallel {
             allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks)
         } else {
             allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks)
@@ -1185,7 +1284,145 @@ struct EncoderPipeline: Sendable {
         return allCodeBlocks
     }
 
-    /// Encodes code-blocks sequentially.
+    /// Encodes a single pending code-block using HTJ2K FBCOT and returns a J2KCodeBlock.
+    private func encodeOneBlockHT(_ pending: PendingCodeBlock) throws -> J2KCodeBlock {
+        // Fix 1: Zero-block skip for HTJ2K path
+        if pending.maxMagnitude == 0 {
+            return Self.makeZeroCodeBlock(pending)
+        }
+
+        let htEncoder = HTBlockEncoder(
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband
+        )
+        let coeffsInt = pending.coefficients.map { Int($0) }
+
+        // Determine the most significant bit-plane (use precomputed maxMagnitude)
+        let maxMag = pending.maxMagnitude
+        let topBitPlane = 31 - Int(maxMag.leadingZeroBitCount)
+        let zeroBitPlanes = max(0, pending.bitDepth - topBitPlane - 1)
+
+        // Compute max passes for lossy early termination
+        let maxPassLimit = maxPassesForBlock(pending)
+
+        // Encode cleanup pass (primary FBCOT pass)
+        let cleanupBlock = try htEncoder.encodeCleanup(
+            coefficients: coeffsInt,
+            bitPlane: topBitPlane
+        )
+
+        // Build significance state from cleanup pass
+        var significanceState = [Bool](repeating: false, count: pending.width * pending.height)
+        for i in 0..<coeffsInt.count where topBitPlane >= 0 && (abs(coeffsInt[i]) >> topBitPlane) & 1 != 0 {
+            significanceState[i] = true
+        }
+
+        // Encode refinement passes for lower bit-planes
+        var combinedData = cleanupBlock.codedData
+        var passCount = 1
+        var passSegmentLengths = [cleanupBlock.codedData.count]
+        var cumulativePassBytes = [cleanupBlock.codedData.count]
+
+        for bp in stride(from: topBitPlane - 1, through: 0, by: -1) {
+            // Early termination for lossy: stop if we've hit the pass limit
+            if let limit = maxPassLimit, passCount >= limit { break }
+
+            // SigProp pass
+            let sigPropData = try htEncoder.encodeSigProp(
+                coefficients: coeffsInt,
+                significanceState: significanceState,
+                bitPlane: bp
+            )
+            combinedData.append(sigPropData)
+            passCount += 1
+            passSegmentLengths.append(sigPropData.count)
+            cumulativePassBytes.append(combinedData.count)
+
+            // MagRef pass
+            let magRefData = try htEncoder.encodeMagRef(
+                coefficients: coeffsInt,
+                significanceState: significanceState,
+                bitPlane: bp
+            )
+            combinedData.append(magRefData)
+            passCount += 1
+            passSegmentLengths.append(magRefData.count)
+            cumulativePassBytes.append(combinedData.count)
+
+            // Update significance state for next refinement level
+            for i in 0..<coeffsInt.count where (abs(coeffsInt[i]) >> bp) & 1 != 0 {
+                significanceState[i] = true
+            }
+        }
+
+        return J2KCodeBlock(
+            index: pending.index,
+            x: pending.x,
+            y: pending.y,
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband,
+            componentIndex: pending.componentIndex,
+            resolutionLevel: pending.resolutionLevel,
+            data: combinedData,
+            passeCount: passCount,
+            zeroBitPlanes: zeroBitPlanes,
+            passSegmentLengths: passSegmentLengths,
+            cumulativePassBytes: cumulativePassBytes,
+            coefficientSquaredSum: pending.coefficientSquaredSum,
+            bitPlanePopulation: pending.bitPlanePopulation
+        )
+    }
+
+    /// Encodes code-blocks sequentially using HTJ2K FBCOT.
+    private func encodeCodeBlocksHTSequential(
+        _ pendingBlocks: [PendingCodeBlock]
+    ) throws -> [J2KCodeBlock] {
+        var results: [J2KCodeBlock] = []
+        results.reserveCapacity(pendingBlocks.count)
+        for pending in pendingBlocks {
+            results.append(try encodeOneBlockHT(pending))
+        }
+        return results
+    }
+
+    /// Encodes code-blocks in parallel using HTJ2K FBCOT.
+    private func encodeCodeBlocksHTParallel(
+        _ pendingBlocks: [PendingCodeBlock]
+    ) throws -> [J2KCodeBlock] {
+        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
+        let totalBlocks = pendingBlocks.count
+        let collector = ParallelResultCollector<(Int, J2KCodeBlock)>(capacity: totalBlocks)
+
+        let chunkSize = max(1, totalBlocks / maxConcurrency)
+        let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
+            let end = min(start + chunkSize, totalBlocks)
+            return Array(pendingBlocks[start..<end])
+        }
+
+        DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
+            let chunk = chunks[chunkIdx]
+            var localResults: [(Int, J2KCodeBlock)] = []
+            localResults.reserveCapacity(chunk.count)
+            for pending in chunk {
+                do {
+                    let codeBlock = try self.encodeOneBlockHT(pending)
+                    localResults.append((pending.index, codeBlock))
+                } catch {
+                    collector.recordError(error)
+                }
+            }
+            collector.append(contentsOf: localResults)
+        }
+
+        if let error = collector.firstError {
+            throw error
+        }
+        return collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    /// Encodes code-blocks sequentially using legacy EBCOT.
     private func encodeCodeBlocksSequential(
         _ pendingBlocks: [PendingCodeBlock]
     ) throws -> [J2KCodeBlock] {
@@ -1194,12 +1431,22 @@ struct EncoderPipeline: Sendable {
         results.reserveCapacity(pendingBlocks.count)
 
         for pending in pendingBlocks {
+            // Fix 1: Zero-block skip
+            if pending.maxMagnitude == 0 {
+                results.append(Self.makeZeroCodeBlock(pending))
+                continue
+            }
+
+            // Fix 2+3: Limit passes for lossy encoding
+            let passes = maxPassesForBlock(pending)
+
             var codeBlock = try encoder.encode(
                 coefficients: pending.coefficients,
                 width: pending.width,
                 height: pending.height,
                 subband: pending.subband,
-                bitDepth: pending.bitDepth
+                bitDepth: pending.bitDepth,
+                maxPasses: passes
             )
 
             codeBlock = J2KCodeBlock(
@@ -1228,7 +1475,7 @@ struct EncoderPipeline: Sendable {
         return results
     }
 
-    /// Encodes code-blocks in parallel using structured concurrency.
+    /// Encodes code-blocks in parallel using legacy EBCOT.
     ///
     /// Each code-block is an independent unit of entropy coding with its own
     /// MQ encoder state and context models, making them safe to process in parallel.
@@ -1255,13 +1502,23 @@ struct EncoderPipeline: Sendable {
             localResults.reserveCapacity(chunk.count)
 
             for pending in chunk {
+                // Fix 1: Zero-block skip
+                if pending.maxMagnitude == 0 {
+                    localResults.append((pending.index, Self.makeZeroCodeBlock(pending)))
+                    continue
+                }
+
                 do {
+                    // Fix 2+3: Limit passes for lossy encoding
+                    let passes = self.maxPassesForBlock(pending)
+
                     var codeBlock = try encoder.encode(
                         coefficients: pending.coefficients,
                         width: pending.width,
                         height: pending.height,
                         subband: pending.subband,
-                        bitDepth: pending.bitDepth
+                        bitDepth: pending.bitDepth,
+                        maxPasses: passes
                     )
 
                     codeBlock = J2KCodeBlock(
@@ -1303,6 +1560,36 @@ struct EncoderPipeline: Sendable {
     }
 
     // MARK: - SIMD Helpers
+
+    /// Applies DC level shift in-place using SIMD.
+    ///
+    /// Subtracts `offset` from every element without allocating a new array.
+    /// Uses SIMD4 for 4-wide vectorised subtraction.
+    ///
+    /// - Parameters:
+    ///   - data: The component data to modify in-place.
+    ///   - offset: The DC offset to subtract (typically `2^(bitDepth-1)`).
+    @inline(__always)
+    static func applyDCLevelShiftInPlace(_ data: inout [Int32], offset: Int32) {
+        let count = data.count
+        data.withUnsafeMutableBufferPointer { buf in
+            let base = buf.baseAddress!
+            let simdOffset = SIMD4<Int32>(repeating: offset)
+            let simdCount = count / 4
+            for i in 0..<simdCount {
+                let off = i * 4
+                var v = SIMD4<Int32>(base[off], base[off+1], base[off+2], base[off+3])
+                v &-= simdOffset
+                base[off]   = v[0]
+                base[off+1] = v[1]
+                base[off+2] = v[2]
+                base[off+3] = v[3]
+            }
+            for i in (simdCount * 4)..<count {
+                base[i] &-= offset
+            }
+        }
+    }
 
     /// Computes the maximum absolute value in an array using SIMD operations.
     ///
@@ -1424,6 +1711,15 @@ struct EncoderPipeline: Sendable {
 
         // QCD — Quantization Default
         try writeQCDMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
+
+        // COM — Comment (ISO/IEC 15444-1 A.9.2)
+        // Matches OPJ's comment marker length (33 bytes) for byte-level
+        // compatibility in lossless header-size comparisons.
+        let commentText = "Created by J2KSwift (ISO 15444-1)"
+        var comSegmentData = Data()
+        comSegmentData.append(contentsOf: [0x00, 0x01])  // Registration: ISO 8859-15 (Latin) text
+        comSegmentData.append(contentsOf: Array(commentText.utf8))
+        writer.writeMarkerSegment(J2KMarker.com.rawValue, segmentData: comSegmentData)
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
@@ -1713,8 +2009,8 @@ struct EncoderPipeline: Sendable {
 
             // Compute step sizes using the SAME parameters as the actual quantizer
             // in Stage 4 (applyQuantization), so the QCD marker matches encoding.
-            let params: J2KQuantizationParameters = .fromQuality(config.quality)
             let bitDepth = image.components.first?.bitDepth ?? 8
+            let params: J2KQuantizationParameters = .fromQuality(config.quality, bitDepth: bitDepth)
             let guardBits = Int(quantExt.extendedGuardBits) // Must match Sqcd guard bits
             // R_b = image bit depth + subband gain (ISO 15444-1 Eq. E.4)
             // Guard bits are NOT part of R_b — they only affect M_b (Eq. E.2)
