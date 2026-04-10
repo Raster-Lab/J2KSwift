@@ -293,8 +293,12 @@ public struct J2KDWT1D: Sendable {
         filter: Filter,
         boundaryExtension: BoundaryExtension = .symmetric
     ) throws -> [Int32] {
-        guard !lowpass.isEmpty && !highpass.isEmpty else {
-            throw J2KError.invalidParameter("Subbands cannot be empty")
+        guard !lowpass.isEmpty else {
+            throw J2KError.invalidParameter("Lowpass subband cannot be empty")
+        }
+        // Edge tiles may have dimension=1, producing empty highpass
+        if highpass.isEmpty {
+            return lowpass
         }
 
         // For typical dyadic decomposition, lowpass and highpass should have equal
@@ -572,8 +576,12 @@ extension J2KDWT1D {
         highpass: [Double],
         boundaryExtension: BoundaryExtension = .symmetric
     ) throws -> [Double] {
-        guard !lowpass.isEmpty && !highpass.isEmpty else {
-            throw J2KError.invalidParameter("Subbands cannot be empty")
+        guard !lowpass.isEmpty else {
+            throw J2KError.invalidParameter("Lowpass subband cannot be empty")
+        }
+        // Edge tiles may have dimension=1, producing empty highpass
+        if highpass.isEmpty {
+            return lowpass
         }
 
         guard abs(lowpass.count - highpass.count) <= 1 else {

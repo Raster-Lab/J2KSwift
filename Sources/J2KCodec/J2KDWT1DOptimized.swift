@@ -68,8 +68,12 @@ public struct J2KDWT1DOptimizer: Sendable {
         let lowpassSize = lowpass.count
         let highpassSize = highpass.count
 
-        guard lowpassSize > 0 && highpassSize > 0 else {
-            throw J2KError.invalidParameter("Lowpass and highpass subbands must be non-empty")
+        guard lowpassSize > 0 else {
+            throw J2KError.invalidParameter("Lowpass subband must be non-empty")
+        }
+        // Edge tiles may have dimension=1, producing empty highpass
+        if highpassSize == 0 {
+            return lowpass
         }
 
         // Fast path for symmetric extension (most common in JPEG 2000)
@@ -204,31 +208,39 @@ public struct J2KDWT2DOptimizer: Sendable {
         hh: [[Int32]],
         boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric
     ) throws -> [[Int32]] {
-        // Validate inputs (same as standard implementation)
-        guard !ll.isEmpty && !lh.isEmpty && !hl.isEmpty && !hh.isEmpty else {
-            throw J2KError.invalidParameter("All subbands must be non-empty")
+        // Validate inputs
+        guard !ll.isEmpty else {
+            throw J2KError.invalidParameter("LL subband cannot be empty")
+        }
+        // Handle edge tiles where subbands may be empty (tile dimension=1 in some direction)
+        if lh.isEmpty && hl.isEmpty && hh.isEmpty {
+            return ll
         }
 
         let llHeight = ll.count
         let llWidth = ll[0].count
         let lhHeight = lh.count
-        let lhWidth = lh[0].count
+        let lhWidth = lh.isEmpty ? 0 : lh[0].count
         let hlHeight = hl.count
-        let hlWidth = hl[0].count
+        let hlWidth = hl.isEmpty ? 0 : hl[0].count
         let hhHeight = hh.count
-        let hhWidth = hh[0].count
+        let hhWidth = hh.isEmpty ? 0 : hh[0].count
 
         // Validate subband dimensions
-        guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
-            )
+        if !hl.isEmpty && !hh.isEmpty {
+            guard abs(llWidth - lhWidth) <= 1 && abs(hlWidth - hhWidth) <= 1 && abs(llWidth - hlWidth) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband widths: LL=\(llWidth), LH=\(lhWidth), HL=\(hlWidth), HH=\(hhWidth)"
+                )
+            }
         }
 
-        guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
-            throw J2KError.invalidParameter(
-                "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
-            )
+        if !lh.isEmpty && !hh.isEmpty {
+            guard abs(llHeight - hlHeight) <= 1 && abs(lhHeight - hhHeight) <= 1 && abs(llHeight - lhHeight) <= 1 else {
+                throw J2KError.invalidParameter(
+                    "Incompatible subband heights: LL=\(llHeight), LH=\(lhHeight), HL=\(hlHeight), HH=\(hhHeight)"
+                )
+            }
         }
 
         // Per JPEG 2000 standard: inverse applies rows (horizontal) first, then columns (vertical)

@@ -126,6 +126,7 @@ extension J2KCLI {
         }
 
         // Quality / rate modes
+        // Default to lossless when no lossy options are specified (matches OpenJPEG)
         if options["lossless"] != nil {
             config.lossless = true
         } else if let bpStr = options["bitrate"], let bpp = Double(bpStr) {
@@ -133,6 +134,9 @@ extension J2KCLI {
         } else if let qualStr = options["q"] ?? options["quality"],
                   let quality = Double(qualStr) {
             config.quality = quality
+        } else if options["irreversible"] == nil && options["visually-lossless"] == nil {
+            // No lossy option specified — default to lossless
+            config.lossless = true
         }
 
         if options["visually-lossless"] != nil {
