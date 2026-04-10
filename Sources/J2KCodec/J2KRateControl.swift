@@ -424,22 +424,26 @@ public struct J2KRateControl: Sendable {
 
             // Wavelet synthesis norm weighting for PCRD (WMSE model).
             //
-            // For the 5/3 reversible wavelet: coefficient-domain distortion
-            // does NOT equal pixel-domain MSE because (a) the wavelet is
-            // biorthogonal (not orthogonal) and (b) integer coefficients have
-            // no quantization step normalization. Weight each code block's
-            // distortion by the squared L2 norm of the synthesis basis to
-            // convert to pixel-domain MSE.
+            // Both the 5/3 reversible and 9/7 irreversible wavelets require
+            // synthesis norm weighting so that PCRD can correctly convert
+            // coefficient-domain distortion to pixel-domain MSE. Without this,
+            // PCRD treats a distortion reduction in a coarse LL subband (which
+            // affects many pixels) identically to one in a fine HH subband
+            // (which affects few pixels), causing under-allocation of bits to
+            // coarse subbands and worse PSNR at the same file size.
             //
-            // For the 9/7 irreversible wavelet: the quantization step sizes
-            // already incorporate the wavelet norms (Δ_b = Δ / K_b), so
-            // quantized-index-domain distortion is already normalized to
-            // pixel-domain MSE (since Δ_b² · ‖g_b‖² = base² when K_b = ‖g_b‖).
-            // With base=1.0, weight 1.0 is correct — verified empirically
-            // that stepSize²-only weighting severely degrades quality by
-            // starving coarse subbands of bits.
+            // For the 5/3 reversible wavelet: integer coefficients have no
+            // quantization step normalization, so the squared L2 synthesis norm
+            // directly converts coefficient MSE to pixel MSE.
+            //
+            // For the 9/7 irreversible wavelet: although quantization step sizes
+            // incorporate the wavelet norms for individual coefficient scaling,
+            // PCRD still needs the synthesis norms to correctly weight each
+            // subband's contribution to pixel-domain MSE across the full
+            // decomposition hierarchy.
             let subbandWeight: Double
-            if maxResLevel > 0 && configuration.useReversibleFilter {
+            if maxResLevel > 0 {
+                let norms = configuration.useReversibleFilter ? Self.dwtNorms53 : Self.dwtNorms97
                 let resLevel = codeBlock.resolutionLevel
                 let orient: Int
                 let dwtLevel: Int  // 0-indexed decomposition level (0 = finest detail)
@@ -459,8 +463,8 @@ public struct J2KRateControl: Sendable {
                     }
                 }
 
-                let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
-                let norm = Self.dwtNorms53[orient][clampedLevel]
+                let clampedLevel = min(dwtLevel, norms[0].count - 1)
+                let norm = norms[orient][clampedLevel]
                 subbandWeight = norm * norm  // squared L2 norm for MSE domain
             } else {
                 subbandWeight = 1.0
