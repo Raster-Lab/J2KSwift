@@ -549,11 +549,12 @@ extension J2KCLI {
     private static func generateSyntheticImage(size: Int) -> J2KImage {
         let pixelCount = size * size
         var data = Data(count: pixelCount)
-        // Deterministic pseudo-random fill using LCG
+        // Deterministic pseudo-random fill using Knuth's LCG (Numerical Recipes)
         var state: UInt64 = UInt64(size) &* 2654435761
         data.withUnsafeMutableBytes { ptr in
             let buf = ptr.bindMemory(to: UInt8.self)
             for i in 0..<pixelCount {
+                // multiplier and increment from Knuth's 64-bit LCG
                 state = state &* 6364136223846793005 &+ 1442695040888963407
                 buf[i] = UInt8(truncatingIfNeeded: state >> 33)
             }
