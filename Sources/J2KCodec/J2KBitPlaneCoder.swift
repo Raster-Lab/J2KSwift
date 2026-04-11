@@ -400,16 +400,10 @@ struct BitPlaneCoder: Sendable {
                     perPassSnapshotData.append(snapshotData)
                 }
                 // Distortion: newly significant coefficients from SPP
-                var sppDelta: Double = 0
-                for i in 0..<states.count {
-                    if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] == 0 {
-                        let r = UInt32(1 << bitPlane) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
-                        recon[i] = r
-                        let m = Int64(magnitudes[i])
-                        let e = m - Int64(r)
-                        sppDelta += Double(m * m - e * e)
-                    }
-                }
+                let sppDelta = computeNewSignificanceDistortion(
+                    states: &states, magnitudes: magnitudes,
+                    recon: &recon, bitPlane: bitPlane
+                )
                 cumulativeDistReduction += sppDelta
                 cumulativePassDistortion.append(cumulativeDistReduction)
             }
@@ -433,16 +427,10 @@ struct BitPlaneCoder: Sendable {
                     runningSegmentTotal += passData.count
                     cumulativePassBytes.append(runningSegmentTotal)
                     // Distortion: refined coefficients from bypass MRP
-                    var mrpDelta: Double = 0
-                    for i in 0..<states.count {
-                        if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] > 0 {
-                            let oldErr = Int64(magnitudes[i]) - Int64(recon[i])
-                            let high = recon[i] & ~UInt32((1 << (bitPlane + 1)) - 1)
-                            recon[i] = high | (magnitudes[i] & UInt32(1 << bitPlane)) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
-                            let newErr = Int64(magnitudes[i]) - Int64(recon[i])
-                            mrpDelta += Double(oldErr * oldErr - newErr * newErr)
-                        }
-                    }
+                    let mrpDelta = computeRefinementDistortion(
+                        states: &states, magnitudes: magnitudes,
+                        recon: &recon, bitPlane: bitPlane
+                    )
                     cumulativeDistReduction += mrpDelta
                     cumulativePassDistortion.append(cumulativeDistReduction)
                 } else {
@@ -480,16 +468,10 @@ struct BitPlaneCoder: Sendable {
                         perPassSnapshotData.append(snapshotData)
                     }
                     // Distortion: refined coefficients from MRP
-                    var mrpDelta2: Double = 0
-                    for i in 0..<states.count {
-                        if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] > 0 {
-                            let oldErr = Int64(magnitudes[i]) - Int64(recon[i])
-                            let high = recon[i] & ~UInt32((1 << (bitPlane + 1)) - 1)
-                            recon[i] = high | (magnitudes[i] & UInt32(1 << bitPlane)) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
-                            let newErr = Int64(magnitudes[i]) - Int64(recon[i])
-                            mrpDelta2 += Double(oldErr * oldErr - newErr * newErr)
-                        }
-                    }
+                    let mrpDelta2 = computeRefinementDistortion(
+                        states: &states, magnitudes: magnitudes,
+                        recon: &recon, bitPlane: bitPlane
+                    )
                     cumulativeDistReduction += mrpDelta2
                     cumulativePassDistortion.append(cumulativeDistReduction)
                 }
@@ -540,16 +522,10 @@ struct BitPlaneCoder: Sendable {
                     perPassSnapshotData.append(snapshotData)
                 }
                 // Distortion: newly significant coefficients from CUP
-                var cupDelta: Double = 0
-                for i in 0..<states.count {
-                    if states[i].contains(.codedThisPass) && states[i].contains(.significant) && recon[i] == 0 {
-                        let r = UInt32(1 << bitPlane) | (bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0)
-                        recon[i] = r
-                        let m = Int64(magnitudes[i])
-                        let e = m - Int64(r)
-                        cupDelta += Double(m * m - e * e)
-                    }
-                }
+                let cupDelta = computeNewSignificanceDistortion(
+                    states: &states, magnitudes: magnitudes,
+                    recon: &recon, bitPlane: bitPlane
+                )
                 cumulativeDistReduction += cupDelta
                 cumulativePassDistortion.append(cumulativeDistReduction)
             }
@@ -672,56 +648,59 @@ struct BitPlaneCoder: Sendable {
         encoder: inout MQEncoder,
         contexts: inout ContextStateArray
     ) {
-        // JPEG 2000 requires stripe-based column-major scan order:
-        // Process in stripes of 4 rows, then columns within each stripe
         let stripeHeight = 4
+        let w = width
+        let h = height
 
-        for stripeY in stride(from: 0, to: height, by: stripeHeight) {
-            let stripeEnd = min(stripeY + stripeHeight, height)
+        magnitudes.withUnsafeBufferPointer { magBuf in
+            signs.withUnsafeBufferPointer { signBuf in
+                states.withUnsafeMutableBufferPointer { stateBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let signPtr = signBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
 
-            for x in 0..<width {
-                for y in stripeY..<stripeEnd {
-                    let idx = y * width + x
+                    for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                        let stripeEnd = min(stripeY + stripeHeight, h)
 
-                    // Skip if already significant or coded this pass
-                    if states[idx].contains(.significant) || states[idx].contains(.codedThisPass) {
-                        continue
-                    }
+                        for x in 0..<w {
+                            for y in stripeY..<stripeEnd {
+                                let idx = y &* w &+ x
 
-                    // Check if any neighbors are significant
-                    let neighbors = neighborCalculator.calculate(
-                        x: x, y: y,
-                        states: states,
-                        signs: signs
-                    )
+                                let st = statePtr[idx]
+                                if st.contains(.significant) || st.contains(.codedThisPass) {
+                                    continue
+                                }
 
-                    // Only process if at least one neighbor is significant
-                    guard neighbors.hasAny else { continue }
+                                let neighbors = neighborCalculator.calculateUnsafe(
+                                    x: x, y: y,
+                                    states: statePtr,
+                                    signs: signPtr,
+                                    hasSigns: true
+                                )
 
-                    // Get significance context
-                    let sigContext = contextModeler.significanceContext(neighbors: neighbors)
+                                guard neighbors.hasAny else { continue }
 
-                    // Check if this coefficient becomes significant at this bit-plane
-                    let isSignificant = (magnitudes[idx] & bitMask) != 0
+                                let sigContext = contextModeler.significanceContext(neighbors: neighbors)
+                                let isSignificant = (magPtr[idx] & bitMask) != 0
 
-                    // Encode significance bit
-                    encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
+                                encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
 
-                    if isSignificant {
-                        // Encode sign
-                        let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
-                        let signBit = signs[idx]
-                        let codedSign = signBit != xorBit // XOR with prediction
-                        encoder.encode(symbol: codedSign, context: &contexts[signContext])
+                                if isSignificant {
+                                    let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                    let signBit = signPtr[idx]
+                                    let codedSign = signBit != xorBit
+                                    encoder.encode(symbol: codedSign, context: &contexts[signContext])
 
-                        // Update state
-                        states[idx].insert(.significant)
-                        if signBit {
-                            states[idx].insert(.signBit)
+                                    statePtr[idx].insert(.significant)
+                                    if signBit {
+                                        statePtr[idx].insert(.signBit)
+                                    }
+                                }
+
+                                statePtr[idx].insert(.codedThisPass)
+                            }
                         }
                     }
-
-                    states[idx].insert(.codedThisPass)
                 }
             }
         }
@@ -752,51 +731,59 @@ struct BitPlaneCoder: Sendable {
         contexts: inout ContextStateArray,
         useBypass: Bool = false
     ) {
-        // JPEG 2000 requires stripe-based column-major scan order
         let stripeHeight = 4
+        let w = width
+        let h = height
 
-        for stripeY in stride(from: 0, to: height, by: stripeHeight) {
-            let stripeEnd = min(stripeY + stripeHeight, height)
+        magnitudes.withUnsafeBufferPointer { magBuf in
+            states.withUnsafeMutableBufferPointer { stateBuf in
+                firstRefineFlags.withUnsafeMutableBufferPointer { refineBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
+                    let refinePtr = refineBuf.baseAddress!
 
-            for x in 0..<width {
-                for y in stripeY..<stripeEnd {
-                    let idx = y * width + x
+                    for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                        let stripeEnd = min(stripeY + stripeHeight, h)
 
-                    // Only process coefficients that are significant and not coded this pass
-                    guard states[idx].contains(.significant) else { continue }
-                    guard !states[idx].contains(.codedThisPass) else { continue }
+                        for x in 0..<w {
+                            for y in stripeY..<stripeEnd {
+                                let idx = y &* w &+ x
 
-                    // Get the bit value
-                    let bitValue = (magnitudes[idx] & bitMask) != 0
+                                let st = statePtr[idx]
+                                guard st.contains(.significant) else { continue }
+                                guard !st.contains(.codedThisPass) else { continue }
 
-                    if useBypass {
-                        // Use bypass (raw) mode - no context
-                        encoder.encodeBypass(symbol: bitValue)
-                    } else {
-                        // Use context-adaptive arithmetic coding
-                        // Check if this is the first refinement
-                        let isFirstRefinement = !firstRefineFlags[idx]
+                                let bitValue = (magPtr[idx] & bitMask) != 0
 
-                        // Get neighbors to determine context
-                        let neighbors = neighborCalculator.calculate(x: x, y: y, states: states)
-                        let hasSignificantNeighbors = neighbors.hasAny
+                                if useBypass {
+                                    encoder.encodeBypass(symbol: bitValue)
+                                } else {
+                                    let isFirstRefinement = !refinePtr[idx]
 
-                        // Get magnitude refinement context
-                        let magContext = contextModeler.magnitudeRefinementContext(
-                            firstRefinement: isFirstRefinement,
-                            neighborsWereSignificant: hasSignificantNeighbors
-                        )
+                                    let neighbors = neighborCalculator.calculateUnsafe(
+                                        x: x, y: y,
+                                        states: statePtr,
+                                        signs: nil,
+                                        hasSigns: false
+                                    )
+                                    let hasSignificantNeighbors = neighbors.hasAny
 
-                        // Encode the magnitude bit
-                        encoder.encode(symbol: bitValue, context: &contexts[magContext])
+                                    let magContext = contextModeler.magnitudeRefinementContext(
+                                        firstRefinement: isFirstRefinement,
+                                        neighborsWereSignificant: hasSignificantNeighbors
+                                    )
+
+                                    encoder.encode(symbol: bitValue, context: &contexts[magContext])
+                                }
+
+                                if !refinePtr[idx] {
+                                    refinePtr[idx] = true
+                                }
+
+                                statePtr[idx].insert(.codedThisPass)
+                            }
+                        }
                     }
-
-                    // Update refinement flag
-                    if !firstRefineFlags[idx] {
-                        firstRefineFlags[idx] = true
-                    }
-
-                    states[idx].insert(.codedThisPass)
                 }
             }
         }
@@ -861,170 +848,165 @@ struct BitPlaneCoder: Sendable {
         encoder: inout MQEncoder,
         contexts: inout ContextStateArray
     ) {
-        // Process in stripes of 4 rows
         let stripeHeight = 4
+        let w = width
+        let h = height
 
-        for stripeY in stride(from: 0, to: height, by: stripeHeight) {
-            let stripeEnd = min(stripeY + stripeHeight, height)
+        magnitudes.withUnsafeBufferPointer { magBuf in
+            signs.withUnsafeBufferPointer { signBuf in
+                states.withUnsafeMutableBufferPointer { stateBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let signPtr = signBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
 
-            for x in 0..<width {
-                // Check if this column is eligible for run-length coding
-                let eligible = isEligibleForRunLengthCoding(
+        for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+            let stripeEnd = min(stripeY + stripeHeight, h)
+
+            for x in 0..<w {
+                let eligible = isEligibleForRunLengthCodingUnsafe(
                     x: x,
                     stripeStart: stripeY,
                     stripeEnd: stripeEnd,
-                    states: states
+                    states: statePtr
                 )
                 
                 if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("elig=\(eligible)", x: x, y: stripeY) }
 
                 if eligible {
-                    // Check if any coefficient in the column becomes significant
-                    let hasSignificant = anyBecomeSignificant(
+                    let hasSignificant = anyBecomeSignificantUnsafe(
                         x: x,
                         stripeStart: stripeY,
                         stripeEnd: stripeEnd,
-                        magnitudes: magnitudes,
+                        magnitudes: magPtr,
                         bitMask: bitMask
                     )
 
-                    // Encode run-length flag: true if at least one becomes significant
                     encoder.encode(symbol: hasSignificant, context: &contexts[.runLength])
 
                     if !hasSignificant {
-                        // All coefficients remain zero, mark as coded and skip
                         for y in stripeY..<stripeEnd {
-                            let idx = y * width + x
-                            states[idx].insert(.codedThisPass)
+                            let idx = y &* w &+ x
+                            statePtr[idx].insert(.codedThisPass)
                         }
                         continue
                     }
 
                     if options.useISOPositionEncoding {
-                        // RLC interrupted: encode 2-bit position of first significant
-                        // coefficient using UNIFORM context (ISO/IEC 15444-1 D.3.7)
                         var firstSigPos = 0
                         for i in 0..<(stripeEnd - stripeY) {
-                            let idx = (stripeY + i) * width + x
-                            if (magnitudes[idx] & bitMask) != 0 {
+                            let idx = (stripeY &+ i) &* w &+ x
+                            if (magPtr[idx] & bitMask) != 0 {
                                 firstSigPos = i
                                 break
                             }
                         }
 
-                        // Encode position as 2 bits via UNIFORM context (MSB first)
                         encoder.encode(symbol: (firstSigPos & 0x02) != 0, context: &contexts[.uniform])
                         encoder.encode(symbol: (firstSigPos & 0x01) != 0, context: &contexts[.uniform])
 
-                        // Mark coefficients before first significant as coded
                         for i in 0..<firstSigPos {
-                            let idx = (stripeY + i) * width + x
-                            states[idx].insert(.codedThisPass)
+                            let idx = (stripeY &+ i) &* w &+ x
+                            statePtr[idx].insert(.codedThisPass)
                         }
 
-                        // Encode sign of first significant (significance is implicit)
-                        let firstIdx = (stripeY + firstSigPos) * width + x
-                        let firstNeighbors = neighborCalculator.calculate(
+                        let firstIdx = (stripeY &+ firstSigPos) &* w &+ x
+                        let firstNeighbors = neighborCalculator.calculateUnsafe(
                             x: x, y: stripeY + firstSigPos,
-                            states: states,
-                            signs: signs
+                            states: statePtr,
+                            signs: signPtr,
+                            hasSigns: true
                         )
                         let (firstSignCtx, firstXorBit) = contextModeler.signContext(neighbors: firstNeighbors)
-                        let firstSignBit = signs[firstIdx]
+                        let firstSignBit = signPtr[firstIdx]
                         let firstCodedSign = firstSignBit != firstXorBit
                         encoder.encode(symbol: firstCodedSign, context: &contexts[firstSignCtx])
 
-                        // Update state for first significant
-                        states[firstIdx].insert(.significant)
+                        statePtr[firstIdx].insert(.significant)
                         if firstSignBit {
-                            states[firstIdx].insert(.signBit)
+                            statePtr[firstIdx].insert(.signBit)
                         }
-                        states[firstIdx].insert(.codedThisPass)
+                        statePtr[firstIdx].insert(.codedThisPass)
 
-                        // Process remaining coefficients after first significant normally
                         for y in (stripeY + firstSigPos + 1)..<stripeEnd {
-                            let idx = y * width + x
+                            let idx = y &* w &+ x
 
-                            if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
+                            let st = statePtr[idx]
+                            if st.contains(.codedThisPass) || st.contains(.significant) {
                                 continue
                             }
 
-                            let neighbors = neighborCalculator.calculate(
+                            let neighbors = neighborCalculator.calculateUnsafe(
                                 x: x, y: y,
-                                states: states,
-                                signs: signs
+                                states: statePtr,
+                                signs: signPtr,
+                                hasSigns: true
                             )
 
                             let sigContext = contextModeler.significanceContext(neighbors: neighbors)
-                            let isSignificant = (magnitudes[idx] & bitMask) != 0
+                            let isSignificant = (magPtr[idx] & bitMask) != 0
                             encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
 
                             if isSignificant {
                                 let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
-                                let signBit = signs[idx]
+                                let signBit = signPtr[idx]
                                 let codedSign = signBit != xorBit
                                 encoder.encode(symbol: codedSign, context: &contexts[signContext])
 
-                                states[idx].insert(.significant)
+                                statePtr[idx].insert(.significant)
                                 if signBit {
-                                    states[idx].insert(.signBit)
+                                    statePtr[idx].insert(.signBit)
                                 }
                             }
 
-                            states[idx].insert(.codedThisPass)
+                            statePtr[idx].insert(.codedThisPass)
                         }
                         continue
                     }
-                    // Legacy fallthrough: fall through to per-coefficient loop below
                 }
 
-                // Not eligible for RLC: process all coefficients individually
                 for y in stripeY..<stripeEnd {
-                    let idx = y * width + x
+                    let idx = y &* w &+ x
 
-                    // Skip if already coded or significant
-                    if states[idx].contains(.codedThisPass) || states[idx].contains(.significant) {
+                    let st = statePtr[idx]
+                    if st.contains(.codedThisPass) || st.contains(.significant) {
                         if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("skip(coded/sig)", x: x, y: y) }
                         continue
                     }
 
-                    // Get neighbors (using current state which includes any updates
-                    // from previously processed coefficients in this stripe column)
-                    let neighbors = neighborCalculator.calculate(
+                    let neighbors = neighborCalculator.calculateUnsafe(
                         x: x, y: y,
-                        states: states,
-                        signs: signs
+                        states: statePtr,
+                        signs: signPtr,
+                        hasSigns: true
                     )
 
-                    // Get significance context
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
+                    let isSignificant = (magPtr[idx] & bitMask) != 0
 
-                    // Check if significant
-                    let isSignificant = (magnitudes[idx] & bitMask) != 0
-
-                    // Encode significance
                     encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
                     if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y) }
 
                     if isSignificant {
-                        // Encode sign
                         let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
-                        let signBit = signs[idx]
+                        let signBit = signPtr[idx]
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
                         if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y) }
 
-                        // Update state immediately
-                        states[idx].insert(.significant)
+                        statePtr[idx].insert(.significant)
                         if signBit {
-                            states[idx].insert(.signBit)
+                            statePtr[idx].insert(.signBit)
                         }
                     }
 
-                    states[idx].insert(.codedThisPass)
+                    statePtr[idx].insert(.codedThisPass)
                 }
             }
         }
+
+                } // stateBuf
+            } // signBuf
+        } // magBuf
     }
 
     /// Checks if a column is eligible for run-length coding.
@@ -1056,6 +1038,55 @@ struct BitPlaneCoder: Sendable {
         }
 
         return true
+    }
+
+    /// Unsafe version of RLC eligibility check for use within withUnsafeMutableBufferPointer.
+    @inline(__always)
+    private func isEligibleForRunLengthCodingUnsafe(
+        x: Int,
+        stripeStart: Int,
+        stripeEnd: Int,
+        states: UnsafeMutablePointer<CoefficientState>
+    ) -> Bool {
+        guard stripeEnd - stripeStart == 4 else { return false }
+        let w = width
+
+        for y in stripeStart..<stripeEnd {
+            let idx = y &* w &+ x
+            let st = states[idx]
+            if st.contains(.significant) || st.contains(.codedThisPass) {
+                return false
+            }
+            let neighbors = neighborCalculator.calculateUnsafe(
+                x: x, y: y,
+                states: states,
+                signs: nil,
+                hasSigns: false
+            )
+            if neighbors.hasAny {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Unsafe version of significance check for use within withUnsafeBufferPointer.
+    @inline(__always)
+    private func anyBecomeSignificantUnsafe(
+        x: Int,
+        stripeStart: Int,
+        stripeEnd: Int,
+        magnitudes: UnsafePointer<UInt32>,
+        bitMask: UInt32
+    ) -> Bool {
+        let w = width
+        for y in stripeStart..<stripeEnd {
+            let idx = y &* w &+ x
+            if (magnitudes[idx] & bitMask) != 0 {
+                return true
+            }
+        }
+        return false
     }
 
     /// Checks if any coefficient in a column becomes significant at this bit-plane.
@@ -1094,6 +1125,78 @@ struct BitPlaneCoder: Sendable {
             x: x, stripeStart: stripeStart,
             stripeEnd: stripeEnd,
             magnitudes: magnitudes, bitMask: bitMask)
+    }
+
+    // MARK: - Distortion Helpers
+
+    /// Computes distortion reduction for newly significant coefficients coded in this pass.
+    ///
+    /// Updates reconstruction values for coefficients that became significant.
+    /// Used after SPP and Cleanup passes.
+    @inline(__always)
+    private func computeNewSignificanceDistortion(
+        states: inout [CoefficientState],
+        magnitudes: [UInt32],
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
+        let count = states.count
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let reconVal = UInt32(1 << bitPlane) | halfBit
+        let codedAndSig = CoefficientState.codedThisPass.rawValue | CoefficientState.significant.rawValue
+        return states.withUnsafeMutableBufferPointer { statesBuf in
+            magnitudes.withUnsafeBufferPointer { magBuf in
+                recon.withUnsafeMutableBufferPointer { reconBuf in
+                    var delta: Double = 0
+                    for i in 0..<count {
+                        let raw = statesBuf[i].rawValue
+                        if (raw & codedAndSig) == codedAndSig && reconBuf[i] == 0 {
+                            reconBuf[i] = reconVal
+                            let m = Int64(magBuf[i])
+                            let e = m - Int64(reconVal)
+                            delta += Double(m &* m &- e &* e)
+                        }
+                    }
+                    return delta
+                }
+            }
+        }
+    }
+
+    /// Computes distortion reduction for refined coefficients coded in this pass.
+    ///
+    /// Updates reconstruction values for coefficients that were already significant
+    /// and got their magnitude refined. Used after MRP passes.
+    @inline(__always)
+    private func computeRefinementDistortion(
+        states: inout [CoefficientState],
+        magnitudes: [UInt32],
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
+        let count = states.count
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let clearMask = ~UInt32((1 << (bitPlane + 1)) - 1)
+        let bitVal = UInt32(1 << bitPlane)
+        let codedAndSig = CoefficientState.codedThisPass.rawValue | CoefficientState.significant.rawValue
+        return states.withUnsafeMutableBufferPointer { statesBuf in
+            magnitudes.withUnsafeBufferPointer { magBuf in
+                recon.withUnsafeMutableBufferPointer { reconBuf in
+                    var delta: Double = 0
+                    for i in 0..<count {
+                        let raw = statesBuf[i].rawValue
+                        if (raw & codedAndSig) == codedAndSig && reconBuf[i] > 0 {
+                            let oldErr = Int64(magBuf[i]) - Int64(reconBuf[i])
+                            let high = reconBuf[i] & clearMask
+                            reconBuf[i] = high | (magBuf[i] & bitVal) | halfBit
+                            let newErr = Int64(magBuf[i]) - Int64(reconBuf[i])
+                            delta += Double(oldErr &* oldErr &- newErr &* newErr)
+                        }
+                    }
+                    return delta
+                }
+            }
+        }
     }
 }
 

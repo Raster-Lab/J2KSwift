@@ -102,7 +102,9 @@ internal struct HTBlockEncoderPooled: Sendable {
                     // Encode significance
                     let pattern = sig0 | (sig1 << 1)
                     mel.encode(bit: (pattern == 0) ? 0 : 1)
-                    vlc.encodeSignificance(pattern: pattern)
+                    if pattern != 0 {
+                        vlc.encodeSignificance(pattern: pattern)
+                    }
 
                     // Encode magnitude/sign
                     if sig0 != 0 {
@@ -124,8 +126,15 @@ internal struct HTBlockEncoderPooled: Sendable {
         let vlcData = vlc.flush()
         let magsgnData = magsgn.flush()
 
-        // Combine data
+        // Combine data with 6-byte length header (matches standard encoder)
         var codedData = Data()
+        codedData.reserveCapacity(6 + melData.count + magsgnData.count + vlcData.count)
+        codedData.append(UInt8((melData.count >> 8) & 0xFF))
+        codedData.append(UInt8(melData.count & 0xFF))
+        codedData.append(UInt8((vlcData.count >> 8) & 0xFF))
+        codedData.append(UInt8(vlcData.count & 0xFF))
+        codedData.append(UInt8((magsgnData.count >> 8) & 0xFF))
+        codedData.append(UInt8(magsgnData.count & 0xFF))
         codedData.append(melData)
         codedData.append(magsgnData)
         codedData.append(Data(vlcData.reversed()))

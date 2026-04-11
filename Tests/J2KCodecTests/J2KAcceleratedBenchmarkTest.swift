@@ -165,6 +165,10 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
     }
 
     /// Encode a PGM file with OpenJPEG and return (encodeTime, fileSize).
+    ///
+    /// Parses OpenJPEG's own "encode time: N ms" from stdout to avoid
+    /// conflating process launch overhead (~50-60 ms on macOS) with
+    /// actual encoding time. Falls back to wall-clock if parsing fails.
     private func opjEncode(
         pgmPath: String, j2kPath: String,
         compressionRatio: Double?, lossless: Bool
@@ -177,37 +181,76 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
             let ratio = compressionRatio ?? 10.0
             proc.arguments = ["-i", pgmPath, "-o", j2kPath, "-r", String(format: "%.1f", ratio)]
         }
-        proc.standardOutput = Pipe()
+        let stdoutPipe = Pipe()
+        proc.standardOutput = stdoutPipe
         proc.standardError = Pipe()
 
-        let start = CFAbsoluteTimeGetCurrent()
+        let wallStart = CFAbsoluteTimeGetCurrent()
         try proc.run()
         proc.waitUntilExit()
-        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        let wallElapsed = CFAbsoluteTimeGetCurrent() - wallStart
 
         guard proc.terminationStatus == 0 else {
             throw NSError(domain: "OPJ", code: Int(proc.terminationStatus))
+        }
+
+        // Parse OPJ's internal timing: "encode time: <N> ms"
+        var elapsed = wallElapsed
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: stdoutData, encoding: .utf8) {
+            // Match "encode time: 29 ms" or similar
+            let lines = output.components(separatedBy: .newlines)
+            for line in lines {
+                let lower = line.lowercased()
+                if lower.contains("encode time"),
+                   let range = lower.range(of: #"(\d+)\s*ms"#, options: .regularExpression),
+                   let ms = Double(lower[range].components(separatedBy: CharacterSet.decimalDigits.inverted).joined()) {
+                    elapsed = ms / 1000.0
+                    break
+                }
+            }
         }
 
         let fileSize = try FileManager.default.attributesOfItem(atPath: j2kPath)[.size] as? Int ?? 0
         return (elapsed, fileSize)
     }
 
-    /// Decode a J2K file with OpenJPEG and return (decodeTime, pgmPath).
+    /// Decode a J2K file with OpenJPEG and return decodeTime.
+    ///
+    /// Parses OpenJPEG's own "decode time: N ms" from stdout to avoid
+    /// conflating process launch overhead with actual decoding time.
+    /// Falls back to wall-clock if parsing fails.
     private func opjDecode(j2kPath: String, pgmPath: String) throws -> Double {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: opjDecompress)
         proc.arguments = ["-i", j2kPath, "-o", pgmPath]
-        proc.standardOutput = Pipe()
+        let stdoutPipe = Pipe()
+        proc.standardOutput = stdoutPipe
         proc.standardError = Pipe()
 
-        let start = CFAbsoluteTimeGetCurrent()
+        let wallStart = CFAbsoluteTimeGetCurrent()
         try proc.run()
         proc.waitUntilExit()
-        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        let wallElapsed = CFAbsoluteTimeGetCurrent() - wallStart
 
         guard proc.terminationStatus == 0 else {
             throw NSError(domain: "OPJ", code: Int(proc.terminationStatus))
+        }
+
+        // Parse OPJ's internal timing: "decode time: <N> ms"
+        var elapsed = wallElapsed
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: stdoutData, encoding: .utf8) {
+            let lines = output.components(separatedBy: .newlines)
+            for line in lines {
+                let lower = line.lowercased()
+                if lower.contains("decode time"),
+                   let range = lower.range(of: #"(\d+)\s*ms"#, options: .regularExpression),
+                   let ms = Double(lower[range].components(separatedBy: CharacterSet.decimalDigits.inverted).joined()) {
+                    elapsed = ms / 1000.0
+                    break
+                }
+            }
         }
 
         return elapsed
@@ -295,6 +338,13 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
     // MARK: - Full Benchmark Suite
 
     func testAcceleratedEncoderBenchmark() throws {
+        // Guard against running in debug mode — Swift debug builds are
+        // 20-40× slower than release, producing meaningless benchmarks.
+        #if DEBUG
+        print("⚠️  WARNING: Running benchmark in DEBUG mode. Results will be")
+        print("   unreliable. Use: swift test -c release --filter testAcceleratedEncoderBenchmark")
+        #endif
+
         var results: [BenchmarkResult] = []
 
         // Test configurations: (label, width, height, bitDepth, components, modes)

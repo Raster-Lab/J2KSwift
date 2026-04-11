@@ -79,6 +79,12 @@ struct HTMELCoder: Sendable {
     /// Current run count.
     private var run: Int = 0
 
+    /// Whether the next decode call should return 1 (significant).
+    ///
+    /// Set after consuming a terminated run of zeros — the significant
+    /// decision that caused the run termination is delivered on the next call.
+    private var pendingSignificant: Bool = false
+
     /// Current run-length threshold (number of zeros to emit a 0 MEL bit).
     private var threshold: Int = 0
 
@@ -136,12 +142,12 @@ struct HTMELCoder: Sendable {
     ///
     /// - Returns: The MEL-encoded byte stream.
     mutating func flush() -> Data {
-        // Emit remaining run if any
-        if run > 0 {
-            // Pad with 0-bits since the run didn't complete
-            emitBit(0)
-        }
-        // Flush bit buffer
+        // Do NOT emit a run-completion bit for a partial trailing run.
+        // The decoder handles an exhausted MEL reader by falling back to VLC,
+        // which correctly returns pattern 0 (neither significant) for the
+        // trailing insignificant pairs.
+        //
+        // Flush any remaining bits in the accumulator (zero-padded to byte boundary)
         while bitCount > 0 {
             buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
             bitBuffer <<= 8
@@ -164,13 +170,27 @@ struct HTMELCoder: Sendable {
 
     /// Decodes a single context decision from MEL-encoded data.
     ///
+    /// A MEL "1" bit signals a terminated run: `runLength` insignificant pairs
+    /// followed by one significant pair. The decoder delivers `runLength` zeros
+    /// then one "1". The `pendingSignificant` flag tracks the deferred "1".
+    ///
     /// - Parameter reader: The bit reader positioned at MEL data.
     /// - Returns: The decoded context decision (0 or 1).
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
     mutating func decode(from reader: inout J2KBitReader) throws -> Int {
+        // Consume remaining zeros from a run BEFORE delivering
+        // the pending significant decision. A terminated MEL run
+        // encodes N zeros followed by 1 significant — the run zeros
+        // must all be delivered before the trailing significant.
         if run > 0 {
             run -= 1
             return 0
+        }
+
+        // Deliver the deferred significant decision after all run zeros
+        if pendingSignificant {
+            pendingSignificant = false
+            return 1
         }
 
         guard reader.bytesRemaining > 0 || bitCount > 0 else {
@@ -179,30 +199,30 @@ struct HTMELCoder: Sendable {
 
         let bit = try readBit(from: &reader)
         if bit == 0 {
-            // Run continues — set run to the threshold value
+            // Complete run of `limit` insignificant pairs
             let limit = 1 << Self.thresholdTable[stateIndex]
-            run = limit - 1
+            run = limit - 1  // this call consumes 1; remaining = limit-1
             if stateIndex < Self.thresholdTable.count - 1 {
                 stateIndex += 1
             }
             return 0
         } else {
-            // Run ends — read remaining bits to get run length
+            // Terminated run: `runLength` zeros then 1 significant
             let remainingBits = Self.thresholdTable[stateIndex]
             var runLength = 0
             for _ in 0..<remainingBits {
                 let b = try readBit(from: &reader)
                 runLength = (runLength << 1) | b
             }
-            run = runLength
             if stateIndex > 0 {
                 stateIndex -= 1
             }
-            if run > 0 {
-                run -= 1
+            if runLength > 0 {
+                run = runLength - 1  // this call consumes 1 zero
+                pendingSignificant = true  // deliver "1" after the zeros
                 return 0
             }
-            return 1
+            return 1  // immediate significant (no preceding zeros)
         }
     }
 
@@ -369,11 +389,15 @@ struct HTMagSgnCoder: Sendable {
         // Encode sign bit
         emitBit(sign & 1)
 
-        // Encode magnitude minus 1 in the remaining bit-planes
-        let magMinus1 = magnitude - 1
+        // Encode the magnitude bits below the significance bit-plane.
+        // The significance bit (bit at bitPlane) is already communicated via
+        // VLC/MEL, so MagSgn only needs to encode the lower bitPlane bits.
+        // These bits represent (magnitude - (1 << bitPlane)), which always
+        // fits in exactly bitPlane bits.
+        let lowerBits = magnitude - (1 << bitPlane)
         let numBits = max(0, bitPlane)
         for shift in stride(from: numBits - 1, through: 0, by: -1) {
-            emitBit((magMinus1 >> shift) & 1)
+            emitBit((lowerBits >> shift) & 1)
         }
     }
 
@@ -415,15 +439,16 @@ struct HTMagSgnCoder: Sendable {
         // Read sign bit
         let sign = try reader.readBit() ? 1 : 0
 
-        // Read magnitude bits
+        // Read magnitude bits below the significance bit-plane.
+        // These represent (magnitude - (1 << bitPlane)).
         let numBits = max(0, bitPlane)
-        var magMinus1 = 0
+        var lowerBits = 0
         for _ in 0..<numBits {
             let bit = try reader.readBit() ? 1 : 0
-            magMinus1 = (magMinus1 << 1) | bit
+            lowerBits = (lowerBits << 1) | bit
         }
 
-        let magnitude = magMinus1 + 1
+        let magnitude = (1 << bitPlane) + lowerBits
         return sign == 1 ? -magnitude : magnitude
     }
 }
@@ -455,18 +480,21 @@ struct HTBlockEncoder: Sendable {
     /// The subband this code-block belongs to.
     let subband: J2KSubband
 
-    /// Encodes wavelet coefficients using the HT cleanup pass.
+    /// Encodes wavelet coefficients using the HT cleanup pass (Int32 primary path).
     ///
     /// The cleanup pass is the primary coding pass in HTJ2K. It processes all
     /// samples in the code-block and produces significance, sign, and magnitude
     /// information using the MEL, VLC, and MagSgn coding primitives.
     ///
+    /// This overload accepts `[Int32]` directly, avoiding a redundant copy when
+    /// coefficients are already stored as `Int32` in the encoder pipeline.
+    ///
     /// - Parameters:
     ///   - coefficients: The wavelet coefficients in raster order.
     ///   - bitPlane: The most significant bit-plane to encode.
-    /// - Returns: An ``HTEncodedBlock`` containing the coded data and metadata.
+    /// - Returns: A tuple of the encoded block, significance state, and absolute magnitudes.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
+    func encodeCleanup(coefficients: [Int32], bitPlane: Int) throws -> (block: HTEncodedBlock, significanceState: [Bool], absMags: [Int32]) {
         guard coefficients.count == width * height else {
             throw J2KError.encodingError(
                 "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
@@ -474,12 +502,13 @@ struct HTBlockEncoder: Sendable {
         }
 
         let count = coefficients.count
+        let bp32 = Int32(bitPlane)
 
         // Pre-compute significance bits, absolute magnitudes, and sign bits
-        // using SIMD4 vectorisation for the bulk of the array.
-        var sigBits = [Int](repeating: 0, count: count)
-        var absMags = [Int](repeating: 0, count: count)
-        var signBits = [Int](repeating: 0, count: count)
+        // using SIMD4<Int32> vectorisation (fits in a single 128-bit NEON register).
+        var sigBits = [Int32](repeating: 0, count: count)
+        var absMags = [Int32](repeating: 0, count: count)
+        var signBits = [Int32](repeating: 0, count: count)
 
         coefficients.withUnsafeBufferPointer { srcPtr in
             sigBits.withUnsafeMutableBufferPointer { sigPtr in
@@ -493,43 +522,43 @@ struct HTBlockEncoder: Sendable {
                         let simdCount = count / 4
 
                         for i in 0..<simdCount {
-                            let offset = i * 4
-                            let v = SIMD4<Int>(
-                                src[offset], src[offset + 1],
-                                src[offset + 2], src[offset + 3]
+                            let offset = i &* 4
+                            let v = SIMD4<Int32>(
+                                src[offset], src[offset &+ 1],
+                                src[offset &+ 2], src[offset &+ 3]
                             )
 
                             // Absolute value
-                            let negative = v .< SIMD4<Int>.zero
+                            let negative = v .< SIMD4<Int32>.zero
                             let absV = v.replacing(
-                                with: SIMD4<Int>.zero &- v, where: negative
+                                with: SIMD4<Int32>.zero &- v, where: negative
                             )
 
                             // Significance: (abs >> bitPlane) & 1
-                            let shifted = absV &>> SIMD4<Int>(repeating: bitPlane)
-                            let masked = shifted & SIMD4<Int>(repeating: 1)
+                            let shifted = absV &>> SIMD4<Int32>(repeating: bp32)
+                            let masked = shifted & SIMD4<Int32>(repeating: 1)
 
                             // Sign: 1 if negative, 0 otherwise
-                            let signV = SIMD4<Int>.zero.replacing(
-                                with: SIMD4<Int>(repeating: 1), where: negative
+                            let signV = SIMD4<Int32>.zero.replacing(
+                                with: SIMD4<Int32>(repeating: 1), where: negative
                             )
 
-                            sig[offset] = masked[0]; sig[offset+1] = masked[1]
-                            sig[offset+2] = masked[2]; sig[offset+3] = masked[3]
-                            mag[offset] = absV[0]; mag[offset+1] = absV[1]
-                            mag[offset+2] = absV[2]; mag[offset+3] = absV[3]
-                            sgn[offset] = signV[0]; sgn[offset+1] = signV[1]
-                            sgn[offset+2] = signV[2]; sgn[offset+3] = signV[3]
+                            sig[offset] = masked[0]; sig[offset &+ 1] = masked[1]
+                            sig[offset &+ 2] = masked[2]; sig[offset &+ 3] = masked[3]
+                            mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                            mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+                            sgn[offset] = signV[0]; sgn[offset &+ 1] = signV[1]
+                            sgn[offset &+ 2] = signV[2]; sgn[offset &+ 3] = signV[3]
                         }
 
                         // Scalar remainder
-                        let remStart = simdCount * 4
+                        let remStart = simdCount &* 4
                         for i in remStart..<count {
                             let coeff = src[i]
-                            let absVal = coeff < 0 ? -coeff : coeff
+                            let absVal = coeff < 0 ? (0 &- coeff) : coeff
                             mag[i] = absVal
                             sgn[i] = coeff < 0 ? 1 : 0
-                            sig[i] = (absVal >> bitPlane) & 1
+                            sig[i] = (absVal >> bp32) & 1
                         }
                     }
                 }
@@ -555,23 +584,27 @@ struct HTBlockEncoder: Sendable {
 
                     let sig0 = sigBits[idx0]
 
-                    var sig1 = 0
+                    var sig1: Int32 = 0
                     if pairWidth > 1 {
                         sig1 = sigBits[idx0 + 1]
                     }
 
                     // Encode significance via MEL and VLC
-                    let pattern = sig0 | (sig1 << 1)
+                    let pattern = Int(sig0 | (sig1 << 1))
                     mel.encode(bit: (pattern == 0) ? 0 : 1)
-                    vlc.encodeSignificance(pattern: pattern)
+                    // Only encode VLC for significant pairs — the decoder
+                    // only reads VLC when MEL indicates significance.
+                    if pattern != 0 {
+                        vlc.encodeSignificance(pattern: pattern)
+                    }
 
                     // Encode magnitude/sign for significant samples
                     if sig0 != 0 {
-                        magsgn.encode(magnitude: absMags[idx0], sign: signBits[idx0], bitPlane: bitPlane)
+                        magsgn.encode(magnitude: Int(absMags[idx0]), sign: Int(signBits[idx0]), bitPlane: bitPlane)
                     }
                     if sig1 != 0 {
                         let idx1 = idx0 + 1
-                        magsgn.encode(magnitude: absMags[idx1], sign: signBits[idx1], bitPlane: bitPlane)
+                        magsgn.encode(magnitude: Int(absMags[idx1]), sign: Int(signBits[idx1]), bitPlane: bitPlane)
                     }
                 }
             }
@@ -598,7 +631,7 @@ struct HTBlockEncoder: Sendable {
         codedData.append(magsgnData)
         codedData.append(Data(vlcData.reversed()))
 
-        return HTEncodedBlock(
+        let block = HTEncodedBlock(
             codedData: codedData,
             passType: .htCleanup,
             melLength: melData.count,
@@ -608,9 +641,26 @@ struct HTBlockEncoder: Sendable {
             width: width,
             height: height
         )
+
+        // Build significance state from the pre-computed sigBits
+        let significanceState = sigBits.map { $0 != 0 }
+
+        return (block: block, significanceState: significanceState, absMags: absMags)
     }
 
-    /// Encodes the HT significance propagation pass.
+    /// Encodes wavelet coefficients using the HT cleanup pass (convenience for `[Int]` callers).
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - bitPlane: The most significant bit-plane to encode.
+    /// - Returns: An ``HTEncodedBlock`` containing the coded data and metadata.
+    /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
+    func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
+        let (block, _, _) = try encodeCleanup(coefficients: coefficients.map { Int32($0) }, bitPlane: bitPlane)
+        return block
+    }
+
+    /// Encodes the HT significance propagation pass (Int32 primary path).
     ///
     /// This pass encodes samples that become newly significant at a refinement
     /// bit-plane. It is used for progressive quality improvement.
@@ -622,7 +672,7 @@ struct HTBlockEncoder: Sendable {
     /// - Returns: The encoded data for the SigProp pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     func encodeSigProp(
-        coefficients: [Int],
+        coefficients: [Int32],
         significanceState: [Bool],
         bitPlane: Int
     ) throws -> Data {
@@ -633,11 +683,17 @@ struct HTBlockEncoder: Sendable {
             throw J2KError.encodingError("Significance state count mismatch")
         }
 
+        let bp32 = Int32(bitPlane)
         var output: [UInt8] = []
         var bitBuffer: UInt8 = 0
         var bitPos = 0
 
-        // Process samples in stripe order
+        // Process ALL non-significant samples in stripe order.
+        // Unlike traditional EBCOT which uses three passes per bit-plane
+        // (SigProp + MagRef + Cleanup), HTJ2K refinement only uses two
+        // passes (SigProp + MagRef). To avoid losing isolated significant
+        // samples that lack significant neighbors, SigProp must scan ALL
+        // non-significant samples rather than just those with neighbors.
         let numStripes = (height + 3) / 4
         for stripe in 0..<numStripes {
             let stripeHeight = min(4, height - stripe * 4)
@@ -651,20 +707,25 @@ struct HTBlockEncoder: Sendable {
                         continue
                     }
 
-                    // Check if any neighbor is significant (significance propagation)
-                    if hasSignificantNeighbor(x: col, y: y, state: significanceState) {
-                        let coeff = coefficients[idx]
-                        let bit = (abs(coeff) >> bitPlane) & 1
+                    let coeff = coefficients[idx]
+                    let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                    let bit = (absCoeff >> bp32) & 1
 
-                        bitBuffer |= UInt8(bit) << bitPos
+                    // MSB-first packing to match J2KBitReader
+                    bitBuffer |= UInt8(bit) << (7 - bitPos)
+                    bitPos += 1
+
+                    if bitPos >= 8 {
+                        output.append(bitBuffer)
+                        bitBuffer = 0
+                        bitPos = 0
+                    }
+
+                    if bit != 0 {
+                        // Also encode sign
+                        let sign: UInt8 = coeff < 0 ? 1 : 0
+                        bitBuffer |= sign << (7 - bitPos)
                         bitPos += 1
-
-                        if bit != 0 {
-                            // Also encode sign
-                            let sign: UInt8 = coeff < 0 ? 1 : 0
-                            bitBuffer |= sign << bitPos
-                            bitPos += 1
-                        }
 
                         if bitPos >= 8 {
                             output.append(bitBuffer)
@@ -684,7 +745,20 @@ struct HTBlockEncoder: Sendable {
         return Data(output)
     }
 
-    /// Encodes the HT magnitude refinement pass.
+    /// Encodes the HT significance propagation pass (convenience for `[Int]` callers).
+    func encodeSigProp(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int
+    ) throws -> Data {
+        try encodeSigProp(
+            coefficients: coefficients.map { Int32($0) },
+            significanceState: significanceState,
+            bitPlane: bitPlane
+        )
+    }
+
+    /// Encodes the HT magnitude refinement pass (Int32 primary path).
     ///
     /// This pass refines the magnitude of already-significant samples by
     /// encoding additional bit-planes.
@@ -696,7 +770,7 @@ struct HTBlockEncoder: Sendable {
     /// - Returns: The encoded data for the MagRef pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     func encodeMagRef(
-        coefficients: [Int],
+        coefficients: [Int32],
         significanceState: [Bool],
         bitPlane: Int
     ) throws -> Data {
@@ -704,6 +778,7 @@ struct HTBlockEncoder: Sendable {
             throw J2KError.encodingError("Coefficient count mismatch")
         }
 
+        let bp32 = Int32(bitPlane)
         var output: [UInt8] = []
         var bitBuffer: UInt8 = 0
         var bitPos = 0
@@ -719,9 +794,11 @@ struct HTBlockEncoder: Sendable {
 
                     if significanceState[idx] {
                         let coeff = coefficients[idx]
-                        let bit = (abs(coeff) >> bitPlane) & 1
+                        let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                        let bit = (absCoeff >> bp32) & 1
 
-                        bitBuffer |= UInt8(bit) << bitPos
+                        // MSB-first packing to match J2KBitReader
+                        bitBuffer |= UInt8(bit) << (7 - bitPos)
                         bitPos += 1
 
                         if bitPos >= 8 {
@@ -740,6 +817,19 @@ struct HTBlockEncoder: Sendable {
         }
 
         return Data(output)
+    }
+
+    /// Encodes the HT magnitude refinement pass (convenience for `[Int]` callers).
+    func encodeMagRef(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int
+    ) throws -> Data {
+        try encodeMagRef(
+            coefficients: coefficients.map { Int32($0) },
+            significanceState: significanceState,
+            bitPlane: bitPlane
+        )
     }
 
     /// Checks whether any neighbor of the given sample is significant.
@@ -839,8 +929,10 @@ struct HTBlockDecoder: Sendable {
                     let melDecision = try mel.decode(from: &melReader)
 
                     var pattern = 0
-                    if melDecision != 0 || melReader.bytesRemaining == 0 {
-                        // Decode VLC significance pattern
+                    if melDecision != 0 {
+                        // Decode VLC significance pattern only when MEL says
+                        // the pair is significant. The encoder only writes VLC
+                        // entries for significant pairs.
                         pattern = try vlc.decodeSignificance(from: &vlcReader)
                     }
 
@@ -905,32 +997,16 @@ struct HTBlockDecoder: Sendable {
         // Determine the top bit-plane from zeroBitPlanes and bitDepth
         let topBitPlane = max(0, bitDepth - zeroBitPlanes - 1)
 
-        // Split data into per-pass segments
-        var segments: [Data] = []
-        if !passSegmentLengths.isEmpty {
-            var offset = data.startIndex
-            for len in passSegmentLengths {
-                let end = min(offset + len, data.endIndex)
-                segments.append(data[offset..<end])
-                offset = end
-            }
-        } else {
-            // Single segment for all passes
-            segments = [data]
-        }
-
-        guard !segments.isEmpty else {
-            return [Int32](repeating: 0, count: width * height)
-        }
-
-        // Decode cleanup pass (first segment)
-        let cleanupData = segments[0]
-
-        // Parse stream length header from cleanup data
-        guard let header = HTStreamHeader.read(from: cleanupData) else {
+        // Parse the cleanup pass header to determine its length.
+        // The 6-byte header encodes melLen + vlcLen + magsgnLen.
+        guard let header = HTStreamHeader.read(from: data) else {
             // Trivial block with no significant coefficients
             return [Int32](repeating: 0, count: width * height)
         }
+
+        let cleanupLen = HTStreamHeader.size + header.melLen + header.magsgnLen + header.vlcLen
+        let cleanupEnd = min(data.startIndex + cleanupLen, data.endIndex)
+        let cleanupData = Data(data[data.startIndex..<cleanupEnd])
 
         let block = HTEncodedBlock(
             codedData: cleanupData,
@@ -944,42 +1020,177 @@ struct HTBlockDecoder: Sendable {
         )
         var coefficients = try decodeCleanup(from: block)
 
-        // Apply refinement passes (SigProp + MagRef pairs)
-        if segments.count > 1 {
+        // Apply refinement passes (SigProp + MagRef pairs) from the remaining data.
+        // The refinement data forms a continuous bit-packed stream. When per-pass
+        // segment lengths are provided, use them to split the data. Otherwise,
+        // process the remaining data as one continuous reader.
+        let refinementPassCount = passCount - 1
+        if refinementPassCount > 0 && cleanupEnd < data.endIndex {
             var significanceState = coefficients.map { $0 != 0 }
-            var passIdx = 1
-            var bp = topBitPlane - 1
 
-            while passIdx < segments.count && bp >= 0 {
-                // SigProp pass
-                let sigPropData = segments[passIdx]
-                let sigPropResult = try decodeSigProp(
-                    coefficients: coefficients,
-                    sigPropData: sigPropData,
-                    significanceState: significanceState,
-                    bitPlane: bp
-                )
-                coefficients = sigPropResult.coefficients
-                significanceState = sigPropResult.significanceState
-                passIdx += 1
+            if !passSegmentLengths.isEmpty {
+                // Per-pass segments provided — split into individual segments
+                var segments: [Data] = []
+                // Skip the first segment length (cleanup pass)
+                var offset = data.startIndex + (passSegmentLengths.isEmpty ? 0 : passSegmentLengths[0])
+                for i in 1..<passSegmentLengths.count {
+                    let end = min(offset + passSegmentLengths[i], data.endIndex)
+                    segments.append(Data(data[offset..<end]))
+                    offset = end
+                }
 
-                // MagRef pass
-                if passIdx < segments.count {
-                    coefficients = try decodeMagRef(
+                var passIdx = 0
+                var bp = topBitPlane - 1
+
+                while passIdx < segments.count && bp >= 0 {
+                    // Save pre-SigProp significance for MagRef (encoder uses same state)
+                    let preSigPropState = significanceState
+                    let sigPropResult = try decodeSigProp(
                         coefficients: coefficients,
-                        magRefData: segments[passIdx],
+                        sigPropData: segments[passIdx],
                         significanceState: significanceState,
                         bitPlane: bp
                     )
+                    coefficients = sigPropResult.coefficients
                     passIdx += 1
-                }
 
-                bp -= 1
+                    if passIdx < segments.count {
+                        // Use pre-SigProp state to match encoder
+                        coefficients = try decodeMagRef(
+                            coefficients: coefficients,
+                            magRefData: segments[passIdx],
+                            significanceState: preSigPropState,
+                            bitPlane: bp
+                        )
+                        passIdx += 1
+                    }
+                    // Update significance after both passes
+                    significanceState = sigPropResult.significanceState
+                    bp -= 1
+                }
+            } else {
+                // No per-pass segment lengths — read refinement from continuous stream.
+                // Each SigProp/MagRef pass is independently byte-aligned (the encoder
+                // flushes each pass to a byte boundary). After decoding each pass we
+                // must align the reader to the next byte before reading the next pass.
+                let refinementData = Data(data[cleanupEnd..<data.endIndex])
+                var reader = J2KBitReader(data: refinementData)
+                reader.setByteStuffing(false)
+                var bp = topBitPlane - 1
+                var passesDecoded = 0
+
+                while bp >= 0 && passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
+                    // SigProp pass — decode using current significance state.
+                    // IMPORTANT: save pre-SigProp significance for MagRef, because
+                    // the encoder uses the SAME significance state for both SigProp
+                    // and MagRef at the same bit-plane.
+                    let preSigPropState = significanceState
+                    let sigResult = try decodeSigPropFromReader(
+                        coefficients: coefficients,
+                        significanceState: significanceState,
+                        bitPlane: bp,
+                        reader: &reader
+                    )
+                    coefficients = sigResult.coefficients
+                    passesDecoded += 1
+                    // Align to next byte boundary (skip padding from encoder flush)
+                    try reader.alignToByte()
+
+                    // MagRef pass — use pre-SigProp significance state to match
+                    // the encoder, which hadn't updated significance yet.
+                    if passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
+                        coefficients = try decodeMagRefFromReader(
+                            coefficients: coefficients,
+                            significanceState: preSigPropState,
+                            bitPlane: bp,
+                            reader: &reader
+                        )
+                        passesDecoded += 1
+                        try reader.alignToByte()
+                    }
+
+                    // NOW update significance state (after both passes at this bp)
+                    significanceState = sigResult.significanceState
+                    bp -= 1
+                }
             }
         }
 
         // Convert Int to Int32
         return coefficients.map { Int32($0) }
+    }
+
+    // MARK: - Continuous Stream Refinement Decoders
+
+    /// Decodes the SigProp pass from a continuous reader (no per-pass framing).
+    private func decodeSigPropFromReader(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int,
+        reader: inout J2KBitReader
+    ) throws -> (coefficients: [Int], significanceState: [Bool]) {
+        var coeffs = coefficients
+        var sigState = significanceState
+
+        let numStripes = (height + 3) / 4
+        for stripe in 0..<numStripes {
+            let stripeHeight = min(4, height - stripe * 4)
+            for col in 0..<width {
+                for row in 0..<stripeHeight {
+                    let y = stripe * 4 + row
+                    let idx = y * width + col
+
+                    if sigState[idx] { continue }
+
+                    guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                    let bit = try reader.readBit()
+                    if bit {
+                        let sign = try reader.readBit()
+                        let magnitude = 1 << bitPlane
+                        coeffs[idx] = sign ? -magnitude : magnitude
+                        sigState[idx] = true
+                    }
+                }
+            }
+        }
+
+        return (coeffs, sigState)
+    }
+
+    /// Decodes the MagRef pass from a continuous reader (no per-pass framing).
+    private func decodeMagRefFromReader(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int,
+        reader: inout J2KBitReader
+    ) throws -> [Int] {
+        var coeffs = coefficients
+
+        let numStripes = (height + 3) / 4
+        for stripe in 0..<numStripes {
+            let stripeHeight = min(4, height - stripe * 4)
+            for col in 0..<width {
+                for row in 0..<stripeHeight {
+                    let y = stripe * 4 + row
+                    let idx = y * width + col
+
+                    if significanceState[idx] {
+                        guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                        let bit = try reader.readBit()
+                        if bit {
+                            let refinement = 1 << bitPlane
+                            if coeffs[idx] > 0 {
+                                coeffs[idx] |= refinement
+                            } else {
+                                coeffs[idx] = -(abs(coeffs[idx]) | refinement)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return coeffs
     }
 
     /// Applies the HT significance propagation pass to refine coefficients.
@@ -1013,15 +1224,13 @@ struct HTBlockDecoder: Sendable {
                         continue
                     }
 
-                    if hasSignificantNeighbor(x: col, y: y, state: sigState) {
-                        guard reader.bytesRemaining > 0 else { break }
-                        let bit = try reader.readBit()
-                        if bit {
-                            let sign = try reader.readBit()
-                            let magnitude = 1 << bitPlane
-                            coeffs[idx] = sign ? -magnitude : magnitude
-                            sigState[idx] = true
-                        }
+                    guard reader.bytesRemaining > 0 else { break }
+                    let bit = try reader.readBit()
+                    if bit {
+                        let sign = try reader.readBit()
+                        let magnitude = 1 << bitPlane
+                        coeffs[idx] = sign ? -magnitude : magnitude
+                        sigState[idx] = true
                     }
                 }
             }

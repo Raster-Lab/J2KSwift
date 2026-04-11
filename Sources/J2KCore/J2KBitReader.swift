@@ -45,9 +45,15 @@ public struct J2KBitReader: Sendable {
 
     /// Creates a new bit reader from the specified data.
     ///
+    /// Data slices with non-zero `startIndex` are normalized to zero-based
+    /// indexing so that internal `data[bytePosition]` accesses remain valid.
+    ///
     /// - Parameter data: The data to read from.
     public init(data: Data) {
-        self.data = data
+        // Normalize to zero-based indexing to avoid slice offset issues.
+        // Data subscript uses absolute indices, so a slice like data[6..<10]
+        // would trap on data[0]. Copying restores startIndex == 0.
+        self.data = data.startIndex == 0 ? data : Data(data)
         self.bytePosition = 0
         self.bitPosition = 0
         self.byteStuffingEnabled = false

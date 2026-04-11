@@ -1366,42 +1366,61 @@ struct EncoderPipeline: Sendable {
             subband: pending.subband
         )
 
-        // Convert Int32 coefficients to Int for HTBlockEncoder interface
-        let coeffsInt = pending.coefficients.map { Int($0) }
+        // Determine the most significant bit-plane directly from Int32 coefficients
+        // using the existing SIMD-optimized helper (no intermediate array allocation).
+        let maxMag = Int(Self.maxAbsValue(pending.coefficients))
 
-        // Pre-compute absolute magnitudes (reused for maxMag, significance, and refinement)
-        let absMags = coeffsInt.map { abs($0) }
-
-        // Determine the most significant bit-plane from the magnitudes
-        let maxMag = absMags.max() ?? 0
-        let topBitPlane: Int
-        if maxMag > 0 {
-            topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
-        } else {
-            topBitPlane = 0
+        // Early termination: trivial block with no significant coefficients
+        guard maxMag > 0 else {
+            let emptyData = Data()
+            return J2KCodeBlock(
+                index: pending.index,
+                x: pending.x,
+                y: pending.y,
+                width: pending.width,
+                height: pending.height,
+                subband: pending.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
+                data: emptyData,
+                passeCount: 0,
+                zeroBitPlanes: pending.bitDepth,
+                passSegmentLengths: [],
+                cumulativePassBytes: [],
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation
+            )
         }
 
-        // Encode cleanup pass (the primary HT coding pass)
-        let cleanupBlock = try htEncoder.encodeCleanup(
-            coefficients: coeffsInt,
+        let topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
+
+        // Encode cleanup pass directly from Int32 coefficients (no copy).
+        // The Int32 overload also returns significance state and absolute
+        // magnitudes, avoiding redundant recomputation.
+        let cleanupResult = try htEncoder.encodeCleanup(
+            coefficients: pending.coefficients,
             bitPlane: topBitPlane
         )
+        let cleanupBlock = cleanupResult.block
+        var significanceState = cleanupResult.significanceState
+        let absMags = cleanupResult.absMags
 
-        // Build significance state from cleanup pass results using cached abs magnitudes
-        var significanceState = [Bool](repeating: false, count: pending.width * pending.height)
-        for i in 0..<absMags.count where (absMags[i] >> topBitPlane) & 1 != 0 {
-            significanceState[i] = true
-        }
-
-        // Encode refinement passes (SigProp + MagRef) for lower bit-planes
+        // Encode refinement passes (SigProp + MagRef) for lower bit-planes.
+        // Cap at a configurable maximum to avoid encoding bit-planes that rate
+        // control will truncate anyway. Each pair adds ~2× block size in output
+        // with diminishing quality contribution.
         var allPassData = cleanupBlock.codedData
         var totalPasses = 1  // cleanup pass
         var passSegmentLengths = [cleanupBlock.codedData.count]
         var cumulativePassBytes = [cleanupBlock.codedData.count]
 
+        // Encode refinement passes (SigProp + MagRef) for all remaining bit-planes.
+        // PCRD rate control will truncate unnecessary passes for lossy encoding;
+        // for lossless encoding, all bit-planes are required for exact reconstruction.
+
         for bp in stride(from: topBitPlane - 1, through: 0, by: -1) {
             let sigPropData = try htEncoder.encodeSigProp(
-                coefficients: coeffsInt,
+                coefficients: pending.coefficients,
                 significanceState: significanceState,
                 bitPlane: bp
             )
@@ -1411,7 +1430,7 @@ struct EncoderPipeline: Sendable {
             cumulativePassBytes.append(allPassData.count)
 
             let magRefData = try htEncoder.encodeMagRef(
-                coefficients: coeffsInt,
+                coefficients: pending.coefficients,
                 significanceState: significanceState,
                 bitPlane: bp
             )
@@ -1420,13 +1439,14 @@ struct EncoderPipeline: Sendable {
             passSegmentLengths.append(magRefData.count)
             cumulativePassBytes.append(allPassData.count)
 
-            // Update significance state for next bit-plane using cached abs magnitudes
-            for i in 0..<absMags.count where (absMags[i] >> bp) & 1 != 0 {
+            // Update significance state using cached absolute magnitudes
+            let bp32 = Int32(bp)
+            for i in 0..<absMags.count where (absMags[i] >> bp32) & 1 != 0 {
                 significanceState[i] = true
             }
         }
 
-        let zeroBitPlanes = maxMag > 0 ? max(0, pending.bitDepth - topBitPlane - 1) : pending.bitDepth
+        let zeroBitPlanes = max(0, pending.bitDepth - topBitPlane - 1)
 
         return J2KCodeBlock(
             index: pending.index,
