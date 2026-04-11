@@ -1104,17 +1104,22 @@ struct DecoderPipeline: Sendable {
     }
 
     /// Applies entropy decoding to code blocks.
+    ///
+    /// When `metadata.configuration.useHTJ2K` is true, uses HTJ2K FBCOT block
+    /// decoding (ISO/IEC 15444-15). Otherwise uses legacy EBCOT bit-plane
+    /// decoding (ISO/IEC 15444-1).
     private func applyEntropyDecoding(
         _ blocks: [CodeBlockInfo],
         metadata: CodestreamMetadata
     ) throws -> [SubbandInfo] {
-        let decoder = CodeBlockDecoder()
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
             isIrreversible = true
         } else {
             isIrreversible = false
         }
+        let useHT = metadata.configuration.useHTJ2K
+
         // Track subband dimensions and use 2D placement for code blocks
         var subbandDims: [String: (width: Int, height: Int)] = [:]
         // Store decoded code blocks with their positions for proper 2D placement
@@ -1131,7 +1136,8 @@ struct DecoderPipeline: Sendable {
 
         if blockCount >= 4 {
             // === Parallel code block decoding ===
-            // Each code block is independent (own MQ state + context models).
+            // Each code block is independent (own MQ state + context models for EBCOT,
+            // own MEL/VLC/MagSgn state for HTJ2K).
             // Use DispatchQueue.concurrentPerform for cross-platform parallelism
             // (macOS Intel/ARM, Linux).
             let componentBitDepths = metadata.components.map { $0.bitDepth }
@@ -1148,25 +1154,44 @@ struct DecoderPipeline: Sendable {
 
             DispatchQueue.concurrentPerform(iterations: blockCount) { i in
                 let block = blocks[i]
-                let blockDecoder = CodeBlockDecoder()
-                let codeBlock = J2KCodeBlock(
-                    index: 0,
-                    x: block.x,
-                    y: block.y,
-                    width: block.width,
-                    height: block.height,
-                    subband: block.subband,
-                    data: block.data,
-                    passeCount: block.passCount,
-                    zeroBitPlanes: block.zeroBitPlanes
-                )
                 let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
-                if let coeffs = try? blockDecoder.decode(
-                    codeBlock: codeBlock,
-                    bitDepth: bitDepth,
-                    irreversible: isIrreversible
-                ) {
-                    resultsPtr[i] = coeffs
+
+                if useHT {
+                    // HTJ2K path: use FBCOT block decoding
+                    let htDecoder = HTBlockDecoder(
+                        width: block.width,
+                        height: block.height,
+                        subband: block.subband
+                    )
+                    if let coeffs = try? htDecoder.decodeFromCodestream(
+                        data: block.data,
+                        passCount: block.passCount,
+                        bitDepth: bitDepth,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    ) {
+                        resultsPtr[i] = coeffs
+                    }
+                } else {
+                    // Legacy path: use EBCOT bit-plane decoding
+                    let blockDecoder = CodeBlockDecoder()
+                    let codeBlock = J2KCodeBlock(
+                        index: 0,
+                        x: block.x,
+                        y: block.y,
+                        width: block.width,
+                        height: block.height,
+                        subband: block.subband,
+                        data: block.data,
+                        passeCount: block.passCount,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    )
+                    if let coeffs = try? blockDecoder.decode(
+                        codeBlock: codeBlock,
+                        bitDepth: bitDepth,
+                        irreversible: isIrreversible
+                    ) {
+                        resultsPtr[i] = coeffs
+                    }
                 }
             }
 
@@ -1199,24 +1224,43 @@ struct DecoderPipeline: Sendable {
         } else {
             // Sequential path for small block counts
             for block in blocks {
-                let codeBlock = J2KCodeBlock(
-                    index: 0,
-                    x: block.x,
-                    y: block.y,
-                    width: block.width,
-                    height: block.height,
-                    subband: block.subband,
-                    data: block.data,
-                    passeCount: block.passCount,
-                    zeroBitPlanes: block.zeroBitPlanes
-                )
-
                 let compInfo = metadata.components[block.componentIndex]
-                let coeffs = try decoder.decode(
-                    codeBlock: codeBlock,
-                    bitDepth: block.bandKb > 0 ? block.bandKb : compInfo.bitDepth,
-                    irreversible: isIrreversible
-                )
+                let bitDepth = block.bandKb > 0 ? block.bandKb : compInfo.bitDepth
+                let coeffs: [Int32]
+
+                if useHT {
+                    // HTJ2K path: use FBCOT block decoding
+                    let htDecoder = HTBlockDecoder(
+                        width: block.width,
+                        height: block.height,
+                        subband: block.subband
+                    )
+                    coeffs = try htDecoder.decodeFromCodestream(
+                        data: block.data,
+                        passCount: block.passCount,
+                        bitDepth: bitDepth,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    )
+                } else {
+                    // Legacy path: use EBCOT bit-plane decoding
+                    let decoder = CodeBlockDecoder()
+                    let codeBlock = J2KCodeBlock(
+                        index: 0,
+                        x: block.x,
+                        y: block.y,
+                        width: block.width,
+                        height: block.height,
+                        subband: block.subband,
+                        data: block.data,
+                        passeCount: block.passCount,
+                        zeroBitPlanes: block.zeroBitPlanes
+                    )
+                    coeffs = try decoder.decode(
+                        codeBlock: codeBlock,
+                        bitDepth: bitDepth,
+                        irreversible: isIrreversible
+                    )
+                }
 
                 let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
 
