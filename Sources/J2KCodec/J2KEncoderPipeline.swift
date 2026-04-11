@@ -1373,7 +1373,7 @@ struct EncoderPipeline: Sendable {
         let maxMag = coeffsInt.lazy.map { abs($0) }.max() ?? 0
         let topBitPlane: Int
         if maxMag > 0 {
-            topBitPlane = Int(log2(Double(maxMag)))
+            topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
         } else {
             topBitPlane = 0
         }

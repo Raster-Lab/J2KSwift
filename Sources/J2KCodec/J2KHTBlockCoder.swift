@@ -485,10 +485,10 @@ struct HTBlockEncoder: Sendable {
             sigBits.withUnsafeMutableBufferPointer { sigPtr in
                 absMags.withUnsafeMutableBufferPointer { magPtr in
                     signBits.withUnsafeMutableBufferPointer { sgnPtr in
-                        let src = srcPtr.baseAddress!
-                        let sig = sigPtr.baseAddress!
-                        let mag = magPtr.baseAddress!
-                        let sgn = sgnPtr.baseAddress!
+                        guard let src = srcPtr.baseAddress,
+                              let sig = sigPtr.baseAddress,
+                              let mag = magPtr.baseAddress,
+                              let sgn = sgnPtr.baseAddress else { return }
 
                         let simdCount = count / 4
 
@@ -806,12 +806,12 @@ struct HTBlockDecoder: Sendable {
         // Parse the stream length header
         let headerMelLen = Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1])
         let headerVlcLen = Int(data[data.startIndex + 2]) << 8 | Int(data[data.startIndex + 3])
-        _ = Int(data[data.startIndex + 4]) << 8 | Int(data[data.startIndex + 5])
+        let headerMagsgnLen = Int(data[data.startIndex + 4]) << 8 | Int(data[data.startIndex + 5])
 
         let headerSize = 6
         let payloadStart = data.startIndex + headerSize
         let melEnd = payloadStart + headerMelLen
-        let magsgnEnd = melEnd + block.magsgnLength
+        let magsgnEnd = melEnd + headerMagsgnLen
 
         guard melEnd <= data.endIndex && magsgnEnd <= data.endIndex else {
             throw J2KError.decodingError("Invalid stream lengths in HT encoded block")
@@ -941,9 +941,6 @@ struct HTBlockDecoder: Sendable {
         let vlcLen = Int(cleanupData[s + 2]) << 8 | Int(cleanupData[s + 3])
         let magsgnLen = Int(cleanupData[s + 4]) << 8 | Int(cleanupData[s + 5])
 
-        let headerSize = 6
-        let payloadStart = s + headerSize
-
         let block = HTEncodedBlock(
             codedData: cleanupData,
             passType: .htCleanup,
@@ -954,8 +951,6 @@ struct HTBlockDecoder: Sendable {
             width: width,
             height: height
         )
-        // Use the existing cleanup decoder via the HTEncodedBlock path
-        _ = payloadStart  // payloadStart used by decodeCleanup internally
         var coefficients = try decodeCleanup(from: block)
 
         // Apply refinement passes (SigProp + MagRef pairs)
