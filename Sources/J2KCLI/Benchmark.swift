@@ -58,11 +58,8 @@ extension J2KCLI {
             return
         }
 
-        guard let inputPath = options["i"] ?? options["input"] else {
-            print("Error: Missing required argument: -i/--input")
-            exit(1)
-        }
-
+        let inputPath   = options["i"] ?? options["input"]
+        let sizesStr    = options["sizes"]
         let runs        = Int(options["r"] ?? options["runs"] ?? "3") ?? 3
         let warmupRuns  = Int(options["warmup"] ?? "1") ?? 1
         let outputPath  = options["o"] ?? options["output"]
@@ -73,6 +70,27 @@ extension J2KCLI {
         let useHTJ2K    = options["htj2k"] != nil
         let compareAll  = options["compare-all"] != nil
         let outputFmt   = options["format"] ?? "text"
+
+        // Multi-size mode: --sizes 256,512,1024,2048
+        if let sizesStr = sizesStr {
+            let sizes = parseSizes(sizesStr)
+            guard !sizes.isEmpty else {
+                print("Error: Invalid --sizes value. Use comma-separated dimensions, e.g. --sizes 256,512,1024,2048")
+                exit(1)
+            }
+            try await runMultiSizeBenchmark(
+                sizes: sizes, options: options, runs: runs, warmupRuns: warmupRuns,
+                outputPath: outputPath, encodeOnly: encodeOnly, decodeOnly: decodeOnly,
+                compareOJ: compareOJ, useGPU: useGPU, useHTJ2K: useHTJ2K,
+                compareAll: compareAll, outputFmt: outputFmt
+            )
+            return
+        }
+
+        guard let inputPath = inputPath else {
+            print("Error: Missing required argument: -i/--input or --sizes")
+            exit(1)
+        }
 
         // Detect GPU availability
         let gpuAvailable = isGPUAvailable
@@ -508,6 +526,248 @@ extension J2KCLI {
         print("")
     }
 
+    // MARK: - Multi-Size Benchmark
+
+    /// Parses a comma-separated list of square image dimensions.
+    ///
+    /// - Parameter str: Comma-separated dimensions, e.g. "256,512,1024,2048".
+    /// - Returns: Array of parsed dimensions.
+    private static func parseSizes(_ str: String) -> [Int] {
+        str.split(separator: ",")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { $0 > 0 }
+    }
+
+    /// Generates a synthetic grayscale test image with pseudo-random data.
+    ///
+    /// Uses a linear congruential generator seeded with the dimension to
+    /// produce deterministic but non-trivial pixel data that exercises
+    /// the full encoding pipeline (DWT, quantization, entropy coding).
+    ///
+    /// - Parameter size: The width and height of the square image.
+    /// - Returns: A grayscale `J2KImage` of the requested size.
+    private static func generateSyntheticImage(size: Int) -> J2KImage {
+        let pixelCount = size * size
+        var data = Data(count: pixelCount)
+        // Deterministic pseudo-random fill using LCG
+        var state: UInt64 = UInt64(size) &* 2654435761
+        data.withUnsafeMutableBytes { ptr in
+            let buf = ptr.bindMemory(to: UInt8.self)
+            for i in 0..<pixelCount {
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                buf[i] = UInt8(truncatingIfNeeded: state >> 33)
+            }
+        }
+        let component = J2KComponent(
+            index: 0, bitDepth: 8, signed: false,
+            width: size, height: size, data: data
+        )
+        return J2KImage(width: size, height: size, components: [component])
+    }
+
+    /// Runs benchmarks across multiple image sizes using synthetic test images.
+    ///
+    /// For each size the encoder (and optionally decoder) is benchmarked.
+    /// Results are collected into a single output with per-size rows in CSV
+    /// mode, or per-size sections in text mode.
+    private static func runMultiSizeBenchmark(
+        sizes: [Int],
+        options: [String: String],
+        runs: Int,
+        warmupRuns: Int,
+        outputPath: String?,
+        encodeOnly: Bool,
+        decodeOnly: Bool,
+        compareOJ: Bool,
+        useGPU: Bool,
+        useHTJ2K: Bool,
+        compareAll: Bool,
+        outputFmt: String
+    ) async throws {
+        let gpuAvailable = isGPUAvailable
+
+        // Determine benchmark modes
+        var modes: [BenchmarkMode] = []
+        if compareAll {
+            modes.append(.cpu)
+            modes.append(.gpu)
+            modes.append(.htj2k)
+        } else if useGPU && useHTJ2K {
+            modes.append(.gpu)
+            modes.append(.htj2k)
+        } else if useGPU {
+            modes.append(.gpu)
+        } else if useHTJ2K {
+            modes.append(.htj2k)
+        } else {
+            modes.append(.cpu)
+        }
+
+        let config = makeEncodingConfiguration(from: options, outputFmt: outputFmt)
+
+        if outputFmt == "text" {
+            print("═══════════════════════════════════════════════════════════════")
+            print(" Multi-Size Benchmark")
+            print(" Sizes: \(sizes.map { "\($0)×\($0)" }.joined(separator: ", "))")
+            print(" Runs: \(runs), Warmup: \(warmupRuns)")
+            if gpuAvailable {
+                print(" GPU: Metal")
+            } else {
+                print(" GPU: not available (CPU fallback)")
+            }
+            print("═══════════════════════════════════════════════════════════════")
+            print("")
+        }
+
+        // Collect all rows: (name, mode, direction, stats dict)
+        var allRows: [(name: String, mode: BenchmarkMode, direction: String, stats: [String: Any])] = []
+
+        for size in sizes {
+            let image = generateSyntheticImage(size: size)
+
+            if outputFmt == "text" {
+                print("───────────────────────────────────────────────────────────────")
+                print(" Image: \(size)×\(size) (\(size * size) pixels)")
+                print("───────────────────────────────────────────────────────────────")
+                print("")
+            }
+
+            for mode in modes {
+                var modeConfig = config
+                if mode == .htj2k { modeConfig.useHTJ2K = true }
+
+                if mode == .gpu && !gpuAvailable && outputFmt == "text" {
+                    print("⚠ GPU requested but not available — running with CPU fallback\n")
+                }
+
+                let testName = "\(mode.label)_\(size)x\(size)"
+
+                // Benchmark encoding
+                var encodedData: Data?
+                if !decodeOnly {
+                    if outputFmt == "text" {
+                        print("  \(mode.title) — Encode:")
+                    }
+                    let encodeResult = try await benchmarkEncode(
+                        image: image, config: modeConfig, useGPU: mode == .gpu,
+                        runs: runs, warmupRuns: warmupRuns, outputFmt: outputFmt
+                    )
+                    encodedData = encodeResult.data
+                    allRows.append((name: testName, mode: mode, direction: "encode", stats: encodeResult.stats))
+                }
+
+                // Benchmark decoding
+                if !encodeOnly {
+                    if encodedData == nil {
+                        let encoder = J2KEncoder(encodingConfiguration: modeConfig)
+                        if mode == .gpu {
+                            encodedData = try await encoder.encodeGPU(image)
+                        } else {
+                            encodedData = try encoder.encode(image)
+                        }
+                    }
+                    guard let dataToUse = encodedData else {
+                        throw J2KError.internalError("No encoded data available for decoding benchmark")
+                    }
+                    if outputFmt == "text" {
+                        print("  \(mode.title) — Decode:")
+                    }
+                    let decodeStats = try await benchmarkDecode(
+                        data: dataToUse, useGPU: mode == .gpu,
+                        runs: runs, warmupRuns: warmupRuns,
+                        pixels: size * size, outputFmt: outputFmt
+                    )
+                    allRows.append((name: testName, mode: mode, direction: "decode", stats: decodeStats))
+                }
+            }
+        }
+
+        if compareOJ && outputFmt == "text" {
+            print("Note: OpenJPEG comparison is not available on this platform.")
+        }
+
+        // Output results
+        switch outputFmt {
+        case "csv":
+            printMultiSizeCSV(allRows, gpuAvailable: gpuAvailable)
+        case "json":
+            printMultiSizeJSON(allRows, gpuAvailable: gpuAvailable, sizes: sizes)
+        default:
+            if outputFmt == "text" { print("Benchmark complete!") }
+        }
+
+        // Save report if requested
+        if let outPath = outputPath {
+            let ext = URL(fileURLWithPath: outPath).pathExtension.lowercased()
+            let saveData: Data
+            if ext == "csv" {
+                let csv = buildMultiSizeCSVString(allRows, gpuAvailable: gpuAvailable)
+                saveData = csv.data(using: .utf8) ?? Data()
+            } else {
+                let jsonObj = buildMultiSizeJSONObject(allRows, gpuAvailable: gpuAvailable, sizes: sizes)
+                saveData = (try? JSONSerialization.data(withJSONObject: jsonObj, options: .prettyPrinted)) ?? Data()
+            }
+            try saveData.write(to: URL(fileURLWithPath: outPath))
+            if outputFmt == "text" { print("Saved benchmark results to: \(outPath)") }
+        }
+    }
+
+    // MARK: - Multi-Size Output Formatting
+
+    private static func printMultiSizeCSV(
+        _ rows: [(name: String, mode: BenchmarkMode, direction: String, stats: [String: Any])],
+        gpuAvailable: Bool
+    ) {
+        print(buildMultiSizeCSVString(rows, gpuAvailable: gpuAvailable))
+    }
+
+    private static func buildMultiSizeCSVString(
+        _ rows: [(name: String, mode: BenchmarkMode, direction: String, stats: [String: Any])],
+        gpuAvailable: Bool
+    ) -> String {
+        var lines = ["name,mode,direction,average_ms,median_ms,min_ms,max_ms,stddev_ms,throughput_mpps,compressed_size,gpu_available"]
+        for row in rows {
+            let d    = row.stats
+            let avg  = d["average_ms"]      as? Double ?? 0
+            let med  = d["median_ms"]       as? Double ?? 0
+            let mn   = d["min_ms"]          as? Double ?? 0
+            let mx   = d["max_ms"]          as? Double ?? 0
+            let std  = d["stddev_ms"]       as? Double ?? 0
+            let mpps = d["throughput_mpps"] as? Double ?? 0
+            let cs   = d["compressed_size"] as? Int
+            let csStr = cs.map { String($0) } ?? ""
+            lines.append("\(row.name),\(row.mode.label),\(row.direction),\(String(format: "%.3f", avg)),\(String(format: "%.3f", med)),\(String(format: "%.3f", mn)),\(String(format: "%.3f", mx)),\(String(format: "%.3f", std)),\(String(format: "%.2f", mpps)),\(csStr),\(gpuAvailable)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func printMultiSizeJSON(
+        _ rows: [(name: String, mode: BenchmarkMode, direction: String, stats: [String: Any])],
+        gpuAvailable: Bool,
+        sizes: [Int]
+    ) {
+        let jsonObj = buildMultiSizeJSONObject(rows, gpuAvailable: gpuAvailable, sizes: sizes)
+        if let jsonData = try? JSONSerialization.data(withJSONObject: jsonObj, options: .prettyPrinted),
+           let str = String(data: jsonData, encoding: .utf8) {
+            print(str)
+        }
+    }
+
+    private static func buildMultiSizeJSONObject(
+        _ rows: [(name: String, mode: BenchmarkMode, direction: String, stats: [String: Any])],
+        gpuAvailable: Bool,
+        sizes: [Int]
+    ) -> [String: Any] {
+        var results: [String: Any] = [
+            "gpu_available": gpuAvailable,
+            "sizes": sizes.map { "\($0)x\($0)" },
+        ]
+        for row in rows {
+            results[row.name] = row.stats
+        }
+        return results
+    }
+
     // MARK: - Statistics
 
     private struct Stats {
@@ -608,6 +868,7 @@ extension J2KCLI {
 
         USAGE:
             j2k benchmark -i <input> [options]
+            j2k benchmark --sizes 256,512,1024,2048 [options]
 
         MODES:
             (default)                   CPU-only Part 1 EBCOT benchmark
@@ -619,6 +880,10 @@ extension J2KCLI {
 
         OPTIONS:
             -i, --input PATH            Input image file
+            --sizes D1,D2,...           Run multi-size benchmark with synthetic
+                                        square images at each dimension (e.g.
+                                        --sizes 256,512,1024,2048). Mutually
+                                        exclusive with -i/--input.
             -r, --runs N                Measurement runs (default: 3)
             --warmup N                  Warm-up runs before measurement (default: 1)
             -o, --output PATH           Output report file
@@ -634,11 +899,20 @@ extension J2KCLI {
             falls back to CPU. The benchmark clearly reports this so results
             are not misleading.
 
+        MULTI-SIZE NOTES:
+            When --sizes is used, the benchmark generates synthetic grayscale
+            test images filled with pseudo-random data at each requested
+            dimension. This is useful for measuring GPU scaling across image
+            sizes without needing external test files. CSV output includes a
+            'name' column identifying each test (e.g. gpu_256x256).
+
         EXAMPLES:
             j2k benchmark -i test.pgm -r 10
             j2k benchmark -i test.pgm --gpu
             j2k benchmark -i test.pgm --htj2k --encode-only
             j2k benchmark -i test.pgm --compare-all --format csv -o results.csv
+            j2k benchmark --sizes 256,512,1024,2048 --gpu --format csv
+            j2k benchmark --sizes 256,512,1024,2048 --compare-all --encode-only
         """)
     }
 }
