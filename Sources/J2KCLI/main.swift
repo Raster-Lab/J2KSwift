@@ -224,6 +224,9 @@ struct J2KCLI {
             --encode-only               Only benchmark encoding
             --decode-only               Only benchmark decoding
             --preset NAME               Use preset: fast, balanced, quality
+            --gpu                       Benchmark GPU-accelerated pipeline
+            --htj2k                     Benchmark HTJ2K (Part 15) mode
+            --compare-all               Compare CPU vs GPU vs HTJ2K
             --compare-openjpeg          Compare with OpenJPEG (if available)
 
         GLOBAL FLAGS:
