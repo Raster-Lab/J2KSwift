@@ -186,8 +186,12 @@ struct EncoderPipeline: Sendable {
 
     /// Encodes an image through the GPU-accelerated JPEG 2000 pipeline.
     ///
-    /// Uses Metal GPU acceleration for the CDF 9/7 wavelet transform stage.
-    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    /// Uses Metal GPU acceleration for the CDF 9/7 wavelet transform and colour
+    /// transform stages when available. Falls back to CPU implementations when
+    /// Metal is unavailable (e.g. Linux, CI servers without GPU).
+    ///
+    /// HTJ2K block coding (when `config.useHTJ2K` is true) always runs on CPU
+    /// using the FBCOT algorithm with SIMD-accelerated significance extraction.
     ///
     /// - Parameters:
     ///   - image: The image to encode.
@@ -256,7 +260,7 @@ struct EncoderPipeline: Sendable {
     /// GPU-accelerated wavelet transform using Metal.
     ///
     /// Uses Metal GPU for both CDF 9/7 irreversible and Le Gall 5/3 reversible wavelet transforms.
-    /// Falls back to CPU for custom/arbitrary wavelet kernels.
+    /// Falls back to CPU when Metal is unavailable or for custom/arbitrary wavelet kernels.
     private func applyWaveletTransformGPU(
         _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
         width: Int, height: Int
@@ -275,6 +279,12 @@ struct EncoderPipeline: Sendable {
         let levels = min(config.decompositionLevels, maxLevels)
 
         guard levels >= 1 else {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+
+        // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
+        guard J2KMetalDWT.isAvailable else {
             return try applyWaveletTransform(components, doubleComponents: doubleComponents,
                                               width: width, height: height)
         }

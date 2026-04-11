@@ -211,8 +211,12 @@ struct DecoderPipeline: Sendable {
 
     /// Decodes a JPEG 2000 codestream using GPU-accelerated inverse DWT.
     ///
-    /// Uses Metal GPU for the CDF 9/7 inverse wavelet transform stage.
-    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    /// Uses Metal GPU for the inverse wavelet transform and colour transform
+    /// stages when available. Falls back to CPU implementations when Metal is
+    /// unavailable (e.g. Linux, CI servers without GPU).
+    ///
+    /// HTJ2K block decoding (when signaled via COD marker bit 6) always runs
+    /// on CPU using the FBCOT algorithm.
     ///
     /// - Parameters:
     ///   - data: The JPEG 2000 codestream data.
@@ -1730,8 +1734,8 @@ struct DecoderPipeline: Sendable {
 
     /// GPU-accelerated inverse wavelet transform using Metal.
     ///
-    /// Uses Metal GPU for CDF 9/7 irreversible inverse DWT.
-    /// Falls back to CPU for Le Gall 5/3 reversible and custom filters.
+    /// Uses Metal GPU for CDF 9/7 irreversible and Le Gall 5/3 reversible inverse DWT.
+    /// Falls back to CPU when Metal is unavailable or for custom filters.
     private func applyInverseWaveletTransformGPU(
         _ subbands: [SubbandInfo],
         metadata: CodestreamMetadata
@@ -1743,6 +1747,11 @@ struct DecoderPipeline: Sendable {
 
         let levels = metadata.configuration.decompositionLevels
         guard levels >= 1 else {
+            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+        }
+
+        // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
+        guard J2KMetalDWT.isAvailable else {
             return try applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
