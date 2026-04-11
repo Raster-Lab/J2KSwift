@@ -813,7 +813,8 @@ struct HTBlockDecoder: Sendable {
         let melEnd = payloadStart + headerMelLen
         let magsgnEnd = melEnd + headerMagsgnLen
 
-        guard melEnd <= data.endIndex && magsgnEnd <= data.endIndex else {
+        guard melEnd <= data.endIndex && magsgnEnd <= data.endIndex
+              && (magsgnEnd + headerVlcLen) <= data.endIndex else {
             throw J2KError.decodingError("Invalid stream lengths in HT encoded block")
         }
 

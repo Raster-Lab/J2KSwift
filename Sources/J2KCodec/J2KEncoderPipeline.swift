@@ -1369,8 +1369,11 @@ struct EncoderPipeline: Sendable {
         // Convert Int32 coefficients to Int for HTBlockEncoder interface
         let coeffsInt = pending.coefficients.map { Int($0) }
 
-        // Determine the most significant bit-plane from the magnitudes
-        let maxMag = coeffsInt.lazy.map { abs($0) }.max() ?? 0
+        // Pre-compute absolute magnitudes (reused for maxMag, significance, and refinement)
+        let absMags = coeffsInt.map { abs($0) }
+
+        // Determine the most significant bit-plane from the magnitudes (single-pass)
+        let maxMag = absMags.reduce(0) { Swift.max($0, $1) }
         let topBitPlane: Int
         if maxMag > 0 {
             topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
@@ -1384,9 +1387,9 @@ struct EncoderPipeline: Sendable {
             bitPlane: topBitPlane
         )
 
-        // Build significance state from cleanup pass results
+        // Build significance state from cleanup pass results using cached abs magnitudes
         var significanceState = [Bool](repeating: false, count: pending.width * pending.height)
-        for i in 0..<coeffsInt.count where (abs(coeffsInt[i]) >> topBitPlane) & 1 != 0 {
+        for i in 0..<absMags.count where (absMags[i] >> topBitPlane) & 1 != 0 {
             significanceState[i] = true
         }
 
@@ -1417,8 +1420,8 @@ struct EncoderPipeline: Sendable {
             passSegmentLengths.append(magRefData.count)
             cumulativePassBytes.append(allPassData.count)
 
-            // Update significance state for next bit-plane
-            for i in 0..<coeffsInt.count where (abs(coeffsInt[i]) >> bp) & 1 != 0 {
+            // Update significance state for next bit-plane using cached abs magnitudes
+            for i in 0..<absMags.count where (absMags[i] >> bp) & 1 != 0 {
                 significanceState[i] = true
             }
         }
