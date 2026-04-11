@@ -405,18 +405,17 @@ public struct J2KRateControl: Sendable {
             // Wavelet synthesis norm weighting for PCRD (WMSE model).
             //
             // For the 5/3 reversible wavelet: coefficient-domain distortion
-            // does NOT equal pixel-domain MSE because (a) the wavelet is
-            // biorthogonal (not orthogonal) and (b) integer coefficients have
-            // no quantization step normalization. Weight each code block's
-            // distortion by the squared L2 norm of the synthesis basis to
-            // convert to pixel-domain MSE.
+            // does NOT equal pixel-domain MSE because the wavelet is
+            // biorthogonal and integer coefficients have no quantization
+            // step normalization. Weight by the full squared L2 norm.
             //
-            // For the 9/7 irreversible wavelet: the quantization step sizes
-            // already incorporate the wavelet norms (Δ_b = Δ / norm_b), so
-            // the quantized coefficients are already normalized. No additional
-            // weighting is needed.
+            // For the 9/7 irreversible wavelet: quantization step sizes
+            // already incorporate the wavelet norms (Δ_b = Δ_base / K_b),
+            // so coefficients are partially normalized. Apply only the
+            // relative norm ratio (subband/LL) to correct residual
+            // inter-subband bias without double-counting.
             let subbandWeight: Double
-            if maxResLevel > 0 && configuration.useReversibleFilter {
+            if maxResLevel > 0 {
                 let resLevel = codeBlock.resolutionLevel
                 let orient: Int
                 let dwtLevel: Int  // 0-indexed decomposition level (0 = finest detail)
@@ -436,9 +435,23 @@ public struct J2KRateControl: Sendable {
                     }
                 }
 
-                let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
-                let norm = Self.dwtNorms53[orient][clampedLevel]
-                subbandWeight = norm * norm  // squared L2 norm for MSE domain
+                if configuration.useReversibleFilter {
+                    // 5/3 reversible: full squared norm weighting needed because
+                    // integer coefficients have no quantization step normalization.
+                    let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
+                    let norm = Self.dwtNorms53[orient][clampedLevel]
+                    subbandWeight = norm * norm
+                } else {
+                    // 9/7 irreversible: quantization step sizes already incorporate
+                    // the wavelet norms (Δ_b = Δ_base / K_b), so coefficient
+                    // magnitudes are normalized. Apply only the RELATIVE norm ratio
+                    // (subband norm / LL norm at same level) to correct residual
+                    // inter-subband bias without double-counting.
+                    let clampedLevel = min(dwtLevel, Self.dwtNorms97[0].count - 1)
+                    let norm = Self.dwtNorms97[orient][clampedLevel]
+                    let llNorm = Self.dwtNorms97[0][clampedLevel]
+                    subbandWeight = norm / llNorm
+                }
             } else {
                 subbandWeight = 1.0
             }
