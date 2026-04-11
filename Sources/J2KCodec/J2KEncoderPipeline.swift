@@ -186,8 +186,12 @@ struct EncoderPipeline: Sendable {
 
     /// Encodes an image through the GPU-accelerated JPEG 2000 pipeline.
     ///
-    /// Uses Metal GPU acceleration for the CDF 9/7 wavelet transform stage.
-    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    /// Uses Metal GPU acceleration for the CDF 9/7 wavelet transform and colour
+    /// transform stages when available. Falls back to CPU implementations when
+    /// Metal is unavailable (e.g. Linux, CI servers without GPU).
+    ///
+    /// HTJ2K block coding (when `config.useHTJ2K` is true) always runs on CPU
+    /// using the FBCOT algorithm with SIMD-accelerated significance extraction.
     ///
     /// - Parameters:
     ///   - image: The image to encode.
@@ -256,7 +260,7 @@ struct EncoderPipeline: Sendable {
     /// GPU-accelerated wavelet transform using Metal.
     ///
     /// Uses Metal GPU for both CDF 9/7 irreversible and Le Gall 5/3 reversible wavelet transforms.
-    /// Falls back to CPU for custom/arbitrary wavelet kernels.
+    /// Falls back to CPU when Metal is unavailable or for custom/arbitrary wavelet kernels.
     private func applyWaveletTransformGPU(
         _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
         width: Int, height: Int
@@ -275,6 +279,12 @@ struct EncoderPipeline: Sendable {
         let levels = min(config.decompositionLevels, maxLevels)
 
         guard levels >= 1 else {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+
+        // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
+        guard J2KMetalDWT.isAvailable else {
             return try applyWaveletTransform(components, doubleComponents: doubleComponents,
                                               width: width, height: height)
         }
@@ -1033,7 +1043,11 @@ struct EncoderPipeline: Sendable {
         let bitPlanePopulation: [Int]
     }
 
-    /// Applies EBCOT entropy coding to all subbands, producing code blocks.
+    /// Applies entropy coding to all subbands, producing code blocks.
+    ///
+    /// When `config.useHTJ2K` is true, uses HTJ2K FBCOT (Fast Block Coder with
+    /// Optimised Truncation) per ISO/IEC 15444-15. Otherwise uses legacy EBCOT
+    /// bit-plane coding per ISO/IEC 15444-1.
     private func applyEntropyCoding(
         _ componentSubbands: [[SubbandInfo]],
         image: J2KImage
@@ -1186,43 +1200,55 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Encodes code-blocks sequentially.
+    ///
+    /// Dispatches to HTJ2K FBCOT block coding when `config.useHTJ2K` is true,
+    /// otherwise uses legacy EBCOT bit-plane coding.
     private func encodeCodeBlocksSequential(
         _ pendingBlocks: [PendingCodeBlock]
     ) throws -> [J2KCodeBlock] {
-        let encoder = CodeBlockEncoder()
         var results: [J2KCodeBlock] = []
         results.reserveCapacity(pendingBlocks.count)
 
-        for pending in pendingBlocks {
-            var codeBlock = try encoder.encode(
-                coefficients: pending.coefficients,
-                width: pending.width,
-                height: pending.height,
-                subband: pending.subband,
-                bitDepth: pending.bitDepth
-            )
+        if config.useHTJ2K {
+            // HTJ2K path: use FBCOT block coding
+            for pending in pendingBlocks {
+                let codeBlock = try encodeCodeBlockHTJ2K(pending)
+                results.append(codeBlock)
+            }
+        } else {
+            // Legacy path: use EBCOT bit-plane coding
+            let encoder = CodeBlockEncoder()
+            for pending in pendingBlocks {
+                var codeBlock = try encoder.encode(
+                    coefficients: pending.coefficients,
+                    width: pending.width,
+                    height: pending.height,
+                    subband: pending.subband,
+                    bitDepth: pending.bitDepth
+                )
 
-            codeBlock = J2KCodeBlock(
-                index: pending.index,
-                x: pending.x,
-                y: pending.y,
-                width: pending.width,
-                height: pending.height,
-                subband: codeBlock.subband,
-                componentIndex: pending.componentIndex,
-                resolutionLevel: pending.resolutionLevel,
-                data: codeBlock.data,
-                passeCount: codeBlock.passeCount,
-                zeroBitPlanes: codeBlock.zeroBitPlanes,
-                passSegmentLengths: codeBlock.passSegmentLengths,
-                cumulativePassBytes: codeBlock.cumulativePassBytes,
-                coefficientSquaredSum: pending.coefficientSquaredSum,
-                bitPlanePopulation: pending.bitPlanePopulation,
-                cumulativePassDistortion: codeBlock.cumulativePassDistortion,
-                perPassSnapshotData: codeBlock.perPassSnapshotData
-            )
+                codeBlock = J2KCodeBlock(
+                    index: pending.index,
+                    x: pending.x,
+                    y: pending.y,
+                    width: pending.width,
+                    height: pending.height,
+                    subband: codeBlock.subband,
+                    componentIndex: pending.componentIndex,
+                    resolutionLevel: pending.resolutionLevel,
+                    data: codeBlock.data,
+                    passeCount: codeBlock.passeCount,
+                    zeroBitPlanes: codeBlock.zeroBitPlanes,
+                    passSegmentLengths: codeBlock.passSegmentLengths,
+                    cumulativePassBytes: codeBlock.cumulativePassBytes,
+                    coefficientSquaredSum: pending.coefficientSquaredSum,
+                    bitPlanePopulation: pending.bitPlanePopulation,
+                    cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                    perPassSnapshotData: codeBlock.perPassSnapshotData
+                )
 
-            results.append(codeBlock)
+                results.append(codeBlock)
+            }
         }
 
         return results
@@ -1231,7 +1257,11 @@ struct EncoderPipeline: Sendable {
     /// Encodes code-blocks in parallel using structured concurrency.
     ///
     /// Each code-block is an independent unit of entropy coding with its own
-    /// MQ encoder state and context models, making them safe to process in parallel.
+    /// MQ encoder state and context models (EBCOT) or MEL/VLC/MagSgn state (HTJ2K),
+    /// making them safe to process in parallel.
+    ///
+    /// Dispatches to HTJ2K FBCOT block coding when `config.useHTJ2K` is true,
+    /// otherwise uses legacy EBCOT bit-plane coding.
     private func encodeCodeBlocksParallel(
         _ pendingBlocks: [PendingCodeBlock]
     ) throws -> [J2KCodeBlock] {
@@ -1248,45 +1278,60 @@ struct EncoderPipeline: Sendable {
             return Array(pendingBlocks[start..<end])
         }
 
+        let useHT = config.useHTJ2K
+
         DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
             let chunk = chunks[chunkIdx]
-            let encoder = CodeBlockEncoder()
             var localResults: [(Int, J2KCodeBlock)] = []
             localResults.reserveCapacity(chunk.count)
 
-            for pending in chunk {
-                do {
-                    var codeBlock = try encoder.encode(
-                        coefficients: pending.coefficients,
-                        width: pending.width,
-                        height: pending.height,
-                        subband: pending.subband,
-                        bitDepth: pending.bitDepth
-                    )
+            if useHT {
+                // HTJ2K path: use FBCOT block coding
+                for pending in chunk {
+                    do {
+                        let codeBlock = try self.encodeCodeBlockHTJ2K(pending)
+                        localResults.append((pending.index, codeBlock))
+                    } catch {
+                        collector.recordError(error)
+                    }
+                }
+            } else {
+                // Legacy path: use EBCOT bit-plane coding
+                let encoder = CodeBlockEncoder()
+                for pending in chunk {
+                    do {
+                        var codeBlock = try encoder.encode(
+                            coefficients: pending.coefficients,
+                            width: pending.width,
+                            height: pending.height,
+                            subband: pending.subband,
+                            bitDepth: pending.bitDepth
+                        )
 
-                    codeBlock = J2KCodeBlock(
-                        index: pending.index,
-                        x: pending.x,
-                        y: pending.y,
-                        width: pending.width,
-                        height: pending.height,
-                        subband: codeBlock.subband,
-                        componentIndex: pending.componentIndex,
-                        resolutionLevel: pending.resolutionLevel,
-                        data: codeBlock.data,
-                        passeCount: codeBlock.passeCount,
-                        zeroBitPlanes: codeBlock.zeroBitPlanes,
-                        passSegmentLengths: codeBlock.passSegmentLengths,
-                        cumulativePassBytes: codeBlock.cumulativePassBytes,
-                        coefficientSquaredSum: pending.coefficientSquaredSum,
-                        bitPlanePopulation: pending.bitPlanePopulation,
-                        cumulativePassDistortion: codeBlock.cumulativePassDistortion,
-                        perPassSnapshotData: codeBlock.perPassSnapshotData
-                    )
+                        codeBlock = J2KCodeBlock(
+                            index: pending.index,
+                            x: pending.x,
+                            y: pending.y,
+                            width: pending.width,
+                            height: pending.height,
+                            subband: codeBlock.subband,
+                            componentIndex: pending.componentIndex,
+                            resolutionLevel: pending.resolutionLevel,
+                            data: codeBlock.data,
+                            passeCount: codeBlock.passeCount,
+                            zeroBitPlanes: codeBlock.zeroBitPlanes,
+                            passSegmentLengths: codeBlock.passSegmentLengths,
+                            cumulativePassBytes: codeBlock.cumulativePassBytes,
+                            coefficientSquaredSum: pending.coefficientSquaredSum,
+                            bitPlanePopulation: pending.bitPlanePopulation,
+                            cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                            perPassSnapshotData: codeBlock.perPassSnapshotData
+                        )
 
-                    localResults.append((pending.index, codeBlock))
-                } catch {
-                    collector.recordError(error)
+                        localResults.append((pending.index, codeBlock))
+                    } catch {
+                        collector.recordError(error)
+                    }
                 }
             }
 
@@ -1300,6 +1345,106 @@ struct EncoderPipeline: Sendable {
 
         // Sort by original index to maintain order
         return collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    // MARK: - HTJ2K Block Encoding
+
+    /// Encodes a single code-block using HTJ2K FBCOT block coding.
+    ///
+    /// Converts the pipeline's Int32 coefficients to the HTBlockEncoder's Int interface,
+    /// runs the HT cleanup + refinement passes, and wraps the result in a `J2KCodeBlock`
+    /// that is compatible with the rest of the encoding pipeline (rate control, Tier-2,
+    /// codestream generation).
+    ///
+    /// - Parameter pending: The pending code-block with coefficients and metadata.
+    /// - Returns: A `J2KCodeBlock` with HT-encoded data.
+    /// - Throws: ``J2KError/encodingError(_:)`` if HT encoding fails.
+    private func encodeCodeBlockHTJ2K(_ pending: PendingCodeBlock) throws -> J2KCodeBlock {
+        let htEncoder = HTBlockEncoder(
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband
+        )
+
+        // Convert Int32 coefficients to Int for HTBlockEncoder interface
+        let coeffsInt = pending.coefficients.map { Int($0) }
+
+        // Pre-compute absolute magnitudes (reused for maxMag, significance, and refinement)
+        let absMags = coeffsInt.map { abs($0) }
+
+        // Determine the most significant bit-plane from the magnitudes
+        let maxMag = absMags.max() ?? 0
+        let topBitPlane: Int
+        if maxMag > 0 {
+            topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
+        } else {
+            topBitPlane = 0
+        }
+
+        // Encode cleanup pass (the primary HT coding pass)
+        let cleanupBlock = try htEncoder.encodeCleanup(
+            coefficients: coeffsInt,
+            bitPlane: topBitPlane
+        )
+
+        // Build significance state from cleanup pass results using cached abs magnitudes
+        var significanceState = [Bool](repeating: false, count: pending.width * pending.height)
+        for i in 0..<absMags.count where (absMags[i] >> topBitPlane) & 1 != 0 {
+            significanceState[i] = true
+        }
+
+        // Encode refinement passes (SigProp + MagRef) for lower bit-planes
+        var allPassData = cleanupBlock.codedData
+        var totalPasses = 1  // cleanup pass
+        var passSegmentLengths = [cleanupBlock.codedData.count]
+        var cumulativePassBytes = [cleanupBlock.codedData.count]
+
+        for bp in stride(from: topBitPlane - 1, through: 0, by: -1) {
+            let sigPropData = try htEncoder.encodeSigProp(
+                coefficients: coeffsInt,
+                significanceState: significanceState,
+                bitPlane: bp
+            )
+            allPassData.append(sigPropData)
+            totalPasses += 1
+            passSegmentLengths.append(sigPropData.count)
+            cumulativePassBytes.append(allPassData.count)
+
+            let magRefData = try htEncoder.encodeMagRef(
+                coefficients: coeffsInt,
+                significanceState: significanceState,
+                bitPlane: bp
+            )
+            allPassData.append(magRefData)
+            totalPasses += 1
+            passSegmentLengths.append(magRefData.count)
+            cumulativePassBytes.append(allPassData.count)
+
+            // Update significance state for next bit-plane using cached abs magnitudes
+            for i in 0..<absMags.count where (absMags[i] >> bp) & 1 != 0 {
+                significanceState[i] = true
+            }
+        }
+
+        let zeroBitPlanes = maxMag > 0 ? max(0, pending.bitDepth - topBitPlane - 1) : pending.bitDepth
+
+        return J2KCodeBlock(
+            index: pending.index,
+            x: pending.x,
+            y: pending.y,
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband,
+            componentIndex: pending.componentIndex,
+            resolutionLevel: pending.resolutionLevel,
+            data: allPassData,
+            passeCount: totalPasses,
+            zeroBitPlanes: zeroBitPlanes,
+            passSegmentLengths: passSegmentLengths,
+            cumulativePassBytes: cumulativePassBytes,
+            coefficientSquaredSum: pending.coefficientSquaredSum,
+            bitPlanePopulation: pending.bitPlanePopulation
+        )
     }
 
     // MARK: - SIMD Helpers

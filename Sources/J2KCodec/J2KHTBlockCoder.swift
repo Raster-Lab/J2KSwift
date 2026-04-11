@@ -473,6 +473,69 @@ struct HTBlockEncoder: Sendable {
             )
         }
 
+        let count = coefficients.count
+
+        // Pre-compute significance bits, absolute magnitudes, and sign bits
+        // using SIMD4 vectorisation for the bulk of the array.
+        var sigBits = [Int](repeating: 0, count: count)
+        var absMags = [Int](repeating: 0, count: count)
+        var signBits = [Int](repeating: 0, count: count)
+
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            sigBits.withUnsafeMutableBufferPointer { sigPtr in
+                absMags.withUnsafeMutableBufferPointer { magPtr in
+                    signBits.withUnsafeMutableBufferPointer { sgnPtr in
+                        guard let src = srcPtr.baseAddress,
+                              let sig = sigPtr.baseAddress,
+                              let mag = magPtr.baseAddress,
+                              let sgn = sgnPtr.baseAddress else { return }
+
+                        let simdCount = count / 4
+
+                        for i in 0..<simdCount {
+                            let offset = i * 4
+                            let v = SIMD4<Int>(
+                                src[offset], src[offset + 1],
+                                src[offset + 2], src[offset + 3]
+                            )
+
+                            // Absolute value
+                            let negative = v .< SIMD4<Int>.zero
+                            let absV = v.replacing(
+                                with: SIMD4<Int>.zero &- v, where: negative
+                            )
+
+                            // Significance: (abs >> bitPlane) & 1
+                            let shifted = absV &>> SIMD4<Int>(repeating: bitPlane)
+                            let masked = shifted & SIMD4<Int>(repeating: 1)
+
+                            // Sign: 1 if negative, 0 otherwise
+                            let signV = SIMD4<Int>.zero.replacing(
+                                with: SIMD4<Int>(repeating: 1), where: negative
+                            )
+
+                            sig[offset] = masked[0]; sig[offset+1] = masked[1]
+                            sig[offset+2] = masked[2]; sig[offset+3] = masked[3]
+                            mag[offset] = absV[0]; mag[offset+1] = absV[1]
+                            mag[offset+2] = absV[2]; mag[offset+3] = absV[3]
+                            sgn[offset] = signV[0]; sgn[offset+1] = signV[1]
+                            sgn[offset+2] = signV[2]; sgn[offset+3] = signV[3]
+                        }
+
+                        // Scalar remainder
+                        let remStart = simdCount * 4
+                        for i in remStart..<count {
+                            let coeff = src[i]
+                            let absVal = coeff < 0 ? -coeff : coeff
+                            mag[i] = absVal
+                            sgn[i] = coeff < 0 ? 1 : 0
+                            sig[i] = (absVal >> bitPlane) & 1
+                        }
+                    }
+                }
+            }
+        }
+
         var mel = HTMELCoder()
         var vlc = HTVLCCoder()
         var magsgn = HTMagSgnCoder()
@@ -490,15 +553,11 @@ struct HTBlockEncoder: Sendable {
                     let x0 = col
                     let idx0 = y * width + x0
 
-                    let coeff0 = coefficients[idx0]
-                    let sig0 = (abs(coeff0) >> bitPlane) & 1
+                    let sig0 = sigBits[idx0]
 
                     var sig1 = 0
-                    var coeff1 = 0
                     if pairWidth > 1 {
-                        let idx1 = y * width + x0 + 1
-                        coeff1 = coefficients[idx1]
-                        sig1 = (abs(coeff1) >> bitPlane) & 1
+                        sig1 = sigBits[idx0 + 1]
                     }
 
                     // Encode significance via MEL and VLC
@@ -508,14 +567,11 @@ struct HTBlockEncoder: Sendable {
 
                     // Encode magnitude/sign for significant samples
                     if sig0 != 0 {
-                        let mag = abs(coeff0)
-                        let sign = coeff0 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
+                        magsgn.encode(magnitude: absMags[idx0], sign: signBits[idx0], bitPlane: bitPlane)
                     }
                     if sig1 != 0 {
-                        let mag = abs(coeff1)
-                        let sign = coeff1 < 0 ? 1 : 0
-                        magsgn.encode(magnitude: mag, sign: sign, bitPlane: bitPlane)
+                        let idx1 = idx0 + 1
+                        magsgn.encode(magnitude: absMags[idx1], sign: signBits[idx1], bitPlane: bitPlane)
                     }
                 }
             }
@@ -526,9 +582,18 @@ struct HTBlockEncoder: Sendable {
         let vlcData = vlc.flush()
         let magsgnData = magsgn.flush()
 
-        // Combine into a single coded data buffer:
-        // [MEL data | MagSgn data | VLC data (reversed)]
+        // Combine into a single coded data buffer with a 6-byte length header
+        // so the decoder can split the streams without external metadata:
+        // [melLen:2 | vlcLen:2 | magsgnLen:2 | MEL data | MagSgn data | VLC data (reversed)]
         var codedData = Data()
+        codedData.reserveCapacity(6 + melData.count + magsgnData.count + vlcData.count)
+        // Stream length header (big-endian UInt16 each)
+        codedData.append(UInt8((melData.count >> 8) & 0xFF))
+        codedData.append(UInt8(melData.count & 0xFF))
+        codedData.append(UInt8((vlcData.count >> 8) & 0xFF))
+        codedData.append(UInt8(vlcData.count & 0xFF))
+        codedData.append(UInt8((magsgnData.count >> 8) & 0xFF))
+        codedData.append(UInt8(magsgnData.count & 0xFF))
         codedData.append(melData)
         codedData.append(magsgnData)
         codedData.append(Data(vlcData.reversed()))
@@ -731,17 +796,25 @@ struct HTBlockDecoder: Sendable {
         var coefficients = [Int](repeating: 0, count: width * height)
         let data = block.codedData
 
-        // Split the coded data into the three streams
-        let melEnd = block.melLength
-        let magsgnEnd = melEnd + block.magsgnLength
+        // The coded data has a 6-byte length header:
+        // [melLen:2 | vlcLen:2 | magsgnLen:2 | MEL data | MagSgn data | VLC data (reversed)]
+        guard let header = HTStreamHeader.read(from: data) else {
+            // Empty or trivial block — all zeros
+            return coefficients
+        }
 
-        guard melEnd <= data.count && magsgnEnd <= data.count else {
+        let payloadStart = data.startIndex + HTStreamHeader.size
+        let melEnd = payloadStart + header.melLen
+        let magsgnEnd = melEnd + header.magsgnLen
+
+        guard melEnd <= data.endIndex && magsgnEnd <= data.endIndex
+              && (magsgnEnd + header.vlcLen) <= data.endIndex else {
             throw J2KError.decodingError("Invalid stream lengths in HT encoded block")
         }
 
-        let melData = data.prefix(melEnd)
+        let melData = data[payloadStart..<melEnd]
         let magsgnData = data[melEnd..<magsgnEnd]
-        let vlcDataReversed = data[magsgnEnd...]
+        let vlcDataReversed = data[magsgnEnd..<(magsgnEnd + header.vlcLen)]
         let vlcData = Data(vlcDataReversed.reversed())
 
         var melReader = J2KBitReader(data: melData)
@@ -796,6 +869,117 @@ struct HTBlockDecoder: Sendable {
         }
 
         return coefficients
+    }
+
+    /// Decodes HT-encoded code-block data from raw codestream bytes.
+    ///
+    /// This method is used by the main decoder pipeline to decode HT blocks
+    /// that flow through the standard JPEG 2000 packet structure. The raw data
+    /// contains a self-describing cleanup pass followed by optional refinement passes.
+    ///
+    /// The cleanup pass data includes a 6-byte header with stream lengths:
+    /// `[melLen:2 | vlcLen:2 | magsgnLen:2 | MEL | MagSgn | VLC_reversed]`
+    ///
+    /// Refinement passes (SigProp + MagRef) follow the cleanup pass data and are
+    /// delimited by `passSegmentLengths`.
+    ///
+    /// - Parameters:
+    ///   - data: The raw code-block data from the codestream.
+    ///   - passCount: Total number of coding passes.
+    ///   - bitDepth: The bit depth (Kb) for this code-block.
+    ///   - zeroBitPlanes: Number of zero bit-planes above the MSB.
+    ///   - passSegmentLengths: Byte lengths per pass segment (optional).
+    /// - Returns: The decoded wavelet coefficients as `[Int32]`.
+    /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
+    func decodeFromCodestream(
+        data: Data,
+        passCount: Int,
+        bitDepth: Int,
+        zeroBitPlanes: Int,
+        passSegmentLengths: [Int] = []
+    ) throws -> [Int32] {
+        guard passCount > 0 else {
+            return [Int32](repeating: 0, count: width * height)
+        }
+
+        // Determine the top bit-plane from zeroBitPlanes and bitDepth
+        let topBitPlane = max(0, bitDepth - zeroBitPlanes - 1)
+
+        // Split data into per-pass segments
+        var segments: [Data] = []
+        if !passSegmentLengths.isEmpty {
+            var offset = data.startIndex
+            for len in passSegmentLengths {
+                let end = min(offset + len, data.endIndex)
+                segments.append(data[offset..<end])
+                offset = end
+            }
+        } else {
+            // Single segment for all passes
+            segments = [data]
+        }
+
+        guard !segments.isEmpty else {
+            return [Int32](repeating: 0, count: width * height)
+        }
+
+        // Decode cleanup pass (first segment)
+        let cleanupData = segments[0]
+
+        // Parse stream length header from cleanup data
+        guard let header = HTStreamHeader.read(from: cleanupData) else {
+            // Trivial block with no significant coefficients
+            return [Int32](repeating: 0, count: width * height)
+        }
+
+        let block = HTEncodedBlock(
+            codedData: cleanupData,
+            passType: .htCleanup,
+            melLength: header.melLen,
+            vlcLength: header.vlcLen,
+            magsgnLength: header.magsgnLen,
+            bitPlane: topBitPlane,
+            width: width,
+            height: height
+        )
+        var coefficients = try decodeCleanup(from: block)
+
+        // Apply refinement passes (SigProp + MagRef pairs)
+        if segments.count > 1 {
+            var significanceState = coefficients.map { $0 != 0 }
+            var passIdx = 1
+            var bp = topBitPlane - 1
+
+            while passIdx < segments.count && bp >= 0 {
+                // SigProp pass
+                let sigPropData = segments[passIdx]
+                let sigPropResult = try decodeSigProp(
+                    coefficients: coefficients,
+                    sigPropData: sigPropData,
+                    significanceState: significanceState,
+                    bitPlane: bp
+                )
+                coefficients = sigPropResult.coefficients
+                significanceState = sigPropResult.significanceState
+                passIdx += 1
+
+                // MagRef pass
+                if passIdx < segments.count {
+                    coefficients = try decodeMagRef(
+                        coefficients: coefficients,
+                        magRefData: segments[passIdx],
+                        significanceState: significanceState,
+                        bitPlane: bp
+                    )
+                    passIdx += 1
+                }
+
+                bp -= 1
+            }
+        }
+
+        // Convert Int to Int32
+        return coefficients.map { Int32($0) }
     }
 
     /// Applies the HT significance propagation pass to refine coefficients.
@@ -910,6 +1094,36 @@ struct HTBlockDecoder: Sendable {
 }
 
 // MARK: - Encoded Block
+
+/// Parsed 6-byte stream length header from HT cleanup pass data.
+///
+/// Format: `[melLen:2 | vlcLen:2 | magsgnLen:2]` (big-endian UInt16 values).
+private struct HTStreamHeader {
+    /// Size of the header in bytes.
+    static let size = 6
+
+    /// Length of the MEL stream in bytes.
+    let melLen: Int
+
+    /// Length of the VLC stream in bytes.
+    let vlcLen: Int
+
+    /// Length of the MagSgn stream in bytes.
+    let magsgnLen: Int
+
+    /// Reads the 6-byte header from the start of `data`.
+    ///
+    /// - Parameter data: Data containing the header (must have at least 6 bytes).
+    /// - Returns: The parsed header, or `nil` if data is too short.
+    static func read(from data: Data) -> HTStreamHeader? {
+        guard data.count >= size else { return nil }
+        let s = data.startIndex
+        let mel = Int(data[s]) << 8 | Int(data[s + 1])
+        let vlc = Int(data[s + 2]) << 8 | Int(data[s + 3])
+        let mag = Int(data[s + 4]) << 8 | Int(data[s + 5])
+        return HTStreamHeader(melLen: mel, vlcLen: vlc, magsgnLen: mag)
+    }
+}
 
 /// Represents an HTJ2K-encoded code-block.
 ///

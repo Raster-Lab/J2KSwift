@@ -293,7 +293,7 @@ struct HTJ2KEncoder: Sendable {
         let maxMag = coefficients.map { abs($0) }.max() ?? 0
         let topBitPlane: Int
         if maxMag > 0 {
-            topBitPlane = Int(log2(Double(maxMag)))
+            topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
         } else {
             topBitPlane = 0
         }
