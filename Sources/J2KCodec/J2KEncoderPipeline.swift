@@ -1372,8 +1372,8 @@ struct EncoderPipeline: Sendable {
         // Pre-compute absolute magnitudes (reused for maxMag, significance, and refinement)
         let absMags = coeffsInt.map { abs($0) }
 
-        // Determine the most significant bit-plane from the magnitudes (single-pass)
-        let maxMag = absMags.reduce(0) { Swift.max($0, $1) }
+        // Determine the most significant bit-plane from the magnitudes
+        let maxMag = absMags.max() ?? 0
         let topBitPlane: Int
         if maxMag > 0 {
             topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1

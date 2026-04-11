@@ -15,13 +15,20 @@ extension J2KCLI {
 
     /// Detects whether Metal GPU acceleration is available on the current platform.
     ///
-    /// On macOS/iOS with Metal, this checks if the Metal framework is importable.
-    /// On Linux and other platforms without Metal, this returns false.
-    /// When GPU is unavailable, the GPU pipeline transparently falls back to CPU,
-    /// but the benchmark reports this so users understand the results.
+    /// Uses a runtime check via `MTLCreateSystemDefaultDevice()` when Metal is
+    /// available at compile time, which handles headless systems where Metal is
+    /// importable but no GPU device exists. On platforms without Metal (Linux),
+    /// this returns false at compile time.
+    ///
+    /// When GPU is unavailable, the GPU pipeline (`encodeGPU`/`decodeGPU`)
+    /// transparently falls back to CPU. The benchmark reports the fallback
+    /// so users understand the results.
     private static var isGPUAvailable: Bool {
         #if canImport(Metal)
-        return true
+        if let _ = MTLCreateSystemDefaultDevice() {
+            return true
+        }
+        return false
         #else
         return false
         #endif
@@ -30,7 +37,7 @@ extension J2KCLI {
     /// Returns a description of the GPU backend for display.
     private static var gpuBackendDescription: String {
         #if canImport(Metal)
-        return "Metal"
+        return isGPUAvailable ? "Metal" : "Metal (no device)"
         #else
         return "none"
         #endif

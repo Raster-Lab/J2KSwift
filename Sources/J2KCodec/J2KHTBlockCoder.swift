@@ -798,29 +798,23 @@ struct HTBlockDecoder: Sendable {
 
         // The coded data has a 6-byte length header:
         // [melLen:2 | vlcLen:2 | magsgnLen:2 | MEL data | MagSgn data | VLC data (reversed)]
-        guard data.count >= 6 else {
+        guard let header = HTStreamHeader.read(from: data) else {
             // Empty or trivial block — all zeros
             return coefficients
         }
 
-        // Parse the stream length header
-        let headerMelLen = Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1])
-        let headerVlcLen = Int(data[data.startIndex + 2]) << 8 | Int(data[data.startIndex + 3])
-        let headerMagsgnLen = Int(data[data.startIndex + 4]) << 8 | Int(data[data.startIndex + 5])
-
-        let headerSize = 6
-        let payloadStart = data.startIndex + headerSize
-        let melEnd = payloadStart + headerMelLen
-        let magsgnEnd = melEnd + headerMagsgnLen
+        let payloadStart = data.startIndex + HTStreamHeader.size
+        let melEnd = payloadStart + header.melLen
+        let magsgnEnd = melEnd + header.magsgnLen
 
         guard melEnd <= data.endIndex && magsgnEnd <= data.endIndex
-              && (magsgnEnd + headerVlcLen) <= data.endIndex else {
+              && (magsgnEnd + header.vlcLen) <= data.endIndex else {
             throw J2KError.decodingError("Invalid stream lengths in HT encoded block")
         }
 
         let melData = data[payloadStart..<melEnd]
         let magsgnData = data[melEnd..<magsgnEnd]
-        let vlcDataReversed = data[magsgnEnd..<(magsgnEnd + headerVlcLen)]
+        let vlcDataReversed = data[magsgnEnd..<(magsgnEnd + header.vlcLen)]
         let vlcData = Data(vlcDataReversed.reversed())
 
         var melReader = J2KBitReader(data: melData)
@@ -931,23 +925,19 @@ struct HTBlockDecoder: Sendable {
 
         // Decode cleanup pass (first segment)
         let cleanupData = segments[0]
-        guard cleanupData.count >= 6 else {
+
+        // Parse stream length header from cleanup data
+        guard let header = HTStreamHeader.read(from: cleanupData) else {
             // Trivial block with no significant coefficients
             return [Int32](repeating: 0, count: width * height)
         }
 
-        // Parse stream length header from cleanup data
-        let s = cleanupData.startIndex
-        let melLen = Int(cleanupData[s]) << 8 | Int(cleanupData[s + 1])
-        let vlcLen = Int(cleanupData[s + 2]) << 8 | Int(cleanupData[s + 3])
-        let magsgnLen = Int(cleanupData[s + 4]) << 8 | Int(cleanupData[s + 5])
-
         let block = HTEncodedBlock(
             codedData: cleanupData,
             passType: .htCleanup,
-            melLength: melLen,
-            vlcLength: vlcLen,
-            magsgnLength: magsgnLen,
+            melLength: header.melLen,
+            vlcLength: header.vlcLen,
+            magsgnLength: header.magsgnLen,
             bitPlane: topBitPlane,
             width: width,
             height: height
@@ -1104,6 +1094,36 @@ struct HTBlockDecoder: Sendable {
 }
 
 // MARK: - Encoded Block
+
+/// Parsed 6-byte stream length header from HT cleanup pass data.
+///
+/// Format: `[melLen:2 | vlcLen:2 | magsgnLen:2]` (big-endian UInt16 values).
+private struct HTStreamHeader {
+    /// Size of the header in bytes.
+    static let size = 6
+
+    /// Length of the MEL stream in bytes.
+    let melLen: Int
+
+    /// Length of the VLC stream in bytes.
+    let vlcLen: Int
+
+    /// Length of the MagSgn stream in bytes.
+    let magsgnLen: Int
+
+    /// Reads the 6-byte header from the start of `data`.
+    ///
+    /// - Parameter data: Data containing the header (must have at least 6 bytes).
+    /// - Returns: The parsed header, or `nil` if data is too short.
+    static func read(from data: Data) -> HTStreamHeader? {
+        guard data.count >= size else { return nil }
+        let s = data.startIndex
+        let mel = Int(data[s]) << 8 | Int(data[s + 1])
+        let vlc = Int(data[s + 2]) << 8 | Int(data[s + 3])
+        let mag = Int(data[s + 4]) << 8 | Int(data[s + 5])
+        return HTStreamHeader(melLen: mel, vlcLen: vlc, magsgnLen: mag)
+    }
+}
 
 /// Represents an HTJ2K-encoded code-block.
 ///
