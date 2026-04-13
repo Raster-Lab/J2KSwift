@@ -11,6 +11,10 @@
 import Foundation
 import J2KCore
 
+#if canImport(Accelerate)
+import Accelerate
+#endif
+
 // # JPEG 2000 Quantization
 //
 // Implementation of quantization and dequantization for JPEG 2000 encoding.
@@ -729,6 +733,84 @@ public struct J2KQuantizer: Sendable {
         }
     }
 
+    // MARK: - vDSP Vectorized Quantization
+
+    #if canImport(Accelerate)
+    /// Vectorised scalar quantization: q = sign(c) × floor(|c| / Δ).
+    ///
+    /// Uses vDSP for bulk absolute value, division, floor, and sign restoration,
+    /// replacing the per-element scalar loop with hardware-accelerated vector ops.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients to quantize.
+    ///   - stepSize: The quantization step size.
+    /// - Returns: Array of quantized indices as Int32.
+    private func quantizeVectorized(_ coefficients: [Double], stepSize: Double) -> [Int32] {
+        let count = coefficients.count
+        var magnitudes = [Double](repeating: 0, count: count)
+        var divided = [Double](repeating: 0, count: count)
+
+        // |c|
+        vDSP_vabsD(coefficients, 1, &magnitudes, 1, vDSP_Length(count))
+
+        // |c| / Δ
+        var step = stepSize
+        vDSP_vsdivD(magnitudes, 1, &step, &divided, 1, vDSP_Length(count))
+
+        // floor(|c| / Δ) — vDSP has no floor, but truncation toward zero for positive
+        // values is equivalent to floor. Since magnitudes are >= 0, Int32 truncation works.
+        // Restore sign: q = sign(c) × floor(|c| / Δ)
+        var result = [Int32](repeating: 0, count: count)
+        coefficients.withUnsafeBufferPointer { src in
+            divided.withUnsafeBufferPointer { div in
+                result.withUnsafeMutableBufferPointer { dst in
+                    for i in 0..<count {
+                        let mag = Int32(div[i])
+                        dst[i] = src[i] >= 0 ? mag : -mag
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    /// Vectorised scalar quantization from Float: q = sign(c) × floor(|c| / Δ).
+    ///
+    /// Uses vDSP single-precision operations for 2× throughput vs Double path.
+    /// Ideal for GPU DWT output which is already in Float.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients as Float.
+    ///   - stepSize: The quantization step size.
+    /// - Returns: Array of quantized indices as Int32.
+    private func quantizeVectorizedFloat(_ coefficients: [Float], stepSize: Double) -> [Int32] {
+        let count = coefficients.count
+        var magnitudes = [Float](repeating: 0, count: count)
+        var divided = [Float](repeating: 0, count: count)
+
+        // |c|
+        vDSP_vabs(coefficients, 1, &magnitudes, 1, vDSP_Length(count))
+
+        // |c| / Δ
+        var step = Float(stepSize)
+        vDSP_vsdiv(magnitudes, 1, &step, &divided, 1, vDSP_Length(count))
+
+        // Truncate and restore sign
+        var result = [Int32](repeating: 0, count: count)
+        coefficients.withUnsafeBufferPointer { src in
+            divided.withUnsafeBufferPointer { div in
+                result.withUnsafeMutableBufferPointer { dst in
+                    for i in 0..<count {
+                        let mag = Int32(div[i])
+                        dst[i] = src[i] >= 0 ? mag : -mag
+                    }
+                }
+            }
+        }
+        return result
+    }
+    #endif
+
     /// Quantizes an array of coefficients.
     ///
     /// - Parameters:
@@ -755,8 +837,57 @@ public struct J2KQuantizer: Sendable {
             throw J2KError.invalidParameter("Step size must be positive")
         }
 
+        // Use vDSP-accelerated path for scalar/expounded modes (sign × floor(|c| / Δ))
+        #if canImport(Accelerate)
+        if (parameters.mode == .scalar || parameters.mode == .expounded
+                || parameters.mode == .trellis) && coefficients.count >= 64 {
+            return quantizeVectorized(coefficients, stepSize: stepSize)
+        }
+        #endif
+
         return coefficients.map { coefficient in
             quantizeCoefficient(coefficient, stepSize: stepSize)
+        }
+    }
+
+    /// Quantizes an array of Float coefficients.
+    ///
+    /// Optimised for the GPU DWT path where subbands are already Float.
+    /// Uses vDSP single-precision vector operations for 2× throughput
+    /// over the Double path by avoiding Float→Double conversion.
+    ///
+    /// - Parameters:
+    ///   - coefficients: Array of Float wavelet coefficients from GPU DWT.
+    ///   - subband: The subband type.
+    ///   - decompositionLevel: The decomposition level (0 = finest).
+    ///   - totalLevels: Total number of decomposition levels.
+    /// - Returns: Array of quantized indices.
+    /// - Throws: `J2KError` if quantization fails.
+    public func quantize(
+        coefficients: [Float],
+        subband: J2KSubband,
+        decompositionLevel: Int,
+        totalLevels: Int
+    ) throws -> [Int32] {
+        let stepSize = getStepSize(
+            for: subband,
+            decompositionLevel: decompositionLevel,
+            totalLevels: totalLevels
+        )
+
+        guard stepSize > 0 else {
+            throw J2KError.invalidParameter("Step size must be positive")
+        }
+
+        #if canImport(Accelerate)
+        if (parameters.mode == .scalar || parameters.mode == .expounded
+                || parameters.mode == .trellis) && coefficients.count >= 64 {
+            return quantizeVectorizedFloat(coefficients, stepSize: stepSize)
+        }
+        #endif
+
+        return coefficients.map { coefficient in
+            quantizeCoefficient(Double(coefficient), stepSize: stepSize)
         }
     }
 

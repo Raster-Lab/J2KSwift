@@ -13,6 +13,10 @@ import J2KCore
 import J2KMetal
 import Synchronization
 
+#if canImport(Accelerate)
+import Accelerate
+#endif
+
 // MARK: - Encoding Stage
 
 /// Represents the stages of the JPEG 2000 encoding pipeline.
@@ -121,6 +125,9 @@ struct EncoderPipeline: Sendable {
         _ image: J2KImage,
         progress: ((EncoderProgressUpdate) -> Void)? = nil
     ) throws -> Data {
+        let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
+        var stageStart = CFAbsoluteTimeGetCurrent()
+
         try image.validate()
 
         // Stage 1: Preprocessing — extract component data as Int32 arrays
@@ -133,14 +140,30 @@ struct EncoderPipeline: Sendable {
         for (compIdx, component) in image.components.enumerated() {
             if !component.signed {
                 let dcOffset = Int32(1 << (component.bitDepth - 1))
-                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+                componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    for i in 0..<buf.count {
+                        buf[i] &-= dcOffset
+                    }
+                }
             }
+        }
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE preprocess: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
         }
 
         // Stage 2: Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
         let (transformedData, transformedDoubleData) = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE colorXform: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
+        }
 
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
@@ -150,15 +173,33 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE dwt: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
+        }
+
         // Stage 4: Quantization
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
         let quantizedSubbands = try applyQuantization(decompositions)
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE quantize: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
+        }
+
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
         let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE entropy: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
+        }
 
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
@@ -171,6 +212,12 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
 
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE rateCtrl: \(String(format: "%.4f", t - stageStart))s")
+            stageStart = t
+        }
+
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
         let codestream = try generateCodestream(
@@ -178,6 +225,11 @@ struct EncoderPipeline: Sendable {
             actualDecompositionLevels: actualDecompositionLevels
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("  PROFILE codestream: \(String(format: "%.4f", t - stageStart))s")
+        }
 
         return codestream
     }
@@ -212,7 +264,11 @@ struct EncoderPipeline: Sendable {
         for (compIdx, component) in image.components.enumerated() {
             if !component.signed {
                 let dcOffset = Int32(1 << (component.bitDepth - 1))
-                componentData[compIdx] = componentData[compIdx].map { $0 - dcOffset }
+                componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    for i in 0..<buf.count {
+                        buf[i] &-= dcOffset
+                    }
+                }
             }
         }
 
@@ -289,6 +345,17 @@ struct EncoderPipeline: Sendable {
                                               width: width, height: height)
         }
 
+        // Fall back to CPU for small images where GPU dispatch overhead exceeds compute benefit.
+        // For HTJ2K mode, DWT is a small fraction of total time — raise threshold to
+        // avoid GPU overhead dominating. For legacy EBCOT, GPU helps at smaller sizes
+        // because DWT is a larger fraction of the pipeline.
+        let pixelCount = width * height
+        let gpuThreshold = config.useHTJ2K ? (1024 * 1024) : (256 * 256)
+        guard pixelCount >= gpuThreshold else {
+            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+                                              width: width, height: height)
+        }
+
         // Select filter based on configuration
         let metalFilter: J2KMetalDWTFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
 
@@ -301,12 +368,12 @@ struct EncoderPipeline: Sendable {
         var allSubbands: [[SubbandInfo]] = []
 
         for (compIdx, compData) in components.enumerated() {
-            // Convert to Float for Metal DWT
+            // Convert to Float for Metal DWT using vDSP when available
             let flatFloat: [Float]
             if let dc = doubleComponents, compIdx < dc.count {
-                flatFloat = dc[compIdx].map { Float($0) }
+                flatFloat = vDSPConvert.doublesToFloats(dc[compIdx])
             } else {
-                flatFloat = compData.map { Float($0) }
+                flatFloat = vDSPConvert.int32sToFloats(compData)
             }
 
             let decomposition = try await metalDWT.forwardMultiLevel(
@@ -323,30 +390,34 @@ struct EncoderPipeline: Sendable {
 
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .hl,
-                    coefficients: level.hl.map { Int32($0.rounded()) },
-                    doubleCoefficients: level.hl.map { Double($0) },
-                    width: hlWidth, height: level.llHeight
+                    coefficients: vDSPConvert.floatsToInt32s(level.hl),
+                    doubleCoefficients: nil,
+                    width: hlWidth, height: level.llHeight,
+                    floatCoefficients: level.hl
                 ))
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .lh,
-                    coefficients: level.lh.map { Int32($0.rounded()) },
-                    doubleCoefficients: level.lh.map { Double($0) },
-                    width: level.llWidth, height: lhHeight
+                    coefficients: vDSPConvert.floatsToInt32s(level.lh),
+                    doubleCoefficients: nil,
+                    width: level.llWidth, height: lhHeight,
+                    floatCoefficients: level.lh
                 ))
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .hh,
-                    coefficients: level.hh.map { Int32($0.rounded()) },
-                    doubleCoefficients: level.hh.map { Double($0) },
-                    width: hlWidth, height: lhHeight
+                    coefficients: vDSPConvert.floatsToInt32s(level.hh),
+                    doubleCoefficients: nil,
+                    width: hlWidth, height: lhHeight,
+                    floatCoefficients: level.hh
                 ))
             }
 
             subbands.insert(SubbandInfo(
                 componentIndex: compIdx, level: 0, subband: .ll,
-                coefficients: decomposition.approximation.map { Int32($0.rounded()) },
-                doubleCoefficients: decomposition.approximation.map { Double($0) },
+                coefficients: vDSPConvert.floatsToInt32s(decomposition.approximation),
+                doubleCoefficients: nil,
                 width: decomposition.approximationWidth,
-                height: decomposition.approximationHeight
+                height: decomposition.approximationHeight,
+                floatCoefficients: decomposition.approximation
             ), at: 0)
 
             allSubbands.append(subbands)
@@ -387,18 +458,18 @@ struct EncoderPipeline: Sendable {
         try await metalCT.initialize()
 
         // Convert Int32 to Float for Metal
-        let redFloat = components[0].map { Float($0) }
-        let greenFloat = components[1].map { Float($0) }
-        let blueFloat = components[2].map { Float($0) }
+        let redFloat = vDSPConvert.int32sToFloats(components[0])
+        let greenFloat = vDSPConvert.int32sToFloats(components[1])
+        let blueFloat = vDSPConvert.int32sToFloats(components[2])
 
         let result = try await metalCT.forwardTransform(
             red: redFloat, green: greenFloat, blue: blueFloat, backend: .auto
         )
 
         // Convert back to Int32 and optionally Double
-        let y = result.component0.map { Int32($0.rounded()) }
-        let cb = result.component1.map { Int32($0.rounded()) }
-        let cr = result.component2.map { Int32($0.rounded()) }
+        let y = vDSPConvert.floatsToInt32s(result.component0)
+        let cb = vDSPConvert.floatsToInt32s(result.component1)
+        let cr = vDSPConvert.floatsToInt32s(result.component2)
 
         var intResult = [y, cb, cr]
         if components.count > 3 {
@@ -409,9 +480,9 @@ struct EncoderPipeline: Sendable {
         if !config.useReversibleFilter {
             // Keep double-precision ICT output for 9/7 DWT path
             var dbl: [[Double]] = [
-                result.component0.map { Double($0) },
-                result.component1.map { Double($0) },
-                result.component2.map { Double($0) }
+                vDSPConvert.floatsToDoubles(result.component0),
+                vDSPConvert.floatsToDoubles(result.component1),
+                vDSPConvert.floatsToDoubles(result.component2)
             ]
             if components.count > 3 {
                 dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
@@ -533,19 +604,19 @@ struct EncoderPipeline: Sendable {
             )
         } else {
             // Use ICT (floating-point, irreversible) for lossy mode
-            let redD = components[0].map { Double($0) }
-            let greenD = components[1].map { Double($0) }
-            let blueD = components[2].map { Double($0) }
+            let redD = vDSPConvert.int32sToDoubles(components[0])
+            let greenD = vDSPConvert.int32sToDoubles(components[1])
+            let blueD = vDSPConvert.int32sToDoubles(components[2])
             let (yD, cbD, crD) = try transform.forwardICT(
                 red: redD, green: greenD, blue: blueD
             )
-            y = yD.map { Int32($0.rounded()) }
-            cb = cbD.map { Int32($0.rounded()) }
-            cr = crD.map { Int32($0.rounded()) }
+            y = vDSPConvert.doublesToInt32s(yD)
+            cb = vDSPConvert.doublesToInt32s(cbD)
+            cr = vDSPConvert.doublesToInt32s(crD)
             // Keep double-precision ICT output for 9/7 DWT path
             var dbl = [yD, cbD, crD]
             if components.count > 3 {
-                dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
+                dbl.append(contentsOf: components[3...].map { vDSPConvert.int32sToDoubles($0) })
             }
             doubleResult = dbl
         }
@@ -653,8 +724,28 @@ struct EncoderPipeline: Sendable {
         /// When non-nil, quantization uses these instead of `coefficients`
         /// to avoid precision loss from premature Int32 rounding.
         let doubleCoefficients: [Double]?
+        /// Raw Float DWT coefficients from the GPU path.
+        /// When non-nil, quantization uses these directly to avoid the
+        /// Float→Double conversion overhead. Takes priority over `doubleCoefficients`.
+        let floatCoefficients: [Float]?
         let width: Int
         let height: Int
+
+        init(
+            componentIndex: Int, level: Int, subband: J2KSubband,
+            coefficients: [Int32], doubleCoefficients: [Double]?,
+            width: Int, height: Int,
+            floatCoefficients: [Float]? = nil
+        ) {
+            self.componentIndex = componentIndex
+            self.level = level
+            self.subband = subband
+            self.coefficients = coefficients
+            self.doubleCoefficients = doubleCoefficients
+            self.floatCoefficients = floatCoefficients
+            self.width = width
+            self.height = height
+        }
     }
 
     /// Applies the forward wavelet transform to all components.
@@ -754,7 +845,7 @@ struct EncoderPipeline: Sendable {
                 if let dc = doubleComponents, compIdx < dc.count {
                     flatDouble = dc[compIdx]
                 } else {
-                    flatDouble = compData.map { Double($0) }
+                    flatDouble = vDSPConvert.int32sToDoubles(compData)
                 }
 
                 let decomposition = AcceleratedDWT2D.forwardDecomposition(
@@ -768,7 +859,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hl,
-                        coefficients: level.hl.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(level.hl),
                         doubleCoefficients: level.hl,
                         width: level.hlW,
                         height: level.hlH
@@ -777,7 +868,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .lh,
-                        coefficients: level.lh.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(level.lh),
                         doubleCoefficients: level.lh,
                         width: level.lhW,
                         height: level.lhH
@@ -786,7 +877,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hh,
-                        coefficients: level.hh.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(level.hh),
                         doubleCoefficients: level.hh,
                         width: level.hhW,
                         height: level.hhH
@@ -797,7 +888,7 @@ struct EncoderPipeline: Sendable {
                     componentIndex: compIdx,
                     level: 0,
                     subband: .ll,
-                    coefficients: decomposition.coarsestLL.map { Int32($0.rounded()) },
+                    coefficients: vDSPConvert.doublesToInt32s(decomposition.coarsestLL),
                     doubleCoefficients: decomposition.coarsestLL,
                     width: decomposition.llW,
                     height: decomposition.llH
@@ -879,7 +970,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hl,
-                        coefficients: hlFlat.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(hlFlat),
                         doubleCoefficients: hlFlat,
                         width: level.hl.isEmpty ? 0 : level.hl[0].count,
                         height: level.hl.count
@@ -889,7 +980,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .lh,
-                        coefficients: lhFlat.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(lhFlat),
                         doubleCoefficients: lhFlat,
                         width: level.lh.isEmpty ? 0 : level.lh[0].count,
                         height: level.lh.count
@@ -899,7 +990,7 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hh,
-                        coefficients: hhFlat.map { Int32($0.rounded()) },
+                        coefficients: vDSPConvert.doublesToInt32s(hhFlat),
                         doubleCoefficients: hhFlat,
                         width: level.hh.isEmpty ? 0 : level.hh[0].count,
                         height: level.hh.count
@@ -912,7 +1003,7 @@ struct EncoderPipeline: Sendable {
                     componentIndex: compIdx,
                     level: 0,
                     subband: .ll,
-                    coefficients: llFlat.map { Int32($0.rounded()) },
+                    coefficients: vDSPConvert.doublesToInt32s(llFlat),
                     doubleCoefficients: llFlat,
                     width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
                     height: coarsestLL.count
@@ -991,7 +1082,15 @@ struct EncoderPipeline: Sendable {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
                 let quantized: [Int32]
-                if let doubleCoeffs = info.doubleCoefficients {
+                if let floatCoeffs = info.floatCoefficients {
+                    // Use Float-precision path for GPU DWT output — avoids Float→Double conversion
+                    quantized = try quantizer.quantize(
+                        coefficients: floatCoeffs,
+                        subband: info.subband,
+                        decompositionLevel: info.level,
+                        totalLevels: config.decompositionLevels
+                    )
+                } else if let doubleCoeffs = info.doubleCoefficients {
                     // Use Double-precision path for 9/7 irreversible to preserve fractional precision
                     quantized = try quantizer.quantize(
                         coefficients: doubleCoeffs,
@@ -1043,15 +1142,42 @@ struct EncoderPipeline: Sendable {
         let bitPlanePopulation: [Int]
     }
 
+    /// Lightweight block descriptor for deferred-extraction HTJ2K encoding.
+    ///
+    /// Stores a CoW reference to the subband coefficient array plus extraction
+    /// coordinates, deferring the per-block memcpy to the parallel encoding loop.
+    private struct DeferredCodeBlock: Sendable {
+        let index: Int
+        let x: Int
+        let y: Int
+        let width: Int
+        let height: Int
+        let subband: J2KSubband
+        let componentIndex: Int
+        let resolutionLevel: Int
+        let bitDepth: Int
+        /// CoW reference to the subband's full coefficient array.
+        let subbandCoefficients: [Int32]
+        /// Width of the subband (row stride in elements).
+        let subbandWidth: Int
+        /// Origin of this block within the subband.
+        let originX: Int
+        let originY: Int
+    }
+
     /// Applies entropy coding to all subbands, producing code blocks.
     ///
-    /// When `config.useHTJ2K` is true, uses HTJ2K FBCOT (Fast Block Coder with
-    /// Optimised Truncation) per ISO/IEC 15444-15. Otherwise uses legacy EBCOT
+    /// When `config.useHTJ2K` is true, uses a fused extract-and-encode path
+    /// that defers coefficient extraction to the parallel encoding loop,
+    /// eliminating the sequential first pass. Otherwise uses legacy EBCOT
     /// bit-plane coding per ISO/IEC 15444-1.
     private func applyEntropyCoding(
         _ componentSubbands: [[SubbandInfo]],
         image: J2KImage
     ) throws -> [J2KCodeBlock] {
+        let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
+        let entropyStart = CFAbsoluteTimeGetCurrent()
+
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
 
@@ -1063,6 +1189,20 @@ struct EncoderPipeline: Sendable {
         // Guard bits and range bits for Kb computation (must match QCD marker)
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
         let guardBits = Int(quantExt.extendedGuardBits)
+
+        // HTJ2K fast path: build lightweight descriptors and fuse coefficient
+        // extraction into the parallel encoding loop to eliminate the sequential
+        // first pass.
+        if config.useHTJ2K {
+            return try applyEntropyCodingHTJ2KFused(
+                componentSubbands, image: image,
+                actualLevels: actualLevels, guardBits: guardBits,
+                cbWidth: cbWidth, cbHeight: cbHeight, profiling: profiling,
+                entropyStart: entropyStart
+            )
+        }
+
+        // Legacy EBCOT path: sequential extraction then parallel encoding.
 
         // First pass: collect all pending code-blocks with their metadata
         var pendingBlocks: [PendingCodeBlock] = []
@@ -1129,14 +1269,21 @@ struct EncoderPipeline: Sendable {
                         let blockW = min(cbWidth, info.width - bx * cbWidth)
                         let blockH = min(cbHeight, info.height - by * cbHeight)
 
-                        // Extract code block coefficients
-                        var blockCoeffs: [Int32] = []
-                        blockCoeffs.reserveCapacity(blockW * blockH)
-                        for row in 0..<blockH {
-                            let srcRow = by * cbHeight + row
-                            let srcStart = srcRow * info.width + bx * cbWidth
-                            let srcEnd = srcStart + blockW
-                            blockCoeffs.append(contentsOf: info.coefficients[srcStart..<srcEnd])
+                        // Extract code block coefficients via direct memcpy
+                        let blockSize = blockW * blockH
+                        var blockCoeffs = [Int32](unsafeUninitializedCapacity: blockSize) { buf, count in
+                            info.coefficients.withUnsafeBufferPointer { src in
+                                for row in 0..<blockH {
+                                    let srcRow = by * cbHeight + row
+                                    let srcStart = srcRow * info.width + bx * cbWidth
+                                    memcpy(
+                                        buf.baseAddress! + row * blockW,
+                                        src.baseAddress! + srcStart,
+                                        blockW * MemoryLayout<Int32>.size
+                                    )
+                                }
+                                count = blockSize
+                            }
                         }
 
                         // TEMP DEBUG: dump quantized coefficients
@@ -1144,26 +1291,53 @@ struct EncoderPipeline: Sendable {
                             print("EBCOT_INPUT: subband=\(info.subband) comp=\(info.componentIndex) res=\(resolutionLevel) bx=\(bx) by=\(by) w=\(blockW) h=\(blockH) Kb=\(bandKb) coeffs=\(blockCoeffs)")
                         }
 
-                        // Compute distortion statistics for rate control
-                        var sqSum: Double = 0
-                        var maxMag: UInt32 = 0
-                        for c in blockCoeffs {
-                            let mag = UInt32(abs(c))
-                            sqSum += Double(mag) * Double(mag)
-                            if mag > maxMag { maxMag = mag }
-                        }
-                        // Compute bit-plane population: count how many coefficients
-                        // have their MSB at each bit-plane
-                        let totalBitPlanes = bandKb
-                        var bpPop = [Int](repeating: 0, count: totalBitPlanes)
-                        for c in blockCoeffs {
-                            let mag = UInt32(abs(c))
-                            if mag > 0 {
-                                let msb = 31 - mag.leadingZeroBitCount  // 0-based MSB position
-                                if msb < totalBitPlanes {
-                                    bpPop[msb] += 1
+                        // Compute distortion statistics for rate control.
+                        // For lossless mode, rate control includes all data — skip
+                        // the expensive squared-sum and bit-plane population scans.
+                        let sqSum: Double
+                        let bpPop: [Int]
+                        if config.lossless {
+                            sqSum = 0
+                            bpPop = []
+                        } else {
+                            #if canImport(Accelerate)
+                            if blockCoeffs.count >= 16 {
+                                var absD = vDSPConvert.int32sToDoubles(blockCoeffs)
+                                vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(absD.count))
+                                var dotResult: Double = 0
+                                vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(absD.count))
+                                sqSum = dotResult
+                            } else {
+                                var sq: Double = 0
+                                for c in blockCoeffs {
+                                    let mag = Double(abs(c))
+                                    sq += mag * mag
+                                }
+                                sqSum = sq
+                            }
+                            #else
+                            do {
+                                var sq: Double = 0
+                                for c in blockCoeffs {
+                                    let mag = Double(abs(c))
+                                    sq += mag * mag
+                                }
+                                sqSum = sq
+                            }
+                            #endif
+
+                            let totalBitPlanes = bandKb
+                            var pop = [Int](repeating: 0, count: totalBitPlanes)
+                            for c in blockCoeffs {
+                                let mag = UInt32(abs(c))
+                                if mag > 0 {
+                                    let msb = 31 - mag.leadingZeroBitCount
+                                    if msb < totalBitPlanes {
+                                        pop[msb] += 1
+                                    }
                                 }
                             }
+                            bpPop = pop
                         }
 
                         pendingBlocks.append(PendingCodeBlock(
@@ -1186,14 +1360,380 @@ struct EncoderPipeline: Sendable {
             }
         }
 
+        if profiling {
+            let extractEnd = CFAbsoluteTimeGetCurrent()
+            print("    PROFILE entropy-extract: \(pendingBlocks.count) blocks in \(String(format: "%.4f", extractEnd - entropyStart))s")
+        }
+
         // Second pass: encode code-blocks (parallel or sequential)
         let useParallel = config.enableParallelCodeBlocks && pendingBlocks.count > 1
         let allCodeBlocks: [J2KCodeBlock]
 
+        let encodeStart = CFAbsoluteTimeGetCurrent()
         if useParallel {
             allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks)
         } else {
             allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks)
+        }
+
+        if profiling {
+            let encodeEnd = CFAbsoluteTimeGetCurrent()
+            print("    PROFILE entropy-encode: \(String(format: "%.4f", encodeEnd - encodeStart))s (parallel=\(useParallel))")
+        }
+
+        return allCodeBlocks
+    }
+
+    // MARK: - HTJ2K Fused Extract-and-Encode
+
+    /// HTJ2K fast path: builds lightweight block descriptors in a single sequential
+    /// scan, then performs coefficient extraction + HT encoding in a parallel loop.
+    ///
+    /// Compared to the legacy two-pass approach (extract all, then encode all),
+    /// this eliminates:
+    /// - Sequential per-block coefficient array allocations (~4MB for 1024×1024)
+    /// - The `pendingBlocks` array holding all coefficient arrays simultaneously
+    /// - A full sequential pass over all subbands
+    private func applyEntropyCodingHTJ2KFused(
+        _ componentSubbands: [[SubbandInfo]],
+        image: J2KImage,
+        actualLevels: Int,
+        guardBits: Int,
+        cbWidth: Int,
+        cbHeight: Int,
+        profiling: Bool,
+        entropyStart: CFAbsoluteTime
+    ) throws -> [J2KCodeBlock] {
+        // Build lightweight block descriptors (no coefficient copy).
+        var deferred: [DeferredCodeBlock] = []
+        var blockIndex = 0
+
+        for subbands in componentSubbands {
+            for info in subbands {
+                guard info.width > 0 && info.height > 0 else { continue }
+                let imageBitDepth = image.components[info.componentIndex].bitDepth
+                let resolutionLevel: Int
+                if info.subband == .ll {
+                    resolutionLevel = 0
+                } else {
+                    resolutionLevel = actualLevels - info.level + 1
+                }
+
+                let bandKb: Int
+                if config.useReversibleFilter {
+                    let gainExponent: Int
+                    switch info.subband {
+                    case .ll: gainExponent = 0
+                    case .hl, .lh: gainExponent = 1
+                    case .hh: gainExponent = 2
+                    }
+                    bandKb = imageBitDepth + gainExponent + guardBits - 1
+                } else {
+                    let subbandGain: Int
+                    switch info.subband {
+                    case .ll: subbandGain = 0
+                    case .hl, .lh: subbandGain = 1
+                    case .hh: subbandGain = 2
+                    }
+                    let rangeBits = imageBitDepth + subbandGain
+                    let params = J2KQuantizationParameters.fromQuality(config.quality)
+                    let step = J2KStepSizeCalculator.calculateStepSize(
+                        baseStepSize: params.baseStepSize,
+                        subband: info.subband,
+                        decompositionLevel: info.level,
+                        totalLevels: actualLevels,
+                        reversible: false
+                    )
+                    let (epsilon, _) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
+                    bandKb = epsilon + guardBits - 1
+                }
+
+                let blocksX = (info.width + cbWidth - 1) / cbWidth
+                let blocksY = (info.height + cbHeight - 1) / cbHeight
+
+                deferred.reserveCapacity(deferred.count + blocksX * blocksY)
+                for by in 0..<blocksY {
+                    for bx in 0..<blocksX {
+                        let blockW = min(cbWidth, info.width - bx * cbWidth)
+                        let blockH = min(cbHeight, info.height - by * cbHeight)
+
+                        deferred.append(DeferredCodeBlock(
+                            index: blockIndex,
+                            x: bx * cbWidth,
+                            y: by * cbHeight,
+                            width: blockW,
+                            height: blockH,
+                            subband: info.subband,
+                            componentIndex: info.componentIndex,
+                            resolutionLevel: resolutionLevel,
+                            bitDepth: bandKb,
+                            subbandCoefficients: info.coefficients,
+                            subbandWidth: info.width,
+                            originX: bx * cbWidth,
+                            originY: by * cbHeight
+                        ))
+                        blockIndex += 1
+                    }
+                }
+            }
+        }
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("    PROFILE htj2k-descriptors: \(deferred.count) blocks in \(String(format: "%.4f", t - entropyStart))s")
+        }
+
+        // Parallel encode with fused coefficient extraction.
+        let totalBlocks = deferred.count
+        guard totalBlocks > 0 else { return [] }
+
+        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
+        // Only use parallel dispatch when there are enough blocks to amortize
+        // the GCD overhead and per-chunk buffer allocations. For small images
+        // with ≤2× the core count of blocks, the sequential path (single set
+        // of reusable allocations) is faster.
+        let parallelThreshold = max(4, maxConcurrency * 2)
+        let useParallel = config.enableParallelCodeBlocks && totalBlocks >= parallelThreshold
+
+        let encodeStart = CFAbsoluteTimeGetCurrent()
+        let allCodeBlocks: [J2KCodeBlock]
+
+        if useParallel {
+            let collector = ParallelResultCollector<(Int, J2KCodeBlock)>(capacity: totalBlocks)
+
+            let chunkSize = max(1, totalBlocks / maxConcurrency)
+            let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
+                let end = min(start + chunkSize, totalBlocks)
+                return start..<end
+            }
+
+            let maxBlockSize = cbWidth * cbHeight
+            let isLossless = config.lossless
+
+            DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
+                let range = chunks[chunkIdx]
+                var localResults: [(Int, J2KCodeBlock)] = []
+                localResults.reserveCapacity(range.count)
+
+                // Per-chunk reusable resources
+                var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
+                var absMags = [Int32](repeating: 0, count: maxBlockSize)
+                var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
+                let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
+                var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
+                var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
+                // Pre-allocated HT coders (reset per block, avoiding per-block allocation)
+                var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
+                var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
+                var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
+
+                for i in range {
+                    let d = deferred[i]
+
+                    // Extract coefficients into reusable buffer
+                    let blockSize = d.width * d.height
+                    d.subbandCoefficients.withUnsafeBufferPointer { src in
+                        coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                            for row in 0..<d.height {
+                                let srcStart = (d.originY + row) * d.subbandWidth + d.originX
+                                memcpy(
+                                    dst.baseAddress! + row * d.width,
+                                    src.baseAddress! + srcStart,
+                                    d.width * MemoryLayout<Int32>.size
+                                )
+                            }
+                        }
+                    }
+
+                    // Compute distortion stats for lossy mode
+                    var sqSum: Double = 0
+                    var bpPop: [Int] = []
+                    if !isLossless {
+                        #if canImport(Accelerate)
+                        if blockSize >= 16 {
+                            coeffsBuffer.withUnsafeBufferPointer { ptr in
+                                var absD = [Double](unsafeUninitializedCapacity: blockSize) { buf, count in
+                                    vDSP_vflt32D(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
+                                    count = blockSize
+                                }
+                                vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(blockSize))
+                                var dotResult: Double = 0
+                                vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(blockSize))
+                                sqSum = dotResult
+                            }
+                        } else {
+                            for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
+                        }
+                        #else
+                        for j in 0..<blockSize {
+                            let v = Double(abs(coeffsBuffer[j]))
+                            sqSum += v * v
+                        }
+                        #endif
+
+                        let totalBitPlanes = d.bitDepth
+                        bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                        for j in 0..<blockSize {
+                            let mag = UInt32(abs(coeffsBuffer[j]))
+                            if mag > 0 {
+                                let msb = 31 - mag.leadingZeroBitCount
+                                if msb < totalBitPlanes { bpPop[msb] += 1 }
+                            }
+                        }
+                    }
+
+                    // For full-size blocks (the common case), pass coeffsBuffer
+                    // directly — CoW means no copy since encode only reads.
+                    // For edge blocks (blockSize < maxBlockSize), extract only
+                    // the needed elements since encodeCleanupReusing validates
+                    // that coefficients.count == width * height.
+                    let blockCoeffs: [Int32]
+                    if blockSize == maxBlockSize {
+                        blockCoeffs = coeffsBuffer
+                    } else {
+                        blockCoeffs = Array(coeffsBuffer[0..<blockSize])
+                    }
+
+                    let pending = PendingCodeBlock(
+                        index: d.index, x: d.x, y: d.y,
+                        width: d.width, height: d.height,
+                        subband: d.subband,
+                        componentIndex: d.componentIndex,
+                        resolutionLevel: d.resolutionLevel,
+                        coefficients: blockCoeffs,
+                        bitDepth: d.bitDepth,
+                        coefficientSquaredSum: sqSum,
+                        bitPlanePopulation: bpPop
+                    )
+
+                    do {
+                        let codeBlock = try self.encodeCodeBlockHTJ2KFast(
+                            pending,
+                            absMags: &absMags,
+                            sigPacked: &sigPacked,
+                            sigPropWriter: &sigPropWriter,
+                            magRefWriter: &magRefWriter,
+                            mel: &mel,
+                            vlc: &vlc,
+                            magsgn: &magsgn
+                        )
+                        localResults.append((d.index, codeBlock))
+                    } catch {
+                        collector.recordError(error)
+                    }
+                }
+
+                collector.append(contentsOf: localResults)
+            }
+
+            if let error = collector.firstError { throw error }
+            allCodeBlocks = collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+        } else {
+            // Sequential path
+            var results: [J2KCodeBlock] = []
+            results.reserveCapacity(totalBlocks)
+
+            let maxBlockSize = cbWidth * cbHeight
+            var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
+            var absMags = [Int32](repeating: 0, count: maxBlockSize)
+            var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
+            let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
+            var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
+            var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
+            var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
+            var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
+            var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
+
+            let isLossless = config.lossless
+            for d in deferred {
+                let blockSize = d.width * d.height
+                d.subbandCoefficients.withUnsafeBufferPointer { src in
+                    coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                        for row in 0..<d.height {
+                            let srcStart = (d.originY + row) * d.subbandWidth + d.originX
+                            memcpy(
+                                dst.baseAddress! + row * d.width,
+                                src.baseAddress! + srcStart,
+                                d.width * MemoryLayout<Int32>.size
+                            )
+                        }
+                    }
+                }
+
+                // Compute distortion stats for lossy rate control
+                var sqSum: Double = 0
+                var bpPop: [Int] = []
+                if !isLossless {
+                    #if canImport(Accelerate)
+                    if blockSize >= 16 {
+                        coeffsBuffer.withUnsafeBufferPointer { ptr in
+                            var absD = [Double](unsafeUninitializedCapacity: blockSize) { buf, count in
+                                vDSP_vflt32D(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
+                                count = blockSize
+                            }
+                            vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(blockSize))
+                            var dotResult: Double = 0
+                            vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(blockSize))
+                            sqSum = dotResult
+                        }
+                    } else {
+                        for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
+                    }
+                    #else
+                    for j in 0..<blockSize {
+                        let v = Double(abs(coeffsBuffer[j]))
+                        sqSum += v * v
+                    }
+                    #endif
+
+                    let totalBitPlanes = d.bitDepth
+                    bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                    for j in 0..<blockSize {
+                        let mag = UInt32(abs(coeffsBuffer[j]))
+                        if mag > 0 {
+                            let msb = 31 - mag.leadingZeroBitCount
+                            if msb < totalBitPlanes { bpPop[msb] += 1 }
+                        }
+                    }
+                }
+
+                let blockCoeffs: [Int32]
+                if blockSize == maxBlockSize {
+                    blockCoeffs = coeffsBuffer
+                } else {
+                    blockCoeffs = Array(coeffsBuffer[0..<blockSize])
+                }
+
+                let pending = PendingCodeBlock(
+                    index: d.index, x: d.x, y: d.y,
+                    width: d.width, height: d.height,
+                    subband: d.subband,
+                    componentIndex: d.componentIndex,
+                    resolutionLevel: d.resolutionLevel,
+                    coefficients: blockCoeffs,
+                    bitDepth: d.bitDepth,
+                    coefficientSquaredSum: sqSum,
+                    bitPlanePopulation: bpPop
+                )
+
+                let codeBlock = try encodeCodeBlockHTJ2KFast(
+                    pending,
+                    absMags: &absMags,
+                    sigPacked: &sigPacked,
+                    sigPropWriter: &sigPropWriter,
+                    magRefWriter: &magRefWriter,
+                    mel: &mel,
+                    vlc: &vlc,
+                    magsgn: &magsgn
+                )
+                results.append(codeBlock)
+            }
+            allCodeBlocks = results
+        }
+
+        if profiling {
+            let encodeEnd = CFAbsoluteTimeGetCurrent()
+            print("    PROFILE htj2k-encode: \(String(format: "%.4f", encodeEnd - encodeStart))s (parallel=\(useParallel), blocks=\(totalBlocks))")
         }
 
         return allCodeBlocks
@@ -1210,9 +1750,28 @@ struct EncoderPipeline: Sendable {
         results.reserveCapacity(pendingBlocks.count)
 
         if config.useHTJ2K {
-            // HTJ2K path: use FBCOT block coding
+            // HTJ2K fast path: pre-allocate reusable arrays + writers
+            let maxBlockSize = config.codeBlockSize.width * config.codeBlockSize.height
+            var absMags = [Int32](repeating: 0, count: maxBlockSize)
+            var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
+            let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
+            var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
+            var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
+            var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
+            var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
+            var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
+
             for pending in pendingBlocks {
-                let codeBlock = try encodeCodeBlockHTJ2K(pending)
+                let codeBlock = try encodeCodeBlockHTJ2KFast(
+                    pending,
+                    absMags: &absMags,
+                    sigPacked: &sigPacked,
+                    sigPropWriter: &sigPropWriter,
+                    magRefWriter: &magRefWriter,
+                    mel: &mel,
+                    vlc: &vlc,
+                    magsgn: &magsgn
+                )
                 results.append(codeBlock)
             }
         } else {
@@ -1279,6 +1838,8 @@ struct EncoderPipeline: Sendable {
         }
 
         let useHT = config.useHTJ2K
+        let cbW = config.codeBlockSize.width
+        let cbH = config.codeBlockSize.height
 
         DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
             let chunk = chunks[chunkIdx]
@@ -1286,10 +1847,31 @@ struct EncoderPipeline: Sendable {
             localResults.reserveCapacity(chunk.count)
 
             if useHT {
-                // HTJ2K path: use FBCOT block coding
+                // HTJ2K fast path: pre-allocate reusable arrays and writers per chunk
+                // to eliminate per-block heap allocations. The arrays are reused
+                // across all blocks in this chunk (same thread).
+                let maxBlockSize = cbW * cbH
+                var absMags = [Int32](repeating: 0, count: maxBlockSize)
+                var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
+                let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
+                var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
+                var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
+                var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
+                var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
+                var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
+
                 for pending in chunk {
                     do {
-                        let codeBlock = try self.encodeCodeBlockHTJ2K(pending)
+                        let codeBlock = try self.encodeCodeBlockHTJ2KFast(
+                            pending,
+                            absMags: &absMags,
+                            sigPacked: &sigPacked,
+                            sigPropWriter: &sigPropWriter,
+                            magRefWriter: &magRefWriter,
+                            mel: &mel,
+                            vlc: &vlc,
+                            magsgn: &magsgn
+                        )
                         localResults.append((pending.index, codeBlock))
                     } catch {
                         collector.recordError(error)
@@ -1402,48 +1984,233 @@ struct EncoderPipeline: Sendable {
             bitPlane: topBitPlane
         )
         let cleanupBlock = cleanupResult.block
-        var significanceState = cleanupResult.significanceState
+        var sigPacked = cleanupResult.sigPacked
         let absMags = cleanupResult.absMags
 
         // Encode refinement passes (SigProp + MagRef) for lower bit-planes.
         // Cap at a configurable maximum to avoid encoding bit-planes that rate
         // control will truncate anyway. Each pair adds ~2× block size in output
         // with diminishing quality contribution.
-        var allPassData = cleanupBlock.codedData
-        var totalPasses = 1  // cleanup pass
-        var passSegmentLengths = [cleanupBlock.codedData.count]
-        var cumulativePassBytes = [cleanupBlock.codedData.count]
+        let count = pending.width * pending.height
 
         // Encode refinement passes (SigProp + MagRef) for all remaining bit-planes.
         // PCRD rate control will truncate unnecessary passes for lossy encoding;
         // for lossless encoding, all bit-planes are required for exact reconstruction.
-
-        for bp in stride(from: topBitPlane - 1, through: 0, by: -1) {
-            let sigPropData = try htEncoder.encodeSigProp(
-                coefficients: pending.coefficients,
-                significanceState: significanceState,
-                bitPlane: bp
-            )
-            allPassData.append(sigPropData)
-            totalPasses += 1
-            passSegmentLengths.append(sigPropData.count)
-            cumulativePassBytes.append(allPassData.count)
-
-            let magRefData = try htEncoder.encodeMagRef(
-                coefficients: pending.coefficients,
-                significanceState: significanceState,
-                bitPlane: bp
-            )
-            allPassData.append(magRefData)
-            totalPasses += 1
-            passSegmentLengths.append(magRefData.count)
-            cumulativePassBytes.append(allPassData.count)
-
-            // Update significance state using cached absolute magnitudes
-            let bp32 = Int32(bp)
-            for i in 0..<absMags.count where (absMags[i] >> bp32) & 1 != 0 {
-                significanceState[i] = true
+        // Uses fused SigProp+MagRef scan — single pass per bit-plane instead of two
+        // separate scans, updating the packed significance bitfield in-place.
+        //
+        // For lossy mode, cap refinement bit-planes: rate control will discard
+        // the deepest planes anyway, so encoding them wastes CPU time. The cap
+        // is derived from the target bitrate:
+        //   bpp ≥ 2  → encode all planes (high quality)
+        //   bpp ≈ 1  → skip last 2 planes
+        //   bpp ≤ 0.5 → skip last 4 planes
+        // For constant quality, map quality → effective cap.
+        let maxRefinementPlanes: Int
+        if config.lossless {
+            maxRefinementPlanes = topBitPlane  // encode all
+        } else {
+            let effectiveBpp: Double
+            switch config.bitrateMode {
+            case .constantBitrate(let bpp):
+                effectiveBpp = bpp
+            case .constantQuality:
+                // Map quality 0..1 to approximate bpp: q=0.9→~1.2, q=0.5→~0.3
+                effectiveBpp = max(0.1, config.quality * 1.5)
+            case .variableBitrate(_, let maxBpp):
+                effectiveBpp = maxBpp
+            case .lossless:
+                effectiveBpp = Double(pending.bitDepth)
             }
+            // Allow more refinement planes for higher bitrates
+            let skip = effectiveBpp >= 2.0 ? 0 : (effectiveBpp >= 1.0 ? 2 : 4)
+            maxRefinementPlanes = max(1, topBitPlane - skip)
+        }
+
+        let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
+        let numRefinementPlanes = max(0, topBitPlane - lowestRefinementPlane)
+
+        // Pre-allocate allPassData with estimated capacity to minimize Data
+        // reallocation during refinement pass appending.
+        let estimatedRefinementSize = numRefinementPlanes * max(4, (count * 3 + 7) / 8)
+        var allPassData = cleanupBlock.codedData
+        allPassData.reserveCapacity(allPassData.count + estimatedRefinementSize)
+        var totalPasses = 1  // cleanup pass
+        var passSegmentLengths = [cleanupBlock.codedData.count]
+        var cumulativePassBytes = [cleanupBlock.codedData.count]
+
+        // Use direct-output refinement: appends encoded bytes directly to
+        // allPassData, avoiding intermediate Data creation per pass.
+        for bp in stride(from: topBitPlane - 1, through: lowestRefinementPlane, by: -1) {
+            let (sigPropBytes, magRefBytes) = htEncoder.encodeFusedRefinementDirect(
+                coefficients: pending.coefficients,
+                absMags: absMags,
+                sigPacked: &sigPacked,
+                bitPlane: bp,
+                output: &allPassData
+            )
+
+            totalPasses += 1
+            passSegmentLengths.append(sigPropBytes)
+            cumulativePassBytes.append(allPassData.count - magRefBytes)
+
+            totalPasses += 1
+            passSegmentLengths.append(magRefBytes)
+            cumulativePassBytes.append(allPassData.count)
+        }
+
+        let zeroBitPlanes = max(0, pending.bitDepth - topBitPlane - 1)
+
+        return J2KCodeBlock(
+            index: pending.index,
+            x: pending.x,
+            y: pending.y,
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband,
+            componentIndex: pending.componentIndex,
+            resolutionLevel: pending.resolutionLevel,
+            data: allPassData,
+            passeCount: totalPasses,
+            zeroBitPlanes: zeroBitPlanes,
+            passSegmentLengths: passSegmentLengths,
+            cumulativePassBytes: cumulativePassBytes,
+            coefficientSquaredSum: pending.coefficientSquaredSum,
+            bitPlanePopulation: pending.bitPlanePopulation
+        )
+    }
+
+    // MARK: - HTJ2K Fast Block Encoding (Reusing Allocations)
+
+    /// Encodes a single code-block using HTJ2K FBCOT block coding with pre-allocated
+    /// scratch arrays and reusable writers.
+    ///
+    /// This is the fast path called from `encodeCodeBlocksParallel`. It eliminates
+    /// per-block allocation of `absMags`, `sigPacked`, and per-refinement-pass
+    /// writer allocations by reusing caller-provided buffers.
+    ///
+    /// - Parameters:
+    ///   - pending: The pending code-block with coefficients and metadata.
+    ///   - absMags: Pre-allocated absolute magnitude array (reused across blocks).
+    ///   - sigPacked: Pre-allocated significance bitfield (reused across blocks).
+    ///   - sigPropWriter: Pre-allocated SigProp writer (reused across refinement passes).
+    ///   - magRefWriter: Pre-allocated MagRef writer (reused across refinement passes).
+    ///   - mel: Pre-allocated MEL coder (reset and reused per block).
+    ///   - vlc: Pre-allocated VLC coder (reset and reused per block).
+    ///   - magsgn: Pre-allocated MagSgn coder (reset and reused per block).
+    /// - Returns: A `J2KCodeBlock` with HT-encoded data.
+    /// - Throws: ``J2KError/encodingError(_:)`` if HT encoding fails.
+    private func encodeCodeBlockHTJ2KFast(
+        _ pending: PendingCodeBlock,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        sigPropWriter: inout HTFastBitWriter,
+        magRefWriter: inout HTFastBitWriter,
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder
+    ) throws -> J2KCodeBlock {
+        let htEncoder = HTBlockEncoder(
+            width: pending.width,
+            height: pending.height,
+            subband: pending.subband
+        )
+
+        let maxMag = Int(Self.maxAbsValue(pending.coefficients))
+
+        guard maxMag > 0 else {
+            return J2KCodeBlock(
+                index: pending.index,
+                x: pending.x,
+                y: pending.y,
+                width: pending.width,
+                height: pending.height,
+                subband: pending.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
+                data: Data(),
+                passeCount: 0,
+                zeroBitPlanes: pending.bitDepth,
+                passSegmentLengths: [],
+                cumulativePassBytes: [],
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation
+            )
+        }
+
+        let topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
+
+        // Clear sigPacked for this block (only the used portion)
+        let count = pending.width * pending.height
+        let sigWords = (count + 63) / 64
+        for i in 0..<sigWords {
+            sigPacked[i] = 0
+        }
+
+        // Cleanup pass using pre-allocated arrays and coders
+        let cleanupBlock = try htEncoder.encodeCleanupFullyReusing(
+            coefficients: pending.coefficients,
+            bitPlane: topBitPlane,
+            absMags: &absMags,
+            sigPacked: &sigPacked,
+            mel: &mel,
+            vlc: &vlc,
+            magsgn: &magsgn
+        )
+
+        // Refinement passes with reusable writers
+        let maxRefinementPlanes: Int
+        if config.lossless {
+            maxRefinementPlanes = topBitPlane
+        } else {
+            let effectiveBpp: Double
+            switch config.bitrateMode {
+            case .constantBitrate(let bpp):
+                effectiveBpp = bpp
+            case .constantQuality:
+                effectiveBpp = max(0.1, config.quality * 1.5)
+            case .variableBitrate(_, let maxBpp):
+                effectiveBpp = maxBpp
+            case .lossless:
+                effectiveBpp = Double(pending.bitDepth)
+            }
+            let skip = effectiveBpp >= 2.0 ? 0 : (effectiveBpp >= 1.0 ? 2 : 4)
+            maxRefinementPlanes = max(1, topBitPlane - skip)
+        }
+
+        let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
+        let numRefinementPlanes = max(0, topBitPlane - lowestRefinementPlane)
+
+        let estimatedRefinementSize = numRefinementPlanes * max(4, (count * 3 + 7) / 8)
+        var allPassData = cleanupBlock.codedData
+        allPassData.reserveCapacity(allPassData.count + estimatedRefinementSize)
+        var totalPasses = 1
+        var passSegmentLengths = [cleanupBlock.codedData.count]
+        var cumulativePassBytes = [cleanupBlock.codedData.count]
+
+        let maxRefBytes = max(4, (count * 2 + 7) / 8)
+        for bp in stride(from: topBitPlane - 1, through: lowestRefinementPlane, by: -1) {
+            // Reset writers for this bit-plane (reuses existing buffer allocation)
+            sigPropWriter.reset(capacity: maxRefBytes)
+            magRefWriter.reset(capacity: maxRefBytes)
+
+            let (sigPropBytes, magRefBytes) = htEncoder.encodeFusedRefinementReusing(
+                coefficients: pending.coefficients,
+                absMags: absMags,
+                sigPacked: &sigPacked,
+                bitPlane: bp,
+                output: &allPassData,
+                sigPropWriter: &sigPropWriter,
+                magRefWriter: &magRefWriter
+            )
+
+            totalPasses += 1
+            passSegmentLengths.append(sigPropBytes)
+            cumulativePassBytes.append(allPassData.count - magRefBytes)
+
+            totalPasses += 1
+            passSegmentLengths.append(magRefBytes)
+            cumulativePassBytes.append(allPassData.count)
         }
 
         let zeroBitPlanes = max(0, pending.bitDepth - topBitPlane - 1)
@@ -1526,33 +2293,39 @@ struct EncoderPipeline: Sendable {
             return [QualityLayer(index: 0)]
         }
 
-        let rateConfig: RateControlConfiguration
-        // When lossless is true, always use lossless rate control regardless of bitrateMode
+        // Fast path: lossless mode — include all passes from every block.
+        // Skip J2KRateControl instantiation and dictionary creation entirely.
         if config.lossless {
-            rateConfig = .lossless
-        } else {
-            switch config.bitrateMode {
-            case .constantBitrate(let bpp):
-                rateConfig = RateControlConfiguration(
-                    mode: .targetBitrate(bpp),
-                    layerCount: config.qualityLayers,
-                    useReversibleFilter: config.useReversibleFilter
-                )
-            case .constantQuality:
-                rateConfig = RateControlConfiguration(
-                    mode: .constantQuality(max(0.0, min(1.0, config.quality))),
-                    layerCount: config.qualityLayers,
-                    useReversibleFilter: config.useReversibleFilter
-                )
-            case .variableBitrate(_, let maxBpp):
-                rateConfig = RateControlConfiguration(
-                    mode: .targetBitrate(maxBpp),
-                    layerCount: config.qualityLayers,
-                    useReversibleFilter: config.useReversibleFilter
-                )
-            case .lossless:
-                rateConfig = .lossless
+            var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
+            for cb in codeBlocks where cb.passeCount > 0 {
+                contributions[cb.index] = cb.passeCount
             }
+            return [QualityLayer(index: 0, targetRate: nil,
+                                 codeBlockContributions: contributions)]
+        }
+
+        let rateConfig: RateControlConfiguration
+        switch config.bitrateMode {
+        case .constantBitrate(let bpp):
+            rateConfig = RateControlConfiguration(
+                mode: .targetBitrate(bpp),
+                layerCount: config.qualityLayers,
+                useReversibleFilter: config.useReversibleFilter
+            )
+        case .constantQuality:
+            rateConfig = RateControlConfiguration(
+                mode: .constantQuality(max(0.0, min(1.0, config.quality))),
+                layerCount: config.qualityLayers,
+                useReversibleFilter: config.useReversibleFilter
+            )
+        case .variableBitrate(_, let maxBpp):
+            rateConfig = RateControlConfiguration(
+                mode: .targetBitrate(maxBpp),
+                layerCount: config.qualityLayers,
+                useReversibleFilter: config.useReversibleFilter
+            )
+        case .lossless:
+            rateConfig = .lossless
         }
 
         let rateControl = J2KRateControl(configuration: rateConfig)
@@ -1568,7 +2341,9 @@ struct EncoderPipeline: Sendable {
         layers: [QualityLayer],
         actualDecompositionLevels: Int
     ) throws -> Data {
-        var writer = J2KBitWriter()
+        // Pre-size buffer based on total code block data + marker/header overhead
+        let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        var writer = J2KBitWriter(capacity: totalBytes + totalBytes / 8 + 2048)
 
         // SOC — Start of Codestream
         writer.writeMarker(J2KMarker.soc.rawValue)
@@ -1974,6 +2749,11 @@ struct EncoderPipeline: Sendable {
     private func applyLayerTruncation(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer]
     ) -> [J2KCodeBlock] {
+        // Fast path: lossless mode — all passes are included, no truncation needed.
+        if config.lossless {
+            return codeBlocks
+        }
+
         // Step 1: Apply PCRD layer truncation if available.
         // Merge contributions from ALL layers — each layer's contributions
         // only contains blocks updated in that layer, so we need to take
@@ -1988,9 +2768,11 @@ struct EncoderPipeline: Sendable {
             }
         }
         if !mergedContributions.isEmpty {
+            // Cache environment check outside hot loop
+            let dumpPasses = ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil
             truncated = codeBlocks.map { block in
                 let maxPasses = mergedContributions[block.index]
-                if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
+                if dumpPasses {
                     print("TRUNCATION: block=\(block.index) passes=\(block.passeCount) layer_maxPasses=\(String(describing: maxPasses)) data=\(block.data.count)")
                 }
                 // Blocks not selected by PCRD should contribute zero data
@@ -2155,10 +2937,20 @@ struct EncoderPipeline: Sendable {
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
         decompositionLevels: Int, componentCount: Int
     ) throws -> Data {
+        let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
+        // Pre-size data buffer based on total code block data
+        let totalBlockBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
         var data = Data()
+        data.reserveCapacity(totalBlockBytes + totalBlockBytes / 8 + 1024)
 
         // Apply rate control truncation: truncate code blocks per the quality layer
+        var truncStart: CFAbsoluteTime = 0
+        if profiling { truncStart = CFAbsoluteTimeGetCurrent() }
         let effectiveBlocks = applyLayerTruncation(codeBlocks: codeBlocks, layers: layers)
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("      PROFILE truncation: \(String(format: "%.4f", t - truncStart))s")
+        }
 
         // Group code blocks by (resolutionLevel, componentIndex, subband)
         struct BandKey: Hashable {
@@ -2300,10 +3092,10 @@ struct EncoderPipeline: Sendable {
                 // 4. Data length per ISO 15444-1 B.10.7
                 // Total bits = Lblock + floor(log2(numpasses))
                 let length = block.data.count
-                let passLog = passes > 1 ? Int(log2(Double(passes))) : 0
+                let passLog = passes > 1 ? (Int.bitWidth - passes.leadingZeroBitCount - 1) : 0
                 var lblock = 3
                 var totalBits = lblock + passLog
-                let bitsNeeded = length > 0 ? (Int(log2(Double(length))) + 1) : 1
+                let bitsNeeded = length > 0 ? (Int.bitWidth - length.leadingZeroBitCount) : 1
                 while totalBits < bitsNeeded {
                     writer.writeBit(true)
                     lblock += 1
@@ -2392,5 +3184,118 @@ struct EncoderPipeline: Sendable {
         }
 
         return (clampedExponent, mantissa)
+    }
+}
+
+// MARK: - vDSP-Accelerated Type Conversions
+
+/// Vectorised type conversion helpers using Accelerate/vDSP when available.
+///
+/// These replace scalar `map { Float($0) }` / `map { Int32($0) }` conversions
+/// with vDSP vector operations that are 2–4× faster for large arrays.
+/// Falls back to scalar conversion on non-Apple platforms.
+enum vDSPConvert: Sendable {
+    /// Converts `[Int32]` to `[Float]` using vDSP.
+    @inline(__always)
+    static func int32sToFloats(_ input: [Int32]) -> [Float] {
+        #if canImport(Accelerate)
+        var output = [Float](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vflt32(
+                    UnsafePointer<Int32>(src.baseAddress!), 1,
+                    dst.baseAddress!, 1,
+                    vDSP_Length(input.count)
+                )
+            }
+        }
+        return output
+        #else
+        return input.map { Float($0) }
+        #endif
+    }
+
+    /// Converts `[Double]` to `[Float]` using vDSP.
+    @inline(__always)
+    static func doublesToFloats(_ input: [Double]) -> [Float] {
+        #if canImport(Accelerate)
+        var output = [Float](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vdpsp(src.baseAddress!, 1, dst.baseAddress!, 1, vDSP_Length(input.count))
+            }
+        }
+        return output
+        #else
+        return input.map { Float($0) }
+        #endif
+    }
+
+    /// Converts `[Float]` to `[Double]` using vDSP.
+    @inline(__always)
+    static func floatsToDoubles(_ input: [Float]) -> [Double] {
+        #if canImport(Accelerate)
+        var output = [Double](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vspdp(src.baseAddress!, 1, dst.baseAddress!, 1, vDSP_Length(input.count))
+            }
+        }
+        return output
+        #else
+        return input.map { Double($0) }
+        #endif
+    }
+
+    /// Converts `[Float]` to `[Int32]` with rounding using vDSP.
+    @inline(__always)
+    static func floatsToInt32s(_ input: [Float]) -> [Int32] {
+        #if canImport(Accelerate)
+        var output = [Int32](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vfixr32(src.baseAddress!, 1, dst.baseAddress!, 1, vDSP_Length(input.count))
+            }
+        }
+        return output
+        #else
+        return input.map { Int32($0.rounded()) }
+        #endif
+    }
+
+    /// Converts `[Int32]` to `[Double]` using vDSP.
+    @inline(__always)
+    static func int32sToDoubles(_ input: [Int32]) -> [Double] {
+        #if canImport(Accelerate)
+        var output = [Double](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vflt32D(
+                    UnsafePointer<Int32>(src.baseAddress!), 1,
+                    dst.baseAddress!, 1,
+                    vDSP_Length(input.count)
+                )
+            }
+        }
+        return output
+        #else
+        return input.map { Double($0) }
+        #endif
+    }
+
+    /// Converts `[Double]` to `[Int32]` with rounding using vDSP.
+    @inline(__always)
+    static func doublesToInt32s(_ input: [Double]) -> [Int32] {
+        #if canImport(Accelerate)
+        var output = [Int32](repeating: 0, count: input.count)
+        input.withUnsafeBufferPointer { src in
+            output.withUnsafeMutableBufferPointer { dst in
+                vDSP_vfixr32D(src.baseAddress!, 1, dst.baseAddress!, 1, vDSP_Length(input.count))
+            }
+        }
+        return output
+        #else
+        return input.map { Int32($0.rounded()) }
+        #endif
     }
 }

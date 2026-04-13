@@ -11,6 +11,10 @@
 import Foundation
 import J2KCore
 
+#if canImport(Accelerate)
+import Accelerate
+#endif
+
 /// Colour transform modes supported by JPEG 2000.
 ///
 /// JPEG 2000 supports two types of colour transforms:
@@ -151,20 +155,34 @@ public struct J2KColorTransform: Sendable {
         var cb = [Int32](repeating: 0, count: count)
         var cr = [Int32](repeating: 0, count: count)
 
-        // Apply RCT transform
-        for i in 0..<count {
-            let r = red[i]
-            let g = green[i]
-            let b = blue[i]
+        // SIMD-optimized RCT transform: process 4 pixels at a time
+        let simdCount = count & ~3
+        var i = 0
+        while i < simdCount {
+            let r = SIMD4<Int32>(red[i], red[i+1], red[i+2], red[i+3])
+            let g = SIMD4<Int32>(green[i], green[i+1], green[i+2], green[i+3])
+            let b = SIMD4<Int32>(blue[i], blue[i+1], blue[i+2], blue[i+3])
 
             // Y = ⌊(R + 2G + B) / 4⌋
-            y[i] = (r &+ (g &<< 1) &+ b) >> 2
-
+            let g2: SIMD4<Int32> = g &<< 1
+            let yVal: SIMD4<Int32> = (r &+ g2 &+ b) &>> SIMD4<Int32>(repeating: 2)
             // Cb = B - G
-            cb[i] = b &- g
-
+            let cbVal: SIMD4<Int32> = b &- g
             // Cr = R - G
+            let crVal: SIMD4<Int32> = r &- g
+
+            y[i] = yVal[0]; y[i+1] = yVal[1]; y[i+2] = yVal[2]; y[i+3] = yVal[3]
+            cb[i] = cbVal[0]; cb[i+1] = cbVal[1]; cb[i+2] = cbVal[2]; cb[i+3] = cbVal[3]
+            cr[i] = crVal[0]; cr[i+1] = crVal[1]; cr[i+2] = crVal[2]; cr[i+3] = crVal[3]
+            i += 4
+        }
+        // Handle remaining elements
+        while i < count {
+            let r = red[i]; let g = green[i]; let b = blue[i]
+            y[i] = (r &+ (g &<< 1) &+ b) >> 2
+            cb[i] = b &- g
             cr[i] = r &- g
+            i += 1
         }
 
         return (y, cb, cr)
@@ -202,20 +220,33 @@ public struct J2KColorTransform: Sendable {
         var green = [Int32](repeating: 0, count: count)
         var blue = [Int32](repeating: 0, count: count)
 
-        // Apply inverse RCT transform
-        for i in 0..<count {
-            let yVal = y[i]
-            let cbVal = cb[i]
-            let crVal = cr[i]
+        // SIMD-optimized inverse RCT: process 4 pixels at a time
+        let simdCount = count & ~3
+        var i = 0
+        while i < simdCount {
+            let yV = SIMD4<Int32>(y[i], y[i+1], y[i+2], y[i+3])
+            let cbV = SIMD4<Int32>(cb[i], cb[i+1], cb[i+2], cb[i+3])
+            let crV = SIMD4<Int32>(cr[i], cr[i+1], cr[i+2], cr[i+3])
 
             // G = Y - ⌊(Cb + Cr) / 4⌋
-            green[i] = yVal &- ((cbVal &+ crVal) >> 2)
-
+            let cbcrSum: SIMD4<Int32> = cbV &+ crV
+            let gVal: SIMD4<Int32> = yV &- (cbcrSum &>> SIMD4<Int32>(repeating: 2))
             // R = Cr + G
-            red[i] = crVal &+ green[i]
-
+            let rVal: SIMD4<Int32> = crV &+ gVal
             // B = Cb + G
+            let bVal: SIMD4<Int32> = cbV &+ gVal
+
+            green[i] = gVal[0]; green[i+1] = gVal[1]; green[i+2] = gVal[2]; green[i+3] = gVal[3]
+            red[i] = rVal[0]; red[i+1] = rVal[1]; red[i+2] = rVal[2]; red[i+3] = rVal[3]
+            blue[i] = bVal[0]; blue[i+1] = bVal[1]; blue[i+2] = bVal[2]; blue[i+3] = bVal[3]
+            i += 4
+        }
+        while i < count {
+            let yVal = y[i]; let cbVal = cb[i]; let crVal = cr[i]
+            green[i] = yVal &- ((cbVal &+ crVal) >> 2)
+            red[i] = crVal &+ green[i]
             blue[i] = cbVal &+ green[i]
+            i += 1
         }
 
         return (red, green, blue)
@@ -362,9 +393,6 @@ public struct J2KColorTransform: Sendable {
         }
 
         let count = red.count
-        var y = [Double](repeating: 0, count: count)
-        var cb = [Double](repeating: 0, count: count)
-        var cr = [Double](repeating: 0, count: count)
 
         // ICT coefficients from ISO/IEC 15444-1 Annex G.3
         let coeffY_R: Double = 0.299
@@ -379,15 +407,92 @@ public struct J2KColorTransform: Sendable {
         let coeffCr_G: Double = -0.418688
         let coeffCr_B: Double = -0.081312
 
-        // Apply ICT transform
-        for i in 0..<count {
-            let r = red[i]
-            let g = green[i]
-            let b = blue[i]
+        #if canImport(Accelerate)
+        if count >= 64 {
+            // vDSP-accelerated ICT: Y/Cb/Cr = a*R + b*G + c*B via vector multiply-add
+            var y = [Double](repeating: 0, count: count)
+            var cb = [Double](repeating: 0, count: count)
+            var cr = [Double](repeating: 0, count: count)
+            var temp = [Double](repeating: 0, count: count)
+            let n = vDSP_Length(count)
 
+            // Y = coeffY_R * R
+            var cYR = coeffY_R
+            vDSP_vsmulD(red, 1, &cYR, &y, 1, n)
+            // Y += coeffY_G * G
+            var cYG = coeffY_G
+            vDSP_vsmulD(green, 1, &cYG, &temp, 1, n)
+            vDSP_vaddD(y, 1, temp, 1, &y, 1, n)
+            // Y += coeffY_B * B
+            var cYB = coeffY_B
+            vDSP_vsmulD(blue, 1, &cYB, &temp, 1, n)
+            vDSP_vaddD(y, 1, temp, 1, &y, 1, n)
+
+            // Cb = coeffCb_R * R
+            var cCbR = coeffCb_R
+            vDSP_vsmulD(red, 1, &cCbR, &cb, 1, n)
+            // Cb += coeffCb_G * G
+            var cCbG = coeffCb_G
+            vDSP_vsmulD(green, 1, &cCbG, &temp, 1, n)
+            vDSP_vaddD(cb, 1, temp, 1, &cb, 1, n)
+            // Cb += coeffCb_B * B
+            var cCbB = coeffCb_B
+            vDSP_vsmulD(blue, 1, &cCbB, &temp, 1, n)
+            vDSP_vaddD(cb, 1, temp, 1, &cb, 1, n)
+
+            // Cr = coeffCr_R * R
+            var cCrR = coeffCr_R
+            vDSP_vsmulD(red, 1, &cCrR, &cr, 1, n)
+            // Cr += coeffCr_G * G
+            var cCrG = coeffCr_G
+            vDSP_vsmulD(green, 1, &cCrG, &temp, 1, n)
+            vDSP_vaddD(cr, 1, temp, 1, &cr, 1, n)
+            // Cr += coeffCr_B * B
+            var cCrB = coeffCr_B
+            vDSP_vsmulD(blue, 1, &cCrB, &temp, 1, n)
+            vDSP_vaddD(cr, 1, temp, 1, &cr, 1, n)
+
+            return (y, cb, cr)
+        }
+        #endif
+
+        var y = [Double](repeating: 0, count: count)
+        var cb = [Double](repeating: 0, count: count)
+        var cr = [Double](repeating: 0, count: count)
+
+        // SIMD-optimized ICT: process 4 pixels at a time using SIMD4<Double>
+        let sYR = SIMD4<Double>(repeating: coeffY_R)
+        let sYG = SIMD4<Double>(repeating: coeffY_G)
+        let sYB = SIMD4<Double>(repeating: coeffY_B)
+        let sCbR = SIMD4<Double>(repeating: coeffCb_R)
+        let sCbG = SIMD4<Double>(repeating: coeffCb_G)
+        let sCbB = SIMD4<Double>(repeating: coeffCb_B)
+        let sCrR = SIMD4<Double>(repeating: coeffCr_R)
+        let sCrG = SIMD4<Double>(repeating: coeffCr_G)
+        let sCrB = SIMD4<Double>(repeating: coeffCr_B)
+
+        let simdCount = count & ~3
+        var i = 0
+        while i < simdCount {
+            let r = SIMD4<Double>(red[i], red[i+1], red[i+2], red[i+3])
+            let g = SIMD4<Double>(green[i], green[i+1], green[i+2], green[i+3])
+            let b = SIMD4<Double>(blue[i], blue[i+1], blue[i+2], blue[i+3])
+
+            let yVal = sYR * r + sYG * g + sYB * b
+            let cbVal = sCbR * r + sCbG * g + sCbB * b
+            let crVal = sCrR * r + sCrG * g + sCrB * b
+
+            y[i] = yVal[0]; y[i+1] = yVal[1]; y[i+2] = yVal[2]; y[i+3] = yVal[3]
+            cb[i] = cbVal[0]; cb[i+1] = cbVal[1]; cb[i+2] = cbVal[2]; cb[i+3] = cbVal[3]
+            cr[i] = crVal[0]; cr[i+1] = crVal[1]; cr[i+2] = crVal[2]; cr[i+3] = crVal[3]
+            i += 4
+        }
+        while i < count {
+            let r = red[i]; let g = green[i]; let b = blue[i]
             y[i] = coeffY_R * r + coeffY_G * g + coeffY_B * b
             cb[i] = coeffCb_R * r + coeffCb_G * g + coeffCb_B * b
             cr[i] = coeffCr_R * r + coeffCr_G * g + coeffCr_B * b
+            i += 1
         }
 
         return (y, cb, cr)
@@ -439,15 +544,62 @@ public struct J2KColorTransform: Sendable {
         let coeffG_Cr: Double = -0.714136
         let coeffB_Cb: Double = 1.772
 
-        // Apply inverse ICT transform
-        for i in 0..<count {
-            let yVal = y[i]
-            let cbVal = cb[i]
-            let crVal = cr[i]
+        #if canImport(Accelerate)
+        if count >= 64 {
+            // vDSP-accelerated inverse ICT
+            var temp = [Double](repeating: 0, count: count)
+            let n = vDSP_Length(count)
 
+            // R = Y + 1.402 * Cr
+            var cRCr = coeffR_Cr
+            vDSP_vsmulD(cr, 1, &cRCr, &temp, 1, n)
+            vDSP_vaddD(y, 1, temp, 1, &red, 1, n)
+
+            // G = Y - 0.344136 * Cb - 0.714136 * Cr
+            var cGCb = coeffG_Cb
+            vDSP_vsmulD(cb, 1, &cGCb, &green, 1, n)
+            var cGCr = coeffG_Cr
+            vDSP_vsmulD(cr, 1, &cGCr, &temp, 1, n)
+            vDSP_vaddD(green, 1, temp, 1, &green, 1, n)
+            vDSP_vaddD(y, 1, green, 1, &green, 1, n)
+
+            // B = Y + 1.772 * Cb
+            var cBCb = coeffB_Cb
+            vDSP_vsmulD(cb, 1, &cBCb, &temp, 1, n)
+            vDSP_vaddD(y, 1, temp, 1, &blue, 1, n)
+
+            return (red, green, blue)
+        }
+        #endif
+
+        // SIMD-optimized inverse ICT: process 4 pixels at a time
+        let sRCr = SIMD4<Double>(repeating: coeffR_Cr)
+        let sGCb = SIMD4<Double>(repeating: coeffG_Cb)
+        let sGCr = SIMD4<Double>(repeating: coeffG_Cr)
+        let sBCb = SIMD4<Double>(repeating: coeffB_Cb)
+
+        let simdCount = count & ~3
+        var i = 0
+        while i < simdCount {
+            let yV = SIMD4<Double>(y[i], y[i+1], y[i+2], y[i+3])
+            let cbV = SIMD4<Double>(cb[i], cb[i+1], cb[i+2], cb[i+3])
+            let crV = SIMD4<Double>(cr[i], cr[i+1], cr[i+2], cr[i+3])
+
+            let rVal = yV + sRCr * crV
+            let gVal = yV + sGCb * cbV + sGCr * crV
+            let bVal = yV + sBCb * cbV
+
+            red[i] = rVal[0]; red[i+1] = rVal[1]; red[i+2] = rVal[2]; red[i+3] = rVal[3]
+            green[i] = gVal[0]; green[i+1] = gVal[1]; green[i+2] = gVal[2]; green[i+3] = gVal[3]
+            blue[i] = bVal[0]; blue[i+1] = bVal[1]; blue[i+2] = bVal[2]; blue[i+3] = bVal[3]
+            i += 4
+        }
+        while i < count {
+            let yVal = y[i]; let cbVal = cb[i]; let crVal = cr[i]
             red[i] = yVal + coeffR_Cr * crVal
             green[i] = yVal + coeffG_Cb * cbVal + coeffG_Cr * crVal
             blue[i] = yVal + coeffB_Cb * cbVal
+            i += 1
         }
 
         return (red, green, blue)
