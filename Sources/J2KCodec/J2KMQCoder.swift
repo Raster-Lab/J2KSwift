@@ -136,6 +136,19 @@ let mqStateTable: [MQState] = [
     MQState(qe: 0x5601, nextMPS: 46, nextLPS: 46, switchMPS: false)
 ]
 
+// MARK: - Flat MQ State Arrays (Performance)
+
+/// Flat parallel arrays for the MQ state table.
+///
+/// These avoid struct copies in the critical encode/decode hot paths.
+/// Each array is indexed by state index (0-46). Using `UInt16` for Qe
+/// (upper 16 bits of the 32-bit value are zero) and `UInt8` for indices
+/// maximises L1 cache utilisation.
+let mqQe: [UInt32] = mqStateTable.map { $0.qe }
+let mqNextMPS: [UInt8] = mqStateTable.map { UInt8($0.nextMPS) }
+let mqNextLPS: [UInt8] = mqStateTable.map { UInt8($0.nextLPS) }
+let mqSwitchMPS: [UInt8] = mqStateTable.map { $0.switchMPS ? 1 : 0 }
+
 // MARK: - MQ Context
 
 /// Represents a context used by the MQ-coder.
@@ -203,6 +216,167 @@ struct MQEncoder: Sendable {
     /// This is used by rate control to estimate per-pass byte boundaries
     /// without requiring full MQ termination after each pass.
     var currentByteCount: Int { output.count + (buffer >= 0 ? 1 : 0) }
+
+    /// The raw output bytes emitted so far (before termination).
+    ///
+    /// Returns a copy of the internal output array. Bytes in this array
+    /// are finalized — subsequent encoding never modifies them (carries
+    /// only propagate into the ``buffer`` register).
+    var currentOutput: [UInt8] { output }
+
+    // MARK: - Lightweight Checkpoints
+
+    /// A lightweight snapshot of the MQ encoder state at a coding pass boundary.
+    ///
+    /// Unlike a full encoder copy (which duplicates the entire `output` array),
+    /// a checkpoint stores only the 5 scalar state values needed to reconstruct
+    /// the terminated byte stream later. The `output` array is shared — bytes
+    /// already emitted to `output` are never modified by future encoding
+    /// (carries only propagate into `buffer`, not into `output`).
+    struct Checkpoint: Sendable {
+        let outputCount: Int
+        let a: UInt32
+        let c: UInt32
+        let ct: Int
+        let buffer: Int
+    }
+
+    /// Creates a lightweight checkpoint of the current encoder state.
+    ///
+    /// The checkpoint captures the encoder's register state and the current
+    /// output position. Combined with the final `output` array (shared across
+    /// all checkpoints for a block), this is sufficient to reconstruct the
+    /// exact terminated byte stream at this pass boundary.
+    ///
+    /// This is O(1) compared to O(n) for a full encoder snapshot.
+    func checkpoint() -> Checkpoint {
+        Checkpoint(outputCount: output.count, a: a, c: c, ct: ct, buffer: buffer)
+    }
+
+    /// Reconstructs the terminated byte stream at a checkpoint boundary.
+    ///
+    /// Takes the output bytes up to `checkpoint.outputCount` from the shared
+    /// output array, then applies the MQ termination procedure using the
+    /// saved register state.
+    ///
+    /// - Parameters:
+    ///   - checkpoint: The checkpoint captured at the desired pass boundary.
+    ///   - mode: The termination mode to use.
+    /// - Returns: The exact terminated byte stream at the checkpoint boundary.
+    func finishFromCheckpoint(_ checkpoint: Checkpoint, mode: TerminationMode) -> Data {
+        // Start with the output bytes that were finalized at checkpoint time
+        var prefixOutput = Array(output.prefix(checkpoint.outputCount))
+
+        // Create a minimal encoder with checkpoint state and apply termination
+        var tempC = checkpoint.c
+        var tempA = checkpoint.a
+        var tempCT = checkpoint.ct
+        var tempBuffer = checkpoint.buffer
+
+        // SETBITS procedure (same as finishDefault)
+        let tempCPlusA = tempC &+ UInt32(tempA)
+        tempC = tempC | 0x0000FFFF
+        if tempC >= tempCPlusA {
+            tempC -= 0x8000
+        }
+
+        // BYTEOUT twice
+        tempC <<= tempCT
+        Self.emitByteStatic(c: &tempC, ct: &tempCT, buffer: &tempBuffer, output: &prefixOutput)
+        tempC <<= tempCT
+        Self.emitByteStatic(c: &tempC, ct: &tempCT, buffer: &tempBuffer, output: &prefixOutput)
+
+        // Emit final buffer byte
+        if tempBuffer >= 0 && tempBuffer != 0xFF {
+            prefixOutput.append(UInt8(tempBuffer & 0xFF))
+        }
+
+        // Drop trailing 0xFF
+        while let last = prefixOutput.last, last == 0xFF {
+            prefixOutput.removeLast()
+        }
+
+        return Data(prefixOutput)
+    }
+
+    /// Reconstructs terminated MQ data from a checkpoint and raw output.
+    ///
+    /// This is the cross-module entry point used by the encoder pipeline
+    /// during PCRD truncation. It takes ``MQCheckpointData`` (from J2KCore)
+    /// and the raw MQ output array, and applies the default termination
+    /// procedure to produce the exact byte stream at the checkpoint boundary.
+    ///
+    /// - Parameters:
+    ///   - checkpoint: The checkpoint data from the code block.
+    ///   - rawOutput: The raw MQ output bytes (shared across all checkpoints).
+    /// - Returns: The terminated MQ byte stream at the checkpoint boundary.
+    static func reconstructFromCheckpoint(
+        _ checkpoint: MQCheckpointData,
+        rawOutput: [UInt8]
+    ) -> Data {
+        let count = min(checkpoint.outputCount, rawOutput.count)
+        var prefixOutput = Array(rawOutput.prefix(count))
+
+        var tempC = checkpoint.c
+        var tempA = checkpoint.a
+        var tempCT = checkpoint.ct
+        var tempBuffer = checkpoint.buffer
+
+        // SETBITS
+        let tempCPlusA = tempC &+ UInt32(tempA)
+        tempC = tempC | 0x0000FFFF
+        if tempC >= tempCPlusA {
+            tempC -= 0x8000
+        }
+
+        // BYTEOUT twice
+        tempC <<= tempCT
+        emitByteStatic(c: &tempC, ct: &tempCT, buffer: &tempBuffer, output: &prefixOutput)
+        tempC <<= tempCT
+        emitByteStatic(c: &tempC, ct: &tempCT, buffer: &tempBuffer, output: &prefixOutput)
+
+        if tempBuffer >= 0 && tempBuffer != 0xFF {
+            prefixOutput.append(UInt8(tempBuffer & 0xFF))
+        }
+
+        while let last = prefixOutput.last, last == 0xFF {
+            prefixOutput.removeLast()
+        }
+
+        return Data(prefixOutput)
+    }
+
+    /// Static version of emitByte for checkpoint reconstruction.
+    private static func emitByteStatic(
+        c: inout UInt32, ct: inout Int, buffer: inout Int, output: inout [UInt8]
+    ) {
+        if buffer >= 0 {
+            if buffer == 0xFF {
+                output.append(0xFF)
+                buffer = Int((c >> 20) & 0xFF)
+                c &= 0x000FFFFF
+                ct = 7
+            } else {
+                buffer += Int(c >> 27)
+                c &= 0x07FFFFFF
+                output.append(UInt8(buffer & 0xFF))
+                if buffer == 0xFF {
+                    buffer = Int((c >> 20) & 0xFF)
+                    c &= 0x000FFFFF
+                    ct = 7
+                } else {
+                    buffer = Int((c >> 19) & 0xFF)
+                    c &= 0x0007FFFF
+                    ct = 8
+                }
+            }
+        } else {
+            c &= 0x07FFFFFF
+            buffer = Int((c >> 19) & 0xFF)
+            c &= 0x0007FFFF
+            ct = 8
+        }
+    }
     
     /// Debug operation counter
     var operationCount: Int = 0
@@ -225,6 +399,7 @@ struct MQEncoder: Sendable {
     /// Encodes a binary symbol using the specified context.
     ///
     /// Implements ISO 15444-1 C.2.4 (CODEMPS) and C.2.6 (CODELPS).
+    /// Uses flat state arrays to avoid struct copies in the critical path.
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
         if ebcotTraceEnabled {
@@ -238,8 +413,8 @@ struct MQEncoder: Sendable {
                 )
             }
         }
-        let state = mqStateTable[context.stateIndex]
-        let qe = state.qe
+        let si = context.stateIndex
+        let qe = mqQe[si]
 
         a -= qe
 
@@ -252,7 +427,7 @@ struct MQEncoder: Sendable {
                 } else {
                     c += qe
                 }
-                context.stateIndex = state.nextMPS
+                context.stateIndex = Int(mqNextMPS[si])
                 renormalize()
             } else {
                 c += qe
@@ -265,10 +440,10 @@ struct MQEncoder: Sendable {
             } else {
                 a = qe
             }
-            if state.switchMPS {
+            if mqSwitchMPS[si] != 0 {
                 context.mps.toggle()
             }
-            context.stateIndex = state.nextLPS
+            context.stateIndex = Int(mqNextLPS[si])
             renormalize()
         }
     }
@@ -541,10 +716,11 @@ struct MQDecoder: Sendable {
     /// Decodes a binary symbol using the specified context.
     ///
     /// Implements ISO 15444-1 C.3.2 (DECODE).
+    /// Uses flat state arrays to avoid struct copies in the critical path.
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
-        let state = mqStateTable[context.stateIndex]
-        let qe = state.qe
+        let si = context.stateIndex
+        let qe = mqQe[si]
 
         a -= qe
 
@@ -557,15 +733,15 @@ struct MQDecoder: Sendable {
                 // Conditional exchange — return MPS
                 a = qe
                 symbol = mps
-                context.stateIndex = state.nextMPS
+                context.stateIndex = Int(mqNextMPS[si])
             } else {
                 // Normal LPS
                 a = qe
                 symbol = !mps
-                if state.switchMPS {
+                if mqSwitchMPS[si] != 0 {
                     context.mps.toggle()
                 }
-                context.stateIndex = state.nextLPS
+                context.stateIndex = Int(mqNextLPS[si])
             }
             renormalizeDecoder()
         } else {
@@ -575,14 +751,14 @@ struct MQDecoder: Sendable {
                 if a < qe {
                     // Conditional exchange — return LPS
                     symbol = !mps
-                    if state.switchMPS {
+                    if mqSwitchMPS[si] != 0 {
                         context.mps.toggle()
                     }
-                    context.stateIndex = state.nextLPS
+                    context.stateIndex = Int(mqNextLPS[si])
                 } else {
                     // Normal MPS
                     symbol = mps
-                    context.stateIndex = state.nextMPS
+                    context.stateIndex = Int(mqNextMPS[si])
                 }
                 renormalizeDecoder()
             } else {

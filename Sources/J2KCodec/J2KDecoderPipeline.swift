@@ -640,7 +640,8 @@ struct DecoderPipeline: Sendable {
 
         // Scod — Coding style flags
         let scod = try reader.readUInt8()
-        // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
+        // Bits 3-4: HT set extensions (legacy non-standard; current encoder
+        // no longer sets these, but decode them for backward compatibility).
         let htSetBits = (scod >> 3) & 0x03
         let hasHTSets = htSetBits != 0
 
@@ -1354,6 +1355,11 @@ struct DecoderPipeline: Sendable {
             isIrreversible = false
         }
 
+        // HTJ2K (FBCOT) outputs coefficients at natural scale, while standard
+        // EBCOT uses bpno_plus_one (shifted left by 1) for irreversible 9/7.
+        // The dequantization scale factor must account for this difference.
+        let useHTJ2K = metadata.configuration.useHTJ2K
+
         for info in subbands {
             // QCD keys use resolution-level numbering (1=coarsest, NL=finest),
             // but SubbandInfo.level uses decomposition-level numbering (NL=coarsest, 1=finest).
@@ -1371,16 +1377,24 @@ struct DecoderPipeline: Sendable {
                 // For irreversible 9/7, dequantize to Double to preserve fractional
                 // precision through the inverse DWT. Rounding to Int32 here would
                 // destroy sub-integer information (e.g. step=0.02, q=10 → 0.2 → 0).
-                // EBCOT coefficients use bpno_plus_one scale (shifted left by 1)
-                // to match OPJ's oneplushalf approach, so dequantization applies
-                // ×0.5 to compensate. This ensures that the midpoint at bitPlane=0
-                // (halfBitMask=1) correctly contributes +0.5 after dequantization.
-                let halfStepSize = 0.5 * stepSize
+                //
+                // Standard EBCOT coefficients use bpno_plus_one scale (shifted left
+                // by 1) to match OPJ's oneplushalf approach, so dequantization
+                // applies ×0.5 to compensate. The EBCOT halfBit adds 1 at bit 0,
+                // giving effective dequantization of (2q + 1) × stepSize/2 =
+                // (q + 0.5) × stepSize — the midpoint of the quantization bin.
+                //
+                // HTJ2K (FBCOT) outputs coefficients at natural scale (no shift).
+                // Apply explicit midpoint reconstruction: (q + 0.5) × stepSize,
+                // which centers the value in the quantization bin and minimizes
+                // the expected quantization error (MSE).
+                let effectiveStepSize = useHTJ2K ? stepSize : (0.5 * stepSize)
+                let midpointOffset = useHTJ2K ? (0.5 * stepSize) : 0.0
                 let dequantizedDouble = info.coefficients.map { coeff -> Double in
                     if coeff == 0 { return 0.0 }
                     let sign: Double = coeff > 0 ? 1.0 : -1.0
                     let magnitude = Double(abs(coeff))
-                    return sign * magnitude * halfStepSize
+                    return sign * (magnitude * effectiveStepSize + midpointOffset)
                 }
 
                 result.append(SubbandInfo(

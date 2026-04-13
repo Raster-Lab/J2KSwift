@@ -289,7 +289,7 @@ struct BitPlaneCoder: Sendable {
         coefficients: [Int32],
         bitDepth: Int,
         maxPasses: Int? = nil
-    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double], perPassSnapshotData: [Data]) {
+    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double], perPassSnapshotData: [Data], mqCheckpoints: [MQCheckpointData], rawMQOutput: [UInt8]) {
         guard coefficients.count == width * height else {
             throw J2KError.invalidParameter("Coefficient count mismatch")
         }
@@ -321,11 +321,13 @@ struct BitPlaneCoder: Sendable {
         // In non-per-pass mode, we use the MQ encoder's approximate byte position.
         var cumulativePassBytes: [Int] = []
 
-        // Per-pass terminated MQ data for correct truncation.
-        // Each entry is a properly terminated copy of the MQ byte stream
-        // at that pass boundary, avoiding carry-corrupted prefixes of
-        // the final stream.
-        var perPassSnapshotData: [Data] = []
+        // Lightweight MQ encoder checkpoints for correct truncation.
+        // Each checkpoint stores only the encoder register state (5 scalars)
+        // at the pass boundary. The output array is shared — bytes already
+        // emitted are never modified by future encoding (carries only
+        // propagate into the buffer register). Terminated data is
+        // reconstructed on-demand via finishFromCheckpoint().
+        var perPassCheckpoints: [MQEncoder.Checkpoint] = []
 
         // Per-pass actual distortion tracking for accurate PCRD.
         // cumulativeDistReduction[i] = total squared-error reduction achieved
@@ -390,14 +392,14 @@ struct BitPlaneCoder: Sendable {
                     runningSegmentTotal += passData.count
                     cumulativePassBytes.append(runningSegmentTotal)
                 } else {
-                    // Snapshot the MQ encoder to get exact byte count at this
-                    // truncation point. MQEncoder is a value type so the copy
-                    // is independent; finishing the snapshot doesn't affect
-                    // the live encoder.
-                    var snapshot = encoder
-                    let snapshotData = snapshot.finish(mode: options.terminationMode)
-                    cumulativePassBytes.append(snapshotData.count)
-                    perPassSnapshotData.append(snapshotData)
+                    // Save a lightweight checkpoint (5 scalars) instead of
+                    // copying the entire MQ output array. The terminated byte
+                    // count is estimated as output.count + buffer + termination
+                    // overhead (~3 bytes). Exact data is reconstructed
+                    // on-demand via finishFromCheckpoint() during truncation.
+                    let cp = encoder.checkpoint()
+                    cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
+                    perPassCheckpoints.append(cp)
                 }
                 // Distortion: newly significant coefficients from SPP
                 let sppDelta = computeNewSignificanceDistortion(
@@ -462,10 +464,9 @@ struct BitPlaneCoder: Sendable {
                         runningSegmentTotal += passData.count
                         cumulativePassBytes.append(runningSegmentTotal)
                     } else {
-                        var snapshot = encoder
-                        let snapshotData = snapshot.finish(mode: options.terminationMode)
-                        cumulativePassBytes.append(snapshotData.count)
-                        perPassSnapshotData.append(snapshotData)
+                        let cp = encoder.checkpoint()
+                        cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
+                        perPassCheckpoints.append(cp)
                     }
                     // Distortion: refined coefficients from MRP
                     let mrpDelta2 = computeRefinementDistortion(
@@ -516,10 +517,9 @@ struct BitPlaneCoder: Sendable {
                     runningSegmentTotal += passData.count
                     cumulativePassBytes.append(runningSegmentTotal)
                 } else {
-                    var snapshot = encoder
-                    let snapshotData = snapshot.finish(mode: options.terminationMode)
-                    cumulativePassBytes.append(snapshotData.count)
-                    perPassSnapshotData.append(snapshotData)
+                    let cp = encoder.checkpoint()
+                    cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
+                    perPassCheckpoints.append(cp)
                 }
                 // Distortion: newly significant coefficients from CUP
                 let cupDelta = computeNewSignificanceDistortion(
@@ -542,6 +542,9 @@ struct BitPlaneCoder: Sendable {
         // Finish encoding
         let encodedData: Data
         var segmentLengths: [Int] = []
+        // Save raw MQ output before termination for checkpoint reconstruction.
+        // In per-pass mode, checkpoints are not used (segments are self-contained).
+        let rawOutput: [UInt8]
         if usePerPassSegments {
             // Concatenate all pass data segments
             var combinedData = Data()
@@ -550,23 +553,29 @@ struct BitPlaneCoder: Sendable {
                 combinedData.append(segment)
             }
             encodedData = combinedData
+            rawOutput = []
         } else {
+            // Save raw output before termination modifies the encoder
+            rawOutput = encoder.currentOutput
             // Single termination at the end
             encodedData = encoder.finish(mode: options.terminationMode)
-            // Snapshot-based byte estimation already gives exact truncation
-            // sizes (each pass snapshot terminates a copy of the MQ encoder),
-            // so no rescaling is needed. Just clamp the last entry to the
-            // actual final size for safety.
+            // Checkpoint-based byte estimation uses outputCount + overhead.
+            // Clamp the last entry to the actual final size for safety.
             if let last = cumulativePassBytes.indices.last {
                 cumulativePassBytes[last] = encodedData.count
             }
+        }
+
+        // Convert internal checkpoints to cross-module MQCheckpointData
+        let checkpointData = perPassCheckpoints.map { cp in
+            MQCheckpointData(outputCount: cp.outputCount, a: cp.a, c: cp.c, ct: cp.ct, buffer: cp.buffer)
         }
 
         if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
             print("EBCOT_RESULT: passCount=\(passCount) dataBytes=\(encodedData.count) zbp=\(zeroBitPlanes)")
         }
 
-        return (encodedData, passCount, zeroBitPlanes, segmentLengths, cumulativePassBytes, cumulativePassDistortion, perPassSnapshotData)
+        return (encodedData, passCount, zeroBitPlanes, segmentLengths, cumulativePassBytes, cumulativePassDistortion, [], checkpointData, rawOutput)
     }
 
     /// Separates coefficients into magnitudes and signs.
@@ -2019,7 +2028,7 @@ struct CodeBlockEncoder: Sendable {
         options: CodingOptions
     ) throws -> J2KCodeBlock {
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion, perPassSnapshotData) = try coder.encode(
+        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion, perPassSnapshotData, mqCheckpoints, rawMQOutput) = try coder.encode(
             coefficients: coefficients,
             bitDepth: bitDepth
         )
@@ -2037,7 +2046,9 @@ struct CodeBlockEncoder: Sendable {
             passSegmentLengths: passSegmentLengths,
             cumulativePassBytes: cumulativePassBytes,
             cumulativePassDistortion: cumulativePassDistortion,
-            perPassSnapshotData: perPassSnapshotData
+            perPassSnapshotData: perPassSnapshotData,
+            mqCheckpoints: mqCheckpoints,
+            rawMQOutput: rawMQOutput
         )
     }
 }

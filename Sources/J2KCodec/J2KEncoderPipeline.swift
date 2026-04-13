@@ -1803,7 +1803,9 @@ struct EncoderPipeline: Sendable {
                     coefficientSquaredSum: pending.coefficientSquaredSum,
                     bitPlanePopulation: pending.bitPlanePopulation,
                     cumulativePassDistortion: codeBlock.cumulativePassDistortion,
-                    perPassSnapshotData: codeBlock.perPassSnapshotData
+                    perPassSnapshotData: codeBlock.perPassSnapshotData,
+                    mqCheckpoints: codeBlock.mqCheckpoints,
+                    rawMQOutput: codeBlock.rawMQOutput
                 )
 
                 results.append(codeBlock)
@@ -1907,7 +1909,9 @@ struct EncoderPipeline: Sendable {
                             coefficientSquaredSum: pending.coefficientSquaredSum,
                             bitPlanePopulation: pending.bitPlanePopulation,
                             cumulativePassDistortion: codeBlock.cumulativePassDistortion,
-                            perPassSnapshotData: codeBlock.perPassSnapshotData
+                            perPassSnapshotData: codeBlock.perPassSnapshotData,
+                            mqCheckpoints: codeBlock.mqCheckpoints,
+                            rawMQOutput: codeBlock.rawMQOutput
                         )
 
                         localResults.append((pending.index, codeBlock))
@@ -2010,21 +2014,8 @@ struct EncoderPipeline: Sendable {
         if config.lossless {
             maxRefinementPlanes = topBitPlane  // encode all
         } else {
-            let effectiveBpp: Double
-            switch config.bitrateMode {
-            case .constantBitrate(let bpp):
-                effectiveBpp = bpp
-            case .constantQuality:
-                // Map quality 0..1 to approximate bpp: q=0.9→~1.2, q=0.5→~0.3
-                effectiveBpp = max(0.1, config.quality * 1.5)
-            case .variableBitrate(_, let maxBpp):
-                effectiveBpp = maxBpp
-            case .lossless:
-                effectiveBpp = Double(pending.bitDepth)
-            }
-            // Allow more refinement planes for higher bitrates
-            let skip = effectiveBpp >= 2.0 ? 0 : (effectiveBpp >= 1.0 ? 2 : 4)
-            maxRefinementPlanes = max(1, topBitPlane - skip)
+            // Generate all refinement planes and let PCRD handle truncation.
+            maxRefinementPlanes = topBitPlane
         }
 
         let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
@@ -2163,19 +2154,8 @@ struct EncoderPipeline: Sendable {
         if config.lossless {
             maxRefinementPlanes = topBitPlane
         } else {
-            let effectiveBpp: Double
-            switch config.bitrateMode {
-            case .constantBitrate(let bpp):
-                effectiveBpp = bpp
-            case .constantQuality:
-                effectiveBpp = max(0.1, config.quality * 1.5)
-            case .variableBitrate(_, let maxBpp):
-                effectiveBpp = maxBpp
-            case .lossless:
-                effectiveBpp = Double(pending.bitDepth)
-            }
-            let skip = effectiveBpp >= 2.0 ? 0 : (effectiveBpp >= 1.0 ? 2 : 4)
-            maxRefinementPlanes = max(1, topBitPlane - skip)
+            // Generate all refinement planes and let PCRD handle truncation.
+            maxRefinementPlanes = topBitPlane
         }
 
         let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
@@ -2188,11 +2168,43 @@ struct EncoderPipeline: Sendable {
         var passSegmentLengths = [cleanupBlock.codedData.count]
         var cumulativePassBytes = [cleanupBlock.codedData.count]
 
+        // --- Actual per-pass distortion tracking for HTJ2K ---
+        // Track per-coefficient reconstruction to compute accurate R-D slopes.
+        // The cleanup pass gives EXACT magnitudes for significant coefficients
+        // (all bits via MagSgn), unlike standard EBCOT which only gives the MSB.
+        // SigProp-discovered coefficients start with just their significance bit
+        // and are refined by subsequent MagRef passes.
+        var cumulativePassDistortion: [Double]
+        // Per-coefficient reconstruction magnitude (absolute value).
+        // Cleanup-significant: exact magnitude (all bits known).
+        // SigProp-significant: only the significance bit initially, refined by MagRef.
+        var reconMag: [Int32]?
+        if !config.lossless {
+            reconMag = [Int32](repeating: 0, count: count)
+            // After cleanup: significant coefficients have exact values
+            var distReduction: Double = 0
+            for i in 0..<count {
+                let original = Double(pending.coefficients[i])
+                if (sigPacked[i >> 6] >> (i & 63)) & 1 != 0 {
+                    // Significant: reconstructed = original (exact from cleanup)
+                    reconMag![i] = abs(pending.coefficients[i])
+                    distReduction += original * original  // error went from original² to 0
+                }
+            }
+            cumulativePassDistortion = [distReduction]
+        } else {
+            reconMag = nil
+            cumulativePassDistortion = []
+        }
+
         let maxRefBytes = max(4, (count * 2 + 7) / 8)
         for bp in stride(from: topBitPlane - 1, through: lowestRefinementPlane, by: -1) {
             // Reset writers for this bit-plane (reuses existing buffer allocation)
             sigPropWriter.reset(capacity: maxRefBytes)
             magRefWriter.reset(capacity: maxRefBytes)
+
+            // Save pre-SigProp significance for distortion tracking
+            let preSigPacked = sigPacked
 
             let (sigPropBytes, magRefBytes) = htEncoder.encodeFusedRefinementReusing(
                 coefficients: pending.coefficients,
@@ -2208,9 +2220,58 @@ struct EncoderPipeline: Sendable {
             passSegmentLengths.append(sigPropBytes)
             cumulativePassBytes.append(allPassData.count - magRefBytes)
 
+            // SigProp distortion: newly significant coefficients at this bit plane
+            // get reconstruction = sign*(1 << bp), reducing their error.
+            if !config.lossless {
+                var distReduction = cumulativePassDistortion.last ?? 0
+                let sigBitVal = Int32(1 << bp)
+                for i in 0..<count {
+                    let wasSignificant = (preSigPacked[i >> 6] >> (i & 63)) & 1 != 0
+                    let isSignificant = (sigPacked[i >> 6] >> (i & 63)) & 1 != 0
+                    if isSignificant && !wasSignificant {
+                        let original = Double(pending.coefficients[i])
+                        let recon = Double(pending.coefficients[i] >= 0 ? sigBitVal : -sigBitVal)
+                        distReduction += original * original - (original - recon) * (original - recon)
+                        reconMag![i] = sigBitVal
+                    }
+                }
+                cumulativePassDistortion.append(distReduction)
+            }
+
             totalPasses += 1
             passSegmentLengths.append(magRefBytes)
             cumulativePassBytes.append(allPassData.count)
+
+            // MagRef distortion: for pre-SigProp significant coefficients, MagRef
+            // refines bit `bp`. Cleanup-significant coefficients already have exact
+            // values (all bits from MagSgn), so their MagRef is redundant (0 change).
+            // SigProp-significant coefficients from HIGHER planes get bit `bp` added,
+            // improving their reconstruction.
+            if !config.lossless {
+                var distReduction = cumulativePassDistortion.last ?? 0
+                let bpBit = Int32(1 << bp)
+                for i in 0..<count {
+                    let wasPreSigProp = (preSigPacked[i >> 6] >> (i & 63)) & 1 != 0
+                    guard wasPreSigProp else { continue }
+                    let origMag = abs(pending.coefficients[i])
+                    let oldRecon = reconMag![i]
+                    // If reconstruction already equals the original (cleanup-significant
+                    // coefficients), MagRef adds nothing.
+                    if oldRecon == origMag { continue }
+                    // MagRef reveals bit `bp` of the magnitude
+                    let bit = (origMag >> bp) & 1
+                    let newRecon = bit != 0 ? (oldRecon | bpBit) : oldRecon
+                    if newRecon != oldRecon {
+                        let original = Double(pending.coefficients[i])
+                        let sign: Double = pending.coefficients[i] >= 0 ? 1.0 : -1.0
+                        let oldErr = original - sign * Double(oldRecon)
+                        let newErr = original - sign * Double(newRecon)
+                        distReduction += oldErr * oldErr - newErr * newErr
+                        reconMag![i] = newRecon
+                    }
+                }
+                cumulativePassDistortion.append(distReduction)
+            }
         }
 
         let zeroBitPlanes = max(0, pending.bitDepth - topBitPlane - 1)
@@ -2230,7 +2291,8 @@ struct EncoderPipeline: Sendable {
             passSegmentLengths: passSegmentLengths,
             cumulativePassBytes: cumulativePassBytes,
             coefficientSquaredSum: pending.coefficientSquaredSum,
-            bitPlanePopulation: pending.bitPlanePopulation
+            bitPlanePopulation: pending.bitPlanePopulation,
+            cumulativePassDistortion: cumulativePassDistortion
         )
     }
 
@@ -2305,24 +2367,28 @@ struct EncoderPipeline: Sendable {
         }
 
         let rateConfig: RateControlConfiguration
+        let ppbp = config.useHTJ2K ? 2 : 3
         switch config.bitrateMode {
         case .constantBitrate(let bpp):
             rateConfig = RateControlConfiguration(
                 mode: .targetBitrate(bpp),
                 layerCount: config.qualityLayers,
-                useReversibleFilter: config.useReversibleFilter
+                useReversibleFilter: config.useReversibleFilter,
+                passesPerBitPlane: ppbp
             )
         case .constantQuality:
             rateConfig = RateControlConfiguration(
                 mode: .constantQuality(max(0.0, min(1.0, config.quality))),
                 layerCount: config.qualityLayers,
-                useReversibleFilter: config.useReversibleFilter
+                useReversibleFilter: config.useReversibleFilter,
+                passesPerBitPlane: ppbp
             )
         case .variableBitrate(_, let maxBpp):
             rateConfig = RateControlConfiguration(
                 mode: .targetBitrate(maxBpp),
                 layerCount: config.qualityLayers,
-                useReversibleFilter: config.useReversibleFilter
+                useReversibleFilter: config.useReversibleFilter,
+                passesPerBitPlane: ppbp
             )
         case .lossless:
             rateConfig = .lossless
@@ -2445,17 +2511,10 @@ struct EncoderPipeline: Sendable {
         let pcap: UInt32 = 0x00020000
         segment.writeUInt32(pcap)
 
-        // Ccap (2 bytes per capability pair)
-        // First capability: HT block coding support
-        // Bit 5 (0x0020) indicates HT block coding is supported
-        let ccap1: UInt16 = 0x0020
-
-        // Second capability: Mixed mode support
-        // Bit 6 (0x0040) indicates mixed legacy/HT mode is supported
-        let ccap2: UInt16 = 0x0040
-
-        segment.writeUInt16(ccap1)
-        segment.writeUInt16(ccap2)
+        // Ccap15 (2 bytes): one word per set Pcap bit.
+        // Bit 5 (0x0020) indicates HT block coding (Part 15).
+        let ccap15: UInt16 = 0x0020
+        segment.writeUInt16(ccap15)
 
         writer.writeMarkerSegment(J2KMarker.cap.rawValue, segmentData: segment.data)
     }
@@ -2486,10 +2545,11 @@ struct EncoderPipeline: Sendable {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
-        var scod: UInt8 = 0
-        if config.useHTJ2K {
-            scod |= 0x08
-        }
+        // Bit 0: Default precinct sizes specified
+        // Bit 1: SOP markers
+        // Bit 2: EPH markers
+        // Bits 3-7: reserved (must be 0)
+        let scod: UInt8 = 0
         segment.writeUInt8(scod)
 
         // SGcod — Progression order: always LRCP (0) for compatibility
@@ -2531,19 +2591,6 @@ struct EncoderPipeline: Sendable {
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
-
-        // HT set parameters (ISO/IEC 15444-15) — only when bits 3-4 of Scod are non-zero
-        if config.useHTJ2K {
-            // For HT set A (default), write the HT set configuration byte
-            // Bits 0-3: Reserved (set to 0)
-            // Bit 4: Lossless flag (0 = lossy, 1 = lossless)
-            // Bits 5-7: Reserved (set to 0)
-            var htSetConfig: UInt8 = 0
-            if config.lossless {
-                htSetConfig |= 0x10 // Set bit 4 for lossless mode
-            }
-            segment.writeUInt8(htSetConfig)
-        }
 
         writer.writeMarkerSegment(J2KMarker.cod.rawValue, segmentData: segment.data)
     }
@@ -2795,12 +2842,15 @@ struct EncoderPipeline: Sendable {
                     return block
                 }
 
-                // Use the properly terminated snapshot data if available.
-                // A prefix of the final MQ stream may contain carry-corrupted
-                // bytes from later passes, causing decoders to misinterpret
-                // the truncated data.
+                // Reconstruct the properly terminated data at the truncation
+                // point. Prefer lightweight checkpoint reconstruction (O(1)
+                // per block) over stored snapshot data.
                 let truncatedData: Data
-                if !block.perPassSnapshotData.isEmpty && maxPasses <= block.perPassSnapshotData.count {
+                if !block.mqCheckpoints.isEmpty && maxPasses <= block.mqCheckpoints.count {
+                    // Reconstruct from checkpoint + shared raw MQ output
+                    let cp = block.mqCheckpoints[maxPasses - 1]
+                    truncatedData = MQEncoder.reconstructFromCheckpoint(cp, rawOutput: block.rawMQOutput)
+                } else if !block.perPassSnapshotData.isEmpty && maxPasses <= block.perPassSnapshotData.count {
                     truncatedData = block.perPassSnapshotData[maxPasses - 1]
                 } else {
                     let truncatedLength: Int

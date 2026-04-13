@@ -141,6 +141,15 @@ public struct RateControlConfiguration: Sendable {
     /// step sizes already incorporate the norms, so weighting is not applied.
     public let useReversibleFilter: Bool
 
+    /// Number of coding passes per bit-plane in the entropy coder.
+    ///
+    /// Standard JPEG 2000 (EBCOT) uses 3 passes per bit-plane:
+    /// significance propagation, magnitude refinement, and cleanup.
+    /// HTJ2K uses 1 cleanup pass (first bit-plane only) then 2 passes
+    /// per refinement bit-plane (SigProp + MagRef), so `passesPerBitPlane = 2`
+    /// with the first coded plane using only 1 pass.
+    public let passesPerBitPlane: Int
+
     /// Creates a new rate control configuration.
     ///
     /// - Parameters:
@@ -158,7 +167,8 @@ public struct RateControlConfiguration: Sendable {
         distortionEstimation: DistortionEstimationMethod = .normBased,
         mctConfiguration: J2KMCTEncodingConfiguration? = nil,
         componentCount: Int = 3,
-        useReversibleFilter: Bool = true
+        useReversibleFilter: Bool = true,
+        passesPerBitPlane: Int = 3
     ) {
         self.mode = mode
         self.layerCount = layerCount
@@ -167,6 +177,7 @@ public struct RateControlConfiguration: Sendable {
         self.mctConfiguration = mctConfiguration
         self.componentCount = componentCount
         self.useReversibleFilter = useReversibleFilter
+        self.passesPerBitPlane = passesPerBitPlane
     }
 
     /// Creates a configuration for lossless encoding.
@@ -601,10 +612,21 @@ public struct J2KRateControl: Sendable {
         }
 
         // Fallback: generic exponential model
-        // Each 3 coding passes ≈ 1 bit plane
+        // Standard JPEG 2000: 3 coding passes per bit-plane (SPP, MagRef, Cleanup)
+        // HTJ2K: 1 cleanup pass + 2 passes per refinement bit-plane (SigProp, MagRef)
         // Each bit plane reduces distortion by factor of 4
-        let codedPlanes = (passNumber + 1) / 3
-        let codedPlanesRemainder = (passNumber + 1) % 3
+        let ppbp = configuration.passesPerBitPlane
+        let codedPlanes: Int
+        let codedPlanesRemainder: Int
+        if ppbp == 2 {
+            // HTJ2K: pass 0 = cleanup (1 plane), then 2 passes per additional plane
+            codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+            codedPlanesRemainder = passNumber == 0 ? 0 : passNumber % 2
+        } else {
+            // Standard: 3 passes per plane
+            codedPlanes = (passNumber + 1) / 3
+            codedPlanesRemainder = (passNumber + 1) % 3
+        }
         let intReduction = Self.pow4Table[min(codedPlanes, 31)]
         // Fractional sub-plane: approximate 4^(r/3) with linear interpolation
         let fracFactor = codedPlanesRemainder == 0 ? 1.0
@@ -639,7 +661,13 @@ public struct J2KRateControl: Sendable {
     ) -> Double {
         let numBitPlanes = population.count
         guard numBitPlanes > 0 else {
-            let codedPlanes = (passNumber + 1) / 3
+            let ppbp = configuration.passesPerBitPlane
+            let codedPlanes: Int
+            if ppbp == 2 {
+                codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+            } else {
+                codedPlanes = (passNumber + 1) / 3
+            }
             return initialDistortion / Self.pow4Table[min(codedPlanes, 31)]
         }
 
@@ -651,8 +679,16 @@ public struct J2KRateControl: Sendable {
             return 0.0
         }
 
-        // Number of bit planes coded so far (3 passes per plane, fractional allowed)
-        let codedPlanes = Int((passNumber + 1) / 3)
+        // Number of bit planes coded so far.
+        // Standard JPEG 2000: 3 passes per plane.
+        // HTJ2K: 1 cleanup pass + 2 passes per refinement plane.
+        let ppbp = configuration.passesPerBitPlane
+        let codedPlanes: Int
+        if ppbp == 2 {
+            codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+        } else {
+            codedPlanes = Int((passNumber + 1) / 3)
+        }
         let lowestCodedPlane = max(0, topCodedPlane - codedPlanes + 1)
 
         var remainingDistortion = 0.0

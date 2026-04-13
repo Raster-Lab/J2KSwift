@@ -1200,7 +1200,10 @@ struct HTBlockEncoder: Sendable {
                                 let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
 
                                 if isSignificant {
-                                    magBits |= Int((magBase[idx] >> bp32) & 1) << magCount
+                                    // Pack MSB-first: shift left and OR in new bit so
+                                    // row-0's bit occupies the MSB, matching the
+                                    // MSB-first emission order of emitBits.
+                                    magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
                                     magCount += 1
                                 } else {
                                     let bit = Int((magBase[idx] >> bp32) & 1)
@@ -1669,6 +1672,7 @@ struct HTBlockDecoder: Sendable {
 
         let cleanupLen = HTStreamHeader.size + header.melLen + header.magsgnLen + header.vlcLen
         let cleanupEnd = min(data.startIndex + cleanupLen, data.endIndex)
+
         let cleanupData = Data(data[data.startIndex..<cleanupEnd])
 
         let block = HTEncodedBlock(
