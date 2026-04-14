@@ -75,9 +75,20 @@ enum HTCodingPassType: Sendable, Equatable {
 ///
 /// Pre-allocates the output buffer to worst-case size, eliminating dynamic
 /// array growth during encoding.
-struct HTFastBitWriter: Sendable {
-    /// Pre-allocated output buffer.
-    private var buffer: [UInt8]
+///
+/// Uses `UnsafeMutableRawPointer` for direct memory access, eliminating
+/// Swift Array bounds-check overhead. The 32-bit flush compiles to a
+/// single ARM64 `STR W` + `REV W` instead of 4 separate `STRB` stores.
+struct HTFastBitWriter: @unchecked Sendable {
+    // @unchecked Sendable: buffer is exclusively owned by this value type —
+    // no shared mutable state. UnsafeMutableRawPointer is not Sendable but
+    // the struct has value semantics (copied on assignment).
+
+    /// Raw output buffer (unmanaged heap allocation).
+    private var buffer: UnsafeMutableRawPointer
+
+    /// Allocated capacity of the buffer in bytes.
+    private var bufferCapacity: Int
 
     /// Current write position in the buffer.
     private var pos: Int = 0
@@ -85,14 +96,18 @@ struct HTFastBitWriter: Sendable {
     /// 64-bit bit accumulator — bits are packed MSB-first from bit 63 down.
     private var accum: UInt64 = 0
 
-    /// Number of valid bits in the accumulator (0..56).
+    /// Number of valid bits in the accumulator (0..63).
     private var bits: Int = 0
 
     /// Creates a fast bit writer with a pre-allocated buffer.
     ///
     /// - Parameter capacity: Maximum number of bytes the output can contain.
+    ///   Four extra bytes are allocated to allow safe 32-bit word writes
+    ///   near the end of the buffer without bounds-check overhead.
     init(capacity: Int) {
-        buffer = [UInt8](repeating: 0, count: capacity)
+        bufferCapacity = capacity + 4
+        buffer = .allocate(byteCount: bufferCapacity, alignment: 4)
+        buffer.initializeMemory(as: UInt8.self, repeating: 0, count: bufferCapacity)
     }
 
     /// Emits 1 to 32 bits from the MSB side of `value`.
@@ -105,42 +120,44 @@ struct HTFastBitWriter: Sendable {
         // Shift value into the top of accum, just below existing bits
         accum |= UInt64(value & ((1 << count) - 1)) << (64 - bits - count)
         bits += count
-        // Flush complete bytes when accumulator has ≥ 8 bits
-        while bits >= 8 {
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
-            pos += 1
-            accum <<= 8
-            bits -= 8
+        // Flush 4 bytes at once when accumulator has ≥ 32 bits.
+        // Buffer is allocated with +4 padding so this is always safe.
+        if bits >= 32 {
+            // Single 32-bit big-endian store (ARM64: REV W + STR W)
+            buffer.storeBytes(
+                of: UInt32(accum >> 32).bigEndian,
+                toByteOffset: pos, as: UInt32.self
+            )
+            pos += 4
+            accum <<= 32
+            bits -= 32
         }
     }
 
     /// Emits a single bit.
     @inline(__always)
     mutating func emitBit(_ bit: Int) {
-        accum |= UInt64(bit & 1) << (63 - bits)
-        bits += 1
-        if bits >= 8 {
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
-            pos += 1
-            accum <<= 8
-            bits -= 8
-        }
+        emitBits(bit, count: 1)
     }
 
     /// Flushes any remaining bits (zero-padded) and returns the output as Data.
     mutating func flush() -> Data {
-        if bits > 0 {
-            // Pad to byte boundary
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
+        // Drain all complete and partial bytes from the accumulator.
+        // With 32-bit flush in emitBits, up to 31 bits may remain.
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
             pos += 1
-            accum = 0
-            bits = 0
+            accum <<= 8
+            bits -= 8
         }
-        return Data(buffer[0..<pos])
+        bits = 0
+        accum = 0
+        return Data(bytes: buffer, count: pos)
     }
 
-    /// Returns the number of bytes written so far (excluding partial byte).
-    var byteCount: Int { pos + (bits > 0 ? 1 : 0) }
+    /// Returns the number of bytes written so far (including partial bytes in accumulator).
+    var byteCount: Int { pos + (bits > 0 ? (bits + 7) / 8 : 0) }
 
     /// Resets the writer for reuse without reallocating the buffer.
     ///
@@ -151,8 +168,12 @@ struct HTFastBitWriter: Sendable {
     /// - Parameter capacity: The minimum buffer capacity needed.
     @inline(__always)
     mutating func reset(capacity: Int) {
-        if buffer.count < capacity {
-            buffer = [UInt8](repeating: 0, count: capacity)
+        let needed = capacity + 4
+        if bufferCapacity < needed {
+            buffer.deallocate()
+            bufferCapacity = needed
+            buffer = .allocate(byteCount: needed, alignment: 4)
+            buffer.initializeMemory(as: UInt8.self, repeating: 0, count: needed)
         }
         pos = 0
         accum = 0
@@ -170,15 +191,16 @@ struct HTFastBitWriter: Sendable {
     @inline(__always)
     @discardableResult
     mutating func flushTo(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
-        if bits > 0 {
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
             pos += 1
-            accum = 0
-            bits = 0
+            accum <<= 8
+            bits -= 8
         }
-        buffer.withUnsafeBufferPointer { src in
-            dest.update(from: src.baseAddress!, count: pos)
-        }
+        bits = 0
+        accum = 0
+        dest.update(from: buffer.assumingMemoryBound(to: UInt8.self), count: pos)
         return pos
     }
 
@@ -191,17 +213,18 @@ struct HTFastBitWriter: Sendable {
     @inline(__always)
     @discardableResult
     mutating func flushToReversed(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
-        if bits > 0 {
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
             pos += 1
-            accum = 0
-            bits = 0
+            accum <<= 8
+            bits -= 8
         }
-        buffer.withUnsafeBufferPointer { src in
-            guard let base = src.baseAddress else { return }
-            for i in 0..<pos {
-                dest[i] = base[pos - 1 - i]
-            }
+        bits = 0
+        accum = 0
+        let base = buffer.assumingMemoryBound(to: UInt8.self)
+        for i in 0..<pos {
+            dest[i] = base[pos - 1 - i]
         }
         return pos
     }
@@ -216,15 +239,16 @@ struct HTFastBitWriter: Sendable {
     @inline(__always)
     @discardableResult
     mutating func flushAppending(to data: inout Data) -> Int {
-        if bits > 0 {
-            buffer[pos] = UInt8((accum >> 56) & 0xFF)
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
             pos += 1
-            accum = 0
-            bits = 0
+            accum <<= 8
+            bits -= 8
         }
-        buffer.withUnsafeBufferPointer { ptr in
-            data.append(ptr.baseAddress!, count: pos)
-        }
+        bits = 0
+        accum = 0
+        data.append(buffer.assumingMemoryBound(to: UInt8.self), count: pos)
         return pos
     }
 }
@@ -687,6 +711,8 @@ struct HTBlockEncoder: Sendable {
                       let mag = magPtr.baseAddress else { return }
 
                 let simdCount = count / 4
+                let bpVec = SIMD4<Int32>(repeating: bp32)
+                let oneVec = SIMD4<Int32>(repeating: 1)
 
                 for i in 0..<simdCount {
                     let offset = i &* 4
@@ -704,14 +730,15 @@ struct HTBlockEncoder: Sendable {
                     mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
                     mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
 
-                    // Pack significance into UInt64 bitfield
-                    let shifted = absV &>> SIMD4<Int32>(repeating: bp32)
-                    let masked = shifted & SIMD4<Int32>(repeating: 1)
-                    for lane in 0..<4 {
-                        if masked[lane] != 0 {
-                            let idx = offset + lane
-                            sigPacked[idx >> 6] |= 1 << (idx & 63)
-                        }
+                    // Branchless significance: build 4-bit mask and deposit
+                    let masked = (absV &>> bpVec) & oneVec
+                    let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                              | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                    let shift = offset & 63
+                    sigPacked[offset >> 6] |= mask4 << shift
+                    // Handle cross-word boundary (when shift > 60)
+                    if shift > 60 {
+                        sigPacked[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
                     }
                 }
 
@@ -744,7 +771,11 @@ struct HTBlockEncoder: Sendable {
         // Uses unsafe pointer access to eliminate bounds checking in the hot loop.
         // Sign bits are read directly from the coefficient array, avoiding the
         // separate signBits array allocation.
+        // Full column pairs are separated from the odd-width last column
+        // to eliminate the pairWidth branch from the hot loop.
         let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
         sigPacked.withUnsafeBufferPointer { sigPtr in
             absMags.withUnsafeBufferPointer { magPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
@@ -753,25 +784,21 @@ struct HTBlockEncoder: Sendable {
                     let coefBase = coefPtr.baseAddress!
 
                     for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        for col in stride(from: 0, to: width, by: 2) {
-                            let pairWidth = min(2, width - col)
+                        let stripeY = stripe &* 4
+                        let stripeHeight = min(4, height &- stripeY)
 
+                        // Fast path: full column pairs — no pairWidth branch
+                        for pairIdx in 0..<fullPairs {
+                            let col = pairIdx &* 2
                             for row in 0..<stripeHeight {
-                                let y = stripe * 4 + row
-                                let idx0 = y * width + col
-
+                                let idx0 = (stripeY &+ row) &* width &+ col
                                 let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
-
-                                var sig1 = 0
-                                if pairWidth > 1 {
-                                    let idx1 = idx0 + 1
-                                    sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
-                                }
+                                let idx1 = idx0 &+ 1
+                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
 
                                 // Encode significance via MEL and VLC
                                 let pattern = sig0 | (sig1 << 1)
-                                mel.encode(bit: (pattern == 0) ? 0 : 1)
+                                mel.encode(bit: pattern == 0 ? 0 : 1)
                                 if pattern != 0 {
                                     vlc.encodeSignificance(pattern: pattern)
                                 }
@@ -781,8 +808,21 @@ struct HTBlockEncoder: Sendable {
                                     magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                                 if sig1 != 0 {
-                                    let idx1 = idx0 + 1
                                     magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
+
+                        // Handle odd-width last column (single sample, no pair)
+                        if hasHalfPair {
+                            let col = fullPairs &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                if sig0 != 0 {
+                                    vlc.encodeSignificance(pattern: sig0)
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                             }
                         }
@@ -887,6 +927,8 @@ struct HTBlockEncoder: Sendable {
                           let sig = sigPtr.baseAddress else { return }
 
                     let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
                     for i in 0..<simdCount {
                         let offset = i &* 4
                         let v = SIMD4<Int32>(
@@ -898,13 +940,13 @@ struct HTBlockEncoder: Sendable {
                         mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
                         mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
 
-                        let shifted = absV &>> SIMD4<Int32>(repeating: bp32)
-                        let masked = shifted & SIMD4<Int32>(repeating: 1)
-                        for lane in 0..<4 {
-                            if masked[lane] != 0 {
-                                let idx = offset + lane
-                                sig[idx >> 6] |= 1 << (idx & 63)
-                            }
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
                         }
                     }
                     let remStart = simdCount &* 4
@@ -928,8 +970,11 @@ struct HTBlockEncoder: Sendable {
         var vlc = HTVLCCoder(capacity: maxVlcBytes)
         var magsgn = HTMagSgnCoder(capacity: maxMagsgnBytes)
 
-        // Process in stripe order using unsafe pointer access
+        // Process in stripe order using unsafe pointer access.
+        // Full column pairs use branch-free significance extraction.
         let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
         sigPacked.withUnsafeBufferPointer { sigPtr in
             absMags.withUnsafeBufferPointer { magPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
@@ -938,20 +983,18 @@ struct HTBlockEncoder: Sendable {
                     let coefBase = coefPtr.baseAddress!
 
                     for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        for col in stride(from: 0, to: width, by: 2) {
-                            let pairWidth = min(2, width - col)
+                        let stripeY = stripe &* 4
+                        let stripeHeight = min(4, height &- stripeY)
+
+                        for pairIdx in 0..<fullPairs {
+                            let col = pairIdx &* 2
                             for row in 0..<stripeHeight {
-                                let y = stripe * 4 + row
-                                let idx0 = y * width + col
+                                let idx0 = (stripeY &+ row) &* width &+ col
                                 let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
-                                var sig1 = 0
-                                if pairWidth > 1 {
-                                    let idx1 = idx0 + 1
-                                    sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
-                                }
+                                let idx1 = idx0 &+ 1
+                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
                                 let pattern = sig0 | (sig1 << 1)
-                                mel.encode(bit: (pattern == 0) ? 0 : 1)
+                                mel.encode(bit: pattern == 0 ? 0 : 1)
                                 if pattern != 0 {
                                     vlc.encodeSignificance(pattern: pattern)
                                 }
@@ -959,8 +1002,20 @@ struct HTBlockEncoder: Sendable {
                                     magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                                 if sig1 != 0 {
-                                    let idx1 = idx0 + 1
                                     magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
+
+                        if hasHalfPair {
+                            let col = fullPairs &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                if sig0 != 0 {
+                                    vlc.encodeSignificance(pattern: sig0)
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                             }
                         }
@@ -1032,6 +1087,8 @@ struct HTBlockEncoder: Sendable {
                           let sig = sigPtr.baseAddress else { return }
 
                     let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
                     for i in 0..<simdCount {
                         let offset = i &* 4
                         let v = SIMD4<Int32>(
@@ -1043,13 +1100,13 @@ struct HTBlockEncoder: Sendable {
                         mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
                         mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
 
-                        let shifted = absV &>> SIMD4<Int32>(repeating: bp32)
-                        let masked = shifted & SIMD4<Int32>(repeating: 1)
-                        for lane in 0..<4 {
-                            if masked[lane] != 0 {
-                                let idx = offset + lane
-                                sig[idx >> 6] |= 1 << (idx & 63)
-                            }
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
                         }
                     }
                     let remStart = simdCount &* 4
@@ -1073,8 +1130,12 @@ struct HTBlockEncoder: Sendable {
         vlc.reset(capacity: maxVlcBytes)
         magsgn.reset(capacity: maxMagsgnBytes)
 
-        // Process in stripe order using unsafe pointer access
+        // Process in stripe order using unsafe pointer access.
+        // Separates full column pairs (pairWidth==2) from the odd-width
+        // last column to eliminate the pairWidth branch from the hot loop.
         let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
         sigPacked.withUnsafeBufferPointer { sigPtr in
             absMags.withUnsafeBufferPointer { magPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
@@ -1083,20 +1144,19 @@ struct HTBlockEncoder: Sendable {
                     let coefBase = coefPtr.baseAddress!
 
                     for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        for col in stride(from: 0, to: width, by: 2) {
-                            let pairWidth = min(2, width - col)
+                        let stripeY = stripe &* 4
+                        let stripeHeight = min(4, height &- stripeY)
+
+                        // Fast path: full column pairs — no pairWidth branch
+                        for pairIdx in 0..<fullPairs {
+                            let col = pairIdx &* 2
                             for row in 0..<stripeHeight {
-                                let y = stripe * 4 + row
-                                let idx0 = y * width + col
+                                let idx0 = (stripeY &+ row) &* width &+ col
                                 let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
-                                var sig1 = 0
-                                if pairWidth > 1 {
-                                    let idx1 = idx0 + 1
-                                    sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
-                                }
+                                let idx1 = idx0 &+ 1
+                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
                                 let pattern = sig0 | (sig1 << 1)
-                                mel.encode(bit: (pattern == 0) ? 0 : 1)
+                                mel.encode(bit: pattern == 0 ? 0 : 1)
                                 if pattern != 0 {
                                     vlc.encodeSignificance(pattern: pattern)
                                 }
@@ -1104,8 +1164,21 @@ struct HTBlockEncoder: Sendable {
                                     magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                                 if sig1 != 0 {
-                                    let idx1 = idx0 + 1
                                     magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
+
+                        // Handle odd-width last column (single sample, no pair)
+                        if hasHalfPair {
+                            let col = fullPairs &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                if sig0 != 0 {
+                                    vlc.encodeSignificance(pattern: sig0)
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
                                 }
                             }
                         }

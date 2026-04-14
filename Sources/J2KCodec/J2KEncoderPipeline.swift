@@ -156,7 +156,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 2: Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
-        let (transformedData, transformedDoubleData) = try applyColorTransform(componentData, image: image)
+        let (transformedData, transformedFloatData) = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
 
         if profiling {
@@ -168,7 +168,7 @@ struct EncoderPipeline: Sendable {
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
         let (decompositions, actualDecompositionLevels) = try applyWaveletTransform(
-            transformedData, doubleComponents: transformedDoubleData,
+            transformedData, floatComponents: transformedFloatData,
             width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
@@ -180,8 +180,16 @@ struct EncoderPipeline: Sendable {
         }
 
         // Stage 4: Quantization
+        // For HTJ2K, quantization is fused into block extraction (P6 optimization).
+        // Raw subbands with Float coefficients are passed to entropy coding,
+        // which quantizes inline during per-block extraction.
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
-        let quantizedSubbands = try applyQuantization(decompositions)
+        let subandsForEntropy: [[SubbandInfo]]
+        if config.useHTJ2K {
+            subandsForEntropy = decompositions
+        } else {
+            subandsForEntropy = try applyQuantization(decompositions)
+        }
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         if profiling {
@@ -192,7 +200,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
+        let codeBlocks = try applyEntropyCoding(subandsForEntropy, image: image)
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         if profiling {
@@ -274,25 +282,31 @@ struct EncoderPipeline: Sendable {
 
         // Stage 2: GPU Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
-        let (transformedData, transformedDoubleData) = try await applyColorTransformGPU(componentData, image: image)
+        let (transformedData, transformedFloatData) = try await applyColorTransformGPU(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
 
         // Stage 3: GPU Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
         let (decompositions, actualDecompositionLevels) = try await applyWaveletTransformGPU(
-            transformedData, doubleComponents: transformedDoubleData,
+            transformedData, floatComponents: transformedFloatData,
             width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
         // Stage 4: Quantization
+        // For HTJ2K, quantization is fused into block extraction (P6 optimization).
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
-        let quantizedSubbands = try applyQuantization(decompositions)
+        let subandsForEntropy: [[SubbandInfo]]
+        if config.useHTJ2K {
+            subandsForEntropy = decompositions
+        } else {
+            subandsForEntropy = try applyQuantization(decompositions)
+        }
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(quantizedSubbands, image: image)
+        let codeBlocks = try applyEntropyCoding(subandsForEntropy, image: image)
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         // Stage 6: Rate Control
@@ -318,16 +332,16 @@ struct EncoderPipeline: Sendable {
     /// Uses Metal GPU for both CDF 9/7 irreversible and Le Gall 5/3 reversible wavelet transforms.
     /// Falls back to CPU when Metal is unavailable or for custom/arbitrary wavelet kernels.
     private func applyWaveletTransformGPU(
-        _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
+        _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int
     ) async throws -> ([[SubbandInfo]], Int) {
         // Fall back to CPU for custom wavelet kernels only
         if case .arbitrary = config.waveletKernelConfiguration {
-            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+            return try applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
         if case .perTileComponent = config.waveletKernelConfiguration {
-            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+            return try applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -335,13 +349,13 @@ struct EncoderPipeline: Sendable {
         let levels = min(config.decompositionLevels, maxLevels)
 
         guard levels >= 1 else {
-            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+            return try applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
         // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
         guard J2KMetalDWT.isAvailable else {
-            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+            return try applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -352,7 +366,7 @@ struct EncoderPipeline: Sendable {
         let pixelCount = width * height
         let gpuThreshold = config.useHTJ2K ? (1024 * 1024) : (256 * 256)
         guard pixelCount >= gpuThreshold else {
-            return try applyWaveletTransform(components, doubleComponents: doubleComponents,
+            return try applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -370,8 +384,8 @@ struct EncoderPipeline: Sendable {
         for (compIdx, compData) in components.enumerated() {
             // Convert to Float for Metal DWT using vDSP when available
             let flatFloat: [Float]
-            if let dc = doubleComponents, compIdx < dc.count {
-                flatFloat = vDSPConvert.doublesToFloats(dc[compIdx])
+            if let fc = floatComponents, compIdx < fc.count {
+                flatFloat = fc[compIdx]
             } else {
                 flatFloat = vDSPConvert.int32sToFloats(compData)
             }
@@ -390,21 +404,21 @@ struct EncoderPipeline: Sendable {
 
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .hl,
-                    coefficients: vDSPConvert.floatsToInt32s(level.hl),
+                    coefficients: [],
                     doubleCoefficients: nil,
                     width: hlWidth, height: level.llHeight,
                     floatCoefficients: level.hl
                 ))
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .lh,
-                    coefficients: vDSPConvert.floatsToInt32s(level.lh),
+                    coefficients: [],
                     doubleCoefficients: nil,
                     width: level.llWidth, height: lhHeight,
                     floatCoefficients: level.lh
                 ))
                 subbands.append(SubbandInfo(
                     componentIndex: compIdx, level: decomLevel, subband: .hh,
-                    coefficients: vDSPConvert.floatsToInt32s(level.hh),
+                    coefficients: [],
                     doubleCoefficients: nil,
                     width: hlWidth, height: lhHeight,
                     floatCoefficients: level.hh
@@ -413,7 +427,7 @@ struct EncoderPipeline: Sendable {
 
             subbands.insert(SubbandInfo(
                 componentIndex: compIdx, level: 0, subband: .ll,
-                coefficients: vDSPConvert.floatsToInt32s(decomposition.approximation),
+                coefficients: [],
                 doubleCoefficients: nil,
                 width: decomposition.approximationWidth,
                 height: decomposition.approximationHeight,
@@ -432,7 +446,7 @@ struct EncoderPipeline: Sendable {
     /// Falls back to CPU for non-standard MCT modes.
     private func applyColorTransformGPU(
         _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
-    ) async throws -> ([[Int32]], [[Double]]?) {
+    ) async throws -> ([[Int32]], [[Float]]?) {
         // Fall back to CPU for non-standard MCT modes
         if config.mctConfiguration.perTileMCT[tileIndex] != nil {
             return try applyColorTransform(components, image: image, tileIndex: tileIndex)
@@ -476,21 +490,21 @@ struct EncoderPipeline: Sendable {
             intResult.append(contentsOf: components[3...])
         }
 
-        var doubleResult: [[Double]]? = nil
+        var floatResult: [[Float]]? = nil
         if !config.useReversibleFilter {
-            // Keep double-precision ICT output for 9/7 DWT path
-            var dbl: [[Double]] = [
-                vDSPConvert.floatsToDoubles(result.component0),
-                vDSPConvert.floatsToDoubles(result.component1),
-                vDSPConvert.floatsToDoubles(result.component2)
+            // Keep Float ICT output for the 9/7 DWT path (zero-copy)
+            var flt: [[Float]] = [
+                result.component0,
+                result.component1,
+                result.component2
             ]
             if components.count > 3 {
-                dbl.append(contentsOf: components[3...].map { $0.map { Double($0) } })
+                flt.append(contentsOf: components[3...].map { vDSPConvert.int32sToFloats($0) })
             }
-            doubleResult = dbl
+            floatResult = flt
         }
 
-        return (intResult, doubleResult)
+        return (intResult, floatResult)
     }
 
     // MARK: - Stage 1: Preprocessing
@@ -552,7 +566,7 @@ struct EncoderPipeline: Sendable {
     /// - Returns: Transformed component data as Int32 and optionally as Double (for ICT lossy path).
     private func applyColorTransform(
         _ components: [[Int32]], image: J2KImage, tileIndex: Int = 0
-    ) throws -> ([[Int32]], [[Double]]?) {
+    ) throws -> ([[Int32]], [[Float]]?) {
         // Check for per-tile MCT override first
         if let tileMatrix = config.mctConfiguration.perTileMCT[tileIndex] {
             return (try applyArrayBasedMCT(components, matrix: tileMatrix, image: image), nil)
@@ -584,7 +598,7 @@ struct EncoderPipeline: Sendable {
     /// Applies standard Part 1 colour transform (RCT/ICT).
     private func applyStandardColorTransform(
         _ components: [[Int32]], image: J2KImage
-    ) throws -> ([[Int32]], [[Double]]?) {
+    ) throws -> ([[Int32]], [[Float]]?) {
         // Colour transform only applies to 3+ component images
         guard components.count >= 3 else { return (components, nil) }
 
@@ -595,7 +609,7 @@ struct EncoderPipeline: Sendable {
         let y: [Int32]
         let cb: [Int32]
         let cr: [Int32]
-        var doubleResult: [[Double]]? = nil
+        var floatResult: [[Float]]? = nil
 
         if config.useReversibleFilter {
             // Use RCT (integer-based, perfectly reversible)
@@ -613,12 +627,17 @@ struct EncoderPipeline: Sendable {
             y = vDSPConvert.doublesToInt32s(yD)
             cb = vDSPConvert.doublesToInt32s(cbD)
             cr = vDSPConvert.doublesToInt32s(crD)
-            // Keep double-precision ICT output for 9/7 DWT path
-            var dbl = [yD, cbD, crD]
+            // Convert ICT Double output directly to Float for the 9/7 DWT path,
+            // avoiding the previous Double→store→Double→Float round-trip.
+            var flt: [[Float]] = [
+                vDSPConvert.doublesToFloats(yD),
+                vDSPConvert.doublesToFloats(cbD),
+                vDSPConvert.doublesToFloats(crD)
+            ]
             if components.count > 3 {
-                dbl.append(contentsOf: components[3...].map { vDSPConvert.int32sToDoubles($0) })
+                flt.append(contentsOf: components[3...].map { vDSPConvert.int32sToFloats($0) })
             }
-            doubleResult = dbl
+            floatResult = flt
         }
 
         var result = [y, cb, cr]
@@ -626,7 +645,7 @@ struct EncoderPipeline: Sendable {
         if components.count > 3 {
             result.append(contentsOf: components[3...])
         }
-        return (result, doubleResult)
+        return (result, floatResult)
     }
 
     /// Applies array-based MCT using a transformation matrix.
@@ -692,7 +711,7 @@ struct EncoderPipeline: Sendable {
         criteria: J2KMCTEncodingConfiguration.AdaptiveSelectionCriteria,
         image: J2KImage,
         tileIndex: Int = 0
-    ) throws -> ([[Int32]], [[Double]]?) {
+    ) throws -> ([[Int32]], [[Float]]?) {
         // For now, use a simple heuristic: correlation-based selection
         // In a full implementation, this would evaluate each candidate matrix
         // and select based on the specified criteria
@@ -752,7 +771,7 @@ struct EncoderPipeline: Sendable {
     ///
     /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
-        _ components: [[Int32]], doubleComponents: [[Double]]? = nil,
+        _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int
     ) throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
@@ -840,16 +859,18 @@ struct EncoderPipeline: Sendable {
             }
 
             if use97DoublePrecision && useAcceleratedPath {
-                // Accelerated Double-precision CDF 9/7 path.
-                let flatDouble: [Double]
-                if let dc = doubleComponents, compIdx < dc.count {
-                    flatDouble = dc[compIdx]
+                // Accelerated Float-precision CDF 9/7 path.
+                // Float32's 23-bit mantissa is sufficient for 16-bit images
+                // through 5+ DWT levels, and provides 2× bandwidth/SIMD throughput.
+                let flatFloat: [Float]
+                if let fc = floatComponents, compIdx < fc.count {
+                    flatFloat = fc[compIdx]
                 } else {
-                    flatDouble = vDSPConvert.int32sToDoubles(compData)
+                    flatFloat = vDSPConvert.int32sToFloats(compData)
                 }
 
                 let decomposition = AcceleratedDWT2D.forwardDecomposition(
-                    data: flatDouble, width: width, height: height, levels: levels
+                    data: flatFloat, width: width, height: height, levels: levels
                 )
 
                 for (levelIdx, level) in decomposition.levels.enumerated() {
@@ -859,28 +880,31 @@ struct EncoderPipeline: Sendable {
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hl,
-                        coefficients: vDSPConvert.doublesToInt32s(level.hl),
-                        doubleCoefficients: level.hl,
+                        coefficients: [],
+                        doubleCoefficients: nil,
                         width: level.hlW,
-                        height: level.hlH
+                        height: level.hlH,
+                        floatCoefficients: level.hl
                     ))
                     subbands.append(SubbandInfo(
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .lh,
-                        coefficients: vDSPConvert.doublesToInt32s(level.lh),
-                        doubleCoefficients: level.lh,
+                        coefficients: [],
+                        doubleCoefficients: nil,
                         width: level.lhW,
-                        height: level.lhH
+                        height: level.lhH,
+                        floatCoefficients: level.lh
                     ))
                     subbands.append(SubbandInfo(
                         componentIndex: compIdx,
                         level: decomLevel,
                         subband: .hh,
-                        coefficients: vDSPConvert.doublesToInt32s(level.hh),
-                        doubleCoefficients: level.hh,
+                        coefficients: [],
+                        doubleCoefficients: nil,
                         width: level.hhW,
-                        height: level.hhH
+                        height: level.hhH,
+                        floatCoefficients: level.hh
                     ))
                 }
 
@@ -888,10 +912,11 @@ struct EncoderPipeline: Sendable {
                     componentIndex: compIdx,
                     level: 0,
                     subband: .ll,
-                    coefficients: vDSPConvert.doublesToInt32s(decomposition.coarsestLL),
-                    doubleCoefficients: decomposition.coarsestLL,
+                    coefficients: [],
+                    doubleCoefficients: nil,
                     width: decomposition.llW,
-                    height: decomposition.llH
+                    height: decomposition.llH,
+                    floatCoefficients: decomposition.coarsestLL
                 ), at: 0)
 
             } else if !use97DoublePrecision && useAcceleratedPath {
@@ -945,13 +970,14 @@ struct EncoderPipeline: Sendable {
             } else if use97DoublePrecision {
                 // Fallback: original [[Double]] path for custom filters
                 let doubleImage: [[Double]]
-                if let dc = doubleComponents, compIdx < dc.count {
+                if let fc = floatComponents, compIdx < fc.count {
+                    // Convert Float to Double for custom filter path
                     var img2D: [[Double]] = []
                     img2D.reserveCapacity(height)
                     for row in 0..<height {
                         let rowStart = row * width
                         let rowEnd = rowStart + width
-                        img2D.append(Array(dc[compIdx][rowStart..<rowEnd]))
+                        img2D.append(fc[compIdx][rowStart..<rowEnd].map { Double($0) })
                     }
                     doubleImage = img2D
                 } else {
@@ -1156,13 +1182,18 @@ struct EncoderPipeline: Sendable {
         let componentIndex: Int
         let resolutionLevel: Int
         let bitDepth: Int
-        /// CoW reference to the subband's full coefficient array.
+        /// CoW reference to the subband's full coefficient array (Int32, quantized or lossless).
         let subbandCoefficients: [Int32]
         /// Width of the subband (row stride in elements).
         let subbandWidth: Int
         /// Origin of this block within the subband.
         let originX: Int
         let originY: Int
+        /// Raw Float DWT coefficients for fused quantization (9/7 lossy HTJ2K path).
+        /// When non-nil, block extraction quantizes inline using `quantizationStep`.
+        let floatSubbandCoefficients: [Float]?
+        /// Quantization step size for inline Float→Int32 conversion.
+        let quantizationStep: Float
     }
 
     /// Applies entropy coding to all subbands, producing code blocks.
@@ -1302,11 +1333,11 @@ struct EncoderPipeline: Sendable {
                         } else {
                             #if canImport(Accelerate)
                             if blockCoeffs.count >= 16 {
-                                var absD = vDSPConvert.int32sToDoubles(blockCoeffs)
-                                vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(absD.count))
-                                var dotResult: Double = 0
-                                vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(absD.count))
-                                sqSum = dotResult
+                                var absF = vDSPConvert.int32sToFloats(blockCoeffs)
+                                vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(absF.count))
+                                var dotResult: Float = 0
+                                vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(absF.count))
+                                sqSum = Double(dotResult)
                             } else {
                                 var sq: Double = 0
                                 for c in blockCoeffs {
@@ -1420,6 +1451,7 @@ struct EncoderPipeline: Sendable {
                 }
 
                 let bandKb: Int
+                let subbandStepSize: Float
                 if config.useReversibleFilter {
                     let gainExponent: Int
                     switch info.subband {
@@ -1428,6 +1460,7 @@ struct EncoderPipeline: Sendable {
                     case .hh: gainExponent = 2
                     }
                     bandKb = imageBitDepth + gainExponent + guardBits - 1
+                    subbandStepSize = 1.0  // Identity quantization for lossless
                 } else {
                     let subbandGain: Int
                     switch info.subband {
@@ -1446,7 +1479,13 @@ struct EncoderPipeline: Sendable {
                     )
                     let (epsilon, _) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
                     bandKb = epsilon + guardBits - 1
+                    subbandStepSize = Float(step)
                 }
+
+                // For 9/7 lossy with Float DWT output, defer quantization to the
+                // block extraction loop (P6 fused quantization). This eliminates
+                // the full quantized subband array allocation.
+                let hasFloatCoeffs = info.floatCoefficients != nil && !config.useReversibleFilter
 
                 let blocksX = (info.width + cbWidth - 1) / cbWidth
                 let blocksY = (info.height + cbHeight - 1) / cbHeight
@@ -1470,7 +1509,9 @@ struct EncoderPipeline: Sendable {
                             subbandCoefficients: info.coefficients,
                             subbandWidth: info.width,
                             originX: bx * cbWidth,
-                            originY: by * cbHeight
+                            originY: by * cbHeight,
+                            floatSubbandCoefficients: hasFloatCoeffs ? info.floatCoefficients : nil,
+                            quantizationStep: subbandStepSize
                         ))
                         blockIndex += 1
                     }
@@ -1530,8 +1571,40 @@ struct EncoderPipeline: Sendable {
                 for i in range {
                     let d = deferred[i]
 
-                    // Extract coefficients into reusable buffer
+                    // Extract coefficients into reusable buffer.
+                    // For 9/7 lossy with Float DWT output, quantize inline (P6 fusion)
+                    // and compute distortion stats in the same pass (no separate vDSP/bpPop loops).
                     let blockSize = d.width * d.height
+                    var sqSum: Double = 0
+                    var bpPop: [Int] = []
+                    var distortionFused = false
+                    if let floatCoeffs = d.floatSubbandCoefficients {
+                        let invStep = 1.0 / d.quantizationStep
+                        let totalBitPlanes = d.bitDepth
+                        bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                        floatCoeffs.withUnsafeBufferPointer { src in
+                            coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                                let dstBase = dst.baseAddress!
+                                let srcBase = src.baseAddress!
+                                for row in 0..<d.height {
+                                    let srcRow = (d.originY + row) * d.subbandWidth + d.originX
+                                    let dstRow = row * d.width
+                                    for col in 0..<d.width {
+                                        let coeff = srcBase[srcRow + col]
+                                        let mag = Int32(abs(coeff) * invStep)
+                                        dstBase[dstRow + col] = coeff >= 0 ? mag : -mag
+                                        // Fused distortion: sqSum and bpPop inline
+                                        sqSum += Double(mag) * Double(mag)
+                                        if mag > 0 {
+                                            let msb = 31 &- Int(UInt32(mag).leadingZeroBitCount)
+                                            if msb < totalBitPlanes { bpPop[msb] += 1 }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        distortionFused = true
+                    } else {
                     d.subbandCoefficients.withUnsafeBufferPointer { src in
                         coeffsBuffer.withUnsafeMutableBufferPointer { dst in
                             for row in 0..<d.height {
@@ -1544,22 +1617,21 @@ struct EncoderPipeline: Sendable {
                             }
                         }
                     }
+                    } // end else (Int32 extraction)
 
-                    // Compute distortion stats for lossy mode
-                    var sqSum: Double = 0
-                    var bpPop: [Int] = []
-                    if !isLossless {
+                    // Compute distortion stats for lossy mode (skip if already fused above)
+                    if !isLossless && !distortionFused {
                         #if canImport(Accelerate)
                         if blockSize >= 16 {
                             coeffsBuffer.withUnsafeBufferPointer { ptr in
-                                var absD = [Double](unsafeUninitializedCapacity: blockSize) { buf, count in
-                                    vDSP_vflt32D(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
+                                var absF = [Float](unsafeUninitializedCapacity: blockSize) { buf, count in
+                                    vDSP_vflt32(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
                                     count = blockSize
                                 }
-                                vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(blockSize))
-                                var dotResult: Double = 0
-                                vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(blockSize))
-                                sqSum = dotResult
+                                vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(blockSize))
+                                var dotResult: Float = 0
+                                vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(blockSize))
+                                sqSum = Double(dotResult)
                             }
                         } else {
                             for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
@@ -1582,17 +1654,10 @@ struct EncoderPipeline: Sendable {
                         }
                     }
 
-                    // For full-size blocks (the common case), pass coeffsBuffer
-                    // directly — CoW means no copy since encode only reads.
-                    // For edge blocks (blockSize < maxBlockSize), extract only
-                    // the needed elements since encodeCleanupReusing validates
-                    // that coefficients.count == width * height.
-                    let blockCoeffs: [Int32]
-                    if blockSize == maxBlockSize {
-                        blockCoeffs = coeffsBuffer
-                    } else {
-                        blockCoeffs = Array(coeffsBuffer[0..<blockSize])
-                    }
+                    // Always slice-copy to avoid CoW: if we assigned
+                    // coeffsBuffer directly, the next iteration's write
+                    // would trigger a full CoW copy of the shared backing.
+                    let blockCoeffs = Array(coeffsBuffer[0..<blockSize])
 
                     let pending = PendingCodeBlock(
                         index: d.index, x: d.x, y: d.y,
@@ -1647,6 +1712,35 @@ struct EncoderPipeline: Sendable {
             let isLossless = config.lossless
             for d in deferred {
                 let blockSize = d.width * d.height
+                var sqSum: Double = 0
+                var bpPop: [Int] = []
+                var distortionFused = false
+                if let floatCoeffs = d.floatSubbandCoefficients {
+                    let invStep = 1.0 / d.quantizationStep
+                    let totalBitPlanes = d.bitDepth
+                    bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                    floatCoeffs.withUnsafeBufferPointer { src in
+                        coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                            let dstBase = dst.baseAddress!
+                            let srcBase = src.baseAddress!
+                            for row in 0..<d.height {
+                                let srcRow = (d.originY + row) * d.subbandWidth + d.originX
+                                let dstRow = row * d.width
+                                for col in 0..<d.width {
+                                    let coeff = srcBase[srcRow + col]
+                                    let mag = Int32(abs(coeff) * invStep)
+                                    dstBase[dstRow + col] = coeff >= 0 ? mag : -mag
+                                    sqSum += Double(mag) * Double(mag)
+                                    if mag > 0 {
+                                        let msb = 31 &- Int(UInt32(mag).leadingZeroBitCount)
+                                        if msb < totalBitPlanes { bpPop[msb] += 1 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    distortionFused = true
+                } else {
                 d.subbandCoefficients.withUnsafeBufferPointer { src in
                     coeffsBuffer.withUnsafeMutableBufferPointer { dst in
                         for row in 0..<d.height {
@@ -1659,22 +1753,21 @@ struct EncoderPipeline: Sendable {
                         }
                     }
                 }
+                } // end else (Int32 extraction)
 
-                // Compute distortion stats for lossy rate control
-                var sqSum: Double = 0
-                var bpPop: [Int] = []
-                if !isLossless {
+                // Compute distortion stats for lossy rate control (skip if already fused above)
+                if !isLossless && !distortionFused {
                     #if canImport(Accelerate)
                     if blockSize >= 16 {
                         coeffsBuffer.withUnsafeBufferPointer { ptr in
-                            var absD = [Double](unsafeUninitializedCapacity: blockSize) { buf, count in
-                                vDSP_vflt32D(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
+                            var absF = [Float](unsafeUninitializedCapacity: blockSize) { buf, count in
+                                vDSP_vflt32(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
                                 count = blockSize
                             }
-                            vDSP_vabsD(absD, 1, &absD, 1, vDSP_Length(blockSize))
-                            var dotResult: Double = 0
-                            vDSP_dotprD(absD, 1, absD, 1, &dotResult, vDSP_Length(blockSize))
-                            sqSum = dotResult
+                            vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(blockSize))
+                            var dotResult: Float = 0
+                            vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(blockSize))
+                            sqSum = Double(dotResult)
                         }
                     } else {
                         for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
@@ -1697,12 +1790,7 @@ struct EncoderPipeline: Sendable {
                     }
                 }
 
-                let blockCoeffs: [Int32]
-                if blockSize == maxBlockSize {
-                    blockCoeffs = coeffsBuffer
-                } else {
-                    blockCoeffs = Array(coeffsBuffer[0..<blockSize])
-                }
+                let blockCoeffs = Array(coeffsBuffer[0..<blockSize])
 
                 let pending = PendingCodeBlock(
                     index: d.index, x: d.x, y: d.y,

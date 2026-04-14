@@ -24,23 +24,26 @@ struct AcceleratedDWT2D: Sendable {
 
     // MARK: - CDF 9/7 Lifting Coefficients
 
-    private static let alpha = -1.586134342
-    private static let beta  = -0.05298011854
-    private static let gamma =  0.8829110762
-    private static let delta =  0.4435068522
-    private static let K     =  1.230174105
+    private static let alpha: Float = -1.586134342
+    private static let beta: Float  = -0.05298011854
+    private static let gamma: Float =  0.8829110762
+    private static let delta: Float =  0.4435068522
+    private static let K: Float     =  1.230174105
 
     /// Reusable workspace for 1D DWT to eliminate per-call heap allocations.
     ///
     /// Allocates even/odd buffers once and reuses them across all 1D transforms
     /// within a 2D DWT level. For a 1024×1024 image, this eliminates ~20K heap
     /// allocations per decomposition level.
+    ///
+    /// Uses Float (not Double) for 2× SIMD throughput and 2× cache efficiency.
+    /// Float32's 23-bit mantissa is sufficient for 16-bit images through 5+ DWT levels.
     final class DWTWorkspace {
-        var even: UnsafeMutableBufferPointer<Double>
-        var odd: UnsafeMutableBufferPointer<Double>
+        var even: UnsafeMutableBufferPointer<Float>
+        var odd: UnsafeMutableBufferPointer<Float>
         #if canImport(Accelerate)
         /// Scratch buffer for vDSP sum computation: even[i] + even[i+1] or odd shifted
-        var sumBuf: UnsafeMutableBufferPointer<Double>
+        var sumBuf: UnsafeMutableBufferPointer<Float>
         #endif
         let capacity: Int
 
@@ -82,14 +85,14 @@ struct AcceleratedDWT2D: Sendable {
         }
     }
 
-    /// Forward 1D CDF 9/7 lifting on a contiguous Double buffer (in-place, interleaved).
+    /// Forward 1D CDF 9/7 lifting on a contiguous Float buffer (in-place, interleaved).
     ///
     /// Splits even/odd, applies 4 lifting steps, scales, then writes
     /// lowpass coefficients first followed by highpass.
     @inline(__always)
     static func forward97_1D(
-        _ input: UnsafePointer<Double>,
-        _ output: UnsafeMutablePointer<Double>,
+        _ input: UnsafePointer<Float>,
+        _ output: UnsafeMutablePointer<Float>,
         count n: Int
     ) {
         guard n >= 2 else {
@@ -101,8 +104,8 @@ struct AcceleratedDWT2D: Sendable {
         let highCount = n / 2
 
         // Split into even (lowpass) and odd (highpass)
-        var even = [Double](repeating: 0, count: lowCount)
-        var odd  = [Double](repeating: 0, count: highCount)
+        var even = [Float](repeating: 0, count: lowCount)
+        var odd  = [Float](repeating: 0, count: highCount)
 
         for i in 0..<lowCount  { even[i] = input[i * 2] }
         for i in 0..<highCount { odd[i]  = input[i * 2 + 1] }
@@ -118,10 +121,10 @@ struct AcceleratedDWT2D: Sendable {
         var invK = 1.0 / K
         var kVal = K
         even.withUnsafeMutableBufferPointer { buf in
-            vDSP_vsmulD(buf.baseAddress!, 1, &invK, buf.baseAddress!, 1, vDSP_Length(lowCount))
+            vDSP_vsmul(buf.baseAddress!, 1, &invK, buf.baseAddress!, 1, vDSP_Length(lowCount))
         }
         odd.withUnsafeMutableBufferPointer { buf in
-            vDSP_vsmulD(buf.baseAddress!, 1, &kVal, buf.baseAddress!, 1, vDSP_Length(highCount))
+            vDSP_vsmul(buf.baseAddress!, 1, &kVal, buf.baseAddress!, 1, vDSP_Length(highCount))
         }
         #else
         let invK = 1.0 / K
@@ -144,8 +147,8 @@ struct AcceleratedDWT2D: Sendable {
     /// due to zero heap allocations and vDSP vectorization.
     @inline(__always)
     static func forward97_1D(
-        _ input: UnsafePointer<Double>,
-        _ output: UnsafeMutablePointer<Double>,
+        _ input: UnsafePointer<Float>,
+        _ output: UnsafeMutablePointer<Float>,
         count n: Int,
         workspace ws: DWTWorkspace
     ) {
@@ -165,15 +168,30 @@ struct AcceleratedDWT2D: Sendable {
 
         // 4 lifting steps with vDSP vectorization
         #if canImport(Accelerate)
+        // For small signals (< 32 samples), scalar lifting is faster than
+        // 10 vDSP function calls (~200ns overhead each). At 5 DWT levels,
+        // the deepest subbands have n=8..16 where this saves ~1.5μs/call.
+        if n < 32 {
+            liftPredictRaw(oddPtr, evenPtr, coeff: alpha, oddCount: highCount, evenCount: lowCount)
+            liftUpdateRaw(evenPtr, oddPtr, coeff: beta, evenCount: lowCount, oddCount: highCount)
+            liftPredictRaw(oddPtr, evenPtr, coeff: gamma, oddCount: highCount, evenCount: lowCount)
+            liftUpdateRaw(evenPtr, oddPtr, coeff: delta, evenCount: lowCount, oddCount: highCount)
+
+            // Fuse scale + output write: eliminates separate in-place scale + memcpy
+            let invK: Float = 1.0 / K
+            for i in 0..<lowCount  { output[i] = evenPtr[i] * invK }
+            for i in 0..<highCount { output[lowCount &+ i] = oddPtr[i] * K }
+            return
+        } else {
         let scratchPtr = ws.sumBuf.baseAddress!
 
         // Predict 1: odd[i] += alpha * (even[i] + even[i+1])
         if highCount > 1 {
             // Interior: sum = even[0..<highCount-1] + even[1..<highCount]
-            vDSP_vaddD(evenPtr, 1, evenPtr + 1, 1, scratchPtr, 1, vDSP_Length(highCount - 1))
+            vDSP_vadd(evenPtr, 1, evenPtr + 1, 1, scratchPtr, 1, vDSP_Length(highCount - 1))
             // odd[0..<highCount-1] += alpha * sum
             var a = alpha
-            vDSP_vsmaD(scratchPtr, 1, &a, oddPtr, 1, oddPtr, 1, vDSP_Length(highCount - 1))
+            vDSP_vsma(scratchPtr, 1, &a, oddPtr, 1, oddPtr, 1, vDSP_Length(highCount - 1))
         }
         // Boundary: last element
         if highCount > 0 {
@@ -186,27 +204,27 @@ struct AcceleratedDWT2D: Sendable {
             // Interior (indices 1..<lowCount-1): sum = odd[0..<lowCount-2] + odd[1..<lowCount-1]
             let interiorCount = min(lowCount - 2, highCount - 1)
             if interiorCount > 0 {
-                vDSP_vaddD(oddPtr, 1, oddPtr + 1, 1, scratchPtr, 1, vDSP_Length(interiorCount))
+                vDSP_vadd(oddPtr, 1, oddPtr + 1, 1, scratchPtr, 1, vDSP_Length(interiorCount))
                 var b = beta
-                vDSP_vsmaD(scratchPtr, 1, &b, evenPtr + 1, 1, evenPtr + 1, 1, vDSP_Length(interiorCount))
+                vDSP_vsma(scratchPtr, 1, &b, evenPtr + 1, 1, evenPtr + 1, 1, vDSP_Length(interiorCount))
             }
         }
         // Boundaries
         do {
-            let right0 = highCount > 0 ? oddPtr[0] : 0.0
+            let right0: Float = highCount > 0 ? oddPtr[0] : 0.0
             evenPtr[0] += beta * (right0 + right0) // odd[-1] mirrors to odd[0]
             if lowCount > 1 {
-                let leftN = highCount > 0 ? oddPtr[min(lowCount - 2, highCount - 1)] : 0.0
-                let rightN = highCount > 0 ? oddPtr[min(lowCount - 1, highCount - 1)] : 0.0
+                let leftN: Float = highCount > 0 ? oddPtr[min(lowCount - 2, highCount - 1)] : 0.0
+                let rightN: Float = highCount > 0 ? oddPtr[min(lowCount - 1, highCount - 1)] : 0.0
                 evenPtr[lowCount - 1] += beta * (leftN + rightN)
             }
         }
 
         // Predict 2: odd[i] += gamma * (even[i] + even[i+1])
         if highCount > 1 {
-            vDSP_vaddD(evenPtr, 1, evenPtr + 1, 1, scratchPtr, 1, vDSP_Length(highCount - 1))
+            vDSP_vadd(evenPtr, 1, evenPtr + 1, 1, scratchPtr, 1, vDSP_Length(highCount - 1))
             var g = gamma
-            vDSP_vsmaD(scratchPtr, 1, &g, oddPtr, 1, oddPtr, 1, vDSP_Length(highCount - 1))
+            vDSP_vsma(scratchPtr, 1, &g, oddPtr, 1, oddPtr, 1, vDSP_Length(highCount - 1))
         }
         if highCount > 0 {
             let rightIdx = min(highCount, lowCount - 1)
@@ -217,27 +235,28 @@ struct AcceleratedDWT2D: Sendable {
         if lowCount > 2 {
             let interiorCount = min(lowCount - 2, highCount - 1)
             if interiorCount > 0 {
-                vDSP_vaddD(oddPtr, 1, oddPtr + 1, 1, scratchPtr, 1, vDSP_Length(interiorCount))
+                vDSP_vadd(oddPtr, 1, oddPtr + 1, 1, scratchPtr, 1, vDSP_Length(interiorCount))
                 var d = delta
-                vDSP_vsmaD(scratchPtr, 1, &d, evenPtr + 1, 1, evenPtr + 1, 1, vDSP_Length(interiorCount))
+                vDSP_vsma(scratchPtr, 1, &d, evenPtr + 1, 1, evenPtr + 1, 1, vDSP_Length(interiorCount))
             }
         }
         do {
-            let right0 = highCount > 0 ? oddPtr[0] : 0.0
+            let right0: Float = highCount > 0 ? oddPtr[0] : 0.0
             evenPtr[0] += delta * (right0 + right0)
             if lowCount > 1 {
-                let leftN = highCount > 0 ? oddPtr[min(lowCount - 2, highCount - 1)] : 0.0
-                let rightN = highCount > 0 ? oddPtr[min(lowCount - 1, highCount - 1)] : 0.0
+                let leftN: Float = highCount > 0 ? oddPtr[min(lowCount - 2, highCount - 1)] : 0.0
+                let rightN: Float = highCount > 0 ? oddPtr[min(lowCount - 1, highCount - 1)] : 0.0
                 evenPtr[lowCount - 1] += delta * (leftN + rightN)
             }
         }
 
-        // Scale: lowpass /= K, highpass *= K using vDSP
-        var invK = 1.0 / K
+        // Fuse scale + output write: vDSP_vsmul reads from workspace, writes to output
+        var invK: Float = 1.0 / K
         var kVal = K
-        vDSP_vsmulD(evenPtr, 1, &invK, evenPtr, 1, vDSP_Length(lowCount))
-        vDSP_vsmulD(oddPtr, 1, &kVal, oddPtr, 1, vDSP_Length(highCount))
+        vDSP_vsmul(evenPtr, 1, &invK, output, 1, vDSP_Length(lowCount))
+        vDSP_vsmul(oddPtr, 1, &kVal, output + lowCount, 1, vDSP_Length(highCount))
 
+        } // end else (n >= 32 vDSP path)
         #else
         // Scalar fallback: identical to existing lifting
         liftPredictRaw(oddPtr, evenPtr, coeff: alpha, oddCount: highCount, evenCount: lowCount)
@@ -245,22 +264,19 @@ struct AcceleratedDWT2D: Sendable {
         liftPredictRaw(oddPtr, evenPtr, coeff: gamma, oddCount: highCount, evenCount: lowCount)
         liftUpdateRaw(evenPtr, oddPtr, coeff: delta, evenCount: lowCount, oddCount: highCount)
 
-        let invK = 1.0 / K
-        for i in 0..<lowCount  { evenPtr[i] *= invK }
-        for i in 0..<highCount { oddPtr[i]  *= K }
+        // Fuse scale + output write: eliminates separate in-place scale + memcpy
+        let invK: Float = 1.0 / K
+        for i in 0..<lowCount  { output[i] = evenPtr[i] * invK }
+        for i in 0..<highCount { output[lowCount + i] = oddPtr[i] * K }
         #endif
-
-        // Write output: lowpass then highpass
-        memcpy(output, evenPtr, lowCount * MemoryLayout<Double>.size)
-        memcpy(output + lowCount, oddPtr, highCount * MemoryLayout<Double>.size)
     }
 
     /// Raw pointer predict step (non-Accelerate fallback).
     @inline(__always)
     private static func liftPredictRaw(
-        _ odd: UnsafeMutablePointer<Double>,
-        _ even: UnsafePointer<Double>,
-        coeff: Double, oddCount: Int, evenCount: Int
+        _ odd: UnsafeMutablePointer<Float>,
+        _ even: UnsafePointer<Float>,
+        coeff: Float, oddCount: Int, evenCount: Int
     ) {
         for i in 0..<oddCount {
             let right = (i + 1 < evenCount) ? even[i + 1] : even[evenCount - 1]
@@ -271,9 +287,9 @@ struct AcceleratedDWT2D: Sendable {
     /// Raw pointer update step (non-Accelerate fallback).
     @inline(__always)
     private static func liftUpdateRaw(
-        _ even: UnsafeMutablePointer<Double>,
-        _ odd: UnsafePointer<Double>,
-        coeff: Double, evenCount: Int, oddCount: Int
+        _ even: UnsafeMutablePointer<Float>,
+        _ odd: UnsafePointer<Float>,
+        coeff: Float, evenCount: Int, oddCount: Int
     ) {
         for i in 0..<evenCount {
             let left = (i > 0) ? odd[i - 1] : odd[0]
@@ -285,8 +301,8 @@ struct AcceleratedDWT2D: Sendable {
     /// Predict step: odd[i] += coeff * (even[i] + even[i+1])
     @inline(__always)
     private static func liftPredict(
-        _ odd: inout [Double], _ even: [Double],
-        coeff: Double, oddCount: Int, evenCount: Int
+        _ odd: inout [Float], _ even: [Float],
+        coeff: Float, oddCount: Int, evenCount: Int
     ) {
         odd.withUnsafeMutableBufferPointer { oddBuf in
             even.withUnsafeBufferPointer { evenBuf in
@@ -301,8 +317,8 @@ struct AcceleratedDWT2D: Sendable {
     /// Update step: even[i] += coeff * (odd[i-1] + odd[i])
     @inline(__always)
     private static func liftUpdate(
-        _ even: inout [Double], _ odd: [Double],
-        coeff: Double, evenCount: Int, oddCount: Int
+        _ even: inout [Float], _ odd: [Float],
+        coeff: Float, evenCount: Int, oddCount: Int
     ) {
         even.withUnsafeMutableBufferPointer { evenBuf in
             odd.withUnsafeBufferPointer { oddBuf in
@@ -321,8 +337,8 @@ struct AcceleratedDWT2D: Sendable {
     /// Uses preallocated workspace buffers and cache-friendly tile blocking for the
     /// column pass to minimize heap allocations and L1 cache misses.
     static func forward2D(
-        data: [Double], width: Int, height: Int
-    ) -> (ll: [Double], lh: [Double], hl: [Double], hh: [Double],
+        data: [Float], width: Int, height: Int
+    ) -> (ll: [Float], lh: [Float], hl: [Float], hh: [Float],
           llW: Int, llH: Int, lhW: Int, lhH: Int,
           hlW: Int, hlH: Int, hhW: Int, hhH: Int)
     {
@@ -331,56 +347,104 @@ struct AcceleratedDWT2D: Sendable {
         let rowLowW  = (width + 1) / 2
         let rowHighW = width / 2
 
-        // Preallocate workspace for 1D transforms
-        let colWs = DWTWorkspace(maxSignalLength: height)
+        // Preallocate workspace for row 1D transforms
         let rowWs = DWTWorkspace(maxSignalLength: width)
 
         // --- Column pass (vertical): strip-mined with column-major layout ---
         // Transpose strips of adjacent columns into column-major format so
         // each column's data is contiguous in memory. This eliminates the
         // stride-N scatter/gather pattern that causes L1 cache misses.
-        var colResult = [Double](repeating: 0, count: width * height)
+        //
+        // For images ≥ 256 pixels wide, parallelize across column strips:
+        // each strip operates on disjoint memory, so no synchronization needed.
+        var colResult = [Float](repeating: 0, count: width * height)
         let colStripWidth = 8
+        let numStrips = (width + colStripWidth - 1) / colStripWidth
+        let useParallelColumns = numStrips >= 4
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
                 let src = srcBuf.baseAddress!
                 let dst = dstBuf.baseAddress!
 
-                // Column-major strip: layout is stripIn[col * height + row]
-                let stripBufSize = colStripWidth * height
-                let stripIn = UnsafeMutablePointer<Double>.allocate(capacity: stripBufSize)
-                let stripOut = UnsafeMutablePointer<Double>.allocate(capacity: stripBufSize)
-                let colOut = UnsafeMutablePointer<Double>.allocate(capacity: height)
-                defer {
-                    stripIn.deallocate()
-                    stripOut.deallocate()
-                    colOut.deallocate()
-                }
+                if useParallelColumns {
+                    // Pre-allocate all strip buffers to avoid per-strip heap allocations.
+                    // Each concurrentPerform iteration uses its own index into contiguous memory.
+                    let stripBufSize = colStripWidth * height
+                    let allStripIn = UnsafeMutablePointer<Float>.allocate(capacity: numStrips * stripBufSize)
+                    let allStripOut = UnsafeMutablePointer<Float>.allocate(capacity: numStrips * stripBufSize)
+                    let allColOut = UnsafeMutablePointer<Float>.allocate(capacity: numStrips * height)
+                    let stripWorkspaces = (0..<numStrips).map { _ in DWTWorkspace(maxSignalLength: height) }
+                    defer {
+                        allStripIn.deallocate()
+                        allStripOut.deallocate()
+                        allColOut.deallocate()
+                    }
 
-                for colStrip in stride(from: 0, to: width, by: colStripWidth) {
-                    let cols = min(colStripWidth, width - colStrip)
+                    // Parallel column pass: each strip indexes into pre-allocated buffers
+                    DispatchQueue.concurrentPerform(iterations: numStrips) { stripIdx in
+                        let colStrip = stripIdx * colStripWidth
+                        let cols = min(colStripWidth, width - colStrip)
+                        let stripIn = allStripIn + stripIdx * stripBufSize
+                        let stripOut = allStripOut + stripIdx * stripBufSize
+                        let colOut = allColOut + stripIdx * height
+                        let stripWs = stripWorkspaces[stripIdx]
 
-                    // Gather & transpose: row-major source → column-major strip
-                    // Each row read loads 1 cache line (8 Doubles = 64 bytes)
-                    for row in 0..<height {
-                        let srcRow = src + row * width + colStrip
+                        // Gather & transpose: row-major source → column-major strip
+                        for row in 0..<height {
+                            let srcRow = src + row * width + colStrip
+                            for c in 0..<cols {
+                                stripIn[c * height + row] = srcRow[c]
+                            }
+                        }
+
+                        // Transform each column — data is now contiguous
                         for c in 0..<cols {
-                            stripIn[c * height + row] = srcRow[c]
+                            forward97_1D(stripIn + c * height, colOut, count: height, workspace: stripWs)
+                            memcpy(stripOut + c * height, colOut, height * MemoryLayout<Float>.size)
+                        }
+
+                        // Scatter & transpose back: column-major strip → row-major output
+                        for row in 0..<height {
+                            let dstRow = dst + row * width + colStrip
+                            for c in 0..<cols {
+                                dstRow[c] = stripOut[c * height + row]
+                            }
                         }
                     }
-
-                    // Transform each column — data is now contiguous
-                    for c in 0..<cols {
-                        forward97_1D(stripIn + c * height, colOut, count: height, workspace: colWs)
-                        memcpy(stripOut + c * height, colOut, height * MemoryLayout<Double>.size)
+                } else {
+                    // Sequential path for small images
+                    let colWs = DWTWorkspace(maxSignalLength: height)
+                    let stripBufSize = colStripWidth * height
+                    let stripIn = UnsafeMutablePointer<Float>.allocate(capacity: stripBufSize)
+                    let stripOut = UnsafeMutablePointer<Float>.allocate(capacity: stripBufSize)
+                    let colOut = UnsafeMutablePointer<Float>.allocate(capacity: height)
+                    defer {
+                        stripIn.deallocate()
+                        stripOut.deallocate()
+                        colOut.deallocate()
                     }
 
-                    // Scatter & transpose back: column-major strip → row-major output
-                    for row in 0..<height {
-                        let dstRow = dst + row * width + colStrip
+                    for colStrip in stride(from: 0, to: width, by: colStripWidth) {
+                        let cols = min(colStripWidth, width - colStrip)
+
+                        for row in 0..<height {
+                            let srcRow = src + row * width + colStrip
+                            for c in 0..<cols {
+                                stripIn[c * height + row] = srcRow[c]
+                            }
+                        }
+
                         for c in 0..<cols {
-                            dstRow[c] = stripOut[c * height + row]
+                            forward97_1D(stripIn + c * height, colOut, count: height, workspace: colWs)
+                            memcpy(stripOut + c * height, colOut, height * MemoryLayout<Float>.size)
+                        }
+
+                        for row in 0..<height {
+                            let dstRow = dst + row * width + colStrip
+                            for c in 0..<cols {
+                                dstRow[c] = stripOut[c * height + row]
+                            }
                         }
                     }
                 }
@@ -393,14 +457,14 @@ struct AcceleratedDWT2D: Sendable {
         let hlH = colLowH
         let hhH = colHighH
 
-        var ll = [Double](repeating: 0, count: rowLowW * colLowH)
-        var hl = [Double](repeating: 0, count: rowHighW * colLowH)
-        var lh = [Double](repeating: 0, count: rowLowW * colHighH)
-        var hh = [Double](repeating: 0, count: rowHighW * colHighH)
+        var ll = [Float](repeating: 0, count: rowLowW * colLowH)
+        var hl = [Float](repeating: 0, count: rowHighW * colLowH)
+        var lh = [Float](repeating: 0, count: rowLowW * colHighH)
+        var hh = [Float](repeating: 0, count: rowHighW * colHighH)
 
         colResult.withUnsafeBufferPointer { srcBuf in
             let src = srcBuf.baseAddress!
-            var rowOut = [Double](repeating: 0, count: width)
+            var rowOut = [Float](repeating: 0, count: width)
 
             // Process low-column rows → LL, HL using memcpy for contiguous scatter
             for row in 0..<colLowH {
@@ -409,10 +473,10 @@ struct AcceleratedDWT2D: Sendable {
                 }
                 rowOut.withUnsafeBufferPointer { roBuf in
                     ll.withUnsafeMutableBufferPointer { llBuf in
-                        memcpy(llBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Double>.size)
+                        memcpy(llBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Float>.size)
                     }
                     hl.withUnsafeMutableBufferPointer { hlBuf in
-                        memcpy(hlBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Double>.size)
+                        memcpy(hlBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Float>.size)
                     }
                 }
             }
@@ -425,10 +489,10 @@ struct AcceleratedDWT2D: Sendable {
                 }
                 rowOut.withUnsafeBufferPointer { roBuf in
                     lh.withUnsafeMutableBufferPointer { lhBuf in
-                        memcpy(lhBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Double>.size)
+                        memcpy(lhBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Float>.size)
                     }
                     hh.withUnsafeMutableBufferPointer { hhBuf in
-                        memcpy(hhBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Double>.size)
+                        memcpy(hhBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Float>.size)
                     }
                 }
             }
@@ -444,9 +508,9 @@ struct AcceleratedDWT2D: Sendable {
     /// Returns the coarsest LL subband and per-level detail subbands (LH, HL, HH)
     /// in the same structure the encoder pipeline expects.
     struct LevelResult {
-        let lh: [Double]
-        let hl: [Double]
-        let hh: [Double]
+        let lh: [Float]
+        let hl: [Float]
+        let hh: [Float]
         let lhW: Int, lhH: Int
         let hlW: Int, hlH: Int
         let hhW: Int, hhH: Int
@@ -454,13 +518,13 @@ struct AcceleratedDWT2D: Sendable {
 
     struct DecompositionResult {
         let levels: [LevelResult]
-        let coarsestLL: [Double]
+        let coarsestLL: [Float]
         let llW: Int
         let llH: Int
     }
 
     static func forwardDecomposition(
-        data: [Double], width: Int, height: Int, levels: Int
+        data: [Float], width: Int, height: Int, levels: Int
     ) -> DecompositionResult {
         var currentData = data
         var currentW = width
@@ -585,50 +649,87 @@ struct AcceleratedDWT2D: Sendable {
         let rowLowW  = (width + 1) / 2
         let rowHighW = width / 2
 
-        // Preallocate workspaces
-        let colWs = DWTWorkspace53(maxSignalLength: height)
+        // Preallocate row workspace
         let rowWs = DWTWorkspace53(maxSignalLength: width)
 
         var colResult = [Int32](repeating: 0, count: width * height)
         let colStripWidth = 8
+        let numStrips = (width + colStripWidth - 1) / colStripWidth
+        let useParallelColumns = numStrips >= 4
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
                 let src = srcBuf.baseAddress!
                 let dst = dstBuf.baseAddress!
 
-                let stripBufSize = colStripWidth * height
-                let stripIn = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                let stripOut = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                let colOut = UnsafeMutablePointer<Int32>.allocate(capacity: height)
-                defer {
-                    stripIn.deallocate()
-                    stripOut.deallocate()
-                    colOut.deallocate()
-                }
+                if useParallelColumns {
+                    // Parallel column pass: each strip gets its own workspace
+                    DispatchQueue.concurrentPerform(iterations: numStrips) { stripIdx in
+                        let colStrip = stripIdx * colStripWidth
+                        let cols = min(colStripWidth, width - colStrip)
+                        let stripBufSize = colStripWidth * height
+                        let stripWs = DWTWorkspace53(maxSignalLength: height)
+                        let stripIn = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
+                        let stripOut = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
+                        let colOut = UnsafeMutablePointer<Int32>.allocate(capacity: height)
+                        defer {
+                            stripIn.deallocate()
+                            stripOut.deallocate()
+                            colOut.deallocate()
+                        }
 
-                for colStrip in stride(from: 0, to: width, by: colStripWidth) {
-                    let cols = min(colStripWidth, width - colStrip)
+                        for row in 0..<height {
+                            let srcRow = src + row * width + colStrip
+                            for c in 0..<cols {
+                                stripIn[c * height + row] = srcRow[c]
+                            }
+                        }
 
-                    // Gather & transpose: row-major source → column-major strip
-                    for row in 0..<height {
-                        let srcRow = src + row * width + colStrip
                         for c in 0..<cols {
-                            stripIn[c * height + row] = srcRow[c]
+                            forward53_1D(stripIn + c * height, colOut, count: height, workspace: stripWs)
+                            memcpy(stripOut + c * height, colOut, height * MemoryLayout<Int32>.size)
+                        }
+
+                        for row in 0..<height {
+                            let dstRow = dst + row * width + colStrip
+                            for c in 0..<cols {
+                                dstRow[c] = stripOut[c * height + row]
+                            }
                         }
                     }
-
-                    // Transform each column — data is contiguous
-                    for c in 0..<cols {
-                        forward53_1D(stripIn + c * height, colOut, count: height, workspace: colWs)
-                        memcpy(stripOut + c * height, colOut, height * MemoryLayout<Int32>.size)
+                } else {
+                    // Sequential path for small images
+                    let colWs = DWTWorkspace53(maxSignalLength: height)
+                    let stripBufSize = colStripWidth * height
+                    let stripIn = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
+                    let stripOut = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
+                    let colOut = UnsafeMutablePointer<Int32>.allocate(capacity: height)
+                    defer {
+                        stripIn.deallocate()
+                        stripOut.deallocate()
+                        colOut.deallocate()
                     }
 
-                    // Scatter & transpose back: column-major → row-major
-                    for row in 0..<height {
-                        let dstRow = dst + row * width + colStrip
+                    for colStrip in stride(from: 0, to: width, by: colStripWidth) {
+                        let cols = min(colStripWidth, width - colStrip)
+
+                        for row in 0..<height {
+                            let srcRow = src + row * width + colStrip
+                            for c in 0..<cols {
+                                stripIn[c * height + row] = srcRow[c]
+                            }
+                        }
+
                         for c in 0..<cols {
-                            dstRow[c] = stripOut[c * height + row]
+                            forward53_1D(stripIn + c * height, colOut, count: height, workspace: colWs)
+                            memcpy(stripOut + c * height, colOut, height * MemoryLayout<Int32>.size)
+                        }
+
+                        for row in 0..<height {
+                            let dstRow = dst + row * width + colStrip
+                            for c in 0..<cols {
+                                dstRow[c] = stripOut[c * height + row]
+                            }
                         }
                     }
                 }
