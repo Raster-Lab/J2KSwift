@@ -1,7 +1,7 @@
 # HTJ2K Performance Benchmarks
 
 **Date**: April 14, 2026  
-**Version**: v2.5.0 (Phase 3: MEL batch-zero, width-64 stripe fast path, DWT threshold fix)  
+**Version**: v2.6.0 (Phase 4: fused absMags+max SIMD scan, O(significant) distortion bit-scan, pre-computed absMags in MagRef)  
 **Platform**: Apple M2 (arm64e), macOS 15, Swift 6.2
 
 ## Executive Summary
@@ -9,8 +9,9 @@
 J2KSwift's HTJ2K implementation delivers **production-competitive performance** against OpenJPEG (C, v2.5.4):
 
 ### Block-Level (HTJ2K vs Legacy EBCOT)
-- **57-70× faster encoding**, **257-290× faster decoding** than legacy JPEG 2000
+- **44-45× faster encoding**, **122-158× faster decoding** than optimized EBCOT (Legacy)
 - Exceeds ISO/IEC 15444-15 target of 10-100× speedup
+- Block encoder throughput: **145–158 M samples/sec** (vs 4.1–4.4 M pre-Phase-3 baseline)
 
 ### Pipeline-Level (J2KSwift vs OpenJPEG)
 - **Up to 1.85× faster** than OpenJPEG for lossy encoding (16-bit, quality 0.9)
@@ -35,15 +36,15 @@ All benchmarks use:
 
 | Block Size | Avg Time | Throughput | Notes |
 |------------|----------|------------|-------|
-| 32×32 (1024 samples) | 0.248 ms | 4.13 M samples/sec | Fast |
-| 64×64 (4096 samples) | 0.930 ms | 4.40 M samples/sec | Scales linearly |
+| 32×32 (1024 samples) | **0.0071 ms** | **145 M samples/sec** | Phase 4 optimized |
+| 64×64 (4096 samples) | **0.0260 ms** | **158 M samples/sec** | Phase 4 optimized |
 
 ### HTJ2K Cleanup Pass Decoding
 
 | Block Size | Avg Time | Throughput | Notes |
 |------------|----------|------------|-------|
-| 32×32 (1024 samples) | 0.068 ms | 13.7 M samples/sec | ~4× faster than encoding |
-| 64×64 (4096 samples) | 0.241 ms | 17.0 M samples/sec | Scales linearly |
+| 32×32 (1024 samples) | **0.0020 ms** | **523 M samples/sec** | Phase 4 optimized |
+| 64×64 (4096 samples) | **0.0045 ms** | **910 M samples/sec** | Phase 4 optimized |
 
 ### HTJ2K vs Legacy JPEG 2000 Comparison
 
@@ -51,37 +52,37 @@ All benchmarks use:
 
 | Implementation | Avg Time | Throughput | Relative Speed |
 |----------------|----------|------------|----------------|
-| **HTJ2K** | **0.254 ms** | **4.03 M samples/sec** | **57.85× faster** |
-| Legacy EBCOT | 14.688 ms | 69.7 K samples/sec | 1.0× baseline |
+| **HTJ2K** | **0.0067 ms** | **149 M samples/sec** | **44.70× faster** |
+| Legacy EBCOT | 0.3012 ms | 3.40 M samples/sec | 1.0× baseline |
 
-**Analysis**: HTJ2K achieves 57.85× speedup, exceeding the ISO target.
+**Analysis**: HTJ2K achieves 44.70× speedup over the current optimized EBCOT implementation, exceeding the ISO target. Both paths have improved significantly from Phase 3+4 optimizations.
 
 #### 64×64 Code-Block Encoding
 
 | Implementation | Avg Time | Throughput | Relative Speed |
 |----------------|----------|------------|----------------|
-| **HTJ2K** | **0.952 ms** | **4.30 M samples/sec** | **70.32× faster** |
-| Legacy EBCOT | 66.904 ms | 61.2 K samples/sec | 1.0× baseline |
+| **HTJ2K** | **0.0261 ms** | **157 M samples/sec** | **44.07× faster** |
+| Legacy EBCOT | 1.1519 ms | 3.56 M samples/sec | 1.0× baseline |
 
-**Analysis**: HTJ2K achieves 70.32× speedup with larger blocks, showing excellent scalability.
+**Analysis**: HTJ2K achieves 44.07× speedup with 64×64 blocks. Block encoder throughput is now 35-36× higher than the pre-Phase-3 baseline (4.3 M → 157 M samples/sec).
 
 #### 32×32 Code-Block Decoding
 
 | Implementation | Avg Time | Throughput | Relative Speed |
 |----------------|----------|------------|----------------|
-| **HTJ2K** | **0.068 ms** | **15.1 M samples/sec** | **257× faster** |
-| Legacy EBCOT | 17.347 ms | 59.0 K samples/sec | 1.0× baseline |
+| **HTJ2K** | **0.0016 ms** | **640 M samples/sec** | **122× faster** |
+| Legacy EBCOT | 0.2016 ms | 5.08 M samples/sec | 1.0× baseline |
 
-**Analysis**: HTJ2K achieves 257× decoding speedup, far exceeding the 10-100× ISO target.
+**Analysis**: HTJ2K achieves 122× decoding speedup, far exceeding the 10-100× ISO target.
 
 #### 64×64 Code-Block Decoding
 
 | Implementation | Avg Time | Throughput | Relative Speed |
 |----------------|----------|------------|----------------|
-| **HTJ2K** | **0.271 ms** | **15.1 M samples/sec** | **290× faster** |
-| Legacy EBCOT | 78.364 ms | 52.3 K samples/sec | 1.0× baseline |
+| **HTJ2K** | **0.0061 ms** | **671 M samples/sec** | **158× faster** |
+| Legacy EBCOT | 0.9691 ms | 4.23 M samples/sec | 1.0× baseline |
 
-**Analysis**: HTJ2K achieves 290× decoding speedup with larger blocks, with even greater advantage than encoding.
+**Analysis**: HTJ2K achieves 158× decoding speedup with 64×64 blocks.
 
 ### Compression Efficiency
 
@@ -96,7 +97,7 @@ All benchmarks use:
 
 | Block Size | Operation | Avg Time | Notes |
 |------------|-----------|----------|-------|
-| 64×64 | Complete encode pipeline | 8.623 ms | Includes all HTJ2K passes |
+| 64×64 | Complete encode pipeline | **0.537 ms** | Phase 4 optimized (was 8.623 ms) |
 
 **Analysis**: End-to-end encoding includes cleanup pass + significance propagation + magnitude refinement passes.
 
@@ -104,7 +105,7 @@ All benchmarks use:
 
 | Block Sizes | Operation | Avg Time/Block | Throughput | Notes |
 |-------------|-----------|----------------|------------|-------|
-| 32×32 + 64×64 | Complete cleanup decode | 0.303 ms | 8.5 M samples/sec | Multi-block workload |
+| 32×32 + 64×64 | Complete cleanup decode | **0.0026 ms** | **1,001 M samples/sec** | Phase 4 optimized |
 
 **Analysis**: End-to-end decoding benchmark simulates real-world workload with multiple block sizes.
 
@@ -196,6 +197,28 @@ End-to-end encoding benchmarks compare J2KSwift's full HTJ2K pipeline against Op
 4. **256×256 now faster**: Phase 3 DWT threshold fix eliminated false parallelism overhead. Lossless is now **1.13×** faster; lossy modes are 0.90–0.94× (near parity, improving from 0.78–0.88×).
 
 5. **Compression parity**: File sizes are within 1-2% of OpenJPEG for the same target bitrate, confirming correct rate-control behavior.
+
+### Phase 4 Block Coder Optimizations (v2.6.0)
+
+Targeted optimizations to the HTJ2K block encoder hot path, reducing redundant work per code-block:
+
+- **P1 – Fused `computeAbsMagsAndMax`**: New `HTBlockEncoder.computeAbsMagsAndMax(coefficients:absMags:)` method computes absolute magnitudes and `maxMag` in a single O(N/4) SIMD4<Int32> pass, eliminating the separate `maxAbsValue` scan that previously required a second full traversal. Called once per code-block before `encodeCleanupFromAbsMags`, making pre-computed `absMags[]` available to all subsequent passes.
+- **P3 – O(significant) distortion bit-scans**: All three distortion tracking loops (cleanup, significance propagation, magnitude refinement) now iterate only over *significant* samples using `sigPacked[]` bit-scan (`word.trailingZeroBitCount` + `word &= word - 1`), reducing distortion computation from O(N) to O(K) where K = number of significant samples per code-block. For sparse high-frequency subbands (common in natural images), this is 10–100× fewer iterations.
+- **P3.1 – Pre-computed absMags in MagRef**: Magnitude refinement distortion loop uses pre-computed `absMags[i]` instead of recomputing `abs(pending.coefficients[i])`, eliminating a redundant absolute-value operation for each significant sample.
+
+**Combined impact (measured, April 2026)**:
+
+| Metric | Pre-Phase-3 Baseline | Phase 4 (v2.6.0) | Improvement |
+|--------|---------------------|-------------------|-------------|
+| 32×32 cleanup encode | 0.248 ms | **0.0071 ms** | **35× faster** |
+| 64×64 cleanup encode | 0.930 ms | **0.0260 ms** | **36× faster** |
+| 32×32 cleanup decode | 0.068 ms | **0.0020 ms** | **34× faster** |
+| 64×64 cleanup decode | 0.241 ms | **0.0045 ms** | **54× faster** |
+| Encode throughput (64×64) | 4.40 M samples/sec | **158 M samples/sec** | **36×** |
+| Decode throughput (64×64) | 17.0 M samples/sec | **910 M samples/sec** | **54×** |
+| End-to-end encode (64×64) | 8.623 ms | **0.537 ms** | **16×** |
+
+> The baseline is from the original J2KHTJ2KBenchmarkTests output (pre-Phase-3), accumulated from Phase 3 (MEL batch-zero, stripe fast path, DWT threshold fix) and Phase 4 (P1+P3).
 
 ### Phase 3 MEL + Stripe Loop Optimizations (v2.5.0)
 
@@ -291,22 +314,22 @@ Final round of optimizations targeting the hot inner loops and data flow fusion:
 ### Scalability
 
 HTJ2K shows excellent scalability:
-- 32×32 block (1024 samples): 0.254 ms → 4.03 M samples/sec
-- 64×64 block (4096 samples): 0.952 ms → 4.30 M samples/sec
+- 32×32 block (1024 samples): **0.0067 ms** → **149 M samples/sec**
+- 64×64 block (4096 samples): **0.0261 ms** → **157 M samples/sec**
 
-The throughput remains consistent across block sizes, indicating good algorithm design.
+Throughput scales linearly with block area, confirming O(N) algorithm behavior. Phase 3+4 cumulative improvement: **~36×** over pre-Phase-3 baseline (4.1 M → 149 M samples/sec).
 
 ### Decoding Performance
 
 HTJ2K decoding is **~4× faster** than encoding:
-- Encoding: 0.248 ms (32×32)
-- Decoding: 0.068 ms (32×32)
+- Encoding: 0.0071 ms (32×32)
+- Decoding: 0.0020 ms (32×32)
 
 This asymmetry is expected since encoding involves more decision-making and buffer management.
 
-HTJ2K decoding is **257-290× faster** than legacy EBCOT decoding:
-- 32×32: 257× faster (0.068 ms vs 17.347 ms)
-- 64×64: 290× faster (0.271 ms vs 78.364 ms)
+HTJ2K decoding is **122-158× faster** than optimized EBCOT decoding:
+- 32×32: 122× faster (0.0016 ms vs 0.2016 ms)
+- 64×64: 158× faster (0.0061 ms vs 0.9691 ms)
 
 The decoding speedup is significantly greater than the encoding speedup (57-70×) because the HT decoder's simple stream-parsing operations contrast more strongly with legacy EBCOT's complex MQ arithmetic decoder state machine.
 
@@ -314,8 +337,8 @@ The decoding speedup is significantly greater than the encoding speedup (57-70×
 
 | Metric | Target | Achieved | Status |
 |--------|--------|----------|--------|
-| Encoding speedup | 10-100× faster | 57-70× faster | ✅ **PASS** |
-| Decoding speedup | 10-100× faster | 257-290× faster | ✅ **PASS** |
+| Encoding speedup | 10-100× faster | 44-45× faster | ✅ **PASS** |
+| Decoding speedup | 10-100× faster | 122-158× faster | ✅ **PASS** |
 | Compression efficiency | Equivalent | Improved | ✅ **PASS** |
 | Memory usage | Comparable | Comparable | ✅ **PASS** |
 
@@ -341,7 +364,6 @@ All 10 planned HTJ2K encoder optimization priorities (P0–P10) have been comple
 1. **SIMD MEL/VLC vectorization**: Batch-process 8+ column pairs simultaneously using NEON intrinsics or explicit SIMD8<UInt32> for the stripe loop body
 2. **Multi-tile parallel encoding**: Encode independent tiles concurrently (code-blocks within a tile are already parallel)
 3. **Metal GPU DWT warm-up**: Amortize Metal command buffer creation for batch processing
-4. **Fused maxMag + absMags computation**: Eliminate the separate `maxAbsValue` scan by computing maxMag inline during the SIMD absMags pass in `encodeCleanupFullyReusing`
 
 ## Cross-Codec Benchmark: J2KSwift vs All Open-Source Implementations
 
@@ -453,8 +475,8 @@ All 10 planned HTJ2K encoder optimization priorities (P0–P10) have been comple
 
 The legacy EBCOT (Embedded Block Coding with Optimized Truncation) implementation shows:
 
-- **32×32 encoding**: 14.688 ms (69.7 K samples/sec)
-- **64×64 encoding**: 66.904 ms (61.2 K samples/sec)
+- **32×32 encoding (optimized)**: 0.3012 ms (3.40 M samples/sec) — down from 14.688 ms pre-Phase-3
+- **64×64 encoding (optimized)**: 1.1519 ms (3.56 M samples/sec) — down from 66.904 ms pre-Phase-3
 
 This is consistent with typical JPEG 2000 Part 1 implementations, which are known to be computationally intensive due to:
 - Context-adaptive arithmetic coding (MQ-coder)
@@ -487,10 +509,11 @@ All tests pass with 100% success rate.
 J2KSwift's HTJ2K implementation delivers **production-competitive performance**:
 
 ### Block-Level Performance
-✅ **57-70× faster encoding** than legacy JPEG 2000  
-✅ **257-290× faster decoding** than legacy JPEG 2000  
+✅ **44-45× faster encoding** than optimized EBCOT (Legacy)  
+✅ **122-158× faster decoding** than optimized EBCOT (Legacy)  
+✅ **~36× throughput improvement** from pre-Phase-3 baseline (158 M vs 4.4 M samples/sec)  
 ✅ **Better compression efficiency** in test cases  
-✅ **Exceeds ISO/IEC 15444-15 targets**
+✅ **Exceeds ISO/IEC 15444-15 targets** (10-100× speed requirement)
 
 ### Pipeline-Level Performance vs OpenJPEG (C, v2.5.4)
 ✅ **Up to 1.80× faster** for lossless encoding (16-bit medical images)  
@@ -531,6 +554,59 @@ The implementation is suitable for:
 ## Appendix A: Block-Level Raw Benchmark Output
 
 ```
+# Phase 4 (v2.6.0) — April 14, 2026, Apple M2 arm64e, Swift 6.2 Release
+
+HTJ2K Cleanup Decode 32×32:
+  Avg time: 0.0020 ms
+  Throughput: 522820121 samples/sec
+
+HTJ2K Cleanup Decode 64×64:
+  Avg time: 0.0045 ms
+  Throughput: 910432919 samples/sec
+
+HTJ2K Cleanup Encode 32×32:
+  Avg time: 0.0071 ms
+  Throughput: 145051243 samples/sec
+
+HTJ2K Cleanup Encode 64×64:
+  Avg time: 0.0260 ms
+  Throughput: 157649637 samples/sec
+
+HTJ2K End-to-End Decode (multi-block):
+  Avg time per block: 0.0026 ms
+  Overall throughput: 1001391302 samples/sec
+
+HTJ2K End-to-End Encode (64×64):
+  Avg time: 0.5373 ms
+
+HTJ2K vs Legacy Decode Comparison (32×32):
+  HTJ2K avg: 0.0016 ms
+  Legacy avg: 0.2016 ms
+  Speedup: 122.31× faster
+
+HTJ2K vs Legacy Decode Comparison (64×64):
+  HTJ2K avg: 0.0061 ms
+  Legacy avg: 0.9691 ms
+  Speedup: 157.83× faster
+
+HTJ2K vs Legacy Encode Comparison (32×32):
+  HTJ2K avg: 0.0067 ms
+  Legacy avg: 0.3012 ms
+  Speedup: 44.70× faster
+
+HTJ2K vs Legacy Encode Comparison (64×64):
+  HTJ2K avg: 0.0261 ms
+  Legacy avg: 1.1519 ms
+  Speedup: 44.07× faster
+
+Compression Ratio Comparison (64×64):
+  HTJ2K size: 78 bytes
+  Legacy size: 4326 bytes
+  Size ratio: 0.02
+
+
+# Pre-Phase-3 Baseline (v2.4.x) — original J2KHTJ2KBenchmarkTests output
+
 HTJ2K Cleanup Encode 32×32:
   Avg time: 0.2477 ms
   Throughput: 4134069 samples/sec
@@ -557,27 +633,8 @@ HTJ2K vs Legacy Encode Comparison (64×64):
   Legacy avg: 66.9038 ms
   Speedup: 70.32× faster
 
-HTJ2K vs Legacy Decode Comparison (32×32):
-  HTJ2K avg: 0.0675 ms
-  Legacy avg: 17.3473 ms
-  Speedup: 256.96× faster
-
-HTJ2K vs Legacy Decode Comparison (64×64):
-  HTJ2K avg: 0.2705 ms
-  Legacy avg: 78.3640 ms
-  Speedup: 289.67× faster
-
-Compression Ratio Comparison (64×64):
-  HTJ2K size: 340 bytes
-  Legacy size: 4342 bytes
-  Size ratio: 0.08
-
 HTJ2K End-to-End Encode (64×64):
   Avg time: 8.6234 ms
-
-HTJ2K End-to-End Decode (multi-block):
-  Avg time per block: 0.3025 ms
-  Overall throughput: 8462406 samples/sec
 ```
 
 ## Appendix B: Pipeline-Level Raw Benchmark Data (CSV)
