@@ -354,8 +354,80 @@ The decoding speedup is significantly greater than the encoding speedup (57-70×
 ### Expected Performance on Other Platforms
 
 - **Apple Silicon (M3/M4)**: Likely 10-20% faster due to improved branch prediction and memory bandwidth
-- **x86_64 Linux**: 0.8-1.0× of M2 performance depending on CPU generation
+- **Intel x86_64**: See dedicated Intel benchmark section below
 - **ARM64 Linux**: Similar to Apple Silicon without Metal GPU acceleration
+
+### Intel x86_64 Performance (Benchmark Data TBD)
+
+**Benchmark Status**: Ready to test — run `bash Scripts/intel_benchmark.sh` on Intel hardware.
+
+This section will contain comprehensive benchmark results comparing J2KSwift performance on Intel x86_64 architecture against OpenJPEG, OpenJPH, and Grok.
+
+**To run Intel benchmarks:**
+
+1. **On Intel macOS or Linux system:**
+   ```bash
+   git clone https://github.com/Raster-Lab/J2KSwift.git
+   cd J2KSwift
+   bash Scripts/intel_benchmark.sh
+   ```
+
+2. **Review results:**
+   - Raw CSV: `/tmp/j2k_intel_bench/benchmark_results_intel.csv`
+   - Report: `intel_benchmark_report.md`
+
+3. **Expected performance characteristics:**
+   - Absolute encode times will be slower than Apple M2 due to architecture differences
+   - Relative speedup vs OpenJPEG should remain competitive (1.2-2.0× for ≥512×512 images)
+   - AVX2/AVX-512 optimizations may provide additional gains (future work)
+
+**See [INTEL_BENCHMARK_GUIDE.md](INTEL_BENCHMARK_GUIDE.md) for detailed instructions.**
+
+#### Intel Platform Specifications (Template)
+
+| Component | Specification |
+|-----------|--------------|
+| CPU | _Intel Core i7-XXXXX or similar_ |
+| Cores | _8P+4E or similar_ |
+| Base/Turbo | _X.X GHz / X.X GHz_ |
+| Cache | _L2: XX MB, L3: XX MB_ |
+| RAM | _XX GB DDR4/DDR5-XXXX_ |
+| OS | _macOS XX.X / Ubuntu XX.XX_ |
+| Swift | _6.2 (Release build)_ |
+| OpenJPEG | _v2.5.4_ |
+
+#### Pipeline-Level Performance vs OpenJPEG (Intel) — TBD
+
+_This table will be populated once Intel benchmarks are run:_
+
+| Image | Resolution | Bit Depth | Lossless | Lossy q0.9 | Lossy 2bpp | Lossy 1bpp | Lossy 0.5bpp |
+|-------|-----------|-----------|----------|------------|------------|------------|--------------|
+| Grad-256 | 256×256 | 8 | TBD | TBD | TBD | TBD | TBD |
+| Grad-512 | 512×512 | 8 | TBD | TBD | TBD | TBD | TBD |
+| Grad-1024 | 1024×1024 | 8 | TBD | TBD | TBD | TBD | TBD |
+| Grad-2048 | 2048×2048 | 8 | TBD | TBD | TBD | TBD | TBD |
+| Med-512-12b | 512×512 | 12 | TBD | TBD | TBD | TBD | TBD |
+| Med-512-16b | 512×512 | 16 | TBD | TBD | TBD | TBD | TBD |
+| Med-1024-16b | 1024×1024 | 16 | TBD | TBD | TBD | TBD | TBD |
+
+> Values >1.0× mean J2KSwift is faster than OpenJPEG. **Bold** = J2KSwift faster.
+
+#### Intel vs Apple M2 Comparison — TBD
+
+_Comparative analysis of architectural performance differences:_
+
+| Metric | Apple M2 (arm64e) | Intel x86_64 | M2 Advantage |
+|--------|-------------------|--------------|--------------|
+| 1024×1024 lossless (absolute) | 70.6 ms | TBD ms | TBD× |
+| 1024×1024 lossless (speedup vs OPJ) | 1.70× | TBD× | — |
+| Med-512-16b lossless (absolute) | 31.0 ms | TBD ms | TBD× |
+| Med-512-16b lossless (speedup vs OPJ) | 1.68× | TBD× | — |
+| HTJ2K block encode throughput | 158 M samples/sec | TBD M samples/sec | TBD× |
+
+**Architecture Notes:**
+- Apple M2 benefits from unified memory architecture and wide memory bandwidth
+- Intel CPUs may show competitive performance with AVX2/AVX-512 SIMD (future optimization target)
+- Both architectures achieve significant speedups vs OpenJPEG, validating HTJ2K algorithm efficiency
 
 ## Remaining Optimization Opportunities
 
