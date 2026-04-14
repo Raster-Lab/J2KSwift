@@ -343,6 +343,37 @@ struct HTMELCoder: Sendable {
         }
     }
 
+    /// Encodes N consecutive insignificant (zero) context decisions.
+    ///
+    /// Equivalent to calling `encode(bit: 0)` N times, but avoids per-element
+    /// function call overhead. Advances the run counter in bulk and only calls
+    /// into the writer when a run-length threshold is crossed.
+    ///
+    /// For a fully sparse code-block stripe (all 2048 pairs insignificant at the
+    /// top bit-plane), this replaces O(N) encode calls with O(log₂N) emitBit
+    /// calls (since the threshold table grows geometrically).
+    ///
+    /// - Parameter n: Number of consecutive insignificant pairs to encode.
+    @inline(__always)
+    mutating func encodeZeroRun(_ n: Int) {
+        var remaining = n
+        while remaining > 0 {
+            let limit = 1 << Self.thresholdTable[stateIndex]
+            let roomLeft = limit &- run   // zeros remaining before threshold crossed
+            if remaining < roomLeft {
+                run &+= remaining
+                return
+            }
+            // Fill run to threshold: emit a 0 MEL bit, advance state
+            remaining &-= roomLeft
+            writer.emitBit(0)
+            run = 0
+            if stateIndex < Self.thresholdTable.count - 1 {
+                stateIndex &+= 1
+            }
+        }
+    }
+
     /// The number of output bytes (including any partial byte in the accumulator).
     var byteCount: Int { writer.byteCount }
 
@@ -1055,11 +1086,489 @@ struct HTBlockEncoder: Sendable {
         )
     }
 
+    /// Computes absolute magnitudes and the maximum value in a single SIMD pass.
+    ///
+    /// Fills `absMags` with `abs(coefficients[i])` for all `i` and returns the maximum.
+    /// This replaces the separate `maxAbsValue` scan so the caller can determine
+    /// `topBitPlane` from the returned value and then call `encodeCleanupFromAbsMags`
+    /// without re-scanning the coefficient data.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - absMags: Pre-allocated absolute magnitude array to fill (reused across blocks).
+    /// - Returns: The maximum absolute coefficient value, or 0 if all are zero.
+    func computeAbsMagsAndMax(
+        coefficients: [Int32],
+        absMags: inout [Int32]
+    ) -> Int {
+        let count = coefficients.count
+        var localMax: Int32 = 0
+
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                guard let src = srcPtr.baseAddress,
+                      let mag = magPtr.baseAddress else { return }
+
+                let simdCount = count / 4
+                var maxVec = SIMD4<Int32>.zero
+
+                for i in 0..<simdCount {
+                    let offset = i &* 4
+                    let v = SIMD4<Int32>(
+                        src[offset], src[offset &+ 1],
+                        src[offset &+ 2], src[offset &+ 3]
+                    )
+                    let negative = v .< SIMD4<Int32>.zero
+                    let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                    mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                    mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+                    maxVec = pointwiseMax(maxVec, absV)
+                }
+                localMax = max(max(maxVec[0], maxVec[1]), max(maxVec[2], maxVec[3]))
+
+                let remStart = simdCount &* 4
+                for i in remStart..<count {
+                    let coeff = src[i]
+                    let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                    mag[i] = absVal
+                    if absVal > localMax { localMax = absVal }
+                }
+            }
+        }
+        return Int(localMax)
+    }
+
+    /// Encodes the HT cleanup pass using pre-computed absolute magnitudes.
+    ///
+    /// Caller must have already filled `absMags` via `computeAbsMagsAndMax` and
+    /// zeroed `sigPacked`. This method fills `sigPacked` from the pre-computed
+    /// magnitudes (no abs computation needed), resets the coders, and runs the
+    /// full stripe encoding loop. Eliminates one O(N) coefficient scan compared
+    /// to `encodeCleanupFullyReusingWithMax`.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order (signs only used during encode).
+    ///   - bitPlane: The most significant bit-plane to encode.
+    ///   - absMags: Pre-filled absolute magnitude array (from `computeAbsMagsAndMax`).
+    ///   - sigPacked: Pre-allocated significance bitfield, **zeroed by caller**.
+    ///   - mel: Pre-allocated MEL coder (reset internally before use).
+    ///   - vlc: Pre-allocated VLC coder (reset internally before use).
+    ///   - magsgn: Pre-allocated MagSgn coder (reset internally before use).
+    /// - Returns: The encoded ``HTEncodedBlock``.
+    /// - Throws: ``J2KError/encodingError(_:)`` if the coefficient count is wrong.
+    func encodeCleanupFromAbsMags(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+
+        // Fill sigPacked from pre-computed absMags — no abs needed, just shift+mask.
+        absMags.withUnsafeBufferPointer { magPtr in
+            sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                guard let mag = magPtr.baseAddress,
+                      let sig = sigPtr.baseAddress else { return }
+
+                let simdCount = count / 4
+                let bpVec = SIMD4<Int32>(repeating: bp32)
+                let oneVec = SIMD4<Int32>(repeating: 1)
+
+                for i in 0..<simdCount {
+                    let offset = i &* 4
+                    let absV = SIMD4<Int32>(
+                        mag[offset], mag[offset &+ 1],
+                        mag[offset &+ 2], mag[offset &+ 3]
+                    )
+                    let masked = (absV &>> bpVec) & oneVec
+                    let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                              | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                    let shift = offset & 63
+                    sig[offset >> 6] |= mask4 << shift
+                    if shift > 60 {
+                        sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                    }
+                }
+                let remStart = simdCount &* 4
+                for i in remStart..<count {
+                    if (mag[i] >> bp32) & 1 != 0 {
+                        sig[i >> 6] |= 1 << (i & 63)
+                    }
+                }
+            }
+        }
+
+        // Reset pre-allocated coders
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        mel.reset(capacity: maxMelBytes)
+        vlc.reset(capacity: maxVlcBytes)
+        magsgn.reset(capacity: maxMagsgnBytes)
+
+        // Stripe encoding loop — identical to encodeCleanupFullyReusingWithMax.
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    if width == 64 {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            let stripeOrWord = w0 | w1 | w2 | w3
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                continue
+                            }
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF); ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF); ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF); ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        return HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+    }
+
     /// Encodes the HT cleanup pass using caller-provided reusable arrays and coders.
     ///
     /// This variant avoids ALL per-block allocation by reusing pre-allocated
     /// MEL, VLC, and MagSgn coders in addition to `absMags` and `sigPacked`.
     /// The coders are reset internally with appropriate capacities.
+    /// Encodes the HT cleanup pass using caller-provided reusable arrays,
+    /// and returns the maximum absolute coefficient value.
+    ///
+    /// Identical to `encodeCleanupFullyReusing` but additionally computes the
+    /// maximum absolute magnitude during the SIMD absMags pass, eliminating the
+    /// separate `Self.maxAbsValue(coefficients)` scan in the caller. This saves
+    /// one O(N) pass over the coefficient data per code-block.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - bitPlane: The most significant bit-plane to encode.
+    ///   - absMags: Pre-allocated absolute magnitude array (reused across blocks).
+    ///   - sigPacked: Pre-allocated significance bitfield, **zeroed by caller** (reused).
+    ///   - mel: Pre-allocated MEL coder (reset internally before use).
+    ///   - vlc: Pre-allocated VLC coder (reset internally before use).
+    ///   - magsgn: Pre-allocated MagSgn coder (reset internally before use).
+    ///   - maxMag: On return, the maximum absolute coefficient value in the block.
+    /// - Returns: The encoded ``HTEncodedBlock``.
+    /// - Throws: ``J2KError/encodingError(_:)`` if the coefficient count is wrong.
+    func encodeCleanupFullyReusingWithMax(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder,
+        maxMag: inout Int
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+        var localMax: Int32 = 0
+
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    guard let src = srcPtr.baseAddress,
+                          let mag = magPtr.baseAddress,
+                          let sig = sigPtr.baseAddress else { return }
+
+                    let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
+                    var maxVec = SIMD4<Int32>.zero
+
+                    for i in 0..<simdCount {
+                        let offset = i &* 4
+                        let v = SIMD4<Int32>(
+                            src[offset], src[offset &+ 1],
+                            src[offset &+ 2], src[offset &+ 3]
+                        )
+                        let negative = v .< SIMD4<Int32>.zero
+                        let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                        mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                        mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+                        maxVec = pointwiseMax(maxVec, absV)
+
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                        }
+                    }
+                    // Horizontal max of SIMD lane
+                    localMax = max(max(maxVec[0], maxVec[1]), max(maxVec[2], maxVec[3]))
+
+                    let remStart = simdCount &* 4
+                    for i in remStart..<count {
+                        let coeff = src[i]
+                        let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                        mag[i] = absVal
+                        if absVal > localMax { localMax = absVal }
+                        if (absVal >> bp32) & 1 != 0 {
+                            sig[i >> 6] |= 1 << (i & 63)
+                        }
+                    }
+                }
+            }
+        }
+        maxMag = Int(localMax)
+
+        // Reset pre-allocated coders
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        mel.reset(capacity: maxMelBytes)
+        vlc.reset(capacity: maxVlcBytes)
+        magsgn.reset(capacity: maxMagsgnBytes)
+
+        // Encode stripe loop (same as encodeCleanupFullyReusing)
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    if width == 64 {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            let stripeOrWord = w0 | w1 | w2 | w3
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                continue
+                            }
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF); ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF); ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF); ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        return HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+    }
+
     func encodeCleanupFullyReusing(
         coefficients: [Int32],
         bitPlane: Int,
@@ -1133,6 +1642,11 @@ struct HTBlockEncoder: Sendable {
         // Process in stripe order using unsafe pointer access.
         // Separates full column pairs (pairWidth==2) from the odd-width
         // last column to eliminate the pairWidth branch from the hot loop.
+        //
+        // width=64 fast path: each row occupies exactly one sigPacked word,
+        // allowing per-stripe OR to detect all-zero column pairs and call
+        // encodeZeroRun instead of stripeHeight individual encode(bit:0) calls.
+        // This reduces O(N) MEL calls to O(log₂N) emitBit calls for sparse blocks.
         let numStripes = (height + 3) / 4
         let fullPairs = width / 2
         let hasHalfPair = (width & 1) != 0
@@ -1143,42 +1657,112 @@ struct HTBlockEncoder: Sendable {
                     let magBase = magPtr.baseAddress!
                     let coefBase = coefPtr.baseAddress!
 
-                    for stripe in 0..<numStripes {
-                        let stripeY = stripe &* 4
-                        let stripeHeight = min(4, height &- stripeY)
+                    if width == 64 {
+                        // Optimised path for 64-wide blocks (standard 64×64 code-block).
+                        // Each row occupies exactly sigBase[stripeY + r], so significance
+                        // for column pair pairIdx at any row r is testable with a 2-bit
+                        // shift + mask in constant time.
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
 
-                        // Fast path: full column pairs — no pairWidth branch
-                        for pairIdx in 0..<fullPairs {
-                            let col = pairIdx &* 2
-                            for row in 0..<stripeHeight {
-                                let idx0 = (stripeY &+ row) &* width &+ col
-                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
-                                let idx1 = idx0 &+ 1
-                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
-                                let pattern = sig0 | (sig1 << 1)
-                                mel.encode(bit: pattern == 0 ? 0 : 1)
-                                if pattern != 0 {
-                                    vlc.encodeSignificance(pattern: pattern)
-                                }
-                                if sig0 != 0 {
-                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
-                                }
-                                if sig1 != 0 {
-                                    magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                            // Load up to 4 row significance words for this stripe
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            // OR all rows: any set bit means some row is significant at that position
+                            let stripeOrWord = w0 | w1 | w2 | w3
+
+                            // Ultra-fast path: entire stripe has no significant column pairs.
+                            // Common at high bit-planes (sparse blocks) and lossless encoding.
+                            // Replaces 32 × encodeZeroRun(stripeHeight) with a single call,
+                            // collapsing O(fullPairs) loop iterations into O(log₂ run) MEL bits.
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                // width=64 → hasHalfPair false; skip odd-col check
+                                continue
+                            }
+
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                // 2-bit mask covers both samples of the column pair
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    // All stripe rows insignificant for this column pair
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    // At least one row significant — per-row processing
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 {
+                                            vlc.encodeSignificance(pattern: pattern)
+                                        }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
                                 }
                             }
+                            // width=64 is always even → hasHalfPair false; skip odd-col check
                         }
+                    } else {
+                        // Scalar fallback for non-64-wide blocks (e.g. partial subbands)
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
 
-                        // Handle odd-width last column (single sample, no pair)
-                        if hasHalfPair {
-                            let col = fullPairs &* 2
-                            for row in 0..<stripeHeight {
-                                let idx0 = (stripeY &+ row) &* width &+ col
-                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
-                                mel.encode(bit: sig0 == 0 ? 0 : 1)
-                                if sig0 != 0 {
-                                    vlc.encodeSignificance(pattern: sig0)
-                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                            // Fast path: full column pairs — no pairWidth branch
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 {
+                                        vlc.encodeSignificance(pattern: pattern)
+                                    }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+
+                            // Handle odd-width last column (single sample, no pair)
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
                                 }
                             }
                         }

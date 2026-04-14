@@ -360,7 +360,10 @@ struct AcceleratedDWT2D: Sendable {
         var colResult = [Float](repeating: 0, count: width * height)
         let colStripWidth = 8
         let numStrips = (width + colStripWidth - 1) / colStripWidth
-        let useParallelColumns = numStrips >= 4
+        // Use parallel column pass only when there is enough work to amortise
+        // GCD dispatch overhead (~50 µs) and stripWorkspaces allocation.
+        // Threshold: at least 8 strips (width ≥ 64) and height > 32.
+        let useParallelColumns = numStrips >= 8 && height > 32
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
@@ -655,7 +658,13 @@ struct AcceleratedDWT2D: Sendable {
         var colResult = [Int32](repeating: 0, count: width * height)
         let colStripWidth = 8
         let numStrips = (width + colStripWidth - 1) / colStripWidth
-        let useParallelColumns = numStrips >= 4
+        // Use parallel column pass only when there is enough work to amortise
+        // GCD dispatch overhead (~50 µs) and per-strip workspace allocations.
+        // Threshold: at least 8 strips (width ≥ 64) and height > 32.
+        // This prevents the parallel path from activating for fine decomposition
+        // levels (e.g. 32×32 at level 3 of a 256×256 image) where overhead
+        // dominates the actual wavelet work.
+        let useParallelColumns = numStrips >= 8 && height > 32
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
@@ -663,20 +672,28 @@ struct AcceleratedDWT2D: Sendable {
                 let dst = dstBuf.baseAddress!
 
                 if useParallelColumns {
-                    // Parallel column pass: each strip gets its own workspace
+                    // Pre-allocate all strip buffers OUTSIDE concurrentPerform to
+                    // avoid per-strip heap allocations inside GCD tasks (which was
+                    // causing 128 malloc/free pairs per DWT level for 256×256).
+                    let stripBufSize = colStripWidth * height
+                    let allStripIn = UnsafeMutablePointer<Int32>.allocate(capacity: numStrips * stripBufSize)
+                    let allStripOut = UnsafeMutablePointer<Int32>.allocate(capacity: numStrips * stripBufSize)
+                    let allColOut = UnsafeMutablePointer<Int32>.allocate(capacity: numStrips * height)
+                    let stripWorkspaces = (0..<numStrips).map { _ in DWTWorkspace53(maxSignalLength: height) }
+                    defer {
+                        allStripIn.deallocate()
+                        allStripOut.deallocate()
+                        allColOut.deallocate()
+                    }
+
+                    // Parallel column pass: each strip indexes into pre-allocated buffers
                     DispatchQueue.concurrentPerform(iterations: numStrips) { stripIdx in
                         let colStrip = stripIdx * colStripWidth
                         let cols = min(colStripWidth, width - colStrip)
-                        let stripBufSize = colStripWidth * height
-                        let stripWs = DWTWorkspace53(maxSignalLength: height)
-                        let stripIn = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                        let stripOut = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                        let colOut = UnsafeMutablePointer<Int32>.allocate(capacity: height)
-                        defer {
-                            stripIn.deallocate()
-                            stripOut.deallocate()
-                            colOut.deallocate()
-                        }
+                        let stripIn = allStripIn + stripIdx * stripBufSize
+                        let stripOut = allStripOut + stripIdx * stripBufSize
+                        let colOut = allColOut + stripIdx * height
+                        let stripWs = stripWorkspaces[stripIdx]
 
                         for row in 0..<height {
                             let srcRow = src + row * width + colStrip

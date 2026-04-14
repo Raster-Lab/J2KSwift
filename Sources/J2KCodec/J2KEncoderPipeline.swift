@@ -2195,7 +2195,21 @@ struct EncoderPipeline: Sendable {
             subband: pending.subband
         )
 
-        let maxMag = Int(Self.maxAbsValue(pending.coefficients))
+        let count = pending.width * pending.height
+
+        // Clear sigPacked before the fused abs+max pass.
+        let sigWords = (count + 63) / 64
+        for i in 0..<sigWords {
+            sigPacked[i] = 0
+        }
+
+        // Single fused SIMD pass: compute absMags[] and find the maximum.
+        // This replaces the former two-pass approach (separate maxAbsValue scan
+        // + internal SIMD abs pass inside encodeCleanupFullyReusingWithMax).
+        let maxMag = htEncoder.computeAbsMagsAndMax(
+            coefficients: pending.coefficients,
+            absMags: &absMags
+        )
 
         guard maxMag > 0 else {
             return J2KCodeBlock(
@@ -2219,15 +2233,9 @@ struct EncoderPipeline: Sendable {
 
         let topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
 
-        // Clear sigPacked for this block (only the used portion)
-        let count = pending.width * pending.height
-        let sigWords = (count + 63) / 64
-        for i in 0..<sigWords {
-            sigPacked[i] = 0
-        }
-
-        // Cleanup pass using pre-allocated arrays and coders
-        let cleanupBlock = try htEncoder.encodeCleanupFullyReusing(
+        // Cleanup pass from pre-computed absMags: fills sigPacked + MEL/VLC/MagSgn.
+        // No additional abs computation — absMags already filled above.
+        let cleanupBlock = try htEncoder.encodeCleanupFromAbsMags(
             coefficients: pending.coefficients,
             bitPlane: topBitPlane,
             absMags: &absMags,
@@ -2269,14 +2277,21 @@ struct EncoderPipeline: Sendable {
         var reconMag: [Int32]?
         if !config.lossless {
             reconMag = [Int32](repeating: 0, count: count)
-            // After cleanup: significant coefficients have exact values
+            // After cleanup: significant coefficients have exact values.
+            // Bit-scan over sigPacked words — O(significant) instead of O(count).
             var distReduction: Double = 0
-            for i in 0..<count {
-                let original = Double(pending.coefficients[i])
-                if (sigPacked[i >> 6] >> (i & 63)) & 1 != 0 {
-                    // Significant: reconstructed = original (exact from cleanup)
-                    reconMag![i] = abs(pending.coefficients[i])
-                    distReduction += original * original  // error went from original² to 0
+            for wordIdx in 0..<sigWords {
+                var word = sigPacked[wordIdx]
+                let base = wordIdx &* 64
+                while word != 0 {
+                    let bit = word.trailingZeroBitCount
+                    let i = base &+ bit
+                    guard i < count else { break }
+                    let coeff = pending.coefficients[i]
+                    reconMag![i] = coeff < 0 ? 0 &- coeff : coeff
+                    let original = Double(coeff)
+                    distReduction += original * original
+                    word &= word &- 1
                 }
             }
             cumulativePassDistortion = [distReduction]
@@ -2310,17 +2325,23 @@ struct EncoderPipeline: Sendable {
 
             // SigProp distortion: newly significant coefficients at this bit plane
             // get reconstruction = sign*(1 << bp), reducing their error.
+            // XOR per word to isolate newly-significant bits — O(newly-sig) scan.
             if !config.lossless {
                 var distReduction = cumulativePassDistortion.last ?? 0
                 let sigBitVal = Int32(1 << bp)
-                for i in 0..<count {
-                    let wasSignificant = (preSigPacked[i >> 6] >> (i & 63)) & 1 != 0
-                    let isSignificant = (sigPacked[i >> 6] >> (i & 63)) & 1 != 0
-                    if isSignificant && !wasSignificant {
-                        let original = Double(pending.coefficients[i])
-                        let recon = Double(pending.coefficients[i] >= 0 ? sigBitVal : -sigBitVal)
+                for wordIdx in 0..<sigWords {
+                    var newBits = sigPacked[wordIdx] & ~preSigPacked[wordIdx]
+                    let base = wordIdx &* 64
+                    while newBits != 0 {
+                        let bit = newBits.trailingZeroBitCount
+                        let i = base &+ bit
+                        guard i < count else { break }
+                        let coeff = pending.coefficients[i]
+                        let original = Double(coeff)
+                        let recon = Double(coeff >= 0 ? sigBitVal : -sigBitVal)
                         distReduction += original * original - (original - recon) * (original - recon)
                         reconMag![i] = sigBitVal
+                        newBits &= newBits &- 1
                     }
                 }
                 cumulativePassDistortion.append(distReduction)
@@ -2335,27 +2356,36 @@ struct EncoderPipeline: Sendable {
             // values (all bits from MagSgn), so their MagRef is redundant (0 change).
             // SigProp-significant coefficients from HIGHER planes get bit `bp` added,
             // improving their reconstruction.
+            // Bit-scan preSigPacked to iterate only pre-significant coefficients.
             if !config.lossless {
                 var distReduction = cumulativePassDistortion.last ?? 0
                 let bpBit = Int32(1 << bp)
-                for i in 0..<count {
-                    let wasPreSigProp = (preSigPacked[i >> 6] >> (i & 63)) & 1 != 0
-                    guard wasPreSigProp else { continue }
-                    let origMag = abs(pending.coefficients[i])
-                    let oldRecon = reconMag![i]
-                    // If reconstruction already equals the original (cleanup-significant
-                    // coefficients), MagRef adds nothing.
-                    if oldRecon == origMag { continue }
-                    // MagRef reveals bit `bp` of the magnitude
-                    let bit = (origMag >> bp) & 1
-                    let newRecon = bit != 0 ? (oldRecon | bpBit) : oldRecon
-                    if newRecon != oldRecon {
-                        let original = Double(pending.coefficients[i])
-                        let sign: Double = pending.coefficients[i] >= 0 ? 1.0 : -1.0
-                        let oldErr = original - sign * Double(oldRecon)
-                        let newErr = original - sign * Double(newRecon)
-                        distReduction += oldErr * oldErr - newErr * newErr
-                        reconMag![i] = newRecon
+                for wordIdx in 0..<sigWords {
+                    var word = preSigPacked[wordIdx]
+                    let base = wordIdx &* 64
+                    while word != 0 {
+                        let bit = word.trailingZeroBitCount
+                        let i = base &+ bit
+                        guard i < count else { break }
+                        let origMag = absMags[i]
+                        let oldRecon = reconMag![i]
+                        // If reconstruction already equals original (cleanup-significant),
+                        // MagRef adds nothing.
+                        if oldRecon != origMag {
+                            // MagRef reveals bit `bp` of the magnitude
+                            let magBit = (origMag >> Int32(bp)) & 1
+                            let newRecon = magBit != 0 ? (oldRecon | bpBit) : oldRecon
+                            if newRecon != oldRecon {
+                                let coeff = pending.coefficients[i]
+                                let original = Double(coeff)
+                                let sign: Double = coeff >= 0 ? 1.0 : -1.0
+                                let oldErr = original - sign * Double(oldRecon)
+                                let newErr = original - sign * Double(newRecon)
+                                distReduction += oldErr * oldErr - newErr * newErr
+                                reconMag![i] = newRecon
+                            }
+                        }
+                        word &= word &- 1
                     }
                 }
                 cumulativePassDistortion.append(distReduction)
