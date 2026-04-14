@@ -28,7 +28,7 @@ final class J2KRLCMinimalTests: XCTestCase {
         }
         
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _, _, _, _) = try encoder.encode(
             coefficients: clamped, bitDepth: 4
         )
         
@@ -79,7 +79,7 @@ final class J2KRLCMinimalTests: XCTestCase {
             }
             
             let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-            let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _, _, _, _) = try encoder.encode(
                 coefficients: clamped, bitDepth: 4
             )
             
@@ -110,7 +110,7 @@ final class J2KRLCMinimalTests: XCTestCase {
         
         for subband: J2KSubband in [.ll, .lh, .hl, .hh] {
             let encoder = BitPlaneCoder(width: width, height: height, subband: subband)
-            let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
+            let (data, passCount, zeroBitPlanes, _, _, _, _, _, _) = try encoder.encode(
                 coefficients: clamped, bitDepth: 4
             )
             
@@ -144,7 +144,7 @@ final class J2KRLCMinimalTests: XCTestCase {
         ]
         
         let encoder = BitPlaneCoder(width: width, height: height, subband: .ll)
-        let (data, passCount, zeroBitPlanes, _, _, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, _, _, _, _, _, _) = try encoder.encode(
             coefficients: coefficients, bitDepth: 4
         )
         

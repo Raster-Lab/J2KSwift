@@ -454,6 +454,32 @@ public struct J2KPrecinct: Sendable {
     }
 }
 
+/// Lightweight snapshot of the MQ encoder register state at a coding pass boundary.
+///
+/// Captures only the 5 scalar values needed to reconstruct the terminated
+/// byte stream at a specific coding pass. Used with the shared raw MQ output
+/// array to avoid O(n) full-encoder copies during EBCOT encoding.
+public struct MQCheckpointData: Sendable {
+    /// Number of bytes emitted to the raw output at this checkpoint.
+    public let outputCount: Int
+    /// MQ interval register.
+    public let a: UInt32
+    /// MQ code register.
+    public let c: UInt32
+    /// MQ bit counter.
+    public let ct: Int
+    /// MQ pending buffer byte (-1 if no byte pending).
+    public let buffer: Int
+
+    public init(outputCount: Int, a: UInt32, c: UInt32, ct: Int, buffer: Int) {
+        self.outputCount = outputCount
+        self.a = a
+        self.c = c
+        self.ct = ct
+        self.buffer = buffer
+    }
+}
+
 /// Represents a code-block, the fundamental unit for entropy coding.
 ///
 /// Code-blocks are small rectangular regions (typically 32×32 or 64×64 samples)
@@ -543,6 +569,24 @@ public struct J2KCodeBlock: Sendable {
     /// bytes from later passes.
     public var perPassSnapshotData: [Data]
 
+    /// Lightweight MQ encoder checkpoints for deferred truncation.
+    ///
+    /// Each checkpoint stores only the MQ register state (5 scalars) at a
+    /// coding pass boundary. Combined with ``rawMQOutput``, this is sufficient
+    /// to reconstruct the exact terminated byte stream at any pass boundary
+    /// on-demand, avoiding the O(n²) cost of full encoder snapshots during
+    /// encoding. When non-empty, ``perPassSnapshotData`` is empty and
+    /// truncation uses these checkpoints instead.
+    public var mqCheckpoints: [MQCheckpointData]
+
+    /// Raw MQ encoder output bytes (before termination).
+    ///
+    /// Shared across all checkpoints for a code block. Bytes already
+    /// emitted to this array are never modified by subsequent MQ encoding
+    /// (carries only propagate into the buffer register). Used with
+    /// ``mqCheckpoints`` to reconstruct terminated data on-demand.
+    public var rawMQOutput: [UInt8]
+
     /// Creates a new code-block.
     ///
     /// - Parameters:
@@ -563,6 +607,8 @@ public struct J2KCodeBlock: Sendable {
     ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
     ///   - cumulativePassDistortion: Per-pass distortion decrements (default: empty).
     ///   - perPassSnapshotData: Terminated MQ data at each pass boundary (default: empty).
+    ///   - mqCheckpoints: Lightweight MQ encoder checkpoints (default: empty).
+    ///   - rawMQOutput: Raw MQ output bytes for checkpoint reconstruction (default: empty).
     public init(
         index: Int,
         x: Int,
@@ -580,7 +626,9 @@ public struct J2KCodeBlock: Sendable {
         coefficientSquaredSum: Double = 0,
         bitPlanePopulation: [Int] = [],
         cumulativePassDistortion: [Double] = [],
-        perPassSnapshotData: [Data] = []
+        perPassSnapshotData: [Data] = [],
+        mqCheckpoints: [MQCheckpointData] = [],
+        rawMQOutput: [UInt8] = []
     ) {
         self.index = index
         self.x = x
@@ -599,6 +647,8 @@ public struct J2KCodeBlock: Sendable {
         self.bitPlanePopulation = bitPlanePopulation
         self.cumulativePassDistortion = cumulativePassDistortion
         self.perPassSnapshotData = perPassSnapshotData
+        self.mqCheckpoints = mqCheckpoints
+        self.rawMQOutput = rawMQOutput
     }
 }
 

@@ -65,6 +65,194 @@ enum HTCodingPassType: Sendable, Equatable {
     case htMagRef
 }
 
+// MARK: - Fast Bit Writer
+
+/// High-throughput bit writer using a 64-bit word accumulator.
+///
+/// Replaces the per-bit `emitBit()` + per-byte `buffer.append()` pattern
+/// with bulk word-level writes. The 64-bit accumulator can hold up to 56 bits
+/// before flushing, allowing multi-bit operations without per-byte branches.
+///
+/// Pre-allocates the output buffer to worst-case size, eliminating dynamic
+/// array growth during encoding.
+///
+/// Uses `UnsafeMutableRawPointer` for direct memory access, eliminating
+/// Swift Array bounds-check overhead. The 32-bit flush compiles to a
+/// single ARM64 `STR W` + `REV W` instead of 4 separate `STRB` stores.
+struct HTFastBitWriter: @unchecked Sendable {
+    // @unchecked Sendable: buffer is exclusively owned by this value type —
+    // no shared mutable state. UnsafeMutableRawPointer is not Sendable but
+    // the struct has value semantics (copied on assignment).
+
+    /// Raw output buffer (unmanaged heap allocation).
+    private var buffer: UnsafeMutableRawPointer
+
+    /// Allocated capacity of the buffer in bytes.
+    private var bufferCapacity: Int
+
+    /// Current write position in the buffer.
+    private var pos: Int = 0
+
+    /// 64-bit bit accumulator — bits are packed MSB-first from bit 63 down.
+    private var accum: UInt64 = 0
+
+    /// Number of valid bits in the accumulator (0..63).
+    private var bits: Int = 0
+
+    /// Creates a fast bit writer with a pre-allocated buffer.
+    ///
+    /// - Parameter capacity: Maximum number of bytes the output can contain.
+    ///   Four extra bytes are allocated to allow safe 32-bit word writes
+    ///   near the end of the buffer without bounds-check overhead.
+    init(capacity: Int) {
+        bufferCapacity = capacity + 4
+        buffer = .allocate(byteCount: bufferCapacity, alignment: 4)
+        buffer.initializeMemory(as: UInt8.self, repeating: 0, count: bufferCapacity)
+    }
+
+    /// Emits 1 to 32 bits from the MSB side of `value`.
+    ///
+    /// - Parameters:
+    ///   - value: The bits to emit (right-aligned, MSB first).
+    ///   - count: Number of bits to emit (1..32).
+    @inline(__always)
+    mutating func emitBits(_ value: Int, count: Int) {
+        // Shift value into the top of accum, just below existing bits
+        accum |= UInt64(value & ((1 << count) - 1)) << (64 - bits - count)
+        bits += count
+        // Flush 4 bytes at once when accumulator has ≥ 32 bits.
+        // Buffer is allocated with +4 padding so this is always safe.
+        if bits >= 32 {
+            // Single 32-bit big-endian store (ARM64: REV W + STR W)
+            buffer.storeBytes(
+                of: UInt32(accum >> 32).bigEndian,
+                toByteOffset: pos, as: UInt32.self
+            )
+            pos += 4
+            accum <<= 32
+            bits -= 32
+        }
+    }
+
+    /// Emits a single bit.
+    @inline(__always)
+    mutating func emitBit(_ bit: Int) {
+        emitBits(bit, count: 1)
+    }
+
+    /// Flushes any remaining bits (zero-padded) and returns the output as Data.
+    mutating func flush() -> Data {
+        // Drain all complete and partial bytes from the accumulator.
+        // With 32-bit flush in emitBits, up to 31 bits may remain.
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
+            pos += 1
+            accum <<= 8
+            bits -= 8
+        }
+        bits = 0
+        accum = 0
+        return Data(bytes: buffer, count: pos)
+    }
+
+    /// Returns the number of bytes written so far (including partial bytes in accumulator).
+    var byteCount: Int { pos + (bits > 0 ? (bits + 7) / 8 : 0) }
+
+    /// Resets the writer for reuse without reallocating the buffer.
+    ///
+    /// The existing buffer is kept if large enough; only the write position
+    /// and accumulator are cleared. If `capacity` exceeds the current buffer
+    /// size, the buffer is grown.
+    ///
+    /// - Parameter capacity: The minimum buffer capacity needed.
+    @inline(__always)
+    mutating func reset(capacity: Int) {
+        let needed = capacity + 4
+        if bufferCapacity < needed {
+            buffer.deallocate()
+            bufferCapacity = needed
+            buffer = .allocate(byteCount: needed, alignment: 4)
+            buffer.initializeMemory(as: UInt8.self, repeating: 0, count: needed)
+        }
+        pos = 0
+        accum = 0
+        bits = 0
+    }
+
+    /// Flushes remaining bits and copies output directly to a destination pointer.
+    ///
+    /// Avoids creating an intermediate `Data` object — the output bytes are
+    /// written directly to `dest`, which must have room for at least `byteCount`
+    /// bytes.
+    ///
+    /// - Parameter dest: Destination pointer with room for at least `byteCount` bytes.
+    /// - Returns: The number of bytes written.
+    @inline(__always)
+    @discardableResult
+    mutating func flushTo(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
+            pos += 1
+            accum <<= 8
+            bits -= 8
+        }
+        bits = 0
+        accum = 0
+        dest.update(from: buffer.assumingMemoryBound(to: UInt8.self), count: pos)
+        return pos
+    }
+
+    /// Flushes remaining bits and copies output in reversed order to a destination.
+    ///
+    /// Used for VLC data which is stored reversed in the HT coded data format.
+    ///
+    /// - Parameter dest: Destination pointer with room for at least `byteCount` bytes.
+    /// - Returns: The number of bytes written.
+    @inline(__always)
+    @discardableResult
+    mutating func flushToReversed(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
+            pos += 1
+            accum <<= 8
+            bits -= 8
+        }
+        bits = 0
+        accum = 0
+        let base = buffer.assumingMemoryBound(to: UInt8.self)
+        for i in 0..<pos {
+            dest[i] = base[pos - 1 - i]
+        }
+        return pos
+    }
+
+    /// Flushes remaining bits and appends the output directly to a Data buffer.
+    ///
+    /// More efficient than `flush()` when combining multiple writers into a larger
+    /// buffer — avoids creating an intermediate Data object per writer.
+    ///
+    /// - Parameter data: The Data buffer to append output bytes to.
+    /// - Returns: The number of bytes appended.
+    @inline(__always)
+    @discardableResult
+    mutating func flushAppending(to data: inout Data) -> Int {
+        let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+        while bits > 0 {
+            ptr[pos] = UInt8((accum >> 56) & 0xFF)
+            pos += 1
+            accum <<= 8
+            bits -= 8
+        }
+        bits = 0
+        accum = 0
+        data.append(buffer.assumingMemoryBound(to: UInt8.self), count: pos)
+        return pos
+    }
+}
+
 // MARK: - MEL Coder
 
 /// Modular Embedded Length coder for HTJ2K.
@@ -79,19 +267,25 @@ struct HTMELCoder: Sendable {
     /// Current run count.
     private var run: Int = 0
 
+    /// Whether the next decode call should return 1 (significant).
+    ///
+    /// Set after consuming a terminated run of zeros — the significant
+    /// decision that caused the run termination is delivered on the next call.
+    private var pendingSignificant: Bool = false
+
     /// Current run-length threshold (number of zeros to emit a 0 MEL bit).
     private var threshold: Int = 0
 
     /// MEL state index for adaptive threshold selection.
     private var stateIndex: Int = 0
 
-    /// Output buffer for MEL-encoded data.
-    private var buffer: [UInt8] = []
+    /// High-throughput bit writer for MEL output.
+    private var writer: HTFastBitWriter
 
-    /// Bit accumulator for partial byte output.
+    /// Bit accumulator for partial byte during decoding.
     private var bitBuffer: UInt32 = 0
 
-    /// Number of valid bits in the bit accumulator.
+    /// Number of valid bits in the bit accumulator (decode only).
     private var bitCount: Int = 0
 
     /// MEL threshold table for adaptive run-length selection.
@@ -102,28 +296,45 @@ struct HTMELCoder: Sendable {
     ]
 
     /// Creates a new MEL coder.
-    init() {}
+    ///
+    /// - Parameter capacity: Pre-allocated output buffer size in bytes.
+    init(capacity: Int = 256) {
+        writer = HTFastBitWriter(capacity: capacity)
+    }
+
+    /// Resets the MEL coder for reuse without reallocating the buffer.
+    @inline(__always)
+    mutating func reset(capacity: Int) {
+        run = 0
+        pendingSignificant = false
+        threshold = 0
+        stateIndex = 0
+        bitBuffer = 0
+        bitCount = 0
+        writer.reset(capacity: capacity)
+    }
 
     /// Encodes a single context decision (0 = insignificant, 1 = significant).
     ///
     /// - Parameter bit: The context decision bit.
+    @inline(__always)
     mutating func encode(bit: Int) {
         if bit == 0 {
             run += 1
             let limit = 1 << Self.thresholdTable[stateIndex]
             if run >= limit {
-                emitBit(0)
+                writer.emitBit(0)
                 run = 0
                 if stateIndex < Self.thresholdTable.count - 1 {
                     stateIndex += 1
                 }
             }
         } else {
-            emitBit(1)
+            writer.emitBit(1)
             let remainingBits = Self.thresholdTable[stateIndex]
-            // Emit the run count using `remainingBits` bits
-            for shift in stride(from: remainingBits - 1, through: 0, by: -1) {
-                emitBit((run >> shift) & 1)
+            // Emit the run count using `remainingBits` bits in one call
+            if remainingBits > 0 {
+                writer.emitBits(run, count: remainingBits)
             }
             run = 0
             if stateIndex > 0 {
@@ -132,45 +343,81 @@ struct HTMELCoder: Sendable {
         }
     }
 
+    /// Encodes N consecutive insignificant (zero) context decisions.
+    ///
+    /// Equivalent to calling `encode(bit: 0)` N times, but avoids per-element
+    /// function call overhead. Advances the run counter in bulk and only calls
+    /// into the writer when a run-length threshold is crossed.
+    ///
+    /// For a fully sparse code-block stripe (all 2048 pairs insignificant at the
+    /// top bit-plane), this replaces O(N) encode calls with O(log₂N) emitBit
+    /// calls (since the threshold table grows geometrically).
+    ///
+    /// - Parameter n: Number of consecutive insignificant pairs to encode.
+    @inline(__always)
+    mutating func encodeZeroRun(_ n: Int) {
+        var remaining = n
+        while remaining > 0 {
+            let limit = 1 << Self.thresholdTable[stateIndex]
+            let roomLeft = limit &- run   // zeros remaining before threshold crossed
+            if remaining < roomLeft {
+                run &+= remaining
+                return
+            }
+            // Fill run to threshold: emit a 0 MEL bit, advance state
+            remaining &-= roomLeft
+            writer.emitBit(0)
+            run = 0
+            if stateIndex < Self.thresholdTable.count - 1 {
+                stateIndex &+= 1
+            }
+        }
+    }
+
+    /// The number of output bytes (including any partial byte in the accumulator).
+    var byteCount: Int { writer.byteCount }
+
     /// Flushes any remaining data in the MEL coder.
     ///
     /// - Returns: The MEL-encoded byte stream.
     mutating func flush() -> Data {
-        // Emit remaining run if any
-        if run > 0 {
-            // Pad with 0-bits since the run didn't complete
-            emitBit(0)
-        }
-        // Flush bit buffer
-        while bitCount > 0 {
-            buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
-            bitBuffer <<= 8
-            bitCount = max(0, bitCount - 8)
-        }
-        return Data(buffer)
+        // Do NOT emit a run-completion bit for a partial trailing run.
+        // The decoder handles an exhausted MEL reader by falling back to VLC,
+        // which correctly returns pattern 0 (neither significant) for the
+        // trailing insignificant pairs.
+        return writer.flush()
     }
 
-    /// Emits a single bit to the output stream.
-    private mutating func emitBit(_ bit: Int) {
-        bitBuffer |= UInt32(bit & 1) << (31 - bitCount)
-        bitCount += 1
-        if bitCount >= 8 {
-            let byte = UInt8((bitBuffer >> 24) & 0xFF)
-            buffer.append(byte)
-            bitBuffer <<= 8
-            bitCount -= 8
-        }
+    /// Flushes and copies output directly to a destination pointer.
+    @inline(__always)
+    @discardableResult
+    mutating func flushTo(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
+        writer.flushTo(dest)
     }
 
     /// Decodes a single context decision from MEL-encoded data.
+    ///
+    /// A MEL "1" bit signals a terminated run: `runLength` insignificant pairs
+    /// followed by one significant pair. The decoder delivers `runLength` zeros
+    /// then one "1". The `pendingSignificant` flag tracks the deferred "1".
     ///
     /// - Parameter reader: The bit reader positioned at MEL data.
     /// - Returns: The decoded context decision (0 or 1).
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
     mutating func decode(from reader: inout J2KBitReader) throws -> Int {
+        // Consume remaining zeros from a run BEFORE delivering
+        // the pending significant decision. A terminated MEL run
+        // encodes N zeros followed by 1 significant — the run zeros
+        // must all be delivered before the trailing significant.
         if run > 0 {
             run -= 1
             return 0
+        }
+
+        // Deliver the deferred significant decision after all run zeros
+        if pendingSignificant {
+            pendingSignificant = false
+            return 1
         }
 
         guard reader.bytesRemaining > 0 || bitCount > 0 else {
@@ -179,30 +426,30 @@ struct HTMELCoder: Sendable {
 
         let bit = try readBit(from: &reader)
         if bit == 0 {
-            // Run continues — set run to the threshold value
+            // Complete run of `limit` insignificant pairs
             let limit = 1 << Self.thresholdTable[stateIndex]
-            run = limit - 1
+            run = limit - 1  // this call consumes 1; remaining = limit-1
             if stateIndex < Self.thresholdTable.count - 1 {
                 stateIndex += 1
             }
             return 0
         } else {
-            // Run ends — read remaining bits to get run length
+            // Terminated run: `runLength` zeros then 1 significant
             let remainingBits = Self.thresholdTable[stateIndex]
             var runLength = 0
             for _ in 0..<remainingBits {
                 let b = try readBit(from: &reader)
                 runLength = (runLength << 1) | b
             }
-            run = runLength
             if stateIndex > 0 {
                 stateIndex -= 1
             }
-            if run > 0 {
-                run -= 1
+            if runLength > 0 {
+                run = runLength - 1  // this call consumes 1 zero
+                pendingSignificant = true  // deliver "1" after the zeros
                 return 0
             }
-            return 1
+            return 1  // immediate significant (no preceding zeros)
         }
     }
 
@@ -232,14 +479,8 @@ struct HTMELCoder: Sendable {
 /// The VLC stream is written from the end of the coded data buffer, growing toward
 /// the beginning, while MEL data grows from the beginning.
 struct HTVLCCoder: Sendable {
-    /// Output buffer for VLC-encoded data.
-    private var buffer: [UInt8] = []
-
-    /// Bit accumulator.
-    private var bitBuffer: UInt32 = 0
-
-    /// Number of valid bits in the accumulator.
-    private var bitCount: Int = 0
+    /// High-throughput bit writer for VLC output.
+    private var writer: HTFastBitWriter
 
     /// VLC table for significance pattern encoding (2 samples per entry).
     ///
@@ -253,52 +494,51 @@ struct HTVLCCoder: Sendable {
     ]
 
     /// Creates a new VLC coder.
-    init() {}
+    ///
+    /// - Parameter capacity: Pre-allocated output buffer size in bytes.
+    init(capacity: Int = 256) {
+        writer = HTFastBitWriter(capacity: capacity)
+    }
+
+    /// Resets the VLC coder for reuse without reallocating the buffer.
+    @inline(__always)
+    mutating func reset(capacity: Int) {
+        writer.reset(capacity: capacity)
+    }
 
     /// Encodes a significance pattern for a pair of samples.
     ///
     /// - Parameter pattern: A 2-bit significance pattern (0-3).
+    @inline(__always)
     mutating func encodeSignificance(pattern: Int) {
         let clampedPattern = pattern & 0x03
         let entry = Self.vlcTable[clampedPattern]
-        emitBits(Int(entry.code), count: entry.length)
+        writer.emitBits(Int(entry.code), count: entry.length)
     }
 
     /// Encodes a sign bit (0 = positive, 1 = negative).
     ///
     /// - Parameter sign: The sign bit.
+    @inline(__always)
     mutating func encodeSign(_ sign: Int) {
-        emitBits(sign & 1, count: 1)
+        writer.emitBit(sign & 1)
     }
+
+    /// The number of output bytes (including any partial byte in the accumulator).
+    var byteCount: Int { writer.byteCount }
 
     /// Flushes the VLC coder and returns the encoded data.
     ///
     /// - Returns: The VLC-encoded byte stream.
     mutating func flush() -> Data {
-        // Pad to byte boundary
-        while !bitCount.isMultiple(of: 8) {
-            emitBits(0, count: 1)
-        }
-        while bitCount > 0 {
-            buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
-            bitBuffer <<= 8
-            bitCount -= 8
-        }
-        return Data(buffer)
+        return writer.flush()
     }
 
-    /// Emits multiple bits to the output.
-    private mutating func emitBits(_ value: Int, count: Int) {
-        for shift in stride(from: count - 1, through: 0, by: -1) {
-            let bit = (value >> shift) & 1
-            bitBuffer |= UInt32(bit) << (31 - bitCount)
-            bitCount += 1
-            if bitCount >= 8 {
-                buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
-                bitBuffer <<= 8
-                bitCount -= 8
-            }
-        }
+    /// Flushes and copies output in reversed order directly to a destination.
+    @inline(__always)
+    @discardableResult
+    mutating func flushToReversed(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
+        writer.flushToReversed(dest)
     }
 
     /// Decodes a significance pattern from VLC-encoded data.
@@ -345,63 +585,61 @@ struct HTVLCCoder: Sendable {
 /// The magnitude is encoded as `|coefficient| - 1` using the number of bits
 /// determined by the most significant bit position.
 struct HTMagSgnCoder: Sendable {
-    /// Output buffer for magnitude/sign data.
-    private var buffer: [UInt8] = []
-
-    /// Bit accumulator.
-    private var bitBuffer: UInt32 = 0
-
-    /// Number of valid bits in the accumulator.
-    private var bitCount: Int = 0
+    /// High-throughput bit writer for MagSgn output.
+    private var writer: HTFastBitWriter
 
     /// Creates a new MagSgn coder.
-    init() {}
+    ///
+    /// - Parameter capacity: Pre-allocated output buffer size in bytes.
+    init(capacity: Int = 1024) {
+        writer = HTFastBitWriter(capacity: capacity)
+    }
+
+    /// Resets the MagSgn coder for reuse without reallocating the buffer.
+    @inline(__always)
+    mutating func reset(capacity: Int) {
+        writer.reset(capacity: capacity)
+    }
 
     /// Encodes the magnitude and sign of a significant coefficient.
+    ///
+    /// Uses bulk bit emission: packs sign + lower magnitude bits into a single
+    /// value and emits them in one `emitBits` call, avoiding per-bit function
+    /// call overhead.
     ///
     /// - Parameters:
     ///   - magnitude: The absolute value of the coefficient (must be > 0).
     ///   - sign: The sign bit (0 = positive, 1 = negative).
     ///   - bitPlane: The current bit-plane being encoded.
+    @inline(__always)
     mutating func encode(magnitude: Int, sign: Int, bitPlane: Int) {
         guard magnitude > 0 else { return }
 
-        // Encode sign bit
-        emitBit(sign & 1)
-
-        // Encode magnitude minus 1 in the remaining bit-planes
-        let magMinus1 = magnitude - 1
-        let numBits = max(0, bitPlane)
-        for shift in stride(from: numBits - 1, through: 0, by: -1) {
-            emitBit((magMinus1 >> shift) & 1)
-        }
+        // The significance bit (bit at bitPlane) is already communicated via
+        // VLC/MEL, so MagSgn encodes: [sign | lowerBits] where lowerBits =
+        // magnitude - (1 << bitPlane), fitting in exactly `bitPlane` bits.
+        let lowerBits = magnitude - (1 << bitPlane)
+        let totalBits = 1 + bitPlane  // sign + magnitude bits
+        // Pack sign into MSB, lower bits below
+        let packed = ((sign & 1) << bitPlane) | lowerBits
+        writer.emitBits(packed, count: totalBits)
     }
+
+    /// The number of output bytes (including any partial byte in the accumulator).
+    var byteCount: Int { writer.byteCount }
 
     /// Flushes the MagSgn coder and returns the encoded data.
     ///
     /// - Returns: The MagSgn-encoded byte stream.
     mutating func flush() -> Data {
-        // Pad to byte boundary
-        while !bitCount.isMultiple(of: 8) {
-            emitBit(0)
-        }
-        while bitCount > 0 {
-            buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
-            bitBuffer <<= 8
-            bitCount -= 8
-        }
-        return Data(buffer)
+        return writer.flush()
     }
 
-    /// Emits a single bit.
-    private mutating func emitBit(_ bit: Int) {
-        bitBuffer |= UInt32(bit & 1) << (31 - bitCount)
-        bitCount += 1
-        if bitCount >= 8 {
-            buffer.append(UInt8((bitBuffer >> 24) & 0xFF))
-            bitBuffer <<= 8
-            bitCount -= 8
-        }
+    /// Flushes and copies output directly to a destination pointer.
+    @inline(__always)
+    @discardableResult
+    mutating func flushTo(_ dest: UnsafeMutablePointer<UInt8>) -> Int {
+        writer.flushTo(dest)
     }
 
     /// Decodes a magnitude and sign from the MagSgn stream.
@@ -415,15 +653,16 @@ struct HTMagSgnCoder: Sendable {
         // Read sign bit
         let sign = try reader.readBit() ? 1 : 0
 
-        // Read magnitude bits
+        // Read magnitude bits below the significance bit-plane.
+        // These represent (magnitude - (1 << bitPlane)).
         let numBits = max(0, bitPlane)
-        var magMinus1 = 0
+        var lowerBits = 0
         for _ in 0..<numBits {
             let bit = try reader.readBit() ? 1 : 0
-            magMinus1 = (magMinus1 << 1) | bit
+            lowerBits = (lowerBits << 1) | bit
         }
 
-        let magnitude = magMinus1 + 1
+        let magnitude = (1 << bitPlane) + lowerBits
         return sign == 1 ? -magnitude : magnitude
     }
 }
@@ -437,8 +676,16 @@ struct HTMagSgnCoder: Sendable {
 /// consisting of interleaved MEL, VLC, and MagSgn streams.
 ///
 /// The encoder processes coefficients in stripe-based order (4 rows at a time)
-/// and produces a single cleanup pass, optionally followed by SigProp and
-/// MagRef refinement passes.
+/// and produces a single cleanup pass, optionally followed by fused
+/// SigProp+MagRef refinement passes.
+///
+/// Performance optimizations:
+/// - 64-bit word-level bit accumulators in all coding primitives
+/// - Pre-allocated output buffers (no dynamic array growth)
+/// - Bulk MagSgn emission (sign + magnitude in one `emitBits` call)
+/// - VLC data reversed in-place (no `Data(reversed())` copy)
+/// - Fused SigProp + MagRef into single scan per bit-plane
+/// - UInt64-packed significance bitfield (8× denser than `[Bool]`)
 ///
 /// Example:
 /// ```swift
@@ -455,18 +702,21 @@ struct HTBlockEncoder: Sendable {
     /// The subband this code-block belongs to.
     let subband: J2KSubband
 
-    /// Encodes wavelet coefficients using the HT cleanup pass.
+    /// Encodes wavelet coefficients using the HT cleanup pass (Int32 primary path).
     ///
     /// The cleanup pass is the primary coding pass in HTJ2K. It processes all
     /// samples in the code-block and produces significance, sign, and magnitude
     /// information using the MEL, VLC, and MagSgn coding primitives.
     ///
+    /// This overload accepts `[Int32]` directly, avoiding a redundant copy when
+    /// coefficients are already stored as `Int32` in the encoder pipeline.
+    ///
     /// - Parameters:
     ///   - coefficients: The wavelet coefficients in raster order.
     ///   - bitPlane: The most significant bit-plane to encode.
-    /// - Returns: An ``HTEncodedBlock`` containing the coded data and metadata.
+    /// - Returns: A tuple of the encoded block, significance state, packed significance bitfield, and absolute magnitudes.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
+    func encodeCleanup(coefficients: [Int32], bitPlane: Int) throws -> (block: HTEncodedBlock, significanceState: [Bool], sigPacked: [UInt64], absMags: [Int32]) {
         guard coefficients.count == width * height else {
             throw J2KError.encodingError(
                 "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
@@ -474,143 +724,1307 @@ struct HTBlockEncoder: Sendable {
         }
 
         let count = coefficients.count
+        let bp32 = Int32(bitPlane)
 
-        // Pre-compute significance bits, absolute magnitudes, and sign bits
-        // using SIMD4 vectorisation for the bulk of the array.
-        var sigBits = [Int](repeating: 0, count: count)
-        var absMags = [Int](repeating: 0, count: count)
-        var signBits = [Int](repeating: 0, count: count)
+        // Pre-compute absolute magnitudes using SIMD4<Int32> vectorisation
+        // (fits in a single 128-bit NEON register). Sign bits are NOT stored
+        // separately — they are read directly from the coefficient array in the
+        // encoding loop, eliminating one array allocation per block.
+        // Significance bits are packed into UInt64 words (64 samples per word)
+        // for 8× density vs [Bool] and bulk bitwise operations in refinement.
+        var absMags = [Int32](repeating: 0, count: count)
+        let sigWordCount = (count + 63) / 64
+        var sigPacked = [UInt64](repeating: 0, count: sigWordCount)
 
         coefficients.withUnsafeBufferPointer { srcPtr in
-            sigBits.withUnsafeMutableBufferPointer { sigPtr in
-                absMags.withUnsafeMutableBufferPointer { magPtr in
-                    signBits.withUnsafeMutableBufferPointer { sgnPtr in
-                        guard let src = srcPtr.baseAddress,
-                              let sig = sigPtr.baseAddress,
-                              let mag = magPtr.baseAddress,
-                              let sgn = sgnPtr.baseAddress else { return }
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                guard let src = srcPtr.baseAddress,
+                      let mag = magPtr.baseAddress else { return }
 
-                        let simdCount = count / 4
+                let simdCount = count / 4
+                let bpVec = SIMD4<Int32>(repeating: bp32)
+                let oneVec = SIMD4<Int32>(repeating: 1)
 
-                        for i in 0..<simdCount {
-                            let offset = i * 4
-                            let v = SIMD4<Int>(
-                                src[offset], src[offset + 1],
-                                src[offset + 2], src[offset + 3]
-                            )
+                for i in 0..<simdCount {
+                    let offset = i &* 4
+                    let v = SIMD4<Int32>(
+                        src[offset], src[offset &+ 1],
+                        src[offset &+ 2], src[offset &+ 3]
+                    )
 
-                            // Absolute value
-                            let negative = v .< SIMD4<Int>.zero
-                            let absV = v.replacing(
-                                with: SIMD4<Int>.zero &- v, where: negative
-                            )
+                    // Absolute value
+                    let negative = v .< SIMD4<Int32>.zero
+                    let absV = v.replacing(
+                        with: SIMD4<Int32>.zero &- v, where: negative
+                    )
 
-                            // Significance: (abs >> bitPlane) & 1
-                            let shifted = absV &>> SIMD4<Int>(repeating: bitPlane)
-                            let masked = shifted & SIMD4<Int>(repeating: 1)
+                    mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                    mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
 
-                            // Sign: 1 if negative, 0 otherwise
-                            let signV = SIMD4<Int>.zero.replacing(
-                                with: SIMD4<Int>(repeating: 1), where: negative
-                            )
+                    // Branchless significance: build 4-bit mask and deposit
+                    let masked = (absV &>> bpVec) & oneVec
+                    let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                              | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                    let shift = offset & 63
+                    sigPacked[offset >> 6] |= mask4 << shift
+                    // Handle cross-word boundary (when shift > 60)
+                    if shift > 60 {
+                        sigPacked[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                    }
+                }
 
-                            sig[offset] = masked[0]; sig[offset+1] = masked[1]
-                            sig[offset+2] = masked[2]; sig[offset+3] = masked[3]
-                            mag[offset] = absV[0]; mag[offset+1] = absV[1]
-                            mag[offset+2] = absV[2]; mag[offset+3] = absV[3]
-                            sgn[offset] = signV[0]; sgn[offset+1] = signV[1]
-                            sgn[offset+2] = signV[2]; sgn[offset+3] = signV[3]
-                        }
-
-                        // Scalar remainder
-                        let remStart = simdCount * 4
-                        for i in remStart..<count {
-                            let coeff = src[i]
-                            let absVal = coeff < 0 ? -coeff : coeff
-                            mag[i] = absVal
-                            sgn[i] = coeff < 0 ? 1 : 0
-                            sig[i] = (absVal >> bitPlane) & 1
-                        }
+                // Scalar remainder
+                let remStart = simdCount &* 4
+                for i in remStart..<count {
+                    let coeff = src[i]
+                    let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                    mag[i] = absVal
+                    if (absVal >> bp32) & 1 != 0 {
+                        sigPacked[i >> 6] |= 1 << (i & 63)
                     }
                 }
             }
         }
 
-        var mel = HTMELCoder()
-        var vlc = HTVLCCoder()
-        var magsgn = HTMagSgnCoder()
+        // Worst-case output sizes per coding primitive:
+        // MEL: ~1 bit per sample pair + run overhead ≈ count/8 bytes
+        // VLC: 3 bits per significant pair ≈ count/4 bytes
+        // MagSgn: (1 + bitPlane) bits per significant sample ≈ count * (bitPlane+1) / 8
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
 
-        // Process in 4-row stripes (standard JPEG 2000 stripe ordering)
+        var mel = HTMELCoder(capacity: maxMelBytes)
+        var vlc = HTVLCCoder(capacity: maxVlcBytes)
+        var magsgn = HTMagSgnCoder(capacity: maxMagsgnBytes)
+
+        // Process in 4-row stripes (standard JPEG 2000 stripe ordering).
+        // Uses unsafe pointer access to eliminate bounds checking in the hot loop.
+        // Sign bits are read directly from the coefficient array, avoiding the
+        // separate signBits array allocation.
+        // Full column pairs are separated from the odd-width last column
+        // to eliminate the pairWidth branch from the hot loop.
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
-            let stripeHeight = min(4, height - stripe * 4)
-            for col in stride(from: 0, to: width, by: 2) {
-                let pairWidth = min(2, width - col)
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
 
-                // Process pairs of columns within the stripe
-                for row in 0..<stripeHeight {
-                    let y = stripe * 4 + row
-                    let x0 = col
-                    let idx0 = y * width + x0
+                    for stripe in 0..<numStripes {
+                        let stripeY = stripe &* 4
+                        let stripeHeight = min(4, height &- stripeY)
 
-                    let sig0 = sigBits[idx0]
+                        // Fast path: full column pairs — no pairWidth branch
+                        for pairIdx in 0..<fullPairs {
+                            let col = pairIdx &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                let idx1 = idx0 &+ 1
+                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
 
-                    var sig1 = 0
-                    if pairWidth > 1 {
-                        sig1 = sigBits[idx0 + 1]
-                    }
+                                // Encode significance via MEL and VLC
+                                let pattern = sig0 | (sig1 << 1)
+                                mel.encode(bit: pattern == 0 ? 0 : 1)
+                                if pattern != 0 {
+                                    vlc.encodeSignificance(pattern: pattern)
+                                }
 
-                    // Encode significance via MEL and VLC
-                    let pattern = sig0 | (sig1 << 1)
-                    mel.encode(bit: (pattern == 0) ? 0 : 1)
-                    vlc.encodeSignificance(pattern: pattern)
+                                // Encode magnitude/sign for significant samples (bulk emission)
+                                if sig0 != 0 {
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                                if sig1 != 0 {
+                                    magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
 
-                    // Encode magnitude/sign for significant samples
-                    if sig0 != 0 {
-                        magsgn.encode(magnitude: absMags[idx0], sign: signBits[idx0], bitPlane: bitPlane)
-                    }
-                    if sig1 != 0 {
-                        let idx1 = idx0 + 1
-                        magsgn.encode(magnitude: absMags[idx1], sign: signBits[idx1], bitPlane: bitPlane)
+                        // Handle odd-width last column (single sample, no pair)
+                        if hasHalfPair {
+                            let col = fullPairs &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                if sig0 != 0 {
+                                    vlc.encodeSignificance(pattern: sig0)
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Flush all coding primitives
-        let melData = mel.flush()
-        let vlcData = vlc.flush()
-        let magsgnData = magsgn.flush()
-
-        // Combine into a single coded data buffer with a 6-byte length header
-        // so the decoder can split the streams without external metadata:
+        // Zero-copy data assembly: flush each coder directly into the combined
+        // output buffer, avoiding 3 intermediate Data allocations and the
+        // separate VLC reversal loop. The format is:
         // [melLen:2 | vlcLen:2 | magsgnLen:2 | MEL data | MagSgn data | VLC data (reversed)]
-        var codedData = Data()
-        codedData.reserveCapacity(6 + melData.count + magsgnData.count + vlcData.count)
-        // Stream length header (big-endian UInt16 each)
-        codedData.append(UInt8((melData.count >> 8) & 0xFF))
-        codedData.append(UInt8(melData.count & 0xFF))
-        codedData.append(UInt8((vlcData.count >> 8) & 0xFF))
-        codedData.append(UInt8(vlcData.count & 0xFF))
-        codedData.append(UInt8((magsgnData.count >> 8) & 0xFF))
-        codedData.append(UInt8(magsgnData.count & 0xFF))
-        codedData.append(melData)
-        codedData.append(magsgnData)
-        codedData.append(Data(vlcData.reversed()))
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            // Stream length header (big-endian UInt16 each)
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF)
+            ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF)
+            ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF)
+            ptr[5] = UInt8(magsgnBytes & 0xFF)
+            // Copy streams directly into output (no intermediate Data objects)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        let block = HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+
+        // Derive Bool significanceState from sigPacked for callers that need it
+        // (e.g. direct-API tests). The pipeline uses sigPacked directly.
+        let significanceState = (0..<count).map { i in
+            (sigPacked[i >> 6] >> UInt64(i & 63)) & 1 != 0
+        }
+        return (block: block, significanceState: significanceState, sigPacked: sigPacked, absMags: absMags)
+    }
+
+    /// Encodes wavelet coefficients using the HT cleanup pass (convenience for `[Int]` callers).
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - bitPlane: The most significant bit-plane to encode.
+    /// - Returns: An ``HTEncodedBlock`` containing the coded data and metadata.
+    /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
+    func encodeCleanup(coefficients: [Int], bitPlane: Int) throws -> HTEncodedBlock {
+        let (block, _, _, _) = try encodeCleanup(coefficients: coefficients.map { Int32($0) }, bitPlane: bitPlane)
+        return block
+    }
+
+    /// Encodes the HT cleanup pass using caller-provided reusable arrays.
+    ///
+    /// This variant avoids per-block allocation of `absMags` and `sigPacked`
+    /// arrays. The caller pre-allocates these once per thread and passes them
+    /// in for repeated use across code-blocks.
+    ///
+    /// The provided arrays must be at least `width * height` elements (absMags)
+    /// and `(width * height + 63) / 64` words (sigPacked). The caller must
+    /// clear `sigPacked` before each call.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - bitPlane: The most significant bit-plane to encode.
+    ///   - absMags: Pre-allocated absolute magnitude array (overwritten).
+    ///   - sigPacked: Pre-allocated and zeroed significance bitfield (overwritten).
+    /// - Returns: The encoded cleanup pass block.
+    /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
+    func encodeCleanupReusing(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64]
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+
+        // Compute absolute magnitudes + significance using SIMD4<Int32>
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    guard let src = srcPtr.baseAddress,
+                          let mag = magPtr.baseAddress,
+                          let sig = sigPtr.baseAddress else { return }
+
+                    let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
+                    for i in 0..<simdCount {
+                        let offset = i &* 4
+                        let v = SIMD4<Int32>(
+                            src[offset], src[offset &+ 1],
+                            src[offset &+ 2], src[offset &+ 3]
+                        )
+                        let negative = v .< SIMD4<Int32>.zero
+                        let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                        mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                        mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                        }
+                    }
+                    let remStart = simdCount &* 4
+                    for i in remStart..<count {
+                        let coeff = src[i]
+                        let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                        mag[i] = absVal
+                        if (absVal >> bp32) & 1 != 0 {
+                            sig[i >> 6] |= 1 << (i & 63)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create fresh coders (local variables, no exclusivity conflict with arrays)
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        var mel = HTMELCoder(capacity: maxMelBytes)
+        var vlc = HTVLCCoder(capacity: maxVlcBytes)
+        var magsgn = HTMagSgnCoder(capacity: maxMagsgnBytes)
+
+        // Process in stripe order using unsafe pointer access.
+        // Full column pairs use branch-free significance extraction.
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    for stripe in 0..<numStripes {
+                        let stripeY = stripe &* 4
+                        let stripeHeight = min(4, height &- stripeY)
+
+                        for pairIdx in 0..<fullPairs {
+                            let col = pairIdx &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                let idx1 = idx0 &+ 1
+                                let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                let pattern = sig0 | (sig1 << 1)
+                                mel.encode(bit: pattern == 0 ? 0 : 1)
+                                if pattern != 0 {
+                                    vlc.encodeSignificance(pattern: pattern)
+                                }
+                                if sig0 != 0 {
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                                if sig1 != 0 {
+                                    magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
+
+                        if hasHalfPair {
+                            let col = fullPairs &* 2
+                            for row in 0..<stripeHeight {
+                                let idx0 = (stripeY &+ row) &* width &+ col
+                                let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                if sig0 != 0 {
+                                    vlc.encodeSignificance(pattern: sig0)
+                                    magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Zero-copy data assembly
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF)
+            ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF)
+            ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF)
+            ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
 
         return HTEncodedBlock(
             codedData: codedData,
             passType: .htCleanup,
-            melLength: melData.count,
-            vlcLength: vlcData.count,
-            magsgnLength: magsgnData.count,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
             bitPlane: bitPlane,
             width: width,
             height: height
         )
     }
 
-    /// Encodes the HT significance propagation pass.
+    /// Computes absolute magnitudes and the maximum value in a single SIMD pass.
+    ///
+    /// Fills `absMags` with `abs(coefficients[i])` for all `i` and returns the maximum.
+    /// This replaces the separate `maxAbsValue` scan so the caller can determine
+    /// `topBitPlane` from the returned value and then call `encodeCleanupFromAbsMags`
+    /// without re-scanning the coefficient data.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - absMags: Pre-allocated absolute magnitude array to fill (reused across blocks).
+    /// - Returns: The maximum absolute coefficient value, or 0 if all are zero.
+    func computeAbsMagsAndMax(
+        coefficients: [Int32],
+        absMags: inout [Int32]
+    ) -> Int {
+        let count = coefficients.count
+        var localMax: Int32 = 0
+
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                guard let src = srcPtr.baseAddress,
+                      let mag = magPtr.baseAddress else { return }
+
+                let simdCount = count / 4
+                var maxVec = SIMD4<Int32>.zero
+
+                for i in 0..<simdCount {
+                    let offset = i &* 4
+                    let v = SIMD4<Int32>(
+                        src[offset], src[offset &+ 1],
+                        src[offset &+ 2], src[offset &+ 3]
+                    )
+                    let negative = v .< SIMD4<Int32>.zero
+                    let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                    mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                    mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+                    maxVec = pointwiseMax(maxVec, absV)
+                }
+                localMax = max(max(maxVec[0], maxVec[1]), max(maxVec[2], maxVec[3]))
+
+                let remStart = simdCount &* 4
+                for i in remStart..<count {
+                    let coeff = src[i]
+                    let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                    mag[i] = absVal
+                    if absVal > localMax { localMax = absVal }
+                }
+            }
+        }
+        return Int(localMax)
+    }
+
+    /// Encodes the HT cleanup pass using pre-computed absolute magnitudes.
+    ///
+    /// Caller must have already filled `absMags` via `computeAbsMagsAndMax` and
+    /// zeroed `sigPacked`. This method fills `sigPacked` from the pre-computed
+    /// magnitudes (no abs computation needed), resets the coders, and runs the
+    /// full stripe encoding loop. Eliminates one O(N) coefficient scan compared
+    /// to `encodeCleanupFullyReusingWithMax`.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order (signs only used during encode).
+    ///   - bitPlane: The most significant bit-plane to encode.
+    ///   - absMags: Pre-filled absolute magnitude array (from `computeAbsMagsAndMax`).
+    ///   - sigPacked: Pre-allocated significance bitfield, **zeroed by caller**.
+    ///   - mel: Pre-allocated MEL coder (reset internally before use).
+    ///   - vlc: Pre-allocated VLC coder (reset internally before use).
+    ///   - magsgn: Pre-allocated MagSgn coder (reset internally before use).
+    /// - Returns: The encoded ``HTEncodedBlock``.
+    /// - Throws: ``J2KError/encodingError(_:)`` if the coefficient count is wrong.
+    func encodeCleanupFromAbsMags(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+
+        // Fill sigPacked from pre-computed absMags — no abs needed, just shift+mask.
+        absMags.withUnsafeBufferPointer { magPtr in
+            sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                guard let mag = magPtr.baseAddress,
+                      let sig = sigPtr.baseAddress else { return }
+
+                let simdCount = count / 4
+                let bpVec = SIMD4<Int32>(repeating: bp32)
+                let oneVec = SIMD4<Int32>(repeating: 1)
+
+                for i in 0..<simdCount {
+                    let offset = i &* 4
+                    let absV = SIMD4<Int32>(
+                        mag[offset], mag[offset &+ 1],
+                        mag[offset &+ 2], mag[offset &+ 3]
+                    )
+                    let masked = (absV &>> bpVec) & oneVec
+                    let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                              | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                    let shift = offset & 63
+                    sig[offset >> 6] |= mask4 << shift
+                    if shift > 60 {
+                        sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                    }
+                }
+                let remStart = simdCount &* 4
+                for i in remStart..<count {
+                    if (mag[i] >> bp32) & 1 != 0 {
+                        sig[i >> 6] |= 1 << (i & 63)
+                    }
+                }
+            }
+        }
+
+        // Reset pre-allocated coders
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        mel.reset(capacity: maxMelBytes)
+        vlc.reset(capacity: maxVlcBytes)
+        magsgn.reset(capacity: maxMagsgnBytes)
+
+        // Stripe encoding loop — identical to encodeCleanupFullyReusingWithMax.
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    if width == 64 {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            let stripeOrWord = w0 | w1 | w2 | w3
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                continue
+                            }
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF); ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF); ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF); ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        return HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+    }
+
+    /// Encodes the HT cleanup pass using caller-provided reusable arrays and coders.
+    ///
+    /// This variant avoids ALL per-block allocation by reusing pre-allocated
+    /// MEL, VLC, and MagSgn coders in addition to `absMags` and `sigPacked`.
+    /// The coders are reset internally with appropriate capacities.
+    /// Encodes the HT cleanup pass using caller-provided reusable arrays,
+    /// and returns the maximum absolute coefficient value.
+    ///
+    /// Identical to `encodeCleanupFullyReusing` but additionally computes the
+    /// maximum absolute magnitude during the SIMD absMags pass, eliminating the
+    /// separate `Self.maxAbsValue(coefficients)` scan in the caller. This saves
+    /// one O(N) pass over the coefficient data per code-block.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - bitPlane: The most significant bit-plane to encode.
+    ///   - absMags: Pre-allocated absolute magnitude array (reused across blocks).
+    ///   - sigPacked: Pre-allocated significance bitfield, **zeroed by caller** (reused).
+    ///   - mel: Pre-allocated MEL coder (reset internally before use).
+    ///   - vlc: Pre-allocated VLC coder (reset internally before use).
+    ///   - magsgn: Pre-allocated MagSgn coder (reset internally before use).
+    ///   - maxMag: On return, the maximum absolute coefficient value in the block.
+    /// - Returns: The encoded ``HTEncodedBlock``.
+    /// - Throws: ``J2KError/encodingError(_:)`` if the coefficient count is wrong.
+    func encodeCleanupFullyReusingWithMax(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder,
+        maxMag: inout Int
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+        var localMax: Int32 = 0
+
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    guard let src = srcPtr.baseAddress,
+                          let mag = magPtr.baseAddress,
+                          let sig = sigPtr.baseAddress else { return }
+
+                    let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
+                    var maxVec = SIMD4<Int32>.zero
+
+                    for i in 0..<simdCount {
+                        let offset = i &* 4
+                        let v = SIMD4<Int32>(
+                            src[offset], src[offset &+ 1],
+                            src[offset &+ 2], src[offset &+ 3]
+                        )
+                        let negative = v .< SIMD4<Int32>.zero
+                        let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                        mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                        mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+                        maxVec = pointwiseMax(maxVec, absV)
+
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                        }
+                    }
+                    // Horizontal max of SIMD lane
+                    localMax = max(max(maxVec[0], maxVec[1]), max(maxVec[2], maxVec[3]))
+
+                    let remStart = simdCount &* 4
+                    for i in remStart..<count {
+                        let coeff = src[i]
+                        let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                        mag[i] = absVal
+                        if absVal > localMax { localMax = absVal }
+                        if (absVal >> bp32) & 1 != 0 {
+                            sig[i >> 6] |= 1 << (i & 63)
+                        }
+                    }
+                }
+            }
+        }
+        maxMag = Int(localMax)
+
+        // Reset pre-allocated coders
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        mel.reset(capacity: maxMelBytes)
+        vlc.reset(capacity: maxVlcBytes)
+        magsgn.reset(capacity: maxMagsgnBytes)
+
+        // Encode stripe loop (same as encodeCleanupFullyReusing)
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    if width == 64 {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            let stripeOrWord = w0 | w1 | w2 | w3
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                continue
+                            }
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 { vlc.encodeSignificance(pattern: pattern) }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF); ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF); ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF); ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        return HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+    }
+
+    func encodeCleanupFullyReusing(
+        coefficients: [Int32],
+        bitPlane: Int,
+        absMags: inout [Int32],
+        sigPacked: inout [UInt64],
+        mel: inout HTMELCoder,
+        vlc: inout HTVLCCoder,
+        magsgn: inout HTMagSgnCoder
+    ) throws -> HTEncodedBlock {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError(
+                "Coefficient count \(coefficients.count) does not match block size \(width)x\(height)"
+            )
+        }
+
+        let count = coefficients.count
+        let bp32 = Int32(bitPlane)
+
+        // Compute absolute magnitudes + significance using SIMD4<Int32>
+        coefficients.withUnsafeBufferPointer { srcPtr in
+            absMags.withUnsafeMutableBufferPointer { magPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    guard let src = srcPtr.baseAddress,
+                          let mag = magPtr.baseAddress,
+                          let sig = sigPtr.baseAddress else { return }
+
+                    let simdCount = count / 4
+                    let bpVec = SIMD4<Int32>(repeating: bp32)
+                    let oneVec = SIMD4<Int32>(repeating: 1)
+                    for i in 0..<simdCount {
+                        let offset = i &* 4
+                        let v = SIMD4<Int32>(
+                            src[offset], src[offset &+ 1],
+                            src[offset &+ 2], src[offset &+ 3]
+                        )
+                        let negative = v .< SIMD4<Int32>.zero
+                        let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
+                        mag[offset] = absV[0]; mag[offset &+ 1] = absV[1]
+                        mag[offset &+ 2] = absV[2]; mag[offset &+ 3] = absV[3]
+
+                        let masked = (absV &>> bpVec) & oneVec
+                        let mask4 = UInt64(masked[0]) | (UInt64(masked[1]) << 1)
+                                  | (UInt64(masked[2]) << 2) | (UInt64(masked[3]) << 3)
+                        let shift = offset & 63
+                        sig[offset >> 6] |= mask4 << shift
+                        if shift > 60 {
+                            sig[(offset >> 6) &+ 1] |= mask4 >> (64 &- shift)
+                        }
+                    }
+                    let remStart = simdCount &* 4
+                    for i in remStart..<count {
+                        let coeff = src[i]
+                        let absVal = coeff < 0 ? (0 &- coeff) : coeff
+                        mag[i] = absVal
+                        if (absVal >> bp32) & 1 != 0 {
+                            sig[i >> 6] |= 1 << (i & 63)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reset pre-allocated coders
+        let maxMelBytes = max(16, count / 4)
+        let maxVlcBytes = max(16, count / 2)
+        let maxMagsgnBytes = max(16, count * (bitPlane + 2) / 8)
+        mel.reset(capacity: maxMelBytes)
+        vlc.reset(capacity: maxVlcBytes)
+        magsgn.reset(capacity: maxMagsgnBytes)
+
+        // Process in stripe order using unsafe pointer access.
+        // Separates full column pairs (pairWidth==2) from the odd-width
+        // last column to eliminate the pairWidth branch from the hot loop.
+        //
+        // width=64 fast path: each row occupies exactly one sigPacked word,
+        // allowing per-stripe OR to detect all-zero column pairs and call
+        // encodeZeroRun instead of stripeHeight individual encode(bit:0) calls.
+        // This reduces O(N) MEL calls to O(log₂N) emitBit calls for sparse blocks.
+        let numStripes = (height + 3) / 4
+        let fullPairs = width / 2
+        let hasHalfPair = (width & 1) != 0
+        sigPacked.withUnsafeBufferPointer { sigPtr in
+            absMags.withUnsafeBufferPointer { magPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    let sigBase = sigPtr.baseAddress!
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+
+                    if width == 64 {
+                        // Optimised path for 64-wide blocks (standard 64×64 code-block).
+                        // Each row occupies exactly sigBase[stripeY + r], so significance
+                        // for column pair pairIdx at any row r is testable with a 2-bit
+                        // shift + mask in constant time.
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+
+                            // Load up to 4 row significance words for this stripe
+                            let w0 = sigBase[stripeY]
+                            let w1: UInt64 = stripeHeight > 1 ? sigBase[stripeY &+ 1] : 0
+                            let w2: UInt64 = stripeHeight > 2 ? sigBase[stripeY &+ 2] : 0
+                            let w3: UInt64 = stripeHeight > 3 ? sigBase[stripeY &+ 3] : 0
+                            // OR all rows: any set bit means some row is significant at that position
+                            let stripeOrWord = w0 | w1 | w2 | w3
+
+                            // Ultra-fast path: entire stripe has no significant column pairs.
+                            // Common at high bit-planes (sparse blocks) and lossless encoding.
+                            // Replaces 32 × encodeZeroRun(stripeHeight) with a single call,
+                            // collapsing O(fullPairs) loop iterations into O(log₂ run) MEL bits.
+                            if stripeOrWord == 0 {
+                                mel.encodeZeroRun(stripeHeight &* fullPairs)
+                                // width=64 → hasHalfPair false; skip odd-col check
+                                continue
+                            }
+
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                // 2-bit mask covers both samples of the column pair
+                                if (stripeOrWord >> col) & 3 == 0 {
+                                    // All stripe rows insignificant for this column pair
+                                    mel.encodeZeroRun(stripeHeight)
+                                } else {
+                                    // At least one row significant — per-row processing
+                                    for row in 0..<stripeHeight {
+                                        let rowWord: UInt64
+                                        switch row {
+                                        case 0: rowWord = w0
+                                        case 1: rowWord = w1
+                                        case 2: rowWord = w2
+                                        default: rowWord = w3
+                                        }
+                                        let sig0 = Int((rowWord >> col) & 1)
+                                        let sig1 = Int((rowWord >> (col &+ 1)) & 1)
+                                        let pattern = sig0 | (sig1 << 1)
+                                        mel.encode(bit: pattern == 0 ? 0 : 1)
+                                        if pattern != 0 {
+                                            vlc.encodeSignificance(pattern: pattern)
+                                        }
+                                        if sig0 != 0 {
+                                            let idx = (stripeY &+ row) &* 64 &+ col
+                                            magsgn.encode(magnitude: Int(magBase[idx]),
+                                                          sign: coefBase[idx] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                        if sig1 != 0 {
+                                            let idx1 = (stripeY &+ row) &* 64 &+ col &+ 1
+                                            magsgn.encode(magnitude: Int(magBase[idx1]),
+                                                          sign: coefBase[idx1] < 0 ? 1 : 0,
+                                                          bitPlane: bitPlane)
+                                        }
+                                    }
+                                }
+                            }
+                            // width=64 is always even → hasHalfPair false; skip odd-col check
+                        }
+                    } else {
+                        // Scalar fallback for non-64-wide blocks (e.g. partial subbands)
+                        for stripe in 0..<numStripes {
+                            let stripeY = stripe &* 4
+                            let stripeHeight = min(4, height &- stripeY)
+
+                            // Fast path: full column pairs — no pairWidth branch
+                            for pairIdx in 0..<fullPairs {
+                                let col = pairIdx &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    let idx1 = idx0 &+ 1
+                                    let sig1 = Int((sigBase[idx1 >> 6] >> (idx1 & 63)) & 1)
+                                    let pattern = sig0 | (sig1 << 1)
+                                    mel.encode(bit: pattern == 0 ? 0 : 1)
+                                    if pattern != 0 {
+                                        vlc.encodeSignificance(pattern: pattern)
+                                    }
+                                    if sig0 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                    if sig1 != 0 {
+                                        magsgn.encode(magnitude: Int(magBase[idx1]), sign: coefBase[idx1] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+
+                            // Handle odd-width last column (single sample, no pair)
+                            if hasHalfPair {
+                                let col = fullPairs &* 2
+                                for row in 0..<stripeHeight {
+                                    let idx0 = (stripeY &+ row) &* width &+ col
+                                    let sig0 = Int((sigBase[idx0 >> 6] >> (idx0 & 63)) & 1)
+                                    mel.encode(bit: sig0 == 0 ? 0 : 1)
+                                    if sig0 != 0 {
+                                        vlc.encodeSignificance(pattern: sig0)
+                                        magsgn.encode(magnitude: Int(magBase[idx0]), sign: coefBase[idx0] < 0 ? 1 : 0, bitPlane: bitPlane)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Zero-copy data assembly
+        let melBytes = mel.byteCount
+        let vlcBytes = vlc.byteCount
+        let magsgnBytes = magsgn.byteCount
+        let totalSize = 6 + melBytes + magsgnBytes + vlcBytes
+        var codedData = Data(count: totalSize)
+        codedData.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            ptr[0] = UInt8((melBytes >> 8) & 0xFF)
+            ptr[1] = UInt8(melBytes & 0xFF)
+            ptr[2] = UInt8((vlcBytes >> 8) & 0xFF)
+            ptr[3] = UInt8(vlcBytes & 0xFF)
+            ptr[4] = UInt8((magsgnBytes >> 8) & 0xFF)
+            ptr[5] = UInt8(magsgnBytes & 0xFF)
+            mel.flushTo(ptr + 6)
+            magsgn.flushTo(ptr + 6 + melBytes)
+            vlc.flushToReversed(ptr + 6 + melBytes + magsgnBytes)
+        }
+
+        return HTEncodedBlock(
+            codedData: codedData,
+            passType: .htCleanup,
+            melLength: melBytes,
+            vlcLength: vlcBytes,
+            magsgnLength: magsgnBytes,
+            bitPlane: bitPlane,
+            width: width,
+            height: height
+        )
+    }
+
+    /// Encodes a fused SigProp + MagRef refinement pass using caller-provided
+    /// reusable writers and arrays.
+    ///
+    /// This variant eliminates per-pass writer allocation by reusing pre-allocated
+    /// writers that the caller resets between calls. It also batches MagRef bit
+    /// emission per stripe column (up to 4 bits at once) to reduce per-sample
+    /// function call overhead.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - absMags: Pre-computed absolute magnitudes (from cleanup).
+    ///   - sigPacked: UInt64-packed significance bitfield (updated in-place).
+    ///   - bitPlane: The bit-plane for this refinement pass.
+    ///   - output: Data buffer to append encoded bytes to.
+    ///   - sigPropWriter: Pre-allocated SigProp writer (must be reset by caller).
+    ///   - magRefWriter: Pre-allocated MagRef writer (must be reset by caller).
+    /// - Returns: A tuple of (sigPropBytes, magRefBytes) byte counts.
+    func encodeFusedRefinementReusing(
+        coefficients: [Int32],
+        absMags: [Int32],
+        sigPacked: inout [UInt64],
+        bitPlane: Int,
+        output: inout Data,
+        sigPropWriter: inout HTFastBitWriter,
+        magRefWriter: inout HTFastBitWriter
+    ) -> (sigPropBytes: Int, magRefBytes: Int) {
+        let bp32 = Int32(bitPlane)
+
+        let numStripes = (height + 3) / 4
+        absMags.withUnsafeBufferPointer { magPtr in
+            coefficients.withUnsafeBufferPointer { coefPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+                    let sigBase = sigPtr.baseAddress!
+
+                    for stripe in 0..<numStripes {
+                        let stripeHeight = min(4, height - stripe * 4)
+                        let baseY = stripe * 4
+                        for col in 0..<width {
+                            // Batch MagRef bits per stripe column: collect up to 4
+                            // bits destined for the MagRef writer and emit them in
+                            // one emitBits call instead of up to 4 emitBit calls.
+                            var magBits = 0
+                            var magCount = 0
+
+                            for row in 0..<stripeHeight {
+                                let y = baseY + row
+                                let idx = y * width + col
+
+                                let wordIdx = idx >> 6
+                                let bitIdx = idx & 63
+                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+
+                                if isSignificant {
+                                    // Pack MSB-first: shift left and OR in new bit so
+                                    // row-0's bit occupies the MSB, matching the
+                                    // MSB-first emission order of emitBits.
+                                    magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
+                                    magCount += 1
+                                } else {
+                                    let bit = Int((magBase[idx] >> bp32) & 1)
+                                    sigPropWriter.emitBit(bit)
+                                    if bit != 0 {
+                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    }
+                                }
+                            }
+
+                            if magCount > 0 {
+                                magRefWriter.emitBits(magBits, count: magCount)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let sigPropBytes = sigPropWriter.flushAppending(to: &output)
+        let magRefBytes = magRefWriter.flushAppending(to: &output)
+        return (sigPropBytes, magRefBytes)
+    }
+
+    /// Encodes a fused SigProp + MagRef refinement pass for a single bit-plane.
+    /// passes — the fused encoder produces the same byte streams, just more efficiently.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - absMags: Pre-computed absolute magnitudes.
+    ///   - sigPacked: UInt64-packed significance bitfield (updated in-place).
+    ///   - bitPlane: The bit-plane for this refinement pass.
+    /// - Returns: A tuple of (sigPropData, magRefData) byte streams.
+    func encodeFusedRefinement(
+        coefficients: [Int32],
+        absMags: [Int32],
+        sigPacked: inout [UInt64],
+        bitPlane: Int
+    ) -> (sigPropData: Data, magRefData: Data) {
+        let count = width * height
+        let bp32 = Int32(bitPlane)
+        // Worst case: 2 bits per non-significant sample (bit + sign), 1 bit per significant
+        let maxBytes = max(4, (count * 2 + 7) / 8)
+        var sigPropWriter = HTFastBitWriter(capacity: maxBytes)
+        var magRefWriter = HTFastBitWriter(capacity: maxBytes)
+
+        // Single scan in stripe order — fuse SigProp and MagRef.
+        // Uses unsafe pointer access to eliminate bounds checking.
+        let numStripes = (height + 3) / 4
+        absMags.withUnsafeBufferPointer { magPtr in
+            coefficients.withUnsafeBufferPointer { coefPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+                    let sigBase = sigPtr.baseAddress!
+
+                    for stripe in 0..<numStripes {
+                        let stripeHeight = min(4, height - stripe * 4)
+                        for col in 0..<width {
+                            for row in 0..<stripeHeight {
+                                let y = stripe * 4 + row
+                                let idx = y * width + col
+
+                                let wordIdx = idx >> 6
+                                let bitIdx = idx & 63
+                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+
+                                if isSignificant {
+                                    // MagRef: emit the bit at this bit-plane for significant samples
+                                    let bit = Int((magBase[idx] >> bp32) & 1)
+                                    magRefWriter.emitBit(bit)
+                                } else {
+                                    // SigProp: check if this sample becomes significant at this bit-plane
+                                    let bit = Int((magBase[idx] >> bp32) & 1)
+                                    sigPropWriter.emitBit(bit)
+
+                                    if bit != 0 {
+                                        // Also encode sign
+                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                        // Update significance in packed bitfield
+                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return (sigPropWriter.flush(), magRefWriter.flush())
+    }
+
+    /// Encodes a fused SigProp + MagRef refinement pass, appending output directly
+    /// to a shared Data buffer.
+    ///
+    /// This variant avoids creating intermediate Data objects per pass, instead
+    /// appending the encoded bytes directly to the caller's output buffer.
+    ///
+    /// - Parameters:
+    ///   - coefficients: The wavelet coefficients in raster order.
+    ///   - absMags: Pre-computed absolute magnitudes.
+    ///   - sigPacked: UInt64-packed significance bitfield (updated in-place).
+    ///   - bitPlane: The bit-plane for this refinement pass.
+    ///   - output: Data buffer to append encoded bytes to.
+    /// - Returns: A tuple of (sigPropBytes, magRefBytes) byte counts.
+    func encodeFusedRefinementDirect(
+        coefficients: [Int32],
+        absMags: [Int32],
+        sigPacked: inout [UInt64],
+        bitPlane: Int,
+        output: inout Data
+    ) -> (sigPropBytes: Int, magRefBytes: Int) {
+        let count = width * height
+        let bp32 = Int32(bitPlane)
+        let maxBytes = max(4, (count * 2 + 7) / 8)
+        var sigPropWriter = HTFastBitWriter(capacity: maxBytes)
+        var magRefWriter = HTFastBitWriter(capacity: maxBytes)
+
+        let numStripes = (height + 3) / 4
+        absMags.withUnsafeBufferPointer { magPtr in
+            coefficients.withUnsafeBufferPointer { coefPtr in
+                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                    let magBase = magPtr.baseAddress!
+                    let coefBase = coefPtr.baseAddress!
+                    let sigBase = sigPtr.baseAddress!
+
+                    for stripe in 0..<numStripes {
+                        let stripeHeight = min(4, height - stripe * 4)
+                        for col in 0..<width {
+                            for row in 0..<stripeHeight {
+                                let y = stripe * 4 + row
+                                let idx = y * width + col
+
+                                let wordIdx = idx >> 6
+                                let bitIdx = idx & 63
+                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+
+                                if isSignificant {
+                                    let bit = Int((magBase[idx] >> bp32) & 1)
+                                    magRefWriter.emitBit(bit)
+                                } else {
+                                    let bit = Int((magBase[idx] >> bp32) & 1)
+                                    sigPropWriter.emitBit(bit)
+
+                                    if bit != 0 {
+                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let sigPropBytes = sigPropWriter.flushAppending(to: &output)
+        let magRefBytes = magRefWriter.flushAppending(to: &output)
+        return (sigPropBytes, magRefBytes)
+    }
+
+    /// Encodes the HT significance propagation pass (Int32 primary path).
     ///
     /// This pass encodes samples that become newly significant at a refinement
     /// bit-plane. It is used for progressive quality improvement.
@@ -622,7 +2036,7 @@ struct HTBlockEncoder: Sendable {
     /// - Returns: The encoded data for the SigProp pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     func encodeSigProp(
-        coefficients: [Int],
+        coefficients: [Int32],
         significanceState: [Bool],
         bitPlane: Int
     ) throws -> Data {
@@ -633,11 +2047,12 @@ struct HTBlockEncoder: Sendable {
             throw J2KError.encodingError("Significance state count mismatch")
         }
 
-        var output: [UInt8] = []
-        var bitBuffer: UInt8 = 0
-        var bitPos = 0
+        let count = width * height
+        let bp32 = Int32(bitPlane)
+        let maxBytes = max(4, (count * 2 + 7) / 8)
+        var writer = HTFastBitWriter(capacity: maxBytes)
 
-        // Process samples in stripe order
+        // Process ALL non-significant samples in stripe order.
         let numStripes = (height + 3) / 4
         for stripe in 0..<numStripes {
             let stripeHeight = min(4, height - stripe * 4)
@@ -651,40 +2066,36 @@ struct HTBlockEncoder: Sendable {
                         continue
                     }
 
-                    // Check if any neighbor is significant (significance propagation)
-                    if hasSignificantNeighbor(x: col, y: y, state: significanceState) {
-                        let coeff = coefficients[idx]
-                        let bit = (abs(coeff) >> bitPlane) & 1
+                    let coeff = coefficients[idx]
+                    let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                    let bit = Int((absCoeff >> bp32) & 1)
+                    writer.emitBit(bit)
 
-                        bitBuffer |= UInt8(bit) << bitPos
-                        bitPos += 1
-
-                        if bit != 0 {
-                            // Also encode sign
-                            let sign: UInt8 = coeff < 0 ? 1 : 0
-                            bitBuffer |= sign << bitPos
-                            bitPos += 1
-                        }
-
-                        if bitPos >= 8 {
-                            output.append(bitBuffer)
-                            bitBuffer = 0
-                            bitPos = 0
-                        }
+                    if bit != 0 {
+                        // Also encode sign
+                        writer.emitBit(coeff < 0 ? 1 : 0)
                     }
                 }
             }
         }
 
-        // Flush remaining bits
-        if bitPos > 0 {
-            output.append(bitBuffer)
-        }
-
-        return Data(output)
+        return writer.flush()
     }
 
-    /// Encodes the HT magnitude refinement pass.
+    /// Encodes the HT significance propagation pass (convenience for `[Int]` callers).
+    func encodeSigProp(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int
+    ) throws -> Data {
+        try encodeSigProp(
+            coefficients: coefficients.map { Int32($0) },
+            significanceState: significanceState,
+            bitPlane: bitPlane
+        )
+    }
+
+    /// Encodes the HT magnitude refinement pass (Int32 primary path).
     ///
     /// This pass refines the magnitude of already-significant samples by
     /// encoding additional bit-planes.
@@ -696,7 +2107,7 @@ struct HTBlockEncoder: Sendable {
     /// - Returns: The encoded data for the MagRef pass.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     func encodeMagRef(
-        coefficients: [Int],
+        coefficients: [Int32],
         significanceState: [Bool],
         bitPlane: Int
     ) throws -> Data {
@@ -704,9 +2115,10 @@ struct HTBlockEncoder: Sendable {
             throw J2KError.encodingError("Coefficient count mismatch")
         }
 
-        var output: [UInt8] = []
-        var bitBuffer: UInt8 = 0
-        var bitPos = 0
+        let count = width * height
+        let bp32 = Int32(bitPlane)
+        let maxBytes = max(4, (count + 7) / 8)
+        var writer = HTFastBitWriter(capacity: maxBytes)
 
         // Process in stripe order — only already-significant samples
         let numStripes = (height + 3) / 4
@@ -719,27 +2131,28 @@ struct HTBlockEncoder: Sendable {
 
                     if significanceState[idx] {
                         let coeff = coefficients[idx]
-                        let bit = (abs(coeff) >> bitPlane) & 1
-
-                        bitBuffer |= UInt8(bit) << bitPos
-                        bitPos += 1
-
-                        if bitPos >= 8 {
-                            output.append(bitBuffer)
-                            bitBuffer = 0
-                            bitPos = 0
-                        }
+                        let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                        let bit = Int((absCoeff >> bp32) & 1)
+                        writer.emitBit(bit)
                     }
                 }
             }
         }
 
-        // Flush remaining bits
-        if bitPos > 0 {
-            output.append(bitBuffer)
-        }
+        return writer.flush()
+    }
 
-        return Data(output)
+    /// Encodes the HT magnitude refinement pass (convenience for `[Int]` callers).
+    func encodeMagRef(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int
+    ) throws -> Data {
+        try encodeMagRef(
+            coefficients: coefficients.map { Int32($0) },
+            significanceState: significanceState,
+            bitPlane: bitPlane
+        )
     }
 
     /// Checks whether any neighbor of the given sample is significant.
@@ -839,8 +2252,10 @@ struct HTBlockDecoder: Sendable {
                     let melDecision = try mel.decode(from: &melReader)
 
                     var pattern = 0
-                    if melDecision != 0 || melReader.bytesRemaining == 0 {
-                        // Decode VLC significance pattern
+                    if melDecision != 0 {
+                        // Decode VLC significance pattern only when MEL says
+                        // the pair is significant. The encoder only writes VLC
+                        // entries for significant pairs.
                         pattern = try vlc.decodeSignificance(from: &vlcReader)
                     }
 
@@ -905,32 +2320,17 @@ struct HTBlockDecoder: Sendable {
         // Determine the top bit-plane from zeroBitPlanes and bitDepth
         let topBitPlane = max(0, bitDepth - zeroBitPlanes - 1)
 
-        // Split data into per-pass segments
-        var segments: [Data] = []
-        if !passSegmentLengths.isEmpty {
-            var offset = data.startIndex
-            for len in passSegmentLengths {
-                let end = min(offset + len, data.endIndex)
-                segments.append(data[offset..<end])
-                offset = end
-            }
-        } else {
-            // Single segment for all passes
-            segments = [data]
-        }
-
-        guard !segments.isEmpty else {
-            return [Int32](repeating: 0, count: width * height)
-        }
-
-        // Decode cleanup pass (first segment)
-        let cleanupData = segments[0]
-
-        // Parse stream length header from cleanup data
-        guard let header = HTStreamHeader.read(from: cleanupData) else {
+        // Parse the cleanup pass header to determine its length.
+        // The 6-byte header encodes melLen + vlcLen + magsgnLen.
+        guard let header = HTStreamHeader.read(from: data) else {
             // Trivial block with no significant coefficients
             return [Int32](repeating: 0, count: width * height)
         }
+
+        let cleanupLen = HTStreamHeader.size + header.melLen + header.magsgnLen + header.vlcLen
+        let cleanupEnd = min(data.startIndex + cleanupLen, data.endIndex)
+
+        let cleanupData = Data(data[data.startIndex..<cleanupEnd])
 
         let block = HTEncodedBlock(
             codedData: cleanupData,
@@ -944,42 +2344,177 @@ struct HTBlockDecoder: Sendable {
         )
         var coefficients = try decodeCleanup(from: block)
 
-        // Apply refinement passes (SigProp + MagRef pairs)
-        if segments.count > 1 {
+        // Apply refinement passes (SigProp + MagRef pairs) from the remaining data.
+        // The refinement data forms a continuous bit-packed stream. When per-pass
+        // segment lengths are provided, use them to split the data. Otherwise,
+        // process the remaining data as one continuous reader.
+        let refinementPassCount = passCount - 1
+        if refinementPassCount > 0 && cleanupEnd < data.endIndex {
             var significanceState = coefficients.map { $0 != 0 }
-            var passIdx = 1
-            var bp = topBitPlane - 1
 
-            while passIdx < segments.count && bp >= 0 {
-                // SigProp pass
-                let sigPropData = segments[passIdx]
-                let sigPropResult = try decodeSigProp(
-                    coefficients: coefficients,
-                    sigPropData: sigPropData,
-                    significanceState: significanceState,
-                    bitPlane: bp
-                )
-                coefficients = sigPropResult.coefficients
-                significanceState = sigPropResult.significanceState
-                passIdx += 1
+            if !passSegmentLengths.isEmpty {
+                // Per-pass segments provided — split into individual segments
+                var segments: [Data] = []
+                // Skip the first segment length (cleanup pass)
+                var offset = data.startIndex + (passSegmentLengths.isEmpty ? 0 : passSegmentLengths[0])
+                for i in 1..<passSegmentLengths.count {
+                    let end = min(offset + passSegmentLengths[i], data.endIndex)
+                    segments.append(Data(data[offset..<end]))
+                    offset = end
+                }
 
-                // MagRef pass
-                if passIdx < segments.count {
-                    coefficients = try decodeMagRef(
+                var passIdx = 0
+                var bp = topBitPlane - 1
+
+                while passIdx < segments.count && bp >= 0 {
+                    // Save pre-SigProp significance for MagRef (encoder uses same state)
+                    let preSigPropState = significanceState
+                    let sigPropResult = try decodeSigProp(
                         coefficients: coefficients,
-                        magRefData: segments[passIdx],
+                        sigPropData: segments[passIdx],
                         significanceState: significanceState,
                         bitPlane: bp
                     )
+                    coefficients = sigPropResult.coefficients
                     passIdx += 1
-                }
 
-                bp -= 1
+                    if passIdx < segments.count {
+                        // Use pre-SigProp state to match encoder
+                        coefficients = try decodeMagRef(
+                            coefficients: coefficients,
+                            magRefData: segments[passIdx],
+                            significanceState: preSigPropState,
+                            bitPlane: bp
+                        )
+                        passIdx += 1
+                    }
+                    // Update significance after both passes
+                    significanceState = sigPropResult.significanceState
+                    bp -= 1
+                }
+            } else {
+                // No per-pass segment lengths — read refinement from continuous stream.
+                // Each SigProp/MagRef pass is independently byte-aligned (the encoder
+                // flushes each pass to a byte boundary). After decoding each pass we
+                // must align the reader to the next byte before reading the next pass.
+                let refinementData = Data(data[cleanupEnd..<data.endIndex])
+                var reader = J2KBitReader(data: refinementData)
+                reader.setByteStuffing(false)
+                var bp = topBitPlane - 1
+                var passesDecoded = 0
+
+                while bp >= 0 && passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
+                    // SigProp pass — decode using current significance state.
+                    // IMPORTANT: save pre-SigProp significance for MagRef, because
+                    // the encoder uses the SAME significance state for both SigProp
+                    // and MagRef at the same bit-plane.
+                    let preSigPropState = significanceState
+                    let sigResult = try decodeSigPropFromReader(
+                        coefficients: coefficients,
+                        significanceState: significanceState,
+                        bitPlane: bp,
+                        reader: &reader
+                    )
+                    coefficients = sigResult.coefficients
+                    passesDecoded += 1
+                    // Align to next byte boundary (skip padding from encoder flush)
+                    try reader.alignToByte()
+
+                    // MagRef pass — use pre-SigProp significance state to match
+                    // the encoder, which hadn't updated significance yet.
+                    if passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
+                        coefficients = try decodeMagRefFromReader(
+                            coefficients: coefficients,
+                            significanceState: preSigPropState,
+                            bitPlane: bp,
+                            reader: &reader
+                        )
+                        passesDecoded += 1
+                        try reader.alignToByte()
+                    }
+
+                    // NOW update significance state (after both passes at this bp)
+                    significanceState = sigResult.significanceState
+                    bp -= 1
+                }
             }
         }
 
         // Convert Int to Int32
         return coefficients.map { Int32($0) }
+    }
+
+    // MARK: - Continuous Stream Refinement Decoders
+
+    /// Decodes the SigProp pass from a continuous reader (no per-pass framing).
+    private func decodeSigPropFromReader(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int,
+        reader: inout J2KBitReader
+    ) throws -> (coefficients: [Int], significanceState: [Bool]) {
+        var coeffs = coefficients
+        var sigState = significanceState
+
+        let numStripes = (height + 3) / 4
+        for stripe in 0..<numStripes {
+            let stripeHeight = min(4, height - stripe * 4)
+            for col in 0..<width {
+                for row in 0..<stripeHeight {
+                    let y = stripe * 4 + row
+                    let idx = y * width + col
+
+                    if sigState[idx] { continue }
+
+                    guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                    let bit = try reader.readBit()
+                    if bit {
+                        let sign = try reader.readBit()
+                        let magnitude = 1 << bitPlane
+                        coeffs[idx] = sign ? -magnitude : magnitude
+                        sigState[idx] = true
+                    }
+                }
+            }
+        }
+
+        return (coeffs, sigState)
+    }
+
+    /// Decodes the MagRef pass from a continuous reader (no per-pass framing).
+    private func decodeMagRefFromReader(
+        coefficients: [Int],
+        significanceState: [Bool],
+        bitPlane: Int,
+        reader: inout J2KBitReader
+    ) throws -> [Int] {
+        var coeffs = coefficients
+
+        let numStripes = (height + 3) / 4
+        for stripe in 0..<numStripes {
+            let stripeHeight = min(4, height - stripe * 4)
+            for col in 0..<width {
+                for row in 0..<stripeHeight {
+                    let y = stripe * 4 + row
+                    let idx = y * width + col
+
+                    if significanceState[idx] {
+                        guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                        let bit = try reader.readBit()
+                        if bit {
+                            let refinement = 1 << bitPlane
+                            if coeffs[idx] > 0 {
+                                coeffs[idx] |= refinement
+                            } else {
+                                coeffs[idx] = -(abs(coeffs[idx]) | refinement)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return coeffs
     }
 
     /// Applies the HT significance propagation pass to refine coefficients.
@@ -1013,15 +2548,13 @@ struct HTBlockDecoder: Sendable {
                         continue
                     }
 
-                    if hasSignificantNeighbor(x: col, y: y, state: sigState) {
-                        guard reader.bytesRemaining > 0 else { break }
-                        let bit = try reader.readBit()
-                        if bit {
-                            let sign = try reader.readBit()
-                            let magnitude = 1 << bitPlane
-                            coeffs[idx] = sign ? -magnitude : magnitude
-                            sigState[idx] = true
-                        }
+                    guard reader.bytesRemaining > 0 else { break }
+                    let bit = try reader.readBit()
+                    if bit {
+                        let sign = try reader.readBit()
+                        let magnitude = 1 << bitPlane
+                        coeffs[idx] = sign ? -magnitude : magnitude
+                        sigState[idx] = true
                     }
                 }
             }

@@ -12,6 +12,10 @@ import Foundation
 import J2KCore
 import J2KMetal
 
+#if canImport(Accelerate)
+import Accelerate
+#endif
+
 // MARK: - Decoding Stage
 
 /// Represents the stages of the JPEG 2000 decoding pipeline.
@@ -386,7 +390,11 @@ struct DecoderPipeline: Sendable {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
                 let dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                rgbData[compIdx] = rgbData[compIdx].map { $0 + dcOffset }
+                rgbData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    for i in 0..<buf.count {
+                        buf[i] += dcOffset
+                    }
+                }
             }
         }
 
@@ -632,7 +640,8 @@ struct DecoderPipeline: Sendable {
 
         // Scod — Coding style flags
         let scod = try reader.readUInt8()
-        // Bits 3-4: HT set extensions (ISO/IEC 15444-15)
+        // Bits 3-4: HT set extensions (legacy non-standard; current encoder
+        // no longer sets these, but decode them for backward compatibility).
         let htSetBits = (scod >> 3) & 0x03
         let hasHTSets = htSetBits != 0
 
@@ -1346,6 +1355,11 @@ struct DecoderPipeline: Sendable {
             isIrreversible = false
         }
 
+        // HTJ2K (FBCOT) outputs coefficients at natural scale, while standard
+        // EBCOT uses bpno_plus_one (shifted left by 1) for irreversible 9/7.
+        // The dequantization scale factor must account for this difference.
+        let useHTJ2K = metadata.configuration.useHTJ2K
+
         for info in subbands {
             // QCD keys use resolution-level numbering (1=coarsest, NL=finest),
             // but SubbandInfo.level uses decomposition-level numbering (NL=coarsest, 1=finest).
@@ -1363,16 +1377,24 @@ struct DecoderPipeline: Sendable {
                 // For irreversible 9/7, dequantize to Double to preserve fractional
                 // precision through the inverse DWT. Rounding to Int32 here would
                 // destroy sub-integer information (e.g. step=0.02, q=10 → 0.2 → 0).
-                // EBCOT coefficients use bpno_plus_one scale (shifted left by 1)
-                // to match OPJ's oneplushalf approach, so dequantization applies
-                // ×0.5 to compensate. This ensures that the midpoint at bitPlane=0
-                // (halfBitMask=1) correctly contributes +0.5 after dequantization.
-                let halfStepSize = 0.5 * stepSize
+                //
+                // Standard EBCOT coefficients use bpno_plus_one scale (shifted left
+                // by 1) to match OPJ's oneplushalf approach, so dequantization
+                // applies ×0.5 to compensate. The EBCOT halfBit adds 1 at bit 0,
+                // giving effective dequantization of (2q + 1) × stepSize/2 =
+                // (q + 0.5) × stepSize — the midpoint of the quantization bin.
+                //
+                // HTJ2K (FBCOT) outputs coefficients at natural scale (no shift).
+                // Apply explicit midpoint reconstruction: (q + 0.5) × stepSize,
+                // which centers the value in the quantization bin and minimizes
+                // the expected quantization error (MSE).
+                let effectiveStepSize = useHTJ2K ? stepSize : (0.5 * stepSize)
+                let midpointOffset = useHTJ2K ? (0.5 * stepSize) : 0.0
                 let dequantizedDouble = info.coefficients.map { coeff -> Double in
                     if coeff == 0 { return 0.0 }
                     let sign: Double = coeff > 0 ? 1.0 : -1.0
                     let magnitude = Double(abs(coeff))
-                    return sign * magnitude * halfStepSize
+                    return sign * (magnitude * effectiveStepSize + midpointOffset)
                 }
 
                 result.append(SubbandInfo(
@@ -1478,7 +1500,7 @@ struct DecoderPipeline: Sendable {
 
             // For now, if no decomposition levels, just return LL subband
             if levels == 0 {
-                componentData.append(llSubband.coefficients.map { Double($0) })
+                componentData.append(vDSPConvert.int32sToDoubles(llSubband.coefficients))
                 continue
             }
 
@@ -1716,11 +1738,13 @@ struct DecoderPipeline: Sendable {
                 let rowCount = currentLL.count
                 let colCount = rowCount > 0 ? currentLL[0].count : 0
                 var flattened = [Double](repeating: 0.0, count: rowCount * colCount)
-                for r in 0..<rowCount {
-                    let row = currentLL[r]
-                    let offset = r * colCount
-                    for c in 0..<colCount {
-                        flattened[offset + c] = Double(row[c])
+                flattened.withUnsafeMutableBufferPointer { dst in
+                    for r in 0..<rowCount {
+                        let row = currentLL[r]
+                        let offset = r * colCount
+                        for c in 0..<min(colCount, row.count) {
+                            dst[offset + c] = Double(row[c])
+                        }
                     }
                 }
                 componentData.append(flattened)
@@ -1752,6 +1776,12 @@ struct DecoderPipeline: Sendable {
 
         // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
         guard J2KMetalDWT.isAvailable else {
+            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+        }
+
+        // Fall back to CPU for small images where GPU dispatch overhead exceeds compute benefit.
+        let pixelCount = metadata.width * metadata.height
+        guard pixelCount >= 256 * 256 else {
             return try applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
@@ -1799,10 +1829,10 @@ struct DecoderPipeline: Sendable {
             var currentLL: [Float]
             if let ll = llSubband {
                 if let dc = ll.doubleCoefficients {
-                    currentLL = padFlatFloat(dc.map { Float($0) }, srcW: ll.width, srcH: ll.height,
+                    currentLL = padFlatFloat(vDSPConvert.doublesToFloats(dc), srcW: ll.width, srcH: ll.height,
                                               dstW: expectedLLW, dstH: expectedLLH)
                 } else {
-                    currentLL = padFlatFloat(ll.coefficients.map { Float($0) }, srcW: ll.width, srcH: ll.height,
+                    currentLL = padFlatFloat(vDSPConvert.int32sToFloats(ll.coefficients), srcW: ll.width, srcH: ll.height,
                                               dstW: expectedLLW, dstH: expectedLLH)
                 }
             } else {
@@ -1834,7 +1864,7 @@ struct DecoderPipeline: Sendable {
                 currentLL = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
             }
 
-            componentData.append(currentLL.map { Double($0) })
+            componentData.append(vDSPConvert.floatsToDoubles(currentLL))
         }
 
         return componentData
@@ -1846,9 +1876,9 @@ struct DecoderPipeline: Sendable {
         if let sb = subbands.first(where: { $0.level == level && $0.subband == subband }) {
             let srcData: [Float]
             if let dc = sb.doubleCoefficients {
-                srcData = dc.map { Float($0) }
+                srcData = vDSPConvert.doublesToFloats(dc)
             } else {
-                srcData = sb.coefficients.map { Float($0) }
+                srcData = vDSPConvert.int32sToFloats(sb.coefficients)
             }
             return padFlatFloat(srcData, srcW: sb.width, srcH: sb.height, dstW: dstW, dstH: dstH)
         }
@@ -1903,9 +1933,9 @@ struct DecoderPipeline: Sendable {
         try await metalCT.initialize()
 
         // Convert Double to Float for Metal
-        let comp0 = components[0].map { Float($0) }
-        let comp1 = components[1].map { Float($0) }
-        let comp2 = components[2].map { Float($0) }
+        let comp0 = vDSPConvert.doublesToFloats(components[0])
+        let comp1 = vDSPConvert.doublesToFloats(components[1])
+        let comp2 = vDSPConvert.doublesToFloats(components[2])
 
         let result = try await metalCT.inverseTransform(
             component0: comp0, component1: comp1, component2: comp2, backend: .auto
@@ -1913,9 +1943,9 @@ struct DecoderPipeline: Sendable {
 
         // Convert back to Double
         var output: [[Double]] = [
-            result.component0.map { Double($0) },
-            result.component1.map { Double($0) },
-            result.component2.map { Double($0) }
+            vDSPConvert.floatsToDoubles(result.component0),
+            vDSPConvert.floatsToDoubles(result.component1),
+            vDSPConvert.floatsToDoubles(result.component2)
         ]
         if components.count > 3 {
             output.append(contentsOf: components[3...])
@@ -1938,12 +1968,12 @@ struct DecoderPipeline: Sendable {
                 // Inverse RCT (lossless) — needs Int32 for exact integer arithmetic
                 let transform = J2KColorTransform(configuration: J2KColorTransformConfiguration(mode: .reversible))
                 let (r, g, b) = try transform.inverseRCT(
-                    y: components[0].map { Int32($0) },
-                    cb: components[1].map { Int32($0) },
-                    cr: components[2].map { Int32($0) }
+                    y: vDSPConvert.doublesToInt32s(components[0]),
+                    cb: vDSPConvert.doublesToInt32s(components[1]),
+                    cr: vDSPConvert.doublesToInt32s(components[2])
                 )
 
-                var result: [[Double]] = [r.map { Double($0) }, g.map { Double($0) }, b.map { Double($0) }]
+                var result: [[Double]] = [vDSPConvert.int32sToDoubles(r), vDSPConvert.int32sToDoubles(g), vDSPConvert.int32sToDoubles(b)]
                 if components.count > 3 {
                     result.append(contentsOf: components[3...])
                 }

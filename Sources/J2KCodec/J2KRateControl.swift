@@ -141,6 +141,15 @@ public struct RateControlConfiguration: Sendable {
     /// step sizes already incorporate the norms, so weighting is not applied.
     public let useReversibleFilter: Bool
 
+    /// Number of coding passes per bit-plane in the entropy coder.
+    ///
+    /// Standard JPEG 2000 (EBCOT) uses 3 passes per bit-plane:
+    /// significance propagation, magnitude refinement, and cleanup.
+    /// HTJ2K uses 1 cleanup pass (first bit-plane only) then 2 passes
+    /// per refinement bit-plane (SigProp + MagRef), so `passesPerBitPlane = 2`
+    /// with the first coded plane using only 1 pass.
+    public let passesPerBitPlane: Int
+
     /// Creates a new rate control configuration.
     ///
     /// - Parameters:
@@ -158,7 +167,8 @@ public struct RateControlConfiguration: Sendable {
         distortionEstimation: DistortionEstimationMethod = .normBased,
         mctConfiguration: J2KMCTEncodingConfiguration? = nil,
         componentCount: Int = 3,
-        useReversibleFilter: Bool = true
+        useReversibleFilter: Bool = true,
+        passesPerBitPlane: Int = 3
     ) {
         self.mode = mode
         self.layerCount = layerCount
@@ -167,6 +177,7 @@ public struct RateControlConfiguration: Sendable {
         self.mctConfiguration = mctConfiguration
         self.componentCount = componentCount
         self.useReversibleFilter = useReversibleFilter
+        self.passesPerBitPlane = passesPerBitPlane
     }
 
     /// Creates a configuration for lossless encoding.
@@ -304,14 +315,30 @@ public struct J2KRateControl: Sendable {
             return [createLosslessLayer(codeBlocks: codeBlocks)]
         }
 
+        let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
+        var rateStart = CFAbsoluteTimeGetCurrent()
+
         // Compute coding pass information with R-D slopes
         let passInfos = try computeCodingPassInfo(codeBlocks: codeBlocks)
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("      PROFILE rcPassInfos: \(passInfos.count) passes in \(String(format: "%.4f", t - rateStart))s")
+            rateStart = t
+        }
 
         // Sort by descending slope (best quality-per-bit first)
         let sortedPasses = passInfos.sorted { $0.slope > $1.slope }
 
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("      PROFILE rcSort: \(String(format: "%.4f", t - rateStart))s")
+            rateStart = t
+        }
+
         // Debug: dump PCRD pass info
-        if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+        let dumpPCRD = ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil
+        if dumpPCRD {
             print("PCRD_DEBUG: totalPixels=\(totalPixels), codeBlocks=\(codeBlocks.count)")
             // Group passes by code block index
             var blockPassInfos: [Int: [CodingPassInfo]] = [:]
@@ -332,13 +359,13 @@ public struct J2KRateControl: Sendable {
 
         // Form layers using PCRD-opt
         var layers = [QualityLayer]()
-        var previousLayerPasses = Set<String>()
+        var previousLayerPasses = Set<Int64>()
         var previousBlockCumulativeBytes = [Int: Int]()
 
         for (layerIndex, targetRate) in targetRates.enumerated() {
             let targetBytes = Int(targetRate * Double(totalPixels) / 8.0)
 
-            if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+            if dumpPCRD {
                 print("PCRD_LAYER: layer=\(layerIndex) targetRate=\(String(format: "%.3f", targetRate)) targetBytes=\(targetBytes)")
             }
 
@@ -354,6 +381,11 @@ public struct J2KRateControl: Sendable {
             layers.append(layer)
             previousLayerPasses = selectedPasses
             previousBlockCumulativeBytes = blockCumBytes
+        }
+
+        if profiling {
+            let t = CFAbsoluteTimeGetCurrent()
+            print("      PROFILE rcLayers: \(layers.count) layers in \(String(format: "%.4f", t - rateStart))s")
         }
 
         return layers
@@ -389,15 +421,22 @@ public struct J2KRateControl: Sendable {
         [2.080, 3.865, 8.307, 17.187, 34.726, 69.453, 138.905, 277.810, 555.621, 1111.242],
     ]
 
+    /// Pre-computed powers of 4: pow4Table[p] = 4^p for p in 0..<32.
+    /// Replaces expensive pow() calls in distortion estimation hot loops.
+    private static let pow4Table: [Double] = (0..<32).map { Double(1 << (2 * $0)) }
+
     /// Computes coding pass information with rate-distortion slopes.
     private func computeCodingPassInfo(
         codeBlocks: [J2KCodeBlock]
     ) throws -> [CodingPassInfo] {
+        let totalPasses = codeBlocks.reduce(0) { $0 + $1.passeCount }
         var passInfos = [CodingPassInfo]()
+        passInfos.reserveCapacity(totalPasses)
 
         // Determine the total number of decomposition levels (NL) from
         // the maximum resolution level across all code blocks.
-        let maxResLevel = codeBlocks.map { $0.resolutionLevel }.max() ?? 0
+        var maxResLevel = 0
+        for cb in codeBlocks { maxResLevel = max(maxResLevel, cb.resolutionLevel) }
 
         for codeBlock in codeBlocks {
             guard codeBlock.passeCount > 0 else { continue }
@@ -409,11 +448,16 @@ public struct J2KRateControl: Sendable {
             // biorthogonal and integer coefficients have no quantization
             // step normalization. Weight by the full squared L2 norm.
             //
-            // For the 9/7 irreversible wavelet: quantization step sizes
-            // already incorporate the wavelet norms (Δ_b = Δ_base / K_b),
-            // so coefficients are partially normalized. Apply only the
-            // relative norm ratio (subband/LL) to correct residual
-            // inter-subband bias without double-counting.
+            // For the 9/7 irreversible wavelet:
+            //   step_b = Δ_base / K_b  (K_b = synthesis L2 norm)
+            //   c_q    = coeff / step_b = coeff × K_b / Δ_base
+            //   Pixel error from 1 unit of c_q error = step_b × K_b = Δ_base
+            //
+            // Therefore MSE_pixel = Δ_base² × Σ e_q², which is the SAME
+            // constant for all subbands. For cross-subband PCRD comparison,
+            // pixel distortion = coeff_distortion × (1/K_b)² ∝ 1/norm_b².
+            // This lets PCRD correctly prioritize LL (energy-dominant) over
+            // fine-detail HL/HH subbands without double-counting the norms.
             let subbandWeight: Double
             if maxResLevel > 0 {
                 let resLevel = codeBlock.resolutionLevel
@@ -442,15 +486,21 @@ public struct J2KRateControl: Sendable {
                     let norm = Self.dwtNorms53[orient][clampedLevel]
                     subbandWeight = norm * norm
                 } else {
-                    // 9/7 irreversible: quantization step sizes already incorporate
-                    // the wavelet norms (Δ_b = Δ_base / K_b), so coefficient
-                    // magnitudes are normalized. Apply only the RELATIVE norm ratio
-                    // (subband norm / LL norm at same level) to correct residual
-                    // inter-subband bias without double-counting.
-                    let clampedLevel = min(dwtLevel, Self.dwtNorms97[0].count - 1)
-                    let norm = Self.dwtNorms97[orient][clampedLevel]
-                    let llNorm = Self.dwtNorms97[0][clampedLevel]
-                    subbandWeight = norm / llNorm
+                    // 9/7 irreversible: quantization step sizes FULLY incorporate
+                    // the wavelet norms (Δ_b = Δ_base / K_b). The pixel-domain MSE
+                    // contribution from subband b is:
+                    //
+                    //   MSE_pixel = step_b² × K_b² × Σ(error_q)²
+                    //             = (Δ_base/K_b)² × K_b² × Σ(error_q)²
+                    //             = Δ_base² × Σ(error_q)²
+                    //
+                    // Since Δ_base is constant across subbands, all subbands
+                    // contribute equally to pixel MSE per unit of quantized-domain
+                    // distortion. This matches OpenJPEG's t1_getwmsedec() which
+                    // computes w2 = 8192 × step² × norm² = 8192 × Δ_base² (constant).
+                    //
+                    // Therefore, equal PCRD weight for all subbands is correct.
+                    subbandWeight = 1.0
                 }
             } else {
                 subbandWeight = 1.0
@@ -539,7 +589,7 @@ public struct J2KRateControl: Sendable {
         // Fallback: model-based estimate
         let samples = codeBlock.width * codeBlock.height
         let significantBitPlanes = max(1, codeBlock.passeCount / 3)
-        let bitPlaneWeight = pow(2.0, Double(significantBitPlanes))
+        let bitPlaneWeight = Double(1 << min(significantBitPlanes, 30))
         return Double(samples) * bitPlaneWeight
     }
 
@@ -573,10 +623,26 @@ public struct J2KRateControl: Sendable {
         }
 
         // Fallback: generic exponential model
-        // Each 3 coding passes ≈ 1 bit plane
+        // Standard JPEG 2000: 3 coding passes per bit-plane (SPP, MagRef, Cleanup)
+        // HTJ2K: 1 cleanup pass + 2 passes per refinement bit-plane (SigProp, MagRef)
         // Each bit plane reduces distortion by factor of 4
-        let bitPlanesCoded = Double(passNumber + 1) / 3.0
-        let distortionReduction = pow(4.0, -bitPlanesCoded)
+        let ppbp = configuration.passesPerBitPlane
+        let codedPlanes: Int
+        let codedPlanesRemainder: Int
+        if ppbp == 2 {
+            // HTJ2K: pass 0 = cleanup (1 plane), then 2 passes per additional plane
+            codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+            codedPlanesRemainder = passNumber == 0 ? 0 : passNumber % 2
+        } else {
+            // Standard: 3 passes per plane
+            codedPlanes = (passNumber + 1) / 3
+            codedPlanesRemainder = (passNumber + 1) % 3
+        }
+        let intReduction = Self.pow4Table[min(codedPlanes, 31)]
+        // Fractional sub-plane: approximate 4^(r/3) with linear interpolation
+        let fracFactor = codedPlanesRemainder == 0 ? 1.0
+            : (codedPlanesRemainder == 1 ? 1.587 : 2.52)  // 4^(1/3), 4^(2/3)
+        let distortionReduction = 1.0 / (intReduction * fracFactor)
 
         return initialDistortion * distortionReduction
     }
@@ -606,7 +672,14 @@ public struct J2KRateControl: Sendable {
     ) -> Double {
         let numBitPlanes = population.count
         guard numBitPlanes > 0 else {
-            return initialDistortion * pow(4.0, -Double(passNumber + 1) / 3.0)
+            let ppbp = configuration.passesPerBitPlane
+            let codedPlanes: Int
+            if ppbp == 2 {
+                codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+            } else {
+                codedPlanes = (passNumber + 1) / 3
+            }
+            return initialDistortion / Self.pow4Table[min(codedPlanes, 31)]
         }
 
         // Bit planes are coded from MSB down. The top 'zeroBitPlanes' are
@@ -617,8 +690,16 @@ public struct J2KRateControl: Sendable {
             return 0.0
         }
 
-        // Number of bit planes coded so far (3 passes per plane, fractional allowed)
-        let codedPlanes = Int((passNumber + 1) / 3)
+        // Number of bit planes coded so far.
+        // Standard JPEG 2000: 3 passes per plane.
+        // HTJ2K: 1 cleanup pass + 2 passes per refinement plane.
+        let ppbp = configuration.passesPerBitPlane
+        let codedPlanes: Int
+        if ppbp == 2 {
+            codedPlanes = passNumber == 0 ? 1 : 1 + passNumber / 2
+        } else {
+            codedPlanes = Int((passNumber + 1) / 3)
+        }
         let lowestCodedPlane = max(0, topCodedPlane - codedPlanes + 1)
 
         var remainingDistortion = 0.0
@@ -631,13 +712,13 @@ public struct J2KRateControl: Sendable {
                 // This plane has been coded. Remaining error per coefficient
                 // is approximately (2^lowestCodedPlane)² / 3, representing
                 // the uncoded bits below the lowest coded plane.
-                let errorPerCoeff = pow(4.0, Double(lowestCodedPlane)) / 3.0
+                let errorPerCoeff = Self.pow4Table[min(lowestCodedPlane, 31)] / 3.0
                 remainingDistortion += Double(count) * errorPerCoeff
             } else if p < lowestCodedPlane {
                 // This plane has NOT been coded. Coefficients are still
                 // unknown to the decoder → full magnitude error.
                 // Expected magnitude² ≈ 2.25 × 4^p for uniform dist in [2^p, 2^(p+1))
-                let errorPerCoeff = 2.25 * pow(4.0, Double(p))
+                let errorPerCoeff = 2.25 * Self.pow4Table[min(p, 31)]
                 remainingDistortion += Double(count) * errorPerCoeff
             }
             // Planes above topCodedPlane are all-zero (zeroBitPlanes), no contribution
@@ -663,7 +744,7 @@ public struct J2KRateControl: Sendable {
             guard count > 0 else { continue }
             // Expected magnitude² for coefficients with MSB at p:
             // magnitude ∈ [2^p, 2^(p+1)), expected(m²) ≈ 2.25 × 4^p
-            total += Double(count) * 2.25 * pow(4.0, Double(p))
+            total += Double(count) * 2.25 * Self.pow4Table[min(p, 31)]
         }
         return total
     }
@@ -726,14 +807,18 @@ public struct J2KRateControl: Sendable {
         layerIndex: Int,
         targetBytes: Int,
         sortedPasses: [CodingPassInfo],
-        previousPasses: Set<String>,
+        previousPasses: Set<Int64>,
         codeBlocks: [J2KCodeBlock],
         previousBlockCumulativeBytes: [Int: Int]
-    ) throws -> (QualityLayer, Set<String>, [Int: Int]) {
-        var contributions = [Int: Int]()
+    ) throws -> (QualityLayer, Set<Int64>, [Int: Int]) {
+        var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
         var selectedPasses = previousPasses
         // Track per-block cumulative bytes to compute incremental cost correctly
         var blockCumulativeBytes = previousBlockCumulativeBytes
+
+        // Cache environment check outside hot loop — ProcessInfo.processInfo.environment
+        // creates a new dictionary from C environ on each access (~5-10μs per call).
+        let dumpPCRD = ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil
 
         // Account for bytes already included in previous layers (targetBytes is cumulative)
         var currentBytes = blockCumulativeBytes.values.reduce(0, +)
@@ -744,13 +829,19 @@ public struct J2KRateControl: Sendable {
         var consecutiveSkips = 0
         let maxConsecutiveSkips = 64
 
+        let isFirstLayer = previousPasses.isEmpty
+        let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
+        var iterations = 0
+
         // Select passes in order of descending slope until budget is exhausted
         for passInfo in sortedPasses {
-            let passKey = "\(passInfo.codeBlockIndex)_\(passInfo.passNumber)"
-
-            // Skip if already included in a previous layer
-            if selectedPasses.contains(passKey) {
-                continue
+            iterations += 1
+            // Skip if already included in a previous layer (only needed for multi-layer)
+            if !isFirstLayer {
+                let passKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(passInfo.passNumber)
+                if selectedPasses.contains(passKey) {
+                    continue
+                }
             }
 
             // Compute incremental bytes: new cumulative minus previously included bytes
@@ -761,7 +852,7 @@ public struct J2KRateControl: Sendable {
             if configuration.strictRateMatching &&
                currentBytes + incrementalBytes > targetBytes &&
                !contributions.isEmpty {
-                if ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil {
+                if dumpPCRD {
                     print("PCRD_SKIP: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(String(format: "%.2f", passInfo.slope)) incBytes=\(incrementalBytes) cumBytes=\(passInfo.cumulativeBytes) current=\(currentBytes) target=\(targetBytes)")
                 }
                 consecutiveSkips += 1
@@ -785,12 +876,19 @@ public struct J2KRateControl: Sendable {
                 passInfo.cumulativeBytes
             )
             currentBytes += incrementalBytes
-            selectedPasses.insert(passKey)
+            if !isFirstLayer {
+                let passKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(passInfo.passNumber)
+                selectedPasses.insert(passKey)
+            }
 
             // Stop if we've met the target
             if currentBytes >= targetBytes {
                 break
             }
+        }
+
+        if profiling {
+            print("        PROFILE formLayer: \(iterations) iters, \(contributions.count) blocks, target=\(targetBytes) actual=\(currentBytes)")
         }
 
         let layer = QualityLayer(
@@ -805,9 +903,10 @@ public struct J2KRateControl: Sendable {
     /// Creates a lossless quality layer with all coding passes.
     private func createLosslessLayer(codeBlocks: [J2KCodeBlock]) -> QualityLayer {
         var contributions = [Int: Int]()
+        let dumpPasses = ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil
 
         for codeBlock in codeBlocks where codeBlock.passeCount > 0 {
-            if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
+            if dumpPasses {
                 print("LOSSLESS_LAYER: block=\(codeBlock.index) passeCount=\(codeBlock.passeCount) data=\(codeBlock.data.count)")
             }
             contributions[codeBlock.index] = codeBlock.passeCount

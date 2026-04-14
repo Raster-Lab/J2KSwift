@@ -8,6 +8,9 @@
 import Foundation
 import J2KCore
 import J2KCodec
+#if canImport(Metal)
+import Metal
+#endif
 
 extension J2KCLI {
 
@@ -127,9 +130,9 @@ extension J2KCLI {
             modes.append(.cpu)
             modes.append(.gpu)
             modes.append(.htj2k)
+            modes.append(.gpuHtj2k)
         } else if useGPU && useHTJ2K {
-            modes.append(.gpu)
-            modes.append(.htj2k)
+            modes.append(.gpuHtj2k)
         } else if useGPU {
             modes.append(.gpu)
         } else if useHTJ2K {
@@ -141,7 +144,7 @@ extension J2KCLI {
         // Run benchmarks for each mode
         for mode in modes {
             // Warn about GPU fallback if needed
-            if mode == .gpu && !gpuAvailable && outputFmt == "text" {
+            if (mode == .gpu || mode == .gpuHtj2k) && !gpuAvailable && outputFmt == "text" {
                 print("⚠ GPU requested but not available — running with CPU fallback")
                 print("  (GPU pipeline will use CPU implementations for all stages)")
                 print("")
@@ -149,7 +152,7 @@ extension J2KCLI {
 
             // Configure HTJ2K if needed
             var modeConfig = config
-            if mode == .htj2k {
+            if mode == .htj2k || mode == .gpuHtj2k {
                 modeConfig.useHTJ2K = true
             }
 
@@ -157,7 +160,7 @@ extension J2KCLI {
             if outputFmt == "text" {
                 print("═══════════════════════════════════════════════════════════════")
                 print(" \(mode.title)")
-                if mode == .gpu {
+                if mode == .gpu || mode == .gpuHtj2k {
                     print(" Backend: \(gpuAvailable ? "Metal GPU" : "CPU fallback (no GPU)")")
                 }
                 print("═══════════════════════════════════════════════════════════════")
@@ -170,7 +173,7 @@ extension J2KCLI {
                 let encodeResult = try await benchmarkEncode(
                     image: image,
                     config: modeConfig,
-                    useGPU: mode == .gpu,
+                    useGPU: mode == .gpu || mode == .gpuHtj2k,
                     runs: runs,
                     warmupRuns: warmupRuns,
                     outputFmt: outputFmt
@@ -183,7 +186,7 @@ extension J2KCLI {
             if !encodeOnly {
                 if encodedData == nil {
                     let encoder = J2KEncoder(encodingConfiguration: modeConfig)
-                    if mode == .gpu {
+                    if mode == .gpu || mode == .gpuHtj2k {
                         encodedData = try await encoder.encodeGPU(image)
                     } else {
                         encodedData = try encoder.encode(image)
@@ -195,7 +198,7 @@ extension J2KCLI {
 
                 let decodeResult = try await benchmarkDecode(
                     data: dataToUse,
-                    useGPU: mode == .gpu,
+                    useGPU: mode == .gpu || mode == .gpuHtj2k,
                     runs: runs,
                     warmupRuns: warmupRuns,
                     pixels: image.width * image.height,
@@ -247,17 +250,19 @@ extension J2KCLI {
     // MARK: - Benchmark Modes
 
     private enum BenchmarkMode: String {
-        case cpu   = "cpu"
-        case gpu   = "gpu"
-        case htj2k = "htj2k"
+        case cpu      = "cpu"
+        case gpu      = "gpu"
+        case htj2k    = "htj2k"
+        case gpuHtj2k = "gpu_htj2k"
 
         var label: String { rawValue }
 
         var title: String {
             switch self {
-            case .cpu:   return "CPU Benchmark (Part 1 EBCOT)"
-            case .gpu:   return "GPU Benchmark (Metal Pipeline)"
-            case .htj2k: return "HTJ2K Benchmark (Part 15 FBCOT)"
+            case .cpu:      return "CPU Benchmark (Part 1 EBCOT)"
+            case .gpu:      return "GPU Benchmark (Metal Pipeline)"
+            case .htj2k:    return "HTJ2K Benchmark (Part 15 FBCOT)"
+            case .gpuHtj2k: return "GPU+HTJ2K Benchmark (Metal DWT + FBCOT)"
             }
         }
     }
@@ -420,6 +425,9 @@ extension J2KCLI {
             if mode == .gpu && !gpuAvailable {
                 label += "*"
             }
+            if mode == .gpuHtj2k && !gpuAvailable {
+                label += "*"
+            }
             header += String(format: "  %14s", label)
         }
         print(header)
@@ -502,7 +510,7 @@ extension J2KCLI {
         }
 
         print("")
-        if modes.contains(.gpu) && !gpuAvailable {
+        if (modes.contains(.gpu) || modes.contains(.gpuHtj2k)) && !gpuAvailable {
             print("* GPU column ran with CPU fallback (Metal GPU not available)")
         }
         print("")

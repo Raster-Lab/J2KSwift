@@ -1264,19 +1264,20 @@ public actor J2KMetalDWT {
         let halfWidth = (signal.count + 1) / 2
         let halfWidthH = signal.count / 2
 
-        // Create buffers
-        let inputBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: signal.count * MemoryLayout<Float>.stride
-        )
-        let lowBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: halfWidth * MemoryLayout<Float>.stride
-        )
-        let highBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWidthH, 1) * MemoryLayout<Float>.stride
-        )
+        // Allocate buffers directly to avoid actor boundary crossing
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeBuffer(size: signal.count * MemoryLayout<Float>.stride)
+        let lowBuffer = try makeBuffer(size: halfWidth * MemoryLayout<Float>.stride)
+        let highBuffer = try makeBuffer(size: max(halfWidthH, 1) * MemoryLayout<Float>.stride)
 
         // Copy input data
         signal.withUnsafeBytes { src in
@@ -1334,10 +1335,7 @@ public actor J2KMetalDWT {
             }
         }
 
-        // Return buffers
-        await bufferPool.returnBuffer(inputBuffer)
-        await bufferPool.returnBuffer(lowBuffer)
-        await bufferPool.returnBuffer(highBuffer)
+        // Buffers released via ARC when they go out of scope
 
         return (lowpass: lowpass, highpass: highpass)
     }
@@ -1356,18 +1354,20 @@ public actor J2KMetalDWT {
         let halfWidth = lowpass.count
         let halfWidthH = highpass.count
 
-        let lowBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: halfWidth * MemoryLayout<Float>.stride
-        )
-        let highBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWidthH, 1) * MemoryLayout<Float>.stride
-        )
-        let outputBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: outputLength * MemoryLayout<Float>.stride
-        )
+        // Allocate buffers directly to avoid actor boundary crossing
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let lowBuffer = try makeBuffer(size: halfWidth * MemoryLayout<Float>.stride)
+        let highBuffer = try makeBuffer(size: max(halfWidthH, 1) * MemoryLayout<Float>.stride)
+        let outputBuffer = try makeBuffer(size: outputLength * MemoryLayout<Float>.stride)
 
         lowpass.withUnsafeBytes { src in
             lowBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -1414,9 +1414,7 @@ public actor J2KMetalDWT {
             )
         }
 
-        await bufferPool.returnBuffer(lowBuffer)
-        await bufferPool.returnBuffer(highBuffer)
-        await bufferPool.returnBuffer(outputBuffer)
+        // Buffers released via ARC when they go out of scope
 
         return result
     }
@@ -1436,18 +1434,32 @@ public actor J2KMetalDWT {
         let halfWH = width / 2
         let halfHH = height / 2
 
-        // Allocate buffers
-        let inputBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: data.count * MemoryLayout<Float>.stride
+        // Allocate all buffers directly to avoid repeated actor boundary crossings
+        // which can cause thread pool exhaustion after MTLCommandBuffer.completed()
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeBuffer(size: data.count * MemoryLayout<Float>.stride)
+        let hLowBuffer = try makeBuffer(size: halfW * height * MemoryLayout<Float>.stride)
+        let hHighBuffer = try makeBuffer(size: max(halfWH * height, 1) * MemoryLayout<Float>.stride)
+        let llBuffer = try makeBuffer(size: halfW * halfH * MemoryLayout<Float>.stride)
+        let lhBuffer = try makeBuffer(size: max(halfW * halfHH, 1) * MemoryLayout<Float>.stride)
+        let hlBuffer = try makeBuffer(size: max(halfWH * halfH, 1) * MemoryLayout<Float>.stride)
+        let hhBuffer = try makeBuffer(size: max(halfWH * halfHH, 1) * MemoryLayout<Float>.stride)
+
+        // Get both pipelines upfront (single actor boundary crossing each)
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: horizontalForwardShaderFunction()
         )
-        let hLowBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: halfW * height * MemoryLayout<Float>.stride
-        )
-        let hHighBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * height, 1) * MemoryLayout<Float>.stride
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: verticalForwardShaderFunction()
         )
 
         // Copy input
@@ -1456,10 +1468,6 @@ public actor J2KMetalDWT {
         }
 
         // Step 1: Horizontal forward DWT
-        let hPipeline = try await shaderLibrary.computePipeline(
-            for: horizontalForwardShaderFunction()
-        )
-
         guard let cb1 = queue.makeCommandBuffer(),
               let enc1 = cb1.makeComputeCommandEncoder() else {
             throw J2KError.internalError("Failed to create command buffer")
@@ -1482,29 +1490,6 @@ public actor J2KMetalDWT {
         await cb1.completed()
 
         // Step 2 & 3: Vertical DWT on lowpass → LL, LH AND highpass → HL, HH
-        // These are independent operations, so dispatch them in a single command buffer
-        let llBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: halfW * halfH * MemoryLayout<Float>.stride
-        )
-        let lhBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfW * halfHH, 1) * MemoryLayout<Float>.stride
-        )
-
-        let vPipeline = try await shaderLibrary.computePipeline(
-            for: verticalForwardShaderFunction()
-        )
-
-        let hlBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * halfH, 1) * MemoryLayout<Float>.stride
-        )
-        let hhBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * halfHH, 1) * MemoryLayout<Float>.stride
-        )
-
         guard let cb2 = queue.makeCommandBuffer(),
               let enc2 = cb2.makeComputeCommandEncoder() else {
             throw J2KError.internalError("Failed to create command buffer")
@@ -1558,14 +1543,8 @@ public actor J2KMetalDWT {
             _statistics.peakGPUMemory = totalMem
         }
 
-        // Return buffers
-        await bufferPool.returnBuffer(inputBuffer)
-        await bufferPool.returnBuffer(hLowBuffer)
-        await bufferPool.returnBuffer(hHighBuffer)
-        await bufferPool.returnBuffer(llBuffer)
-        await bufferPool.returnBuffer(lhBuffer)
-        await bufferPool.returnBuffer(hlBuffer)
-        await bufferPool.returnBuffer(hhBuffer)
+        // Buffers are allocated directly (not from pool), so they are
+        // released automatically when they go out of scope via ARC.
 
         return J2KMetalDWTSubbands(
             ll: ll, lh: lh, hl: hl, hh: hh,
@@ -1577,9 +1556,10 @@ public actor J2KMetalDWT {
     private func readFloatArray(from buffer: MTLBuffer, elementCount: Int) -> [Float] {
         guard elementCount > 0 else { return [] }
         var result = [Float](repeating: 0, count: elementCount)
+        let ptr = buffer.contents()
         result.withUnsafeMutableBytes { dst in
             dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: buffer.contents(),
+                start: ptr,
                 count: elementCount * MemoryLayout<Float>.stride
             ))
         }
@@ -1597,25 +1577,33 @@ public actor J2KMetalDWT {
         let width = subbands.originalWidth
         let height = subbands.originalHeight
         let halfW = subbands.llWidth
-        let halfH = subbands.llHeight
         let halfWH = width / 2
 
-        // Allocate buffers for subbands
-        let llBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: subbands.ll.count * MemoryLayout<Float>.stride
+        // Allocate all buffers directly to avoid actor boundary crossing after cb.completed()
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let llBuffer = try makeBuffer(size: subbands.ll.count * MemoryLayout<Float>.stride)
+        let lhBuffer = try makeBuffer(size: max(subbands.lh.count, 1) * MemoryLayout<Float>.stride)
+        let hlBuffer = try makeBuffer(size: max(subbands.hl.count, 1) * MemoryLayout<Float>.stride)
+        let hhBuffer = try makeBuffer(size: max(subbands.hh.count, 1) * MemoryLayout<Float>.stride)
+        let hLowBuffer = try makeBuffer(size: halfW * height * MemoryLayout<Float>.stride)
+        let hHighBuffer = try makeBuffer(size: max(halfWH * height, 1) * MemoryLayout<Float>.stride)
+        let outputBuffer = try makeBuffer(size: width * height * MemoryLayout<Float>.stride)
+
+        // Get both pipelines upfront
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: verticalInverseShaderFunction()
         )
-        let lhBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(subbands.lh.count, 1) * MemoryLayout<Float>.stride
-        )
-        let hlBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(subbands.hl.count, 1) * MemoryLayout<Float>.stride
-        )
-        let hhBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(subbands.hh.count, 1) * MemoryLayout<Float>.stride
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: horizontalInverseShaderFunction()
         )
 
         // Copy subband data to GPU
@@ -1639,19 +1627,6 @@ public actor J2KMetalDWT {
         }
 
         // Step 1: Inverse vertical DWT — LL + LH → hLow, HL + HH → hHigh
-        let hLowBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: halfW * height * MemoryLayout<Float>.stride
-        )
-        let hHighBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: max(halfWH * height, 1) * MemoryLayout<Float>.stride
-        )
-
-        let vPipeline = try await shaderLibrary.computePipeline(
-            for: verticalInverseShaderFunction()
-        )
-
         guard let cb1 = queue.makeCommandBuffer(),
               let enc1 = cb1.makeComputeCommandEncoder() else {
             throw J2KError.internalError("Failed to create command buffer")
@@ -1690,15 +1665,6 @@ public actor J2KMetalDWT {
         await cb1.completed()
 
         // Step 2: Inverse horizontal DWT — hLow + hHigh → output
-        let outputBuffer = try await bufferPool.acquireBuffer(
-            device: device,
-            size: width * height * MemoryLayout<Float>.stride
-        )
-
-        let hPipeline = try await shaderLibrary.computePipeline(
-            for: horizontalInverseShaderFunction()
-        )
-
         guard let cb2 = queue.makeCommandBuffer(),
               let enc2 = cb2.makeComputeCommandEncoder() else {
             throw J2KError.internalError("Failed to create command buffer")
@@ -1721,15 +1687,6 @@ public actor J2KMetalDWT {
 
         // Read result
         let result = readFloatArray(from: outputBuffer, elementCount: width * height)
-
-        // Return buffers
-        await bufferPool.returnBuffer(llBuffer)
-        await bufferPool.returnBuffer(lhBuffer)
-        await bufferPool.returnBuffer(hlBuffer)
-        await bufferPool.returnBuffer(hhBuffer)
-        await bufferPool.returnBuffer(hLowBuffer)
-        await bufferPool.returnBuffer(hHighBuffer)
-        await bufferPool.returnBuffer(outputBuffer)
 
         return result
     }

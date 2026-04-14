@@ -619,12 +619,24 @@ public actor J2KMetalColorTransform {
         let count = red.count
         let bufferSize = count * MemoryLayout<Float>.stride
 
-        let rBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let gBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let bBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let c0Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let c1Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let c2Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
+        // Allocate buffers directly to avoid actor boundary crossing
+        // after commandBuffer.completed() which causes thread pool exhaustion
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let rBuffer = try makeBuffer(size: bufferSize)
+        let gBuffer = try makeBuffer(size: bufferSize)
+        let bBuffer = try makeBuffer(size: bufferSize)
+        let c0Buffer = try makeBuffer(size: bufferSize)
+        let c1Buffer = try makeBuffer(size: bufferSize)
+        let c2Buffer = try makeBuffer(size: bufferSize)
 
         red.withUnsafeBytes { src in
             rBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -682,12 +694,7 @@ public actor J2KMetalColorTransform {
             dst.copyBytes(from: UnsafeRawBufferPointer(start: c2Buffer.contents(), count: bufferSize))
         }
 
-        await bufferPool.returnBuffer(rBuffer)
-        await bufferPool.returnBuffer(gBuffer)
-        await bufferPool.returnBuffer(bBuffer)
-        await bufferPool.returnBuffer(c0Buffer)
-        await bufferPool.returnBuffer(c1Buffer)
-        await bufferPool.returnBuffer(c2Buffer)
+        // Buffers released via ARC when they go out of scope
 
         return J2KMetalColorTransformResult(
             component0: c0, component1: c1, component2: c2,
@@ -706,12 +713,24 @@ public actor J2KMetalColorTransform {
         let count = component0.count
         let bufferSize = count * MemoryLayout<Float>.stride
 
-        let c0Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let c1Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let c2Buffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let rBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let gBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let bBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
+        // Allocate buffers directly to avoid actor boundary crossing
+        // after commandBuffer.completed() which causes thread pool exhaustion
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let c0Buffer = try makeBuffer(size: bufferSize)
+        let c1Buffer = try makeBuffer(size: bufferSize)
+        let c2Buffer = try makeBuffer(size: bufferSize)
+        let rBuffer = try makeBuffer(size: bufferSize)
+        let gBuffer = try makeBuffer(size: bufferSize)
+        let bBuffer = try makeBuffer(size: bufferSize)
 
         component0.withUnsafeBytes { src in
             c0Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -769,12 +788,7 @@ public actor J2KMetalColorTransform {
             dst.copyBytes(from: UnsafeRawBufferPointer(start: bBuffer.contents(), count: bufferSize))
         }
 
-        await bufferPool.returnBuffer(c0Buffer)
-        await bufferPool.returnBuffer(c1Buffer)
-        await bufferPool.returnBuffer(c2Buffer)
-        await bufferPool.returnBuffer(rBuffer)
-        await bufferPool.returnBuffer(gBuffer)
-        await bufferPool.returnBuffer(bBuffer)
+        // Buffers released via ARC when they go out of scope
 
         return J2KMetalColorTransformResult(
             component0: r, component1: g, component2: b,
@@ -793,8 +807,19 @@ public actor J2KMetalColorTransform {
         let count = data.count
         let bufferSize = count * MemoryLayout<Float>.stride
 
-        let inputBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
-        let outputBuffer = try await bufferPool.acquireBuffer(device: device, size: bufferSize)
+        // Allocate buffers directly to avoid actor boundary crossing
+        func makeNLTBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeNLTBuffer(size: bufferSize)
+        let outputBuffer = try makeNLTBuffer(size: bufferSize)
 
         data.withUnsafeBytes { src in
             inputBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -870,7 +895,7 @@ public actor J2KMetalColorTransform {
 
         case let .lut(table, inputMin, inputMax):
             let lutBufferSize = table.count * MemoryLayout<Float>.stride
-            let lutBuffer = try await bufferPool.acquireBuffer(device: device, size: lutBufferSize)
+            let lutBuffer = try makeNLTBuffer(size: lutBufferSize)
             table.withUnsafeBytes { src in
                 lutBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
             }
@@ -899,11 +924,7 @@ public actor J2KMetalColorTransform {
             dst.copyBytes(from: UnsafeRawBufferPointer(start: outputBuffer.contents(), count: bufferSize))
         }
 
-        await bufferPool.returnBuffer(inputBuffer)
-        await bufferPool.returnBuffer(outputBuffer)
-        for buffer in extraBuffers {
-            await bufferPool.returnBuffer(buffer)
-        }
+        // Buffers released via ARC when they go out of scope
 
         return result
     }

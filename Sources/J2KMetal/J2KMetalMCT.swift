@@ -714,15 +714,21 @@ public actor J2KMetalMCT {
         let inputBufferSize = totalSamples * MemoryLayout<Float>.stride
         let matrixBufferSize = matrix.count * MemoryLayout<Float>.stride
 
-        let inputBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: inputBufferSize
-        )
-        let outputBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: inputBufferSize
-        )
-        let matrixBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: matrixBufferSize
-        )
+        // Allocate buffers directly to avoid actor boundary crossing
+        // after commandBuffer.completed() which causes thread pool exhaustion
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeBuffer(size: inputBufferSize)
+        let outputBuffer = try makeBuffer(size: inputBufferSize)
+        let matrixBuffer = try makeBuffer(size: matrixBufferSize)
 
         // Copy component data: component-major layout [c0s0, c0s1, ..., c1s0, c1s1, ...]
         let inputPtr = inputBuffer.contents().bindMemory(
@@ -797,9 +803,7 @@ public actor J2KMetalMCT {
             }
         }
 
-        await bufferPool.returnBuffer(inputBuffer)
-        await bufferPool.returnBuffer(outputBuffer)
-        await bufferPool.returnBuffer(matrixBuffer)
+        // Buffers released via ARC when they go out of scope
 
         return J2KMetalMCTResult(
             components: output,
@@ -825,18 +829,21 @@ public actor J2KMetalMCT {
         let inputBufferSize = totalSamples * MemoryLayout<Float>.stride
         let matrixBufferSize = colorMatrix.count * MemoryLayout<Float>.stride
 
-        let inputBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: inputBufferSize
-        )
-        let outputBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: inputBufferSize
-        )
-        let colorMatrixBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: matrixBufferSize
-        )
-        let mctMatrixBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: matrixBufferSize
-        )
+        // Allocate buffers directly to avoid actor boundary crossing
+        func makeFusedBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeFusedBuffer(size: inputBufferSize)
+        let outputBuffer = try makeFusedBuffer(size: inputBufferSize)
+        let colorMatrixBuffer = try makeFusedBuffer(size: matrixBufferSize)
+        let mctMatrixBuffer = try makeFusedBuffer(size: matrixBufferSize)
 
         // Copy component data
         let inputPtr = inputBuffer.contents().bindMemory(
@@ -907,10 +914,7 @@ public actor J2KMetalMCT {
             }
         }
 
-        await bufferPool.returnBuffer(inputBuffer)
-        await bufferPool.returnBuffer(outputBuffer)
-        await bufferPool.returnBuffer(colorMatrixBuffer)
-        await bufferPool.returnBuffer(mctMatrixBuffer)
+        // Buffers released via ARC when they go out of scope
 
         return J2KMetalMCTResult(
             components: output,
