@@ -486,15 +486,21 @@ public struct J2KRateControl: Sendable {
                     let norm = Self.dwtNorms53[orient][clampedLevel]
                     subbandWeight = norm * norm
                 } else {
-                    // 9/7 irreversible: quantization step sizes already incorporate
-                    // the wavelet norms (Δ_b = Δ_base / K_b), so coefficient
-                    // magnitudes are partially normalized. Apply the RELATIVE norm ratio
-                    // (subband norm / LL norm at same level) to balance R-D allocation
-                    // between subbands. Empirically validated to minimize PSNR gap vs OPJ.
-                    let clampedLevel = min(dwtLevel, Self.dwtNorms97[0].count - 1)
-                    let norm = Self.dwtNorms97[orient][clampedLevel]
-                    let llNorm = Self.dwtNorms97[0][clampedLevel]
-                    subbandWeight = norm / llNorm
+                    // 9/7 irreversible: quantization step sizes FULLY incorporate
+                    // the wavelet norms (Δ_b = Δ_base / K_b). The pixel-domain MSE
+                    // contribution from subband b is:
+                    //
+                    //   MSE_pixel = step_b² × K_b² × Σ(error_q)²
+                    //             = (Δ_base/K_b)² × K_b² × Σ(error_q)²
+                    //             = Δ_base² × Σ(error_q)²
+                    //
+                    // Since Δ_base is constant across subbands, all subbands
+                    // contribute equally to pixel MSE per unit of quantized-domain
+                    // distortion. This matches OpenJPEG's t1_getwmsedec() which
+                    // computes w2 = 8192 × step² × norm² = 8192 × Δ_base² (constant).
+                    //
+                    // Therefore, equal PCRD weight for all subbands is correct.
+                    subbandWeight = 1.0
                 }
             } else {
                 subbandWeight = 1.0

@@ -112,7 +112,12 @@ def generate_medical(width, height, bitdepth, seed=314159):
             ey2 = (dy - radius*0.15) / (radius*0.12)
             if ex2*ex2 + ey2*ey2 < 1.0:
                 val = maxval * 0.20
-            noise = (int(rng.next()) % max(int(maxval/50), 1)) - int(maxval/100)
+            # Match Swift's Int32(bitPattern: rng.next()) % Int32(maxVal/50)
+            # Swift reinterprets UInt32 as signed Int32 before modulo,
+            # giving noise in [-N+1, N+1] centered around 0.
+            raw = rng.next()
+            signed = raw - 0x100000000 if raw >= 0x80000000 else raw
+            noise = int(signed % max(int(maxval / 50), 1))
             val = int(max(0, min(maxval, val + noise)))
             pixels.append(val)
     return maxval, pixels

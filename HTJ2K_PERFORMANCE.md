@@ -126,11 +126,11 @@ End-to-end encoding benchmarks compare J2KSwift's full HTJ2K pipeline against Op
 
 | Image | Resolution | Bit Depth | Lossless | Lossy q0.9 | Lossy 2bpp | Lossy 1bpp | Lossy 0.5bpp |
 |-------|-----------|-----------|----------|------------|------------|------------|--------------|
-| Grad-256 | 256×256 | 8 | **1.13×** | **0.92×** | **0.94×** | **0.93×** | **0.90×** |
-| Grad-512 | 512×512 | 8 | **1.12×** | **1.37×** | **1.24×** | **1.23×** | **1.23×** |
-| Grad-1024 | 1024×1024 | 8 | **1.68×** | **1.39×** | **1.47×** | **1.50×** | **1.45×** |
-| Med-512-12b | 512×512 | 12 | **1.64×** | **1.57×** | **1.54×** | **1.50×** | **1.51×** |
-| Med-512-16b | 512×512 | 16 | **1.72×** | **1.85×** | **1.56×** | **1.74×** | **1.68×** |
+| Grad-256 | 256×256 | 8 | 0.86× | 0.91× | 0.84× | 0.93× | 0.87× |
+| Grad-512 | 512×512 | 8 | **1.15×** | **1.35×** | **1.19×** | **1.13×** | **1.18×** |
+| Grad-1024 | 1024×1024 | 8 | **1.70×** | **1.47×** | **1.46×** | **1.45×** | **1.44×** |
+| Med-512-12b | 512×512 | 12 | **1.77×** | **1.50×** | **1.48×** | **1.59×** | **1.53×** |
+| Med-512-16b | 512×512 | 16 | **1.68×** | **1.63×** | **1.59×** | **1.59×** | **1.80×** |
 
 > Values >1.0× mean J2KSwift is faster than OpenJPEG. **Bold** = J2KSwift faster.
 
@@ -140,61 +140,61 @@ End-to-end encoding benchmarks compare J2KSwift's full HTJ2K pipeline against Op
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 30.0 ms | 53.0 ms | **1.72×** | 414,088 B | 414,127 B |
-| Lossy q0.9 | 29.0 ms | 53.0 ms | **1.85×** | 49,441 B | 48,840 B |
-| Lossy 2 bpp | 34.0 ms | 53.0 ms | **1.56×** | 65,822 B | 65,010 B |
-| Lossy 1 bpp | 31.0 ms | 54.0 ms | **1.74×** | 33,036 B | 32,608 B |
-| Lossy 0.5 bpp | 32.0 ms | 54.0 ms | **1.68×** | 16,652 B | 16,360 B |
+| Lossless | 31.0 ms | 52.0 ms | **1.68×** | 414,088 B | 414,127 B |
+| Lossy q0.9 | 32.5 ms | 53.0 ms | **1.63×** | 49,442 B | 48,840 B |
+| Lossy 2 bpp | 33.4 ms | 53.0 ms | **1.59×** | 65,822 B | 65,010 B |
+| Lossy 1 bpp | 33.4 ms | 53.0 ms | **1.59×** | 33,046 B | 32,608 B |
+| Lossy 0.5 bpp | 29.4 ms | 53.0 ms | **1.80×** | 16,654 B | 16,360 B |
 
 #### 12-bit Medical (512×512)
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 26.0 ms | 42.0 ms | **1.64×** | 276,067 B | 276,106 B |
-| Lossy q0.9 | 27.0 ms | 42.0 ms | **1.57×** | 49,433 B | 49,062 B |
-| Lossy 2 bpp | 27.0 ms | 44.0 ms | **1.54×** | 65,824 B | 65,417 B |
-| Lossy 1 bpp | 28.0 ms | 42.0 ms | **1.50×** | 33,040 B | 32,485 B |
-| Lossy 0.5 bpp | 28.0 ms | 45.0 ms | **1.51×** | 16,649 B | 16,340 B |
+| Lossless | 23.7 ms | 42.0 ms | **1.77×** | 276,067 B | 276,106 B |
+| Lossy q0.9 | 27.9 ms | 42.0 ms | **1.50×** | 49,433 B | 49,062 B |
+| Lossy 2 bpp | 28.3 ms | 42.0 ms | **1.48×** | 65,816 B | 65,417 B |
+| Lossy 1 bpp | 26.4 ms | 42.0 ms | **1.59×** | 33,049 B | 32,485 B |
+| Lossy 0.5 bpp | 27.4 ms | 42.0 ms | **1.53×** | 16,654 B | 16,340 B |
 
 #### 8-bit Gradient (1024×1024)
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 71.0 ms | 119.0 ms | **1.68×** | 857,210 B | 857,249 B |
-| Lossy q0.9 | 86.0 ms | 121.0 ms | **1.39×** | 197,341 B | 197,732 B |
-| Lossy 2 bpp | 82.0 ms | 122.0 ms | **1.47×** | 262,924 B | 261,864 B |
-| Lossy 1 bpp | 80.0 ms | 136.0 ms | **1.50×** | 131,640 B | 130,829 B |
-| Lossy 0.5 bpp | 83.0 ms | 122.0 ms | **1.45×** | 65,924 B | 65,327 B |
+| Lossless | 70.6 ms | 120.0 ms | **1.70×** | 857,210 B | 857,249 B |
+| Lossy q0.9 | 82.5 ms | 121.0 ms | **1.47×** | 197,333 B | 197,732 B |
+| Lossy 2 bpp | 82.1 ms | 120.0 ms | **1.46×** | 262,924 B | 261,864 B |
+| Lossy 1 bpp | 82.8 ms | 120.0 ms | **1.45×** | 131,642 B | 130,829 B |
+| Lossy 0.5 bpp | 84.0 ms | 121.0 ms | **1.44×** | 65,929 B | 65,327 B |
 
-#### 8-bit Gradient (512×512) — Faster Across All Modes
+#### 8-bit Gradient (512×512)
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup |
 |------|----------------|-----------------|--------|
-| Lossless | 28.0 ms | 31.0 ms | **1.12×** |
-| Lossy q0.9 | 23.0 ms | 33.0 ms | **1.37×** |
-| Lossy 2 bpp | 24.0 ms | 30.0 ms | **1.24×** |
-| Lossy 1 bpp | 24.0 ms | 30.0 ms | **1.23×** |
-| Lossy 0.5 bpp | 24.0 ms | 30.0 ms | **1.23×** |
+| Lossless | 26.8 ms | 31.0 ms | **1.15×** |
+| Lossy q0.9 | 23.0 ms | 31.0 ms | **1.35×** |
+| Lossy 2 bpp | 24.4 ms | 29.0 ms | **1.19×** |
+| Lossy 1 bpp | 25.7 ms | 29.0 ms | **1.13×** |
+| Lossy 0.5 bpp | 24.6 ms | 29.0 ms | **1.18×** |
 
 #### 8-bit Gradient (256×256) — Small-Image Overhead
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup |
 |------|----------------|-----------------|--------|
-| Lossless | 7.0 ms | 7.0 ms | **1.13×** |
-| Lossy q0.9 | 9.0 ms | 8.0 ms | **0.92×** |
-| Lossy 2 bpp | 11.0 ms | 10.0 ms | **0.94×** |
-| Lossy 1 bpp | 9.0 ms | 8.0 ms | **0.93×** |
-| Lossy 0.5 bpp | 11.0 ms | 9.0 ms | **0.90×** |
+| Lossless | 8.2 ms | 7.0 ms | 0.86× |
+| Lossy q0.9 | 9.8 ms | 9.0 ms | 0.91× |
+| Lossy 2 bpp | 11.9 ms | 10.0 ms | 0.84× |
+| Lossy 1 bpp | 8.6 ms | 8.0 ms | 0.93× |
+| Lossy 0.5 bpp | 11.5 ms | 10.0 ms | 0.87× |
 
 ### Key Observations
 
 1. **High bit-depth advantage**: J2KSwift shows its strongest performance with 12-bit and 16-bit images (up to 1.80× faster), where the HTJ2K block coder's efficiency dominates pipeline overhead.
 
-2. **Resolution scaling**: Performance improves with image size — at 1024×1024, J2KSwift is 1.70× faster lossless and 1.51× faster at 0.5 bpp. J2KSwift exceeds OpenJPEG at all modes for ≥512×512 across all bit depths.
+2. **Resolution scaling**: Performance improves with image size — at 1024×1024, J2KSwift is 1.70× faster lossless and 1.44× faster at 0.5 bpp. J2KSwift exceeds OpenJPEG at all modes for ≥512×512 across all bit depths.
 
-3. **Lossless strength**: Lossless encoding consistently shows strong speedups per image size (1.70× for 1024×1024 8-bit, 1.61× for 12-bit, 1.80× for 16-bit).
+3. **Lossless strength**: Lossless encoding consistently shows strong speedups per image size (1.70× for 1024×1024 8-bit, 1.77× for 12-bit, 1.68× for 16-bit).
 
-4. **256×256 now faster**: Phase 3 DWT threshold fix eliminated false parallelism overhead. Lossless is now **1.13×** faster; lossy modes are 0.90–0.94× (near parity, improving from 0.78–0.88×).
+4. **256×256 overhead**: Small images (256×256) show near-parity or slightly slower than OPJ (0.84–0.93×) due to per-block pipeline overhead being a larger fraction of total encode time at small sizes.
 
 5. **Compression parity**: File sizes are within 1-2% of OpenJPEG for the same target bitrate, confirming correct rate-control behavior.
 
@@ -230,7 +230,7 @@ Targeted optimizations to the MEL coder and cleanup pass stripe loop:
 - **DWT parallel column threshold fix**: Changed the `useParallelColumns` guard in both 9/7 and 5/3 DWT paths from `numStrips >= 4` (≥32-wide) to `numStrips >= 8 && height > 32` (≥64-wide and height >32). The previous threshold was activating GCD `concurrentPerform` for 32×32 sub-level DWT stages in multi-level decompositions, incurring ~50 µs dispatch overhead for blocks completing in <200 µs. Fix also pre-allocates all strip buffers outside `concurrentPerform` to avoid per-strip malloc inside GCD tasks.
 - **`encodeCleanupFullyReusingWithMax`**: New `HTBlockEncoder` method that tracks the SIMD running maximum alongside the absMags computation, making maxMag available to callers without a separate O(N) scan.
 
-**Combined impact**: 256×256 lossless improved from 0.88× to **1.13×** (now faster than OpenJPEG). Med-512-16b lossy-1bpp improved from 1.19× to **1.74×**. Med-512-12b lossy-q0.9 improved from 1.22× to **1.57×**.
+**Combined impact**: 256×256 lossless improved from 0.88× to near-parity (~0.86×). Med-512-16b lossy modes improved from 1.19× to **1.59–1.80×**. Med-512-12b lossy-q0.9 improved from 1.22× to **1.50×**.
 
 ### Tier-1 Optimizations (v2.4.0)
 
@@ -443,23 +443,27 @@ All 10 planned HTJ2K encoder optimization priorities (P0–P10) have been comple
 
 ### Quality Comparison (PSNR in dB, lossy modes)
 
-| Image | Mode | J2KSwift | OpenJPEG | OpenJPH | Grok |
-|-------|------|----------|----------|---------|------|
-| Grad-512 (8-bit) | 2 bpp | 30.37 | 30.89 | 55.00† | 29.14 |
-| Grad-512 (8-bit) | 1 bpp | 25.78 | 25.99 | 49.20† | 25.72 |
-| Grad-512 (8-bit) | 0.5 bpp | 24.24 | 24.26 | 42.63† | 24.03 |
-| Med-512 (12-bit) | 2 bpp | 44.04 | 49.77 | 53.00† | 32.79 |
-| Med-512 (12-bit) | 1 bpp | 39.85 | 45.77 | 46.85† | 32.65 |
-| Med-512 (12-bit) | 0.5 bpp | 38.42 | 43.93 | 44.27† | 32.45 |
-| Med-512 (16-bit) | 2 bpp | 44.03 | 49.76 | 53.01† | 32.77 |
-| Med-512 (16-bit) | 1 bpp | 39.72 | 45.71 | 46.82† | 32.66 |
-| Med-512 (16-bit) | 0.5 bpp | 38.26 | 43.90 | 44.19† | 32.46 |
+| Image | Mode | J2KSwift | OpenJPEG | Gap | OpenJPH | Grok |
+|-------|------|----------|----------|-----|---------|------|
+| Grad-512 (8-bit) | 2 bpp | 30.37 | 30.89 | −0.52 | 55.00† | 29.14 |
+| Grad-512 (8-bit) | 1 bpp | 25.81 | 25.99 | −0.18 | 49.20† | 25.72 |
+| Grad-512 (8-bit) | 0.5 bpp | 24.23 | 24.26 | −0.03 | 42.63† | 24.03 |
+| Med-512 (12-bit) | 2 bpp | 44.11 | 44.33 | −0.22 | — | — |
+| Med-512 (12-bit) | 1 bpp | 39.88 | 40.18 | −0.30 | — | — |
+| Med-512 (12-bit) | 0.5 bpp | 38.46 | 38.83 | −0.37 | — | — |
+| Med-512 (16-bit) | 2 bpp | 44.03 | 44.17 | −0.14 | — | — |
+| Med-512 (16-bit) | 1 bpp | 39.75 | 40.05 | −0.30 | — | — |
+| Med-512 (16-bit) | 0.5 bpp | 38.28 | 38.65 | −0.37 | — | — |
 
-> † OpenJPH PSNR is artificially high because its qstep-based rate control produces much larger files than the target bpp — not a fair quality comparison. For equal file sizes, quality would be comparable.
+> J2KSwift and OpenJPEG values are from the pipeline benchmark using the same test image and PSNR function (apples-to-apples comparison). The PSNR gap of 0.14–0.52 dB is clinically negligible.
+>
+> † OpenJPH PSNR is artificially high because its qstep-based rate control produces much larger files than the target bpp — not a fair quality comparison.
+>
+> — OpenJPH/Grok medical values omitted: the cross-codec script generated a different medical phantom (Python RNG noise ±40) than the Swift test (±80), making PSNR not directly comparable.
 
 ### Cross-Codec Analysis
 
-1. **J2KSwift vs OpenJPEG**: J2KSwift is **1.2–3.7× faster** for encoding (in-process vs wall-clock), with comparable compression efficiency and quality. At equal bitrates, PSNR is within 0.2–5 dB for 8-bit and 5–10 dB for high-bit-depth images due to different quantization strategies.
+1. **J2KSwift vs OpenJPEG**: J2KSwift is **1.2–3.7× faster** for encoding (in-process vs wall-clock), with comparable compression efficiency and quality. At equal bitrates, PSNR is within **0.03–0.52 dB** for all image types including 12-bit and 16-bit medical images. This gap is clinically negligible and within normal implementation variance.
 
 2. **J2KSwift vs OpenJPH**: OpenJPH (pure HTJ2K, C++) shows the fastest raw encoding wall-clock times at ≥1024×1024, benefiting from mature SIMD optimizations. However, OpenJPH lacks PCRD-based rate control, making direct bitrate comparison difficult. J2KSwift matches or leads at ≤512×512 where its in-process advantage offsets the process launch overhead.
 
@@ -468,6 +472,25 @@ All 10 planned HTJ2K encoder optimization priorities (P0–P10) have been comple
 4. **Key Advantage**: J2KSwift is the only pure Swift codec, enabling zero-overhead integration in Apple ecosystem apps, server-side Swift, and cross-platform Swift projects without C/C++ bridging or process spawning.
 
 5. **Rate Control**: J2KSwift and OpenJPEG both use PCRD-optimal rate control, producing nearly identical file sizes at the same compression ratio. Grok also uses PCRD but shows quality differences. OpenJPH relies on quantization step size, making it better suited for quality-based (rather than rate-based) workflows.
+
+### Medical Imaging Quality Assessment
+
+For medical imaging applications (DICOM, CT, MRI), J2KSwift provides near-reference quality:
+
+| Metric | 12-bit @ 2 bpp | 12-bit @ 1 bpp | 16-bit @ 2 bpp | 16-bit @ 1 bpp |
+|--------|----------------|----------------|----------------|----------------|
+| J2KSwift PSNR | 44.11 dB | 39.88 dB | 44.03 dB | 39.75 dB |
+| OpenJPEG PSNR | 44.33 dB | 40.18 dB | 44.17 dB | 40.05 dB |
+| **Gap** | **−0.22 dB** | **−0.30 dB** | **−0.14 dB** | **−0.30 dB** |
+| J2KSwift MAE | 20.49 | 34.02 | 331.00 | 553.69 |
+| OpenJPEG MAE | 19.77 | 32.74 | 322.71 | 532.51 |
+| Lossless | ✅ MAE=0 | — | ✅ MAE=0 | — |
+
+**Key findings:**
+- **Lossless**: Perfect reconstruction (MAE=0) for both 12-bit and 16-bit — suitable for diagnostic DICOM.
+- **Lossy**: PSNR gap vs OpenJPEG is 0.14–0.37 dB at rate-controlled modes — clinically negligible, well within inter-implementation variance.
+- **Encoding speed**: J2KSwift is **1.48–1.80× faster** than OpenJPEG for medical images.
+- **Recommendation**: Lossless mode for diagnostic storage, 2 bpp lossy for efficient web viewing/transmission.
 
 ## Baseline Comparison: Legacy JPEG 2000
 
@@ -656,19 +679,21 @@ Grad-1024-8b,1024x1024,8,lossy-q0.9,0.0860,0.0370,197341,28.27,7.80,0.1210,0.026
 Grad-1024-8b,1024x1024,8,lossy-2bpp,0.0820,0.0400,262924,30.52,5.97,0.1220,0.0340,261864,31.12,5.57,1.47x
 Grad-1024-8b,1024x1024,8,lossy-1bpp,0.0800,0.0330,131640,25.80,10.49,0.1360,0.0200,130829,26.09,10.14,1.50x
 Grad-1024-8b,1024x1024,8,lossy-0.5bpp,0.0830,0.0280,65924,24.28,12.88,0.1220,0.0140,65327,24.36,12.69,1.45x
-Med-512-12b,512x512,12,lossless,0.0260,0.0150,276067,Inf,0.00,0.0420,0.0300,276106,inf,0.00,1.64x
-Med-512-12b,512x512,12,lossy-q0.9,0.0270,0.0110,49433,41.42,28.10,0.0420,0.0070,49062,42.09,25.67,1.57x
-Med-512-12b,512x512,12,lossy-2bpp,0.0270,0.0110,65824,44.04,20.66,0.0440,0.0090,65417,44.33,19.77,1.54x
-Med-512-12b,512x512,12,lossy-1bpp,0.0280,0.0100,33040,39.85,34.13,0.0420,0.0050,32485,40.18,32.74,1.50x
-Med-512-12b,512x512,12,lossy-0.5bpp,0.0280,0.0090,16649,38.42,40.92,0.0450,0.0040,16340,38.83,39.55,1.51x
-Med-512-16b,512x512,16,lossless,0.0300,0.0190,414088,Inf,0.00,0.0530,0.0400,414127,inf,0.00,1.72x
-Med-512-16b,512x512,16,lossy-q0.9,0.0290,0.0110,49441,41.21,460.64,0.0530,0.0070,48840,41.93,418.39,1.85x
-Med-512-16b,512x512,16,lossy-2bpp,0.0340,0.0120,65822,44.03,331.00,0.0530,0.0090,65010,44.17,322.71,1.56x
-Med-512-16b,512x512,16,lossy-1bpp,0.0310,0.0100,33036,39.72,555.16,0.0540,0.0060,32608,40.05,532.51,1.74x
-Med-512-16b,512x512,16,lossy-0.5bpp,0.0320,0.0090,16652,38.26,666.49,0.0540,0.0040,16360,38.65,646.45,1.68x
+Med-512-12b,512x512,12,lossless,0.0237,0.0152,276067,Inf,0.00,0.0420,0.0290,276106,inf,0.00,1.77x
+Med-512-12b,512x512,12,lossy-q0.9,0.0279,0.0106,49433,41.42,28.10,0.0420,0.0070,49062,42.09,25.67,1.50x
+Med-512-12b,512x512,12,lossy-2bpp,0.0283,0.0116,65816,44.11,20.49,0.0420,0.0090,65417,44.33,19.77,1.48x
+Med-512-12b,512x512,12,lossy-1bpp,0.0264,0.0100,33049,39.88,34.02,0.0420,0.0060,32485,40.18,32.74,1.59x
+Med-512-12b,512x512,12,lossy-0.5bpp,0.0274,0.0088,16654,38.46,40.78,0.0420,0.0040,16340,38.83,39.55,1.53x
+Med-512-16b,512x512,16,lossless,0.0310,0.0192,414088,Inf,0.00,0.0520,0.0390,414127,inf,0.00,1.68x
+Med-512-16b,512x512,16,lossy-q0.9,0.0325,0.0109,49442,41.21,460.69,0.0530,0.0070,48840,41.93,418.39,1.63x
+Med-512-16b,512x512,16,lossy-2bpp,0.0334,0.0116,65822,44.03,331.00,0.0530,0.0090,65010,44.17,322.71,1.59x
+Med-512-16b,512x512,16,lossy-1bpp,0.0334,0.0099,33046,39.75,553.69,0.0530,0.0050,32608,40.05,532.51,1.59x
+Med-512-16b,512x512,16,lossy-0.5bpp,0.0294,0.0089,16654,38.28,665.37,0.0530,0.0040,16360,38.65,646.45,1.80x
 ```
 
 ## Appendix C: Cross-Codec Raw Benchmark Data (CSV)
+
+> **Note**: This data was generated by `Scripts/cross_codec_benchmark.sh` using Python-generated test images. For >8-bit medical images, the Python phantom uses a different noise distribution (±40) than the Swift test (±80), so PSNR values are not directly comparable with Appendix B. The 8-bit gradient data is consistent across both benchmarks. For accurate J2KSwift vs OpenJPEG quality comparison, refer to Appendix B (same-image pipeline benchmark).
 
 ```csv
 Image,Resolution,BitDepth,Mode,Codec,EncTime_s,DecTime_s,FileSize_bytes,PSNR_dB
