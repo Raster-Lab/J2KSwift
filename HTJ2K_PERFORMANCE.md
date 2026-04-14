@@ -13,11 +13,11 @@ J2KSwift's HTJ2K implementation delivers **production-competitive performance** 
 - Exceeds ISO/IEC 15444-15 target of 10-100× speedup
 
 ### Pipeline-Level (J2KSwift vs OpenJPEG)
-- **Up to 1.91× faster** than OpenJPEG for lossless encoding (1024×1024 8-bit)
-- **Up to 1.89× faster** for lossless encoding (12-bit medical)
-- **Up to 1.79× faster** for lossless encoding (16-bit medical)
-- **Up to 1.77× faster** for lossy encoding (16-bit, 0.5 bpp)
-- **Matches or exceeds OpenJPEG** at ≥512×512 across all bit depths
+- **Up to 1.80× faster** than OpenJPEG for lossless encoding (16-bit medical)
+- **Up to 1.70× faster** for lossless encoding (1024×1024 8-bit)
+- **Up to 1.71× faster** for lossy encoding (16-bit, quality 0.9)
+- **Up to 1.65× faster** for lossy encoding (12-bit medical, 2 bpp)
+- **Exceeds OpenJPEG** at all modes ≥512×512 across all bit depths
 - Pure Swift implementation with no C/C++ dependencies
 
 ## Benchmark Methodology
@@ -124,11 +124,11 @@ End-to-end encoding benchmarks compare J2KSwift's full HTJ2K pipeline against Op
 
 | Image | Resolution | Bit Depth | Lossless | Lossy q0.9 | Lossy 2bpp | Lossy 1bpp | Lossy 0.5bpp |
 |-------|-----------|-----------|----------|------------|------------|------------|--------------|
-| Grad-256 | 256×256 | 8 | 1.02× | 0.85× | 0.86× | 0.89× | 0.90× |
-| Grad-512 | 512×512 | 8 | **1.13×** | **1.32×** | **1.19×** | 0.85× | **1.22×** |
-| Grad-1024 | 1024×1024 | 8 | **1.91×** | **1.62×** | **1.54×** | **1.69×** | **1.65×** |
-| Med-512-12b | 512×512 | 12 | **1.89×** | **1.67×** | **1.63×** | **1.62×** | **1.52×** |
-| Med-512-16b | 512×512 | 16 | **1.79×** | **1.69×** | **1.65×** | **1.75×** | **1.77×** |
+| Grad-256 | 256×256 | 8 | 0.88× | 0.83× | 0.82× | 0.86× | 0.78× |
+| Grad-512 | 512×512 | 8 | **1.28×** | **1.45×** | **1.21×** | **1.24×** | **1.20×** |
+| Grad-1024 | 1024×1024 | 8 | **1.70×** | **1.52×** | **1.49×** | **1.61×** | **1.51×** |
+| Med-512-12b | 512×512 | 12 | **1.61×** | **1.22×** | **1.65×** | **1.57×** | **1.61×** |
+| Med-512-16b | 512×512 | 16 | **1.80×** | **1.71×** | **1.59×** | **1.19×** | **1.65×** |
 
 > Values >1.0× mean J2KSwift is faster than OpenJPEG. **Bold** = J2KSwift faster.
 
@@ -138,61 +138,61 @@ End-to-end encoding benchmarks compare J2KSwift's full HTJ2K pipeline against Op
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 30.6 ms | 55.0 ms | **1.79×** | 414,088 B | 414,127 B |
-| Lossy q0.9 | 34.2 ms | 58.0 ms | **1.69×** | 49,441 B | 48,840 B |
-| Lossy 2 bpp | 35.1 ms | 58.0 ms | **1.65×** | 65,822 B | 65,010 B |
-| Lossy 1 bpp | 33.1 ms | 58.0 ms | **1.75×** | 33,036 B | 32,608 B |
-| Lossy 0.5 bpp | 32.3 ms | 57.0 ms | **1.77×** | 16,652 B | 16,360 B |
+| Lossless | 29.5 ms | 53.0 ms | **1.80×** | 414,088 B | 414,127 B |
+| Lossy q0.9 | 31.1 ms | 53.0 ms | **1.71×** | 49,441 B | 48,840 B |
+| Lossy 2 bpp | 33.3 ms | 53.0 ms | **1.59×** | 65,822 B | 65,010 B |
+| Lossy 1 bpp | 45.2 ms | 54.0 ms | **1.19×** | 33,036 B | 32,608 B |
+| Lossy 0.5 bpp | 32.8 ms | 54.0 ms | **1.65×** | 16,652 B | 16,360 B |
 
 #### 12-bit Medical (512×512)
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 24.3 ms | 46.0 ms | **1.89×** | 276,067 B | 276,106 B |
-| Lossy q0.9 | 28.1 ms | 47.0 ms | **1.67×** | 49,433 B | 49,062 B |
-| Lossy 2 bpp | 28.9 ms | 47.0 ms | **1.63×** | 65,824 B | 65,417 B |
-| Lossy 1 bpp | 27.8 ms | 45.0 ms | **1.62×** | 33,040 B | 32,485 B |
-| Lossy 0.5 bpp | 29.6 ms | 45.0 ms | **1.52×** | 16,649 B | 16,340 B |
+| Lossless | 26.0 ms | 42.0 ms | **1.61×** | 276,067 B | 276,106 B |
+| Lossy q0.9 | 34.4 ms | 42.0 ms | **1.22×** | 49,433 B | 49,062 B |
+| Lossy 2 bpp | 26.7 ms | 44.0 ms | **1.65×** | 65,824 B | 65,417 B |
+| Lossy 1 bpp | 26.8 ms | 42.0 ms | **1.57×** | 33,040 B | 32,485 B |
+| Lossy 0.5 bpp | 28.0 ms | 45.0 ms | **1.61×** | 16,649 B | 16,340 B |
 
 #### 8-bit Gradient (1024×1024)
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup | J2K Size | OPJ Size |
 |------|----------------|-----------------|---------|----------|----------|
-| Lossless | 82.3 ms | 157.0 ms | **1.91×** | 857,210 B | 857,249 B |
-| Lossy q0.9 | 86.2 ms | 140.0 ms | **1.62×** | 197,341 B | 197,732 B |
-| Lossy 2 bpp | 88.8 ms | 137.0 ms | **1.54×** | 262,924 B | 261,864 B |
-| Lossy 1 bpp | 81.3 ms | 137.0 ms | **1.69×** | 131,640 B | 130,829 B |
-| Lossy 0.5 bpp | 81.9 ms | 135.0 ms | **1.65×** | 65,924 B | 65,327 B |
+| Lossless | 70.2 ms | 119.0 ms | **1.70×** | 857,210 B | 857,249 B |
+| Lossy q0.9 | 79.4 ms | 121.0 ms | **1.52×** | 197,341 B | 197,732 B |
+| Lossy 2 bpp | 81.9 ms | 122.0 ms | **1.49×** | 262,924 B | 261,864 B |
+| Lossy 1 bpp | 84.3 ms | 136.0 ms | **1.61×** | 131,640 B | 130,829 B |
+| Lossy 0.5 bpp | 80.6 ms | 122.0 ms | **1.51×** | 65,924 B | 65,327 B |
 
-#### 8-bit Gradient (512×512) — Now Faster
-
-| Mode | J2KSwift Encode | OpenJPEG Encode | Speedup |
-|------|----------------|-----------------|--------|
-| Lossless | 27.5 ms | 31.0 ms | **1.13×** |
-| Lossy q0.9 | 22.7 ms | 30.0 ms | **1.32×** |
-| Lossy 2 bpp | 26.0 ms | 31.0 ms | **1.19×** |
-| Lossy 1 bpp | 38.9 ms | 33.0 ms | 0.85× |
-| Lossy 0.5 bpp | 25.4 ms | 31.0 ms | **1.22×** |
-
-#### 8-bit Gradient (256×256) — Near Parity
+#### 8-bit Gradient (512×512) — Faster Across All Modes
 
 | Mode | J2KSwift Encode | OpenJPEG Encode | Speedup |
 |------|----------------|-----------------|--------|
-| Lossless | 7.8 ms | 8.0 ms | 1.02× |
-| Lossy q0.9 | 10.6 ms | 9.0 ms | 0.85× |
-| Lossy 2 bpp | 11.7 ms | 10.0 ms | 0.86× |
-| Lossy 1 bpp | 11.2 ms | 10.0 ms | 0.89× |
-| Lossy 0.5 bpp | 12.2 ms | 11.0 ms | 0.90× |
+| Lossless | 24.1 ms | 31.0 ms | **1.28×** |
+| Lossy q0.9 | 22.7 ms | 33.0 ms | **1.45×** |
+| Lossy 2 bpp | 24.8 ms | 30.0 ms | **1.21×** |
+| Lossy 1 bpp | 24.1 ms | 30.0 ms | **1.24×** |
+| Lossy 0.5 bpp | 25.0 ms | 30.0 ms | **1.20×** |
+
+#### 8-bit Gradient (256×256) — Small-Image Overhead
+
+| Mode | J2KSwift Encode | OpenJPEG Encode | Speedup |
+|------|----------------|-----------------|--------|
+| Lossless | 8.0 ms | 7.0 ms | 0.88× |
+| Lossy q0.9 | 9.7 ms | 8.0 ms | 0.83× |
+| Lossy 2 bpp | 12.2 ms | 10.0 ms | 0.82× |
+| Lossy 1 bpp | 9.3 ms | 8.0 ms | 0.86× |
+| Lossy 0.5 bpp | 11.5 ms | 9.0 ms | 0.78× |
 
 ### Key Observations
 
-1. **High bit-depth advantage**: J2KSwift shows its strongest performance with 12-bit and 16-bit images (up to 1.89× faster), where the HTJ2K block coder's efficiency dominates pipeline overhead.
+1. **High bit-depth advantage**: J2KSwift shows its strongest performance with 12-bit and 16-bit images (up to 1.80× faster), where the HTJ2K block coder's efficiency dominates pipeline overhead.
 
-2. **Resolution scaling**: Performance improves with image size — at 1024×1024, J2KSwift is 1.91× faster lossless and 1.65× faster at 0.5 bpp. J2KSwift now exceeds OpenJPEG at all modes for ≥512×512 high-bit-depth images and most modes for 512×512 8-bit.
+2. **Resolution scaling**: Performance improves with image size — at 1024×1024, J2KSwift is 1.70× faster lossless and 1.51× faster at 0.5 bpp. J2KSwift exceeds OpenJPEG at all modes for ≥512×512 across all bit depths.
 
-3. **Lossless strength**: Lossless encoding consistently shows the highest speedup per image size (1.91× for 1024×1024 8-bit, 1.89× for 12-bit, 1.79× for 16-bit).
+3. **Lossless strength**: Lossless encoding consistently shows strong speedups per image size (1.70× for 1024×1024 8-bit, 1.61× for 12-bit, 1.80× for 16-bit).
 
-4. **Near parity at 256×256**: At 256×256, J2KSwift achieves 0.85–1.02× of OpenJPEG speed, reaching parity for lossless mode. Small-image pipeline overhead remains the main bottleneck at this size.
+4. **Near parity at 256×256**: At 256×256, J2KSwift achieves 0.78–0.88× of OpenJPEG speed. Small-image pipeline overhead remains the main bottleneck at this size.
 
 5. **Compression parity**: File sizes are within 1-2% of OpenJPEG for the same target bitrate, confirming correct rate-control behavior.
 
@@ -481,12 +481,12 @@ J2KSwift's HTJ2K implementation delivers **production-competitive performance**:
 ✅ **Exceeds ISO/IEC 15444-15 targets**
 
 ### Pipeline-Level Performance vs OpenJPEG (C, v2.5.4)
-✅ **Up to 1.91× faster** for lossless encoding (1024×1024 8-bit images)  
-✅ **Up to 1.89× faster** for lossless encoding (12-bit medical images)  
-✅ **Up to 1.77× faster** for lossy encoding (16-bit, 0.5 bpp)  
-✅ **Matches or exceeds OpenJPEG** at ≥512×512 across all bit depths  
-✅ **Near parity** (0.85–1.02×) at 256×256  
-✅ **Consistent gains** across all lossy bitrates (1.13–1.77× at ≥512×512)
+✅ **Up to 1.80× faster** for lossless encoding (16-bit medical images)  
+✅ **Up to 1.70× faster** for lossless encoding (1024×1024 8-bit images)  
+✅ **Up to 1.71× faster** for lossy encoding (16-bit, quality 0.9)  
+✅ **Exceeds OpenJPEG** at all modes ≥512×512 across all bit depths  
+✅ **Near parity** (0.78–0.88×) at 256×256  
+✅ **Consistent gains** across all lossy bitrates (1.19–1.71× at ≥512×512)
 
 ### Cross-Codec Performance (vs OpenJPH, Grok)
 ✅ **Fastest at ≤512×512** among all codecs tested (in-process measurement)  
@@ -572,31 +572,31 @@ HTJ2K End-to-End Decode (multi-block):
 
 ```csv
 Image,Resolution,BitDepth,Mode,J2K_EncTime_s,J2K_DecTime_s,J2K_Size_bytes,J2K_PSNR_dB,J2K_MAE,OPJ_EncTime_s,OPJ_DecTime_s,OPJ_Size_bytes,OPJ_PSNR_dB,OPJ_MAE,Speedup
-Grad-256-8b,256x256,8,lossless,0.0096,0.0043,54259,Inf,0.00,0.0070,0.0060,54298,N/A,N/A,0.73x
-Grad-256-8b,256x256,8,lossy-q0.9,0.0139,0.0037,12483,27.84,8.18,0.0090,0.0070,54298,N/A,N/A,0.65x
-Grad-256-8b,256x256,8,lossy-2bpp,0.0166,0.0043,16583,29.78,6.48,0.0090,0.0020,16109,N/A,N/A,0.54x
-Grad-256-8b,256x256,8,lossy-1bpp,0.0198,0.0037,8373,25.72,10.54,0.0100,0.0010,7858,N/A,N/A,0.51x
-Grad-256-8b,256x256,8,lossy-0.5bpp,0.0195,0.0032,4266,24.09,13.16,0.0100,0.0000,3897,N/A,N/A,0.51x
-Grad-512-8b,512x512,8,lossless,0.0341,0.0129,215119,Inf,0.00,0.0300,0.0240,215158,N/A,N/A,0.88x
-Grad-512-8b,512x512,8,lossy-q0.9,0.0351,0.0097,49480,28.07,7.97,0.0310,0.0240,215162,N/A,N/A,0.88x
-Grad-512-8b,512x512,8,lossy-2bpp,0.0330,0.0106,65884,30.30,6.11,0.0300,0.0080,65183,N/A,N/A,0.91x
-Grad-512-8b,512x512,8,lossy-1bpp,0.0381,0.0087,33066,25.78,10.51,0.0300,0.0050,32655,N/A,N/A,0.79x
-Grad-512-8b,512x512,8,lossy-0.5bpp,0.0365,0.0077,16620,24.24,12.95,0.0300,0.0030,16316,N/A,N/A,0.82x
-Grad-1024-8b,1024x1024,8,lossless,0.1007,0.0449,857210,Inf,0.00,0.1200,0.0950,857249,N/A,N/A,1.19x
-Grad-1024-8b,1024x1024,8,lossy-q0.9,0.1236,0.0378,197517,28.30,7.77,0.1240,0.0940,857266,N/A,N/A,1.00x
-Grad-1024-8b,1024x1024,8,lossy-2bpp,0.1138,0.0401,263123,30.54,5.95,0.1210,0.0340,261864,N/A,N/A,1.06x
-Grad-1024-8b,1024x1024,8,lossy-1bpp,0.1118,0.0336,131803,25.85,10.41,0.1200,0.0190,130829,N/A,N/A,1.07x
-Grad-1024-8b,1024x1024,8,lossy-0.5bpp,0.1096,0.0296,66026,24.28,12.87,0.1210,0.0130,65327,N/A,N/A,1.10x
-Med-512-12b,512x512,12,lossless,0.0319,0.0156,276067,Inf,0.00,0.0420,0.0300,276106,N/A,N/A,1.32x
-Med-512-12b,512x512,12,lossy-q0.9,0.0365,0.0108,49490,41.43,28.06,0.0450,0.0290,276104,N/A,N/A,1.23x
-Med-512-12b,512x512,12,lossy-2bpp,0.0402,0.0117,65887,44.06,20.61,0.0420,0.0090,65417,N/A,N/A,1.04x
-Med-512-12b,512x512,12,lossy-1bpp,0.0388,0.0099,33104,39.86,34.09,0.0420,0.0060,32485,N/A,N/A,1.08x
-Med-512-12b,512x512,12,lossy-0.5bpp,0.0382,0.0092,16701,38.45,40.82,0.0420,0.0040,16340,N/A,N/A,1.10x
-Med-512-16b,512x512,16,lossless,0.0363,0.0192,414088,Inf,0.00,0.0520,0.0400,414127,N/A,N/A,1.43x
-Med-512-16b,512x512,16,lossy-q0.9,0.0419,0.0111,49485,41.21,460.62,0.0560,0.0390,414127,N/A,N/A,1.34x
-Med-512-16b,512x512,16,lossy-2bpp,0.0378,0.0117,65873,44.01,331.76,0.0530,0.0090,65010,N/A,N/A,1.40x
-Med-512-16b,512x512,16,lossy-1bpp,0.0472,0.0097,33099,39.74,553.89,0.0530,0.0050,32608,N/A,N/A,1.12x
-Med-512-16b,512x512,16,lossy-0.5bpp,0.0433,0.0093,16704,38.29,665.11,0.0530,0.0040,16360,N/A,N/A,1.22x
+Grad-256-8b,256x256,8,lossless,0.0080,0.0044,54259,Inf,0.00,0.0070,0.0060,54298,inf,0.00,0.88x
+Grad-256-8b,256x256,8,lossy-q0.9,0.0097,0.0036,12465,27.91,8.10,0.0080,0.0020,12298,28.01,8.01,0.83x
+Grad-256-8b,256x256,8,lossy-2bpp,0.0122,0.0046,16566,29.93,6.37,0.0100,0.0020,16109,30.45,5.96,0.82x
+Grad-256-8b,256x256,8,lossy-1bpp,0.0093,0.0030,8361,25.46,10.94,0.0080,0.0010,7858,25.63,10.74,0.86x
+Grad-256-8b,256x256,8,lossy-0.5bpp,0.0115,0.0034,4255,24.07,13.19,0.0090,0.0000,3897,24.02,13.24,0.78x
+Grad-512-8b,512x512,8,lossless,0.0241,0.0134,215119,Inf,0.00,0.0310,0.0240,215158,inf,0.00,1.28x
+Grad-512-8b,512x512,8,lossy-q0.9,0.0227,0.0096,49446,28.12,7.93,0.0330,0.0060,49424,28.36,7.70,1.45x
+Grad-512-8b,512x512,8,lossy-2bpp,0.0248,0.0109,65838,30.37,6.06,0.0300,0.0090,65183,30.89,5.71,1.21x
+Grad-512-8b,512x512,8,lossy-1bpp,0.0241,0.0093,33020,25.78,10.53,0.0300,0.0050,32655,25.99,10.26,1.24x
+Grad-512-8b,512x512,8,lossy-0.5bpp,0.0250,0.0082,16591,24.24,12.96,0.0300,0.0030,16316,24.26,12.81,1.20x
+Grad-1024-8b,1024x1024,8,lossless,0.0702,0.0464,857210,Inf,0.00,0.1190,0.0950,857249,inf,0.00,1.70x
+Grad-1024-8b,1024x1024,8,lossy-q0.9,0.0794,0.0361,197341,28.27,7.80,0.1210,0.0260,197732,28.52,7.58,1.52x
+Grad-1024-8b,1024x1024,8,lossy-2bpp,0.0819,0.0412,262924,30.52,5.97,0.1220,0.0340,261864,31.12,5.57,1.49x
+Grad-1024-8b,1024x1024,8,lossy-1bpp,0.0843,0.0338,131640,25.80,10.49,0.1360,0.0200,130829,26.09,10.14,1.61x
+Grad-1024-8b,1024x1024,8,lossy-0.5bpp,0.0806,0.0356,65924,24.28,12.88,0.1220,0.0140,65327,24.36,12.69,1.51x
+Med-512-12b,512x512,12,lossless,0.0260,0.0163,276067,Inf,0.00,0.0420,0.0300,276106,inf,0.00,1.61x
+Med-512-12b,512x512,12,lossy-q0.9,0.0344,0.0121,49433,41.42,28.10,0.0420,0.0070,49062,42.09,25.67,1.22x
+Med-512-12b,512x512,12,lossy-2bpp,0.0267,0.0122,65824,44.04,20.66,0.0440,0.0090,65417,44.33,19.77,1.65x
+Med-512-12b,512x512,12,lossy-1bpp,0.0268,0.0106,33040,39.85,34.13,0.0420,0.0050,32485,40.18,32.74,1.57x
+Med-512-12b,512x512,12,lossy-0.5bpp,0.0280,0.0083,16649,38.42,40.92,0.0450,0.0040,16340,38.83,39.55,1.61x
+Med-512-16b,512x512,16,lossless,0.0295,0.0201,414088,Inf,0.00,0.0530,0.0400,414127,inf,0.00,1.80x
+Med-512-16b,512x512,16,lossy-q0.9,0.0311,0.0118,49441,41.21,460.64,0.0530,0.0070,48840,41.93,418.39,1.71x
+Med-512-16b,512x512,16,lossy-2bpp,0.0333,0.0118,65822,44.03,331.00,0.0530,0.0090,65010,44.17,322.71,1.59x
+Med-512-16b,512x512,16,lossy-1bpp,0.0452,0.0120,33036,39.72,555.16,0.0540,0.0060,32608,40.05,532.51,1.19x
+Med-512-16b,512x512,16,lossy-0.5bpp,0.0328,0.0091,16652,38.26,666.49,0.0540,0.0040,16360,38.65,646.45,1.65x
 ```
 
 ## Appendix C: Cross-Codec Raw Benchmark Data (CSV)
