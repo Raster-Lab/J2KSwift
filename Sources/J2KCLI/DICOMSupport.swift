@@ -5,8 +5,9 @@
 /// Minimal DICOM pixel-data extractor (input only).
 ///
 /// Parses uncompressed DICOM files with explicit and implicit VR, in both
-/// little-endian and big-endian transfer syntaxes. Strips all metadata and
-/// returns only the raw pixel data as a `J2KImage`.
+/// little-endian and big-endian transfer syntaxes, and can also fall back to
+/// a local Python helper for selected compressed transfer syntaxes. Strips all
+/// metadata and returns only the pixel data as a `J2KImage`.
 ///
 /// This code lives in the CLI target only — no DICOM dependency is added to
 /// the J2KSwift library (per ADR-004).
@@ -18,10 +19,17 @@ extension J2KCLI {
 
     // MARK: - Transfer Syntax
 
-    private enum DICOMTransferSyntax {
+    enum DICOMTransferSyntax: Sendable, Equatable {
         case implicitVRLittleEndian
         case explicitVRLittleEndian
         case explicitVRBigEndian
+    }
+
+    struct DICOMTransferSyntaxInfo: Sendable, Equatable {
+        let byteOrderSyntax: DICOMTransferSyntax
+        let uid: String
+        let isCompressed: Bool
+        let isJPEG2000: Bool
     }
 
     // MARK: - Public API
@@ -29,8 +37,10 @@ extension J2KCLI {
     /// Load a DICOM file, stripping all metadata and returning the pixel data
     /// as a `J2KImage`.
     ///
-    /// Only uncompressed transfer syntaxes are supported. JPEG 2000 transfer
-    /// syntaxes produce a helpful error directing the user to `j2k decode`.
+    /// Uncompressed transfer syntaxes are parsed directly. Selected compressed
+    /// non-JPEG 2000 syntaxes can be decompressed through the workspace Python
+    /// helper, while JPEG 2000 transfer syntaxes produce a helpful error
+    /// directing the user to `j2k decode`.
     static func loadDICOM(_ data: Data) throws -> J2KImage {
         // 1. Validate preamble + magic
         guard data.count >= 132 + 4 else {
@@ -45,7 +55,12 @@ extension J2KCLI {
 
         // 2. Read File Meta Information (group 0002, always Explicit VR LE)
         var offset = 132
-        var transferSyntax: DICOMTransferSyntax = .explicitVRLittleEndian
+        var transferSyntaxInfo = DICOMTransferSyntaxInfo(
+            byteOrderSyntax: .explicitVRLittleEndian,
+            uid: "1.2.840.10008.1.2.1",
+            isCompressed: false,
+            isJPEG2000: false
+        )
 
         // Read tags in group 0002 to find Transfer Syntax UID
         while offset + 8 <= data.count {
@@ -62,7 +77,7 @@ extension J2KCLI {
             if element == 0x0010 {
                 // Transfer Syntax UID
                 if let tsUID = dcmReadString(data, offset: valueStart, length: valueLength) {
-                    transferSyntax = try parseDICOMTransferSyntax(tsUID)
+                    transferSyntaxInfo = dicomTransferSyntaxInfo(for: tsUID)
                 }
             }
 
@@ -70,8 +85,8 @@ extension J2KCLI {
         }
 
         // 3. Parse dataset to extract pixel-interpretation tags
-        let bigEndian = (transferSyntax == .explicitVRBigEndian)
-        let explicitVR = (transferSyntax != .implicitVRLittleEndian)
+        let bigEndian = (transferSyntaxInfo.byteOrderSyntax == .explicitVRBigEndian)
+        let explicitVR = (transferSyntaxInfo.byteOrderSyntax != .implicitVRLittleEndian)
 
         var rows = 0
         var columns = 0
@@ -83,6 +98,7 @@ extension J2KCLI {
         var planarConfiguration = 0
         var numberOfFrames = 1
         var pixelDataOffset = -1
+        var pixelDataLength = 0
 
         while offset + 4 <= data.count {
             let group   = dcmReadU16(data, offset: offset, bigEndian: bigEndian)
@@ -93,10 +109,20 @@ extension J2KCLI {
             if tag == (0x7FE0, 0x0010) {
                 let (vl, hs) = dcmDatasetValueLength(data, offset: offset, explicitVR: explicitVR, bigEndian: bigEndian)
                 pixelDataOffset = offset + hs
-                if vl == 0xFFFF_FFFF {
-                    // Undefined length = encapsulated
+                pixelDataLength = vl
+
+                if transferSyntaxInfo.isJPEG2000 {
                     throw J2KError.invalidParameter(
-                        "Encapsulated pixel data is not supported; only uncompressed DICOM files can be read.")
+                        "Input is already JPEG 2000 compressed (TS: \(transferSyntaxInfo.uid)). Use j2k decode instead."
+                    )
+                }
+                if transferSyntaxInfo.isCompressed {
+                    return try loadCompressedDICOM(data, transferSyntaxInfo: transferSyntaxInfo)
+                }
+                if vl == 0xFFFF_FFFF {
+                    throw J2KError.invalidParameter(
+                        "Encapsulated pixel data is not supported for transfer syntax \(transferSyntaxInfo.uid)."
+                    )
                 }
                 break
             }
@@ -145,140 +171,405 @@ extension J2KCLI {
         guard pixelDataOffset >= 0 else {
             throw J2KError.invalidParameter("DICOM file missing Pixel Data tag (7FE0,0010)")
         }
-        guard rows > 0 && columns > 0 else {
-            throw J2KError.invalidParameter("DICOM file missing Rows/Columns tags")
-        }
-        if bitsStored == 0 { bitsStored = bitsAllocated }
-        if numberOfFrames > 1 {
-            if let warnData = "Warning: DICOM file has \(numberOfFrames) frames; extracting first frame only.\n".data(using: .utf8) {
-                FileHandle.standardError.write(warnData)
-            }
-        }
 
-        let signed = pixelRepresentation != 0
-        let bytesPerSample = bitsAllocated / 8
+        let effectiveBitsStored = bitsStored == 0 ? bitsAllocated : bitsStored
+        let bytesPerSample = max(1, (bitsAllocated + 7) / 8)
+        let frameCount = max(1, numberOfFrames)
         let frameSize = columns * rows * samplesPerPixel * bytesPerSample
+        let totalPixelBytes = frameSize * frameCount
+        let availablePixelBytes: Int
+        if pixelDataLength == 0xFFFF_FFFF || pixelDataLength <= 0 {
+            availablePixelBytes = data.count - pixelDataOffset
+        } else {
+            availablePixelBytes = min(pixelDataLength, data.count - pixelDataOffset)
+        }
 
-        guard pixelDataOffset + frameSize <= data.count else {
+        guard totalPixelBytes > 0, availablePixelBytes >= totalPixelBytes else {
             throw J2KError.invalidParameter("DICOM pixel data truncated")
         }
 
-        var pixelData = data.subdata(in: pixelDataOffset..<(pixelDataOffset + frameSize))
+        var pixelData = data.subdata(in: pixelDataOffset..<(pixelDataOffset + totalPixelBytes))
 
-        // Byte-swap big-endian 16-bit samples to host order
-        if bigEndian && bytesPerSample == 2 {
+        // Canonicalize multi-byte samples to the CLI's internal big-endian layout.
+        if !bigEndian && bytesPerSample == 2 {
             let sampleCount = pixelData.count / 2
             for i in 0..<sampleCount {
                 pixelData.swapAt(i * 2, i * 2 + 1)
             }
         }
 
-        // De-interleave into component planes
-        let components: [J2KComponent]
-        if samplesPerPixel == 1 {
-            components = [J2KComponent(
-                index: 0,
-                bitDepth: bitsStored,
-                signed: signed,
-                width: columns,
-                height: rows,
-                subsamplingX: 1,
-                subsamplingY: 1,
-                data: pixelData
-            )]
-        } else if planarConfiguration == 1 {
-            // Planar — data is plane-by-plane
-            let planeSize = columns * rows * bytesPerSample
-            var comps: [J2KComponent] = []
-            for s in 0..<samplesPerPixel {
-                let start = s * planeSize
-                let end = min(start + planeSize, pixelData.count)
-                comps.append(J2KComponent(
-                    index: s,
-                    bitDepth: bitsStored,
-                    signed: signed,
-                    width: columns,
-                    height: rows,
-                    subsamplingX: 1,
-                    subsamplingY: 1,
-                    data: pixelData.subdata(in: start..<end)
-                ))
-            }
-            components = comps
+        return try makeDICOMImage(
+            rows: rows,
+            columns: columns,
+            bitsAllocated: bitsAllocated,
+            bitsStored: effectiveBitsStored,
+            pixelRepresentation: pixelRepresentation,
+            samplesPerPixel: samplesPerPixel,
+            photometricInterpretation: photometricInterpretation,
+            planarConfiguration: planarConfiguration,
+            numberOfFrames: numberOfFrames,
+            pixelData: pixelData
+        )
+    }
+
+    // MARK: - Transfer Syntax Parsing
+
+    static func dicomTransferSyntaxInfo(for uid: String) -> DICOMTransferSyntaxInfo {
+        let trimmed = uid.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\0")))
+        let isJPEG2000 = trimmed.hasPrefix("1.2.840.10008.1.2.4.90") || trimmed.hasPrefix("1.2.840.10008.1.2.4.91")
+        let isCompressed = isJPEG2000
+            || trimmed.hasPrefix("1.2.840.10008.1.2.4")
+            || trimmed.hasPrefix("1.2.840.10008.1.2.5")
+
+        let byteOrderSyntax: DICOMTransferSyntax
+        switch trimmed {
+        case "1.2.840.10008.1.2":
+            byteOrderSyntax = .implicitVRLittleEndian
+        case "1.2.840.10008.1.2.2":
+            byteOrderSyntax = .explicitVRBigEndian
+        default:
+            byteOrderSyntax = .explicitVRLittleEndian
+        }
+
+        return DICOMTransferSyntaxInfo(
+            byteOrderSyntax: byteOrderSyntax,
+            uid: trimmed,
+            isCompressed: isCompressed,
+            isJPEG2000: isJPEG2000
+        )
+    }
+
+    private static func loadCompressedDICOM(
+        _ data: Data,
+        transferSyntaxInfo: DICOMTransferSyntaxInfo
+    ) throws -> J2KImage {
+        let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "j2k-dicom-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let inputURL = temporaryDirectory.appendingPathComponent("input.dcm")
+        let metadataURL = temporaryDirectory.appendingPathComponent("metadata.json")
+        let pixelURL = temporaryDirectory.appendingPathComponent("pixels.bin")
+        try data.write(to: inputURL)
+
+        let pythonExecutable = try resolveCompressedDICOMPythonExecutable()
+        let script = """
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pydicom
+
+input_path, metadata_path, pixel_path = sys.argv[1:4]
+ds = pydicom.dcmread(input_path)
+arr = ds.pixel_array
+frames = int(getattr(ds, \"NumberOfFrames\", 1) or 1)
+samples_per_pixel = int(getattr(ds, \"SamplesPerPixel\", 1) or 1)
+arr = np.ascontiguousarray(arr)
+if arr.dtype.itemsize == 2:
+    if arr.dtype.kind == \"u\":
+        arr = arr.astype(\">u2\", copy=False)
+    elif arr.dtype.kind == \"i\":
+        arr = arr.astype(\">i2\", copy=False)
+elif arr.dtype.itemsize == 4:
+    if arr.dtype.kind == \"u\":
+        arr = arr.astype(\">u4\", copy=False)
+    elif arr.dtype.kind == \"i\":
+        arr = arr.astype(\">i4\", copy=False)
+Path(pixel_path).write_bytes(arr.tobytes(order=\"C\"))
+metadata = {
+    \"rows\": int(getattr(ds, \"Rows\", arr.shape[0] if getattr(arr, \"ndim\", 0) >= 1 else 0)),
+    \"columns\": int(getattr(ds, \"Columns\", arr.shape[1] if getattr(arr, \"ndim\", 0) >= 2 else 0)),
+    \"bitsAllocated\": int(getattr(ds, \"BitsAllocated\", arr.dtype.itemsize * 8)),
+    \"bitsStored\": int(getattr(ds, \"BitsStored\", getattr(ds, \"BitsAllocated\", arr.dtype.itemsize * 8))),
+    \"pixelRepresentation\": int(getattr(ds, \"PixelRepresentation\", 0)),
+    \"samplesPerPixel\": samples_per_pixel,
+    \"photometricInterpretation\": str(getattr(ds, \"PhotometricInterpretation\", \"\")),
+    \"planarConfiguration\": 0,
+    \"numberOfFrames\": frames,
+}
+Path(metadata_path).write_text(json.dumps(metadata), encoding=\"utf-8\")
+"""
+
+        let process = Process()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        if pythonExecutable.contains("/") {
+            process.executableURL = URL(fileURLWithPath: pythonExecutable)
+            process.arguments = ["-c", script, inputURL.path, metadataURL.path, pixelURL.path]
         } else {
-            // Interleaved by pixel — de-interleave
-            let pixelCount = columns * rows
-            var planes = Array(repeating: Data(count: pixelCount * bytesPerSample), count: samplesPerPixel)
-            for i in 0..<pixelCount {
-                for s in 0..<samplesPerPixel {
-                    let srcOff = (i * samplesPerPixel + s) * bytesPerSample
-                    let dstOff = i * bytesPerSample
-                    for b in 0..<bytesPerSample {
-                        if srcOff + b < pixelData.count {
-                            planes[s][dstOff + b] = pixelData[srcOff + b]
-                        }
-                    }
-                }
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [pythonExecutable, "-c", script, inputURL.path, metadataURL.path, pixelURL.path]
+        }
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw J2KError.invalidParameter(
+                "Compressed DICOM transfer syntax (\(transferSyntaxInfo.uid)) could not start the Python decompression helper: \(error.localizedDescription)"
+            )
+        }
+
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            let details = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw J2KError.invalidParameter(
+                "Compressed DICOM transfer syntax (\(transferSyntaxInfo.uid)) requires Python decompression support. Install pydicom with JPEG plugins or set J2K_DICOM_PYTHON. \(details)"
+            )
+        }
+
+        struct PythonDecodedDICOMMetadata: Decodable {
+            let rows: Int
+            let columns: Int
+            let bitsAllocated: Int
+            let bitsStored: Int
+            let pixelRepresentation: Int
+            let samplesPerPixel: Int
+            let photometricInterpretation: String
+            let planarConfiguration: Int
+            let numberOfFrames: Int
+        }
+
+        let metadataData = try Data(contentsOf: metadataURL)
+        let metadata = try JSONDecoder().decode(PythonDecodedDICOMMetadata.self, from: metadataData)
+        let pixelData = try Data(contentsOf: pixelURL)
+
+        return try makeDICOMImage(
+            rows: metadata.rows,
+            columns: metadata.columns,
+            bitsAllocated: metadata.bitsAllocated,
+            bitsStored: metadata.bitsStored,
+            pixelRepresentation: metadata.pixelRepresentation,
+            samplesPerPixel: metadata.samplesPerPixel,
+            photometricInterpretation: metadata.photometricInterpretation,
+            planarConfiguration: metadata.planarConfiguration,
+            numberOfFrames: metadata.numberOfFrames,
+            pixelData: pixelData
+        )
+    }
+
+    private static func resolveCompressedDICOMPythonExecutable() throws -> String {
+        let environment = ProcessInfo.processInfo.environment
+        var candidates: [String] = []
+
+        if let explicit = environment["J2K_DICOM_PYTHON"], !explicit.isEmpty {
+            candidates.append(explicit)
+        }
+        if let virtualEnv = environment["VIRTUAL_ENV"], !virtualEnv.isEmpty {
+            candidates.append(URL(fileURLWithPath: virtualEnv).appendingPathComponent("bin/python").path)
+        }
+
+        var searchDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        for _ in 0..<6 {
+            candidates.append(searchDirectory.appendingPathComponent(".venv/bin/python").path)
+            let parent = searchDirectory.deletingLastPathComponent()
+            if parent.path == searchDirectory.path { break }
+            searchDirectory = parent
+        }
+
+        candidates.append(contentsOf: ["/usr/bin/python3", "python3", "python"])
+
+        var seen = Set<String>()
+        for candidate in candidates where seen.insert(candidate).inserted {
+            if pythonEnvironmentSupportsDICOMDecompression(candidate) {
+                return candidate
             }
-            components = planes.enumerated().map { (idx, planeData) in
-                J2KComponent(
-                    index: idx,
-                    bitDepth: bitsStored,
-                    signed: signed,
-                    width: columns,
-                    height: rows,
-                    subsamplingX: 1,
-                    subsamplingY: 1,
-                    data: planeData
+        }
+
+        throw J2KError.invalidParameter(
+            "Compressed DICOM transfer syntaxes require Python with pydicom, numpy, and JPEG plugins. Set J2K_DICOM_PYTHON or use a workspace .venv."
+        )
+    }
+
+    private static func pythonEnvironmentSupportsDICOMDecompression(_ candidate: String) -> Bool {
+        let process = Process()
+        if candidate.contains("/") {
+            guard FileManager.default.isExecutableFile(atPath: candidate) else { return false }
+            process.executableURL = URL(fileURLWithPath: candidate)
+            process.arguments = ["-c", "import pydicom, numpy"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [candidate, "-c", "import pydicom, numpy"]
+        }
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private static func makeDICOMImage(
+        rows: Int,
+        columns: Int,
+        bitsAllocated: Int,
+        bitsStored: Int,
+        pixelRepresentation: Int,
+        samplesPerPixel: Int,
+        photometricInterpretation: String,
+        planarConfiguration: Int,
+        numberOfFrames: Int,
+        pixelData: Data
+    ) throws -> J2KImage {
+        guard rows > 0 && columns > 0 else {
+            throw J2KError.invalidParameter("DICOM file missing Rows/Columns tags")
+        }
+
+        let frameCount = max(1, numberOfFrames)
+        let signed = pixelRepresentation != 0
+        let bytesPerSample = max(1, (bitsAllocated + 7) / 8)
+        let pixelCount = columns * rows
+        let frameByteCount = pixelCount * max(1, samplesPerPixel) * bytesPerSample
+
+        guard frameByteCount > 0, pixelData.count >= frameByteCount * frameCount else {
+            throw J2KError.invalidParameter("DICOM pixel data truncated")
+        }
+
+        let mosaicLayout = dicomFrameMosaicLayout(frameCount: frameCount)
+        let mosaicWidth = columns * mosaicLayout.columns
+        let mosaicHeight = rows * mosaicLayout.rows
+
+        if frameCount > 1,
+           let warnData = "Warning: DICOM file has \(frameCount) frames; composing a \(mosaicLayout.columns)x\(mosaicLayout.rows) mosaic for CLI processing (\(mosaicWidth)x\(mosaicHeight)).\n".data(using: .utf8) {
+            FileHandle.standardError.write(warnData)
+        }
+
+        var mosaicPlanes = Array(
+            repeating: Data(count: mosaicWidth * mosaicHeight * bytesPerSample),
+            count: max(1, samplesPerPixel)
+        )
+
+        for frameIndex in 0..<frameCount {
+            let frameStart = frameIndex * frameByteCount
+            let frameEnd = frameStart + frameByteCount
+            let frameData = pixelData.subdata(in: frameStart..<frameEnd)
+            let framePlanes = splitDICOMFrameIntoPlanes(
+                frameData,
+                samplesPerPixel: max(1, samplesPerPixel),
+                planarConfiguration: planarConfiguration,
+                pixelCount: pixelCount,
+                bytesPerSample: bytesPerSample
+            )
+
+            let tileColumn = frameIndex % mosaicLayout.columns
+            let tileRow = frameIndex / mosaicLayout.columns
+            let destinationX = tileColumn * columns
+            let destinationY = tileRow * rows
+
+            for sampleIndex in 0..<framePlanes.count {
+                copyDICOMFramePlane(
+                    framePlanes[sampleIndex],
+                    into: &mosaicPlanes[sampleIndex],
+                    frameWidth: columns,
+                    frameHeight: rows,
+                    bytesPerSample: bytesPerSample,
+                    mosaicWidth: mosaicWidth,
+                    destinationX: destinationX,
+                    destinationY: destinationY
                 )
             }
         }
 
-        // Map colour space
-        let pi = photometricInterpretation.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let components = mosaicPlanes.enumerated().map { index, planeData in
+            J2KComponent(
+                index: index,
+                bitDepth: bitsStored,
+                signed: signed,
+                width: mosaicWidth,
+                height: mosaicHeight,
+                subsamplingX: 1,
+                subsamplingY: 1,
+                data: planeData
+            )
+        }
+
+        let interpretation = photometricInterpretation.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         let colorSpace: J2KColorSpace
-        switch pi {
-        case "RGB":
-            colorSpace = .sRGB
-        case "YBR_FULL", "YBR_FULL_422":
-            // TODO: Convert YBR to RGB
+        switch interpretation {
+        case "RGB", "YBR_FULL", "YBR_FULL_422":
             colorSpace = .sRGB
         default:
             colorSpace = .grayscale
         }
 
         return J2KImage(
-            width: columns,
-            height: rows,
+            width: mosaicWidth,
+            height: mosaicHeight,
             components: components,
             colorSpace: colorSpace
         )
     }
 
-    // MARK: - Transfer Syntax Parsing
+    private static func dicomFrameMosaicLayout(frameCount: Int) -> (columns: Int, rows: Int) {
+        guard frameCount > 1 else { return (1, 1) }
 
-    private static func parseDICOMTransferSyntax(_ uid: String) throws -> DICOMTransferSyntax {
-        let trimmed = uid.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(["\0"])))
-        switch trimmed {
-        case "1.2.840.10008.1.2":
-            return .implicitVRLittleEndian
-        case "1.2.840.10008.1.2.1":
-            return .explicitVRLittleEndian
-        case "1.2.840.10008.1.2.2":
-            return .explicitVRBigEndian
-        default:
-            // Check for JPEG 2000 transfer syntaxes
-            if trimmed.hasPrefix("1.2.840.10008.1.2.4.90") || trimmed.hasPrefix("1.2.840.10008.1.2.4.91") {
-                throw J2KError.invalidParameter(
-                    "Input is already JPEG 2000 compressed (TS: \(trimmed)). Use `j2k decode` instead.")
+        let mosaicColumns = max(1, Int(ceil(sqrt(Double(frameCount)))))
+        let mosaicRows = max(1, (frameCount + mosaicColumns - 1) / mosaicColumns)
+        return (mosaicColumns, mosaicRows)
+    }
+
+    private static func splitDICOMFrameIntoPlanes(
+        _ frameData: Data,
+        samplesPerPixel: Int,
+        planarConfiguration: Int,
+        pixelCount: Int,
+        bytesPerSample: Int
+    ) -> [Data] {
+        if samplesPerPixel == 1 {
+            return [frameData]
+        }
+
+        if planarConfiguration == 1 {
+            let planeSize = pixelCount * bytesPerSample
+            return (0..<samplesPerPixel).map { sampleIndex in
+                let start = sampleIndex * planeSize
+                let end = min(start + planeSize, frameData.count)
+                return frameData.subdata(in: start..<end)
             }
-            // Other compressed transfer syntaxes
-            if trimmed.hasPrefix("1.2.840.10008.1.2.4") || trimmed.hasPrefix("1.2.840.10008.1.2.5") {
-                throw J2KError.invalidParameter(
-                    "Compressed DICOM transfer syntax (\(trimmed)) is not supported. Only uncompressed DICOM files can be read.")
+        }
+
+        var planes = Array(repeating: Data(count: pixelCount * bytesPerSample), count: samplesPerPixel)
+        for pixelIndex in 0..<pixelCount {
+            for sampleIndex in 0..<samplesPerPixel {
+                let sourceOffset = (pixelIndex * samplesPerPixel + sampleIndex) * bytesPerSample
+                let destinationOffset = pixelIndex * bytesPerSample
+                for byteIndex in 0..<bytesPerSample where sourceOffset + byteIndex < frameData.count {
+                    planes[sampleIndex][destinationOffset + byteIndex] = frameData[sourceOffset + byteIndex]
+                }
             }
-            // Unknown — try as explicit VR LE
-            return .explicitVRLittleEndian
+        }
+        return planes
+    }
+
+    private static func copyDICOMFramePlane(
+        _ framePlane: Data,
+        into destinationPlane: inout Data,
+        frameWidth: Int,
+        frameHeight: Int,
+        bytesPerSample: Int,
+        mosaicWidth: Int,
+        destinationX: Int,
+        destinationY: Int
+    ) {
+        let sourceRowByteCount = frameWidth * bytesPerSample
+        for row in 0..<frameHeight {
+            let sourceStart = row * sourceRowByteCount
+            let sourceEnd = min(sourceStart + sourceRowByteCount, framePlane.count)
+            let destinationStart = ((destinationY + row) * mosaicWidth + destinationX) * bytesPerSample
+            var writeIndex = destinationStart
+            for byte in framePlane[sourceStart..<sourceEnd] where writeIndex < destinationPlane.count {
+                destinationPlane[writeIndex] = byte
+                writeIndex += 1
+            }
         }
     }
 

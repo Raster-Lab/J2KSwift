@@ -100,7 +100,7 @@ let package = Package(
             dependencies: ["JPIP", "J2KCodec"]),
         .testTarget(
             name: "J2KCLITests",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KCore", "J2KCLI"]),
         .testTarget(
             name: "JP3DTests",
             dependencies: ["J2K3D", "J2KCore", "JPIP"]),

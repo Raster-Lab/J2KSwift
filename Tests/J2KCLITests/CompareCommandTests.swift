@@ -5,6 +5,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
+@testable import J2KCLI
 
 /// Tests for the compare command: PSNR, MSE, MAE, MaxError, bit-exact comparison.
 final class CompareCommandTests: XCTestCase {
@@ -82,6 +83,79 @@ final class CompareCommandTests: XCTestCase {
         let ref: [UInt8] = [10, 20, 30, 40, 50]
         let dist: [UInt8] = [10, 20, 31, 40, 50]
         XCTAssertFalse(ref == dist)
+    }
+
+    func testCompareJSONHandlesInfinitePSNR() throws {
+        let data = Data([10, 20, 30, 40])
+
+        let original = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 2,
+            height: 2,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: data
+        )
+        let reconstructed = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 2,
+            height: 2,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: data
+        )
+
+        let metrics = J2KCLI.computeComponentMetrics(original: original, reconstructed: reconstructed)
+        XCTAssertTrue(metrics.psnr.isInfinite)
+
+        let payload: [String: Any] = [
+            "overall": [
+                "psnr": J2KCLI.jsonCompatibleMetricValue(metrics.psnr),
+                "mse": metrics.mse,
+                "mae": metrics.mae,
+                "maxError": metrics.maxError,
+                "bitExact": metrics.bitExact
+            ]
+        ]
+
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: payload, options: []))
+    }
+
+    func testComputeComponentMetricsHandlesSlicedData() {
+        let backing = Data([255, 254, 10, 20, 30, 40, 50])
+        let sliced = backing[2..<7]
+
+        let original = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 5,
+            height: 1,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: sliced
+        )
+        let reconstructed = J2KComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: 5,
+            height: 1,
+            subsamplingX: 1,
+            subsamplingY: 1,
+            data: sliced
+        )
+
+        let metrics = J2KCLI.computeComponentMetrics(original: original, reconstructed: reconstructed)
+        XCTAssertTrue(metrics.bitExact)
+        XCTAssertEqual(metrics.mse, 0, accuracy: 1e-12)
+        XCTAssertEqual(metrics.mae, 0, accuracy: 1e-12)
+        XCTAssertEqual(metrics.maxError, 0)
+        XCTAssertTrue(metrics.psnr.isInfinite)
     }
 
     // MARK: - Helpers

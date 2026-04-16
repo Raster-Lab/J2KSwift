@@ -50,7 +50,7 @@ extension J2KCLI {
         let decoder = J2KDecoder()
         let image: J2KImage
         do {
-            image = try decoder.decode(codestreamData)
+            image = try await decoder.decode(codestreamData)
         } catch {
             if validateOnly {
                 let msg = "Validation FAILED: \(error.localizedDescription)"

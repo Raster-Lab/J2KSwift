@@ -7,19 +7,19 @@ import Foundation
 /// can parse without errors.
 final class J2KRoundTripValidationTest: XCTestCase {
 
-    func testDecodeOpenJPEGRef() throws {
+    func testDecodeOpenJPEGRef() async throws {
         let url = URL(fileURLWithPath: "/tmp/ref_gradient8_lossless.j2k")
         guard FileManager.default.fileExists(atPath: url.path) else {
             print("SKIP: no ref file")
             return
         }
         let data = try Data(contentsOf: url)
-        let decoded = try DecoderPipeline().decode(data)
+        let decoded = try await DecoderPipeline().decode(data)
         let decData = decoded.components[0].data
         print("OPJ ref decoded: \(Array(decData))")
     }
 
-    func testEBCOTDirectRoundTrip() throws {
+    func testEBCOTDirectRoundTrip() async throws {
         // Test BitPlaneCoder directly — bypass the full pipeline
         let w = 4, h = 4
         let coefficients: [Int32] = [
@@ -32,19 +32,19 @@ final class J2KRoundTripValidationTest: XCTestCase {
 
         let options = CodingOptions()
         let encoder = BitPlaneCoder(width: w, height: h, subband: .ll, options: options)
-        let (data, passCount, zeroBitPlanes, segLengths, _, _, _, _, _) = try encoder.encode(
+        let (data, passCount, zeroBitPlanes, segLengths, _, _, _, _, _) = try await encoder.encode(
             coefficients: coefficients, bitDepth: bitDepth)
         print("[EBCOT_RT] encoded: \(data.count) bytes, passes=\(passCount), zbp=\(zeroBitPlanes)")
 
         let decoder = BitPlaneDecoder(width: w, height: h, subband: .ll, options: options)
-        let decoded = try decoder.decode(
+        let decoded = try await decoder.decode(
             data: data, passCount: passCount, bitDepth: bitDepth,
             zeroBitPlanes: zeroBitPlanes, passSegmentLengths: segLengths)
         print("[EBCOT_RT] decoded: \(decoded)")
         XCTAssertEqual(decoded, coefficients, "Direct EBCOT round-trip failed")
     }
 
-    func testConstantImageOpenJPEG() throws {
+    func testConstantImageOpenJPEG() async throws {
         // Test: all pixels = 128 → level shift = 0 → trivial encoding
         let width = 8, height = 8
         var bytes = Data(repeating: 128, count: width * height)
@@ -53,7 +53,7 @@ final class J2KRoundTripValidationTest: XCTestCase {
         let image = J2KImage(width: width, height: height, components: [comp])
         let config = J2KEncodingConfiguration(quality: 1.0, lossless: true,
             decompositionLevels: 0, codeBlockSize: (width: 32, height: 32))
-        let encoded = try EncoderPipeline(config: config).encode(image)
+        let encoded = try await EncoderPipeline(config: config).encode(image)
         try encoded.write(to: URL(fileURLWithPath: "/tmp/test_const128.j2k"))
         print("Const128: \(encoded.count) bytes")
         
@@ -62,7 +62,7 @@ final class J2KRoundTripValidationTest: XCTestCase {
         let comp2 = J2KComponent(index: 0, bitDepth: 8, signed: false,
             width: width, height: height, data: bytes)
         let image2 = J2KImage(width: width, height: height, components: [comp2])
-        let encoded2 = try EncoderPipeline(config: config).encode(image2)
+        let encoded2 = try await EncoderPipeline(config: config).encode(image2)
         try encoded2.write(to: URL(fileURLWithPath: "/tmp/test_const200.j2k"))
         print("Const200: \(encoded2.count) bytes")
     }
@@ -84,7 +84,7 @@ final class J2KRoundTripValidationTest: XCTestCase {
         return J2KImage(width: width, height: height, components: comps)
     }
 
-    func testLossyRoundTrip64x64() throws {
+    func testLossyRoundTrip64x64() async throws {
         let image = makeTestImage(width: 64, height: 64, components: 3)
 
         let config = J2KEncodingConfiguration(
@@ -92,20 +92,20 @@ final class J2KRoundTripValidationTest: XCTestCase {
             decompositionLevels: 3,
             codeBlockSize: (width: 32, height: 32)
         )
-        let encoded = try EncoderPipeline(config: config).encode(image)
+        let encoded = try await EncoderPipeline(config: config).encode(image)
 
         XCTAssertEqual(encoded[0], 0xFF)
         XCTAssertEqual(encoded[1], 0x4F)
         XCTAssertEqual(encoded[encoded.count - 2], 0xFF)
         XCTAssertEqual(encoded[encoded.count - 1], 0xD9)
 
-        let decoded = try DecoderPipeline().decode(encoded)
+        let decoded = try await DecoderPipeline().decode(encoded)
         XCTAssertEqual(decoded.width, 64)
         XCTAssertEqual(decoded.height, 64)
         XCTAssertEqual(decoded.components.count, 3)
     }
 
-    func testLosslessRoundTrip32x32() throws {
+    func testLosslessRoundTrip32x32() async throws {
         let width = 8, height = 8
         // Simple gradient to test MQ coding: values 10, 20, ..., 80, 10, 20, ...
         var bytes = Data(count: width * height)
@@ -117,11 +117,11 @@ final class J2KRoundTripValidationTest: XCTestCase {
         let image = J2KImage(width: width, height: height, components: [comp])
         let config = J2KEncodingConfiguration(quality: 1.0, lossless: true,
             decompositionLevels: 0, codeBlockSize: (width: 32, height: 32))
-        let encoded = try EncoderPipeline(config: config).encode(image)
+        let encoded = try await EncoderPipeline(config: config).encode(image)
         print("Encoded size: \(encoded.count) bytes (0-level DWT)")
         // Write to file for OpenJPEG testing
         try encoded.write(to: URL(fileURLWithPath: "/tmp/test_gradient8.j2k"))
-        let decoded = try DecoderPipeline().decode(encoded)
+        let decoded = try await DecoderPipeline().decode(encoded)
         let decData = decoded.components[0].data
         print("Orig first 8: \(Array(bytes.prefix(8)))")
         print("Dec  first 8: \(Array(decData.prefix(8)))")
@@ -134,7 +134,7 @@ final class J2KRoundTripValidationTest: XCTestCase {
         XCTAssertEqual(maxErr, 0, "Lossless 0-level DWT: max error \(maxErr)")
     }
 
-    func testLossyRoundTrip512x512() throws {
+    func testLossyRoundTrip512x512() async throws {
         let image = makeTestImage(width: 512, height: 512, components: 3)
 
         let config = J2KEncodingConfiguration(
@@ -142,11 +142,11 @@ final class J2KRoundTripValidationTest: XCTestCase {
             decompositionLevels: 5,
             codeBlockSize: (width: 32, height: 32)
         )
-        let encoded = try EncoderPipeline(config: config).encode(image)
+        let encoded = try await EncoderPipeline(config: config).encode(image)
         XCTAssertEqual(encoded[0], 0xFF)
         XCTAssertEqual(encoded[1], 0x4F)
 
-        let decoded = try DecoderPipeline().decode(encoded)
+        let decoded = try await DecoderPipeline().decode(encoded)
         XCTAssertEqual(decoded.width, 512)
         XCTAssertEqual(decoded.height, 512)
         XCTAssertEqual(decoded.components.count, 3)

@@ -250,14 +250,14 @@ final class J2KPart2ConformanceTests: XCTestCase {
 
     // MARK: - Encoder Pipeline Integration Tests
 
-    func testEncoderProducesPart1SIZForDefault() throws {
+    func testEncoderProducesPart1SIZForDefault() async throws {
         let config = J2KEncodingConfiguration(
             quality: 0.9, lossless: false, decompositionLevels: 2
         )
         let encoder = J2KEncoder(encodingConfiguration: config)
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
 
-        let data = try encoder.encode(image)
+        let data = try await encoder.encode(image)
 
         // Verify SOC marker
         XCTAssertEqual(data[0], 0xFF)
@@ -278,7 +278,7 @@ final class J2KPart2ConformanceTests: XCTestCase {
         XCTAssertEqual(rsiz, 0x0000)
     }
 
-    func testEncoderProducesPart2SIZForDCOffset() throws {
+    func testEncoderProducesPart2SIZForDCOffset() async throws {
         let config = J2KEncodingConfiguration(
             quality: 0.9, lossless: false, decompositionLevels: 2,
             dcOffsetConfiguration: .naturalImage
@@ -286,7 +286,7 @@ final class J2KPart2ConformanceTests: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
 
-        let data = try encoder.encode(image)
+        let data = try await encoder.encode(image)
 
         // Rsiz is first 2 bytes of SIZ segment content (after SOC + SIZ marker + length)
         let rsiz = UInt16(data[6]) << 8 | UInt16(data[7])
@@ -296,7 +296,7 @@ final class J2KPart2ConformanceTests: XCTestCase {
         XCTAssertTrue((rsiz & J2KPart2Capabilities.dcOffsetBit) != 0)
     }
 
-    func testEncoderProducesHTJ2KRsiz() throws {
+    func testEncoderProducesHTJ2KRsiz() async throws {
         let config = J2KEncodingConfiguration(
             quality: 0.9, lossless: false, decompositionLevels: 2,
             useHTJ2K: true
@@ -304,7 +304,7 @@ final class J2KPart2ConformanceTests: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
 
-        let data = try encoder.encode(image)
+        let data = try await encoder.encode(image)
 
         // Rsiz is first 2 bytes of SIZ segment content
         let rsiz = UInt16(data[6]) << 8 | UInt16(data[7])

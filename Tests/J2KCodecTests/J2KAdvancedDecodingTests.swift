@@ -649,17 +649,22 @@ final class J2KAdvancedDecodingTests: XCTestCase {
         }
     }
 
-    func testDecodeRegionDirectThrowsNotImplemented() {
+    func testDecodeRegionDirectThrowsNotImplemented() async {
         let decoder = J2KDecoder()
         let data = Data()
         let region = J2KRegion(x: 0, y: 0, width: 100, height: 100)
         let options = J2KROIDecodingOptions(region: region, strategy: .direct)
 
-        XCTAssertThrowsError(try decoder.decodeRegion(data, options: options)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected notImplemented error")
+        do {
+            _ = try await decoder.decodeRegion(data, options: options)
+            XCTFail("Expected notImplemented error")
+        } catch let error as J2KError {
+            guard case .notImplemented = error else {
+                XCTFail("Expected notImplemented error, got \(error)")
                 return
             }
+        } catch {
+            XCTFail("Expected J2KError.notImplemented, got \(error)")
         }
     }
 

@@ -13,7 +13,7 @@ import Foundation
 /// These tests verify that the file writer API works correctly.
 final class J2KFileFormatPlaceholderAPITests: XCTestCase {
     /// Tests that `J2KFileWriter.write()` successfully writes a JP2 file.
-    func testFileWriterWriteJP2Format() throws {
+    func testFileWriterWriteJP2Format() async throws {
         let writer = J2KFileWriter()
         let image = J2KImage(width: 8, height: 8, components: 1, bitDepth: 8)
 
@@ -23,14 +23,14 @@ final class J2KFileFormatPlaceholderAPITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         // Should succeed without throwing
-        XCTAssertNoThrow(try writer.write(image, to: tempURL))
+        try await writer.write(image, to: tempURL)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path))
     }
 
     /// Tests that `J2KFileWriter.write()` with J2K format successfully writes a codestream.
-    func testFileWriterWriteJ2KFormat() throws {
+    func testFileWriterWriteJ2KFormat() async throws {
         let writer = J2KFileWriter(format: .j2k)
         let image = J2KImage(width: 16, height: 16, components: 3, bitDepth: 8)
 
@@ -40,7 +40,7 @@ final class J2KFileFormatPlaceholderAPITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         // Should succeed without throwing
-        XCTAssertNoThrow(try writer.write(image, to: tempURL))
+        try await writer.write(image, to: tempURL)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path))

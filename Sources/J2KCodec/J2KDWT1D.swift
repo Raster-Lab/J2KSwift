@@ -45,6 +45,14 @@ import J2KCore
 /// )
 /// ```
 public struct J2KDWT1D: Sendable {
+    @inline(__always)
+    private static func saturatingInt32(_ value: Double) -> Int32 {
+        let rounded = value.rounded()
+        if rounded.isNaN { return 0 }
+        if rounded >= Double(Int32.max) { return Int32.max }
+        if rounded <= Double(Int32.min) { return Int32.min }
+        return Int32(rounded)
+    }
     // MARK: - Filter Types
 
     /// Lifting step specification for custom filters.
@@ -213,8 +221,8 @@ public struct J2KDWT1D: Sendable {
             let (lowDouble, highDouble) = try forwardTransform97(
                 signal: doubleSignal,
                 boundaryExtension: boundaryExtension)
-            let lowpass = lowDouble.map { Int32($0.rounded()) }
-            let highpass = highDouble.map { Int32($0.rounded()) }
+            let lowpass = lowDouble.map { saturatingInt32($0) }
+            let highpass = highDouble.map { saturatingInt32($0) }
             return (lowpass: lowpass, highpass: highpass)
         case .custom(let customFilter):
             // Convert Int32 to Double, apply custom filter, then round back to Int32
@@ -224,8 +232,8 @@ public struct J2KDWT1D: Sendable {
                 filter: customFilter,
                 boundaryExtension: boundaryExtension
             )
-            let lowpass = lowDouble.map { Int32($0.rounded()) }
-            let highpass = highDouble.map { Int32($0.rounded()) }
+            let lowpass = lowDouble.map { saturatingInt32($0) }
+            let highpass = highDouble.map { saturatingInt32($0) }
             return (lowpass: lowpass, highpass: highpass)
         }
     }
@@ -252,7 +260,7 @@ public struct J2KDWT1D: Sendable {
 
         switch filter {
         case .reversible53:
-            let int32Signal = signal.map { Int32($0.rounded()) }
+            let int32Signal = signal.map { saturatingInt32($0) }
             let (low, high) = try forwardTransform53(signal: int32Signal, boundaryExtension: boundaryExtension)
             return (lowpass: low.map { Double($0) }, highpass: high.map { Double($0) })
         case .irreversible97:
@@ -319,7 +327,7 @@ public struct J2KDWT1D: Sendable {
             let resultDouble = try inverseTransform97(
                 lowpass: lowDouble, highpass: highDouble,
                 boundaryExtension: boundaryExtension)
-            return resultDouble.map { Int32($0.rounded()) }
+            return resultDouble.map { saturatingInt32($0) }
         case .custom(let customFilter):
             // Convert Int32 to Double, apply inverse custom filter, then round back to Int32
             let lowDouble = lowpass.map { Double($0) }
@@ -330,7 +338,7 @@ public struct J2KDWT1D: Sendable {
                 filter: customFilter,
                 boundaryExtension: boundaryExtension
             )
-            return resultDouble.map { Int32($0.rounded()) }
+            return resultDouble.map { saturatingInt32($0) }
         }
     }
 

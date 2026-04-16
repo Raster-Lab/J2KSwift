@@ -93,9 +93,9 @@ public struct J2KEncoder: Sendable {
     /// - Returns: The encoded JPEG 2000 codestream data.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if the image is invalid.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
-    public func encode(_ image: J2KImage) throws -> Data {
+    public func encode(_ image: J2KImage) async throws -> Data {
         let pipeline = EncoderPipeline(config: encodingConfiguration)
-        return try pipeline.encode(image)
+        return try await pipeline.encode(image)
     }
 
     /// Encodes an image to JPEG 2000 format with progress reporting.
@@ -108,9 +108,9 @@ public struct J2KEncoder: Sendable {
     public func encode(
         _ image: J2KImage,
         progress: ((EncoderProgressUpdate) -> Void)?
-    ) throws -> Data {
+    ) async throws -> Data {
         let pipeline = EncoderPipeline(config: encodingConfiguration)
-        return try pipeline.encode(image, progress: progress)
+        return try await pipeline.encode(image, progress: progress)
     }
 
     /// Encodes an image to JPEG 2000 format with GPU acceleration.
@@ -182,9 +182,9 @@ public struct J2KDecoder: Sendable {
     /// - Returns: The decoded image.
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if the codestream is malformed.
-    public func decode(_ data: Data) throws -> J2KImage {
+    public func decode(_ data: Data) async throws -> J2KImage {
         let pipeline = DecoderPipeline()
-        return try pipeline.decode(data)
+        return try await pipeline.decode(data)
     }
 
     /// Decodes JPEG 2000 data into an image with progress reporting.
@@ -197,9 +197,9 @@ public struct J2KDecoder: Sendable {
     public func decode(
         _ data: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
-    ) throws -> J2KImage {
+    ) async throws -> J2KImage {
         let pipeline = DecoderPipeline()
-        return try pipeline.decode(data, progress: progress)
+        return try await pipeline.decode(data, progress: progress)
     }
 
     /// Decodes JPEG 2000 data into an image with GPU acceleration.

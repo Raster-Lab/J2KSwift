@@ -189,7 +189,7 @@ extension J2KCLI {
                     if mode == .gpu || mode == .gpuHtj2k {
                         encodedData = try await encoder.encodeGPU(image)
                     } else {
-                        encodedData = try encoder.encode(image)
+                        encodedData = try await encoder.encode(image)
                     }
                 }
                 guard let dataToUse = encodedData else {
@@ -315,7 +315,7 @@ extension J2KCLI {
             if useGPU {
                 _ = try await encoder.encodeGPU(image)
             } else {
-                _ = try encoder.encode(image)
+                _ = try await encoder.encode(image)
             }
         }
 
@@ -329,7 +329,7 @@ extension J2KCLI {
             if useGPU {
                 data = try await encoder.encodeGPU(image)
             } else {
-                data = try encoder.encode(image)
+                data = try await encoder.encode(image)
             }
             let elapsed = Date().timeIntervalSince(start)
             encodeTimes.append(elapsed)
@@ -379,7 +379,7 @@ extension J2KCLI {
             if useGPU {
                 _ = try await decoder.decodeGPU(data)
             } else {
-                _ = try decoder.decode(data)
+                _ = try await decoder.decode(data)
             }
         }
 
@@ -391,7 +391,7 @@ extension J2KCLI {
             if useGPU {
                 _ = try await decoder.decodeGPU(data)
             } else {
-                _ = try decoder.decode(data)
+                _ = try await decoder.decode(data)
             }
             let elapsed = Date().timeIntervalSince(start)
             decodeTimes.append(elapsed)

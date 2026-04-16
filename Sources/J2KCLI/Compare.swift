@@ -32,7 +32,6 @@ extension J2KCLI {
         let jsonOutput = options["json"] != nil
         let quiet = options["quiet"] != nil
         let bitExact = options["bit-exact"] != nil
-        let mode = options["mode"] ?? "2d"
 
         // Load images
         let originalImage: J2KImage
@@ -46,7 +45,7 @@ extension J2KCLI {
         if j2kExts.contains(origExt) {
             let data = try Data(contentsOf: URL(fileURLWithPath: originalPath))
             let decoder = J2KDecoder()
-            originalImage = try decoder.decode(data)
+            originalImage = try await decoder.decode(data)
         } else {
             originalImage = try loadImage(from: originalPath)
         }
@@ -54,7 +53,7 @@ extension J2KCLI {
         if j2kExts.contains(recoExt) {
             let data = try Data(contentsOf: URL(fileURLWithPath: reconstructedPath))
             let decoder = J2KDecoder()
-            reconstructedImage = try decoder.decode(data)
+            reconstructedImage = try await decoder.decode(data)
         } else {
             reconstructedImage = try loadImage(from: reconstructedPath)
         }
@@ -83,7 +82,7 @@ extension J2KCLI {
 
             componentMetrics.append([
                 "component": ci,
-                "psnr": metrics.psnr,
+                "psnr": jsonCompatibleMetricValue(metrics.psnr),
                 "mse": metrics.mse,
                 "mae": metrics.mae,
                 "maxError": metrics.maxError,
@@ -111,7 +110,7 @@ extension J2KCLI {
                 "height": originalImage.height,
                 "components": originalImage.componentCount,
                 "overall": [
-                    "psnr": overallPSNR.isInfinite ? "Inf" : String(format: "%.4f", overallPSNR),
+                    "psnr": jsonCompatibleMetricValue(overallPSNR),
                     "mse": overallMSE,
                     "mae": overallMAE,
                     "maxError": overallMaxError,
@@ -167,46 +166,59 @@ extension J2KCLI {
         let bitExact: Bool
     }
 
+    static func jsonCompatibleMetricValue(_ value: Double) -> Any {
+        if value.isNaN { return "NaN" }
+        if value == .infinity { return "Inf" }
+        if value == -.infinity { return "-Inf" }
+        return value
+    }
+
     static func computeComponentMetrics(original: J2KComponent, reconstructed: J2KComponent) -> ComponentMetrics {
         let pixelCount = original.width * original.height
         guard pixelCount > 0 else {
             return ComponentMetrics(psnr: .infinity, mse: 0, mae: 0, maxError: 0, bitExact: true)
         }
 
-        let bytesPerSample = original.bitDepth <= 8 ? 1 : 2
+        let bytesPerSample = max(original.bitDepth, reconstructed.bitDepth) <= 8 ? 1 : 2
         var sumSqError: Double = 0
         var sumAbsError: Double = 0
         var maxErr = 0
         var exact = true
 
-        for i in 0..<pixelCount {
-            let origVal: Int
-            let recoVal: Int
+        original.data.withUnsafeBytes { originalRawBuffer in
+            reconstructed.data.withUnsafeBytes { reconstructedRawBuffer in
+                let originalBytes = originalRawBuffer.bindMemory(to: UInt8.self)
+                let reconstructedBytes = reconstructedRawBuffer.bindMemory(to: UInt8.self)
 
-            if bytesPerSample == 1 {
-                let idx = i
-                origVal = idx < original.data.count ? Int(original.data[idx]) : 0
-                recoVal = idx < reconstructed.data.count ? Int(reconstructed.data[idx]) : 0
-            } else {
-                let idx = i * 2
-                if idx + 1 < original.data.count {
-                    origVal = Int(original.data[idx]) | (Int(original.data[idx + 1]) << 8)
-                } else {
-                    origVal = 0
-                }
-                if idx + 1 < reconstructed.data.count {
-                    recoVal = Int(reconstructed.data[idx]) | (Int(reconstructed.data[idx + 1]) << 8)
-                } else {
-                    recoVal = 0
+                for i in 0..<pixelCount {
+                    let origVal: Int
+                    let recoVal: Int
+
+                    if bytesPerSample == 1 {
+                        origVal = i < originalBytes.count ? Int(originalBytes[i]) : 0
+                        recoVal = i < reconstructedBytes.count ? Int(reconstructedBytes[i]) : 0
+                    } else {
+                        let idx = i * 2
+                        if idx + 1 < originalBytes.count {
+                            origVal = (Int(originalBytes[idx]) << 8) | Int(originalBytes[idx + 1])
+                        } else {
+                            origVal = 0
+                        }
+                        if idx + 1 < reconstructedBytes.count {
+                            recoVal = (Int(reconstructedBytes[idx]) << 8) | Int(reconstructedBytes[idx + 1])
+                        } else {
+                            recoVal = 0
+                        }
+                    }
+
+                    let diff = origVal - recoVal
+                    let absDiff = abs(diff)
+                    sumSqError += Double(diff * diff)
+                    sumAbsError += Double(absDiff)
+                    if absDiff > maxErr { maxErr = absDiff }
+                    if diff != 0 { exact = false }
                 }
             }
-
-            let diff = origVal - recoVal
-            let absDiff = abs(diff)
-            sumSqError += Double(diff * diff)
-            sumAbsError += Double(absDiff)
-            if absDiff > maxErr { maxErr = absDiff }
-            if diff != 0 { exact = false }
         }
 
         let mse = sumSqError / Double(pixelCount)

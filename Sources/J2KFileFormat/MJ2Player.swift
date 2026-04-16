@@ -644,7 +644,7 @@ public actor MJ2Player {
 
         // Decode
         do {
-            return try decoder.decode(frameData)
+            return try await decoder.decode(frameData)
         } catch {
             throw MJ2PlaybackError.decodeFailed(frameIndex: index, error: error)
         }

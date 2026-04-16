@@ -333,11 +333,11 @@ final class J2KTranscoderTests: XCTestCase {
 
     // MARK: - Coefficient Round-Trip Tests
 
-    func testCoefficientRoundTripLegacyToHT() throws {
+    func testCoefficientRoundTripLegacyToHT() async throws {
         // Create a valid encoded JPEG 2000 codestream using the encoder
         let encoder = J2KEncoder()
         let image = createTestImage(width: 32, height: 32, components: 1, bitDepth: 8)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         // Extract coefficients
         let transcoder = J2KTranscoder()
@@ -354,12 +354,12 @@ final class J2KTranscoderTests: XCTestCase {
         XCTAssertNoThrow(try coefficients.validate())
     }
 
-    func testCoefficientRoundTripHTToLegacy() throws {
+    func testCoefficientRoundTripHTToLegacy() async throws {
         // Create an HTJ2K encoded codestream
         let config = J2KEncodingConfiguration(useHTJ2K: true)
         let encoder = J2KEncoder(encodingConfiguration: config)
         let image = createTestImage(width: 32, height: 32, components: 1, bitDepth: 8)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         // Extract coefficients
         let transcoder = J2KTranscoder()
@@ -473,15 +473,15 @@ final class J2KTranscoderTests: XCTestCase {
 
     // MARK: - Full Transcoding Pipeline Tests
 
-    func testTranscodeLegacyToHT() throws {
+    func testTranscodeLegacyToHT() async throws {
         // Create a legacy JPEG 2000 codestream
         let encoder = J2KEncoder()
         let image = createTestImage(width: 32, height: 32, components: 1, bitDepth: 8)
-        let legacyData = try encoder.encode(image)
+        let legacyData = try await encoder.encode(image)
 
         // Transcode to HTJ2K
         let transcoder = J2KTranscoder()
-        let result = try transcoder.transcode(legacyData, direction: .legacyToHT)
+        let result = try await transcoder.transcode(legacyData, direction: .legacyToHT)
 
         XCTAssertGreaterThan(result.data.count, 0)
         XCTAssertEqual(result.direction, .legacyToHT)
@@ -491,16 +491,16 @@ final class J2KTranscoderTests: XCTestCase {
         XCTAssertTrue(result.metadataPreserved)
     }
 
-    func testTranscodeHTToLegacy() throws {
+    func testTranscodeHTToLegacy() async throws {
         // Create an HTJ2K codestream
         let config = J2KEncodingConfiguration(useHTJ2K: true)
         let encoder = J2KEncoder(encodingConfiguration: config)
         let image = createTestImage(width: 32, height: 32, components: 1, bitDepth: 8)
-        let htData = try encoder.encode(image)
+        let htData = try await encoder.encode(image)
 
         // Transcode to legacy
         let transcoder = J2KTranscoder()
-        let result = try transcoder.transcode(htData, direction: .htToLegacy)
+        let result = try await transcoder.transcode(htData, direction: .htToLegacy)
 
         XCTAssertGreaterThan(result.data.count, 0)
         XCTAssertEqual(result.direction, .htToLegacy)
@@ -508,16 +508,16 @@ final class J2KTranscoderTests: XCTestCase {
         XCTAssertTrue(result.metadataPreserved)
     }
 
-    func testTranscodeWithProgressReporting() throws {
+    func testTranscodeWithProgressReporting() async throws {
         let encoder = J2KEncoder()
         let image = createTestImage(width: 32, height: 32, components: 1, bitDepth: 8)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         let transcoder = J2KTranscoder()
 
         // Use atomic counter instead of array to avoid Swift 6 concurrency issues
         nonisolated(unsafe) var progressCallCount = 0
-        let result = try transcoder.transcode(
+        let result = try await transcoder.transcode(
             codestreamData,
             direction: .legacyToHT
         ) { _ in
@@ -530,10 +530,10 @@ final class J2KTranscoderTests: XCTestCase {
 
     // MARK: - Metadata Preservation Tests
 
-    func testMetadataPreservationDimensions() throws {
+    func testMetadataPreservationDimensions() async throws {
         let encoder = J2KEncoder()
         let image = createTestImage(width: 48, height: 32, components: 1, bitDepth: 8)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         let transcoder = J2KTranscoder()
         let coefficients = try transcoder.extractCoefficients(from: codestreamData)
@@ -543,10 +543,10 @@ final class J2KTranscoderTests: XCTestCase {
         XCTAssertEqual(coefficients.componentCount, 1)
     }
 
-    func testMetadataPreservationMultiComponent() throws {
+    func testMetadataPreservationMultiComponent() async throws {
         let encoder = J2KEncoder()
         let image = createTestImage(width: 32, height: 32, components: 3, bitDepth: 8)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         let transcoder = J2KTranscoder()
         let coefficients = try transcoder.extractCoefficients(from: codestreamData)
@@ -558,15 +558,25 @@ final class J2KTranscoderTests: XCTestCase {
 
     // MARK: - Edge Cases
 
-    func testTranscodeEmptyInput() throws {
+    func testTranscodeEmptyInput() async throws {
         let transcoder = J2KTranscoder()
-        XCTAssertThrowsError(try transcoder.transcode(Data(), direction: .legacyToHT))
+        do {
+            _ = try await transcoder.transcode(Data(), direction: .legacyToHT)
+            XCTFail("Expected transcode to throw for empty input")
+        } catch {
+            XCTAssertNotNil(error)
+        }
     }
 
-    func testTranscodeInvalidInput() throws {
+    func testTranscodeInvalidInput() async throws {
         let transcoder = J2KTranscoder()
         let invalidData = Data([0x00, 0x01, 0x02, 0x03])
-        XCTAssertThrowsError(try transcoder.transcode(invalidData, direction: .legacyToHT))
+        do {
+            _ = try await transcoder.transcode(invalidData, direction: .legacyToHT)
+            XCTFail("Expected transcode to throw for invalid input")
+        } catch {
+            XCTAssertNotNil(error)
+        }
     }
 
     func testTranscodingCoefficientsNoComponents() throws {

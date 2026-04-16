@@ -697,7 +697,7 @@ public actor MJ2Extractor {
 
         if decode {
             do {
-                let image = try decoder.decode(frameData)
+                let image = try await decoder.decode(frameData)
                 frame.image = image
             } catch {
                 throw MJ2ExtractionError.extractionFailed(

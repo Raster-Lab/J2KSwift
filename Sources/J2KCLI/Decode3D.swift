@@ -43,7 +43,7 @@ extension J2KCLI {
         let loadTime = Date().timeIntervalSince(startTime)
 
         // Configure decoder
-        var decoderConfig = JP3DDecoderConfiguration.default
+        let decoderConfig = JP3DDecoderConfiguration.default
 
         // Parse slice range if specified
         let sliceRange: ClosedRange<Int>?

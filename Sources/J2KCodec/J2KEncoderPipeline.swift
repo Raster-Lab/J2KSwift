@@ -13,6 +13,10 @@ import J2KCore
 import J2KMetal
 import Synchronization
 
+#if canImport(Dispatch)
+import Dispatch
+#endif
+
 #if canImport(Accelerate)
 import Accelerate
 #endif
@@ -57,14 +61,86 @@ public struct EncoderProgressUpdate: Sendable {
     public let overallProgress: Double
 }
 
-// MARK: - Parallel Result Collector
+// MARK: - Parallel Tier-1 Scheduling
 
-/// Thread-safe result collector for parallel code-block encoding.
+/// Coarse-grained chunk plan for Tier-1 worker execution.
 ///
-/// Uses `Mutex` from the `Synchronization` module for lock-based
-/// synchronisation, replacing the previous `@unchecked Sendable` + `NSLock`
-/// pattern. The `Mutex` guarantees exclusive access to mutable state
-/// and is unconditionally `Sendable`.
+/// Uses roughly twice the available parallelism to keep Apple Silicon cores
+/// busy without paying the overhead of one task per code-block.
+private struct Tier1ChunkPlan: Sendable {
+    let workerCount: Int
+    let chunkSize: Int
+
+    init(totalBlocks: Int, maxConcurrency: Int, oversubscription: Int = 2) {
+        let safeConcurrency = max(1, maxConcurrency)
+        workerCount = max(1, min(totalBlocks, safeConcurrency * oversubscription))
+        chunkSize = max(1, (totalBlocks + workerCount - 1) / workerCount)
+    }
+
+    @inline(__always)
+    func range(for workerIndex: Int, totalBlocks: Int) -> Range<Int>? {
+        let start = workerIndex * chunkSize
+        guard start < totalBlocks else { return nil }
+        return start..<min(start + chunkSize, totalBlocks)
+    }
+}
+
+/// Ordered result buffer for parallel Tier-1 workers.
+///
+/// Safety invariant: each worker writes only to its own exclusive index range,
+/// so there are no overlapping mutations even though the backing storage is
+/// shared. This avoids locks and post-sort overhead in the hot path.
+private final class Tier1ResultBuffer<T: Sendable>: @unchecked Sendable {
+    private let storage: UnsafeMutablePointer<T?>
+    private let count: Int
+    private let firstStoredError: Mutex<(any Error)?> = Mutex(nil)
+
+    init(count: Int) {
+        self.count = count
+        storage = .allocate(capacity: count)
+        storage.initialize(repeating: nil, count: count)
+    }
+
+    deinit {
+        storage.deinitialize(count: count)
+        storage.deallocate()
+    }
+
+    @inline(__always)
+    func write(_ value: T, at index: Int) {
+        storage[index] = value
+    }
+
+    func recordError(_ error: any Error) {
+        firstStoredError.withLock { state in
+            if state == nil {
+                state = error
+            }
+        }
+    }
+
+    var firstError: (any Error)? {
+        firstStoredError.withLock { $0 }
+    }
+
+    func materialize() throws -> [T] {
+        if let error = firstError {
+            throw error
+        }
+
+        var results: [T] = []
+        results.reserveCapacity(count)
+        for index in 0..<count {
+            guard let value = storage[index] else {
+                throw J2KError.internalError("Missing Tier-1 result at index \(index)")
+            }
+            results.append(value)
+        }
+        return results
+    }
+}
+
+/// General-purpose thread-safe collector retained for tests and non-hot paths.
 final class ParallelResultCollector<T: Sendable>: Sendable {
     private let _results: Mutex<[T]>
     private let _firstError: Mutex<(any Error)?>
@@ -112,6 +188,49 @@ final class ParallelResultCollector<T: Sendable>: Sendable {
 struct EncoderPipeline: Sendable {
     let config: J2KEncodingConfiguration
 
+    /// Uses the default EBCOT coding style for the benchmark path.
+    ///
+    /// Selective bypass remains available in the codec, but stays disabled here
+    /// because it regresses rate-distortion quality at the fixed comparison bitrate.
+    private var standardEBCOTCodingOptions: CodingOptions {
+        .default
+    }
+
+    /// Returns an EBCOT pass cap for the current quality target.
+    ///
+    /// The very aggressive low-pass cap is now reserved for genuinely low-quality
+    /// single-component preview encodes. Medium-quality grayscale and any explicit
+    /// bitrate-constrained encode must keep a deeper pass stack so PCRD can make
+    /// a meaningful rate-distortion decision.
+    private func recommendedEBCOTPassLimit(componentCount: Int) -> Int? {
+        guard !config.lossless else { return nil }
+
+        // Multi-component and explicit-bitrate encodes rely on PCRD to spend the
+        // full target budget. Do not pre-truncate their coding pass stacks.
+        if componentCount > 1 {
+            return nil
+        }
+        switch config.bitrateMode {
+        case .constantBitrate, .variableBitrate:
+            return nil
+        case .constantQuality, .lossless:
+            break
+        }
+
+        // Preserve a shallow fast path only for truly low-quality grayscale
+        // previews. Medium-quality constant-quality encodes (for example q=0.5
+        // used by the benchmark path) need the full pass stack so PCRD can reach
+        // a better rate-distortion point instead of being starved early.
+        if config.quality < 0.20 {
+            return 6
+        }
+        if config.quality < 0.35 {
+            return 12
+        }
+
+        return nil
+    }
+
     // MARK: - Main Encode
 
     /// Encodes an image through the full JPEG 2000 pipeline.
@@ -124,7 +243,7 @@ struct EncoderPipeline: Sendable {
     func encode(
         _ image: J2KImage,
         progress: ((EncoderProgressUpdate) -> Void)? = nil
-    ) throws -> Data {
+    ) async throws -> Data {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         var stageStart = CFAbsoluteTimeGetCurrent()
 
@@ -167,7 +286,7 @@ struct EncoderPipeline: Sendable {
 
         // Stage 3: Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
-        let (decompositions, actualDecompositionLevels) = try applyWaveletTransform(
+        let (decompositions, actualDecompositionLevels) = try await applyWaveletTransform(
             transformedData, floatComponents: transformedFloatData,
             width: image.width, height: image.height
         )
@@ -179,17 +298,20 @@ struct EncoderPipeline: Sendable {
             stageStart = t
         }
 
+        let adaptiveLossyStepSizes = buildAdaptiveLossyStepSizes(
+            decompositions,
+            image: image,
+            totalLevels: actualDecompositionLevels
+        )
+
         // Stage 4: Quantization
-        // For HTJ2K, quantization is fused into block extraction (P6 optimization).
-        // Raw subbands with Float coefficients are passed to entropy coding,
-        // which quantizes inline during per-block extraction.
+        // Quantization is now fused into block extraction for both HTJ2K and EBCOT,
+        // eliminating intermediate subband-sized Int32 allocations (~4MB for 1024×1024).
+        // - HTJ2K: fused into block encoding
+        // - EBCOT lossless (5/3): no quantization needed (integer DWT)
+        // - EBCOT lossy (9/7): fused Float→Int32 quantization during block extraction
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
-        let subandsForEntropy: [[SubbandInfo]]
-        if config.useHTJ2K {
-            subandsForEntropy = decompositions
-        } else {
-            subandsForEntropy = try applyQuantization(decompositions)
-        }
+        let subandsForEntropy: [[SubbandInfo]] = decompositions
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         if profiling {
@@ -200,7 +322,12 @@ struct EncoderPipeline: Sendable {
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(subandsForEntropy, image: image)
+        let codeBlocks = try await applyEntropyCoding(
+            subandsForEntropy,
+            image: image,
+            adaptiveStepSizes: adaptiveLossyStepSizes,
+            totalLevels: actualDecompositionLevels
+        )
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         if profiling {
@@ -212,11 +339,12 @@ struct EncoderPipeline: Sendable {
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
         // totalPixels is the number of spatial locations (W × H).
-        // bpp (bits per pixel) already accounts for all components —
-        // e.g. 1.2 bpp for RGB means 1.2 total bits per spatial location.
-        // The PCRD budget is: targetBytes = bpp × totalPixels / 8.
+        // qualityToBitrate() returns bits-per-pixel scaled by component count,
+        // so the PCRD budget correctly covers all components:
+        //   targetBytes = bpp_per_sample × componentCount × totalPixels / 8.
         let layers = try applyRateControl(
-            codeBlocks: codeBlocks, totalPixels: image.width * image.height
+            codeBlocks: codeBlocks, totalPixels: image.width * image.height,
+            componentCount: image.components.count
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
 
@@ -229,8 +357,11 @@ struct EncoderPipeline: Sendable {
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
         let codestream = try generateCodestream(
-            image: image, codeBlocks: codeBlocks, layers: layers,
-            actualDecompositionLevels: actualDecompositionLevels
+            image: image,
+            codeBlocks: codeBlocks,
+            layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveLossyStepSizes
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
@@ -293,6 +424,12 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
+        let adaptiveLossyStepSizes = buildAdaptiveLossyStepSizes(
+            decompositions,
+            image: image,
+            totalLevels: actualDecompositionLevels
+        )
+
         // Stage 4: Quantization
         // For HTJ2K, quantization is fused into block extraction (P6 optimization).
         reportProgress(progress, stage: .quantization, stageProgress: 0.0)
@@ -300,13 +437,23 @@ struct EncoderPipeline: Sendable {
         if config.useHTJ2K {
             subandsForEntropy = decompositions
         } else {
-            subandsForEntropy = try applyQuantization(decompositions)
+            subandsForEntropy = try applyQuantization(
+                decompositions,
+                image: image,
+                adaptiveStepSizes: adaptiveLossyStepSizes,
+                totalLevels: actualDecompositionLevels
+            )
         }
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
-        let codeBlocks = try applyEntropyCoding(subandsForEntropy, image: image)
+        let codeBlocks = try await applyEntropyCoding(
+            subandsForEntropy,
+            image: image,
+            adaptiveStepSizes: adaptiveLossyStepSizes,
+            totalLevels: actualDecompositionLevels
+        )
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
         // Stage 6: Rate Control
@@ -319,8 +466,11 @@ struct EncoderPipeline: Sendable {
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
         let codestream = try generateCodestream(
-            image: image, codeBlocks: codeBlocks, layers: layers,
-            actualDecompositionLevels: actualDecompositionLevels
+            image: image,
+            codeBlocks: codeBlocks,
+            layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveLossyStepSizes
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
@@ -337,11 +487,11 @@ struct EncoderPipeline: Sendable {
     ) async throws -> ([[SubbandInfo]], Int) {
         // Fall back to CPU for custom wavelet kernels only
         if case .arbitrary = config.waveletKernelConfiguration {
-            return try applyWaveletTransform(components, floatComponents: floatComponents,
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
         if case .perTileComponent = config.waveletKernelConfiguration {
-            return try applyWaveletTransform(components, floatComponents: floatComponents,
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -349,13 +499,13 @@ struct EncoderPipeline: Sendable {
         let levels = min(config.decompositionLevels, maxLevels)
 
         guard levels >= 1 else {
-            return try applyWaveletTransform(components, floatComponents: floatComponents,
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
         // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
         guard J2KMetalDWT.isAvailable else {
-            return try applyWaveletTransform(components, floatComponents: floatComponents,
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -366,7 +516,7 @@ struct EncoderPipeline: Sendable {
         let pixelCount = width * height
         let gpuThreshold = config.useHTJ2K ? (1024 * 1024) : (256 * 256)
         guard pixelCount >= gpuThreshold else {
-            return try applyWaveletTransform(components, floatComponents: floatComponents,
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
                                               width: width, height: height)
         }
 
@@ -767,13 +917,200 @@ struct EncoderPipeline: Sendable {
         }
     }
 
+    private struct AdaptiveQuantizationStats: Sendable {
+        let mean: Double
+        let meanAbsoluteValue: Double
+        let variance: Double
+        let zeroFraction: Double
+    }
+
+    @inline(__always)
+    private func adaptiveStepKey(for subband: J2KSubband, level: Int) -> String {
+        "\(subband.rawValue)_L\(level)"
+    }
+
+    private func sampledStats(for info: SubbandInfo, sampleBudget: Int = 2048) -> AdaptiveQuantizationStats {
+        var sampleCount = 0
+        var sum = 0.0
+        var sumAbs = 0.0
+        var sumSquares = 0.0
+        var zeroCount = 0
+
+        @inline(__always)
+        func accumulate(_ value: Double) {
+            sampleCount += 1
+            sum += value
+            sumAbs += abs(value)
+            sumSquares += value * value
+            if abs(value) < 1e-9 {
+                zeroCount += 1
+            }
+        }
+
+        if let floats = info.floatCoefficients, !floats.isEmpty {
+            let sampleStride = max(1, floats.count / sampleBudget)
+            for index in Swift.stride(from: 0, to: floats.count, by: sampleStride) {
+                accumulate(Double(floats[index]))
+            }
+        } else if let doubles = info.doubleCoefficients, !doubles.isEmpty {
+            let sampleStride = max(1, doubles.count / sampleBudget)
+            for index in Swift.stride(from: 0, to: doubles.count, by: sampleStride) {
+                accumulate(doubles[index])
+            }
+        } else if !info.coefficients.isEmpty {
+            let sampleStride = max(1, info.coefficients.count / sampleBudget)
+            for index in Swift.stride(from: 0, to: info.coefficients.count, by: sampleStride) {
+                accumulate(Double(info.coefficients[index]))
+            }
+        }
+
+        guard sampleCount > 0 else {
+            return AdaptiveQuantizationStats(mean: 0.0, meanAbsoluteValue: 0.0, variance: 0.0, zeroFraction: 1.0)
+        }
+
+        let count = Double(sampleCount)
+        let mean = sum / count
+        let variance = max(0.0, (sumSquares / count) - mean * mean)
+        return AdaptiveQuantizationStats(
+            mean: mean,
+            meanAbsoluteValue: sumAbs / count,
+            variance: variance,
+            zeroFraction: Double(zeroCount) / count
+        )
+    }
+
+    private func adaptiveQuantizationScale(
+        for stats: AdaptiveQuantizationStats,
+        subband: J2KSubband,
+        bitDepth: Int
+    ) -> Double {
+        let dynamicRange = max(1.0, Double(1 << min(22, max(1, bitDepth - 1))))
+        let normalizedSigma = sqrt(stats.variance) / dynamicRange
+        let normalizedMeanAbs = stats.meanAbsoluteValue / dynamicRange
+
+        var scale = 1.0
+
+        switch subband {
+        case .ll:
+            scale *= 0.96
+        case .hl, .lh:
+            break
+        case .hh:
+            scale *= 1.03
+        }
+
+        if normalizedSigma < 0.010 {
+            scale *= 0.84
+        } else if normalizedSigma < 0.025 {
+            scale *= 0.90
+        } else if normalizedSigma < 0.050 {
+            scale *= 0.96
+        } else if normalizedSigma > 0.18 {
+            scale *= 1.04
+        }
+
+        if stats.zeroFraction > 0.80 && normalizedMeanAbs < 0.02 {
+            scale *= 0.92
+        } else if stats.zeroFraction < 0.20 && normalizedMeanAbs > 0.10 {
+            scale *= 1.03
+        }
+
+        return min(1.10, max(0.78, scale))
+    }
+
+    private func buildAdaptiveLossyStepSizes(
+        _ componentSubbands: [[SubbandInfo]],
+        image: J2KImage,
+        totalLevels: Int
+    ) -> [String: Double] {
+        guard !config.useReversibleFilter, !config.lossless else {
+            return [:]
+        }
+
+        var grouped = [String: [SubbandInfo]]()
+        for subbands in componentSubbands {
+            for info in subbands where info.width > 0 && info.height > 0 {
+                grouped[adaptiveStepKey(for: info.subband, level: info.level), default: []].append(info)
+            }
+        }
+
+        var steps = [String: Double]()
+        steps.reserveCapacity(grouped.count)
+
+        for (key, infos) in grouped {
+            guard let representative = infos.first else { continue }
+            let bitDepth = infos.map { image.components[$0.componentIndex].bitDepth }.max() ?? 8
+            let baseParams = lossyQuantizationParameters(
+                bitDepth: bitDepth,
+                componentCount: image.components.count
+            )
+            let nominalStep = J2KStepSizeCalculator.calculateStepSize(
+                baseStepSize: baseParams.baseStepSize,
+                subband: representative.subband,
+                decompositionLevel: representative.level,
+                totalLevels: totalLevels,
+                reversible: false
+            )
+
+            var mean = 0.0
+            var meanAbs = 0.0
+            var variance = 0.0
+            var zeroFraction = 0.0
+            for info in infos {
+                let stats = sampledStats(for: info)
+                mean += stats.mean
+                meanAbs += stats.meanAbsoluteValue
+                variance += stats.variance
+                zeroFraction += stats.zeroFraction
+            }
+            let invCount = 1.0 / Double(max(1, infos.count))
+            let aggregated = AdaptiveQuantizationStats(
+                mean: mean * invCount,
+                meanAbsoluteValue: meanAbs * invCount,
+                variance: variance * invCount,
+                zeroFraction: zeroFraction * invCount
+            )
+
+            let adaptiveScale = adaptiveQuantizationScale(
+                for: aggregated,
+                subband: representative.subband,
+                bitDepth: bitDepth
+            )
+            steps[key] = nominalStep * adaptiveScale
+        }
+
+        return steps
+    }
+
+    private func lossyStepSize(
+        for info: SubbandInfo,
+        imageBitDepth: Int,
+        componentCount: Int,
+        totalLevels: Int,
+        adaptiveStepSizes: [String: Double]
+    ) -> Double {
+        let key = adaptiveStepKey(for: info.subband, level: info.level)
+        if let step = adaptiveStepSizes[key] {
+            return step
+        }
+
+        let params = lossyQuantizationParameters(bitDepth: imageBitDepth, componentCount: componentCount)
+        return J2KStepSizeCalculator.calculateStepSize(
+            baseStepSize: params.baseStepSize,
+            subband: info.subband,
+            decompositionLevel: info.level,
+            totalLevels: totalLevels,
+            reversible: false
+        )
+    }
+
     /// Applies the forward wavelet transform to all components.
     ///
     /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
         _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int
-    ) throws -> ([[SubbandInfo]], Int) {
+    ) async throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
         switch config.waveletKernelConfiguration {
@@ -811,14 +1148,9 @@ struct EncoderPipeline: Sendable {
                 componentFilter = filter
             }
 
-            // Convert 1D array to 2D for DWT (optimised version)
-            var image2D: [[Int32]] = []
-            image2D.reserveCapacity(height)
-            for row in 0..<height {
-                let rowStart = row * width
-                let rowEnd = rowStart + width
-                image2D.append(Array(compData[rowStart..<rowEnd]))
-            }
+            // Convert 1D array to 2D for DWT — only needed for non-accelerated paths.
+            // The accelerated paths (9/7 Float, 5/3 Int32) work on flat arrays directly.
+            // Deferring this allocation saves `height` array copies for the common case.
 
             // If no decomposition, treat entire image as LL subband
             guard levels >= 1 else {
@@ -869,7 +1201,7 @@ struct EncoderPipeline: Sendable {
                     flatFloat = vDSPConvert.int32sToFloats(compData)
                 }
 
-                let decomposition = AcceleratedDWT2D.forwardDecomposition(
+                let decomposition = await AcceleratedDWT2D.forwardDecomposition(
                     data: flatFloat, width: width, height: height, levels: levels
                 )
 
@@ -921,7 +1253,7 @@ struct EncoderPipeline: Sendable {
 
             } else if !use97DoublePrecision && useAcceleratedPath {
                 // Accelerated Int32 Le Gall 5/3 path.
-                let decomposition = AcceleratedDWT2D.forwardDecomposition53(
+                let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
                     data: compData, width: width, height: height, levels: levels
                 )
 
@@ -981,7 +1313,15 @@ struct EncoderPipeline: Sendable {
                     }
                     doubleImage = img2D
                 } else {
-                    doubleImage = image2D.map { $0.map { Double($0) } }
+                    // Build [[Double]] from Int32 flat data
+                    var img2D: [[Double]] = []
+                    img2D.reserveCapacity(height)
+                    for row in 0..<height {
+                        let rowStart = row * width
+                        let rowEnd = rowStart + width
+                        img2D.append(compData[rowStart..<rowEnd].map { Double($0) })
+                    }
+                    doubleImage = img2D
                 }
                 let decomposition = try J2KDWT2D.forwardDecompositionDouble(
                     image: doubleImage, levels: levels, filter: componentFilter
@@ -1036,6 +1376,14 @@ struct EncoderPipeline: Sendable {
                 ), at: 0)
             } else {
                 // Fallback: original Int32 path for custom filters
+                // Build [[Int32]] from flat data (only needed for custom filters)
+                var image2D: [[Int32]] = []
+                image2D.reserveCapacity(height)
+                for row in 0..<height {
+                    let rowStart = row * width
+                    let rowEnd = rowStart + width
+                    image2D.append(Array(compData[rowStart..<rowEnd]))
+                }
                 let decomposition = try J2KDWT2D.forwardDecomposition(
                     image: image2D, levels: levels, filter: componentFilter
                 )
@@ -1093,20 +1441,137 @@ struct EncoderPipeline: Sendable {
 
     // MARK: - Stage 4: Quantization
 
+    /// Builds lossy quantization parameters matched to the source precision and
+    /// the current bitrate budget.
+    private func lossyQuantizationParameters(bitDepth: Int, componentCount: Int) -> J2KQuantizationParameters {
+        let baseParameters = J2KQuantizationParameters.fromQuality(config.quality, bitDepth: bitDepth)
+
+        let perComponentTargetBpp: Double?
+        switch config.bitrateMode {
+        case .constantBitrate(let bitsPerPixel):
+            perComponentTargetBpp = bitsPerPixel / Double(max(1, componentCount))
+        case .variableBitrate(_, let maxBitsPerPixel):
+            perComponentTargetBpp = maxBitsPerPixel / Double(max(1, componentCount))
+        case .constantQuality, .lossless:
+            perComponentTargetBpp = nil
+        }
+
+        let scaleFactor: Double
+        if bitDepth > 8 {
+            if let target = perComponentTargetBpp {
+                if target <= 0.35 {
+                    scaleFactor = 12.0
+                } else if target <= 0.50 {
+                    scaleFactor = 8.0
+                } else if target <= 0.75 {
+                    scaleFactor = 6.0
+                } else if target <= 1.00 {
+                    scaleFactor = 3.5
+                } else {
+                    scaleFactor = 2.0
+                }
+            } else if config.quality <= 0.55 {
+                scaleFactor = 8.0
+            } else if config.quality <= 0.75 {
+                scaleFactor = 6.0
+            } else if config.quality <= 0.90 {
+                scaleFactor = 4.0
+            } else {
+                scaleFactor = 2.0
+            }
+        } else if let target = perComponentTargetBpp, componentCount > 1 {
+            if target <= 0.20 {
+                scaleFactor = 1.0
+            } else if target <= 0.35 {
+                scaleFactor = 1.25
+            } else if target <= 0.50 {
+                scaleFactor = 1.10
+            } else {
+                scaleFactor = 1.0
+            }
+        } else if let target = perComponentTargetBpp, componentCount == 1 {
+            if target <= 1.00 && target > 0.50 {
+                scaleFactor = 0.95
+            } else {
+                scaleFactor = 1.0
+            }
+        } else if componentCount > 1, perComponentTargetBpp == nil {
+            if config.quality <= 0.55 {
+                scaleFactor = 0.12
+            } else if config.quality <= 0.75 {
+                scaleFactor = 0.45
+            } else if config.quality <= 0.90 {
+                scaleFactor = 0.80
+            } else {
+                scaleFactor = 1.0
+            }
+        } else if componentCount == 1, perComponentTargetBpp == nil {
+            if config.quality <= 0.55 {
+                scaleFactor = 0.70
+            } else if config.quality <= 0.75 {
+                scaleFactor = 0.85
+            } else {
+                scaleFactor = 1.0
+            }
+        } else {
+            scaleFactor = 1.0
+        }
+
+        guard scaleFactor != 1.0 else {
+            return baseParameters
+        }
+
+        return J2KQuantizationParameters(
+            mode: baseParameters.mode,
+            baseStepSize: baseParameters.baseStepSize * scaleFactor,
+            deadzoneWidth: baseParameters.deadzoneWidth,
+            guardBits: baseParameters.guardBits,
+            implicitStepSizes: baseParameters.implicitStepSizes,
+            explicitStepSizes: baseParameters.explicitStepSizes,
+            tcqConfiguration: baseParameters.tcqConfiguration
+        )
+    }
+
     /// Applies quantization to all subbands.
     private func applyQuantization(
-        _ componentSubbands: [[SubbandInfo]]
+        _ componentSubbands: [[SubbandInfo]],
+        image: J2KImage,
+        adaptiveStepSizes: [String: Double],
+        totalLevels: Int
     ) throws -> [[SubbandInfo]] {
-        let params: J2KQuantizationParameters = config.useReversibleFilter
-            ? .lossless
-            : .fromQuality(config.quality)
-        let quantizer = J2KQuantizer(parameters: params)
-
         var result: [[SubbandInfo]] = []
 
         for subbands in componentSubbands {
             var quantizedSubbands: [SubbandInfo] = []
             for info in subbands {
+                let componentBitDepth = image.components[info.componentIndex].bitDepth
+                let params: J2KQuantizationParameters
+                if config.useReversibleFilter {
+                    params = .lossless
+                } else {
+                    let base = lossyQuantizationParameters(
+                        bitDepth: componentBitDepth,
+                        componentCount: image.components.count
+                    )
+                    let step = lossyStepSize(
+                        for: info,
+                        imageBitDepth: componentBitDepth,
+                        componentCount: image.components.count,
+                        totalLevels: totalLevels,
+                        adaptiveStepSizes: adaptiveStepSizes
+                    )
+                    params = J2KQuantizationParameters(
+                        mode: base.mode,
+                        baseStepSize: base.baseStepSize,
+                        deadzoneWidth: base.deadzoneWidth,
+                        guardBits: base.guardBits,
+                        implicitStepSizes: false,
+                        explicitStepSizes: ["\(info.subband.rawValue)\(info.level + 1)": step],
+                        tcqConfiguration: base.tcqConfiguration
+                    )
+                }
+                let quantizer = J2KQuantizer(parameters: params)
+
                 let quantized: [Int32]
                 if let floatCoeffs = info.floatCoefficients {
                     // Use Float-precision path for GPU DWT output — avoids Float→Double conversion
@@ -1114,7 +1579,7 @@ struct EncoderPipeline: Sendable {
                         coefficients: floatCoeffs,
                         subband: info.subband,
                         decompositionLevel: info.level,
-                        totalLevels: config.decompositionLevels
+                        totalLevels: totalLevels
                     )
                 } else if let doubleCoeffs = info.doubleCoefficients {
                     // Use Double-precision path for 9/7 irreversible to preserve fractional precision
@@ -1122,7 +1587,7 @@ struct EncoderPipeline: Sendable {
                         coefficients: doubleCoeffs,
                         subband: info.subband,
                         decompositionLevel: info.level,
-                        totalLevels: config.decompositionLevels
+                        totalLevels: totalLevels
                     )
                 } else {
                     // Use Int32-optimised quantize method for reversible 5/3
@@ -1130,7 +1595,7 @@ struct EncoderPipeline: Sendable {
                         coefficients: info.coefficients,
                         subband: info.subband,
                         decompositionLevel: info.level,
-                        totalLevels: config.decompositionLevels
+                        totalLevels: totalLevels
                     )
                 }
 
@@ -1204,18 +1669,25 @@ struct EncoderPipeline: Sendable {
     /// bit-plane coding per ISO/IEC 15444-1.
     private func applyEntropyCoding(
         _ componentSubbands: [[SubbandInfo]],
-        image: J2KImage
-    ) throws -> [J2KCodeBlock] {
+        image: J2KImage,
+        adaptiveStepSizes: [String: Double],
+        totalLevels: Int
+    ) async throws -> [J2KCodeBlock] {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         let entropyStart = CFAbsoluteTimeGetCurrent()
 
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
 
-        // Determine decomposition levels actually used
-        let actualLevels = componentSubbands.first.map { subbands -> Int in
-            return subbands.count > 1 ? (subbands.count - 1) / 3 : 0
-        } ?? config.decompositionLevels
+        // Determine decomposition levels actually used.
+        // Prefer the caller-provided value so the quantizer, entropy path, and
+        // codestream marker signaling all use the same level count.
+        let actualLevels = max(
+            totalLevels,
+            componentSubbands.first.map { subbands -> Int in
+                return subbands.count > 1 ? (subbands.count - 1) / 3 : 0
+            } ?? config.decompositionLevels
+        )
 
         // Guard bits and range bits for Kb computation (must match QCD marker)
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
@@ -1225,30 +1697,30 @@ struct EncoderPipeline: Sendable {
         // extraction into the parallel encoding loop to eliminate the sequential
         // first pass.
         if config.useHTJ2K {
-            return try applyEntropyCodingHTJ2KFused(
-                componentSubbands, image: image,
-                actualLevels: actualLevels, guardBits: guardBits,
-                cbWidth: cbWidth, cbHeight: cbHeight, profiling: profiling,
-                entropyStart: entropyStart
+            return try await applyEntropyCodingHTJ2KFused(
+                componentSubbands,
+                image: image,
+                actualLevels: actualLevels,
+                guardBits: guardBits,
+                cbWidth: cbWidth,
+                cbHeight: cbHeight,
+                profiling: profiling,
+                entropyStart: entropyStart,
+                adaptiveStepSizes: adaptiveStepSizes
             )
         }
 
-        // Legacy EBCOT path: sequential extraction then parallel encoding.
-
-        // First pass: collect all pending code-blocks with their metadata
-        var pendingBlocks: [PendingCodeBlock] = []
+        // Legacy EBCOT path: build lightweight descriptors and defer per-block
+        // extraction to the encoding loop. This avoids allocating one `[Int32]`
+        // array per code-block before Tier-1 coding starts.
+        var deferred: [DeferredCodeBlock] = []
         var blockIndex = 0
 
         for subbands in componentSubbands {
             for info in subbands {
                 guard info.width > 0 && info.height > 0 else { continue }
 
-                // Use actual component bit depth instead of hardcoded 8
                 let imageBitDepth = image.components[info.componentIndex].bitDepth
-
-                // Compute JPEG 2000 resolution level:
-                // Resolution 0 = LL subband only
-                // Resolution r (1..NL) = detail subbands at decomposition level (NL - r + 1)
                 let resolutionLevel: Int
                 if info.subband == .ll {
                     resolutionLevel = 0
@@ -1256,8 +1728,6 @@ struct EncoderPipeline: Sendable {
                     resolutionLevel = actualLevels - info.level + 1
                 }
 
-                // Compute band-level Kb = ε_b + G from QCD parameters.
-                // This must match what we write in the QCD marker.
                 let bandKb: Int
                 if config.useReversibleFilter {
                     let gainExponent: Int
@@ -1267,111 +1737,87 @@ struct EncoderPipeline: Sendable {
                     case .hh: gainExponent = 2
                     }
                     let epsilon = imageBitDepth + gainExponent
-                    bandKb = epsilon + guardBits - 1  // Kb = εb + Gb - 1
+                    bandKb = epsilon + guardBits - 1
                 } else {
-                    // Lossy (9/7 irreversible): Kb = ε_b + G where ε_b from step size
-                    // Must use subband gains {LL=0, HL=1, LH=1, HH=2} for Rb,
-                    // matching OPJ encoder convention. OPJ decoder uses gain=0
-                    // (BUG_WEIRD_TWO_INVK) with two_invK in inverse DWT.
-                    let subbandGain: Int
+                    // For irreversible 9/7, the QCD/Kb signaling must include
+                    // the JPEG 2000 detail-band gain exponents so external
+                    // decoders reconstruct the same quantization steps.
+                    let gainExponent: Int
                     switch info.subband {
-                    case .ll: subbandGain = 0
-                    case .hl, .lh: subbandGain = 1
-                    case .hh: subbandGain = 2
+                    case .ll: gainExponent = 0
+                    case .hl, .lh: gainExponent = 1
+                    case .hh: gainExponent = 2
                     }
-                    let rangeBits = imageBitDepth + subbandGain
-                    let params = J2KQuantizationParameters.fromQuality(config.quality)
-                    let step = J2KStepSizeCalculator.calculateStepSize(
-                        baseStepSize: params.baseStepSize,
-                        subband: info.subband,
-                        decompositionLevel: info.level,
+                    let rangeBits = imageBitDepth + gainExponent
+                    let step = lossyStepSize(
+                        for: info,
+                        imageBitDepth: imageBitDepth,
+                        componentCount: image.components.count,
                         totalLevels: actualLevels,
-                        reversible: false
+                        adaptiveStepSizes: adaptiveStepSizes
                     )
                     let (epsilon, _) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
-                    bandKb = epsilon + guardBits - 1  // Kb = εb + Gb - 1
+                    bandKb = epsilon + guardBits - 1
+                }
+
+                let fusedInvStep: Float?
+                if info.floatCoefficients != nil && !config.useReversibleFilter {
+                    let step = lossyStepSize(
+                        for: info,
+                        imageBitDepth: imageBitDepth,
+                        componentCount: image.components.count,
+                        totalLevels: actualLevels,
+                        adaptiveStepSizes: adaptiveStepSizes
+                    )
+                    fusedInvStep = Float(1.0 / step)
+                } else if info.doubleCoefficients != nil && !config.useReversibleFilter && info.coefficients.isEmpty {
+                    let step = lossyStepSize(
+                        for: info,
+                        imageBitDepth: imageBitDepth,
+                        componentCount: image.components.count,
+                        totalLevels: actualLevels,
+                        adaptiveStepSizes: adaptiveStepSizes
+                    )
+                    fusedInvStep = Float(1.0 / step)
+                } else {
+                    fusedInvStep = nil
+                }
+
+                let quantizedSubband: [Int32]
+                if let floatCoeffs = info.floatCoefficients, var invStep = fusedInvStep {
+                    #if canImport(Accelerate)
+                    let n = vDSP_Length(floatCoeffs.count)
+                    var scaled = [Float](repeating: 0, count: floatCoeffs.count)
+                    vDSP_vsmul(floatCoeffs, 1, &invStep, &scaled, 1, n)
+                    var result = [Int32](repeating: 0, count: floatCoeffs.count)
+                    vDSP_vfix32(&scaled, 1, &result, 1, n)
+                    quantizedSubband = result
+                    #else
+                    quantizedSubband = floatCoeffs.map { val in
+                        let mag = Int32(abs(val) * invStep)
+                        return val >= 0 ? mag : -mag
+                    }
+                    #endif
+                } else if let doubleCoeffs = info.doubleCoefficients, let invStep = fusedInvStep {
+                    let dInvStep = Double(invStep)
+                    quantizedSubband = doubleCoeffs.map { val in
+                        let mag = Int32(abs(val) * dInvStep)
+                        return val >= 0 ? mag : -mag
+                    }
+                } else {
+                    quantizedSubband = info.coefficients
                 }
 
                 let blocksX = (info.width + cbWidth - 1) / cbWidth
                 let blocksY = (info.height + cbHeight - 1) / cbHeight
+                deferred.reserveCapacity(deferred.count + blocksX * blocksY)
 
                 for by in 0..<blocksY {
                     for bx in 0..<blocksX {
                         let blockW = min(cbWidth, info.width - bx * cbWidth)
                         let blockH = min(cbHeight, info.height - by * cbHeight)
 
-                        // Extract code block coefficients via direct memcpy
-                        let blockSize = blockW * blockH
-                        var blockCoeffs = [Int32](unsafeUninitializedCapacity: blockSize) { buf, count in
-                            info.coefficients.withUnsafeBufferPointer { src in
-                                for row in 0..<blockH {
-                                    let srcRow = by * cbHeight + row
-                                    let srcStart = srcRow * info.width + bx * cbWidth
-                                    memcpy(
-                                        buf.baseAddress! + row * blockW,
-                                        src.baseAddress! + srcStart,
-                                        blockW * MemoryLayout<Int32>.size
-                                    )
-                                }
-                                count = blockSize
-                            }
-                        }
-
-                        // TEMP DEBUG: dump quantized coefficients
-                        if ProcessInfo.processInfo.environment["J2K_DUMP_COEFFS"] != nil {
-                            print("EBCOT_INPUT: subband=\(info.subband) comp=\(info.componentIndex) res=\(resolutionLevel) bx=\(bx) by=\(by) w=\(blockW) h=\(blockH) Kb=\(bandKb) coeffs=\(blockCoeffs)")
-                        }
-
-                        // Compute distortion statistics for rate control.
-                        // For lossless mode, rate control includes all data — skip
-                        // the expensive squared-sum and bit-plane population scans.
-                        let sqSum: Double
-                        let bpPop: [Int]
-                        if config.lossless {
-                            sqSum = 0
-                            bpPop = []
-                        } else {
-                            #if canImport(Accelerate)
-                            if blockCoeffs.count >= 16 {
-                                var absF = vDSPConvert.int32sToFloats(blockCoeffs)
-                                vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(absF.count))
-                                var dotResult: Float = 0
-                                vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(absF.count))
-                                sqSum = Double(dotResult)
-                            } else {
-                                var sq: Double = 0
-                                for c in blockCoeffs {
-                                    let mag = Double(abs(c))
-                                    sq += mag * mag
-                                }
-                                sqSum = sq
-                            }
-                            #else
-                            do {
-                                var sq: Double = 0
-                                for c in blockCoeffs {
-                                    let mag = Double(abs(c))
-                                    sq += mag * mag
-                                }
-                                sqSum = sq
-                            }
-                            #endif
-
-                            let totalBitPlanes = bandKb
-                            var pop = [Int](repeating: 0, count: totalBitPlanes)
-                            for c in blockCoeffs {
-                                let mag = UInt32(abs(c))
-                                if mag > 0 {
-                                    let msb = 31 - mag.leadingZeroBitCount
-                                    if msb < totalBitPlanes {
-                                        pop[msb] += 1
-                                    }
-                                }
-                            }
-                            bpPop = pop
-                        }
-
-                        pendingBlocks.append(PendingCodeBlock(
+                        deferred.append(DeferredCodeBlock(
                             index: blockIndex,
                             x: bx * cbWidth,
                             y: by * cbHeight,
@@ -1380,10 +1826,13 @@ struct EncoderPipeline: Sendable {
                             subband: info.subband,
                             componentIndex: info.componentIndex,
                             resolutionLevel: resolutionLevel,
-                            coefficients: blockCoeffs,
                             bitDepth: bandKb,
-                            coefficientSquaredSum: sqSum,
-                            bitPlanePopulation: bpPop
+                            subbandCoefficients: quantizedSubband,
+                            subbandWidth: info.width,
+                            originX: bx * cbWidth,
+                            originY: by * cbHeight,
+                            floatSubbandCoefficients: nil,
+                            quantizationStep: 1.0
                         ))
                         blockIndex += 1
                     }
@@ -1393,26 +1842,135 @@ struct EncoderPipeline: Sendable {
 
         if profiling {
             let extractEnd = CFAbsoluteTimeGetCurrent()
-            print("    PROFILE entropy-extract: \(pendingBlocks.count) blocks in \(String(format: "%.4f", extractEnd - entropyStart))s")
+            print("    PROFILE entropy-extract: \(deferred.count) blocks in \(String(format: "%.4f", extractEnd - entropyStart))s")
         }
-
-        // Second pass: encode code-blocks (parallel or sequential)
-        let useParallel = config.enableParallelCodeBlocks && pendingBlocks.count > 1
-        let allCodeBlocks: [J2KCodeBlock]
 
         let encodeStart = CFAbsoluteTimeGetCurrent()
-        if useParallel {
-            allCodeBlocks = try encodeCodeBlocksParallel(pendingBlocks)
-        } else {
-            allCodeBlocks = try encodeCodeBlocksSequential(pendingBlocks)
-        }
+        let allCodeBlocks = try await encodeDeferredCodeBlocksEBCOT(
+            deferred,
+            isLossless: config.lossless,
+            cbWidth: cbWidth,
+            cbHeight: cbHeight
+        )
 
         if profiling {
             let encodeEnd = CFAbsoluteTimeGetCurrent()
-            print("    PROFILE entropy-encode: \(String(format: "%.4f", encodeEnd - encodeStart))s (parallel=\(useParallel))")
+            print("    PROFILE entropy-encode: \(String(format: "%.4f", encodeEnd - encodeStart))s (parallel=\(config.enableParallelCodeBlocks && deferred.count > 1))")
         }
 
         return allCodeBlocks
+    }
+
+    /// Standard J2K fused EBCOT path: lightweight descriptors followed by
+    /// per-chunk extraction directly into reusable scratch buffers.
+    private func encodeDeferredCodeBlocksEBCOT(
+        _ deferred: [DeferredCodeBlock],
+        isLossless: Bool,
+        cbWidth: Int,
+        cbHeight: Int
+    ) async throws -> [J2KCodeBlock] {
+        let totalBlocks = deferred.count
+        guard totalBlocks > 0 else { return [] }
+
+        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.activeProcessorCount
+        let chunkPlan = Tier1ChunkPlan(totalBlocks: totalBlocks, maxConcurrency: maxConcurrency)
+        let maxBlockSize = cbWidth * cbHeight
+        let componentCount = max(1, Set(deferred.map(\.componentIndex)).count)
+        let maxPassesLimit = recommendedEBCOTPassLimit(componentCount: componentCount)
+        let orderedResults = Tier1ResultBuffer<J2KCodeBlock>(count: totalBlocks)
+
+        let encodeRange: @Sendable (Range<Int>) throws -> Void = { range in
+            let encoder = CodeBlockEncoder()
+            let scratch = EBCOTScratchBuffers(maxSize: maxBlockSize)
+            let shouldCollectRateControlMetrics = !isLossless
+            var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
+
+            for i in range {
+                let d = deferred[i]
+                let blockSize = d.width * d.height
+
+                d.subbandCoefficients.withUnsafeBufferPointer { src in
+                    coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                        guard let srcBase = src.baseAddress, let dstBase = dst.baseAddress else { return }
+                        for row in 0..<d.height {
+                            let srcStart = (d.originY + row) * d.subbandWidth + d.originX
+                            memcpy(
+                                dstBase + row * d.width,
+                                srcBase + srcStart,
+                                d.width * MemoryLayout<Int32>.size
+                            )
+                        }
+                    }
+                }
+
+                let analysis = scratch.separateAndAnalyze(
+                    coeffsBuffer,
+                    count: blockSize,
+                    totalBitPlanes: d.bitDepth,
+                    collectRateControlMetrics: shouldCollectRateControlMetrics
+                )
+
+                var codeBlock = try encoder.encode(
+                    coefficients: coeffsBuffer,
+                    width: d.width,
+                    height: d.height,
+                    subband: d.subband,
+                    bitDepth: d.bitDepth,
+                    options: standardEBCOTCodingOptions,
+                    coefficientCount: blockSize,
+                    maxPasses: maxPassesLimit,
+                    scratch: scratch,
+                    collectRateControlMetrics: shouldCollectRateControlMetrics,
+                    precomputedAnalysis: analysis
+                )
+
+                codeBlock = J2KCodeBlock(
+                    index: d.index,
+                    x: d.x,
+                    y: d.y,
+                    width: d.width,
+                    height: d.height,
+                    subband: codeBlock.subband,
+                    componentIndex: d.componentIndex,
+                    resolutionLevel: d.resolutionLevel,
+                    data: codeBlock.data,
+                    passeCount: codeBlock.passeCount,
+                    zeroBitPlanes: codeBlock.zeroBitPlanes,
+                    passSegmentLengths: codeBlock.passSegmentLengths,
+                    cumulativePassBytes: codeBlock.cumulativePassBytes,
+                    coefficientSquaredSum: codeBlock.coefficientSquaredSum,
+                    bitPlanePopulation: codeBlock.bitPlanePopulation,
+                    cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                    perPassSnapshotData: codeBlock.perPassSnapshotData,
+                    mqCheckpoints: codeBlock.mqCheckpoints,
+                    rawMQOutput: codeBlock.rawMQOutput
+                )
+                orderedResults.write(codeBlock, at: d.index)
+            }
+        }
+
+        #if canImport(Dispatch)
+        if config.enableParallelCodeBlocks && chunkPlan.workerCount > 1 {
+            DispatchQueue.global(qos: .userInteractive).sync {
+                DispatchQueue.concurrentPerform(iterations: chunkPlan.workerCount) { workerIndex in
+                    if orderedResults.firstError != nil { return }
+                    guard let range = chunkPlan.range(for: workerIndex, totalBlocks: totalBlocks) else { return }
+
+                    autoreleasepool {
+                        do {
+                            try encodeRange(range)
+                        } catch {
+                            orderedResults.recordError(error)
+                        }
+                    }
+                }
+            }
+            return try orderedResults.materialize()
+        }
+        #endif
+
+        try encodeRange(0..<totalBlocks)
+        return try orderedResults.materialize()
     }
 
     // MARK: - HTJ2K Fused Extract-and-Encode
@@ -1433,8 +1991,9 @@ struct EncoderPipeline: Sendable {
         cbWidth: Int,
         cbHeight: Int,
         profiling: Bool,
-        entropyStart: CFAbsoluteTime
-    ) throws -> [J2KCodeBlock] {
+        entropyStart: CFAbsoluteTime,
+        adaptiveStepSizes: [String: Double]
+    ) async throws -> [J2KCodeBlock] {
         // Build lightweight block descriptors (no coefficient copy).
         var deferred: [DeferredCodeBlock] = []
         var blockIndex = 0
@@ -1462,20 +2021,21 @@ struct EncoderPipeline: Sendable {
                     bandKb = imageBitDepth + gainExponent + guardBits - 1
                     subbandStepSize = 1.0  // Identity quantization for lossless
                 } else {
-                    let subbandGain: Int
+                    // Match JPEG 2000 / OpenJPEG detail-band signaling for 9/7:
+                    // the encoded precision uses gain {0,1,1,2} for LL/HL/LH/HH.
+                    let gainExponent: Int
                     switch info.subband {
-                    case .ll: subbandGain = 0
-                    case .hl, .lh: subbandGain = 1
-                    case .hh: subbandGain = 2
+                    case .ll: gainExponent = 0
+                    case .hl, .lh: gainExponent = 1
+                    case .hh: gainExponent = 2
                     }
-                    let rangeBits = imageBitDepth + subbandGain
-                    let params = J2KQuantizationParameters.fromQuality(config.quality)
-                    let step = J2KStepSizeCalculator.calculateStepSize(
-                        baseStepSize: params.baseStepSize,
-                        subband: info.subband,
-                        decompositionLevel: info.level,
+                    let rangeBits = imageBitDepth + gainExponent
+                    let step = lossyStepSize(
+                        for: info,
+                        imageBitDepth: imageBitDepth,
+                        componentCount: image.components.count,
                         totalLevels: actualLevels,
-                        reversible: false
+                        adaptiveStepSizes: adaptiveStepSizes
                     )
                     let (epsilon, _) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
                     bandKb = epsilon + guardBits - 1
@@ -1540,8 +2100,6 @@ struct EncoderPipeline: Sendable {
         let allCodeBlocks: [J2KCodeBlock]
 
         if useParallel {
-            let collector = ParallelResultCollector<(Int, J2KCodeBlock)>(capacity: totalBlocks)
-
             let chunkSize = max(1, totalBlocks / maxConcurrency)
             let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
                 let end = min(start + chunkSize, totalBlocks)
@@ -1550,149 +2108,147 @@ struct EncoderPipeline: Sendable {
 
             let maxBlockSize = cbWidth * cbHeight
             let isLossless = config.lossless
+            let pipeline = self
+            let capturedDeferred = deferred
 
-            DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
-                let range = chunks[chunkIdx]
-                var localResults: [(Int, J2KCodeBlock)] = []
-                localResults.reserveCapacity(range.count)
+            allCodeBlocks = try await withThrowingTaskGroup(
+                of: [(Int, J2KCodeBlock)].self
+            ) { group in
+                for range in chunks {
+                    group.addTask {
+                        var localResults: [(Int, J2KCodeBlock)] = []
+                        localResults.reserveCapacity(range.count)
 
-                // Per-chunk reusable resources
-                var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
-                var absMags = [Int32](repeating: 0, count: maxBlockSize)
-                var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
-                let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
-                var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
-                var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
-                // Pre-allocated HT coders (reset per block, avoiding per-block allocation)
-                var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
-                var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
-                var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
+                        // Per-chunk reusable resources
+                        var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
+                        var absMags = [Int32](repeating: 0, count: maxBlockSize)
+                        var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
+                        let maxRefBytes = max(4, (maxBlockSize * 2 + 7) / 8)
+                        var sigPropWriter = HTFastBitWriter(capacity: maxRefBytes)
+                        var magRefWriter = HTFastBitWriter(capacity: maxRefBytes)
+                        var mel = HTMELCoder(capacity: max(16, maxBlockSize / 4))
+                        var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
+                        var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
 
-                for i in range {
-                    let d = deferred[i]
+                        for i in range {
+                            let d = capturedDeferred[i]
 
-                    // Extract coefficients into reusable buffer.
-                    // For 9/7 lossy with Float DWT output, quantize inline (P6 fusion)
-                    // and compute distortion stats in the same pass (no separate vDSP/bpPop loops).
-                    let blockSize = d.width * d.height
-                    var sqSum: Double = 0
-                    var bpPop: [Int] = []
-                    var distortionFused = false
-                    if let floatCoeffs = d.floatSubbandCoefficients {
-                        let invStep = 1.0 / d.quantizationStep
-                        let totalBitPlanes = d.bitDepth
-                        bpPop = [Int](repeating: 0, count: totalBitPlanes)
-                        floatCoeffs.withUnsafeBufferPointer { src in
-                            coeffsBuffer.withUnsafeMutableBufferPointer { dst in
-                                let dstBase = dst.baseAddress!
-                                let srcBase = src.baseAddress!
-                                for row in 0..<d.height {
-                                    let srcRow = (d.originY + row) * d.subbandWidth + d.originX
-                                    let dstRow = row * d.width
-                                    for col in 0..<d.width {
-                                        let coeff = srcBase[srcRow + col]
-                                        let mag = Int32(abs(coeff) * invStep)
-                                        dstBase[dstRow + col] = coeff >= 0 ? mag : -mag
-                                        // Fused distortion: sqSum and bpPop inline
-                                        sqSum += Double(mag) * Double(mag)
-                                        if mag > 0 {
-                                            let msb = 31 &- Int(UInt32(mag).leadingZeroBitCount)
-                                            if msb < totalBitPlanes { bpPop[msb] += 1 }
+                            let blockSize = d.width * d.height
+                            var sqSum: Double = 0
+                            var bpPop: [Int] = []
+                            var distortionFused = false
+                            if let floatCoeffs = d.floatSubbandCoefficients {
+                                let invStep = 1.0 / d.quantizationStep
+                                let totalBitPlanes = d.bitDepth
+                                bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                                floatCoeffs.withUnsafeBufferPointer { src in
+                                    coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                                        let dstBase = dst.baseAddress!
+                                        let srcBase = src.baseAddress!
+                                        for row in 0..<d.height {
+                                            let srcRow = (d.originY + row) * d.subbandWidth + d.originX
+                                            let dstRow = row * d.width
+                                            for col in 0..<d.width {
+                                                let coeff = srcBase[srcRow + col]
+                                                let mag = Int32(abs(coeff) * invStep)
+                                                dstBase[dstRow + col] = coeff >= 0 ? mag : -mag
+                                                sqSum += Double(mag) * Double(mag)
+                                                if mag > 0 {
+                                                    let msb = 31 &- Int(UInt32(mag).leadingZeroBitCount)
+                                                    if msb < totalBitPlanes { bpPop[msb] += 1 }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        }
-                        distortionFused = true
-                    } else {
-                    d.subbandCoefficients.withUnsafeBufferPointer { src in
-                        coeffsBuffer.withUnsafeMutableBufferPointer { dst in
-                            for row in 0..<d.height {
-                                let srcStart = (d.originY + row) * d.subbandWidth + d.originX
-                                memcpy(
-                                    dst.baseAddress! + row * d.width,
-                                    src.baseAddress! + srcStart,
-                                    d.width * MemoryLayout<Int32>.size
-                                )
-                            }
-                        }
-                    }
-                    } // end else (Int32 extraction)
-
-                    // Compute distortion stats for lossy mode (skip if already fused above)
-                    if !isLossless && !distortionFused {
-                        #if canImport(Accelerate)
-                        if blockSize >= 16 {
-                            coeffsBuffer.withUnsafeBufferPointer { ptr in
-                                var absF = [Float](unsafeUninitializedCapacity: blockSize) { buf, count in
-                                    vDSP_vflt32(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
-                                    count = blockSize
+                                distortionFused = true
+                            } else {
+                            d.subbandCoefficients.withUnsafeBufferPointer { src in
+                                coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                                    for row in 0..<d.height {
+                                        let srcStart = (d.originY + row) * d.subbandWidth + d.originX
+                                        memcpy(
+                                            dst.baseAddress! + row * d.width,
+                                            src.baseAddress! + srcStart,
+                                            d.width * MemoryLayout<Int32>.size
+                                        )
+                                    }
                                 }
-                                vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(blockSize))
-                                var dotResult: Float = 0
-                                vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(blockSize))
-                                sqSum = Double(dotResult)
                             }
-                        } else {
-                            for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
-                        }
-                        #else
-                        for j in 0..<blockSize {
-                            let v = Double(abs(coeffsBuffer[j]))
-                            sqSum += v * v
-                        }
-                        #endif
+                            } // end else (Int32 extraction)
 
-                        let totalBitPlanes = d.bitDepth
-                        bpPop = [Int](repeating: 0, count: totalBitPlanes)
-                        for j in 0..<blockSize {
-                            let mag = UInt32(abs(coeffsBuffer[j]))
-                            if mag > 0 {
-                                let msb = 31 - mag.leadingZeroBitCount
-                                if msb < totalBitPlanes { bpPop[msb] += 1 }
+                            if !isLossless && !distortionFused {
+                                #if canImport(Accelerate)
+                                if blockSize >= 16 {
+                                    coeffsBuffer.withUnsafeBufferPointer { ptr in
+                                        var absF = [Float](unsafeUninitializedCapacity: blockSize) { buf, count in
+                                            vDSP_vflt32(ptr.baseAddress!, 1, buf.baseAddress!, 1, vDSP_Length(blockSize))
+                                            count = blockSize
+                                        }
+                                        vDSP_vabs(absF, 1, &absF, 1, vDSP_Length(blockSize))
+                                        var dotResult: Float = 0
+                                        vDSP_dotpr(absF, 1, absF, 1, &dotResult, vDSP_Length(blockSize))
+                                        sqSum = Double(dotResult)
+                                    }
+                                } else {
+                                    for j in 0..<blockSize { sqSum += Double(coeffsBuffer[j]) * Double(coeffsBuffer[j]) }
+                                }
+                                #else
+                                for j in 0..<blockSize {
+                                    let v = Double(abs(coeffsBuffer[j]))
+                                    sqSum += v * v
+                                }
+                                #endif
+
+                                let totalBitPlanes = d.bitDepth
+                                bpPop = [Int](repeating: 0, count: totalBitPlanes)
+                                for j in 0..<blockSize {
+                                    let mag = UInt32(abs(coeffsBuffer[j]))
+                                    if mag > 0 {
+                                        let msb = 31 - mag.leadingZeroBitCount
+                                        if msb < totalBitPlanes { bpPop[msb] += 1 }
+                                    }
+                                }
                             }
+
+                            let blockCoeffs = Array(coeffsBuffer[0..<blockSize])
+
+                            let pending = PendingCodeBlock(
+                                index: d.index, x: d.x, y: d.y,
+                                width: d.width, height: d.height,
+                                subband: d.subband,
+                                componentIndex: d.componentIndex,
+                                resolutionLevel: d.resolutionLevel,
+                                coefficients: blockCoeffs,
+                                bitDepth: d.bitDepth,
+                                coefficientSquaredSum: sqSum,
+                                bitPlanePopulation: bpPop
+                            )
+
+                            let codeBlock = try pipeline.encodeCodeBlockHTJ2KFast(
+                                pending,
+                                absMags: &absMags,
+                                sigPacked: &sigPacked,
+                                sigPropWriter: &sigPropWriter,
+                                magRefWriter: &magRefWriter,
+                                mel: &mel,
+                                vlc: &vlc,
+                                magsgn: &magsgn
+                            )
+                            localResults.append((d.index, codeBlock))
                         }
-                    }
 
-                    // Always slice-copy to avoid CoW: if we assigned
-                    // coeffsBuffer directly, the next iteration's write
-                    // would trigger a full CoW copy of the shared backing.
-                    let blockCoeffs = Array(coeffsBuffer[0..<blockSize])
-
-                    let pending = PendingCodeBlock(
-                        index: d.index, x: d.x, y: d.y,
-                        width: d.width, height: d.height,
-                        subband: d.subband,
-                        componentIndex: d.componentIndex,
-                        resolutionLevel: d.resolutionLevel,
-                        coefficients: blockCoeffs,
-                        bitDepth: d.bitDepth,
-                        coefficientSquaredSum: sqSum,
-                        bitPlanePopulation: bpPop
-                    )
-
-                    do {
-                        let codeBlock = try self.encodeCodeBlockHTJ2KFast(
-                            pending,
-                            absMags: &absMags,
-                            sigPacked: &sigPacked,
-                            sigPropWriter: &sigPropWriter,
-                            magRefWriter: &magRefWriter,
-                            mel: &mel,
-                            vlc: &vlc,
-                            magsgn: &magsgn
-                        )
-                        localResults.append((d.index, codeBlock))
-                    } catch {
-                        collector.recordError(error)
+                        return localResults
                     }
                 }
 
-                collector.append(contentsOf: localResults)
-            }
-
-            if let error = collector.firstError { throw error }
-            allCodeBlocks = collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+                var combined: [(Int, J2KCodeBlock)] = []
+                combined.reserveCapacity(totalBlocks)
+                for try await chunkResults in group {
+                    combined.append(contentsOf: chunkResults)
+                }
+                return combined
+            }.sorted { $0.0 < $1.0 }.map { $0.1 }
         } else {
             // Sequential path
             var results: [J2KCodeBlock] = []
@@ -1863,15 +2419,23 @@ struct EncoderPipeline: Sendable {
                 results.append(codeBlock)
             }
         } else {
-            // Legacy path: use EBCOT bit-plane coding
+            // Legacy path: use EBCOT bit-plane coding with pre-allocated scratch buffers
             let encoder = CodeBlockEncoder()
+            let maxBlockSize = config.codeBlockSize.width * config.codeBlockSize.height
+            let scratch = EBCOTScratchBuffers(maxSize: maxBlockSize)
+            let componentCount = max(1, Set(pendingBlocks.map(\.componentIndex)).count)
+            let maxPassesLimit = recommendedEBCOTPassLimit(componentCount: componentCount)
             for pending in pendingBlocks {
                 var codeBlock = try encoder.encode(
                     coefficients: pending.coefficients,
                     width: pending.width,
                     height: pending.height,
                     subband: pending.subband,
-                    bitDepth: pending.bitDepth
+                    bitDepth: pending.bitDepth,
+                    options: standardEBCOTCodingOptions,
+                    maxPasses: maxPassesLimit,
+                    scratch: scratch,
+                    collectRateControlMetrics: false
                 )
 
                 codeBlock = J2KCodeBlock(
@@ -1903,43 +2467,37 @@ struct EncoderPipeline: Sendable {
         return results
     }
 
-    /// Encodes code-blocks in parallel using structured concurrency.
+    /// Encodes code-blocks in parallel using coarse-grained chunk workers.
     ///
-    /// Each code-block is an independent unit of entropy coding with its own
-    /// MQ encoder state and context models (EBCOT) or MEL/VLC/MagSgn state (HTJ2K),
-    /// making them safe to process in parallel.
-    ///
-    /// Dispatches to HTJ2K FBCOT block coding when `config.useHTJ2K` is true,
-    /// otherwise uses legacy EBCOT bit-plane coding.
+    /// Each worker owns its own MQ/HT state and scratch buffers and processes a
+    /// contiguous index range. This avoids one-task-per-block overhead, reduces
+    /// ARC churn, and provides deterministic output ordering.
     private func encodeCodeBlocksParallel(
         _ pendingBlocks: [PendingCodeBlock]
+    ) async throws -> [J2KCodeBlock] {
+        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.activeProcessorCount
+        return try encodeCodeBlocksParallel(blocks: pendingBlocks, maxConcurrency: maxConcurrency)
+    }
+
+    /// Synchronous Tier-1 worker scheduler used by the async pipeline entry point.
+    private func encodeCodeBlocksParallel(
+        blocks pendingBlocks: [PendingCodeBlock],
+        maxConcurrency: Int
     ) throws -> [J2KCodeBlock] {
-        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
         let totalBlocks = pendingBlocks.count
+        guard totalBlocks > 0 else { return [] }
 
-        // Thread-safe result collector
-        let collector = ParallelResultCollector<(Int, J2KCodeBlock)>(capacity: totalBlocks)
-
-        // Determine chunk size for balanced workload
-        let chunkSize = max(1, totalBlocks / maxConcurrency)
-        let chunks = stride(from: 0, to: totalBlocks, by: chunkSize).map { start in
-            let end = min(start + chunkSize, totalBlocks)
-            return Array(pendingBlocks[start..<end])
-        }
-
+        let chunkPlan = Tier1ChunkPlan(totalBlocks: totalBlocks, maxConcurrency: maxConcurrency)
         let useHT = config.useHTJ2K
         let cbW = config.codeBlockSize.width
         let cbH = config.codeBlockSize.height
+        let pipeline = self
+        let componentCount = max(1, Set(pendingBlocks.map(\.componentIndex)).count)
+        let maxPassesLimit = recommendedEBCOTPassLimit(componentCount: componentCount)
+        let orderedResults = Tier1ResultBuffer<J2KCodeBlock>(count: totalBlocks)
 
-        DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
-            let chunk = chunks[chunkIdx]
-            var localResults: [(Int, J2KCodeBlock)] = []
-            localResults.reserveCapacity(chunk.count)
-
+        let encodeRange: @Sendable (Range<Int>) throws -> Void = { range in
             if useHT {
-                // HTJ2K fast path: pre-allocate reusable arrays and writers per chunk
-                // to eliminate per-block heap allocations. The arrays are reused
-                // across all blocks in this chunk (same thread).
                 let maxBlockSize = cbW * cbH
                 var absMags = [Int32](repeating: 0, count: maxBlockSize)
                 var sigPacked = [UInt64](repeating: 0, count: (maxBlockSize + 63) / 64)
@@ -1950,75 +2508,160 @@ struct EncoderPipeline: Sendable {
                 var vlc = HTVLCCoder(capacity: max(16, maxBlockSize / 2))
                 var magsgn = HTMagSgnCoder(capacity: max(16, maxBlockSize * 10 / 8))
 
-                for pending in chunk {
-                    do {
-                        let codeBlock = try self.encodeCodeBlockHTJ2KFast(
-                            pending,
-                            absMags: &absMags,
-                            sigPacked: &sigPacked,
-                            sigPropWriter: &sigPropWriter,
-                            magRefWriter: &magRefWriter,
-                            mel: &mel,
-                            vlc: &vlc,
-                            magsgn: &magsgn
-                        )
-                        localResults.append((pending.index, codeBlock))
-                    } catch {
-                        collector.recordError(error)
-                    }
+                for index in range {
+                    let pending = pendingBlocks[index]
+                    let codeBlock = try pipeline.encodeCodeBlockHTJ2KFast(
+                        pending,
+                        absMags: &absMags,
+                        sigPacked: &sigPacked,
+                        sigPropWriter: &sigPropWriter,
+                        magRefWriter: &magRefWriter,
+                        mel: &mel,
+                        vlc: &vlc,
+                        magsgn: &magsgn
+                    )
+                    orderedResults.write(codeBlock, at: pending.index)
                 }
             } else {
-                // Legacy path: use EBCOT bit-plane coding
                 let encoder = CodeBlockEncoder()
-                for pending in chunk {
-                    do {
-                        var codeBlock = try encoder.encode(
-                            coefficients: pending.coefficients,
-                            width: pending.width,
-                            height: pending.height,
-                            subband: pending.subband,
-                            bitDepth: pending.bitDepth
-                        )
+                let maxBlockSize = cbW * cbH
+                let scratch = EBCOTScratchBuffers(maxSize: maxBlockSize)
 
-                        codeBlock = J2KCodeBlock(
-                            index: pending.index,
-                            x: pending.x,
-                            y: pending.y,
-                            width: pending.width,
-                            height: pending.height,
-                            subband: codeBlock.subband,
-                            componentIndex: pending.componentIndex,
-                            resolutionLevel: pending.resolutionLevel,
-                            data: codeBlock.data,
-                            passeCount: codeBlock.passeCount,
-                            zeroBitPlanes: codeBlock.zeroBitPlanes,
-                            passSegmentLengths: codeBlock.passSegmentLengths,
-                            cumulativePassBytes: codeBlock.cumulativePassBytes,
-                            coefficientSquaredSum: pending.coefficientSquaredSum,
-                            bitPlanePopulation: pending.bitPlanePopulation,
-                            cumulativePassDistortion: codeBlock.cumulativePassDistortion,
-                            perPassSnapshotData: codeBlock.perPassSnapshotData,
-                            mqCheckpoints: codeBlock.mqCheckpoints,
-                            rawMQOutput: codeBlock.rawMQOutput
-                        )
+                for index in range {
+                    let pending = pendingBlocks[index]
+                    var codeBlock = try encoder.encode(
+                        coefficients: pending.coefficients,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: pending.subband,
+                        bitDepth: pending.bitDepth,
+                        options: standardEBCOTCodingOptions,
+                        maxPasses: maxPassesLimit,
+                        scratch: scratch,
+                        collectRateControlMetrics: false
+                    )
 
-                        localResults.append((pending.index, codeBlock))
-                    } catch {
-                        collector.recordError(error)
+                    codeBlock = J2KCodeBlock(
+                        index: pending.index,
+                        x: pending.x,
+                        y: pending.y,
+                        width: pending.width,
+                        height: pending.height,
+                        subband: codeBlock.subband,
+                        componentIndex: pending.componentIndex,
+                        resolutionLevel: pending.resolutionLevel,
+                        data: codeBlock.data,
+                        passeCount: codeBlock.passeCount,
+                        zeroBitPlanes: codeBlock.zeroBitPlanes,
+                        passSegmentLengths: codeBlock.passSegmentLengths,
+                        cumulativePassBytes: codeBlock.cumulativePassBytes,
+                        coefficientSquaredSum: pending.coefficientSquaredSum,
+                        bitPlanePopulation: pending.bitPlanePopulation,
+                        cumulativePassDistortion: codeBlock.cumulativePassDistortion,
+                        perPassSnapshotData: codeBlock.perPassSnapshotData,
+                        mqCheckpoints: codeBlock.mqCheckpoints,
+                        rawMQOutput: codeBlock.rawMQOutput
+                    )
+
+                    orderedResults.write(codeBlock, at: pending.index)
+                }
+            }
+        }
+
+        #if canImport(Dispatch)
+        if chunkPlan.workerCount > 1 {
+            DispatchQueue.global(qos: .userInteractive).sync {
+                DispatchQueue.concurrentPerform(iterations: chunkPlan.workerCount) { workerIndex in
+                    if orderedResults.firstError != nil { return }
+                    guard let range = chunkPlan.range(for: workerIndex, totalBlocks: totalBlocks) else { return }
+
+                    autoreleasepool {
+                        do {
+                            try encodeRange(range)
+                        } catch {
+                            orderedResults.recordError(error)
+                        }
                     }
                 }
             }
+            return try orderedResults.materialize()
+        }
+        #endif
 
-            collector.append(contentsOf: localResults)
+        try encodeRange(0..<totalBlocks)
+        return try orderedResults.materialize()
+    }
+
+    /// Estimates the effective total target bitrate used for HT refinement truncation.
+    ///
+    /// This keeps HTJ2K from spending CPU on very deep tail bit-planes that the
+    /// final PCRD pass will almost certainly discard at lower rates.
+    private func effectiveHTTargetBitsPerPixel() -> Double {
+        switch config.bitrateMode {
+        case .constantBitrate(let bitsPerPixel):
+            return max(0.05, bitsPerPixel)
+        case .variableBitrate(_, let maxBitsPerPixel):
+            return max(0.05, maxBitsPerPixel)
+        case .constantQuality:
+            let quality = max(0.0, min(1.0, config.quality))
+            if quality >= 0.95 { return 2.0 }
+            if quality >= 0.80 { return 1.2 }
+            if quality >= 0.50 { return 0.7 }
+            if quality >= 0.20 { return 0.35 }
+            return 0.18
+        case .lossless:
+            return Double.greatestFiniteMagnitude
+        }
+    }
+
+    /// Recommends how many HT refinement bit-planes to emit for a block.
+    ///
+    /// Lossy HTJ2K quality is dominated by the upper refinement planes; the
+    /// deepest tail planes often add bytes and CPU with negligible value. Bias
+    /// the cap toward LL and high-energy blocks while trimming low-value tails.
+    private func recommendedHTRefinementPlanes(for pending: PendingCodeBlock, topBitPlane: Int) -> Int {
+        guard topBitPlane > 0 else { return 0 }
+        guard !config.lossless else { return topBitPlane }
+
+        let targetBitsPerPixel = effectiveHTTargetBitsPerPixel()
+        var planeLimit: Int
+        switch targetBitsPerPixel {
+        case ..<0.35:
+            planeLimit = 4
+        case ..<0.75:
+            planeLimit = 5
+        case ..<1.25:
+            planeLimit = 6
+        case ..<2.0:
+            planeLimit = 8
+        default:
+            planeLimit = topBitPlane
         }
 
-        // Propagate any encoding errors
-        if let error = collector.firstError {
-            throw error
+        if config.useReversibleFilter {
+            planeLimit += 1
         }
 
-        // Sort by original index to maintain order
-        return collector.results.sorted { $0.0 < $1.0 }.map { $0.1 }
+        switch pending.subband {
+        case .ll:
+            planeLimit += (config.useReversibleFilter && targetBitsPerPixel <= 1.0) ? 2 : 1
+        case .hh:
+            planeLimit -= (config.useReversibleFilter && targetBitsPerPixel <= 1.0) ? 2 : 1
+        case .hl, .lh:
+            if config.useReversibleFilter && targetBitsPerPixel <= 1.0 {
+                planeLimit -= 1
+            }
+        }
+
+        let sampleCount = max(1, pending.width * pending.height)
+        let meanEnergy = pending.coefficientSquaredSum / Double(sampleCount)
+        if meanEnergy > 4096 {
+            planeLimit += 1
+        } else if meanEnergy < 64 {
+            planeLimit -= 1
+        }
+
+        return min(topBitPlane, max(2, planeLimit))
     }
 
     // MARK: - HTJ2K Block Encoding
@@ -2077,6 +2720,7 @@ struct EncoderPipeline: Sendable {
         )
         let cleanupBlock = cleanupResult.block
         var sigPacked = cleanupResult.sigPacked
+        let cleanupSigPacked = sigPacked
         let absMags = cleanupResult.absMags
 
         // Encode refinement passes (SigProp + MagRef) for lower bit-planes.
@@ -2098,13 +2742,7 @@ struct EncoderPipeline: Sendable {
         //   bpp ≈ 1  → skip last 2 planes
         //   bpp ≤ 0.5 → skip last 4 planes
         // For constant quality, map quality → effective cap.
-        let maxRefinementPlanes: Int
-        if config.lossless {
-            maxRefinementPlanes = topBitPlane  // encode all
-        } else {
-            // Generate all refinement planes and let PCRD handle truncation.
-            maxRefinementPlanes = topBitPlane
-        }
+        let maxRefinementPlanes = recommendedHTRefinementPlanes(for: pending, topBitPlane: topBitPlane)
 
         let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
         let numRefinementPlanes = max(0, topBitPlane - lowestRefinementPlane)
@@ -2125,9 +2763,14 @@ struct EncoderPipeline: Sendable {
                 coefficients: pending.coefficients,
                 absMags: absMags,
                 sigPacked: &sigPacked,
+                cleanupSigPacked: cleanupSigPacked,
                 bitPlane: bp,
                 output: &allPassData
             )
+
+            guard sigPropBytes > 0 || magRefBytes > 0 else {
+                break
+            }
 
             totalPasses += 1
             passSegmentLengths.append(sigPropBytes)
@@ -2244,15 +2887,10 @@ struct EncoderPipeline: Sendable {
             vlc: &vlc,
             magsgn: &magsgn
         )
+        let cleanupSigPacked = sigPacked
 
         // Refinement passes with reusable writers
-        let maxRefinementPlanes: Int
-        if config.lossless {
-            maxRefinementPlanes = topBitPlane
-        } else {
-            // Generate all refinement planes and let PCRD handle truncation.
-            maxRefinementPlanes = topBitPlane
-        }
+        let maxRefinementPlanes = recommendedHTRefinementPlanes(for: pending, topBitPlane: topBitPlane)
 
         let lowestRefinementPlane = max(0, topBitPlane - maxRefinementPlanes)
         let numRefinementPlanes = max(0, topBitPlane - lowestRefinementPlane)
@@ -2277,9 +2915,13 @@ struct EncoderPipeline: Sendable {
         var reconMag: [Int32]?
         if !config.lossless {
             reconMag = [Int32](repeating: 0, count: count)
-            // After cleanup: significant coefficients have exact values.
-            // Bit-scan over sigPacked words — O(significant) instead of O(count).
+            // Cleanup establishes significance at the top bit-plane, but later
+            // HT refinement passes still carry important magnitude detail.
+            // Track newly significant cleanup samples conservatively at the
+            // current significance bit so PCRD does not overvalue cleanup while
+            // undervaluing the follow-on refinement passes.
             var distReduction: Double = 0
+            let cleanupBitValue = Int32(1 << topBitPlane)
             for wordIdx in 0..<sigWords {
                 var word = sigPacked[wordIdx]
                 let base = wordIdx &* 64
@@ -2288,9 +2930,11 @@ struct EncoderPipeline: Sendable {
                     let i = base &+ bit
                     guard i < count else { break }
                     let coeff = pending.coefficients[i]
-                    reconMag![i] = coeff < 0 ? 0 &- coeff : coeff
+                    let knownMagnitude = min(cleanupBitValue, absMags[i])
+                    reconMag![i] = knownMagnitude
                     let original = Double(coeff)
-                    distReduction += original * original
+                    let reconstructed = Double(coeff >= 0 ? knownMagnitude : -knownMagnitude)
+                    distReduction += original * original - (original - reconstructed) * (original - reconstructed)
                     word &= word &- 1
                 }
             }
@@ -2313,11 +2957,16 @@ struct EncoderPipeline: Sendable {
                 coefficients: pending.coefficients,
                 absMags: absMags,
                 sigPacked: &sigPacked,
+                cleanupSigPacked: cleanupSigPacked,
                 bitPlane: bp,
                 output: &allPassData,
                 sigPropWriter: &sigPropWriter,
                 magRefWriter: &magRefWriter
             )
+
+            guard sigPropBytes > 0 || magRefBytes > 0 else {
+                break
+            }
 
             totalPasses += 1
             passSegmentLengths.append(sigPropBytes)
@@ -2467,7 +3116,8 @@ struct EncoderPipeline: Sendable {
 
     /// Applies rate control and quality layer formation.
     private func applyRateControl(
-        codeBlocks: [J2KCodeBlock], totalPixels: Int
+        codeBlocks: [J2KCodeBlock], totalPixels: Int,
+        componentCount: Int = 1
     ) throws -> [QualityLayer] {
         guard !codeBlocks.isEmpty else {
             return [QualityLayer(index: 0)]
@@ -2486,25 +3136,33 @@ struct EncoderPipeline: Sendable {
 
         let rateConfig: RateControlConfiguration
         let ppbp = config.useHTJ2K ? 2 : 3
+        // The current packet writer emits one final truncated layer rather than
+        // a true multi-layer LRCP codestream. Use a single cumulative PCRD
+        // target here so bitrate increases remain monotonic and are not skewed
+        // by provisional intermediate-layer commitments.
+        let effectiveLayerCount = 1
         switch config.bitrateMode {
         case .constantBitrate(let bpp):
             rateConfig = RateControlConfiguration(
                 mode: .targetBitrate(bpp),
-                layerCount: config.qualityLayers,
+                layerCount: effectiveLayerCount,
+                componentCount: componentCount,
                 useReversibleFilter: config.useReversibleFilter,
                 passesPerBitPlane: ppbp
             )
         case .constantQuality:
             rateConfig = RateControlConfiguration(
                 mode: .constantQuality(max(0.0, min(1.0, config.quality))),
-                layerCount: config.qualityLayers,
+                layerCount: effectiveLayerCount,
+                componentCount: componentCount,
                 useReversibleFilter: config.useReversibleFilter,
                 passesPerBitPlane: ppbp
             )
         case .variableBitrate(_, let maxBpp):
             rateConfig = RateControlConfiguration(
                 mode: .targetBitrate(maxBpp),
-                layerCount: config.qualityLayers,
+                layerCount: effectiveLayerCount,
+                componentCount: componentCount,
                 useReversibleFilter: config.useReversibleFilter,
                 passesPerBitPlane: ppbp
             )
@@ -2523,7 +3181,8 @@ struct EncoderPipeline: Sendable {
         image: J2KImage,
         codeBlocks: [J2KCodeBlock],
         layers: [QualityLayer],
-        actualDecompositionLevels: Int
+        actualDecompositionLevels: Int,
+        adaptiveStepSizes: [String: Double]
     ) throws -> Data {
         // Pre-size buffer based on total code block data + marker/header overhead
         let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
@@ -2547,7 +3206,12 @@ struct EncoderPipeline: Sendable {
         try writeCODMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
 
         // QCD — Quantization Default
-        try writeQCDMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
+        try writeQCDMarker(
+            &writer,
+            image: image,
+            decompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveStepSizes
+        )
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
@@ -2702,6 +3366,9 @@ struct EncoderPipeline: Sendable {
         // Bit 5: Segmentation symbols
         // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
         var codeBlockStyle: UInt8 = 0
+        if standardEBCOTCodingOptions.bypassEnabled {
+            codeBlockStyle |= 0x01 // Set bit 0 for selective arithmetic coding bypass
+        }
         if config.useHTJ2K {
             codeBlockStyle |= 0x40 // Set bit 6 for HTJ2K mode
         }
@@ -2753,8 +3420,11 @@ struct EncoderPipeline: Sendable {
         let cbHeightExp = Int(log2(Double(config.codeBlockSize.height)))
         segment.writeUInt8(UInt8(cbHeightExp - 2))
 
-        // Code-block style (with HT bit if HTJ2K is enabled)
+        // Code-block style (with selective arithmetic bypass and HT bit if enabled)
         var codeBlockStyle: UInt8 = 0
+        if standardEBCOTCodingOptions.bypassEnabled {
+            codeBlockStyle |= 0x01 // Set bit 0 for selective arithmetic coding bypass
+        }
         if config.useHTJ2K {
             codeBlockStyle |= 0x40 // Set bit 6 for HTJ2K mode
         }
@@ -2780,7 +3450,12 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the QCD marker segment (Quantization Default).
-    private func writeQCDMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
+    private func writeQCDMarker(
+        _ writer: inout J2KBitWriter,
+        image: J2KImage,
+        decompositionLevels: Int,
+        adaptiveStepSizes: [String: Double]
+    ) throws {
         var segment = J2KBitWriter()
 
         // Sqcd byte layout: guard bits (bits 5-7) | quantization style (bits 0-4)
@@ -2818,12 +3493,11 @@ struct EncoderPipeline: Sendable {
 
             // Compute step sizes using the SAME parameters as the actual quantizer
             // in Stage 4 (applyQuantization), so the QCD marker matches encoding.
-            let params: J2KQuantizationParameters = .fromQuality(config.quality)
             let bitDepth = image.components.first?.bitDepth ?? 8
-            let guardBits = Int(quantExt.extendedGuardBits) // Must match Sqcd guard bits
-            // R_b = image bit depth + subband gain (ISO 15444-1 Eq. E.4)
-            // Guard bits are NOT part of R_b — they only affect M_b (Eq. E.2)
-            // Subband gain G_b: LL=0, HL/LH=1, HH=2
+            // For the irreversible 9/7 path, the DWT normalization already
+            // equalizes subband energy, so the effective QCD range-bits use the
+            // base image precision for all subbands. This matches the OpenJPEG
+            // convention and keeps encode/decode step reconstruction aligned.
             let baseRangeBits = bitDepth
 
             // SPqcd: Step size values for each subband (2 bytes each)
@@ -2834,8 +3508,8 @@ struct EncoderPipeline: Sendable {
             //   μ_b = round((Δ_b / 2^(R_b - ε_b) - 1) × 2^11)
 
             // LL subband (quantizer uses decompositionLevel=0 for LL, gain=0)
-            let llStep = J2KStepSizeCalculator.calculateStepSize(
-                baseStepSize: params.baseStepSize,
+            let llStep = adaptiveStepSizes[adaptiveStepKey(for: .ll, level: 0)] ?? J2KStepSizeCalculator.calculateStepSize(
+                baseStepSize: lossyQuantizationParameters(bitDepth: bitDepth, componentCount: image.components.count).baseStepSize,
                 subband: .ll,
                 decompositionLevel: 0,
                 totalLevels: decompositionLevels,
@@ -2852,26 +3526,20 @@ struct EncoderPipeline: Sendable {
             if decompositionLevels > 0 {
                 for level in (1...decompositionLevels).reversed() {
                     for subband in [J2KSubband.hl, .lh, .hh] {
-                        let step = J2KStepSizeCalculator.calculateStepSize(
-                            baseStepSize: params.baseStepSize,
+                        let step = adaptiveStepSizes[adaptiveStepKey(for: subband, level: level)] ?? J2KStepSizeCalculator.calculateStepSize(
+                            baseStepSize: lossyQuantizationParameters(bitDepth: bitDepth, componentCount: image.components.count).baseStepSize,
                             subband: subband,
                             decompositionLevel: level,
                             totalLevels: decompositionLevels,
                             reversible: false
                         )
-                        // Include subband gain in R_b as required by ISO 15444-1
-                        // Eq. E.4: R_b = I + G_b where G_b is subband gain exponent.
-                        // OpenJPEG's decoder uses gain=0 internally but compensates
-                        // with adjusted DWT normalization (two_invK), so the net
-                        // result is the same either way for OPJ decoding. Our own
-                        // decoder expects the standard gains.
-                        let subbandGain: Int
+                        let gainExponent: Int
                         switch subband {
-                        case .ll: subbandGain = 0
-                        case .hl, .lh: subbandGain = 1
-                        case .hh: subbandGain = 2
+                        case .ll: gainExponent = 0
+                        case .hl, .lh: gainExponent = 1
+                        case .hh: gainExponent = 2
                         }
-                        let rangeBits = baseRangeBits + subbandGain
+                        let rangeBits = baseRangeBits + gainExponent
                         let (exp, mant) = Self.encodeJ2KStepSize(step, rangeBits: rangeBits)
                         segment.writeUInt16(UInt16((exp & 0x1F) << 11 | (mant & 0x7FF)))
                     }

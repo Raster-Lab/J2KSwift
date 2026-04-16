@@ -18,11 +18,11 @@ final class J2KLosslessDecodingBenchmarkTests: XCTestCase {
     #endif
 
     /// Runs the full benchmark suite and prints results.
-    func testRunBenchmarkSuite() throws {
+    func testRunBenchmarkSuite() async throws {
         // This test runs the benchmark and prints results to console
         // It's marked as a test so it can be run easily, but it's really a benchmark runner
 
-        let report = try J2KLosslessDecodingBenchmark.runAll()
+        let report = try await J2KLosslessDecodingBenchmark.runAll()
         print("\n" + report + "\n")
 
         // The test always passes - it's just for running benchmarks

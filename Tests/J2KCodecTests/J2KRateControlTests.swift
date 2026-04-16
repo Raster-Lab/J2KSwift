@@ -326,7 +326,7 @@ final class J2KRateControlTests: XCTestCase {
         let targetBytes = Int(0.5 * Double(10000) / 8.0)
         var totalBytes = 0
 
-        for (blockIndex, passCount) in layers[0].codeBlockContributions {
+        for (blockIndex, _) in layers[0].codeBlockContributions {
             let block = codeBlocks.first { $0.index == blockIndex }
             XCTAssertNotNil(block)
             totalBytes += block!.data.count
@@ -496,7 +496,402 @@ final class J2KRateControlTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(layers[0].codeBlockContributions.count, 5)
     }
 
+    func testPCRDZeroByteRefinementPassesPreferBetterTruncationPoint() throws {
+        let blockWithFreeRefinement = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 2),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2, 2, 2],
+            coefficientSquaredSum: 64,
+            cumulativePassDistortion: [20, 40, 60]
+        )
+
+        let steadilyGrowingBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 3),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 2, 3],
+            coefficientSquaredSum: 64,
+            cumulativePassDistortion: [14, 28, 42]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(1.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: false
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layers = try rateControl.optimizeLayers(
+            codeBlocks: [blockWithFreeRefinement, steadilyGrowingBlock],
+            totalPixels: 16
+        )
+
+        XCTAssertEqual(layers.count, 1)
+        XCTAssertEqual(layers[0].codeBlockContributions[0], 3)
+        XCTAssertNil(layers[0].codeBlockContributions[1])
+    }
+
     // MARK: - Rate-Distortion Statistics Tests
+
+    func testPCRDStrictRateMatchingAvoidsOversizedLatePassTrap() throws {
+        let unstableBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 3),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 2, 3],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [4, 8, 40]
+        )
+
+        let fittingBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 1),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [20]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(1.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: true
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layers = try rateControl.optimizeLayers(
+            codeBlocks: [unstableBlock, fittingBlock],
+            totalPixels: 16
+        )
+
+        XCTAssertEqual(layers.count, 1)
+        XCTAssertEqual(layers[0].codeBlockContributions[1], 1)
+        XCTAssertEqual(layers[0].codeBlockContributions[0], 1)
+    }
+
+    func testHTJ2KStylePCRDHigherBitrateDoesNotReduceSelectedPasses() throws {
+        let htPrimaryBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 3),
+            passeCount: 5,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 1, 2, 2, 3],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [8, 20, 34, 48, 62]
+        )
+
+        let htSecondaryBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 4),
+            passeCount: 5,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 1, 2, 3, 4],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [7, 16, 24, 31, 38]
+        )
+
+        let lowRateConfig = RateControlConfiguration(
+            mode: .targetBitrate(1.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: true,
+            passesPerBitPlane: 2
+        )
+        let highRateConfig = RateControlConfiguration(
+            mode: .targetBitrate(1.5),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: true,
+            passesPerBitPlane: 2
+        )
+
+        let codeBlocks = [htPrimaryBlock, htSecondaryBlock]
+        let lowLayer = try J2KRateControl(configuration: lowRateConfig).optimizeLayers(
+            codeBlocks: codeBlocks,
+            totalPixels: 16
+        )[0]
+        let highLayer = try J2KRateControl(configuration: highRateConfig).optimizeLayers(
+            codeBlocks: codeBlocks,
+            totalPixels: 16
+        )[0]
+
+        XCTAssertGreaterThanOrEqual(
+            highLayer.codeBlockContributions[0] ?? 0,
+            lowLayer.codeBlockContributions[0] ?? 0
+        )
+        XCTAssertGreaterThanOrEqual(
+            highLayer.codeBlockContributions[1] ?? 0,
+            lowLayer.codeBlockContributions[1] ?? 0
+        )
+    }
+
+    func testHTJ2KPrefersClosestUsefulFrontierWhenStrictBudgetWouldUndershoot() throws {
+        let dominantBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 5),
+            passeCount: 2,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2, 5],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [40, 80]
+        )
+
+        let weakerBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .hl,
+            data: Data(count: 4),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [4],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [48]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(2.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: true,
+            passesPerBitPlane: 2
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layer = try rateControl.optimizeLayers(
+            codeBlocks: [dominantBlock, weakerBlock],
+            totalPixels: 16
+        )[0]
+
+        XCTAssertEqual(
+            layer.codeBlockContributions[0],
+            2,
+            "HTJ2K should keep the dominant block at the closest useful frontier instead of leaving a large strict-budget undershoot"
+        )
+    }
+
+    func testHTJ2KPrefersCoverageOverDeepLateRefinement() throws {
+        let dominantBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 5),
+            passeCount: 5,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 2, 3, 4, 5],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [18, 20, 22, 26, 32]
+        )
+
+        let coverageBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .hl,
+            data: Data(count: 2),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [20]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(2.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: true,
+            passesPerBitPlane: 2
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layer = try rateControl.optimizeLayers(
+            codeBlocks: [dominantBlock, coverageBlock],
+            totalPixels: 16
+        )[0]
+
+        XCTAssertEqual(
+            layer.codeBlockContributions[1],
+            1,
+            "HTJ2K should keep a useful coverage block instead of spending the whole budget on a deep late refinement frontier"
+        )
+        XCTAssertLessThanOrEqual(layer.codeBlockContributions[0] ?? 0, 2)
+    }
+
+    func testHTCleanupSignificantCoefficientsDoNotEmitRedundantMagRefBits() throws {
+        let coefficients: [Int32] = [32, -33, 47, -48,
+                                     40, -41, 63, -35]
+        let encoder = HTBlockEncoder(width: 4, height: 2, subband: .ll)
+        let cleanup = try encoder.encodeCleanup(coefficients: coefficients, bitPlane: 5)
+        var sigPacked = cleanup.sigPacked
+        let cleanupSigPacked = sigPacked
+
+        let refinement = encoder.encodeFusedRefinement(
+            coefficients: coefficients,
+            absMags: cleanup.absMags,
+            sigPacked: &sigPacked,
+            cleanupSigPacked: cleanupSigPacked,
+            bitPlane: 4
+        )
+
+        XCTAssertEqual(refinement.sigPropData.count, 0)
+        XCTAssertEqual(refinement.magRefData.count, 0)
+    }
+
+    func testMQCheckpointTruncationMatchesPredictablePassBoundaryDecode() throws {
+        let width = 16
+        let height = 16
+        let bitDepth = 10
+        var coefficients = [Int32](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = y * width + x
+                let base = Int32(((x * 17) ^ (y * 29) ^ ((x + y) * 7)) & 0x1FF)
+                coefficients[idx] = (idx.isMultiple(of: 3) ? -1 : 1) * max(1, base)
+            }
+        }
+
+        let encoder = CodeBlockEncoder()
+        let decoder = CodeBlockDecoder()
+
+        let defaultBlock = try encoder.encode(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: CodingOptions(terminationMode: .default)
+        )
+        let predictableBlock = try encoder.encode(
+            coefficients: coefficients,
+            width: width,
+            height: height,
+            subband: .ll,
+            bitDepth: bitDepth,
+            options: CodingOptions(terminationMode: .predictable)
+        )
+
+        XCTAssertFalse(defaultBlock.mqCheckpoints.isEmpty)
+        XCTAssertFalse(defaultBlock.rawMQOutput.isEmpty)
+        XCTAssertFalse(predictableBlock.passSegmentLengths.isEmpty)
+
+        let candidatePasses = [1, 2, 3, 4, min(7, defaultBlock.passeCount), defaultBlock.passeCount - 1]
+        let passCounts = Array(Set(candidatePasses.filter { $0 > 0 && $0 < defaultBlock.passeCount })).sorted()
+
+        for passCount in passCounts {
+            let checkpoint = defaultBlock.mqCheckpoints[passCount - 1]
+            let truncatedData = MQEncoder.reconstructFromCheckpoint(checkpoint, rawOutput: defaultBlock.rawMQOutput)
+            let defaultTruncatedBlock = J2KCodeBlock(
+                index: defaultBlock.index,
+                x: defaultBlock.x,
+                y: defaultBlock.y,
+                width: defaultBlock.width,
+                height: defaultBlock.height,
+                subband: defaultBlock.subband,
+                data: truncatedData,
+                passeCount: passCount,
+                zeroBitPlanes: defaultBlock.zeroBitPlanes
+            )
+
+            let predictableLength = predictableBlock.passSegmentLengths.prefix(passCount).reduce(0, +)
+            let predictableTruncatedBlock = J2KCodeBlock(
+                index: predictableBlock.index,
+                x: predictableBlock.x,
+                y: predictableBlock.y,
+                width: predictableBlock.width,
+                height: predictableBlock.height,
+                subband: predictableBlock.subband,
+                data: Data(predictableBlock.data.prefix(predictableLength)),
+                passeCount: passCount,
+                zeroBitPlanes: predictableBlock.zeroBitPlanes,
+                passSegmentLengths: Array(predictableBlock.passSegmentLengths.prefix(passCount))
+            )
+
+            let decodedFromCheckpoint = try decoder.decode(
+                codeBlock: defaultTruncatedBlock,
+                bitDepth: bitDepth,
+                options: CodingOptions(terminationMode: .default)
+            )
+            let decodedFromPredictable = try decoder.decode(
+                codeBlock: predictableTruncatedBlock,
+                bitDepth: bitDepth,
+                options: CodingOptions(terminationMode: .predictable)
+            )
+
+            XCTAssertEqual(
+                decodedFromCheckpoint,
+                decodedFromPredictable,
+                "Checkpoint truncation should match predictable pass-boundary decode for pass \(passCount)"
+            )
+        }
+    }
 
     func testRateDistortionStatsCreation() {
         let stats = RateDistortionStats(

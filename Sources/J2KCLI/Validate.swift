@@ -73,7 +73,7 @@ extension J2KCLI {
             // Decode attempt is the primary Part 1 check
             let decoder = J2KDecoder()
             do {
-                _ = try decoder.decode(codestream)
+                _ = try await decoder.decode(codestream)
             } catch {
                 issues.append("Part 1 decode failed: \(error.localizedDescription)")
             }

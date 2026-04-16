@@ -8,6 +8,11 @@
 
 J2KSwift's HTJ2K implementation delivers **production-competitive performance** against OpenJPEG (C, v2.5.4):
 
+### Latest tuning status — April 16, 2026
+- HT rate control now keeps the closest useful near-target truncation frontier under strict matched-rate budgets instead of leaving large undershoots.
+- Adaptive refinement-plane caps now trim low-value tail bit-planes before final packet formation.
+- Focused verification for the follow-up tuning is green: the targeted HTJ2K suite completed with **42 tests run, 0 failures**.
+
 ### Block-Level (HTJ2K vs Legacy EBCOT)
 - **44-45× faster encoding**, **122-158× faster decoding** than optimized EBCOT (Legacy)
 - Exceeds ISO/IEC 15444-15 target of 10-100× speedup

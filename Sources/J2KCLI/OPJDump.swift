@@ -63,7 +63,7 @@ extension J2KCLI {
         let decoder = J2KDecoder()
         let image: J2KImage
         do {
-            image = try decoder.decode(codestreamData)
+            image = try await decoder.decode(codestreamData)
         } catch {
             printToStderr("[ERROR] Failed to read the header: \(error)")
             exit(1)

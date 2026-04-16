@@ -102,7 +102,7 @@ extension J2KCLI {
         } else {
             // General re-encode path: decode then encode
             let decoder = J2KDecoder()
-            let image   = try decoder.decode(codestreamData)
+            let image   = try await decoder.decode(codestreamData)
 
             var config = J2KEncodingConfiguration()
 
@@ -115,14 +115,14 @@ extension J2KCLI {
             }
 
             let encoder = J2KEncoder(encodingConfiguration: config)
-            outputData = try encoder.encode(image)
+            outputData = try await encoder.encode(image)
         }
 
         // Wrap in container if required
         if outputFormat == "jp2" || outputFormat == "jpx" {
             let decoder = J2KDecoder()
             do {
-                let image = try decoder.decode(outputData)
+                let image = try await decoder.decode(outputData)
                 outputData = wrapInJP2Container(outputData, image: image)
             } catch {
                 if verbose {
@@ -144,9 +144,9 @@ extension J2KCLI {
             let verifyMode = options["verify-mode"] ?? "exact"
             let decoder = J2KDecoder()
             do {
-                let originalImage = try decoder.decode(codestreamData)
+                let originalImage = try await decoder.decode(codestreamData)
                 let outputCodestream = extractCodestream(from: outputData, format: detectContainerFormat(outputData))
-                let outputImage = try decoder.decode(outputCodestream)
+                let outputImage = try await decoder.decode(outputCodestream)
 
                 if verifyMode == "exact" {
                     // Bit-exact comparison

@@ -39,12 +39,26 @@ enum CodecService {
                 tileHeight: uiConfig.tileHeight
             )
             let encoder = J2KEncoder(encodingConfiguration: encodingConfig)
-            // Bridge the @Sendable progress callback into the encoder's
-            // synchronous, non-escaping progress closure.
-            return try withoutActuallyEscaping({ (update: EncoderProgressUpdate) in
-                progressCallback(update.stage.rawValue, update.progress)
-            }) { escapableCb in
-                try encoder.encode(image, progress: escapableCb)
+            // Bridge sync closure → async encoder using semaphore+Task.
+            // Use withoutActuallyEscaping since Task captures the callback
+            // but it completes before this function returns.
+            return try withoutActuallyEscaping(progressCallback) { escapableCb in
+                let sem = DispatchSemaphore(value: 0)
+                nonisolated(unsafe) var encodeResult: Result<Data, Error>?
+                let cb = escapableCb
+                Task { @Sendable in
+                    do {
+                        let data = try await encoder.encode(image, progress: { update in
+                            cb(update.stage.rawValue, update.progress)
+                        })
+                        encodeResult = .success(data)
+                    } catch {
+                        encodeResult = .failure(error)
+                    }
+                    sem.signal()
+                }
+                sem.wait()
+                return try encodeResult!.get()
             }
         }
     }
@@ -59,7 +73,23 @@ enum CodecService {
     static var decoderFunction: @Sendable (Data) throws -> (Data, Int, Int, Int) {
         { codestreamData in
             let decoder = J2KDecoder()
-            let image = try decoder.decode(codestreamData)
+            // Bridge from sync closure to async decode.
+            // This is acceptable here because the closure is invoked from
+            // a background thread by the ViewModel, never from MainActor.
+            let semaphore = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var result: Swift.Result<J2KImage, Error>?
+            let data = codestreamData
+            Task { @Sendable in
+                do {
+                    let image = try await decoder.decode(data)
+                    result = .success(image)
+                } catch {
+                    result = .failure(error)
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            let image = try result!.get()
 
             let width = image.width
             let height = image.height

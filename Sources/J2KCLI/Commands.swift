@@ -102,7 +102,7 @@ extension J2KCLI {
         let startLoad = Date()
         let image: J2KImage
         if pipeInput {
-            image = try loadImageFromStdin()
+            image = try await loadImageFromStdin()
         } else {
             image = try loadImage(from: inputPath)
         }
@@ -210,7 +210,7 @@ extension J2KCLI {
         if verbose { print("Encoding…") }
         let encoder = J2KEncoder(encodingConfiguration: config)
         let startEncode = Date()
-        var encodedData = try encoder.encode(image)
+        var encodedData = try await encoder.encode(image)
         let encodeTime = Date().timeIntervalSince(startEncode)
 
         // Wrap in JP2 container if requested
@@ -350,6 +350,7 @@ extension J2KCLI {
         let regionStr       = options["region"]
         let outputFormat    = options["output-format"]
         let bitDepthConvert = options["bit-depth"].flatMap { Int($0) }
+        _ = (stripAlpha, scale, regionStr, outputFormat, bitDepthConvert)
 
         if verbose {
             printInfo("Loading: \(inputPath)", pipeMode: pipeOutput)
@@ -370,7 +371,7 @@ extension J2KCLI {
         // Decode
         let decoder = J2KDecoder()
         let startDecode = Date()
-        let decodedImage = try decoder.decode(encodedData)
+        let decodedImage = try await decoder.decode(encodedData)
         let decodeTime = Date().timeIntervalSince(startDecode)
 
         // Header-only mode: print info and exit

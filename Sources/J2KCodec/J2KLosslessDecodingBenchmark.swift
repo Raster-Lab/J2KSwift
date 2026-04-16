@@ -17,7 +17,7 @@ import J2KCore
 /// across various image sizes and decomposition levels.
 public struct J2KLosslessDecodingBenchmark {
     /// Runs all benchmarks and returns a summary report.
-    public static func runAll() throws -> String {
+    public static func runAll() async throws -> String {
         var report = "# Lossless Decoding Optimization Benchmark Results\n\n"
         report += "Date: \(Date())\n\n"
         report += "## Test Configuration\n"
@@ -32,12 +32,12 @@ public struct J2KLosslessDecodingBenchmark {
 
         // 2D Transform Benchmarks
         report += "## 2D Inverse Transform\n\n"
-        report += try benchmark2DTransforms()
+        report += try await benchmark2DTransforms()
         report += "\n"
 
         // Multi-level Benchmarks
         report += "## Multi-level Decomposition\n\n"
-        report += try benchmarkMultiLevel()
+        report += try await benchmarkMultiLevel()
         report += "\n"
 
         return report
@@ -90,7 +90,7 @@ public struct J2KLosslessDecodingBenchmark {
 
     // MARK: - 2D Transform Benchmarks
 
-    private static func benchmark2DTransforms() throws -> String {
+    private static func benchmark2DTransforms() async throws -> String {
         var report = "| Size | Standard (ms) | Optimized (ms) | Speedup |\n"
         report += "|------|---------------|----------------|----------|\n"
 
@@ -123,8 +123,8 @@ public struct J2KLosslessDecodingBenchmark {
             // Optimised implementation
             let optimizer = J2KDWT2DOptimizer()
             let optimizedBenchmark = J2KBenchmark(name: "Optimized-2D-\(width)x\(height)")
-            let optimizedResult = try optimizedBenchmark.measureThrowing(iterations: 50) {
-                _ = try optimizer.inverseTransform2DOptimized(
+            let optimizedResult = try await optimizedBenchmark.measureAsyncThrowing(iterations: 50) {
+                _ = try await optimizer.inverseTransform2DOptimized(
                     ll: ll,
                     lh: lh,
                     hl: hl,
@@ -146,7 +146,7 @@ public struct J2KLosslessDecodingBenchmark {
 
     // MARK: - Multi-level Benchmarks
 
-    private static func benchmarkMultiLevel() throws -> String {
+    private static func benchmarkMultiLevel() async throws -> String {
         var report = "Testing multi-level decomposition reconstruction:\n\n"
         report += "| Levels | Size | Standard (ms) | Optimized (ms) | Speedup |\n"
         report += "|--------|------|---------------|----------------|----------|\n"
@@ -187,8 +187,8 @@ public struct J2KLosslessDecodingBenchmark {
             // Optimised implementation
             let optimizer = J2KDWT2DOptimizer()
             let optimizedBenchmark = J2KBenchmark(name: "Optimized-ML\(numLevels)")
-            let optimizedResult = try optimizedBenchmark.measureThrowing(iterations: 20) {
-                _ = try optimizer.inverseTransform2DOptimized(
+            let optimizedResult = try await optimizedBenchmark.measureAsyncThrowing(iterations: 20) {
+                _ = try await optimizer.inverseTransform2DOptimized(
                     ll: firstLevel.ll,
                     lh: firstLevel.lh,
                     hl: firstLevel.hl,
@@ -213,7 +213,7 @@ public struct J2KLosslessDecodingBenchmark {
 
     // MARK: - Summary Statistics
 
-    public static func printSummary() throws {
-        print(try runAll())
+    public static func printSummary() async throws {
+        print(try await runAll())
     }
 }

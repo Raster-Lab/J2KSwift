@@ -518,7 +518,7 @@ public struct J2KFileWriter: Sendable {
     /// // ... fill image data ...
     /// try writer.write(image, to: fileURL, configuration: .init(quality: 0.95))
     /// ```
-    public func write(_ image: J2KImage, to url: URL, configuration: J2KConfiguration = J2KConfiguration()) throws {
+    public func write(_ image: J2KImage, to url: URL, configuration: J2KConfiguration = J2KConfiguration()) async throws {
         // Validate the image
         guard image.width > 0, image.height > 0 else {
             throw J2KError.invalidParameter("Image must have positive dimensions (got \(image.width)x\(image.height))")
@@ -530,7 +530,7 @@ public struct J2KFileWriter: Sendable {
 
         // Encode the image to a codestream
         let encoder = J2KEncoder(configuration: configuration)
-        let codestreamData = try encoder.encode(image)
+        let codestreamData = try await encoder.encode(image)
 
         // Generate the file data based on format
         let fileData: Data

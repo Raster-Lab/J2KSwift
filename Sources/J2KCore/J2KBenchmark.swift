@@ -131,6 +131,38 @@ public struct J2KBenchmark: Sendable {
 
         return BenchmarkResult(name: name, times: times)
     }
+
+    /// Measures the execution time of an async throwing operation.
+    ///
+    /// - Parameters:
+    ///   - iterations: Number of times to run the operation.
+    ///   - warmupIterations: Number of warmup iterations (default: 5).
+    ///   - operation: The async throwing operation to measure.
+    /// - Returns: Benchmark results with timing statistics.
+    /// - Throws: Any error thrown by the operation.
+    public func measureAsyncThrowing(
+        iterations: Int,
+        warmupIterations: Int = 5,
+        operation: @Sendable () async throws -> Void
+    ) async throws -> BenchmarkResult {
+        // Warmup
+        for _ in 0..<warmupIterations {
+            try await operation()
+        }
+
+        // Measurement
+        var times: [TimeInterval] = []
+        times.reserveCapacity(iterations)
+
+        for _ in 0..<iterations {
+            let start = Self.currentTime()
+            try await operation()
+            let end = Self.currentTime()
+            times.append(end - start)
+        }
+
+        return BenchmarkResult(name: name, times: times)
+    }
 }
 
 /// Results from a benchmark measurement.

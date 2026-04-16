@@ -81,6 +81,9 @@ struct DecoderConfiguration: Sendable {
     /// Whether HTJ2K block coding is used (from COD marker bit 6).
     var useHTJ2K: Bool = false
 
+    /// Whether selective arithmetic coding bypass is enabled (from COD marker bit 0).
+    var useSelectiveArithmeticBypass: Bool = false
+
     /// Per-component DC offset values from DCO marker segment (Part 2).
     ///
     /// When non-nil, the decoder applies these offsets after inverse wavelet
@@ -197,17 +200,17 @@ struct DecoderPipeline: Sendable {
     func decode(
         _ data: Data,
         progress: ((DecoderProgressUpdate) -> Void)? = nil
-    ) throws -> J2KImage {
+    ) async throws -> J2KImage {
         // Stage 1: Parse codestream and extract metadata
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 0.0)
         let (metadata, tiles) = try parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
 
         if metadata.isMultiTile {
-            return try decodeMultiTile(metadata: metadata, tiles: tiles, progress: progress)
+            return try await decodeMultiTile(metadata: metadata, tiles: tiles, progress: progress)
         } else {
             let tileData = tiles.first?.tileData ?? Data()
-            return try decodeSingleTile(metadata: metadata, tileData: tileData, progress: progress)
+            return try await decodeSingleTile(metadata: metadata, tileData: tileData, progress: progress)
         }
     }
 
@@ -255,7 +258,7 @@ struct DecoderPipeline: Sendable {
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
 
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
-        let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: metadata)
+        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 1.0)
 
         reportProgress(progress, stage: .dequantization, stageProgress: 0.0)
@@ -312,7 +315,7 @@ struct DecoderPipeline: Sendable {
             tileMeta.tileSize = (width: tileW, height: tileH)
 
             let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
-            let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+            let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
             let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: tileMeta)
 
             // GPU inverse wavelet transform for this tile
@@ -359,33 +362,61 @@ struct DecoderPipeline: Sendable {
         metadata: CodestreamMetadata,
         tileData: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
-    ) throws -> J2KImage {
+    ) async throws -> J2KImage {
+        let profileDecode = ProcessInfo.processInfo.environment["J2K_PROFILE_DECODE"] != nil
+
         // Stage 2: Extract tile data
         reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
+        var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(tileData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: extractTileData        = \(String(format: "%.1f", dt)) ms (\(codeBlocks.count) blocks)")
+        }
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
 
         // Stage 3: Entropy decoding
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
-        let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: metadata)
+        t0 = DispatchTime.now()
+        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: entropyDecoding         = \(String(format: "%.1f", dt)) ms (\(decodedBlocks.count) subbands)")
+        }
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 1.0)
 
         // Stage 4: Dequantization
         reportProgress(progress, stage: .dequantization, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: dequantization          = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .dequantization, stageProgress: 1.0)
 
         // Stage 5: Inverse wavelet transform
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 0.0)
-        let spatialData = try applyInverseWaveletTransform(dequantizedSubbands, metadata: metadata)
+        t0 = DispatchTime.now()
+        let spatialData = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: inverseWaveletTransform = \(String(format: "%.1f", dt)) ms (\(spatialData.count) components)")
+        }
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 1.0)
 
         // Stage 6: Inverse colour transform
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         var rgbData = try applyInverseColorTransform(spatialData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: inverseColorTransform   = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
 
         // DC level unshift: for unsigned components, add back 2^(bitDepth-1)
+        t0 = DispatchTime.now()
         for (compIdx, compInfo) in metadata.components.enumerated() {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
@@ -397,10 +428,19 @@ struct DecoderPipeline: Sendable {
                 }
             }
         }
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: dcLevelUnshift          = \(String(format: "%.1f", dt)) ms")
+        }
 
         // Stage 7: Image reconstruction
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let image = try reconstructImage(rgbData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE: reconstructImage        = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
 
         return image
@@ -412,7 +452,7 @@ struct DecoderPipeline: Sendable {
         metadata: CodestreamMetadata,
         tiles: [(tileIndex: Int, tileData: Data)],
         progress: ((DecoderProgressUpdate) -> Void)?
-    ) throws -> J2KImage {
+    ) async throws -> J2KImage {
         let numComponents = metadata.componentCount
 
         // Prepare full-image component buffers
@@ -439,11 +479,11 @@ struct DecoderPipeline: Sendable {
 
             // Stage 2-4: Extract, entropy decode, dequantize for this tile
             let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
-            let decodedBlocks = try applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+            let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
             let dequantizedSubbands = try applyDequantization(decodedBlocks, metadata: tileMeta)
 
             // Stage 5: Inverse wavelet transform for this tile
-            let spatialData = try applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
+            let spatialData = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
 
             // Stage 6: Inverse colour transform for this tile
             var tileRGB = try applyInverseColorTransform(spatialData, metadata: tileMeta)
@@ -672,8 +712,10 @@ struct DecoderPipeline: Sendable {
         config.codeBlockSize = (width: 1 << cbWidthExp, height: 1 << cbHeightExp)
 
         // Code-block style
+        // Bit 0: Selective arithmetic coding bypass
         // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
         let codeBlockStyle = try reader.readUInt8()
+        config.useSelectiveArithmeticBypass = (codeBlockStyle & 0x01) != 0
         config.useHTJ2K = (codeBlockStyle & 0x40) != 0
 
         // Wavelet transform type
@@ -739,8 +781,10 @@ struct DecoderPipeline: Sendable {
         config.codeBlockSize = (width: 1 << cbWidthExp, height: 1 << cbHeightExp)
 
         // Code-block style
+        // Bit 0: Selective arithmetic coding bypass
         // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
         let codeBlockStyle = try reader.readUInt8()
+        config.useSelectiveArithmeticBypass = (codeBlockStyle & 0x01) != 0
         config.useHTJ2K = (codeBlockStyle & 0x40) != 0
 
         // Wavelet transform type
@@ -802,11 +846,11 @@ struct DecoderPipeline: Sendable {
                 }
             }
         } else if quantStyle == 2 {
-            // Scalar expounded quantization
-            // Per ISO 15444-1 Eq. E.3:
-            //   Δ_b = 2^(R_b - ε_b) × (1 + μ_b / 2^11)
-            // where R_b = bitDepth + subbandGain (Eq. E.4)
-            // Guard bits are NOT part of R_b — they only affect M_b (Eq. E.2)
+            // Scalar expounded quantization.
+            // For the 9/7 irreversible path, the stored QCD exponents are
+            // interpreted using the base image precision for every subband.
+            // This matches the encoder's OpenJPEG-compatible signaling and keeps
+            // the dequantization step sizes consistent across decode paths.
             let baseRangeBits = bitDepth
 
             func decodeStepSize(_ value: UInt16, subbandGain: Int) -> Double {
@@ -827,11 +871,13 @@ struct DecoderPipeline: Sendable {
                     for subband in ["HL", "LH", "HH"] {
                         let value = try reader.readUInt16()
                         let exp = Int((value >> 11) & 0x1F)
-                        // Use standard subband gains for Rb (ISO 15444-1 Eq. E.4).
-                        // This is correct for our inverse DWT which uses standard invK.
-                        // (OPJ uses gain=0 here but compensates with two_invK in its IDWT.)
-                        let gain: Int = (subband == "HH") ? 2 : 1
-                        stepSizes["\(subband)_\(level)"] = decodeStepSize(value, subbandGain: gain)
+                        let gainExponent: Int
+                        switch subband {
+                        case "HL", "LH": gainExponent = 1
+                        case "HH": gainExponent = 2
+                        default: gainExponent = 0
+                        }
+                        stepSizes["\(subband)_\(level)"] = decodeStepSize(value, subbandGain: gainExponent)
                         bandKb["\(subband)_\(level)"] = exp + guardBits - 1  // Kb = εb + Gb - 1
                     }
                 }
@@ -1124,7 +1170,7 @@ struct DecoderPipeline: Sendable {
     private func applyEntropyDecoding(
         _ blocks: [CodeBlockInfo],
         metadata: CodestreamMetadata
-    ) throws -> [SubbandInfo] {
+    ) async throws -> [SubbandInfo] {
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
             isIrreversible = true
@@ -1146,72 +1192,91 @@ struct DecoderPipeline: Sendable {
         var subbandBlocks: [String: [DecodedBlock]] = [:]
 
         let blockCount = blocks.count
+        let hasHighBitDepthComponent = metadata.components.contains { $0.bitDepth > 8 }
+        let shouldParallelDecodeBlocks = blockCount >= 4 && !hasHighBitDepthComponent
 
-        if blockCount >= 4 {
+        if shouldParallelDecodeBlocks {
             // === Parallel code block decoding ===
             // Each code block is independent (own MQ state + context models for EBCOT,
             // own MEL/VLC/MagSgn state for HTJ2K).
-            // Use DispatchQueue.concurrentPerform for cross-platform parallelism
-            // (macOS Intel/ARM, Linux).
+            //
+            // Keep the more conservative sequential path for high-bit-depth
+            // medical-style decodes. Real-world lossy 12/16-bit studies showed
+            // unstable output under the chunked parallel block path, so correctness
+            // takes priority here.
             let componentBitDepths = metadata.components.map { $0.bitDepth }
+            let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
 
-            // Thread-safe result storage: each thread writes to its unique index
-            let resultsPtr = UnsafeMutablePointer<[Int32]>.allocate(capacity: blockCount)
-            for idx in 0..<blockCount {
-                resultsPtr.advanced(by: idx).initialize(to: [])
-            }
-            defer {
-                resultsPtr.deinitialize(count: blockCount)
-                resultsPtr.deallocate()
-            }
+            // Parallel decode using structured concurrency with chunking
+            let coreCount = ProcessInfo.processInfo.processorCount
+            let chunkSize = max(1, blockCount / coreCount)
 
-            DispatchQueue.concurrentPerform(iterations: blockCount) { i in
-                let block = blocks[i]
-                let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
+            let allResults: [(Int, [Int32])] = try await withThrowingTaskGroup(
+                of: [(Int, [Int32])].self
+            ) { group in
+                for chunkStart in stride(from: 0, to: blockCount, by: chunkSize) {
+                    let chunkEnd = min(chunkStart + chunkSize, blockCount)
+                    group.addTask {
+                        var chunkResults: [(Int, [Int32])] = []
+                        for i in chunkStart..<chunkEnd {
+                            let block = blocks[i]
+                            let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
 
-                if useHT {
-                    // HTJ2K path: use FBCOT block decoding
-                    let htDecoder = HTBlockDecoder(
-                        width: block.width,
-                        height: block.height,
-                        subband: block.subband
-                    )
-                    if let coeffs = try? htDecoder.decodeFromCodestream(
-                        data: block.data,
-                        passCount: block.passCount,
-                        bitDepth: bitDepth,
-                        zeroBitPlanes: block.zeroBitPlanes
-                    ) {
-                        resultsPtr[i] = coeffs
-                    }
-                } else {
-                    // Legacy path: use EBCOT bit-plane decoding
-                    let blockDecoder = CodeBlockDecoder()
-                    let codeBlock = J2KCodeBlock(
-                        index: 0,
-                        x: block.x,
-                        y: block.y,
-                        width: block.width,
-                        height: block.height,
-                        subband: block.subband,
-                        data: block.data,
-                        passeCount: block.passCount,
-                        zeroBitPlanes: block.zeroBitPlanes
-                    )
-                    if let coeffs = try? blockDecoder.decode(
-                        codeBlock: codeBlock,
-                        bitDepth: bitDepth,
-                        irreversible: isIrreversible
-                    ) {
-                        resultsPtr[i] = coeffs
+                            let coeffs: [Int32]
+                            if useHT {
+                                let htDecoder = HTBlockDecoder(
+                                    width: block.width,
+                                    height: block.height,
+                                    subband: block.subband
+                                )
+                                coeffs = try htDecoder.decodeFromCodestream(
+                                    data: block.data,
+                                    passCount: block.passCount,
+                                    bitDepth: bitDepth,
+                                    zeroBitPlanes: block.zeroBitPlanes
+                                )
+                            } else {
+                                let blockDecoder = CodeBlockDecoder()
+                                let codeBlock = J2KCodeBlock(
+                                    index: 0,
+                                    x: block.x,
+                                    y: block.y,
+                                    width: block.width,
+                                    height: block.height,
+                                    subband: block.subband,
+                                    data: block.data,
+                                    passeCount: block.passCount,
+                                    zeroBitPlanes: block.zeroBitPlanes
+                                )
+                                coeffs = try blockDecoder.decode(
+                                    codeBlock: codeBlock,
+                                    bitDepth: bitDepth,
+                                    options: decodeOptions,
+                                    irreversible: isIrreversible
+                                )
+                            }
+                            chunkResults.append((i, coeffs))
+                        }
+                        return chunkResults
                     }
                 }
+                var all: [(Int, [Int32])] = []
+                for try await chunk in group {
+                    all.append(contentsOf: chunk)
+                }
+                return all
+            }
+
+            // Build index → coefficients map
+            var resultsMap = [Int: [Int32]](minimumCapacity: blockCount)
+            for (i, coeffs) in allResults {
+                resultsMap[i] = coeffs
             }
 
             // Collect results sequentially
             for i in 0..<blockCount {
                 let block = blocks[i]
-                var coeffs = resultsPtr[i]
+                var coeffs = resultsMap[i] ?? []
                 if coeffs.isEmpty {
                     coeffs = [Int32](repeating: 0, count: block.width * block.height)
                 }
@@ -1236,6 +1301,7 @@ struct DecoderPipeline: Sendable {
             }
         } else {
             // Sequential path for small block counts
+            let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
             for block in blocks {
                 let compInfo = metadata.components[block.componentIndex]
                 let bitDepth = block.bandKb > 0 ? block.bandKb : compInfo.bitDepth
@@ -1271,6 +1337,7 @@ struct DecoderPipeline: Sendable {
                     coeffs = try decoder.decode(
                         codeBlock: codeBlock,
                         bitDepth: bitDepth,
+                        options: decodeOptions,
                         irreversible: isIrreversible
                     )
                 }
@@ -1430,10 +1497,9 @@ struct DecoderPipeline: Sendable {
     private func applyInverseWaveletTransform(
         _ subbands: [SubbandInfo],
         metadata: CodestreamMetadata
-    ) throws -> [[Double]] {
+    ) async throws -> [[Double]] {
         let filter = metadata.configuration.waveletFilter
         let levels = metadata.configuration.decompositionLevels
-        var componentData: [[Double]] = []
 
         // Use the component count from the SIZ marker, not from the data.
         // Some components may have all-empty packets (e.g., aggressive rate
@@ -1442,8 +1508,22 @@ struct DecoderPipeline: Sendable {
             metadata.componentCount - 1,
             subbands.map { $0.componentIndex }.max() ?? 0
         )
+        let componentCount = maxComponent + 1
 
-        for compIdx in 0...maxComponent {
+        // Pre-index subbands by component — avoids O(n) .filter per component.
+        var subbandsByComponentMut = [[SubbandInfo]](repeating: [], count: componentCount)
+        for sb in subbands {
+            if sb.componentIndex < componentCount {
+                subbandsByComponentMut[sb.componentIndex].append(sb)
+            }
+        }
+        let subbandsByComponent = subbandsByComponentMut
+
+        // Thread-safe result storage for parallel component processing.
+        // Each component's IDWT is fully independent (reads separate
+        // subbands, writes to its own output array).
+
+        let inverseTransformOneComponent: @Sendable (Int) async throws -> [Double] = { (compIdx: Int) async throws -> [Double] in
             // Select filter for this component
             let componentFilter: J2KDWT1D.Filter
             if let kernelConfig = metadata.configuration.waveletKernelConfiguration {
@@ -1460,14 +1540,13 @@ struct DecoderPipeline: Sendable {
                 componentFilter = filter
             }
 
-            let compSubbands = subbands.filter { $0.componentIndex == compIdx }
+            let compSubbands = subbandsByComponent[compIdx]
 
             if compSubbands.isEmpty {
                 // Component has no data (e.g., all code blocks were zeroed by
                 // rate control). Fill with neutral values so downstream stages
                 // (color transform, reconstruction) have the expected shape.
-                componentData.append([Double](repeating: 0.0, count: metadata.width * metadata.height))
-                continue
+                return [Double](repeating: 0.0, count: metadata.width * metadata.height)
             }
 
             // Find LL subband.  When rate control truncates aggressively the
@@ -1500,8 +1579,7 @@ struct DecoderPipeline: Sendable {
 
             // For now, if no decomposition levels, just return LL subband
             if levels == 0 {
-                componentData.append(vDSPConvert.int32sToDoubles(llSubband.coefficients))
-                continue
+                return vDSPConvert.int32sToDoubles(llSubband.coefficients)
             }
 
             // Convert 1D coefficient arrays to 2D arrays for each subband
@@ -1615,6 +1693,47 @@ struct DecoderPipeline: Sendable {
                 return result
             }
 
+            // Flat-buffer helpers for 9/7 multi-level IDWT path
+            func paddedFlat(_ coeffs: [Double], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Double] {
+                var result = [Double](repeating: 0, count: dstW * dstH)
+                let copyW = min(srcW, dstW)
+                let copyH = min(srcH, dstH)
+                coeffs.withUnsafeBufferPointer { srcBuf in
+                    result.withUnsafeMutableBufferPointer { dstBuf in
+                        let dst = dstBuf.baseAddress!
+                        let src = srcBuf.baseAddress!
+                        for row in 0..<copyH {
+                            let srcOffset = row * srcW
+                            let dstOffset = row * dstW
+                            guard srcOffset + copyW <= srcBuf.count else { return }
+                            (dst + dstOffset).update(from: src + srcOffset, count: copyW)
+                        }
+                    }
+                }
+                return result
+            }
+
+            func paddedFlatFromInt(_ coeffs: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Double] {
+                var result = [Double](repeating: 0, count: dstW * dstH)
+                let copyW = min(srcW, dstW)
+                let copyH = min(srcH, dstH)
+                coeffs.withUnsafeBufferPointer { srcBuf in
+                    result.withUnsafeMutableBufferPointer { dstBuf in
+                        let dst = dstBuf.baseAddress!
+                        let src = srcBuf.baseAddress!
+                        for row in 0..<copyH {
+                            let srcOffset = row * srcW
+                            let dstOffset = row * dstW
+                            guard srcOffset + copyW <= srcBuf.count else { return }
+                            for col in 0..<copyW {
+                                dst[dstOffset + col] = Double(src[srcOffset + col])
+                            }
+                        }
+                    }
+                }
+                return result
+            }
+
             // Full multi-level IDWT reconstruction
             // For 9/7 irreversible, use Double precision throughout all levels to
             // avoid accumulated rounding error from Int32 truncation at each level.
@@ -1624,74 +1743,117 @@ struct DecoderPipeline: Sendable {
             } else {
                 useDoublePrecision = false
             }
+            // High-bit-depth medical lossy workflows now use reversible 5/3
+            // rate truncation, and the optimized integer IDWT path has verified
+            // deterministic behavior there. Keep the conservative fallback only
+            // for the more fragile high-bit-depth irreversible 9/7 path.
+            let useConservativeHighBitDepthPath = metadata.components[compIdx].bitDepth > 8 && useDoublePrecision
 
             if useDoublePrecision {
                 // Double-precision path for 9/7 irreversible wavelet.
-                // Use doubleCoefficients (from dequantization) to preserve
-                // fractional precision that would be lost by Int32 rounding.
+                // Use flat-buffer multi-level IDWT to avoid [[Double]]
+                // intermediate conversions at each decomposition level.
                 let expectedLLW = levelSizes[levels].width
                 let expectedLLH = levelSizes[levels].height
-                var currentLLDouble: [[Double]]
+
+                // Convert LL subband to flat [Double]
+                let llFlat: [Double]
                 if let dc = llSubband.doubleCoefficients {
-                    currentLLDouble = paddedDouble(dc, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
+                    llFlat = paddedFlat(dc, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
                 } else {
-                    currentLLDouble = paddedDoubleFromInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
+                    llFlat = paddedFlatFromInt(llSubband.coefficients, srcW: width, srcH: height, dstW: expectedLLW, dstH: expectedLLH)
                 }
+
+                // Build flat subbands for each level (deepest first)
+                var levelSubbands: [(lh: [Double], lhW: Int, lhH: Int,
+                                     hl: [Double], hlW: Int, hlH: Int,
+                                     hh: [Double], hhW: Int, hhH: Int)] = []
 
                 for level in (1...levels).reversed() {
                     let parentW = levelSizes[level - 1].width
                     let parentH = levelSizes[level - 1].height
                     let llW = levelSizes[level].width
                     let llH = levelSizes[level].height
-                    // Standard JPEG 2000 subband dimensions:
-                    // HL: floor(parentW/2) x ceil(parentH/2)
-                    // LH: ceil(parentW/2) x floor(parentH/2)
-                    // HH: floor(parentW/2) x floor(parentH/2)
-                    let hlW = parentW - llW  // = floor(parentW/2)
-                    let lhH = parentH - llH  // = floor(parentH/2)
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
 
+                    // HL subband
                     let hlSub = compSubbands.first(where: { $0.level == level && $0.subband == .hl })
-                    let hl2D: [[Double]]
+                    let hlFlat: [Double]
                     if let hs = hlSub, let dc = hs.doubleCoefficients {
-                        hl2D = paddedDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                        hlFlat = paddedFlat(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
                     } else if let hs = hlSub {
-                        hl2D = paddedDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
+                        hlFlat = paddedFlatFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: llH)
                     } else {
-                        hl2D = [[Double]](repeating: [Double](repeating: 0, count: hlW), count: llH)
+                        hlFlat = [Double](repeating: 0, count: hlW * llH)
                     }
 
+                    // LH subband
                     let lhSub = compSubbands.first(where: { $0.level == level && $0.subband == .lh })
-                    let lh2D: [[Double]]
+                    let lhFlat: [Double]
                     if let ls = lhSub, let dc = ls.doubleCoefficients {
-                        lh2D = paddedDouble(dc, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                        lhFlat = paddedFlat(dc, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
                     } else if let ls = lhSub {
-                        lh2D = paddedDoubleFromInt(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
+                        lhFlat = paddedFlatFromInt(ls.coefficients, srcW: ls.width, srcH: ls.height, dstW: llW, dstH: lhH)
                     } else {
-                        lh2D = [[Double]](repeating: [Double](repeating: 0, count: llW), count: lhH)
+                        lhFlat = [Double](repeating: 0, count: llW * lhH)
                     }
 
+                    // HH subband
                     let hhSub = compSubbands.first(where: { $0.level == level && $0.subband == .hh })
-                    let hh2D: [[Double]]
+                    let hhFlat: [Double]
                     if let hs = hhSub, let dc = hs.doubleCoefficients {
-                        hh2D = paddedDouble(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
+                        hhFlat = paddedFlat(dc, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
                     } else if let hs = hhSub {
-                        hh2D = paddedDoubleFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
+                        hhFlat = paddedFlatFromInt(hs.coefficients, srcW: hs.width, srcH: hs.height, dstW: hlW, dstH: lhH)
                     } else {
-                        hh2D = [[Double]](repeating: [Double](repeating: 0, count: hlW), count: lhH)
+                        hhFlat = [Double](repeating: 0, count: hlW * lhH)
                     }
 
-                    currentLLDouble = try J2KDWT2D.inverseTransform97(
-                        ll: currentLLDouble,
-                        lh: lh2D,
-                        hl: hl2D,
-                        hh: hh2D,
-                        boundaryExtension: .symmetric
-                    )
+                    levelSubbands.append((lh: lhFlat, lhW: llW, lhH: lhH,
+                                          hl: hlFlat, hlW: hlW, hlH: llH,
+                                          hh: hhFlat, hhW: hlW, hhH: lhH))
                 }
 
-                // Keep Double precision through ICT and DC shift — round only at final pixel output
-                let flattened = currentLLDouble.flatMap { $0 }
-                componentData.append(flattened)
+                if useConservativeHighBitDepthPath {
+                    var currentLL = to2DDoubleFromDoubles(llFlat, width: expectedLLW, height: expectedLLH)
+
+                    for (index, _) in Array((1...levels).reversed()).enumerated() {
+                        let levelData = levelSubbands[index]
+                        let lh2D = to2DDoubleFromDoubles(levelData.lh, width: levelData.lhW, height: levelData.lhH)
+                        let hl2D = to2DDoubleFromDoubles(levelData.hl, width: levelData.hlW, height: levelData.hlH)
+                        let hh2D = to2DDoubleFromDoubles(levelData.hh, width: levelData.hhW, height: levelData.hhH)
+                        currentLL = try J2KDWT2D.inverseTransform97(
+                            ll: currentLL,
+                            lh: lh2D,
+                            hl: hl2D,
+                            hh: hh2D,
+                            boundaryExtension: .symmetric
+                        )
+                    }
+
+                    let rowCount = currentLL.count
+                    let colCount = rowCount > 0 ? currentLL[0].count : 0
+                    var flattened = [Double](repeating: 0.0, count: rowCount * colCount)
+                    flattened.withUnsafeMutableBufferPointer { dst in
+                        for r in 0..<rowCount {
+                            let row = currentLL[r]
+                            let offset = r * colCount
+                            for c in 0..<min(colCount, row.count) {
+                                dst[offset + c] = row[c]
+                            }
+                        }
+                    }
+                    return flattened
+                } else {
+                    let optimizer97 = J2KDWT2DOptimizer97()
+                    let result = await optimizer97.inverseTransformMultiLevel97(
+                        ll: llFlat, llW: expectedLLW, llH: expectedLLH,
+                        subbands: levelSubbands
+                    )
+
+                    return result.data
+                }
             } else {
                 // Int32 path for 5/3 reversible wavelet (exact integer arithmetic)
                 let expectedLLW = levelSizes[levels].width
@@ -1725,14 +1887,25 @@ struct DecoderPipeline: Sendable {
                         hh2D = [[Int32]](repeating: [Int32](repeating: 0, count: hlW), count: lhH)
                     }
 
-                    let optimizer = J2KDWT2DOptimizer()
-                    currentLL = try optimizer.inverseTransform2DOptimized(
-                        ll: currentLL,
-                        lh: lh2D,
-                        hl: hl2D,
-                        hh: hh2D,
-                        boundaryExtension: .symmetric
-                    )
+                    if useConservativeHighBitDepthPath {
+                        currentLL = try J2KDWT2D.inverseTransform(
+                            ll: currentLL,
+                            lh: lh2D,
+                            hl: hl2D,
+                            hh: hh2D,
+                            filter: componentFilter,
+                            boundaryExtension: .symmetric
+                        )
+                    } else {
+                        let optimizer = J2KDWT2DOptimizer()
+                        currentLL = try await optimizer.inverseTransform2DOptimized(
+                            ll: currentLL,
+                            lh: lh2D,
+                            hl: hl2D,
+                            hh: hh2D,
+                            boundaryExtension: .symmetric
+                        )
+                    }
                 }
 
                 let rowCount = currentLL.count
@@ -1747,11 +1920,38 @@ struct DecoderPipeline: Sendable {
                         }
                     }
                 }
-                componentData.append(flattened)
+                return flattened
             }
         }
 
-        return componentData
+        // Execute component processing: parallel for multi-component images.
+        let componentResults: [[Double]]
+        if componentCount >= 2 {
+            componentResults = try await withThrowingTaskGroup(
+                of: (Int, [Double]).self
+            ) { group in
+                for compIdx in 0..<componentCount {
+                    group.addTask {
+                        let result = try await inverseTransformOneComponent(compIdx)
+                        return (compIdx, result)
+                    }
+                }
+                var results = [[Double]](repeating: [], count: componentCount)
+                for try await (compIdx, data) in group {
+                    results[compIdx] = data
+                }
+                return results
+            }
+        } else {
+            var results = [[Double]]()
+            for compIdx in 0..<componentCount {
+                let data = try await inverseTransformOneComponent(compIdx)
+                results.append(data)
+            }
+            componentResults = results
+        }
+
+        return componentResults
     }
 
     // MARK: - GPU Inverse Wavelet Transform
@@ -1766,23 +1966,23 @@ struct DecoderPipeline: Sendable {
     ) async throws -> [[Double]] {
         // Fall back to CPU for custom wavelet kernels only
         if metadata.configuration.waveletKernelConfiguration != nil {
-            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
         let levels = metadata.configuration.decompositionLevels
         guard levels >= 1 else {
-            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
         // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
         guard J2KMetalDWT.isAvailable else {
-            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
         // Fall back to CPU for small images where GPU dispatch overhead exceeds compute benefit.
         let pixelCount = metadata.width * metadata.height
         guard pixelCount >= 256 * 256 else {
-            return try applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
         // Select filter based on configuration
@@ -1965,15 +2165,15 @@ struct DecoderPipeline: Sendable {
         // useReversibleTransform indicates MCT is enabled; waveletFilter determines RCT vs ICT
         if metadata.configuration.useReversibleTransform {
             if case .reversible53 = metadata.configuration.waveletFilter {
-                // Inverse RCT (lossless) — needs Int32 for exact integer arithmetic
+                // Inverse RCT (lossless) — operate directly on Doubles to avoid conversion overhead
                 let transform = J2KColorTransform(configuration: J2KColorTransformConfiguration(mode: .reversible))
-                let (r, g, b) = try transform.inverseRCT(
-                    y: vDSPConvert.doublesToInt32s(components[0]),
-                    cb: vDSPConvert.doublesToInt32s(components[1]),
-                    cr: vDSPConvert.doublesToInt32s(components[2])
+                let (r, g, b) = try transform.inverseRCTDouble(
+                    y: components[0],
+                    cb: components[1],
+                    cr: components[2]
                 )
 
-                var result: [[Double]] = [vDSPConvert.int32sToDoubles(r), vDSPConvert.int32sToDoubles(g), vDSPConvert.int32sToDoubles(b)]
+                var result: [[Double]] = [r, g, b]
                 if components.count > 3 {
                     result.append(contentsOf: components[3...])
                 }
@@ -2004,12 +2204,31 @@ struct DecoderPipeline: Sendable {
     ) throws -> J2KImage {
         var imageComponents: [J2KComponent] = []
 
+        func clampRoundedToInt32(_ value: Double) -> Int32 {
+            let rounded = value.rounded()
+            if rounded.isNaN { return 0 }
+            if rounded >= Double(Int32.max) { return Int32.max }
+            if rounded <= Double(Int32.min) { return Int32.min }
+            return Int32(rounded)
+        }
+
         for (idx, compData) in components.enumerated() {
             guard idx < metadata.components.count else { break }
 
             let compInfo = metadata.components[idx]
             let width = metadata.width / compInfo.subsamplingX
             let height = metadata.height / compInfo.subsamplingY
+            let componentLowerBound: Int32
+            let componentUpperBound: Int32
+            if compInfo.signed {
+                let halfRange = Int64(1) << Int64(max(compInfo.bitDepth - 1, 0))
+                componentLowerBound = Int32(max(Int64(Int32.min), -halfRange))
+                componentUpperBound = Int32(min(Int64(Int32.max), halfRange - 1))
+            } else {
+                componentLowerBound = 0
+                let maxValue = (Int64(1) << Int64(max(compInfo.bitDepth, 1))) - 1
+                componentUpperBound = Int32(min(Int64(Int32.max), maxValue))
+            }
 
             // Convert Double array to Data with final rounding and clamping
             // Pre-allocate the exact size needed
@@ -2022,26 +2241,26 @@ struct DecoderPipeline: Sendable {
                 if compInfo.bitDepth <= 8 {
                     if compInfo.signed {
                         for i in 0..<pixelCount {
-                            let rounded = Int32(compData[i].rounded())
+                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             ptr[i] = UInt8(bitPattern: Int8(clamping: rounded))
                         }
                     } else {
                         for i in 0..<pixelCount {
-                            let rounded = Int32(compData[i].rounded())
+                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             ptr[i] = UInt8(clamping: max(0, rounded))
                         }
                     }
                 } else {
                     if compInfo.signed {
                         for i in 0..<pixelCount {
-                            let rounded = Int32(compData[i].rounded())
+                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             let v = UInt16(bitPattern: Int16(clamping: rounded))
                             ptr[i * 2] = UInt8(v >> 8)
                             ptr[i * 2 + 1] = UInt8(v & 0xFF)
                         }
                     } else {
                         for i in 0..<pixelCount {
-                            let rounded = Int32(compData[i].rounded())
+                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             let v = UInt16(clamping: max(0, rounded))
                             ptr[i * 2] = UInt8(v >> 8)
                             ptr[i * 2 + 1] = UInt8(v & 0xFF)

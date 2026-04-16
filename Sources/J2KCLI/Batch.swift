@@ -108,7 +108,7 @@ extension J2KCLI {
             }
 
             let encoder = J2KEncoder(encodingConfiguration: config)
-            let encodedData = try encoder.encode(image)
+            let encodedData = try await encoder.encode(image)
             try encodedData.write(to: URL(fileURLWithPath: outputPath))
 
             let inputSize = image.width * image.height * image.componentCount
@@ -140,7 +140,7 @@ extension J2KCLI {
         ) { inputPath, outputPath in
             let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
             let decoder = J2KDecoder()
-            let image = try decoder.decode(inputData)
+            let image = try await decoder.decode(inputData)
             try saveImage(image, to: outputPath)
 
             let outputSize = image.width * image.height * image.componentCount
@@ -186,9 +186,9 @@ extension J2KCLI {
                 outputData = result.data
             } else {
                 let decoder = J2KDecoder()
-                let image = try decoder.decode(codestreamData)
+                let image = try await decoder.decode(codestreamData)
                 let encoder = J2KEncoder(encodingConfiguration: J2KEncodingConfiguration())
-                outputData = try encoder.encode(image)
+                outputData = try await encoder.encode(image)
             }
 
             try outputData.write(to: URL(fileURLWithPath: outputPath))

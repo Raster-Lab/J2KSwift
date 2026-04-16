@@ -824,7 +824,7 @@ public struct J2KTranscoder: Sendable {
         let totalTiles = coefficients.tiles.count
         let shouldUseParallel = configuration.enableParallelProcessing && totalTiles > 1
 
-        let encodedTiles: [(index: Int, data: Data)]
+        var encodedTiles: [(index: Int, data: Data)]
 
         if shouldUseParallel {
             // Parallel tile processing using Swift structured concurrency
@@ -843,7 +843,7 @@ public struct J2KTranscoder: Sendable {
                 for index in 0..<initialBatch {
                     let tile = coefficients.tiles[index]
                     group.addTask {
-                        let tileData = try self.encodeTile(
+                        let tileData = try await self.encodeTile(
                             tile,
                             targetMode: targetMode,
                             metadata: coefficients
@@ -867,7 +867,7 @@ public struct J2KTranscoder: Sendable {
                         let tile = coefficients.tiles[nextIndex]
                         let capturedIndex = nextIndex
                         group.addTask {
-                            let tileData = try self.encodeTile(
+                            let tileData = try await self.encodeTile(
                                 tile,
                                 targetMode: targetMode,
                                 metadata: coefficients
@@ -883,8 +883,10 @@ public struct J2KTranscoder: Sendable {
             }
         } else {
             // Sequential tile processing
-            encodedTiles = try coefficients.tiles.enumerated().map { tileIdx, tile in
-                let tileData = try self.encodeTile(
+            encodedTiles = []
+            encodedTiles.reserveCapacity(coefficients.tiles.count)
+            for (tileIdx, tile) in coefficients.tiles.enumerated() {
+                let tileData = try await self.encodeTile(
                     tile,
                     targetMode: targetMode,
                     metadata: coefficients
@@ -892,7 +894,7 @@ public struct J2KTranscoder: Sendable {
 
                 progress?(Double(tileIdx + 1) / Double(totalTiles))
 
-                return (index: tileIdx, data: tileData)
+                encodedTiles.append((index: tileIdx, data: tileData))
             }
         }
 
@@ -1538,7 +1540,7 @@ public struct J2KTranscoder: Sendable {
         _ tile: TranscodingTileCoefficients,
         targetMode: HTCodingMode,
         metadata: TranscodingCoefficients
-    ) throws -> Data {
+    ) async throws -> Data {
         // Collect all code-blocks with their ordering metadata
         struct PendingBlock: Sendable {
             let index: Int
@@ -1575,36 +1577,34 @@ public struct J2KTranscoder: Sendable {
                 return Array(pendingBlocks[start..<end])
             }
 
-            let collector = ParallelResultCollector<(Int, Data)>(capacity: totalBlocks)
             let capturedTargetMode = targetMode
 
-            DispatchQueue.concurrentPerform(iterations: chunks.count) { chunkIdx in
-                let chunk = chunks[chunkIdx]
-                var localResults: [(Int, Data)] = []
-                localResults.reserveCapacity(chunk.count)
+            encodedBlocks = try await withThrowingTaskGroup(of: [(Int, Data)].self) { group in
+                for chunk in chunks {
+                    group.addTask { @Sendable in
+                        var localResults: [(Int, Data)] = []
+                        localResults.reserveCapacity(chunk.count)
 
-                for pending in chunk {
-                    do {
-                        let encodedBlock = try self.encodeCodeBlock(
-                            pending.cb,
-                            targetMode: capturedTargetMode,
-                            subband: pending.subband
-                        )
-                        localResults.append((pending.index, encodedBlock))
-                    } catch {
-                        collector.recordError(error)
+                        for pending in chunk {
+                            let encodedBlock = try self.encodeCodeBlock(
+                                pending.cb,
+                                targetMode: capturedTargetMode,
+                                subband: pending.subband
+                            )
+                            localResults.append((pending.index, encodedBlock))
+                        }
+
+                        return localResults
                     }
                 }
 
-                collector.append(contentsOf: localResults)
+                var allResults: [(Int, Data)] = []
+                allResults.reserveCapacity(totalBlocks)
+                for try await chunkResults in group {
+                    allResults.append(contentsOf: chunkResults)
+                }
+                return allResults.sorted { $0.0 < $1.0 }
             }
-
-            // Propagate any encoding errors
-            if let error = collector.firstError {
-                throw error
-            }
-
-            encodedBlocks = collector.results.sorted { $0.0 < $1.0 }
         } else {
             encodedBlocks = try pendingBlocks.map { pending in
                 let encodedBlock = try encodeCodeBlock(

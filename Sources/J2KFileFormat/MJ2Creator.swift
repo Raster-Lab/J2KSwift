@@ -245,7 +245,7 @@ public actor MJ2Creator {
     /// Encodes a single frame.
     private func encodeFrame(_ frame: J2KImage, index: Int) async throws -> Data {
         do {
-            return try encoder.encode(frame)
+            return try await encoder.encode(frame)
         } catch {
             throw MJ2CreationError.encodingFailed(frameIndex: index, error: error)
         }

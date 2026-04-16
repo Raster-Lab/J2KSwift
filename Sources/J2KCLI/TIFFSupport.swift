@@ -123,7 +123,10 @@ extension J2KCLI {
         guard compression == 1 else {
             throw J2KError.invalidParameter("Only uncompressed TIFF is supported (compression=\(compression))")
         }
-        guard bitsPerSample == 8 || bitsPerSample == 16 || bitsPerSample == 32 else {
+        guard bitsPerSample > 0 else {
+            throw J2KError.invalidParameter("Unsupported TIFF bit depth: \(bitsPerSample)")
+        }
+        guard bitsPerSample == 8 || (bitsPerSample > 8 && bitsPerSample <= 16) || bitsPerSample == 32 else {
             throw J2KError.invalidParameter("Unsupported TIFF bit depth: \(bitsPerSample)")
         }
         guard sampleFormat == 1 || sampleFormat == 2 else {
@@ -131,7 +134,14 @@ extension J2KCLI {
         }
 
         let signed = sampleFormat == 2
-        let bytesPerSample = bitsPerSample / 8
+        let bytesPerSample: Int
+        if bitsPerSample <= 8 {
+            bytesPerSample = 1
+        } else if bitsPerSample <= 16 {
+            bytesPerSample = 2
+        } else {
+            bytesPerSample = 4
+        }
 
         // Assemble pixel data from strips
         let stripOffsets    = tags[TIFFTag.stripOffsets.rawValue] ?? []
@@ -139,7 +149,9 @@ extension J2KCLI {
         let rowsPerStrip    = Int(tags[TIFFTag.rowsPerStrip.rawValue]?.first ?? UInt32(height))
 
         var pixelData = Data()
-        let expectedBytes = width * height * samplesPerPixel * bytesPerSample
+        let sampleCount = width * height * samplesPerPixel
+        let expectedBytes = sampleCount * bytesPerSample
+        let packedExpectedBytes = (sampleCount * bitsPerSample + 7) / 8
 
         if stripOffsets.isEmpty {
             throw J2KError.invalidParameter("TIFF missing StripOffsets tag")
@@ -147,26 +159,55 @@ extension J2KCLI {
 
         for i in 0..<stripOffsets.count {
             let offset = Int(stripOffsets[i])
+            let stripRows = min(rowsPerStrip, height - (i * rowsPerStrip))
+            let stripSampleCount = stripRows * width * samplesPerPixel
             let count: Int
             if i < stripByteCounts.count {
                 count = Int(stripByteCounts[i])
             } else {
-                let stripRows = min(rowsPerStrip, height - (i * rowsPerStrip))
-                count = stripRows * width * samplesPerPixel * bytesPerSample
+                count = (stripSampleCount * bitsPerSample + 7) / 8
             }
             guard offset + count <= data.count else {
                 throw J2KError.invalidParameter("TIFF strip data out of range")
             }
-            pixelData.append(data[offset..<(offset + count)])
+
+            let stripData = Data(data[offset..<(offset + count)])
+            if bitsPerSample % 8 != 0 && count < stripSampleCount * bytesPerSample {
+                pixelData.append(
+                    unpackPackedSamples(
+                        stripData,
+                        sampleCount: stripSampleCount,
+                        bitsPerSample: bitsPerSample,
+                        bytesPerSample: bytesPerSample,
+                        signed: signed
+                    )
+                )
+            } else {
+                pixelData.append(stripData)
+            }
         }
 
-        guard pixelData.count >= expectedBytes else {
+        guard pixelData.count >= min(expectedBytes, packedExpectedBytes) else {
+            throw J2KError.invalidParameter("TIFF: insufficient pixel data (\(pixelData.count) < \(min(expectedBytes, packedExpectedBytes)))")
+        }
+
+        if pixelData.count >= expectedBytes {
+            pixelData = Data(pixelData.prefix(expectedBytes))
+
+            // Canonicalize multi-byte samples to the CLI's internal big-endian layout.
+            if !bigEndian && bytesPerSample > 1 {
+                pixelData = byteSwapData(pixelData, bytesPerSample: bytesPerSample)
+            }
+        } else if bitsPerSample % 8 != 0 {
+            pixelData = unpackPackedSamples(
+                Data(pixelData.prefix(packedExpectedBytes)),
+                sampleCount: sampleCount,
+                bitsPerSample: bitsPerSample,
+                bytesPerSample: bytesPerSample,
+                signed: signed
+            )
+        } else {
             throw J2KError.invalidParameter("TIFF: insufficient pixel data (\(pixelData.count) < \(expectedBytes))")
-        }
-
-        // Byte-swap big-endian 16/32-bit samples to host order (little-endian)
-        if bigEndian && bytesPerSample > 1 {
-            pixelData = byteSwapData(pixelData, bytesPerSample: bytesPerSample)
         }
 
         // De-interleave into separate J2KComponent planes
@@ -226,20 +267,18 @@ extension J2KCLI {
 
     // MARK: - TIFF Writing
 
-    /// Save a `J2KImage` as an uncompressed little-endian TIFF file.
     static func saveTIFF(_ image: J2KImage, to url: URL) throws {
-        guard !image.components.isEmpty else {
-            throw J2KError.invalidParameter("Cannot write TIFF: image has no components")
-        }
-
         let samplesPerPixel = image.componentCount
-        let bitsPerSample = image.components[0].bitDepth
-        let bytesPerSample = (bitsPerSample + 7) / 8
-        // Normalise to standard byte widths
+        let sourceBitsPerSample = image.components[0].bitDepth
+        let bytesPerSample = (sourceBitsPerSample + 7) / 8
+        // Normalise to standard storage widths while preserving the source bit-depth
+        // in the TIFF metadata when it still fits that storage class. This keeps
+        // 10/12/14-bit medical TIFFs compatible with OpenJPEG output.
         let actualBytesPerSample: Int
         if bytesPerSample <= 1 { actualBytesPerSample = 1 }
         else if bytesPerSample <= 2 { actualBytesPerSample = 2 }
         else { actualBytesPerSample = 4 }
+        let storedBitsPerSample = min(sourceBitsPerSample, actualBytesPerSample * 8)
 
         let width = image.width
         let height = image.height
@@ -269,6 +308,10 @@ extension J2KCLI {
                     }
                 }
             }
+        }
+
+        if actualBytesPerSample > 1 {
+            pixelData = byteSwapData(pixelData, bytesPerSample: actualBytesPerSample)
         }
 
         // Build the TIFF file
@@ -307,7 +350,7 @@ extension J2KCLI {
         let extraDataStart = UInt32(ifdOffset) + UInt32(ifdSize)
 
         if samplesPerPixel == 1 {
-            entries.append(IFDEntry(tag: 258, type: 3, count: 1, value: UInt32(bitsPerSample)))
+            entries.append(IFDEntry(tag: 258, type: 3, count: 1, value: UInt32(storedBitsPerSample)))
         } else {
             // BPS array will be stored at extraDataStart
             entries.append(IFDEntry(tag: 258, type: 3, count: UInt32(samplesPerPixel), value: extraDataStart))
@@ -338,7 +381,7 @@ extension J2KCLI {
         // Write extra data: BitsPerSample array
         if samplesPerPixel > 1 {
             for _ in 0..<samplesPerPixel {
-                appendLE16(&out, UInt16(bitsPerSample))
+                appendLE16(&out, UInt16(storedBitsPerSample))
             }
         }
 
@@ -388,6 +431,63 @@ extension J2KCLI {
                 result.swapAt(base + 1, base + 2)
             }
         }
+        return result
+    }
+
+    /// Expand bit-packed integer samples into the CLI's canonical big-endian byte layout.
+    private static func unpackPackedSamples(
+        _ data: Data,
+        sampleCount: Int,
+        bitsPerSample: Int,
+        bytesPerSample: Int,
+        signed: Bool
+    ) -> Data {
+        precondition(bitsPerSample > 0)
+
+        var result = Data()
+        result.reserveCapacity(sampleCount * bytesPerSample)
+
+        let mask = (UInt32(1) << UInt32(bitsPerSample)) - 1
+        let signBit = UInt32(1) << UInt32(bitsPerSample - 1)
+        var bitBuffer: UInt64 = 0
+        var bitsAvailable = 0
+        var index = 0
+
+        for _ in 0..<sampleCount {
+            while bitsAvailable < bitsPerSample {
+                guard index < data.count else { break }
+                bitBuffer = (bitBuffer << 8) | UInt64(data[index])
+                bitsAvailable += 8
+                index += 1
+            }
+
+            let shift = bitsAvailable - bitsPerSample
+            var value = UInt32((bitBuffer >> UInt64(shift)) & UInt64(mask))
+            bitsAvailable -= bitsPerSample
+            if bitsAvailable > 0 {
+                bitBuffer &= (UInt64(1) << UInt64(bitsAvailable)) - 1
+            } else {
+                bitBuffer = 0
+            }
+
+            if signed && (value & signBit) != 0 {
+                value |= ~mask
+            }
+
+            switch bytesPerSample {
+            case 1:
+                result.append(UInt8(truncatingIfNeeded: value))
+            case 2:
+                var word = UInt16(truncatingIfNeeded: value).bigEndian
+                withUnsafeBytes(of: &word) { result.append(contentsOf: $0) }
+            case 4:
+                var dword = UInt32(truncatingIfNeeded: value).bigEndian
+                withUnsafeBytes(of: &dword) { result.append(contentsOf: $0) }
+            default:
+                preconditionFailure("Unsupported packed sample width")
+            }
+        }
+
         return result
     }
 

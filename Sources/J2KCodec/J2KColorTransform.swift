@@ -252,6 +252,89 @@ public struct J2KColorTransform: Sendable {
         return (red, green, blue)
     }
 
+    /// Applies the inverse RCT directly on Double arrays, avoiding Int32 conversion overhead.
+    ///
+    /// This overload is used by the decoder pipeline where data is already in `[Double]` form.
+    /// The RCT integer arithmetic (floor division by 4) is replicated using `floor()` on Doubles.
+    ///
+    /// - Parameters:
+    ///   - y: The Y (luminance) component data as Doubles (integer-valued).
+    ///   - cb: The Cb (blue-difference) component data as Doubles (integer-valued).
+    ///   - cr: The Cr (red-difference) component data as Doubles (integer-valued).
+    /// - Returns: A tuple containing (R, G, B) component data as Doubles.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if component sizes don't match.
+    public func inverseRCTDouble(
+        y: [Double],
+        cb: [Double],
+        cr: [Double]
+    ) throws -> (red: [Double], green: [Double], blue: [Double]) {
+        guard y.count == cb.count && cb.count == cr.count else {
+            throw J2KError.invalidParameter("Component sizes must match: Y=\(y.count), Cb=\(cb.count), Cr=\(cr.count)")
+        }
+        guard !y.isEmpty else {
+            throw J2KError.invalidParameter("Components cannot be empty")
+        }
+
+        let count = y.count
+        var red = [Double](repeating: 0, count: count)
+        var green = [Double](repeating: 0, count: count)
+        var blue = [Double](repeating: 0, count: count)
+
+        #if canImport(Accelerate)
+        if count >= 64 {
+            // vDSP-accelerated inverse RCT
+            var sum = [Double](repeating: 0, count: count)
+            var floorDiv = [Double](repeating: 0, count: count)
+            let n = vDSP_Length(count)
+
+            // sum = cb + cr
+            vDSP_vaddD(cb, 1, cr, 1, &sum, 1, n)
+            // floorDiv = sum * 0.25
+            var quarter = 0.25
+            vDSP_vsmulD(sum, 1, &quarter, &floorDiv, 1, n)
+            // floorDiv = floor(floorDiv)
+            vvfloor(&floorDiv, floorDiv, [Int32(count)])
+            // green = y - floorDiv
+            vDSP_vsubD(floorDiv, 1, y, 1, &green, 1, n)
+            // red = cr + green
+            vDSP_vaddD(cr, 1, green, 1, &red, 1, n)
+            // blue = cb + green
+            vDSP_vaddD(cb, 1, green, 1, &blue, 1, n)
+
+            return (red, green, blue)
+        }
+        #endif
+
+        // SIMD-optimized inverse RCT on Doubles
+        let quarter = SIMD4<Double>(repeating: 0.25)
+        let simdCount = count & ~3
+        var i = 0
+        while i < simdCount {
+            let yV = SIMD4<Double>(y[i], y[i+1], y[i+2], y[i+3])
+            let cbV = SIMD4<Double>(cb[i], cb[i+1], cb[i+2], cb[i+3])
+            let crV = SIMD4<Double>(cr[i], cr[i+1], cr[i+2], cr[i+3])
+
+            // G = Y - floor((Cb + Cr) / 4)
+            let gVal = yV - ((cbV + crV) * quarter).rounded(.down)
+            let rVal = crV + gVal
+            let bVal = cbV + gVal
+
+            green[i] = gVal[0]; green[i+1] = gVal[1]; green[i+2] = gVal[2]; green[i+3] = gVal[3]
+            red[i] = rVal[0]; red[i+1] = rVal[1]; red[i+2] = rVal[2]; red[i+3] = rVal[3]
+            blue[i] = bVal[0]; blue[i+1] = bVal[1]; blue[i+2] = bVal[2]; blue[i+3] = bVal[3]
+            i += 4
+        }
+        while i < count {
+            let yVal = y[i]; let cbVal = cb[i]; let crVal = cr[i]
+            green[i] = yVal - Foundation.floor((cbVal + crVal) * 0.25)
+            red[i] = crVal + green[i]
+            blue[i] = cbVal + green[i]
+            i += 1
+        }
+
+        return (red, green, blue)
+    }
+
     /// Applies the forward RCT to multi-component image data.
     ///
     /// This is a convenience method that works with J2KComponent objects.

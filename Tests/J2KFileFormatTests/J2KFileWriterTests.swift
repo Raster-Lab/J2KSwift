@@ -31,7 +31,7 @@ final class J2KFileWriterTests: XCTestCase {
 
     // MARK: - Basic Write Tests
 
-    func testWriteSimpleGrayscaleImageJP2() throws {
+    func testWriteSimpleGrayscaleImageJP2() async throws {
         // Create a simple grayscale image
         let width = 16
         let height = 16
@@ -40,7 +40,7 @@ final class J2KFileWriterTests: XCTestCase {
         // Write to file
         let fileURL = tempDirectory.appendingPathComponent("test_grayscale.jp2")
         let writer = J2KFileWriter(format: .jp2)
-        try writer.write(image, to: fileURL)
+        try await writer.write(image, to: fileURL)
 
         // Verify file exists
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
@@ -61,7 +61,7 @@ final class J2KFileWriterTests: XCTestCase {
         XCTAssertEqual(fileData[7], 0x20) // ' '
     }
 
-    func testWriteRGBImageJP2() throws {
+    func testWriteRGBImageJP2() async throws {
         // Create an RGB image
         let width = 32
         let height = 32
@@ -70,14 +70,14 @@ final class J2KFileWriterTests: XCTestCase {
         // Write to file
         let fileURL = tempDirectory.appendingPathComponent("test_rgb.jp2")
         let writer = J2KFileWriter(format: .jp2)
-        try writer.write(image, to: fileURL)
+        try await writer.write(image, to: fileURL)
 
         // Verify file exists and has content
         let fileData = try Data(contentsOf: fileURL)
         XCTAssertGreaterThan(fileData.count, 100) // JP2 file should be larger
     }
 
-    func testWriteJ2KCodestream() throws {
+    func testWriteJ2KCodestream() async throws {
         // Create a simple image
         let width = 16
         let height = 16
@@ -86,7 +86,7 @@ final class J2KFileWriterTests: XCTestCase {
         // Write as J2K codestream (no boxes)
         let fileURL = tempDirectory.appendingPathComponent("test.j2k")
         let writer = J2KFileWriter(format: .j2k)
-        try writer.write(image, to: fileURL)
+        try await writer.write(image, to: fileURL)
 
         // Verify file exists
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
@@ -100,25 +100,25 @@ final class J2KFileWriterTests: XCTestCase {
 
     // MARK: - Configuration Tests
 
-    func testWriteWithLosslessConfiguration() throws {
+    func testWriteWithLosslessConfiguration() async throws {
         let image = createTestImage(width: 16, height: 16, components: 1)
         let fileURL = tempDirectory.appendingPathComponent("test_lossless.jp2")
 
         let writer = J2KFileWriter(format: .jp2)
         let config = J2KConfiguration(quality: 1.0, lossless: true)
-        try writer.write(image, to: fileURL, configuration: config)
+        try await writer.write(image, to: fileURL, configuration: config)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testWriteWithLossyConfiguration() throws {
+    func testWriteWithLossyConfiguration() async throws {
         let image = createTestImage(width: 16, height: 16, components: 1)
         let fileURL = tempDirectory.appendingPathComponent("test_lossy.jp2")
 
         let writer = J2KFileWriter(format: .jp2)
         let config = J2KConfiguration(quality: 0.8, lossless: false)
-        try writer.write(image, to: fileURL, configuration: config)
+        try await writer.write(image, to: fileURL, configuration: config)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
@@ -126,7 +126,7 @@ final class J2KFileWriterTests: XCTestCase {
 
     // MARK: - Round-Trip Tests
 
-    func testRoundTripWriteAndRead() throws {
+    func testRoundTripWriteAndRead() async throws {
         // Note: This test demonstrates that write works, but full round-trip
         // depends on the decoder being able to parse all marker segments.
         // The decoder currently has limited SIZ marker parsing.
@@ -140,7 +140,7 @@ final class J2KFileWriterTests: XCTestCase {
         // Write to file
         let fileURL = tempDirectory.appendingPathComponent("test_roundtrip.jp2")
         let writer = J2KFileWriter(format: .jp2)
-        try writer.write(originalImage, to: fileURL)
+        try await writer.write(originalImage, to: fileURL)
 
         // Read it back
         let reader = J2KFileReader()
@@ -152,7 +152,7 @@ final class J2KFileWriterTests: XCTestCase {
         XCTAssertEqual(decodedImage.components.count, 1)
     }
 
-    func testRoundTripRGBImage() throws {
+    func testRoundTripRGBImage() async throws {
         // Note: This test demonstrates that write works, but full round-trip
         // depends on the decoder being able to parse all marker segments.
         // The decoder currently has limited SIZ marker parsing.
@@ -166,7 +166,7 @@ final class J2KFileWriterTests: XCTestCase {
         // Write to file
         let fileURL = tempDirectory.appendingPathComponent("test_rgb_roundtrip.jp2")
         let writer = J2KFileWriter(format: .jp2)
-        try writer.write(originalImage, to: fileURL)
+        try await writer.write(originalImage, to: fileURL)
 
         // Read it back
         let reader = J2KFileReader()
@@ -180,7 +180,7 @@ final class J2KFileWriterTests: XCTestCase {
 
     // MARK: - Error Handling Tests
 
-    func testWriteInvalidImageDimensions() throws {
+    func testWriteInvalidImageDimensions() async throws {
         // Create an image with zero width
         let component = J2KComponent(
             index: 0,
@@ -199,15 +199,18 @@ final class J2KFileWriterTests: XCTestCase {
         let writer = J2KFileWriter(format: .jp2)
 
         // Should throw an error
-        XCTAssertThrowsError(try writer.write(image, to: fileURL)) { error in
-            guard case J2KError.invalidParameter = error else {
+        do {
+            try await writer.write(image, to: fileURL)
+            XCTFail("Expected invalidParameter error")
+        } catch let error as J2KError {
+            guard case .invalidParameter = error else {
                 XCTFail("Expected invalidParameter error, got \(error)")
                 return
             }
         }
     }
 
-    func testWriteImageWithoutComponents() throws {
+    func testWriteImageWithoutComponents() async throws {
         // Create an image with no components
         let image = J2KImage(width: 16, height: 16, components: [])
 
@@ -215,8 +218,11 @@ final class J2KFileWriterTests: XCTestCase {
         let writer = J2KFileWriter(format: .jp2)
 
         // Should throw an error
-        XCTAssertThrowsError(try writer.write(image, to: fileURL)) { error in
-            guard case J2KError.invalidParameter = error else {
+        do {
+            try await writer.write(image, to: fileURL)
+            XCTFail("Expected invalidParameter error")
+        } catch let error as J2KError {
+            guard case .invalidParameter = error else {
                 XCTFail("Expected invalidParameter error, got \(error)")
                 return
             }
@@ -225,23 +231,23 @@ final class J2KFileWriterTests: XCTestCase {
 
     // MARK: - Format Tests
 
-    func testWriteJPXFormat() throws {
+    func testWriteJPXFormat() async throws {
         let image = createTestImage(width: 16, height: 16, components: 1)
         let fileURL = tempDirectory.appendingPathComponent("test.jpx")
         let writer = J2KFileWriter(format: .jpx)
 
-        try writer.write(image, to: fileURL)
+        try await writer.write(image, to: fileURL)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testWriteJPMFormat() throws {
+    func testWriteJPMFormat() async throws {
         let image = createTestImage(width: 16, height: 16, components: 1)
         let fileURL = tempDirectory.appendingPathComponent("test.jpm")
         let writer = J2KFileWriter(format: .jpm)
 
-        try writer.write(image, to: fileURL)
+        try await writer.write(image, to: fileURL)
 
         // Verify file was created
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))

@@ -243,20 +243,48 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
 
     /// Creates parameters from a quality factor.
     ///
-    /// - Parameter quality: Quality factor (0.0 = lowest, 1.0 = highest).
+    /// - Parameters:
+    ///   - quality: Quality factor (0.0 = lowest, 1.0 = highest).
+    ///   - bitDepth: Source component precision in bits. Higher-precision inputs
+    ///     require proportionally larger base step sizes to avoid excessive
+    ///     bit-plane counts and unstable PCRD truncation at the same byte budget.
     /// - Returns: Quantization parameters suitable for the quality level.
-    public static func fromQuality(_ quality: Double) -> J2KQuantizationParameters {
-        // Map quality to step size (higher quality = smaller step).
+    public static func fromQuality(_ quality: Double, bitDepth: Int = 8) -> J2KQuantizationParameters {
+        // Map quality to a moderate base quantization step for 8-bit input.
         //
-        // This is only used for the irreversible (9/7) path — the reversible
-        // (5/3) path always uses `.lossless` parameters.
-        //
-        // Use a fixed base step size of 1.0, matching OpenJPEG's approach.
-        // This keeps quantised coefficient magnitudes at full precision,
-        // producing ~10-12 bit planes per code block for maximum PCRD
-        // flexibility.  Rate control (PCRD pass truncation) exclusively
-        // determines the final quality/bitrate trade-off.
-        let stepSize = 1.0
+        // Very small step sizes force noisy images to rely almost entirely on
+        // post-compression pass truncation, which can cause severe low-bitrate
+        // collapse on textured RGB and high-detail medical workloads. A more
+        // realistic base step keeps the number of significant bit-planes under
+        // control while still leaving PCRD room to optimize quality.
+        let q = max(0.0, min(1.0, quality))
+        let base8BitStep: Double
+        if q >= 0.95 {
+            base8BitStep = 0.5
+        } else if q >= 0.80 {
+            base8BitStep = 0.75
+        } else if q >= 0.50 {
+            base8BitStep = 1.0
+        } else if q >= 0.20 {
+            base8BitStep = 1.5
+        } else {
+            base8BitStep = 2.0
+        }
+
+        // Scale the step with input dynamic range so 12/16-bit sources are not
+        // quantized as though they were 8-bit images. This keeps the number of
+        // significant bit-planes in line with the target bitrate and prevents the
+        // severe medical-image collapse seen in low-bpp release benchmarks.
+        let adjustedStep: Double
+        if bitDepth > 8 {
+            adjustedStep = J2KDynamicRange.adjustStepSize(
+                base8BitStep,
+                forBitDepth: bitDepth,
+                referenceBitDepth: 8
+            )
+        } else {
+            adjustedStep = base8BitStep
+        }
 
         // Use scalar mode which implements the standard JPEG 2000 quantization
         // formula: q = sign(c) × floor(|c| / Δ). This naturally creates a
@@ -264,7 +292,7 @@ public struct J2KQuantizationParameters: Sendable, Equatable {
         // matching ISO/IEC 15444-1 Annex E and OpenJPEG behaviour.
         return J2KQuantizationParameters(
             mode: .scalar,
-            baseStepSize: stepSize
+            baseStepSize: adjustedStep
         )
     }
 }
