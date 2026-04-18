@@ -5,6 +5,54 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] — 2026-04-18
+
+**Patch Release — Version bump to 3.0.1**
+
+### Changed
+- `VERSION` bumped from `3.0.0` to `3.0.1`
+
+## [3.0.0] — 2026-04-18
+
+**Phase 22 — HTJ2K Rate Control, CT Volume Loading & Intel Benchmarking**
+
+### Added
+- CT volume loading with real DICOM/raw data support in `DICOMSupport.swift`
+- Real JP3D volumetric viewer in `VolumetricTestView.swift` (full 3D rendering pipeline)
+- Intel x86_64 benchmark infrastructure (`Scripts/intel_benchmark.sh`)
+- Intel vs Apple M2 performance comparison framework (`HTJ2K_PERFORMANCE.md`)
+- Comprehensive multi-codec benchmark suite (`Scripts/multi_codec_benchmark.sh`, `Scripts/multi_codec_benchmark_v2.sh`)
+- Real medical dataset regression testing (`Scripts/real_medical_dataset_regression.py`)
+- Extended test suites: JP3D integration, multi-spectral, streaming, wavelet tests
+- JPIP extended test coverage: bandwidth-aware delivery, cache, client-server integration, HTJ2K support, network framework, progressive streaming, server push, session persistence, WebSocket transport
+- OpenJPEG benchmark comparisons (`Tests/PerformanceTests/OpenJPEGBenchmark.swift`)
+- Performance validation test suite (`Tests/PerformanceTests/PerformanceValidationTests.swift`)
+- GitHub issue templates and agent configuration files
+- `BENCHMARK_REPORT.md`, `MULTI_CODEC_BENCHMARK.md`, `PERFORMANCE_RESULTS.md`, `VALIDATION_REPORT.md`, `WAVELET_TRANSFORM.md`
+- `Documentation/medical-real-data-testing-plan.md`
+
+### Changed
+- HTJ2K rate control tuned for improved throughput and compression quality
+- `J2KBitPlaneCoder.swift` — major overhaul for performance and correctness
+- `J2KDWT1DOptimized.swift` — significantly expanded optimised 1-D DWT paths
+- `J2KDecoderPipeline.swift` — decoder pipeline improvements
+- `J2KContextModeling.swift` — context modelling refinements
+- `J2KAcceleratedEncoder.swift` — accelerated encoder enhancements
+- `J2KColorTransform.swift` — additional colour transform paths
+- `DICOMSupport.swift` — expanded DICOM support with CT volume loading
+- `Encode3D.swift` / `Decode3D.swift` — 3D CLI enhancements
+- `Compare.swift`, `Batch.swift`, `Convert.swift` — CLI improvements
+- `ImageIO.swift` — extended image I/O
+- `TIFFSupport.swift` — TIFF support improvements
+- `CodecService.swift` — test app codec service updates
+- `VolumetricTestView.swift` — fully implemented 3D viewer
+- `VERSION` bumped from `2.4.0` to `3.0.0`
+
+### Fixed
+- HTJ2K benchmark validation accuracy improvements
+- DWT round-trip fidelity refinements
+- Codec integration test reliability
+
 ## [2.4.0] — 2027-03-30
 
 **Phase 21 — Comprehensive CLI Enhancement**
