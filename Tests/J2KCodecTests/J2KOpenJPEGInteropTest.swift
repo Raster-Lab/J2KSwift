@@ -35,7 +35,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         lossless: Bool,
         decompositionLevels: Int,
         codeBlockSize: (width: Int, height: Int) = (32, 32)
-    ) throws -> (maxError: Int, meanError: Double) {
+    ) async throws -> (maxError: Int, meanError: Double) {
 
         // 1. Build J2KImage
         let comp = J2KComponent(
@@ -49,7 +49,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             lossless: lossless,
             decompositionLevels: decompositionLevels,
             codeBlockSize: codeBlockSize)
-        let encoded = try J2KEncoder(encodingConfiguration: config).encode(image)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
 
         // Basic codestream validation
         XCTAssertEqual(encoded[0], 0xFF, "\(name): SOC[0]")
@@ -63,7 +63,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         print("[\(name)] wrote \(encoded.count) bytes → \(j2kPath)")
 
         // 4. Self round-trip
-        let selfDecoded = try DecoderPipeline().decode(encoded)
+        let selfDecoded = try await DecoderPipeline().decode(encoded)
         XCTAssertEqual(selfDecoded.width, width, "\(name): self-decode width")
         XCTAssertEqual(selfDecoded.height, height, "\(name): self-decode height")
 
@@ -163,30 +163,30 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     // MARK: - Test Cases
 
     /// Constant image: all pixels = 200. Simplest possible test (no DWT).
-    func testConstant200_NoDWT() throws {
+    func testConstant200_NoDWT() async throws {
         let w = 8, h = 8
         let pixels = Data(repeating: 200, count: w * h)
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "const200_nodwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 0)
         XCTAssertEqual(maxErr, 0, "Lossless constant image must be exact")
     }
 
     /// Horizontal gradient 8x8 (10, 20, ..., 80 repeating). No DWT.
-    func testGradient8x8_NoDWT() throws {
+    func testGradient8x8_NoDWT() async throws {
         let w = 8, h = 8
         var pixels = Data(count: w * h)
         for i in 0..<(w * h) {
             pixels[i] = UInt8(10 + (i % 8) * 10)
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "gradient8_nodwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 0)
         XCTAssertEqual(maxErr, 0, "Lossless gradient must be exact")
     }
 
     /// Random-ish pattern 16x16 with 1-level DWT.
-    func testPattern16x16_1LevelDWT() throws {
+    func testPattern16x16_1LevelDWT() async throws {
         let w = 16, h = 16
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -194,14 +194,14 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8((x * 17 + y * 31 + 42) & 0xFF)
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "pattern16_1dwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 1)
         XCTAssertEqual(maxErr, 0, "Lossless 1-level DWT must be exact")
     }
 
     /// Larger gradient 32x32 with 2-level DWT.
-    func testGradient32x32_2LevelDWT() throws {
+    func testGradient32x32_2LevelDWT() async throws {
         let w = 32, h = 32
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -209,14 +209,14 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8((x * 8 + y * 4) & 0xFF)
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "gradient32_2dwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 2)
         XCTAssertEqual(maxErr, 0, "Lossless 2-level DWT must be exact")
     }
 
     /// 64x64 natural-like content with 3-level DWT.
-    func testNatural64x64_3LevelDWT() throws {
+    func testNatural64x64_3LevelDWT() async throws {
         let w = 64, h = 64
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -227,14 +227,14 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8(min(255, base + noise))
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "natural64_3dwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 3)
         XCTAssertEqual(maxErr, 0, "Lossless 3-level DWT must be exact")
     }
 
     /// 128x128 with 5-level DWT (matches the blackbuck.j2k configuration).
-    func testLarger128x128_5LevelDWT() throws {
+    func testLarger128x128_5LevelDWT() async throws {
         let w = 128, h = 128
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -244,14 +244,14 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8(255 - dist)
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "radial128_5dwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 5)
         XCTAssertEqual(maxErr, 0, "Lossless 5-level DWT must be exact")
     }
 
     /// Non-power-of-2 dimensions: 13x17 with 2-level DWT.
-    func testOddDimensions13x17() throws {
+    func testOddDimensions13x17() async throws {
         let w = 13, h = 17
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -259,34 +259,34 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8((x * 20 + y * 15) % 256)
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "odd13x17_2dwt", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 2)
         XCTAssertEqual(maxErr, 0, "Lossless odd-dimension must be exact")
     }
 
     /// All-black image (edge case: all zeros after level shift).
-    func testAllBlack() throws {
+    func testAllBlack() async throws {
         let w = 16, h = 16
         let pixels = Data(repeating: 0, count: w * h)
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "black16", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 1)
         XCTAssertEqual(maxErr, 0, "Lossless all-black must be exact")
     }
 
     /// All-white image (edge case: all 127 after level shift).
-    func testAllWhite() throws {
+    func testAllWhite() async throws {
         let w = 16, h = 16
         let pixels = Data(repeating: 255, count: w * h)
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "white16", pixelData: pixels,
             width: w, height: h, lossless: true, decompositionLevels: 1)
         XCTAssertEqual(maxErr, 0, "Lossless all-white must be exact")
     }
 
     /// Decode an OPJ-encoded file with our decoder to verify decoder correctness.
-    func testDecodeOPJReference() throws {
+    func testDecodeOPJReference() async throws {
         let w = 8, h = 8
         var origPixels = Data(count: w * h)
         for y in 0..<h {
@@ -316,7 +316,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
 
         // Decode with our decoder
         let j2kData = try Data(contentsOf: URL(fileURLWithPath: j2kPath))
-        let decoded = try DecoderPipeline().decode(j2kData)
+        let decoded = try await DecoderPipeline().decode(j2kData)
         XCTAssertEqual(decoded.width, w)
         XCTAssertEqual(decoded.height, h)
 
@@ -347,7 +347,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         let config = J2KEncodingConfiguration(
             quality: 1.0, lossless: true,
             decompositionLevels: 1, codeBlockSize: (32, 32))
-        let ourEncoded = try J2KEncoder(encodingConfiguration: config).encode(image)
+        let ourEncoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
         
         // Decode our encoding with OPJ
         let ourJ2kPath = "\(outputDir)/simple8_ours.j2k"
@@ -379,7 +379,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     }
 
     /// Decode OPJ-encoded odd-dimension (13x17) file with our decoder.
-    func testDecodeOPJOddDimension() throws {
+    func testDecodeOPJOddDimension() async throws {
         let w = 13, h = 17
         var origPixels = Data(count: w * h)
         for y in 0..<h {
@@ -411,7 +411,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         }
 
         let j2kData = try Data(contentsOf: URL(fileURLWithPath: j2kPath))
-        let decoded = try DecoderPipeline().decode(j2kData)
+        let decoded = try await DecoderPipeline().decode(j2kData)
         XCTAssertEqual(decoded.width, w)
         XCTAssertEqual(decoded.height, h)
 
@@ -430,18 +430,18 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     // MARK: - Multi-Component (RGB) Tests
 
     /// Simple 8x8 constant RGB image test to verify multi-component encoding.
-    func testSimpleRGB_8x8() throws {
+    func testSimpleRGB_8x8() async throws {
         let w = 8, h = 8
         let size = w * h
         let red = Data(repeating: 100, count: size)
         let green = Data(repeating: 50, count: size)
         let blue = Data(repeating: 200, count: size)
-        try encodeAndVerifyRGB(name: "simple_rgb_8x8", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "simple_rgb_8x8", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 1)
     }
 
     /// 8x8 VARIED RGB (non-constant data).
-    func testVariedRGB_8x8_1DWT() throws {
+    func testVariedRGB_8x8_1DWT() async throws {
         let w = 8, h = 8
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -451,12 +451,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 24 + y * 20 + 30) & 0xFF)
             blue[i] = UInt8((x * 16 + y * 28 + 80) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_8_1dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_8_1dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 1)
     }
 
     /// 32x32 varied RGB image with 2-level DWT.
-    func testVariedRGB_32x32_2DWT() throws {
+    func testVariedRGB_32x32_2DWT() async throws {
         let w = 32, h = 32
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -466,12 +466,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 5 + y * 7 + 50) & 0xFF)
             blue[i] = UInt8((x * 3 + y * 11 + 100) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_32_2dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_32_2dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 2)
     }
 
     /// 16x16 varied RGB image with 1-level DWT (test if 1 DWT level works).
-    func testVariedRGB_16x16_1DWT() throws {
+    func testVariedRGB_16x16_1DWT() async throws {
         let w = 16, h = 16
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -481,12 +481,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 11 + y * 9 + 30) & 0xFF)
             blue[i] = UInt8((x * 7 + y * 13 + 80) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_16_1dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_16_1dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 1)
     }
 
     /// 32x32 varied RGB image with 1-level DWT (test if it's size or level).
-    func testVariedRGB_32x32_1DWT() throws {
+    func testVariedRGB_32x32_1DWT() async throws {
         let w = 32, h = 32
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -496,12 +496,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 5 + y * 7 + 50) & 0xFF)
             blue[i] = UInt8((x * 3 + y * 11 + 100) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_32_1dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_32_1dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 1)
     }
 
     /// 64x64 varied RGB image with 3-level DWT.
-    func testVariedRGB_64x64_3DWT() throws {
+    func testVariedRGB_64x64_3DWT() async throws {
         let w = 64, h = 64
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -511,12 +511,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 3 + y * 5 + 30) & 0xFF)
             blue[i] = UInt8((x * 2 + y * 6 + 90) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_64_3dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_64_3dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 3)
     }
 
     /// 128x128 varied RGB image with 5-level DWT.
-    func testVariedRGB_128x128_5DWT() throws {
+    func testVariedRGB_128x128_5DWT() async throws {
         let w = 128, h = 128
         let size = w * h
         var red = Data(count: size), green = Data(count: size), blue = Data(count: size)
@@ -526,7 +526,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             green[i] = UInt8((x * 1 + y * 3 + 20) & 0xFF)
             blue[i] = UInt8((x * 3 + y * 2 + 80) & 0xFF)
         }}
-        try encodeAndVerifyRGB(name: "varied_rgb_128_5dwt", red: red, green: green, blue: blue,
+        try await encodeAndVerifyRGB(name: "varied_rgb_128_5dwt", red: red, green: green, blue: blue,
                                width: w, height: h, decompositionLevels: 5)
     }
 
@@ -537,7 +537,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         red: Data, green: Data, blue: Data,
         width w: Int, height h: Int,
         decompositionLevels: Int
-    ) throws -> Int {
+    ) async throws -> Int {
         let size = w * h
         let compR = J2KComponent(index: 0, bitDepth: 8, signed: false, width: w, height: h, data: red)
         let compG = J2KComponent(index: 1, bitDepth: 8, signed: false, width: w, height: h, data: green)
@@ -547,11 +547,11 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         let config = J2KEncodingConfiguration(
             quality: 1.0, lossless: true,
             decompositionLevels: decompositionLevels, codeBlockSize: (32, 32))
-        let encoded = try J2KEncoder(encodingConfiguration: config).encode(image)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
         print("[\(name)] Encoded \(encoded.count) bytes")
 
         // Self round-trip
-        let decoded = try DecoderPipeline().decode(encoded)
+        let decoded = try await DecoderPipeline().decode(encoded)
         XCTAssertEqual(decoded.width, w)
         XCTAssertEqual(decoded.height, h)
         XCTAssertEqual(decoded.components.count, 3)
@@ -647,7 +647,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     }
 
     /// Encode blackbuck.bmp (512x512 RGB) to J2K and verify with OpenJPEG.
-    func testBlackbuckBMP_RGB_Lossless() throws {
+    func testBlackbuckBMP_RGB_Lossless() async throws {
         // Find blackbuck.bmp in the test resources
         let bmpPath = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -681,7 +681,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             lossless: true,
             decompositionLevels: 5,
             codeBlockSize: (32, 32))
-        let encoded = try J2KEncoder(encodingConfiguration: config).encode(image)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
 
         // Basic codestream checks
         XCTAssertEqual(encoded[0], 0xFF, "SOC[0]")
@@ -695,7 +695,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         try encoded.write(to: URL(fileURLWithPath: j2kPath))
 
         // Self round-trip first
-        let selfDecoded = try DecoderPipeline().decode(encoded)
+        let selfDecoded = try await DecoderPipeline().decode(encoded)
         XCTAssertEqual(selfDecoded.width, w, "Self-decode width")
         XCTAssertEqual(selfDecoded.height, h, "Self-decode height")
         XCTAssertEqual(selfDecoded.components.count, 3, "Self-decode components")
@@ -808,10 +808,10 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     // MARK: - Lossy (9/7 Irreversible) Interop Tests
 
     /// Constant 200 image with lossy 9/7 DWT — OPJ must decode to ~200.
-    func testLossy_Constant200_5LevelDWT() throws {
+    func testLossy_Constant200_5LevelDWT() async throws {
         let w = 64, h = 64
         let pixels = Data(repeating: 200, count: w * h)
-        let (maxErr, meanErr) = try encodeAndVerify(
+        let (maxErr, meanErr) = try await encodeAndVerify(
             name: "lossy_const200_5dwt", pixelData: pixels,
             width: w, height: h, lossless: false, decompositionLevels: 5)
         XCTAssertLessThanOrEqual(maxErr, 2,
@@ -821,7 +821,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     }
 
     /// Gradient image with lossy 9/7 DWT — OPJ must decode reasonably.
-    func testLossy_Gradient256_5LevelDWT() throws {
+    func testLossy_Gradient256_5LevelDWT() async throws {
         let w = 256, h = 256
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -829,7 +829,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8(x % 256)
             }
         }
-        let (maxErr, meanErr) = try encodeAndVerify(
+        let (maxErr, meanErr) = try await encodeAndVerify(
             name: "lossy_gradient256_5dwt", pixelData: pixels,
             width: w, height: h, lossless: false, decompositionLevels: 5)
         XCTAssertLessThanOrEqual(maxErr, 20,
@@ -839,7 +839,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     }
 
     /// Small checkerboard with lossy 9/7 DWT — tests high frequency content.
-    func testLossy_Checkerboard64_3LevelDWT() throws {
+    func testLossy_Checkerboard64_3LevelDWT() async throws {
         let w = 64, h = 64
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -847,7 +847,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = ((x + y) % 2 == 0) ? 255 : 0
             }
         }
-        let (maxErr, _) = try encodeAndVerify(
+        let (maxErr, _) = try await encodeAndVerify(
             name: "lossy_checker64_3dwt", pixelData: pixels,
             width: w, height: h, lossless: false, decompositionLevels: 3)
         // Checkerboard is hardest for wavelet — allow more error
@@ -856,7 +856,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
     }
 
     /// Medium natural-like pattern with lossy 9/7 DWT.
-    func testLossy_Natural128_5LevelDWT() throws {
+    func testLossy_Natural128_5LevelDWT() async throws {
         let w = 128, h = 128
         var pixels = Data(count: w * h)
         for y in 0..<h {
@@ -865,7 +865,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
                 pixels[y * w + x] = UInt8(clamping: val)
             }
         }
-        let (maxErr, meanErr) = try encodeAndVerify(
+        let (maxErr, meanErr) = try await encodeAndVerify(
             name: "lossy_natural128_5dwt", pixelData: pixels,
             width: w, height: h, lossless: false, decompositionLevels: 5)
         XCTAssertLessThanOrEqual(maxErr, 100,

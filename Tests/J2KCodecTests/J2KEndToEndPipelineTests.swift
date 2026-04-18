@@ -73,340 +73,340 @@ final class J2KEndToEndPipelineTests: XCTestCase {
     }
 
     private func encodeAndDecode(_ image: J2KImage,
-                                 config: J2KEncodingConfiguration = J2KEncodingConfiguration()) throws -> J2KImage {
+                                 config: J2KEncodingConfiguration = J2KEncodingConfiguration()) async throws -> J2KImage {
         let encoder = J2KEncoder(encodingConfiguration: config)
-        let encoded = try encoder.encode(image)
-        return try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        return try await J2KDecoder().decode(encoded)
     }
 
     // MARK: - Basic Round-Trip Tests
 
-    func testLosslessGrayscaleRoundTrip() throws {
+    func testLosslessGrayscaleRoundTrip() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(lossless: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
         XCTAssertEqual(decoded.components.count, 1)
     }
 
-    func testLossyGrayscaleRoundTrip() throws {
+    func testLossyGrayscaleRoundTrip() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.85, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
-    func testLosslessRGBRoundTrip() throws {
+    func testLosslessRGBRoundTrip() async throws {
         let image = makeRGBImage()
         let config = J2KEncodingConfiguration(lossless: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
         // Note: current decoder returns first component; multi-component support is in progress
         XCTAssertGreaterThanOrEqual(decoded.components.count, 1)
     }
 
-    func testLossyRGBRoundTrip() throws {
+    func testLossyRGBRoundTrip() async throws {
         let image = makeRGBImage()
         let config = J2KEncodingConfiguration(quality: 0.80, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
         XCTAssertGreaterThanOrEqual(decoded.components.count, 1)
     }
 
-    func testGradientImageRoundTrip() throws {
+    func testGradientImageRoundTrip() async throws {
         let image = makeGradientImage()
-        let decoded = try encodeAndDecode(image)
+        let decoded = try await encodeAndDecode(image)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
     // MARK: - Quality Level Round-Trips
 
-    func testQualityLevel_0_5() throws {
+    func testQualityLevel_0_5() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.5, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testQualityLevel_0_7() throws {
+    func testQualityLevel_0_7() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.7, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testQualityLevel_0_85() throws {
+    func testQualityLevel_0_85() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.85, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testQualityLevel_0_95() throws {
+    func testQualityLevel_0_95() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.95, lossless: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testQualityLevel_1_0_lossless() throws {
+    func testQualityLevel_1_0_lossless() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 1.0, lossless: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
     // MARK: - Decomposition Level Round-Trips
 
-    func testDecompositionLevels0() throws {
+    func testDecompositionLevels0() async throws {
         // Decomposition level 0 is a valid but unusual configuration.
         // The encoder should produce data; decoder may have limitations.
         let image = makeGrayscaleImage(width: 16, height: 16)
         let config = J2KEncodingConfiguration(decompositionLevels: 0)
         let encoder = J2KEncoder(encodingConfiguration: config)
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
         XCTAssertGreaterThan(encoded.count, 0, "Encoder should produce data for 0 decomposition levels")
         // Decoding level-0 codestreams is handled gracefully (may succeed or throw)
-        _ = try? J2KDecoder().decode(encoded)
+        _ = try? await J2KDecoder().decode(encoded)
     }
 
-    func testDecompositionLevels1() throws {
+    func testDecompositionLevels1() async throws {
         let image = makeGrayscaleImage(width: 32, height: 32)
         let config = J2KEncodingConfiguration(decompositionLevels: 1)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testDecompositionLevels2() throws {
+    func testDecompositionLevels2() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let config = J2KEncodingConfiguration(decompositionLevels: 2)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testDecompositionLevels3() throws {
+    func testDecompositionLevels3() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(decompositionLevels: 3)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testDecompositionLevels5() throws {
+    func testDecompositionLevels5() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(decompositionLevels: 5)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
     // MARK: - Progression Order Round-Trips
 
-    func testProgressionOrderLRCP() throws {
+    func testProgressionOrderLRCP() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(progressionOrder: .lrcp)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testProgressionOrderRLCP() throws {
+    func testProgressionOrderRLCP() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(progressionOrder: .rlcp)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testProgressionOrderRPCL() throws {
+    func testProgressionOrderRPCL() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(progressionOrder: .rpcl)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testProgressionOrderPCRL() throws {
+    func testProgressionOrderPCRL() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(progressionOrder: .pcrl)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testProgressionOrderCPRL() throws {
+    func testProgressionOrderCPRL() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(progressionOrder: .cprl)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
     // MARK: - Quality Layer Round-Trips
 
-    func testSingleQualityLayer() throws {
+    func testSingleQualityLayer() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(qualityLayers: 1)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testThreeQualityLayers() throws {
+    func testThreeQualityLayers() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(qualityLayers: 3)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testFiveQualityLayers() throws {
+    func testFiveQualityLayers() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(qualityLayers: 5)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testTenQualityLayers() throws {
+    func testTenQualityLayers() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(qualityLayers: 10)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
     // MARK: - Image Dimension Round-Trips
 
-    func testMinimumDimensions1x1() throws {
+    func testMinimumDimensions1x1() async throws {
         let image = makeGrayscaleImage(width: 1, height: 1)
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
         XCTAssertGreaterThan(encoded.count, 0)
-        let decoded = try J2KDecoder().decode(encoded)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, 1)
         XCTAssertEqual(decoded.height, 1)
     }
 
-    func testSmallImage8x8() throws {
+    func testSmallImage8x8() async throws {
         let image = makeGrayscaleImage(width: 8, height: 8)
-        let decoded = try encodeAndDecode(image)
+        let decoded = try await encodeAndDecode(image)
         XCTAssertEqual(decoded.width, 8)
     }
 
-    func testMediumImage128x128() throws {
+    func testMediumImage128x128() async throws {
         // Use a medium-sized image within the decoder's validated range
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(decompositionLevels: 2)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, 128)
         XCTAssertEqual(decoded.height, 128)
     }
 
-    func testNonSquareImage128x64() throws {
+    func testNonSquareImage128x64() async throws {
         let image = makeGrayscaleImage(width: 128, height: 64)
-        let decoded = try encodeAndDecode(image)
+        let decoded = try await encodeAndDecode(image)
         XCTAssertEqual(decoded.width, 128)
         XCTAssertEqual(decoded.height, 64)
     }
 
-    func testNonPowerOfTwoDimensions100x100() throws {
+    func testNonPowerOfTwoDimensions100x100() async throws {
         let image = makeGrayscaleImage(width: 100, height: 100)
-        let decoded = try encodeAndDecode(image)
+        let decoded = try await encodeAndDecode(image)
         XCTAssertEqual(decoded.width, 100)
     }
 
-    func testOddDimensions77x53() throws {
+    func testOddDimensions77x53() async throws {
         let image = makeGrayscaleImage(width: 77, height: 53)
-        let decoded = try encodeAndDecode(image)
+        let decoded = try await encodeAndDecode(image)
         XCTAssertEqual(decoded.width, 77)
         XCTAssertEqual(decoded.height, 53)
     }
 
     // MARK: - HTJ2K Encode → Decode Pipeline
 
-    func testHTJ2KLosslessEncodeDecodePipeline() throws {
+    func testHTJ2KLosslessEncodeDecodePipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(lossless: true, useHTJ2K: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
-    func testHTJ2KLossyEncodeDecodePipeline() throws {
+    func testHTJ2KLossyEncodeDecodePipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KEncodingConfiguration(quality: 0.85, lossless: false, useHTJ2K: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testHTJ2KRGBEncodeDecodePipeline() throws {
+    func testHTJ2KRGBEncodeDecodePipeline() async throws {
         let image = makeRGBImage()
         let config = J2KEncodingConfiguration(quality: 0.9, lossless: false, useHTJ2K: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
     // MARK: - Encode → Transcode → Decode Pipeline
 
-    func testEncodeTranscodeToHTJ2KDecodePipeline() throws {
+    func testEncodeTranscodeToHTJ2KDecodePipeline() async throws {
         // Encode with legacy format
         let image = makeGrayscaleImage(width: 64, height: 64)
         let encoder = J2KEncoder(encodingConfiguration: J2KEncodingConfiguration(lossless: false))
-        let legacyData = try encoder.encode(image)
+        let legacyData = try await encoder.encode(image)
         XCTAssertGreaterThan(legacyData.count, 0)
 
         // Transcode to HTJ2K
         let transcoder = J2KTranscoder()
-        let transcodeResult = try transcoder.transcode(legacyData, direction: .legacyToHT)
+        let transcodeResult = try await transcoder.transcode(legacyData, direction: .legacyToHT)
         XCTAssertGreaterThan(transcodeResult.data.count, 0)
         XCTAssertEqual(transcodeResult.direction, .legacyToHT)
         XCTAssertTrue(transcodeResult.metadataPreserved)
 
         // Decode transcoded data
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(transcodeResult.data)
+        let decoded = try await decoder.decode(transcodeResult.data)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
-    func testEncodeHTJ2KTranscodeToLegacyDecodePipeline() throws {
+    func testEncodeHTJ2KTranscodeToLegacyDecodePipeline() async throws {
         // Encode with HTJ2K
         let image = makeGrayscaleImage(width: 64, height: 64)
         let htConfig = J2KEncodingConfiguration(lossless: false, useHTJ2K: true)
         let encoder = J2KEncoder(encodingConfiguration: htConfig)
-        let htData = try encoder.encode(image)
+        let htData = try await encoder.encode(image)
         XCTAssertGreaterThan(htData.count, 0)
 
         // Transcode to legacy
         let transcoder = J2KTranscoder()
-        let transcodeResult = try transcoder.transcode(htData, direction: .htToLegacy)
+        let transcodeResult = try await transcoder.transcode(htData, direction: .htToLegacy)
         XCTAssertGreaterThan(transcodeResult.data.count, 0)
         XCTAssertEqual(transcodeResult.direction, .htToLegacy)
 
         // Decode transcoded data
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(transcodeResult.data)
+        let decoded = try await decoder.decode(transcodeResult.data)
         XCTAssertEqual(decoded.width, image.width)
         XCTAssertEqual(decoded.height, image.height)
     }
 
-    func testTranscodePreservesImageDimensions() throws {
+    func testTranscodePreservesImageDimensions() async throws {
         let width = 48
         let height = 36
         let image = makeGrayscaleImage(width: width, height: height)
         let encoder = J2KEncoder(encodingConfiguration: J2KEncodingConfiguration())
-        let legacyData = try encoder.encode(image)
+        let legacyData = try await encoder.encode(image)
 
         let transcoder = J2KTranscoder()
-        let result = try transcoder.transcode(legacyData, direction: .legacyToHT)
-        let decoded = try J2KDecoder().decode(result.data)
+        let result = try await transcoder.transcode(legacyData, direction: .legacyToHT)
+        let decoded = try await J2KDecoder().decode(result.data)
 
         XCTAssertEqual(decoded.width, width)
         XCTAssertEqual(decoded.height, height)
     }
 
-    func testTranscodeReportsCodeBlocksProcessed() throws {
+    func testTranscodeReportsCodeBlocksProcessed() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let encoder = J2KEncoder(encodingConfiguration: J2KEncodingConfiguration())
-        let legacyData = try encoder.encode(image)
+        let legacyData = try await encoder.encode(image)
 
         let transcoder = J2KTranscoder()
-        let result = try transcoder.transcode(legacyData, direction: .legacyToHT)
+        let result = try await transcoder.transcode(legacyData, direction: .legacyToHT)
         XCTAssertGreaterThanOrEqual(result.codeBlocksTranscoded, 0)
         XCTAssertGreaterThanOrEqual(result.tilesProcessed, 1)
         XCTAssertGreaterThan(result.transcodingTime, 0)
@@ -414,14 +414,14 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Transcode Progress Reporting
 
-    func testTranscodeProgressReporting() throws {
+    func testTranscodeProgressReporting() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let encoder = J2KEncoder(encodingConfiguration: J2KEncodingConfiguration())
-        let legacyData = try encoder.encode(image)
+        let legacyData = try await encoder.encode(image)
 
         nonisolated(unsafe) var progressUpdates: [TranscodingProgressUpdate] = []
         let transcoder = J2KTranscoder()
-        _ = try transcoder.transcode(legacyData, direction: .legacyToHT) { update in
+        _ = try await transcoder.transcode(legacyData, direction: .legacyToHT) { update in
             progressUpdates.append(update)
         }
 
@@ -430,24 +430,24 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Encoder Progress Reporting
 
-    func testEncoderProgressCallbackInvoked() throws {
+    func testEncoderProgressCallbackInvoked() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         nonisolated(unsafe) var updates: [EncoderProgressUpdate] = []
 
         let encoder = J2KEncoder()
-        _ = try encoder.encode(image) { update in
+        _ = try await encoder.encode(image) { update in
             updates.append(update)
         }
 
         XCTAssertFalse(updates.isEmpty, "Encoder progress callbacks should be invoked")
     }
 
-    func testEncoderProgressValuesMonotonicallyIncrease() throws {
+    func testEncoderProgressValuesMonotonicallyIncrease() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         nonisolated(unsafe) var progressValues: [Double] = []
 
         let encoder = J2KEncoder()
-        _ = try encoder.encode(image) { update in
+        _ = try await encoder.encode(image) { update in
             progressValues.append(update.overallProgress)
         }
 
@@ -457,12 +457,12 @@ final class J2KEndToEndPipelineTests: XCTestCase {
         }
     }
 
-    func testEncoderProgressReachesCompletion() throws {
+    func testEncoderProgressReachesCompletion() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         nonisolated(unsafe) var finalProgress = 0.0
 
         let encoder = J2KEncoder()
-        _ = try encoder.encode(image) { update in
+        _ = try await encoder.encode(image) { update in
             finalProgress = update.overallProgress
         }
 
@@ -472,26 +472,26 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Decoder Progress Reporting
 
-    func testDecoderProgressCallbackInvoked() throws {
+    func testDecoderProgressCallbackInvoked() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         nonisolated(unsafe) var updates: [DecoderProgressUpdate] = []
         let decoder = J2KDecoder()
-        _ = try decoder.decode(encoded) { update in
+        _ = try await decoder.decode(encoded) { update in
             updates.append(update)
         }
 
         XCTAssertFalse(updates.isEmpty, "Decoder progress callbacks should be invoked")
     }
 
-    func testDecoderProgressReachesCompletion() throws {
+    func testDecoderProgressReachesCompletion() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
 
         nonisolated(unsafe) var finalProgress = 0.0
-        _ = try J2KDecoder().decode(encoded) { update in
+        _ = try await J2KDecoder().decode(encoded) { update in
             finalProgress = update.overallProgress
         }
 
@@ -501,35 +501,44 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Error Handling Pipeline Tests
 
-    func testDecodeEmptyDataThrows() throws {
+    func testDecodeEmptyDataThrows() async throws {
         let emptyData = Data()
-        XCTAssertThrowsError(try J2KDecoder().decode(emptyData)) { error in
+        do {
+            _ = try await J2KDecoder().decode(emptyData)
+            XCTFail("Expected decode to throw for empty data")
+        } catch {
             // Any decode error is acceptable for empty input
             XCTAssertNotNil(error)
         }
     }
 
-    func testDecodeRandomDataThrows() throws {
+    func testDecodeRandomDataThrows() async throws {
         let randomData = Data([0x01, 0x02, 0x03, 0x04, 0xFF, 0xFE])
-        XCTAssertThrowsError(try J2KDecoder().decode(randomData)) { error in
+        do {
+            _ = try await J2KDecoder().decode(randomData)
+            XCTFail("Expected decode to throw for random data")
+        } catch {
             XCTAssertNotNil(error)
         }
     }
 
-    func testDecodeTruncatedCodestreamThrows() throws {
+    func testDecodeTruncatedCodestreamThrows() async throws {
         let image = makeGrayscaleImage(width: 32, height: 32)
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
 
         // Truncate to first 10 bytes
         let truncated = encoded.prefix(10)
-        XCTAssertThrowsError(try J2KDecoder().decode(truncated)) { error in
+        do {
+            _ = try await J2KDecoder().decode(truncated)
+            XCTFail("Expected decode to throw for truncated data")
+        } catch {
             XCTAssertNotNil(error)
         }
     }
 
-    func testDecodeCorruptedCodestreamThrows() throws {
+    func testDecodeCorruptedCodestreamThrows() async throws {
         let image = makeGrayscaleImage(width: 32, height: 32)
-        var encoded = try J2KEncoder().encode(image)
+        var encoded = try await J2KEncoder().encode(image)
 
         // Corrupt the middle of the data
         if encoded.count > 20 {
@@ -540,12 +549,12 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
         // This may or may not throw depending on the error recovery
         // The key assertion is it does not crash
-        _ = try? J2KDecoder().decode(encoded)
+        _ = try? await J2KDecoder().decode(encoded)
     }
 
     // MARK: - Multi-Component Pipeline Tests
 
-    func testFourComponentEncodeDecodePipeline() throws {
+    func testFourComponentEncodeDecodePipeline() async throws {
         let size = 32 * 32
         let components = (0..<4).map { i in
             J2KComponent(index: i, bitDepth: 8, signed: false, width: 32, height: 32,
@@ -553,136 +562,136 @@ final class J2KEndToEndPipelineTests: XCTestCase {
         }
         let image = J2KImage(width: 32, height: 32, components: components)
 
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
         XCTAssertGreaterThan(encoded.count, 0)
-        let decoded = try J2KDecoder().decode(encoded)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, 32)
         XCTAssertEqual(decoded.height, 32)
     }
 
-    func testSingleComponentGrayscalePipeline() throws {
+    func testSingleComponentGrayscalePipeline() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64, fill: 200)
         let config = J2KEncodingConfiguration(lossless: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.components.count, 1)
         XCTAssertEqual(decoded.components[0].bitDepth, 8)
     }
 
     // MARK: - Configuration Preset Pipeline Tests
 
-    func testConfigurationPresetLosslessPipeline() throws {
+    func testConfigurationPresetLosslessPipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KConfiguration.lossless
         let encoder = J2KEncoder(configuration: config)
-        let encoded = try encoder.encode(image)
-        let decoded = try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testConfigurationPresetHighQualityPipeline() throws {
+    func testConfigurationPresetHighQualityPipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KConfiguration.highQuality
         let encoder = J2KEncoder(configuration: config)
-        let encoded = try encoder.encode(image)
-        let decoded = try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testConfigurationPresetBalancedPipeline() throws {
+    func testConfigurationPresetBalancedPipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KConfiguration.balanced
         let encoder = J2KEncoder(configuration: config)
-        let encoded = try encoder.encode(image)
-        let decoded = try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testConfigurationPresetFastPipeline() throws {
+    func testConfigurationPresetFastPipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KConfiguration.fast
         let encoder = J2KEncoder(configuration: config)
-        let encoded = try encoder.encode(image)
-        let decoded = try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testConfigurationPresetMaxCompressionPipeline() throws {
+    func testConfigurationPresetMaxCompressionPipeline() async throws {
         let image = makeGrayscaleImage()
         let config = J2KConfiguration.maxCompression
         let encoder = J2KEncoder(configuration: config)
-        let encoded = try encoder.encode(image)
-        let decoded = try J2KDecoder().decode(encoded)
+        let encoded = try await encoder.encode(image)
+        let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.width, image.width)
     }
 
     // MARK: - Tiled Encoding Pipeline Tests
 
-    func testTiledEncodingPipeline128x128Tile64x64() throws {
+    func testTiledEncodingPipeline128x128Tile64x64() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(tileSize: (64, 64))
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, 128)
         XCTAssertEqual(decoded.height, 128)
     }
 
-    func testTiledEncodingPipeline256x256Tile64x64() throws {
+    func testTiledEncodingPipeline256x256Tile64x64() async throws {
         let image = makeGrayscaleImage(width: 256, height: 256)
         let config = J2KEncodingConfiguration(tileSize: (64, 64))
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, 256)
     }
 
     // MARK: - Encoded Data Structural Tests
 
-    func testEncodedDataStartsWithSOCMarker() throws {
+    func testEncodedDataStartsWithSOCMarker() async throws {
         let image = makeGrayscaleImage()
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
         // SOC marker is 0xFF4F
         XCTAssertGreaterThanOrEqual(encoded.count, 2)
         XCTAssertEqual(encoded[0], 0xFF)
         XCTAssertEqual(encoded[1], 0x4F, "Encoded data should start with SOC marker (0xFF4F)")
     }
 
-    func testEncodedDataEndsWithEOCMarker() throws {
+    func testEncodedDataEndsWithEOCMarker() async throws {
         let image = makeGrayscaleImage()
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
         // EOC marker is 0xFFD9
         XCTAssertGreaterThanOrEqual(encoded.count, 2)
         XCTAssertEqual(encoded[encoded.count - 2], 0xFF)
         XCTAssertEqual(encoded[encoded.count - 1], 0xD9, "Encoded data should end with EOC marker (0xFFD9)")
     }
 
-    func testLosslessEncodedDataIsSmallerThanRawData() throws {
+    func testLosslessEncodedDataIsSmallerThanRawData() async throws {
         let width = 256
         let height = 256
         let image = makeGrayscaleImage(width: width, height: height, fill: 128)
         let rawSizeInBytes = width * height  // 8-bit grayscale: 1 byte per pixel
         let config = J2KEncodingConfiguration(lossless: true)
-        let encoded = try J2KEncoder(encodingConfiguration: config).encode(image)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
         // For a uniform image, JPEG 2000 should achieve compression
         XCTAssertLessThan(encoded.count, rawSizeInBytes, "Lossless encoding should compress uniform images")
     }
 
     // MARK: - Sequential Encode/Decode Pipeline Tests
 
-    func testMultipleSequentialEncodeDecodeCycles() throws {
+    func testMultipleSequentialEncodeDecodeCycles() async throws {
         let image = makeGrayscaleImage(width: 32, height: 32)
         for i in 0..<10 {
             let quality = 0.5 + Double(i) * 0.05
             let config = J2KEncodingConfiguration(quality: quality, lossless: false)
-            let decoded = try encodeAndDecode(image, config: config)
+            let decoded = try await encodeAndDecode(image, config: config)
             XCTAssertEqual(decoded.width, image.width, "Cycle \(i) width mismatch")
             XCTAssertEqual(decoded.height, image.height, "Cycle \(i) height mismatch")
         }
     }
 
-    func testSameImageEncodedDifferentQualitiesHaveDifferentSizes() throws {
+    func testSameImageEncodedDifferentQualitiesHaveDifferentSizes() async throws {
         let image = makeGradientImage(width: 128, height: 128)
         let highQ = J2KEncodingConfiguration(quality: 0.95, lossless: false)
         let lowQ  = J2KEncodingConfiguration(quality: 0.50, lossless: false)
 
-        let highData = try J2KEncoder(encodingConfiguration: highQ).encode(image)
-        let lowData  = try J2KEncoder(encodingConfiguration: lowQ).encode(image)
+        let highData = try await J2KEncoder(encodingConfiguration: highQ).encode(image)
+        let lowData  = try await J2KEncoder(encodingConfiguration: lowQ).encode(image)
 
         // Higher quality should result in larger encoded data for complex images
         // (gradient is a non-trivial test image)
@@ -692,73 +701,73 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Cross-Platform Compatibility Tests
 
-    func testEncoderIsValueType() throws {
+    func testEncoderIsValueType() async throws {
         let encoder1 = J2KEncoder(configuration: .balanced)
         let encoder2 = encoder1
 
         // Value semantics: both encoders should produce identical output
         let image = makeGrayscaleImage()
-        let data1 = try encoder1.encode(image)
-        let data2 = try encoder2.encode(image)
+        let data1 = try await encoder1.encode(image)
+        let data2 = try await encoder2.encode(image)
 
         // Same configuration should produce equivalent data
         XCTAssertEqual(data1.count, data2.count)
     }
 
-    func testDecoderIsValueType() throws {
+    func testDecoderIsValueType() async throws {
         let image = makeGrayscaleImage()
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
 
         let decoder1 = J2KDecoder()
         let decoder2 = decoder1
 
-        let decoded1 = try decoder1.decode(encoded)
-        let decoded2 = try decoder2.decode(encoded)
+        let decoded1 = try await decoder1.decode(encoded)
+        let decoded2 = try await decoder2.decode(encoded)
 
         XCTAssertEqual(decoded1.width, decoded2.width)
         XCTAssertEqual(decoded1.height, decoded2.height)
     }
 
-    func testTranscoderIsValueType() throws {
+    func testTranscoderIsValueType() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
-        let encoded = try J2KEncoder().encode(image)
+        let encoded = try await J2KEncoder().encode(image)
 
         let transcoder1 = J2KTranscoder()
         let transcoder2 = transcoder1
 
-        let result1 = try transcoder1.transcode(encoded, direction: .legacyToHT)
-        let result2 = try transcoder2.transcode(encoded, direction: .legacyToHT)
+        let result1 = try await transcoder1.transcode(encoded, direction: .legacyToHT)
+        let result2 = try await transcoder2.transcode(encoded, direction: .legacyToHT)
 
         XCTAssertEqual(result1.data.count, result2.data.count)
     }
 
     // MARK: - Parallel Encode/Decode Tests
 
-    func testParallelCodeBlocksEnabled() throws {
+    func testParallelCodeBlocksEnabled() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(enableParallelCodeBlocks: true)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testParallelCodeBlocksDisabled() throws {
+    func testParallelCodeBlocksDisabled() async throws {
         let image = makeGrayscaleImage(width: 128, height: 128)
         let config = J2KEncodingConfiguration(enableParallelCodeBlocks: false)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testParallelAndSequentialProduceSameOutputSize() throws {
+    func testParallelAndSequentialProduceSameOutputSize() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let parallelConfig = J2KEncodingConfiguration(enableParallelCodeBlocks: true)
         let sequentialConfig = J2KEncodingConfiguration(enableParallelCodeBlocks: false)
 
-        let parallelData   = try J2KEncoder(encodingConfiguration: parallelConfig).encode(image)
-        let sequentialData = try J2KEncoder(encodingConfiguration: sequentialConfig).encode(image)
+        let parallelData   = try await J2KEncoder(encodingConfiguration: parallelConfig).encode(image)
+        let sequentialData = try await J2KEncoder(encodingConfiguration: sequentialConfig).encode(image)
 
         // Both encoders should produce valid decodable output
-        let parallelDecoded   = try J2KDecoder().decode(parallelData)
-        let sequentialDecoded = try J2KDecoder().decode(sequentialData)
+        let parallelDecoded   = try await J2KDecoder().decode(parallelData)
+        let sequentialDecoded = try await J2KDecoder().decode(sequentialData)
 
         XCTAssertEqual(parallelDecoded.width, image.width)
         XCTAssertEqual(sequentialDecoded.width, image.width)
@@ -766,17 +775,17 @@ final class J2KEndToEndPipelineTests: XCTestCase {
 
     // MARK: - Single-Threaded vs Multi-Threaded Pipeline Tests
 
-    func testSingleThreadedPipeline() throws {
+    func testSingleThreadedPipeline() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let config = J2KEncodingConfiguration(maxThreads: 1)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 
-    func testAutoThreadedPipeline() throws {
+    func testAutoThreadedPipeline() async throws {
         let image = makeGrayscaleImage(width: 64, height: 64)
         let config = J2KEncodingConfiguration(maxThreads: 0)
-        let decoded = try encodeAndDecode(image, config: config)
+        let decoded = try await encodeAndDecode(image, config: config)
         XCTAssertEqual(decoded.width, image.width)
     }
 }

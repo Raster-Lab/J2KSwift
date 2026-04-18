@@ -39,7 +39,7 @@ extension J2KCLI {
         // Load input — handle both image formats and JPEG 2000 files
         let image: J2KImage
         if pipeInput {
-            image = try loadImageFromStdin()
+            image = try await loadImageFromStdin()
         } else {
             let inputExt = URL(fileURLWithPath: inputPath).pathExtension.lowercased()
             let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
@@ -47,7 +47,7 @@ extension J2KCLI {
             if j2kExts.contains(inputExt) {
                 let data = try Data(contentsOf: URL(fileURLWithPath: inputPath))
                 let decoder = J2KDecoder()
-                image = try decoder.decode(data)
+                image = try await decoder.decode(data)
             } else {
                 image = try loadImage(from: inputPath)
             }
@@ -78,7 +78,7 @@ extension J2KCLI {
             if j2kExts.contains(outputExt) {
                 let config = J2KEncodingConfiguration()
                 let encoder = J2KEncoder(encodingConfiguration: config)
-                let encodedData = try encoder.encode(outputImage)
+                let encodedData = try await encoder.encode(outputImage)
                 FileHandle.standardOutput.write(encodedData)
             } else {
                 try saveImageToStdout(outputImage, format: outputExt)
@@ -87,7 +87,7 @@ extension J2KCLI {
             // Encode to JPEG 2000
             let config = J2KEncodingConfiguration()
             let encoder = J2KEncoder(encodingConfiguration: config)
-            let encodedData = try encoder.encode(outputImage)
+            let encodedData = try await encoder.encode(outputImage)
             try encodedData.write(to: URL(fileURLWithPath: outputPath))
         } else {
             try saveImage(outputImage, to: outputPath)

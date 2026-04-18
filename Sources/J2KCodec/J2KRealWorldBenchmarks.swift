@@ -179,7 +179,7 @@ public struct J2KRealWorldBenchmarks {
     ///
     /// - Parameter quality: Compression quality (default: 0.95).
     /// - Returns: Benchmark result.
-    public func run4KBenchmark(quality: Double = 0.95) throws -> Result {
+    public func run4KBenchmark(quality: Double = 0.95) async throws -> Result {
         let width = 3840
         let height = 2160
         let components = 3
@@ -192,7 +192,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "4K (3840×2160)",
             image: image,
             quality: quality
@@ -200,7 +200,7 @@ public struct J2KRealWorldBenchmarks {
     }
 
     /// Runs benchmark on 4K 10-bit HDR image.
-    public func run4KHDR10Benchmark(quality: Double = 0.95) throws -> Result {
+    public func run4KHDR10Benchmark(quality: Double = 0.95) async throws -> Result {
         let width = 3840
         let height = 2160
         let components = 3
@@ -213,7 +213,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "4K HDR10 (3840×2160, 10-bit)",
             image: image,
             quality: quality
@@ -223,7 +223,7 @@ public struct J2KRealWorldBenchmarks {
     // MARK: - 8K Benchmarks
 
     /// Runs benchmark on 8K image (7680×4320).
-    public func run8KBenchmark(quality: Double = 0.95) throws -> Result {
+    public func run8KBenchmark(quality: Double = 0.95) async throws -> Result {
         let width = 7680
         let height = 4320
         let components = 3
@@ -236,7 +236,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "8K (7680×4320)",
             image: image,
             quality: quality
@@ -244,7 +244,7 @@ public struct J2KRealWorldBenchmarks {
     }
 
     /// Runs benchmark on 8K 12-bit HDR image.
-    public func run8KHDR12Benchmark(quality: Double = 0.95) throws -> Result {
+    public func run8KHDR12Benchmark(quality: Double = 0.95) async throws -> Result {
         let width = 7680
         let height = 4320
         let components = 3
@@ -257,7 +257,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "8K HDR12 (7680×4320, 12-bit)",
             image: image,
             quality: quality
@@ -267,7 +267,7 @@ public struct J2KRealWorldBenchmarks {
     // MARK: - Multi-Spectral Benchmarks
 
     /// Runs benchmark on multi-spectral image (4 components).
-    public func runMultiSpectral4Benchmark(quality: Double = 0.95) throws -> Result {
+    public func runMultiSpectral4Benchmark(quality: Double = 0.95) async throws -> Result {
         let width = 2048
         let height = 2048
         let components = 4
@@ -280,7 +280,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "Multi-spectral 4C (2048×2048, 12-bit)",
             image: image,
             quality: quality
@@ -288,7 +288,7 @@ public struct J2KRealWorldBenchmarks {
     }
 
     /// Runs benchmark on multi-spectral image (8 components).
-    public func runMultiSpectral8Benchmark(quality: Double = 0.95) throws -> Result {
+    public func runMultiSpectral8Benchmark(quality: Double = 0.95) async throws -> Result {
         let width = 2048
         let height: Int = 2048
         let components = 8
@@ -301,7 +301,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "Multi-spectral 8C (2048×2048, 12-bit)",
             image: image,
             quality: quality
@@ -309,7 +309,7 @@ public struct J2KRealWorldBenchmarks {
     }
 
     /// Runs benchmark on multi-spectral image (16 components).
-    public func runMultiSpectral16Benchmark(quality: Double = 0.95) throws -> Result {
+    public func runMultiSpectral16Benchmark(quality: Double = 0.95) async throws -> Result {
         let width = 1024
         let height = 1024
         let components = 16
@@ -322,7 +322,7 @@ public struct J2KRealWorldBenchmarks {
             bitDepth: bitDepth
         )
 
-        return try benchmarkImage(
+        return try await benchmarkImage(
             name: "Multi-spectral 16C (1024×1024, 12-bit)",
             image: image,
             quality: quality
@@ -335,7 +335,7 @@ public struct J2KRealWorldBenchmarks {
     public func runBatchFullHDBenchmark(
         count: Int = 10,
         quality: Double = 0.95
-    ) throws -> BatchResult {
+    ) async throws -> BatchResult {
         let startTime = Date()
         var results: [Result] = []
 
@@ -347,7 +347,7 @@ public struct J2KRealWorldBenchmarks {
                 bitDepth: 8
             )
 
-            let result = try benchmarkImage(
+            let result = try await benchmarkImage(
                 name: "Batch Full HD #\(i + 1)",
                 image: image,
                 quality: quality
@@ -364,7 +364,7 @@ public struct J2KRealWorldBenchmarks {
     public func runBatch4KBenchmark(
         count: Int = 5,
         quality: Double = 0.95
-    ) throws -> BatchResult {
+    ) async throws -> BatchResult {
         let startTime = Date()
         var results: [Result] = []
 
@@ -376,7 +376,7 @@ public struct J2KRealWorldBenchmarks {
                 bitDepth: 8
             )
 
-            let result = try benchmarkImage(
+            let result = try await benchmarkImage(
                 name: "Batch 4K #\(i + 1)",
                 image: image,
                 quality: quality
@@ -396,17 +396,17 @@ public struct J2KRealWorldBenchmarks {
         name: String,
         image: J2KImage,
         quality: Double
-    ) throws -> Result {
+    ) async throws -> Result {
         // Encoding
         let encoder = J2KEncoder()
         let startEncode = Date()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
         let encodingTime = Date().timeIntervalSince(startEncode)
 
         // Decoding
         let decoder = J2KDecoder()
         let startDecode = Date()
-        _ = try decoder.decode(encoded)
+        _ = try await decoder.decode(encoded)
         let decodingTime = Date().timeIntervalSince(startDecode)
 
         // Get bit depth from first component
@@ -427,23 +427,23 @@ public struct J2KRealWorldBenchmarks {
     // MARK: - Full Suite
 
     /// Runs all benchmarks and returns results.
-    public func runFullSuite(quality: Double = 0.95) throws -> [Result] {
+    public func runFullSuite(quality: Double = 0.95) async throws -> [Result] {
         var results: [Result] = []
 
         print("Running 4K benchmark...")
-        results.append(try run4KBenchmark(quality: quality))
+        results.append(try await run4KBenchmark(quality: quality))
 
         print("Running 4K HDR10 benchmark...")
-        results.append(try run4KHDR10Benchmark(quality: quality))
+        results.append(try await run4KHDR10Benchmark(quality: quality))
 
         print("Running 8K benchmark...")
-        results.append(try run8KBenchmark(quality: quality))
+        results.append(try await run8KBenchmark(quality: quality))
 
         print("Running multi-spectral 4C benchmark...")
-        results.append(try runMultiSpectral4Benchmark(quality: quality))
+        results.append(try await runMultiSpectral4Benchmark(quality: quality))
 
         print("Running multi-spectral 8C benchmark...")
-        results.append(try runMultiSpectral8Benchmark(quality: quality))
+        results.append(try await runMultiSpectral8Benchmark(quality: quality))
 
         return results
     }

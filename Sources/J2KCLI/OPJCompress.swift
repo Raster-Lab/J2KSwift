@@ -225,7 +225,7 @@ extension J2KCLI {
         let startTime = Date()
         var encodedData: Data
         do {
-            encodedData = try encoder.encode(image)
+            encodedData = try await encoder.encode(image)
         } catch {
             printToStderr("[ERROR] Failed to encode image: \(error)")
             exit(1)

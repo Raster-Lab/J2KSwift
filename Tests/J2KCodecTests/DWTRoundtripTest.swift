@@ -45,7 +45,7 @@ final class DWTRoundtripTest: XCTestCase {
     }
     
     /// Test the OPTIMIZED DWT inverse path (used by the actual decoder)
-    func testDWTRoundtrip5LevelOptimized() throws {
+    func testDWTRoundtrip5LevelOptimized() async throws {
         let w = 128, h = 128
         var image = [[Int32]]()
         for y in 0..<h {
@@ -70,7 +70,7 @@ final class DWTRoundtripTest: XCTestCase {
         
         for level in (0..<decomp.levelCount).reversed() {
             let result = decomp.levels[level]
-            currentLL = try optimizer.inverseTransform2DOptimized(
+            currentLL = try await optimizer.inverseTransform2DOptimized(
                 ll: currentLL,
                 lh: result.lh,
                 hl: result.hl,

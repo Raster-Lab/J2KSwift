@@ -156,6 +156,18 @@ Resolved GPU encoder pipeline hangs during Metal DWT operations.
 
 ### 6. Encoder Quality Improvements (Lossy Mode)
 
+#### 6.1 Near-Target HTJ2K Truncation Refinement (April 16, 2026)
+- **Problem:** strict PCRD could leave HTJ2K noticeably under target when the next useful truncation frontier slightly overshot the byte budget.
+- **Fix:** preserve the best small overshoot candidate and use it only when it lands closer to the target than the final undershoot.
+- **Additional improvement:** cap HT refinement planes adaptively from target bitrate, subband class, and block energy, and stop once both refinement streams emit zero bytes.
+- **Verification:** a dedicated HT regression now covers the undershoot case, and the focused HTJ2K validation run completed with **42 tests, 0 failures**.
+
+#### 6.2 Medical Compression-Efficiency Retuning (April 16, 2026)
+- **Problem:** the earlier single-component HTJ2K matched-rate allowance was intentionally quality-biased, but the fresh real-medical corpus confirmed that it was also causing a systematic file-size overspend versus standard J2K.
+- **Fix:** narrow the HT matched-rate compensation to a smaller rate-dependent window so the encoder keeps the medical quality guard while avoiding the previous blanket overshoot.
+- **Verification:** the focused HT medical regression remains green, including the new compression-efficiency guard, and the fresh release-mode medical rerun confirmed that lossy HTJ2K average encoded size dropped from **1.30 MB** to **1.18 MB** while encode throughput stayed in the same high-speed range at roughly **0.64 s** per sampled study.
+- **Measured impact:** aggregate lossy HTJ2K compression ratio improved from **15.58×** to **16.55×** on the sampled medical corpus, with the biggest focus-modality gains appearing in PX (**13.75× → 15.19×**), DX (**14.51× → 15.76×**), and XA (**6.94× → 7.67×**).
+
 - **Wavelet filter default:** Fixed `useReversibleFilter` default for lossy mode (was incorrectly using 5/3 instead of 9/7): +1.10 dB
 - **Base quantization step:** Changed to fixed 1.0, matching OpenJPEG approach where PCRD exclusively controls rate/quality: +0.5 dB
 - **PCRD actual distortion:** Modified rate control to use actual per-pass distortion from EBCOT (`cumulativePassDistortion`) instead of model estimates: +0.3–0.4 dB

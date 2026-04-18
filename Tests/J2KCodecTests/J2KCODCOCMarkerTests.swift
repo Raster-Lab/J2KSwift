@@ -10,7 +10,7 @@ import XCTest
 final class J2KCODCOCMarkerTests: XCTestCase {
     // MARK: - COD Marker Tests
 
-    func testCODMarkerLegacyMode() throws {
+    func testCODMarkerLegacyMode() async throws {
         // Arrange: Create configuration without HTJ2K
         let config = J2KEncodingConfiguration(
             quality: 0.9,
@@ -24,7 +24,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Create encoder pipeline and encode a test image
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Assert: Verify the codestream contains COD marker without HT bit
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
@@ -43,7 +43,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         }
     }
 
-    func testCODMarkerHTJ2KMode() throws {
+    func testCODMarkerHTJ2KMode() async throws {
         // Arrange: Create configuration with HTJ2K enabled
         let config = J2KEncodingConfiguration(
             quality: 0.9,
@@ -57,7 +57,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Create encoder pipeline and encode a test image
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Assert: Verify the codestream contains COD marker with HT bit set
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
@@ -70,7 +70,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         }
     }
 
-    func testCODMarkerLosslessMode() throws {
+    func testCODMarkerLosslessMode() async throws {
         // Arrange: Create lossless configuration
         let config = J2KEncodingConfiguration(
             quality: 1.0,
@@ -84,7 +84,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Encode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Assert: Verify wavelet transform type is reversible
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
@@ -97,7 +97,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         }
     }
 
-    func testCODMarkerHTJ2KLossless() throws {
+    func testCODMarkerHTJ2KLossless() async throws {
         // Arrange: Create HTJ2K lossless configuration
         let config = J2KEncodingConfiguration(
             quality: 1.0,
@@ -111,7 +111,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Encode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Assert: Verify both HT bit and reversible transform
         let codMarkerData = try extractMarkerData(from: encodedData, marker: .cod)
@@ -128,28 +128,28 @@ final class J2KCODCOCMarkerTests: XCTestCase {
 
     // MARK: - COD Marker Parsing Tests
 
-    func testCODParsingLegacyMode() throws {
+    func testCODParsingLegacyMode() async throws {
         // Arrange: Create codestream with legacy mode
         let config = J2KEncodingConfiguration(useHTJ2K: false)
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Act: Parse the codestream
         let decoderPipeline = DecoderPipeline()
-        let decodedImage = try decoderPipeline.decode(encodedData)
+        let decodedImage = try await decoderPipeline.decode(encodedData)
 
         // Assert: Image decoded successfully (parser handled legacy mode)
         XCTAssertEqual(decodedImage.width, 64)
         XCTAssertEqual(decodedImage.height, 64)
     }
 
-    func testCODParsingHTJ2KMode() throws {
+    func testCODParsingHTJ2KMode() async throws {
         // Arrange: Create codestream with HTJ2K mode
         let config = J2KEncodingConfiguration(useHTJ2K: true)
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         // Act: Parse the codestream
         let decoderPipeline = DecoderPipeline()
@@ -157,7 +157,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Note: Full decoding with HTJ2K block coder may not be implemented yet,
         // so we just verify the marker parsing doesn't fail
         do {
-            _ = try decoderPipeline.decode(encodedData)
+            _ = try await decoderPipeline.decode(encodedData)
             // If decoding succeeds, that's great
         } catch {
             // If decoding fails due to missing HTJ2K block decoder, that's expected
@@ -202,7 +202,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
 
     // MARK: - Round-trip Tests
 
-    func testCODRoundTripLegacy() throws {
+    func testCODRoundTripLegacy() async throws {
         // Arrange: Create configuration with single component
         let config = J2KEncodingConfiguration(
             quality: 0.95,
@@ -216,10 +216,10 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Encode and decode with single component
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 128, height: 128, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         let decoderPipeline = DecoderPipeline()
-        let decodedImage = try decoderPipeline.decode(encodedData)
+        let decodedImage = try await decoderPipeline.decode(encodedData)
 
         // Assert: Image properties preserved
         XCTAssertEqual(decodedImage.width, image.width)
@@ -227,7 +227,7 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         XCTAssertEqual(decodedImage.componentCount, image.componentCount)
     }
 
-    func testCODRoundTripLossless() throws {
+    func testCODRoundTripLossless() async throws {
         // Arrange: Create lossless configuration
         let config = J2KEncodingConfiguration(
             quality: 1.0,
@@ -241,10 +241,10 @@ final class J2KCODCOCMarkerTests: XCTestCase {
         // Act: Encode and decode
         let pipeline = EncoderPipeline(config: config)
         let image = try createTestImage(width: 64, height: 64, components: 1)
-        let encodedData = try pipeline.encode(image)
+        let encodedData = try await pipeline.encode(image)
 
         let decoderPipeline = DecoderPipeline()
-        let decodedImage = try decoderPipeline.decode(encodedData)
+        let decodedImage = try await decoderPipeline.decode(encodedData)
 
         // Assert: Lossless reconstruction
         XCTAssertEqual(decodedImage.width, image.width)

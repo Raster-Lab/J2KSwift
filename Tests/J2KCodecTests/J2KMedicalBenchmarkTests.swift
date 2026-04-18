@@ -356,7 +356,7 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
         quality: Double? = nil,
         bitrate: Double? = nil,
         opjRate: String? = nil
-    ) -> BenchmarkResult {
+    ) async -> BenchmarkResult {
         let runs   = Self.benchmarkRuns
         let warmup = Self.warmupRuns
         let bd     = image.components[0].bitDepth
@@ -376,13 +376,13 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
 
         // Warmup
-        for _ in 0..<warmup { _ = try? encoder.encode(image) }
+        for _ in 0..<warmup { _ = try? await encoder.encode(image) }
 
         var j2kEncodeTimes: [Double] = []
         var encodedData: Data?
         for _ in 0..<runs {
             let start = CFAbsoluteTimeGetCurrent()
-            let data = try? encoder.encode(image)
+            let data = try? await encoder.encode(image)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
             j2kEncodeTimes.append(elapsed)
             if encodedData == nil { encodedData = data }
@@ -396,10 +396,10 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
         var decodedImage: J2KImage?
 
         if let data = encodedData {
-            for _ in 0..<warmup { _ = try? decoder.decode(data) }
+            for _ in 0..<warmup { _ = try? await decoder.decode(data) }
             for _ in 0..<runs {
                 let start = CFAbsoluteTimeGetCurrent()
-                let dec = try? decoder.decode(data)
+                let dec = try? await decoder.decode(data)
                 let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
                 j2kDecodeTimes.append(elapsed)
                 if decodedImage == nil { decodedImage = dec }
@@ -649,65 +649,65 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
 
     // MARK: - CT Chest Tests
 
-    func testCT_512_12bit_Lossless() throws {
+    func testCT_512_12bit_Lossless() async throws {
         let image = generateCTPhantom(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless CT 512 12-bit must achieve MAE=0")
     }
 
-    func testCT_512_12bit_Lossy_Q09() throws {
+    func testCT_512_12bit_Lossy_Q09() async throws {
         let image = generateCTPhantom(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
                              mode: "lossy", rateLabel: "q0.9",
                              quality: 0.9, opjRate: "10")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testCT_512_12bit_Rate_1bpp() throws {
+    func testCT_512_12bit_Rate_1bpp() async throws {
         let image = generateCTPhantom(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_512_12", modality: "CT",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "12")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testCT_512_16bit_Lossless() throws {
+    func testCT_512_16bit_Lossless() async throws {
         let image = generateCTPhantom(width: 512, height: 512, bitDepth: 16)
-        let r = runBenchmark(image: image, imageName: "CT_512_16", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_512_16", modality: "CT",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless CT 512 16-bit must achieve MAE=0")
     }
 
-    func testCT_512_16bit_Rate_1bpp() throws {
+    func testCT_512_16bit_Rate_1bpp() async throws {
         let image = generateCTPhantom(width: 512, height: 512, bitDepth: 16)
-        let r = runBenchmark(image: image, imageName: "CT_512_16", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_512_16", modality: "CT",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "16")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testCT_1024_12bit_Lossless() throws {
+    func testCT_1024_12bit_Lossless() async throws {
         let image = generateCTPhantom(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "CT_1024_12", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_1024_12", modality: "CT",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless CT 1024 12-bit must achieve MAE=0")
     }
 
-    func testCT_1024_12bit_Rate_1bpp() throws {
+    func testCT_1024_12bit_Rate_1bpp() async throws {
         let image = generateCTPhantom(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "CT_1024_12", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_1024_12", modality: "CT",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "12")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testCT_1024_16bit_Lossless() throws {
+    func testCT_1024_16bit_Lossless() async throws {
         let image = generateCTPhantom(width: 1024, height: 1024, bitDepth: 16)
-        let r = runBenchmark(image: image, imageName: "CT_1024_16", modality: "CT",
+        let r = await runBenchmark(image: image, imageName: "CT_1024_16", modality: "CT",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless CT 1024 16-bit must achieve MAE=0")
@@ -715,49 +715,49 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
 
     // MARK: - MRI Brain Tests
 
-    func testMRI_512_12bit_Lossless() throws {
+    func testMRI_512_12bit_Lossless() async throws {
         let image = generateMRIBrain(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless MRI 512 12-bit must achieve MAE=0")
     }
 
-    func testMRI_512_12bit_Lossy_Q09() throws {
+    func testMRI_512_12bit_Lossy_Q09() async throws {
         let image = generateMRIBrain(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
                              mode: "lossy", rateLabel: "q0.9",
                              quality: 0.9, opjRate: "10")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testMRI_512_12bit_Rate_1bpp() throws {
+    func testMRI_512_12bit_Rate_1bpp() async throws {
         let image = generateMRIBrain(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_512_12", modality: "MRI",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "12")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testMRI_512_16bit_Lossless() throws {
+    func testMRI_512_16bit_Lossless() async throws {
         let image = generateMRIBrain(width: 512, height: 512, bitDepth: 16)
-        let r = runBenchmark(image: image, imageName: "MRI_512_16", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_512_16", modality: "MRI",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless MRI 512 16-bit must achieve MAE=0")
     }
 
-    func testMRI_1024_12bit_Lossless() throws {
+    func testMRI_1024_12bit_Lossless() async throws {
         let image = generateMRIBrain(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "MRI_1024_12", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_1024_12", modality: "MRI",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless MRI 1024 12-bit must achieve MAE=0")
     }
 
-    func testMRI_1024_12bit_Rate_1bpp() throws {
+    func testMRI_1024_12bit_Rate_1bpp() async throws {
         let image = generateMRIBrain(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "MRI_1024_12", modality: "MRI",
+        let r = await runBenchmark(image: image, imageName: "MRI_1024_12", modality: "MRI",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "12")
         Self.allResults.append(r); printResult(r)
@@ -765,25 +765,25 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
 
     // MARK: - Ultrasound Tests
 
-    func testUS_512_8bit_Lossless() throws {
+    func testUS_512_8bit_Lossless() async throws {
         let image = generateUltrasound(width: 512, height: 512, bitDepth: 8)
-        let r = runBenchmark(image: image, imageName: "US_512_8", modality: "US",
+        let r = await runBenchmark(image: image, imageName: "US_512_8", modality: "US",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless US 512 8-bit must achieve MAE=0")
     }
 
-    func testUS_512_8bit_Rate_1bpp() throws {
+    func testUS_512_8bit_Rate_1bpp() async throws {
         let image = generateUltrasound(width: 512, height: 512, bitDepth: 8)
-        let r = runBenchmark(image: image, imageName: "US_512_8", modality: "US",
+        let r = await runBenchmark(image: image, imageName: "US_512_8", modality: "US",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "8")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testUS_512_12bit_Lossless() throws {
+    func testUS_512_12bit_Lossless() async throws {
         let image = generateUltrasound(width: 512, height: 512, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "US_512_12", modality: "US",
+        let r = await runBenchmark(image: image, imageName: "US_512_12", modality: "US",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless US 512 12-bit must achieve MAE=0")
@@ -791,25 +791,25 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
 
     // MARK: - Mammogram Tests
 
-    func testMammo_1024_12bit_Lossless() throws {
+    func testMammo_1024_12bit_Lossless() async throws {
         let image = generateMammogram(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "Mammo_1024_12", modality: "Mammo",
+        let r = await runBenchmark(image: image, imageName: "Mammo_1024_12", modality: "Mammo",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless Mammo 1024 12-bit must achieve MAE=0")
     }
 
-    func testMammo_1024_12bit_Rate_1bpp() throws {
+    func testMammo_1024_12bit_Rate_1bpp() async throws {
         let image = generateMammogram(width: 1024, height: 1024, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "Mammo_1024_12", modality: "Mammo",
+        let r = await runBenchmark(image: image, imageName: "Mammo_1024_12", modality: "Mammo",
                              mode: "rate", rateLabel: "1bpp",
                              bitrate: 1.0, opjRate: "12")
         Self.allResults.append(r); printResult(r)
     }
 
-    func testMammo_2048_12bit_Lossless() throws {
+    func testMammo_2048_12bit_Lossless() async throws {
         let image = generateMammogram(width: 2048, height: 2048, bitDepth: 12)
-        let r = runBenchmark(image: image, imageName: "Mammo_2048_12", modality: "Mammo",
+        let r = await runBenchmark(image: image, imageName: "Mammo_2048_12", modality: "Mammo",
                              mode: "lossless", rateLabel: "lossless")
         Self.allResults.append(r); printResult(r)
         XCTAssertEqual(r.j2kMAE, 0, "Lossless Mammo 2048 12-bit must achieve MAE=0")

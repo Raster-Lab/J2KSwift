@@ -227,6 +227,292 @@ struct CodingOptions: Sendable {
 
 // MARK: - Bit-Plane Coder
 
+// MARK: - EBCOT Scratch Buffers
+
+/// Pre-allocated reusable buffers for EBCOT bit-plane coding.
+///
+/// Eliminates per-block heap allocations for the state, magnitude, sign,
+/// refinement, and reconstruction arrays. Created once per parallel chunk
+/// and reused across all code blocks in that chunk.
+///
+/// Not `Sendable` — must be used only within a single task/thread.
+final class EBCOTScratchBuffers {
+    private let maxSize: Int
+    var magnitudes: [UInt32]
+    var signs: [Bool]
+    var states: [CoefficientState]
+    var firstRefineFlags: [Bool]
+    var recon: [UInt32]
+    private var mqEncoder: MQEncoder
+
+    init(maxSize: Int = 4096) {
+        self.maxSize = maxSize
+        magnitudes = [UInt32](repeating: 0, count: maxSize)
+        signs = [Bool](repeating: false, count: maxSize)
+        states = [CoefficientState](repeating: [], count: maxSize)
+        firstRefineFlags = [Bool](repeating: false, count: maxSize)
+        recon = [UInt32](repeating: 0, count: maxSize)
+        mqEncoder = MQEncoder(estimatedSize: max(256, maxSize))
+    }
+
+    @inline(__always)
+    func makeMQEncoder() -> MQEncoder {
+        mqEncoder.reset()
+        return mqEncoder
+    }
+
+    /// Prepares the state/refine/recon scratch buffers for a new code block.
+    ///
+    /// Does NOT zero magnitudes/signs — those are fully overwritten by
+    /// `separateMagnitudesAndSigns()` which must be called separately.
+    @inline(__always)
+    func prepareStateBuffers(count: Int) {
+        let _: Void = states.withUnsafeMutableBufferPointer { buf in
+            _ = memset(buf.baseAddress!, 0, count &* MemoryLayout<CoefficientState>.size)
+        }
+        let _: Void = firstRefineFlags.withUnsafeMutableBufferPointer { buf in
+            _ = memset(buf.baseAddress!, 0, count &* MemoryLayout<Bool>.size)
+        }
+        let _: Void = recon.withUnsafeMutableBufferPointer { buf in
+            _ = memset(buf.baseAddress!, 0, count &* MemoryLayout<UInt32>.size)
+        }
+    }
+
+    /// Fills magnitudes and signs from Int32 coefficients.
+    @discardableResult
+    @inline(__always)
+    func separateMagnitudesAndSigns(_ coefficients: [Int32], count: Int) -> UInt32 {
+        var maxMagnitude: UInt32 = 0
+        let simdCount = count / 4
+        let remainderStart = simdCount * 4
+
+        coefficients.withUnsafeBufferPointer { coeffPtr in
+            magnitudes.withUnsafeMutableBufferPointer { magPtr in
+                signs.withUnsafeMutableBufferPointer { signPtr in
+                    guard
+                        let coeffBase = coeffPtr.baseAddress,
+                        let magBase = magPtr.baseAddress,
+                        let signBase = signPtr.baseAddress
+                    else { return }
+
+                    for i in 0..<simdCount {
+                        let offset = i * 4
+                        let values = SIMD4<Int32>(
+                            coeffBase[offset],
+                            coeffBase[offset + 1],
+                            coeffBase[offset + 2],
+                            coeffBase[offset + 3]
+                        )
+                        let negative = values .< SIMD4<Int32>.zero
+                        let absValues = values.replacing(with: SIMD4<Int32>.zero &- values, where: negative)
+
+                        let m0 = UInt32(bitPattern: absValues[0])
+                        let m1 = UInt32(bitPattern: absValues[1])
+                        let m2 = UInt32(bitPattern: absValues[2])
+                        let m3 = UInt32(bitPattern: absValues[3])
+
+                        magBase[offset] = m0
+                        magBase[offset + 1] = m1
+                        magBase[offset + 2] = m2
+                        magBase[offset + 3] = m3
+
+                        signBase[offset] = negative[0]
+                        signBase[offset + 1] = negative[1]
+                        signBase[offset + 2] = negative[2]
+                        signBase[offset + 3] = negative[3]
+
+                        if m0 > maxMagnitude { maxMagnitude = m0 }
+                        if m1 > maxMagnitude { maxMagnitude = m1 }
+                        if m2 > maxMagnitude { maxMagnitude = m2 }
+                        if m3 > maxMagnitude { maxMagnitude = m3 }
+                    }
+
+                    if remainderStart < count {
+                        for i in remainderStart..<count {
+                            let coeff = coeffBase[i]
+                            let magnitude: UInt32
+                            if coeff < 0 {
+                                magnitude = UInt32(-coeff)
+                                signBase[i] = true
+                            } else {
+                                magnitude = UInt32(coeff)
+                                signBase[i] = false
+                            }
+                            magBase[i] = magnitude
+                            if magnitude > maxMagnitude {
+                                maxMagnitude = magnitude
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return maxMagnitude
+    }
+
+    /// Fills magnitudes/signs while also collecting PCRD metrics for lossy coding.
+    @inline(__always)
+    func separateAndAnalyze(
+        _ coefficients: [Int32],
+        count: Int,
+        totalBitPlanes: Int,
+        collectRateControlMetrics: Bool
+    ) -> (maxMagnitude: UInt32, squaredSum: Double, bitPlanePopulation: [Int]) {
+        var maxMagnitude: UInt32 = 0
+        var squaredSum: Double = 0
+        var bitPlanePopulation = collectRateControlMetrics
+            ? [Int](repeating: 0, count: totalBitPlanes)
+            : []
+        let simdCount = count / 4
+        let remainderStart = simdCount * 4
+
+        coefficients.withUnsafeBufferPointer { coeffPtr in
+            magnitudes.withUnsafeMutableBufferPointer { magPtr in
+                signs.withUnsafeMutableBufferPointer { signPtr in
+                    guard
+                        let coeffBase = coeffPtr.baseAddress,
+                        let magBase = magPtr.baseAddress,
+                        let signBase = signPtr.baseAddress
+                    else { return }
+
+                    if collectRateControlMetrics {
+                        for i in 0..<simdCount {
+                            let offset = i * 4
+                            let values = SIMD4<Int32>(
+                                coeffBase[offset],
+                                coeffBase[offset + 1],
+                                coeffBase[offset + 2],
+                                coeffBase[offset + 3]
+                            )
+                            let negative = values .< SIMD4<Int32>.zero
+                            let absValues = values.replacing(with: SIMD4<Int32>.zero &- values, where: negative)
+
+                            let m0 = UInt32(bitPattern: absValues[0])
+                            let m1 = UInt32(bitPattern: absValues[1])
+                            let m2 = UInt32(bitPattern: absValues[2])
+                            let m3 = UInt32(bitPattern: absValues[3])
+
+                            magBase[offset] = m0
+                            magBase[offset + 1] = m1
+                            magBase[offset + 2] = m2
+                            magBase[offset + 3] = m3
+
+                            signBase[offset] = negative[0]
+                            signBase[offset + 1] = negative[1]
+                            signBase[offset + 2] = negative[2]
+                            signBase[offset + 3] = negative[3]
+
+                            if m0 > maxMagnitude { maxMagnitude = m0 }
+                            if m1 > maxMagnitude { maxMagnitude = m1 }
+                            if m2 > maxMagnitude { maxMagnitude = m2 }
+                            if m3 > maxMagnitude { maxMagnitude = m3 }
+
+                            squaredSum += Double(m0) * Double(m0)
+                            squaredSum += Double(m1) * Double(m1)
+                            squaredSum += Double(m2) * Double(m2)
+                            squaredSum += Double(m3) * Double(m3)
+
+                            if m0 > 0 {
+                                let msb = 31 &- m0.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m1 > 0 {
+                                let msb = 31 &- m1.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m2 > 0 {
+                                let msb = 31 &- m2.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m3 > 0 {
+                                let msb = 31 &- m3.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                        }
+
+                        if remainderStart < count {
+                            for i in remainderStart..<count {
+                                let coeff = coeffBase[i]
+                                let magnitude: UInt32
+                                if coeff < 0 {
+                                    magnitude = UInt32(-coeff)
+                                    signBase[i] = true
+                                } else {
+                                    magnitude = UInt32(coeff)
+                                    signBase[i] = false
+                                }
+                                magBase[i] = magnitude
+                                if magnitude > maxMagnitude {
+                                    maxMagnitude = magnitude
+                                }
+                                squaredSum += Double(magnitude) * Double(magnitude)
+                                if magnitude > 0 {
+                                    let msb = 31 &- magnitude.leadingZeroBitCount
+                                    if msb < totalBitPlanes {
+                                        bitPlanePopulation[msb] &+= 1
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for i in 0..<simdCount {
+                            let offset = i * 4
+                            let values = SIMD4<Int32>(
+                                coeffBase[offset],
+                                coeffBase[offset + 1],
+                                coeffBase[offset + 2],
+                                coeffBase[offset + 3]
+                            )
+                            let negative = values .< SIMD4<Int32>.zero
+                            let absValues = values.replacing(with: SIMD4<Int32>.zero &- values, where: negative)
+
+                            let m0 = UInt32(bitPattern: absValues[0])
+                            let m1 = UInt32(bitPattern: absValues[1])
+                            let m2 = UInt32(bitPattern: absValues[2])
+                            let m3 = UInt32(bitPattern: absValues[3])
+
+                            magBase[offset] = m0
+                            magBase[offset + 1] = m1
+                            magBase[offset + 2] = m2
+                            magBase[offset + 3] = m3
+
+                            signBase[offset] = negative[0]
+                            signBase[offset + 1] = negative[1]
+                            signBase[offset + 2] = negative[2]
+                            signBase[offset + 3] = negative[3]
+
+                            if m0 > maxMagnitude { maxMagnitude = m0 }
+                            if m1 > maxMagnitude { maxMagnitude = m1 }
+                            if m2 > maxMagnitude { maxMagnitude = m2 }
+                            if m3 > maxMagnitude { maxMagnitude = m3 }
+                        }
+
+                        if remainderStart < count {
+                            for i in remainderStart..<count {
+                                let coeff = coeffBase[i]
+                                let magnitude: UInt32
+                                if coeff < 0 {
+                                    magnitude = UInt32(-coeff)
+                                    signBase[i] = true
+                                } else {
+                                    magnitude = UInt32(coeff)
+                                    signBase[i] = false
+                                }
+                                magBase[i] = magnitude
+                                if magnitude > maxMagnitude {
+                                    maxMagnitude = magnitude
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return (maxMagnitude, squaredSum, bitPlanePopulation)
+    }
+}
+
 /// Encodes wavelet coefficients using EBCOT bit-plane coding.
 ///
 /// The bit-plane coder processes coefficients from most significant to least
@@ -281,6 +567,7 @@ struct BitPlaneCoder: Sendable {
     ///   - coefficients: The wavelet coefficients to encode.
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - maxPasses: Maximum number of coding passes to generate (optional).
+    ///   - scratch: Pre-allocated scratch buffers for reuse across blocks (optional).
     /// - Returns: A tuple containing the encoded data, the number of coding passes,
     ///   the number of zero bit-planes, per-pass segment lengths, cumulative per-pass byte counts,
     ///   and cumulative per-pass distortion decrements.
@@ -288,166 +575,157 @@ struct BitPlaneCoder: Sendable {
     func encode(
         coefficients: [Int32],
         bitDepth: Int,
-        maxPasses: Int? = nil
+        coefficientCount: Int? = nil,
+        maxPasses: Int? = nil,
+        scratch: EBCOTScratchBuffers? = nil
     ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double], perPassSnapshotData: [Data], mqCheckpoints: [MQCheckpointData], rawMQOutput: [UInt8]) {
-        guard coefficients.count == width * height else {
+        let result = try encodeDetailed(
+            coefficients: coefficients,
+            bitDepth: bitDepth,
+            coefficientCount: coefficientCount,
+            maxPasses: maxPasses,
+            scratch: scratch,
+            collectRateControlMetrics: false
+        )
+        return (
+            result.data,
+            result.passCount,
+            result.zeroBitPlanes,
+            result.passSegmentLengths,
+            result.cumulativePassBytes,
+            result.cumulativePassDistortion,
+            result.perPassSnapshotData,
+            result.mqCheckpoints,
+            result.rawMQOutput
+        )
+    }
+
+    /// Internal fast path that also returns precomputed PCRD metrics.
+    func encodeDetailed(
+        coefficients: [Int32],
+        bitDepth: Int,
+        coefficientCount: Int? = nil,
+        maxPasses: Int? = nil,
+        scratch: EBCOTScratchBuffers? = nil,
+        collectRateControlMetrics: Bool = true,
+        precomputedAnalysis: (maxMagnitude: UInt32, squaredSum: Double, bitPlanePopulation: [Int])? = nil
+    ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double], coefficientSquaredSum: Double, bitPlanePopulation: [Int], perPassSnapshotData: [Data], mqCheckpoints: [MQCheckpointData], rawMQOutput: [UInt8]) {
+        let count = coefficientCount ?? (width * height)
+        guard count == width * height, coefficients.count >= count else {
             throw J2KError.invalidParameter("Coefficient count mismatch")
         }
 
-        // Find the number of zero bit-planes (MSBs that are all zero)
-        let (magnitudes, signs) = separateMagnitudesAndSigns(coefficients)
-        let maxMagnitude = magnitudes.max() ?? 0
-        let activeBitPlanes = maxMagnitude > 0 ? Int(log2(Double(maxMagnitude))) + 1 : 0
+        // Find the number of zero bit-planes (MSBs that are all zero) and,
+        // when needed for PCRD, collect distortion metrics in the same pass.
+        let magnitudes: [UInt32]
+        let signs: [Bool]
+        let maxMagnitude: UInt32
+        let coefficientSquaredSum: Double
+        let bitPlanePopulation: [Int]
+        if let precomputedAnalysis, let scratch = scratch {
+            maxMagnitude = precomputedAnalysis.maxMagnitude
+            coefficientSquaredSum = precomputedAnalysis.squaredSum
+            bitPlanePopulation = precomputedAnalysis.bitPlanePopulation
+            magnitudes = scratch.magnitudes
+            signs = scratch.signs
+        } else if let scratch = scratch {
+            let analysis = scratch.separateAndAnalyze(
+                coefficients,
+                count: count,
+                totalBitPlanes: bitDepth,
+                collectRateControlMetrics: collectRateControlMetrics
+            )
+            maxMagnitude = analysis.maxMagnitude
+            coefficientSquaredSum = analysis.squaredSum
+            bitPlanePopulation = analysis.bitPlanePopulation
+            magnitudes = scratch.magnitudes
+            signs = scratch.signs
+        } else {
+            let separated = separateMagnitudesAndAnalyze(
+                coefficients,
+                count: count,
+                totalBitPlanes: bitDepth,
+                collectRateControlMetrics: collectRateControlMetrics
+            )
+            magnitudes = separated.magnitudes
+            signs = separated.signs
+            maxMagnitude = separated.maxMagnitude
+            coefficientSquaredSum = separated.squaredSum
+            bitPlanePopulation = separated.bitPlanePopulation
+        }
+        let activeBitPlanes = maxMagnitude > 0 ? (UInt32.bitWidth - maxMagnitude.leadingZeroBitCount) : 0
         let zeroBitPlanes = max(0, bitDepth - activeBitPlanes)
 
         if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
             print("EBCOT: w=\(width) h=\(height) bitDepth=\(bitDepth) maxMag=\(maxMagnitude) active=\(activeBitPlanes) zbp=\(zeroBitPlanes) maxPassLimit=\(maxPasses ?? (3 * activeBitPlanes))")
         }
 
-        // Initialise state arrays
-        var states = [CoefficientState](repeating: [], count: width * height)
-        var firstRefineFlags = [Bool](repeating: false, count: width * height)
         let signArray = signs
 
-        // Initialise MQ encoder and contexts
-        var encoder = MQEncoder()
-        var contextStates = ContextStateArray()
+        func encodeWithBuffers(
+            states: inout [CoefficientState],
+            firstRefineFlags: inout [Bool],
+            recon: inout [UInt32]
+        ) throws -> (data: Data, passCount: Int, zeroBitPlanes: Int, passSegmentLengths: [Int], cumulativePassBytes: [Int], cumulativePassDistortion: [Double], coefficientSquaredSum: Double, bitPlanePopulation: [Int], perPassSnapshotData: [Data], mqCheckpoints: [MQCheckpointData], rawMQOutput: [UInt8]) {
+            // Initialise MQ encoder and contexts
+            var encoder = scratch?.makeMQEncoder() ?? MQEncoder(estimatedSize: max(256, count))
+            var contextStates = ContextStateArray()
 
-        // When bypass mode is enabled, per-pass segments are required for bypass
-        // bit-planes to separate MQ-coded and raw-coded data per JPEG 2000 standard.
-        let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
+            // When bypass mode is enabled, per-pass segments are required for bypass
+            // bit-planes to separate MQ-coded and raw-coded data per JPEG 2000 standard.
+            let usePerPassSegments = options.resetOnEachPass || options.bypassEnabled
 
-        // Track cumulative byte count after each pass for rate control truncation.
-        // In non-per-pass mode, we use the MQ encoder's approximate byte position.
-        var cumulativePassBytes: [Int] = []
+            // Track cumulative byte count after each pass for rate control truncation.
+            // In non-per-pass mode, we use the MQ encoder's approximate byte position.
+            var cumulativePassBytes: [Int] = []
 
-        // Lightweight MQ encoder checkpoints for correct truncation.
-        // Each checkpoint stores only the encoder register state (5 scalars)
-        // at the pass boundary. The output array is shared — bytes already
-        // emitted are never modified by future encoding (carries only
-        // propagate into the buffer register). Terminated data is
-        // reconstructed on-demand via finishFromCheckpoint().
-        var perPassCheckpoints: [MQEncoder.Checkpoint] = []
+            // Lightweight MQ encoder checkpoints for correct truncation.
+            var perPassCheckpoints: [MQEncoder.Checkpoint] = []
 
-        // Per-pass actual distortion tracking for accurate PCRD.
-        // cumulativeDistReduction[i] = total squared-error reduction achieved
-        // by including passes 0..i (vs. zero reconstruction).
-        var cumulativePassDistortion: [Double] = []
-        // Per-coefficient current reconstruction magnitude
-        var recon = [UInt32](repeating: 0, count: width * height)
-        var cumulativeDistReduction: Double = 0.0
+            // Per-pass actual distortion tracking for accurate PCRD.
+            var cumulativePassDistortion: [Double] = []
+            var cumulativeDistReduction: Double = 0.0
 
-        // For per-pass termination, we collect pass data separately
-        var passDataSegments: [Data] = []
-        var runningSegmentTotal = 0
+            // For per-pass termination, we collect pass data separately
+            var passDataSegments: [Data] = []
+            var runningSegmentTotal = 0
 
-        var passCount = 0
-        let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
-
-        // Process each bit-plane from MSB to LSB
-        for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
-            let bitMask: UInt32 = 1 << bitPlane
-
-            // Determine if bypass mode should be used for this bit-plane
-            let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
-
-            // Per ISO 15444-1 Annex D: the first coding pass of the most
-            // significant bit-plane is the cleanup pass only.
-            let isFirstBitPlane = (bitPlane == activeBitPlanes - 1)
-
-            // Pass 1: Significance Propagation Pass (skip for MSB bit-plane)
-            if !isFirstBitPlane && passCount < maxPassLimit {
-                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
-                encodeSignificancePropagationPass(
-                    magnitudes: magnitudes,
-                    signs: signArray,
-                    states: &states,
-                    bitMask: bitMask,
-                    encoder: &encoder,
-                    contexts: &contextStates
-                )
-                if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
-                    let sigCount = states.filter { $0.contains(.significant) }.count
-                    var sigHash: UInt64 = 0
-                    for (i, s) in states.enumerated() {
-                        if s.contains(.significant) {
-                            sigHash = sigHash &+ UInt64(i &* 2654435761)
-                        }
-                    }
-                    EBCOTDebugTrace.shared.logEncode("POST_SIGPROP sig=\(sigCount) hash=\(sigHash)", x: -1, y: -1)
-                    EBCOTDebugTrace.shared.saveEncoderStates("sigprop_bp\(bitPlane)", states)
-                }
-                if ebcotTraceEnabled {
-                    EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
-                    EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
-                }
-                passCount += 1
-
-                // For per-pass mode, finish and reset after each pass
-                if usePerPassSegments {
-                    let passData = encoder.finish(mode: options.terminationMode)
-                    passDataSegments.append(passData)
-                    encoder.reset()
-                    contextStates.reset()
-                    runningSegmentTotal += passData.count
-                    cumulativePassBytes.append(runningSegmentTotal)
-                } else {
-                    // Save a lightweight checkpoint (5 scalars) instead of
-                    // copying the entire MQ output array. The terminated byte
-                    // count is estimated as output.count + buffer + termination
-                    // overhead (~3 bytes). Exact data is reconstructed
-                    // on-demand via finishFromCheckpoint() during truncation.
-                    let cp = encoder.checkpoint()
-                    cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
-                    perPassCheckpoints.append(cp)
-                }
-                // Distortion: newly significant coefficients from SPP
-                let sppDelta = computeNewSignificanceDistortion(
-                    states: &states, magnitudes: magnitudes,
-                    recon: &recon, bitPlane: bitPlane
-                )
-                cumulativeDistReduction += sppDelta
-                cumulativePassDistortion.append(cumulativeDistReduction)
+            var passCount = 0
+            let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
+            cumulativePassBytes.reserveCapacity(maxPassLimit)
+            perPassCheckpoints.reserveCapacity(maxPassLimit)
+            cumulativePassDistortion.reserveCapacity(maxPassLimit)
+            if usePerPassSegments {
+                passDataSegments.reserveCapacity(maxPassLimit)
             }
 
-            // Pass 2: Magnitude Refinement Pass (skip for MSB bit-plane)
-            if !isFirstBitPlane && passCount < maxPassLimit {
-                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== MAGREF bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
-                if useBypass {
-                    // Use separate raw bypass encoder for bypass mode
-                    var bypassEncoder = RawBypassEncoder()
-                    encodeMagnitudeRefinementPassBypass(
+            for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
+                let bitMask: UInt32 = 1 << bitPlane
+                let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
+                let isFirstBitPlane = (bitPlane == activeBitPlanes - 1)
+
+                if !isFirstBitPlane && passCount < maxPassLimit {
+                    if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
+                    let sppDelta = encodeSignificancePropagationPass(
                         magnitudes: magnitudes,
+                        signs: signArray,
                         states: &states,
-                        firstRefineFlags: &firstRefineFlags,
-                        bitMask: bitMask,
-                        bypassEncoder: &bypassEncoder
-                    )
-                    passCount += 1
-                    let passData = bypassEncoder.finish()
-                    passDataSegments.append(passData)
-                    runningSegmentTotal += passData.count
-                    cumulativePassBytes.append(runningSegmentTotal)
-                    // Distortion: refined coefficients from bypass MRP
-                    let mrpDelta = computeRefinementDistortion(
-                        states: &states, magnitudes: magnitudes,
-                        recon: &recon, bitPlane: bitPlane
-                    )
-                    cumulativeDistReduction += mrpDelta
-                    cumulativePassDistortion.append(cumulativeDistReduction)
-                } else {
-                    encodeMagnitudeRefinementPass(
-                        magnitudes: magnitudes,
-                        states: &states,
-                        firstRefineFlags: &firstRefineFlags,
                         bitMask: bitMask,
                         encoder: &encoder,
                         contexts: &contextStates,
-                        useBypass: false
+                        recon: &recon,
+                        bitPlane: bitPlane
                     )
                     if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
                         let sigCount = states.filter { $0.contains(.significant) }.count
-                        EBCOTDebugTrace.shared.logEncode("POST_MAGREF sig=\(sigCount)", x: -1, y: -1)
+                        var sigHash: UInt64 = 0
+                        for (i, s) in states.enumerated() {
+                            if s.contains(.significant) {
+                                sigHash = sigHash &+ UInt64(i &* 2654435761)
+                            }
+                        }
+                        EBCOTDebugTrace.shared.logEncode("POST_SIGPROP sig=\(sigCount) hash=\(sigHash)", x: -1, y: -1)
+                        EBCOTDebugTrace.shared.saveEncoderStates("sigprop_bp\(bitPlane)", states)
                     }
                     if ebcotTraceEnabled {
                         EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
@@ -455,7 +733,6 @@ struct BitPlaneCoder: Sendable {
                     }
                     passCount += 1
 
-                    // For per-pass mode, finish and reset after each pass
                     if usePerPassSegments {
                         let passData = encoder.finish(mode: options.terminationMode)
                         passDataSegments.append(passData)
@@ -468,121 +745,213 @@ struct BitPlaneCoder: Sendable {
                         cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
                         perPassCheckpoints.append(cp)
                     }
-                    // Distortion: refined coefficients from MRP
-                    let mrpDelta2 = computeRefinementDistortion(
-                        states: &states, magnitudes: magnitudes,
-                        recon: &recon, bitPlane: bitPlane
-                    )
-                    cumulativeDistReduction += mrpDelta2
+                    cumulativeDistReduction += sppDelta
                     cumulativePassDistortion.append(cumulativeDistReduction)
                 }
-            }
 
-            // Pass 3: Cleanup Pass
-            if passCount < maxPassLimit {
-                if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
-                encodeCleanupPass(
-                    magnitudes: magnitudes,
-                    signs: signArray,
-                    states: &states,
-                    bitMask: bitMask,
-                    encoder: &encoder,
-                    contexts: &contextStates
-                )
-                // Count significant coefficients after cleanup
-                if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
-                    let sigCount = states.filter { $0.contains(.significant) }.count
-                    let sbitCount = states.filter { $0.contains(.signBit) }.count
-                    var sigHash: UInt64 = 0
-                    for (i, s) in states.enumerated() {
-                        if s.contains(.significant) {
-                            sigHash = sigHash &+ UInt64(i &* 2654435761)
+                if !isFirstBitPlane && passCount < maxPassLimit {
+                    if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== MAGREF bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
+                    if useBypass {
+                        var bypassEncoder = RawBypassEncoder()
+                        let mrpDelta = encodeMagnitudeRefinementPassBypass(
+                            magnitudes: magnitudes,
+                            states: &states,
+                            firstRefineFlags: &firstRefineFlags,
+                            bitMask: bitMask,
+                            bypassEncoder: &bypassEncoder,
+                            recon: &recon,
+                            bitPlane: bitPlane
+                        )
+                        passCount += 1
+                        let passData = bypassEncoder.finish()
+                        passDataSegments.append(passData)
+                        runningSegmentTotal += passData.count
+                        cumulativePassBytes.append(runningSegmentTotal)
+                        cumulativeDistReduction += mrpDelta
+                        cumulativePassDistortion.append(cumulativeDistReduction)
+                    } else {
+                        let mrpDelta = encodeMagnitudeRefinementPass(
+                            magnitudes: magnitudes,
+                            states: &states,
+                            firstRefineFlags: &firstRefineFlags,
+                            bitMask: bitMask,
+                            encoder: &encoder,
+                            contexts: &contextStates,
+                            useBypass: false,
+                            recon: &recon,
+                            bitPlane: bitPlane
+                        )
+                        if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
+                            let sigCount = states.filter { $0.contains(.significant) }.count
+                            EBCOTDebugTrace.shared.logEncode("POST_MAGREF sig=\(sigCount)", x: -1, y: -1)
+                        }
+                        if ebcotTraceEnabled {
+                            EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
+                            EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                        }
+                        passCount += 1
+
+                        if usePerPassSegments {
+                            let passData = encoder.finish(mode: options.terminationMode)
+                            passDataSegments.append(passData)
+                            encoder.reset()
+                            contextStates.reset()
+                            runningSegmentTotal += passData.count
+                            cumulativePassBytes.append(runningSegmentTotal)
+                        } else {
+                            let cp = encoder.checkpoint()
+                            cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
+                            perPassCheckpoints.append(cp)
+                        }
+                        cumulativeDistReduction += mrpDelta
+                        cumulativePassDistortion.append(cumulativeDistReduction)
+                    }
+                }
+
+                if passCount < maxPassLimit {
+                    if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1) }
+                    let cupDelta = encodeCleanupPass(
+                        magnitudes: magnitudes,
+                        signs: signArray,
+                        states: &states,
+                        bitMask: bitMask,
+                        encoder: &encoder,
+                        contexts: &contextStates,
+                        recon: &recon,
+                        bitPlane: bitPlane
+                    )
+                    if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
+                        let sigCount = states.filter { $0.contains(.significant) }.count
+                        let sbitCount = states.filter { $0.contains(.signBit) }.count
+                        var sigHash: UInt64 = 0
+                        for (i, s) in states.enumerated() {
+                            if s.contains(.significant) {
+                                sigHash = sigHash &+ UInt64(i &* 2654435761)
+                            }
+                        }
+                        EBCOTDebugTrace.shared.logEncode("POST_CLEANUP sig=\(sigCount) sbit=\(sbitCount) hash=\(sigHash)", x: -1, y: -1)
+                        EBCOTDebugTrace.shared.saveEncoderStates("cleanup_bp\(bitPlane)", states)
+                    }
+                    if ebcotTraceEnabled {
+                        EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
+                        EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
+                    }
+                    passCount += 1
+
+                    if usePerPassSegments {
+                        let passData = encoder.finish(mode: options.terminationMode)
+                        passDataSegments.append(passData)
+                        encoder.reset()
+                        contextStates.reset()
+                        runningSegmentTotal += passData.count
+                        cumulativePassBytes.append(runningSegmentTotal)
+                    } else {
+                        let cp = encoder.checkpoint()
+                        cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
+                        perPassCheckpoints.append(cp)
+                    }
+                    cumulativeDistReduction += cupDelta
+                    cumulativePassDistortion.append(cumulativeDistReduction)
+                }
+
+                let clearMask = ~CoefficientState.codedThisPass.rawValue
+                states.withUnsafeMutableBufferPointer { buf in
+                    guard let base = buf.baseAddress else { return }
+                    base.withMemoryRebound(to: UInt8.self, capacity: buf.count) { rawPtr in
+                        for i in 0..<buf.count {
+                            rawPtr[i] &= clearMask
                         }
                     }
-                    EBCOTDebugTrace.shared.logEncode("POST_CLEANUP sig=\(sigCount) sbit=\(sbitCount) hash=\(sigHash)", x: -1, y: -1)
-                    EBCOTDebugTrace.shared.saveEncoderStates("cleanup_bp\(bitPlane)", states)
-                }
-                if ebcotTraceEnabled {
-                    EBCOTDebugTrace.shared.logEncoderPassEnd(pass: passCount, a: encoder.debugA, c: encoder.debugC, opCount: encoder.operationCount)
-                    EBCOTDebugTrace.shared.saveEncoderContexts(passCount, contextStates)
-                }
-                passCount += 1
-
-                // For per-pass mode, finish and reset after each pass
-                if usePerPassSegments {
-                    let passData = encoder.finish(mode: options.terminationMode)
-                    passDataSegments.append(passData)
-                    encoder.reset()
-                    contextStates.reset()
-                    runningSegmentTotal += passData.count
-                    cumulativePassBytes.append(runningSegmentTotal)
-                } else {
-                    let cp = encoder.checkpoint()
-                    cumulativePassBytes.append(cp.outputCount + (cp.buffer >= 0 ? 1 : 0) + 2)
-                    perPassCheckpoints.append(cp)
-                }
-                // Distortion: newly significant coefficients from CUP
-                let cupDelta = computeNewSignificanceDistortion(
-                    states: &states, magnitudes: magnitudes,
-                    recon: &recon, bitPlane: bitPlane
-                )
-                cumulativeDistReduction += cupDelta
-                cumulativePassDistortion.append(cumulativeDistReduction)
-            }
-
-            // Clear coded-this-pass flags for next bit-plane (batch bitwise)
-            let clearMask = ~CoefficientState.codedThisPass.rawValue
-            states.withUnsafeMutableBufferPointer { buf in
-                for i in 0..<buf.count {
-                    buf[i] = CoefficientState(rawValue: buf[i].rawValue & clearMask)
                 }
             }
+
+            let encodedData: Data
+            var segmentLengths: [Int] = []
+            let rawOutput: [UInt8]
+            if usePerPassSegments {
+                var combinedData = Data()
+                for segment in passDataSegments {
+                    segmentLengths.append(segment.count)
+                    combinedData.append(segment)
+                }
+                encodedData = combinedData
+                rawOutput = []
+            } else {
+                rawOutput = encoder.currentOutput
+                encodedData = encoder.finish(mode: options.terminationMode)
+                if let last = cumulativePassBytes.indices.last {
+                    cumulativePassBytes[last] = encodedData.count
+                }
+            }
+
+            let checkpointData = perPassCheckpoints.map { cp in
+                MQCheckpointData(outputCount: cp.outputCount, a: cp.a, c: cp.c, ct: cp.ct, buffer: cp.buffer)
+            }
+
+            if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
+                print("EBCOT_RESULT: passCount=\(passCount) dataBytes=\(encodedData.count) zbp=\(zeroBitPlanes)")
+            }
+
+            return (
+                encodedData,
+                passCount,
+                zeroBitPlanes,
+                segmentLengths,
+                cumulativePassBytes,
+                cumulativePassDistortion,
+                coefficientSquaredSum,
+                bitPlanePopulation,
+                [],
+                checkpointData,
+                rawOutput
+            )
         }
 
-        // Finish encoding
-        let encodedData: Data
-        var segmentLengths: [Int] = []
-        // Save raw MQ output before termination for checkpoint reconstruction.
-        // In per-pass mode, checkpoints are not used (segments are self-contained).
-        let rawOutput: [UInt8]
-        if usePerPassSegments {
-            // Concatenate all pass data segments
-            var combinedData = Data()
-            for segment in passDataSegments {
-                segmentLengths.append(segment.count)
-                combinedData.append(segment)
-            }
-            encodedData = combinedData
-            rawOutput = []
+        if let scratch = scratch {
+            scratch.prepareStateBuffers(count: count)
+            return try encodeWithBuffers(
+                states: &scratch.states,
+                firstRefineFlags: &scratch.firstRefineFlags,
+                recon: &scratch.recon
+            )
         } else {
-            // Save raw output before termination modifies the encoder
-            rawOutput = encoder.currentOutput
-            // Single termination at the end
-            encodedData = encoder.finish(mode: options.terminationMode)
-            // Checkpoint-based byte estimation uses outputCount + overhead.
-            // Clamp the last entry to the actual final size for safety.
-            if let last = cumulativePassBytes.indices.last {
-                cumulativePassBytes[last] = encodedData.count
-            }
-        }
-
-        // Convert internal checkpoints to cross-module MQCheckpointData
-        let checkpointData = perPassCheckpoints.map { cp in
-            MQCheckpointData(outputCount: cp.outputCount, a: cp.a, c: cp.c, ct: cp.ct, buffer: cp.buffer)
-        }
-
-        if ProcessInfo.processInfo.environment["J2K_DUMP_PASSES"] != nil {
-            print("EBCOT_RESULT: passCount=\(passCount) dataBytes=\(encodedData.count) zbp=\(zeroBitPlanes)")
-        }
-
-        return (encodedData, passCount, zeroBitPlanes, segmentLengths, cumulativePassBytes, cumulativePassDistortion, [], checkpointData, rawOutput)
-    }
+            var states = [CoefficientState](repeating: [], count: count)
+            var firstRefineFlags = [Bool](repeating: false, count: count)
+            var recon = [UInt32](repeating: 0, count: count)
+            return try encodeWithBuffers(
+                states: &states,
+                firstRefineFlags: &firstRefineFlags,
+                recon: &recon
+            )
+        }    }
 
     /// Separates coefficients into magnitudes and signs.
-    private func separateMagnitudesAndSigns(_ coefficients: [Int32]) -> ([UInt32], [Bool]) {
-        let count = coefficients.count
+    private func separateMagnitudesAndSigns(_ coefficients: [Int32], count: Int? = nil) -> (magnitudes: [UInt32], signs: [Bool], maxMagnitude: UInt32) {
+        let analyzed = separateMagnitudesAndAnalyze(
+            coefficients,
+            count: count,
+            totalBitPlanes: 0,
+            collectRateControlMetrics: false
+        )
+        return (analyzed.magnitudes, analyzed.signs, analyzed.maxMagnitude)
+    }
+
+    /// Separates coefficients into magnitudes and signs while optionally collecting
+    /// squared-energy and bit-plane population metrics for rate control.
+    private func separateMagnitudesAndAnalyze(
+        _ coefficients: [Int32],
+        count: Int? = nil,
+        totalBitPlanes: Int,
+        collectRateControlMetrics: Bool
+    ) -> (magnitudes: [UInt32], signs: [Bool], maxMagnitude: UInt32, squaredSum: Double, bitPlanePopulation: [Int]) {
+        let count = count ?? coefficients.count
         var magnitudes = [UInt32](repeating: 0, count: count)
         var signs = [Bool](repeating: false, count: count)
+        var maxMagnitude: UInt32 = 0
+        var squaredSum: Double = 0
+        var bitPlanePopulation = collectRateControlMetrics
+            ? [Int](repeating: 0, count: totalBitPlanes)
+            : []
 
         // SIMD-optimised path: process 4 coefficients at a time using SIMD4
         let simdCount = count / 4
@@ -610,10 +979,40 @@ struct BitPlaneCoder: Sendable {
                         let absV = v.replacing(with: SIMD4<Int32>.zero &- v, where: negative)
 
                         // Store magnitudes
-                        magBase[offset] = UInt32(bitPattern: absV[0])
-                        magBase[offset + 1] = UInt32(bitPattern: absV[1])
-                        magBase[offset + 2] = UInt32(bitPattern: absV[2])
-                        magBase[offset + 3] = UInt32(bitPattern: absV[3])
+                        let m0 = UInt32(bitPattern: absV[0])
+                        let m1 = UInt32(bitPattern: absV[1])
+                        let m2 = UInt32(bitPattern: absV[2])
+                        let m3 = UInt32(bitPattern: absV[3])
+                        magBase[offset] = m0
+                        magBase[offset + 1] = m1
+                        magBase[offset + 2] = m2
+                        magBase[offset + 3] = m3
+                        if m0 > maxMagnitude { maxMagnitude = m0 }
+                        if m1 > maxMagnitude { maxMagnitude = m1 }
+                        if m2 > maxMagnitude { maxMagnitude = m2 }
+                        if m3 > maxMagnitude { maxMagnitude = m3 }
+                        if collectRateControlMetrics {
+                            squaredSum += Double(m0) * Double(m0)
+                            squaredSum += Double(m1) * Double(m1)
+                            squaredSum += Double(m2) * Double(m2)
+                            squaredSum += Double(m3) * Double(m3)
+                            if m0 > 0 {
+                                let msb = 31 &- m0.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m1 > 0 {
+                                let msb = 31 &- m1.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m2 > 0 {
+                                let msb = 31 &- m2.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                            if m3 > 0 {
+                                let msb = 31 &- m3.leadingZeroBitCount
+                                if msb < totalBitPlanes { bitPlanePopulation[msb] &+= 1 }
+                            }
+                        }
 
                         // Store signs
                         signBase[offset] = negative[0]
@@ -627,19 +1026,31 @@ struct BitPlaneCoder: Sendable {
                     for i in 0..<remainder {
                         let idx = remStart + i
                         let coeff = coeffBase[idx]
+                        let magnitude: UInt32
                         if coeff < 0 {
-                            magBase[idx] = UInt32(-coeff)
+                            magnitude = UInt32(-coeff)
                             signBase[idx] = true
                         } else {
-                            magBase[idx] = UInt32(coeff)
+                            magnitude = UInt32(coeff)
                             signBase[idx] = false
+                        }
+                        magBase[idx] = magnitude
+                        if magnitude > maxMagnitude { maxMagnitude = magnitude }
+                        if collectRateControlMetrics {
+                            squaredSum += Double(magnitude) * Double(magnitude)
+                            if magnitude > 0 {
+                                let msb = 31 &- magnitude.leadingZeroBitCount
+                                if msb < totalBitPlanes {
+                                    bitPlanePopulation[msb] &+= 1
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        return (magnitudes, signs)
+        return (magnitudes, signs, maxMagnitude, squaredSum, bitPlanePopulation)
     }
 
     // MARK: - Significance Propagation Pass
@@ -655,18 +1066,28 @@ struct BitPlaneCoder: Sendable {
         states: inout [CoefficientState],
         bitMask: UInt32,
         encoder: inout MQEncoder,
-        contexts: inout ContextStateArray
-    ) {
+        contexts: inout ContextStateArray,
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
         let stripeHeight = 4
         let w = width
         let h = height
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let reconVal = UInt32(1 << bitPlane) | halfBit
+        var passDistortion: Double = 0
 
         magnitudes.withUnsafeBufferPointer { magBuf in
             signs.withUnsafeBufferPointer { signBuf in
                 states.withUnsafeMutableBufferPointer { stateBuf in
+                    recon.withUnsafeMutableBufferPointer { reconBuf in
                     let magPtr = magBuf.baseAddress!
                     let signPtr = signBuf.baseAddress!
                     let statePtr = stateBuf.baseAddress!
+                    let reconPtr = reconBuf.baseAddress!
+                    let sigMask = CoefficientState.significant.rawValue
+                    let codedMask = CoefficientState.codedThisPass.rawValue
+                    let signStateMask = CoefficientState.signBit.rawValue
 
                     for stripeY in stride(from: 0, to: h, by: stripeHeight) {
                         let stripeEnd = min(stripeY + stripeHeight, h)
@@ -675,16 +1096,16 @@ struct BitPlaneCoder: Sendable {
                             for y in stripeY..<stripeEnd {
                                 let idx = y &* w &+ x
 
-                                let st = statePtr[idx]
-                                if st.contains(.significant) || st.contains(.codedThisPass) {
+                                let rawState = statePtr[idx].rawValue
+                                if (rawState & (sigMask | codedMask)) != 0 {
                                     continue
                                 }
 
                                 let neighbors = neighborCalculator.calculateUnsafe(
                                     x: x, y: y,
                                     states: statePtr,
-                                    signs: signPtr,
-                                    hasSigns: true
+                                    signs: nil,
+                                    hasSigns: false
                                 )
 
                                 guard neighbors.hasAny else { continue }
@@ -695,24 +1116,40 @@ struct BitPlaneCoder: Sendable {
                                 encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
 
                                 if isSignificant {
-                                    let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                    let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                                        x: x, y: y,
+                                        states: statePtr,
+                                        signs: signPtr
+                                    )
+                                    let (signContext, xorBit) = contextModeler.signContext(
+                                        horizontalSign: hSign, verticalSign: vSign
+                                    )
                                     let signBit = signPtr[idx]
                                     let codedSign = signBit != xorBit
                                     encoder.encode(symbol: codedSign, context: &contexts[signContext])
 
-                                    statePtr[idx].insert(.significant)
+                                    var newState = statePtr[idx].rawValue | sigMask
                                     if signBit {
-                                        statePtr[idx].insert(.signBit)
+                                        newState |= signStateMask
                                     }
+                                    statePtr[idx] = CoefficientState(rawValue: newState)
+
+                                    // Inline distortion: coefficient just became significant
+                                    reconPtr[idx] = reconVal
+                                    let m = Int64(magPtr[idx])
+                                    let e = m &- Int64(reconVal)
+                                    passDistortion += Double(m &* m &- e &* e)
                                 }
 
                                 statePtr[idx].insert(.codedThisPass)
                             }
                         }
                     }
+                    } // reconBuf
                 }
             }
         }
+        return passDistortion
     }
 
     // MARK: - Magnitude Refinement Pass
@@ -738,18 +1175,26 @@ struct BitPlaneCoder: Sendable {
         bitMask: UInt32,
         encoder: inout MQEncoder,
         contexts: inout ContextStateArray,
-        useBypass: Bool = false
-    ) {
+        useBypass: Bool = false,
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
         let stripeHeight = 4
         let w = width
         let h = height
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let clearMask = ~UInt32((1 << (bitPlane + 1)) - 1)
+        let bitVal = UInt32(1 << bitPlane)
+        var passDistortion: Double = 0
 
         magnitudes.withUnsafeBufferPointer { magBuf in
             states.withUnsafeMutableBufferPointer { stateBuf in
                 firstRefineFlags.withUnsafeMutableBufferPointer { refineBuf in
+                    recon.withUnsafeMutableBufferPointer { reconBuf in
                     let magPtr = magBuf.baseAddress!
                     let statePtr = stateBuf.baseAddress!
                     let refinePtr = refineBuf.baseAddress!
+                    let reconPtr = reconBuf.baseAddress!
 
                     for stripeY in stride(from: 0, to: h, by: stripeHeight) {
                         let stripeEnd = min(stripeY + stripeHeight, h)
@@ -769,13 +1214,10 @@ struct BitPlaneCoder: Sendable {
                                 } else {
                                     let isFirstRefinement = !refinePtr[idx]
 
-                                    let neighbors = neighborCalculator.calculateUnsafe(
+                                    let hasSignificantNeighbors = neighborCalculator.hasAnySignificantNeighborUnsafe(
                                         x: x, y: y,
-                                        states: statePtr,
-                                        signs: nil,
-                                        hasSigns: false
+                                        states: statePtr
                                     )
-                                    let hasSignificantNeighbors = neighbors.hasAny
 
                                     let magContext = contextModeler.magnitudeRefinementContext(
                                         firstRefinement: isFirstRefinement,
@@ -789,13 +1231,22 @@ struct BitPlaneCoder: Sendable {
                                     refinePtr[idx] = true
                                 }
 
+                                // Inline refinement distortion
+                                let oldErr = Int64(magPtr[idx]) &- Int64(reconPtr[idx])
+                                let high = reconPtr[idx] & clearMask
+                                reconPtr[idx] = high | (magPtr[idx] & bitVal) | halfBit
+                                let newErr = Int64(magPtr[idx]) &- Int64(reconPtr[idx])
+                                passDistortion += Double(oldErr &* oldErr &- newErr &* newErr)
+
                                 statePtr[idx].insert(.codedThisPass)
                             }
                         }
                     }
+                    } // reconBuf
                 }
             }
         }
+        return passDistortion
     }
 
     /// Encodes the magnitude refinement pass using raw bypass coding.
@@ -814,10 +1265,16 @@ struct BitPlaneCoder: Sendable {
         states: inout [CoefficientState],
         firstRefineFlags: inout [Bool],
         bitMask: UInt32,
-        bypassEncoder: inout RawBypassEncoder
-    ) {
+        bypassEncoder: inout RawBypassEncoder,
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
         // JPEG 2000 requires stripe-based column-major scan order
         let stripeHeight = 4
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let clearMask = ~UInt32((1 << (bitPlane + 1)) - 1)
+        let bitVal = UInt32(1 << bitPlane)
+        var passDistortion: Double = 0
 
         for stripeY in stride(from: 0, to: height, by: stripeHeight) {
             let stripeEnd = min(stripeY + stripeHeight, height)
@@ -836,10 +1293,18 @@ struct BitPlaneCoder: Sendable {
                         firstRefineFlags[idx] = true
                     }
 
+                    // Inline refinement distortion
+                    let oldErr = Int64(magnitudes[idx]) &- Int64(recon[idx])
+                    let high = recon[idx] & clearMask
+                    recon[idx] = high | (magnitudes[idx] & bitVal) | halfBit
+                    let newErr = Int64(magnitudes[idx]) &- Int64(recon[idx])
+                    passDistortion += Double(oldErr &* oldErr &- newErr &* newErr)
+
                     states[idx].insert(.codedThisPass)
                 }
             }
         }
+        return passDistortion
     }
 
     // MARK: - Cleanup Pass
@@ -855,18 +1320,25 @@ struct BitPlaneCoder: Sendable {
         states: inout [CoefficientState],
         bitMask: UInt32,
         encoder: inout MQEncoder,
-        contexts: inout ContextStateArray
-    ) {
+        contexts: inout ContextStateArray,
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
         let stripeHeight = 4
         let w = width
         let h = height
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let reconVal = UInt32(1 << bitPlane) | halfBit
+        var passDistortion: Double = 0
 
         magnitudes.withUnsafeBufferPointer { magBuf in
             signs.withUnsafeBufferPointer { signBuf in
                 states.withUnsafeMutableBufferPointer { stateBuf in
+                    recon.withUnsafeMutableBufferPointer { reconBuf in
                     let magPtr = magBuf.baseAddress!
                     let signPtr = signBuf.baseAddress!
                     let statePtr = stateBuf.baseAddress!
+                    let reconPtr = reconBuf.baseAddress!
 
         for stripeY in stride(from: 0, to: h, by: stripeHeight) {
             let stripeEnd = min(stripeY + stripeHeight, h)
@@ -919,13 +1391,14 @@ struct BitPlaneCoder: Sendable {
                         }
 
                         let firstIdx = (stripeY &+ firstSigPos) &* w &+ x
-                        let firstNeighbors = neighborCalculator.calculateUnsafe(
+                        let (firstHSign, firstVSign) = neighborCalculator.computeCardinalSignsUnsafe(
                             x: x, y: stripeY + firstSigPos,
                             states: statePtr,
-                            signs: signPtr,
-                            hasSigns: true
+                            signs: signPtr
                         )
-                        let (firstSignCtx, firstXorBit) = contextModeler.signContext(neighbors: firstNeighbors)
+                        let (firstSignCtx, firstXorBit) = contextModeler.signContext(
+                            horizontalSign: firstHSign, verticalSign: firstVSign
+                        )
                         let firstSignBit = signPtr[firstIdx]
                         let firstCodedSign = firstSignBit != firstXorBit
                         encoder.encode(symbol: firstCodedSign, context: &contexts[firstSignCtx])
@@ -935,6 +1408,12 @@ struct BitPlaneCoder: Sendable {
                             statePtr[firstIdx].insert(.signBit)
                         }
                         statePtr[firstIdx].insert(.codedThisPass)
+
+                        // Inline distortion for RLC first significant
+                        reconPtr[firstIdx] = reconVal
+                        let fm = Int64(magPtr[firstIdx])
+                        let fe = fm &- Int64(reconVal)
+                        passDistortion += Double(fm &* fm &- fe &* fe)
 
                         for y in (stripeY + firstSigPos + 1)..<stripeEnd {
                             let idx = y &* w &+ x
@@ -947,8 +1426,8 @@ struct BitPlaneCoder: Sendable {
                             let neighbors = neighborCalculator.calculateUnsafe(
                                 x: x, y: y,
                                 states: statePtr,
-                                signs: signPtr,
-                                hasSigns: true
+                                signs: nil,
+                                hasSigns: false
                             )
 
                             let sigContext = contextModeler.significanceContext(neighbors: neighbors)
@@ -956,7 +1435,14 @@ struct BitPlaneCoder: Sendable {
                             encoder.encode(symbol: isSignificant, context: &contexts[sigContext])
 
                             if isSignificant {
-                                let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                                    x: x, y: y,
+                                    states: statePtr,
+                                    signs: signPtr
+                                )
+                                let (signContext, xorBit) = contextModeler.signContext(
+                                    horizontalSign: hSign, verticalSign: vSign
+                                )
                                 let signBit = signPtr[idx]
                                 let codedSign = signBit != xorBit
                                 encoder.encode(symbol: codedSign, context: &contexts[signContext])
@@ -965,6 +1451,12 @@ struct BitPlaneCoder: Sendable {
                                 if signBit {
                                     statePtr[idx].insert(.signBit)
                                 }
+
+                                // Inline distortion for RLC subsequent significant
+                                reconPtr[idx] = reconVal
+                                let m = Int64(magPtr[idx])
+                                let e = m &- Int64(reconVal)
+                                passDistortion += Double(m &* m &- e &* e)
                             }
 
                             statePtr[idx].insert(.codedThisPass)
@@ -985,8 +1477,8 @@ struct BitPlaneCoder: Sendable {
                     let neighbors = neighborCalculator.calculateUnsafe(
                         x: x, y: y,
                         states: statePtr,
-                        signs: signPtr,
-                        hasSigns: true
+                        signs: nil,
+                        hasSigns: false
                     )
 
                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
@@ -996,7 +1488,14 @@ struct BitPlaneCoder: Sendable {
                     if ebcotTraceEnabled { EBCOTDebugTrace.shared.logEncode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y) }
 
                     if isSignificant {
-                        let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                        let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                            x: x, y: y,
+                            states: statePtr,
+                            signs: signPtr
+                        )
+                        let (signContext, xorBit) = contextModeler.signContext(
+                            horizontalSign: hSign, verticalSign: vSign
+                        )
                         let signBit = signPtr[idx]
                         let codedSign = signBit != xorBit
                         encoder.encode(symbol: codedSign, context: &contexts[signContext])
@@ -1006,6 +1505,12 @@ struct BitPlaneCoder: Sendable {
                         if signBit {
                             statePtr[idx].insert(.signBit)
                         }
+
+                        // Inline distortion for non-RLC significant
+                        reconPtr[idx] = reconVal
+                        let m = Int64(magPtr[idx])
+                        let e = m &- Int64(reconVal)
+                        passDistortion += Double(m &* m &- e &* e)
                     }
 
                     statePtr[idx].insert(.codedThisPass)
@@ -1013,9 +1518,11 @@ struct BitPlaneCoder: Sendable {
             }
         }
 
+                    } // reconBuf
                 } // stateBuf
             } // signBuf
         } // magBuf
+        return passDistortion
     }
 
     /// Checks if a column is eligible for run-length coding.
@@ -1060,19 +1567,13 @@ struct BitPlaneCoder: Sendable {
         guard stripeEnd - stripeStart == 4 else { return false }
         let w = width
 
+        let sigOrCodedMask = CoefficientState.significant.rawValue | CoefficientState.codedThisPass.rawValue
         for y in stripeStart..<stripeEnd {
             let idx = y &* w &+ x
-            let st = states[idx]
-            if st.contains(.significant) || st.contains(.codedThisPass) {
+            if (states[idx].rawValue & sigOrCodedMask) != 0 {
                 return false
             }
-            let neighbors = neighborCalculator.calculateUnsafe(
-                x: x, y: y,
-                states: states,
-                signs: nil,
-                hasSigns: false
-            )
-            if neighbors.hasAny {
+            if neighborCalculator.hasAnySignificantNeighborUnsafe(x: x, y: y, states: states) {
                 return false
             }
         }
@@ -1479,8 +1980,11 @@ struct BitPlaneDecoder: Sendable {
             // Clear coded-this-pass flags for next bit-plane (batch bitwise)
             let decoderClearMask = ~CoefficientState.codedThisPass.rawValue
             states.withUnsafeMutableBufferPointer { buf in
-                for i in 0..<buf.count {
-                    buf[i] = CoefficientState(rawValue: buf[i].rawValue & decoderClearMask)
+                guard let base = buf.baseAddress else { return }
+                base.withMemoryRebound(to: UInt8.self, capacity: buf.count) { rawPtr in
+                    for i in 0..<buf.count {
+                        rawPtr[i] &= decoderClearMask
+                    }
                 }
             }
         }
@@ -1552,8 +2056,8 @@ struct BitPlaneDecoder: Sendable {
                                     let neighbors = neighborCalculator.calculateUnsafe(
                                         x: x, y: y,
                                         states: statePtr,
-                                        signs: signPtr,
-                                        hasSigns: true
+                                        signs: nil,
+                                        hasSigns: false
                                     )
 
                                     guard neighbors.hasAny else { continue }
@@ -1562,7 +2066,14 @@ struct BitPlaneDecoder: Sendable {
                                     let isSignificant = decoder.decode(context: &contexts[sigContext])
 
                                     if isSignificant {
-                                        let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                        let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                                            x: x, y: y,
+                                            states: statePtr,
+                                            signs: signPtr
+                                        )
+                                        let (signContext, xorBit) = contextModeler.signContext(
+                                            horizontalSign: hSign, verticalSign: vSign
+                                        )
                                         let codedSign = decoder.decode(context: &contexts[signContext])
                                         let signBit = codedSign != xorBit
 
@@ -1638,13 +2149,10 @@ struct BitPlaneDecoder: Sendable {
                                         bitValue = decoder.decodeBypass()
                                     } else {
                                         let isFirstRefinement = !refinePtr[idx]
-                                        let neighbors = neighborCalculator.calculateUnsafe(
+                                        let hasSignificantNeighbors = neighborCalculator.hasAnySignificantNeighborUnsafe(
                                             x: x, y: y,
-                                            states: statePtr,
-                                            signs: nil,
-                                            hasSigns: false
+                                            states: statePtr
                                         )
-                                        let hasSignificantNeighbors = neighbors.hasAny
                                         let magContext = contextModeler.magnitudeRefinementContext(
                                             firstRefinement: isFirstRefinement,
                                             neighborsWereSignificant: hasSignificantNeighbors
@@ -1795,13 +2303,14 @@ struct BitPlaneDecoder: Sendable {
                                         }
 
                                         let firstIdx = (stripeY + firstSigPos) &* w &+ x
-                                        let firstNeighbors = neighborCalculator.calculateUnsafe(
+                                        let (firstHSign, firstVSign) = neighborCalculator.computeCardinalSignsUnsafe(
                                             x: x, y: stripeY + firstSigPos,
                                             states: statePtr,
-                                            signs: signPtr,
-                                            hasSigns: true
+                                            signs: signPtr
                                         )
-                                        let (firstSignCtx, firstXorBit) = contextModeler.signContext(neighbors: firstNeighbors)
+                                        let (firstSignCtx, firstXorBit) = contextModeler.signContext(
+                                            horizontalSign: firstHSign, verticalSign: firstVSign
+                                        )
                                         let firstCodedSign = decoder.decode(context: &contexts[firstSignCtx])
                                         let firstSignBit = firstCodedSign != firstXorBit
 
@@ -1825,15 +2334,22 @@ struct BitPlaneDecoder: Sendable {
                                             let neighbors = neighborCalculator.calculateUnsafe(
                                                 x: x, y: y,
                                                 states: statePtr,
-                                                signs: signPtr,
-                                                hasSigns: true
+                                                signs: nil,
+                                                hasSigns: false
                                             )
 
                                             let sigContext = contextModeler.significanceContext(neighbors: neighbors)
                                             let isSignificant = decoder.decode(context: &contexts[sigContext])
 
                                             if isSignificant {
-                                                let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                                let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                                                    x: x, y: y,
+                                                    states: statePtr,
+                                                    signs: signPtr
+                                                )
+                                                let (signContext, xorBit) = contextModeler.signContext(
+                                                    horizontalSign: hSign, verticalSign: vSign
+                                                )
                                                 let codedSign = decoder.decode(context: &contexts[signContext])
                                                 let signBit = codedSign != xorBit
 
@@ -1864,8 +2380,8 @@ struct BitPlaneDecoder: Sendable {
                                     let neighbors = neighborCalculator.calculateUnsafe(
                                         x: x, y: y,
                                         states: statePtr,
-                                        signs: signPtr,
-                                        hasSigns: true
+                                        signs: nil,
+                                        hasSigns: false
                                     )
 
                                     let sigContext = contextModeler.significanceContext(neighbors: neighbors)
@@ -1873,7 +2389,14 @@ struct BitPlaneDecoder: Sendable {
                                     if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("sig(\(isSignificant),ctx=\(sigContext.rawValue))", x: x, y: y) }
 
                                     if isSignificant {
-                                        let (signContext, xorBit) = contextModeler.signContext(neighbors: neighbors)
+                                        let (hSign, vSign) = neighborCalculator.computeCardinalSignsUnsafe(
+                                            x: x, y: y,
+                                            states: statePtr,
+                                            signs: signPtr
+                                        )
+                                        let (signContext, xorBit) = contextModeler.signContext(
+                                            horizontalSign: hSign, verticalSign: vSign
+                                        )
                                         let codedSign = decoder.decode(context: &contexts[signContext])
                                         let signBit = codedSign != xorBit
                                         if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("sign(s=\(signBit),mq=\(codedSign),xor=\(xorBit),ctx=\(signContext.rawValue))", x: x, y: y) }
@@ -1989,6 +2512,8 @@ struct CodeBlockEncoder: Sendable {
     ///   - height: The height of the code-block.
     ///   - subband: The subband type.
     ///   - bitDepth: The bit depth of the coefficients.
+    ///   - maxPasses: Maximum coding passes (optional).
+    ///   - scratch: Pre-allocated scratch buffers for reuse (optional).
     /// - Returns: The encoded code-block data with metadata.
     /// - Throws: ``J2KError`` if encoding fails.
     func encode(
@@ -1996,7 +2521,11 @@ struct CodeBlockEncoder: Sendable {
         width: Int,
         height: Int,
         subband: J2KSubband,
-        bitDepth: Int
+        bitDepth: Int,
+        coefficientCount: Int? = nil,
+        maxPasses: Int? = nil,
+        scratch: EBCOTScratchBuffers? = nil,
+        collectRateControlMetrics: Bool = true
     ) throws -> J2KCodeBlock {
         try encode(
             coefficients: coefficients,
@@ -2004,7 +2533,11 @@ struct CodeBlockEncoder: Sendable {
             height: height,
             subband: subband,
             bitDepth: bitDepth,
-            options: .default
+            options: .default,
+            coefficientCount: coefficientCount,
+            maxPasses: maxPasses,
+            scratch: scratch,
+            collectRateControlMetrics: collectRateControlMetrics
         )
     }
 
@@ -2017,6 +2550,8 @@ struct CodeBlockEncoder: Sendable {
     ///   - subband: The subband type.
     ///   - bitDepth: The bit depth of the coefficients.
     ///   - options: Coding options (bypass mode, termination, etc.).
+    ///   - maxPasses: Maximum coding passes (optional).
+    ///   - scratch: Pre-allocated scratch buffers for reuse (optional).
     /// - Returns: The encoded code-block data with metadata.
     /// - Throws: ``J2KError`` if encoding fails.
     func encode(
@@ -2025,12 +2560,22 @@ struct CodeBlockEncoder: Sendable {
         height: Int,
         subband: J2KSubband,
         bitDepth: Int,
-        options: CodingOptions
+        options: CodingOptions,
+        coefficientCount: Int? = nil,
+        maxPasses: Int? = nil,
+        scratch: EBCOTScratchBuffers? = nil,
+        collectRateControlMetrics: Bool = true,
+        precomputedAnalysis: (maxMagnitude: UInt32, squaredSum: Double, bitPlanePopulation: [Int])? = nil
     ) throws -> J2KCodeBlock {
         let coder = BitPlaneCoder(width: width, height: height, subband: subband, options: options)
-        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion, perPassSnapshotData, mqCheckpoints, rawMQOutput) = try coder.encode(
+        let (data, passCount, zeroBitPlanes, passSegmentLengths, cumulativePassBytes, cumulativePassDistortion, coefficientSquaredSum, bitPlanePopulation, perPassSnapshotData, mqCheckpoints, rawMQOutput) = try coder.encodeDetailed(
             coefficients: coefficients,
-            bitDepth: bitDepth
+            bitDepth: bitDepth,
+            coefficientCount: coefficientCount,
+            maxPasses: maxPasses,
+            scratch: scratch,
+            collectRateControlMetrics: collectRateControlMetrics,
+            precomputedAnalysis: precomputedAnalysis
         )
 
         return J2KCodeBlock(
@@ -2045,6 +2590,8 @@ struct CodeBlockEncoder: Sendable {
             zeroBitPlanes: zeroBitPlanes,
             passSegmentLengths: passSegmentLengths,
             cumulativePassBytes: cumulativePassBytes,
+            coefficientSquaredSum: coefficientSquaredSum,
+            bitPlanePopulation: bitPlanePopulation,
             cumulativePassDistortion: cumulativePassDistortion,
             perPassSnapshotData: perPassSnapshotData,
             mqCheckpoints: mqCheckpoints,

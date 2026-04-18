@@ -19,7 +19,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
 
     // MARK: - Basic Round-Trip Tests
 
-    func testSimpleGrayscaleRoundTrip() throws {
+    func testSimpleGrayscaleRoundTrip() async throws {
         // Create a simple grayscale image
         let width = 16
         let height = 16
@@ -47,13 +47,13 @@ final class J2KCodecIntegrationTests: XCTestCase {
 
         // Encode
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         XCTAssertGreaterThan(encoded.count, 0, "Encoded data should not be empty")
 
         // Decode
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         // Verify dimensions
         XCTAssertEqual(decoded.width, width)
@@ -72,7 +72,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
     /// Note: This test is currently limited because the decoder implementation
     /// is simplified and doesn't fully support multi-component images yet.
     /// The decoder currently extracts only the first component from the codestream.
-    func testRGBRoundTrip() throws {
+    func testRGBRoundTrip() async throws {
         // Create a simple RGB image
         let width = 32
         let height = 32
@@ -131,13 +131,13 @@ final class J2KCodecIntegrationTests: XCTestCase {
             decompositionLevels: 2
         )
         let encoder = J2KEncoder(encodingConfiguration: config)
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         XCTAssertGreaterThan(encoded.count, 0, "Encoded data should not be empty")
 
         // Decode
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         // Verify dimensions
         XCTAssertEqual(decoded.width, width)
@@ -156,7 +156,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
     ///
     /// Fixed in v1.2.0: The packet header parsing now correctly indexes the
     /// lengths/passes arrays by included code blocks only.
-    func testLosslessRoundTrip() throws {
+    func testLosslessRoundTrip() async throws {
         // Create a gradient pattern
         let width = 16
         let height = 16
@@ -191,13 +191,13 @@ final class J2KCodecIntegrationTests: XCTestCase {
             lossless: true
         )
         let encoder = J2KEncoder(encodingConfiguration: config)
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         XCTAssertGreaterThan(encoded.count, 0, "Encoded data should not be empty")
 
         // Decode
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         // Verify structure
         XCTAssertEqual(decoded.width, width)
@@ -216,7 +216,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
             "Encoded: \(encoded.count) bytes")
     }
 
-    func testProgressReportingEncoder() throws {
+    func testProgressReportingEncoder() async throws {
         let width = 16
         let height = 16
         var data = Data()
@@ -244,7 +244,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
         var progressUpdates: [EncoderProgressUpdate] = []
         let encoder = J2KEncoder()
 
-        _ = try encoder.encode(image) { update in
+        _ = try await encoder.encode(image) { update in
             progressUpdates.append(update)
         }
 
@@ -264,7 +264,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
         }
     }
 
-    func testProgressReportingDecoder() throws {
+    func testProgressReportingDecoder() async throws {
         // First encode an image
         let width = 16
         let height = 16
@@ -291,13 +291,13 @@ final class J2KCodecIntegrationTests: XCTestCase {
         )
 
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         // Now decode with progress tracking
         var progressUpdates: [DecoderProgressUpdate] = []
         let decoder = J2KDecoder()
 
-        _ = try decoder.decode(encoded) { update in
+        _ = try await decoder.decode(encoded) { update in
             progressUpdates.append(update)
         }
 
@@ -319,7 +319,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
 
     // MARK: - Edge Cases
 
-    func testMinimalImage() throws {
+    func testMinimalImage() async throws {
         // 1x1 pixel image
         let width = 1
         let height = 1
@@ -344,17 +344,17 @@ final class J2KCodecIntegrationTests: XCTestCase {
         )
 
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         XCTAssertEqual(decoded.width, width)
         XCTAssertEqual(decoded.height, height)
         XCTAssertEqual(decoded.components.count, 1)
     }
 
-    func testAllZeroImage() throws {
+    func testAllZeroImage() async throws {
         let width = 16
         let height = 16
         let data = Data(repeating: 0, count: width * height)
@@ -377,17 +377,17 @@ final class J2KCodecIntegrationTests: XCTestCase {
         )
 
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         XCTAssertEqual(decoded.width, width)
         XCTAssertEqual(decoded.height, height)
         XCTAssertEqual(decoded.components.count, 1)
     }
 
-    func testOddDimensions() throws {
+    func testOddDimensions() async throws {
         let width = 17
         let height = 13
         var data = Data()
@@ -413,10 +413,10 @@ final class J2KCodecIntegrationTests: XCTestCase {
         )
 
         let encoder = J2KEncoder()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
 
         let decoder = J2KDecoder()
-        let decoded = try decoder.decode(encoded)
+        let decoded = try await decoder.decode(encoded)
 
         XCTAssertEqual(decoded.width, width)
         XCTAssertEqual(decoded.height, height)
@@ -425,7 +425,7 @@ final class J2KCodecIntegrationTests: XCTestCase {
 
     // MARK: - Configuration Tests
 
-    func testDifferentQualityLevels() throws {
+    func testDifferentQualityLevels() async throws {
         let width = 32
         let height = 32
         var data = Data()
@@ -459,17 +459,17 @@ final class J2KCodecIntegrationTests: XCTestCase {
                 lossless: (quality == 1.0)
             )
             let encoder = J2KEncoder(encodingConfiguration: config)
-            let encoded = try encoder.encode(image)
+            let encoded = try await encoder.encode(image)
 
             let decoder = J2KDecoder()
-            let decoded = try decoder.decode(encoded)
+            let decoded = try await decoder.decode(encoded)
 
             XCTAssertEqual(decoded.width, width)
             XCTAssertEqual(decoded.height, height)
         }
     }
 
-    func testDifferentDecompositionLevels() throws {
+    func testDifferentDecompositionLevels() async throws {
         let width = 64
         let height = 64
         let data = Data(repeating: 150, count: width * height)
@@ -499,10 +499,10 @@ final class J2KCodecIntegrationTests: XCTestCase {
                 decompositionLevels: levels
             )
             let encoder = J2KEncoder(encodingConfiguration: config)
-            let encoded = try encoder.encode(image)
+            let encoded = try await encoder.encode(image)
 
             let decoder = J2KDecoder()
-            let decoded = try decoder.decode(encoded)
+            let decoded = try await decoder.decode(encoded)
 
             XCTAssertEqual(decoded.width, width)
             XCTAssertEqual(decoded.height, height)

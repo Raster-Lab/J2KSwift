@@ -958,6 +958,33 @@ public struct BenchmarkReportGenerator: Sendable {
     /// - Parameter suite: The suite to report on.
     /// - Returns: Multi-line report string.
     public static func textReport(_ suite: OpenJPEGBenchmarkSuite) -> String {
+        func padded(_ value: String, width: Int) -> String {
+            if value.count >= width {
+                return String(value.prefix(width))
+            }
+            return value + String(repeating: " ", count: width - value.count)
+        }
+
+        func reportRow(
+            configuration: String,
+            operation: String,
+            j2k: String,
+            openJPEG: String,
+            ratio: String,
+            target: String,
+            status: String
+        ) -> String {
+            [
+                padded(configuration, width: 40),
+                padded(operation, width: 10),
+                padded(j2k, width: 12),
+                padded(openJPEG, width: 12),
+                padded(ratio, width: 10),
+                padded(target, width: 6),
+                status
+            ].joined(separator: "  ")
+        }
+
         var lines: [String] = []
         let bar = String(repeating: "=", count: 100)
         let dash = String(repeating: "-", count: 100)
@@ -975,10 +1002,15 @@ public struct BenchmarkReportGenerator: Sendable {
 
             lines.append("[\(operation.rawValue)]")
             lines.append(dash)
-            lines.append(
-                String(format: "%-40s  %-10s  %-12s  %-12s  %-10s  %-6s  %s",
-                       "Configuration", "Op", "J2KSwift", "OpenJPEG", "Ratio", "Target", "Status")
-            )
+            lines.append(reportRow(
+                configuration: "Configuration",
+                operation: "Op",
+                j2k: "J2KSwift",
+                openJPEG: "OpenJPEG",
+                ratio: "Ratio",
+                target: "Target",
+                status: "Status"
+            ))
             lines.append(dash)
 
             for comp in opComparisons {
@@ -989,12 +1021,15 @@ public struct BenchmarkReportGenerator: Sendable {
                 let ratio  = comp.speedRatio.map { String(format: "%.2fx", $0) } ?? "N/A"
                 let target = String(format: "≥%.1fx", comp.performanceTarget)
                 let status = comp.meetsTarget.map { $0 ? "✓ PASS" : "✗ FAIL" } ?? "—"
-                lines.append(
-                    String(format: "%-40s  %-10s  %-12s  %-12s  %-10s  %-6s  %s",
-                           comp.configuration.label,
-                           operation.rawValue,
-                           j2k, oj, ratio, target, status)
-                )
+                lines.append(reportRow(
+                    configuration: comp.configuration.label,
+                    operation: operation.rawValue,
+                    j2k: j2k,
+                    openJPEG: oj,
+                    ratio: ratio,
+                    target: target,
+                    status: status
+                ))
             }
             lines.append("")
         }

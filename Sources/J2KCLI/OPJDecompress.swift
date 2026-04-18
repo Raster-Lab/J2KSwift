@@ -92,6 +92,7 @@ extension J2KCLI {
 
         // Upsample
         let upsample = opts["upsample"] != nil
+        _ = (reduceFactor, maxLayers, decodeArea, tileIndex, forceRGB, upsample)
 
         // Threads
         if let threadsStr = opts["threads"] {
@@ -115,7 +116,7 @@ extension J2KCLI {
         let decoder = J2KDecoder()
         let image: J2KImage
         do {
-            image = try decoder.decode(encodedData)
+            image = try await decoder.decode(encodedData)
         } catch {
             if allowPartial {
                 printToStderr("[WARNING] Partial decoding attempted but failed: \(error)")

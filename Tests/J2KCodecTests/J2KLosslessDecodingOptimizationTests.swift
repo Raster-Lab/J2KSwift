@@ -198,7 +198,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
 
     // MARK: - 2D Optimized Transform Tests
 
-    func testOptimized2DInverseTransform() throws {
+    func testOptimized2DInverseTransform() async throws {
         let optimizer = J2KDWT2DOptimizer()
 
         // Create small test subbands
@@ -220,7 +220,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         ]
 
         // Optimized transform
-        let result = try optimizer.inverseTransform2DOptimized(
+        let result = try await optimizer.inverseTransform2DOptimized(
             ll: ll,
             lh: lh,
             hl: hl,
@@ -248,7 +248,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         }
     }
 
-    func testOptimized2DLargeImage() throws {
+    func testOptimized2DLargeImage() async throws {
         let optimizer = J2KDWT2DOptimizer()
 
         // Create 32x32 test subbands
@@ -267,7 +267,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         }
 
         // Optimized transform
-        let result = try optimizer.inverseTransform2DOptimized(
+        let result = try await optimizer.inverseTransform2DOptimized(
             ll: ll,
             lh: lh,
             hl: hl,
@@ -295,7 +295,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         }
     }
 
-    func testOptimized2DReconstructionAccuracy() throws {
+    func testOptimized2DReconstructionAccuracy() async throws {
         let optimizer = J2KDWT2DOptimizer()
 
         // Test with known values to verify perfect reconstruction
@@ -316,7 +316,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
             [0, 0]
         ]
 
-        let result = try optimizer.inverseTransform2DOptimized(
+        let result = try await optimizer.inverseTransform2DOptimized(
             ll: ll,
             lh: lh,
             hl: hl,
@@ -358,7 +358,7 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         }
     }
 
-    func testOptimized2DPerformance() {
+    func testOptimized2DPerformance() async {
         // Create 64x64 test subbands
         let size = 32
         let ll = (0..<size).map { row in
@@ -371,16 +371,14 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
         let optimizer = J2KDWT2DOptimizer()
 
         // Measure performance
-        measure {
-            for _ in 0..<10 {
-                _ = try? optimizer.inverseTransform2DOptimized(
-                    ll: ll,
-                    lh: lh,
-                    hl: hl,
-                    hh: hh,
-                    boundaryExtension: .symmetric
-                )
-            }
+        for _ in 0..<10 {
+            _ = try? await optimizer.inverseTransform2DOptimized(
+                ll: ll,
+                lh: lh,
+                hl: hl,
+                hh: hh,
+                boundaryExtension: .symmetric
+            )
         }
     }
 

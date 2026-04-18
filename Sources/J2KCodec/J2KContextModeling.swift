@@ -201,124 +201,124 @@ struct ContextModeler: Sendable {
     /// The subband type for context formation.
     let subband: J2KSubband
 
-    /// Computes the significance coding context for a coefficient.
+    /// Pre-computed significance context LUT for this subband.
+    /// Indexed by: h * 15 + v * 5 + d (h∈[0,2], v∈[0,2], d∈[0,4])
+    /// 45 entries per subband, eliminating all branch chains.
+    private let sigLUT: [UInt8]
+
+    /// LUT storage for each subband type (3 unique tables × 45 entries).
+    /// HL, LH (also LL), HH
+    private static let hlLUT: [UInt8] = buildHLLUT()
+    private static let lhLUT: [UInt8] = buildLHLUT()
+    private static let hhLUT: [UInt8] = buildHHLUT()
+
+    init(subband: J2KSubband) {
+        self.subband = subband
+        switch subband {
+        case .hl:
+            self.sigLUT = Self.hlLUT
+        case .lh, .ll:
+            self.sigLUT = Self.lhLUT
+        case .hh:
+            self.sigLUT = Self.hhLUT
+        }
+    }
+
+    // MARK: - LUT Builders (called once at static init)
+
+    private static func buildHLLUT() -> [UInt8] {
+        var lut = [UInt8](repeating: 0, count: 45)
+        for h in 0...2 {
+            for v in 0...2 {
+                for d in 0...4 {
+                    lut[h * 15 + v * 5 + d] = significanceContextHLValue(h: h, v: v, d: d)
+                }
+            }
+        }
+        return lut
+    }
+
+    private static func buildLHLUT() -> [UInt8] {
+        var lut = [UInt8](repeating: 0, count: 45)
+        for h in 0...2 {
+            for v in 0...2 {
+                for d in 0...4 {
+                    lut[h * 15 + v * 5 + d] = significanceContextLHValue(h: h, v: v, d: d)
+                }
+            }
+        }
+        return lut
+    }
+
+    private static func buildHHLUT() -> [UInt8] {
+        var lut = [UInt8](repeating: 0, count: 45)
+        for h in 0...2 {
+            for v in 0...2 {
+                for d in 0...4 {
+                    lut[h * 15 + v * 5 + d] = significanceContextHHValue(h: h, v: v, d: d)
+                }
+            }
+        }
+        return lut
+    }
+
+    private static func significanceContextHLValue(h: Int, v: Int, d: Int) -> UInt8 {
+        if v >= 2 { return 8 }
+        else if v == 1 {
+            if h >= 1 { return 7 }
+            else if d >= 1 { return 6 }
+            else { return 5 }
+        } else {
+            if h >= 2 { return 4 }
+            else if h == 1 { return 3 }
+            else if d >= 2 { return 2 }
+            else if d == 1 { return 1 }
+            else { return 0 }
+        }
+    }
+
+    private static func significanceContextLHValue(h: Int, v: Int, d: Int) -> UInt8 {
+        if h >= 2 { return 8 }
+        else if h == 1 {
+            if v >= 1 { return 7 }
+            else if d >= 1 { return 6 }
+            else { return 5 }
+        } else {
+            if v >= 2 { return 4 }
+            else if v == 1 { return 3 }
+            else if d >= 2 { return 2 }
+            else if d == 1 { return 1 }
+            else { return 0 }
+        }
+    }
+
+    private static func significanceContextHHValue(h: Int, v: Int, d: Int) -> UInt8 {
+        let hv = h + v
+        if d >= 3 { return 8 }
+        else if d == 2 {
+            if hv >= 1 { return 7 }
+            else { return 6 }
+        } else if d == 1 {
+            if hv >= 2 { return 5 }
+            else if hv == 1 { return 4 }
+            else { return 3 }
+        } else {
+            if hv >= 2 { return 2 }
+            else if hv == 1 { return 1 }
+            else { return 0 }
+        }
+    }
+
+    /// Computes the significance coding context for a coefficient using LUT.
     ///
-    /// The context depends on the subband type and the significance state
-    /// of the 8 neighbors (horizontal, vertical, and diagonal).
+    /// Single table lookup replaces all branch chains. O(1) with zero branches.
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: The context label for significance coding.
+    @inline(__always)
     func significanceContext(neighbors: NeighborContribution) -> EBCOTContext {
-        let h = neighbors.horizontal
-        let v = neighbors.vertical
-        let d = neighbors.diagonal
-
-        switch subband {
-        case .hl:
-            // HL subband: horizontal details, prefer vertical context
-            return significanceContextHL(h: h, v: v, d: d)
-
-        case .lh:
-            // LH subband: vertical details, prefer horizontal context
-            return significanceContextLH(h: h, v: v, d: d)
-
-        case .hh:
-            // HH subband: diagonal details
-            return significanceContextHH(h: h, v: v, d: d)
-
-        case .ll:
-            // LL subband: same as LH
-            return significanceContextLH(h: h, v: v, d: d)
-        }
-    }
-
-    /// Context formation for HL subband (horizontal details).
-    /// ISO 15444-1 Table D.1 for HL: vertical neighbors have priority.
-    private func significanceContextHL(h: Int, v: Int, d: Int) -> EBCOTContext {
-        if v >= 2 {
-            return .sigPropHH_v           // context 8
-        } else if v == 1 {
-            if h >= 1 {
-                return .sigPropHH_h       // context 7
-            } else if d >= 1 {
-                return .sigPropHL_v       // context 6
-            } else {
-                return .sigPropHL_h       // context 5
-            }
-        } else {  // v == 0
-            if h >= 2 {
-                return .sigPropLL_LH_1d   // context 4
-            } else if h == 1 {
-                return .sigPropLL_LH_2    // context 3
-            } else if d >= 2 {
-                return .sigPropLL_LH_1v   // context 2
-            } else if d == 1 {
-                return .sigPropLL_LH_1h   // context 1
-            } else {
-                return .sigPropLL_LH_0    // context 0
-            }
-        }
-    }
-
-    /// Context formation for LH (and LL) subband (vertical details).
-    /// ISO 15444-1 Table D.1 for LL/LH: horizontal neighbors have priority.
-    private func significanceContextLH(h: Int, v: Int, d: Int) -> EBCOTContext {
-        if h >= 2 {
-            return .sigPropHH_v           // context 8
-        } else if h == 1 {
-            if v >= 1 {
-                return .sigPropHH_h       // context 7
-            } else if d >= 1 {
-                return .sigPropHL_v       // context 6
-            } else {
-                return .sigPropHL_h       // context 5
-            }
-        } else {  // h == 0
-            if v >= 2 {
-                return .sigPropLL_LH_1d   // context 4
-            } else if v == 1 {
-                return .sigPropLL_LH_2    // context 3
-            } else if d >= 2 {
-                return .sigPropLL_LH_1v   // context 2
-            } else if d == 1 {
-                return .sigPropLL_LH_1h   // context 1
-            } else {
-                return .sigPropLL_LH_0    // context 0
-            }
-        }
-    }
-
-    /// Context formation for HH subband.
-    /// ISO 15444-1 Table D.1 for HH: diagonal neighbors have priority.
-    private func significanceContextHH(h: Int, v: Int, d: Int) -> EBCOTContext {
-        let hv = h + v
-
-        if d >= 3 {
-            return .sigPropHH_v           // context 8
-        } else if d == 2 {
-            if hv >= 1 {
-                return .sigPropHH_h       // context 7
-            } else {
-                return .sigPropHL_v       // context 6
-            }
-        } else if d == 1 {
-            if hv >= 2 {
-                return .sigPropHL_h       // context 5
-            } else if hv == 1 {
-                return .sigPropLL_LH_1d   // context 4
-            } else {
-                return .sigPropLL_LH_2    // context 3
-            }
-        } else {
-            // d == 0
-            if hv >= 2 {
-                return .sigPropLL_LH_1v   // context 2
-            } else if hv == 1 {
-                return .sigPropLL_LH_1h   // context 1
-            } else {
-                return .sigPropLL_LH_0    // context 0
-            }
-        }
+        let idx = neighbors.horizontal &* 15 &+ neighbors.vertical &* 5 &+ min(neighbors.diagonal, 4)
+        return EBCOTContext(rawValue: sigLUT[idx])!
     }
 
     /// Computes the sign coding context for a coefficient.
@@ -329,6 +329,7 @@ struct ContextModeler: Sendable {
     ///
     /// - Parameter neighbors: The contribution from neighboring coefficients.
     /// - Returns: A tuple containing the context label and the sign prediction (XOR bit).
+    @inline(__always)
     func signContext(neighbors: NeighborContribution) -> (context: EBCOTContext, xorBit: Bool) {
         let hSign = neighbors.horizontalSign
         let vSign = neighbors.verticalSign
@@ -343,6 +344,19 @@ struct ContextModeler: Sendable {
 
         let context = signContextFromContributions(h: hContrib, v: vContrib)
 
+        return (context, xorBit)
+    }
+
+    /// Computes the sign coding context from pre-computed sign contributions.
+    ///
+    /// This overload accepts direct sign values, avoiding the NeighborContribution
+    /// struct when signs are computed separately from significance counts.
+    @inline(__always)
+    func signContext(horizontalSign: Int, verticalSign: Int) -> (context: EBCOTContext, xorBit: Bool) {
+        let hContrib = horizontalSign == 0 ? 0 : (horizontalSign > 0 ? 1 : -1)
+        let vContrib = verticalSign == 0 ? 0 : (verticalSign > 0 ? 1 : -1)
+        let xorBit = hContrib < 0 || (hContrib == 0 && vContrib < 0)
+        let context = signContextFromContributions(h: hContrib, v: vContrib)
         return (context, xorBit)
     }
 
@@ -384,6 +398,7 @@ struct ContextModeler: Sendable {
     ///   - firstRefinement: True if this is the first magnitude refinement for this coefficient.
     ///   - neighborsWereSignificant: True if neighbors were significant when this coefficient became significant.
     /// - Returns: The context label for magnitude refinement.
+    @inline(__always)
     func magnitudeRefinementContext(
         firstRefinement: Bool,
         neighborsWereSignificant: Bool
@@ -558,6 +573,7 @@ struct NeighborCalculator: Sendable {
         let currentRowOffset = y &* width
         let topRowOffset = (y &- 1) &* width
         let bottomRowOffset = (y &+ 1) &* width
+        let sigMask = CoefficientState.significant.rawValue
 
         let hasLeft = x > 0
         let hasRight = x < width &- 1
@@ -567,72 +583,152 @@ struct NeighborCalculator: Sendable {
         if hasSigns, let signs = signs {
             if hasLeft {
                 let idx = currentRowOffset &+ (x &- 1)
-                if states[idx].contains(.significant) {
+                if (states[idx].rawValue & sigMask) != 0 {
                     contribution.horizontal &+= 1
                     contribution.horizontalSign &+= signs[idx] ? -1 : 1
                 }
             }
             if hasRight {
                 let idx = currentRowOffset &+ (x &+ 1)
-                if states[idx].contains(.significant) {
+                if (states[idx].rawValue & sigMask) != 0 {
                     contribution.horizontal &+= 1
                     contribution.horizontalSign &+= signs[idx] ? -1 : 1
                 }
             }
             if hasTop {
                 let idx = topRowOffset &+ x
-                if states[idx].contains(.significant) {
+                if (states[idx].rawValue & sigMask) != 0 {
                     contribution.vertical &+= 1
                     contribution.verticalSign &+= signs[idx] ? -1 : 1
                 }
             }
             if hasBottom {
                 let idx = bottomRowOffset &+ x
-                if states[idx].contains(.significant) {
+                if (states[idx].rawValue & sigMask) != 0 {
                     contribution.vertical &+= 1
                     contribution.verticalSign &+= signs[idx] ? -1 : 1
                 }
             }
-            if hasTop && hasLeft && states[topRowOffset &+ (x &- 1)].contains(.significant) {
+            if hasTop && hasLeft && (states[topRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasTop && hasRight && states[topRowOffset &+ (x &+ 1)].contains(.significant) {
+            if hasTop && hasRight && (states[topRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasBottom && hasLeft && states[bottomRowOffset &+ (x &- 1)].contains(.significant) {
+            if hasBottom && hasLeft && (states[bottomRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasBottom && hasRight && states[bottomRowOffset &+ (x &+ 1)].contains(.significant) {
+            if hasBottom && hasRight && (states[bottomRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
         } else {
-            if hasLeft && states[currentRowOffset &+ (x &- 1)].contains(.significant) {
+            if hasLeft && (states[currentRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 {
                 contribution.horizontal &+= 1
             }
-            if hasRight && states[currentRowOffset &+ (x &+ 1)].contains(.significant) {
+            if hasRight && (states[currentRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 {
                 contribution.horizontal &+= 1
             }
-            if hasTop && states[topRowOffset &+ x].contains(.significant) {
+            if hasTop && (states[topRowOffset &+ x].rawValue & sigMask) != 0 {
                 contribution.vertical &+= 1
             }
-            if hasBottom && states[bottomRowOffset &+ x].contains(.significant) {
+            if hasBottom && (states[bottomRowOffset &+ x].rawValue & sigMask) != 0 {
                 contribution.vertical &+= 1
             }
-            if hasTop && hasLeft && states[topRowOffset &+ (x &- 1)].contains(.significant) {
+            if hasTop && hasLeft && (states[topRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasTop && hasRight && states[topRowOffset &+ (x &+ 1)].contains(.significant) {
+            if hasTop && hasRight && (states[topRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasBottom && hasLeft && states[bottomRowOffset &+ (x &- 1)].contains(.significant) {
+            if hasBottom && hasLeft && (states[bottomRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
-            if hasBottom && hasRight && states[bottomRowOffset &+ (x &+ 1)].contains(.significant) {
+            if hasBottom && hasRight && (states[bottomRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 {
                 contribution.diagonal &+= 1
             }
         }
 
         return contribution
+    }
+
+    /// Computes only the sign contributions of significant cardinal neighbors.
+    ///
+    /// This is the deferred second half of neighbor analysis — called only when
+    /// a coefficient actually becomes significant (rare case). Avoids redundant
+    /// sign reads in the common non-significant path.
+    @inline(__always)
+    func computeCardinalSignsUnsafe(
+        x: Int,
+        y: Int,
+        states: UnsafePointer<CoefficientState>,
+        signs: UnsafePointer<Bool>
+    ) -> (horizontalSign: Int, verticalSign: Int) {
+        var hSign = 0
+        var vSign = 0
+        let currentRowOffset = y &* width
+        let sigMask = CoefficientState.significant.rawValue
+
+        if x > 0 {
+            let idx = currentRowOffset &+ (x &- 1)
+            if (states[idx].rawValue & sigMask) != 0 {
+                hSign &+= signs[idx] ? -1 : 1
+            }
+        }
+        if x < width &- 1 {
+            let idx = currentRowOffset &+ (x &+ 1)
+            if (states[idx].rawValue & sigMask) != 0 {
+                hSign &+= signs[idx] ? -1 : 1
+            }
+        }
+        if y > 0 {
+            let idx = (y &- 1) &* width &+ x
+            if (states[idx].rawValue & sigMask) != 0 {
+                vSign &+= signs[idx] ? -1 : 1
+            }
+        }
+        if y < height &- 1 {
+            let idx = (y &+ 1) &* width &+ x
+            if (states[idx].rawValue & sigMask) != 0 {
+                vSign &+= signs[idx] ? -1 : 1
+            }
+        }
+
+        return (hSign, vSign)
+    }
+
+    /// Fast check for any significant neighbor (short-circuits on first found).
+    ///
+    /// Used by the magnitude refinement pass which only needs a boolean result,
+    /// not the full neighbor contribution counts.
+    @inline(__always)
+    func hasAnySignificantNeighborUnsafe(
+        x: Int,
+        y: Int,
+        states: UnsafePointer<CoefficientState>
+    ) -> Bool {
+        let currentRowOffset = y &* width
+        let hasLeft = x > 0
+        let hasRight = x < width &- 1
+        let hasTop = y > 0
+        let hasBottom = y < height &- 1
+        let sigMask = CoefficientState.significant.rawValue
+
+        // Check cardinals first (more likely significant due to spatial correlation)
+        if hasLeft && (states[currentRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 { return true }
+        if hasRight && (states[currentRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 { return true }
+        if hasTop {
+            let topRowOffset = (y &- 1) &* width
+            if (states[topRowOffset &+ x].rawValue & sigMask) != 0 { return true }
+            if hasLeft && (states[topRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 { return true }
+            if hasRight && (states[topRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 { return true }
+        }
+        if hasBottom {
+            let bottomRowOffset = (y &+ 1) &* width
+            if (states[bottomRowOffset &+ x].rawValue & sigMask) != 0 { return true }
+            if hasLeft && (states[bottomRowOffset &+ (x &- 1)].rawValue & sigMask) != 0 { return true }
+            if hasRight && (states[bottomRowOffset &+ (x &+ 1)].rawValue & sigMask) != 0 { return true }
+        }
+        return false
     }
 }
 

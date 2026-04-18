@@ -327,8 +327,22 @@ public struct J2KRateControl: Sendable {
             rateStart = t
         }
 
-        // Sort by descending slope (best quality-per-bit first)
-        let sortedPasses = passInfos.sorted { $0.slope > $1.slope }
+        // Sort by descending slope (best quality-per-bit first).
+        // When slopes tie, prefer smaller and earlier truncation points so
+        // higher-rate encodes extend lower-rate choices instead of replacing
+        // them with unstable later-pass candidates.
+        let sortedPasses = passInfos.sorted { lhs, rhs in
+            if lhs.slope != rhs.slope {
+                return lhs.slope > rhs.slope
+            }
+            if lhs.cumulativeBytes != rhs.cumulativeBytes {
+                return lhs.cumulativeBytes < rhs.cumulativeBytes
+            }
+            if lhs.passNumber != rhs.passNumber {
+                return lhs.passNumber < rhs.passNumber
+            }
+            return lhs.codeBlockIndex < rhs.codeBlockIndex
+        }
 
         if profiling {
             let t = CFAbsoluteTimeGetCurrent()
@@ -372,11 +386,22 @@ public struct J2KRateControl: Sendable {
             let (layer, selectedPasses, blockCumBytes) = try formLayerPCRDOpt(
                 layerIndex: layerIndex,
                 targetBytes: targetBytes,
+                totalPixels: totalPixels,
                 sortedPasses: sortedPasses,
                 previousPasses: previousLayerPasses,
                 codeBlocks: codeBlocks,
                 previousBlockCumulativeBytes: previousBlockCumulativeBytes
             )
+
+            if dumpPCRD {
+                emitLayerDiagnostics(
+                    layerIndex: layerIndex,
+                    targetBytes: targetBytes,
+                    actualBytes: blockCumBytes.values.reduce(0, +),
+                    cumulativeBlockBytes: blockCumBytes,
+                    codeBlocks: codeBlocks
+                )
+            }
 
             layers.append(layer)
             previousLayerPasses = selectedPasses
@@ -506,21 +531,43 @@ public struct J2KRateControl: Sendable {
                 subbandWeight = 1.0
             }
 
+            // For multi-component lossy images using ICT, prioritize the first
+            // transformed component (luminance-like Y) slightly over chroma.
+            // This improves low-bitrate RGB quality without altering the overall
+            // byte budget or affecting grayscale/high-bit-depth single-component paths.
+            let componentWeight: Double
+            if !configuration.useReversibleFilter && configuration.componentCount >= 3 {
+                switch codeBlock.componentIndex {
+                case 0:
+                    componentWeight = 1.35
+                case 1, 2:
+                    componentWeight = 0.90
+                default:
+                    componentWeight = 1.0
+                }
+            } else {
+                componentWeight = 1.0
+            }
+            let effectiveWeight = subbandWeight * componentWeight
+
             // Use tracked per-pass byte counts when available, otherwise estimate
             let hasPerPassBytes = !codeBlock.cumulativePassBytes.isEmpty
                 && codeBlock.cumulativePassBytes.count >= codeBlock.passeCount
 
-            // Use actual per-pass distortion from EBCOT when available.
-            // cumulativePassDistortion[i] = total squared-error reduction
-            // after passes 0..i, so remaining distortion after pass i =
-            // initialDistortion - cumulativePassDistortion[i].
+            // Use actual per-pass distortion when the encoder provided it.
+            // This is especially important for HTJ2K medical workloads, where
+            // the coarse population-only fallback can mis-rank truncation points
+            // even though the block coder has already measured real distortion
+            // reduction for each emitted pass.
             let hasActualDistortion = !codeBlock.cumulativePassDistortion.isEmpty
                 && codeBlock.cumulativePassDistortion.count >= codeBlock.passeCount
 
-            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock) * subbandWeight
+            let initialDistortion = estimateInitialDistortion(codeBlock: codeBlock) * effectiveWeight
 
             var previousCumulativeBytes = 0
             var previousDistortion = initialDistortion
+            var blockPassInfos = [CodingPassInfo]()
+            blockPassInfos.reserveCapacity(codeBlock.passeCount)
 
             for passNum in 0..<codeBlock.passeCount {
                 let cumulativeBytes: Int
@@ -532,32 +579,55 @@ public struct J2KRateControl: Sendable {
                     cumulativeBytes = (passNum + 1) * bytesPerPass
                 }
 
-                let passBytes = max(1, cumulativeBytes - previousCumulativeBytes)
+                let passBytes = max(0, cumulativeBytes - previousCumulativeBytes)
+
+                let htPassWeight: Double
+                if configuration.passesPerBitPlane == 2 && configuration.componentCount == 1 {
+                    if passNum == 0 {
+                        htPassWeight = configuration.useReversibleFilter ? 0.82 : 0.92
+                    } else if passNum.isMultiple(of: 2) {
+                        htPassWeight = configuration.useReversibleFilter ? 1.32 : 1.14
+                    } else {
+                        htPassWeight = configuration.useReversibleFilter ? 1.14 : 1.06
+                    }
+                } else {
+                    htPassWeight = 1.0
+                }
 
                 let distortion: Double
                 if hasActualDistortion {
-                    // Actual remaining distortion from EBCOT encoder.
-                    // The EBCOT cumulativePassDistortion values are in the
+                    // Actual remaining distortion from the encoder's tracked pass data.
+                    // These cumulativePassDistortion values are interpreted in the
                     // quantised coefficient domain (sum of m²−e² reductions).
                     // Apply the same subbandWeight to convert to pixel MSE.
                     let remaining = max(0.0, codeBlock.coefficientSquaredSum - codeBlock.cumulativePassDistortion[passNum])
-                    distortion = remaining * subbandWeight
+                    distortion = remaining * effectiveWeight * htPassWeight
                 } else {
                     // Fallback: model-based estimate
                     distortion = estimateDistortion(
                         codeBlock: codeBlock,
                         passNumber: passNum,
                         totalPasses: codeBlock.passeCount
-                    ) * subbandWeight
+                    ) * effectiveWeight * htPassWeight
                 }
 
-                // Compute rate-distortion slope
-                let deltaDistortion = previousDistortion - distortion
+                // Compute rate-distortion slope.
+                // Some refinement passes do not increase the terminated byte count;
+                // they should be treated as effectively free quality gains rather
+                // than penalized as a synthetic 1-byte increase.
+                let deltaDistortion = max(0.0, previousDistortion - distortion)
                 let deltaRate = Double(passBytes * 8) // bits
 
-                let slope = deltaRate > 0 ? deltaDistortion / deltaRate : 0.0
+                let slope: Double
+                if deltaDistortion <= 0 {
+                    slope = 0.0
+                } else if deltaRate == 0 {
+                    slope = Double.greatestFiniteMagnitude
+                } else {
+                    slope = deltaDistortion / deltaRate
+                }
 
-                passInfos.append(CodingPassInfo(
+                blockPassInfos.append(CodingPassInfo(
                     codeBlockIndex: codeBlock.index,
                     passNumber: passNum,
                     cumulativeBytes: cumulativeBytes,
@@ -568,6 +638,56 @@ public struct J2KRateControl: Sendable {
                 previousCumulativeBytes = cumulativeBytes
                 previousDistortion = distortion
             }
+
+            guard !blockPassInfos.isEmpty else { continue }
+
+            // Collapse truncation points with identical cumulative byte counts.
+            // Later zero-byte refinement passes dominate earlier ones at the same
+            // rate, so keep only the furthest pass and recompute the effective
+            // slope against the previous distinct-byte point.
+            var collapsedPassInfos = [CodingPassInfo]()
+            collapsedPassInfos.reserveCapacity(blockPassInfos.count)
+            var groupStart = 0
+            var previousFrontierBytes = 0
+            var previousFrontierDistortion = initialDistortion
+            var previousFrontierSlope = Double.greatestFiniteMagnitude
+
+            while groupStart < blockPassInfos.count {
+                let groupBytes = blockPassInfos[groupStart].cumulativeBytes
+                var groupEnd = groupStart
+                while groupEnd + 1 < blockPassInfos.count &&
+                        blockPassInfos[groupEnd + 1].cumulativeBytes == groupBytes {
+                    groupEnd += 1
+                }
+
+                let representative = blockPassInfos[groupEnd]
+                let frontierDeltaDistortion = max(0.0, previousFrontierDistortion - representative.distortion)
+                let frontierDeltaRate = Double(max(0, representative.cumulativeBytes - previousFrontierBytes) * 8)
+
+                let frontierSlope: Double
+                if frontierDeltaDistortion <= 0 {
+                    frontierSlope = 0.0
+                } else if frontierDeltaRate == 0 {
+                    frontierSlope = Double.greatestFiniteMagnitude
+                } else {
+                    frontierSlope = min(frontierDeltaDistortion / frontierDeltaRate, previousFrontierSlope)
+                    previousFrontierSlope = frontierSlope
+                }
+
+                collapsedPassInfos.append(CodingPassInfo(
+                    codeBlockIndex: representative.codeBlockIndex,
+                    passNumber: representative.passNumber,
+                    cumulativeBytes: representative.cumulativeBytes,
+                    distortion: representative.distortion,
+                    slope: frontierSlope
+                ))
+
+                previousFrontierBytes = representative.cumulativeBytes
+                previousFrontierDistortion = representative.distortion
+                groupStart = groupEnd + 1
+            }
+
+            passInfos.append(contentsOf: collapsedPassInfos)
         }
 
         return passInfos
@@ -753,10 +873,43 @@ public struct J2KRateControl: Sendable {
     private func computeLayerTargetRates(totalPixels: Int) throws -> [Double] {
         switch configuration.mode {
         case .targetBitrate(let bitrate):
-            // Generate progressive rates up to target
+            // Generate progressive rates up to target.
+            // HTJ2K can benefit from a small matched-rate allowance on
+            // single-component medical imagery, but the previous blanket
+            // 16–35% inflation systematically produced oversized codestreams.
+            // Keep only a narrow low-rate compensation so compression stays
+            // close to J2K while preserving the quality guard rails.
+            let effectiveBitrate: Double
+            if configuration.passesPerBitPlane == 2,
+               configuration.componentCount == 1 {
+                let compensation: Double
+                if configuration.useReversibleFilter {
+                    if bitrate <= 0.50 {
+                        compensation = 1.25
+                    } else if bitrate <= 1.00 {
+                        compensation = 1.22
+                    } else if bitrate <= 1.50 {
+                        compensation = 1.14
+                    } else {
+                        compensation = 1.05
+                    }
+                } else {
+                    if bitrate <= 0.50 {
+                        compensation = 1.08
+                    } else if bitrate <= 1.00 {
+                        compensation = 1.05
+                    } else {
+                        compensation = 1.02
+                    }
+                }
+                effectiveBitrate = bitrate * compensation
+            } else {
+                effectiveBitrate = bitrate
+            }
+
             var rates = [Double]()
             for i in 1...configuration.layerCount {
-                let layerRate = bitrate * Double(i) / Double(configuration.layerCount)
+                let layerRate = effectiveBitrate * Double(i) / Double(configuration.layerCount)
                 rates.append(layerRate)
             }
             return rates
@@ -779,33 +932,42 @@ public struct J2KRateControl: Sendable {
 
     /// Estimates bitrate required for a given quality level.
     ///
-    /// Calibrated to match industry JPEG 2000 codecs (OpenJPEG):
-    /// - q=0.9 → ~1.2 bpp (high visual quality)
-    /// - q=0.5 → ~0.3 bpp (medium quality)
-    /// - q=0.3 → ~0.15 bpp (low quality)
+    /// Returns bits-per-pixel across ALL components. The base mapping is
+    /// calibrated for a single component (matching OpenJPEG grayscale),
+    /// then scaled by `componentCount` so that multi-component images
+    /// (e.g. RGB) receive proportionally more bits.
+    ///
+    /// Single-component reference points:
+    /// - q=0.95 → ~2.0 bpp/component (near-lossless)
+    /// - q=0.80 → ~1.0 bpp/component (high visual quality)
+    /// - q=0.50 → ~0.4 bpp/component (medium quality, matches OpenJPEG -r 20 for 8-bit)
+    /// - q=0.20 → ~0.15 bpp/component (low quality)
     private func qualityToBitrate(_ quality: Double) -> Double {
+        let baseBpp: Double
         if quality >= 1.0 {
-            return 8.0 // Near-lossless
+            baseBpp = 8.0 // Near-lossless
+        } else if quality >= 0.95 {
+            baseBpp = 2.0 + (quality - 0.95) * 120.0   // 2.0→8.0 for q 0.95→1.0
+        } else if quality >= 0.80 {
+            baseBpp = 1.0 + (quality - 0.80) * 6.667   // 1.0→2.0 for q 0.80→0.95
+        } else if quality >= 0.50 {
+            baseBpp = 0.4 + (quality - 0.50) * 2.0     // 0.4→1.0 for q 0.50→0.80
+        } else if quality >= 0.20 {
+            baseBpp = 0.15 + (quality - 0.20) * 0.833  // 0.15→0.4 for q 0.20→0.50
+        } else {
+            baseBpp = 0.05 + quality * 0.5             // 0.05→0.15 for q 0→0.20
         }
-        // Piecewise mapping calibrated against OpenJPEG output sizes.
-        // Medical images at q=0.9 produce ~1 bpp, not 6.8 bpp.
-        if quality >= 0.95 {
-            return 2.0 + (quality - 0.95) * 120.0   // 2.0→8.0 for q 0.95→1.0
-        }
-        if quality >= 0.80 {
-            return 0.5 + (quality - 0.80) * 10.0    // 0.5→2.0 for q 0.80→0.95
-        }
-        if quality >= 0.50 {
-            return 0.15 + (quality - 0.50) * 1.167  // 0.15→0.5 for q 0.50→0.80
-        }
-        // Low quality range
-        return 0.05 + quality * 0.2                 // 0.05→0.15 for q 0→0.50
+        // Scale by component count: RGB needs 3× the bits of grayscale
+        // at the same visual quality. totalPixels is spatial (W×H), so
+        // the budget bpp × W × H / 8 must cover all component data.
+        return baseBpp * Double(configuration.componentCount)
     }
 
     /// Forms a single quality layer using PCRD-opt algorithm.
     private func formLayerPCRDOpt(
         layerIndex: Int,
         targetBytes: Int,
+        totalPixels: Int,
         sortedPasses: [CodingPassInfo],
         previousPasses: Set<Int64>,
         codeBlocks: [J2KCodeBlock],
@@ -813,50 +975,78 @@ public struct J2KRateControl: Sendable {
     ) throws -> (QualityLayer, Set<Int64>, [Int: Int]) {
         var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
         var selectedPasses = previousPasses
-        // Track per-block cumulative bytes to compute incremental cost correctly
         var blockCumulativeBytes = previousBlockCumulativeBytes
 
-        // Cache environment check outside hot loop — ProcessInfo.processInfo.environment
-        // creates a new dictionary from C environ on each access (~5-10μs per call).
         let dumpPCRD = ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil
-
-        // Account for bytes already included in previous layers (targetBytes is cumulative)
         var currentBytes = blockCumulativeBytes.values.reduce(0, +)
 
-        // Track consecutive budget-exceeding passes for early termination.
-        // Since passes are sorted by descending slope, if many consecutive
-        // passes exceed the budget, remaining passes are unlikely to fit.
         var consecutiveSkips = 0
         let maxConsecutiveSkips = 64
+        var fallbackPass: CodingPassInfo?
+        var fallbackIncrementalBytes = Int.max
+        var nearTargetOvershootPass: CodingPassInfo?
+        var nearTargetOvershootBytes = Int.max
 
-        let isFirstLayer = previousPasses.isEmpty
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         var iterations = 0
 
-        // Select passes in order of descending slope until budget is exhausted
         for passInfo in sortedPasses {
             iterations += 1
-            // Skip if already included in a previous layer (only needed for multi-layer)
-            if !isFirstLayer {
-                let passKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(passInfo.passNumber)
-                if selectedPasses.contains(passKey) {
-                    continue
-                }
+            let passKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(passInfo.passNumber)
+            if selectedPasses.contains(passKey) {
+                continue
             }
 
-            // Compute incremental bytes: new cumulative minus previously included bytes
             let previousBlockBytes = blockCumulativeBytes[passInfo.codeBlockIndex] ?? 0
             let incrementalBytes = max(0, passInfo.cumulativeBytes - previousBlockBytes)
 
-            // Check budget
-            if configuration.strictRateMatching &&
-               currentBytes + incrementalBytes > targetBytes &&
-               !contributions.isEmpty {
+            if shouldDeferHTDeepRefinement(
+                passInfo: passInfo,
+                incrementalBytes: incrementalBytes,
+                currentBytes: currentBytes,
+                targetBytes: targetBytes,
+                sortedPasses: sortedPasses,
+                selectedPasses: selectedPasses,
+                contributions: contributions,
+                blockCumulativeBytes: blockCumulativeBytes
+            ) {
+                if dumpPCRD {
+                    let formattedSlope = String(format: "%.2f", passInfo.slope)
+                    print("PCRD_DEFER: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(formattedSlope) incBytes=\(incrementalBytes) current=\(currentBytes) target=\(targetBytes)")
+                }
+                consecutiveSkips += 1
+                continue
+            }
+
+            if configuration.strictRateMatching && currentBytes + incrementalBytes > targetBytes {
+                if currentBytes == 0 && incrementalBytes > 0 {
+                    let isBetterFallback = incrementalBytes < fallbackIncrementalBytes ||
+                        (incrementalBytes == fallbackIncrementalBytes && passInfo.slope > (fallbackPass?.slope ?? 0.0))
+                    if isBetterFallback {
+                        fallbackPass = passInfo
+                        fallbackIncrementalBytes = incrementalBytes
+                    }
+                } else if incrementalBytes > 0 {
+                    let overshootBytes = currentBytes + incrementalBytes - targetBytes
+                    let undershootBytes = max(0, targetBytes - currentBytes)
+                    let overshootWindowDivisor = configuration.passesPerBitPlane == 2 ? 8 : 16
+                    let allowedOvershoot = max(1, targetBytes / overshootWindowDivisor)
+
+                    if overshootBytes > 0 && overshootBytes < undershootBytes && overshootBytes <= allowedOvershoot {
+                        let isBetterNearTarget = overshootBytes < nearTargetOvershootBytes ||
+                            (overshootBytes == nearTargetOvershootBytes && passInfo.slope > (nearTargetOvershootPass?.slope ?? 0.0))
+                        if isBetterNearTarget {
+                            nearTargetOvershootPass = passInfo
+                            nearTargetOvershootBytes = overshootBytes
+                        }
+                    }
+                }
+
                 if dumpPCRD {
                     print("PCRD_SKIP: block=\(passInfo.codeBlockIndex) pass=\(passInfo.passNumber) slope=\(String(format: "%.2f", passInfo.slope)) incBytes=\(incrementalBytes) cumBytes=\(passInfo.cumulativeBytes) current=\(currentBytes) target=\(targetBytes)")
                 }
                 consecutiveSkips += 1
-                if consecutiveSkips >= maxConsecutiveSkips {
+                if currentBytes > 0 && consecutiveSkips >= maxConsecutiveSkips {
                     break
                 }
                 continue
@@ -864,9 +1054,6 @@ public struct J2KRateControl: Sendable {
 
             consecutiveSkips = 0
 
-            // Add this pass — use max to prevent out-of-order pass selection
-            // from regressing contributions (e.g., a zero-cost late pass sorted
-            // first should not be overwritten by a lower pass number later).
             contributions[passInfo.codeBlockIndex] = max(
                 contributions[passInfo.codeBlockIndex] ?? 0,
                 passInfo.passNumber + 1
@@ -876,14 +1063,58 @@ public struct J2KRateControl: Sendable {
                 passInfo.cumulativeBytes
             )
             currentBytes += incrementalBytes
-            if !isFirstLayer {
-                let passKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(passInfo.passNumber)
-                selectedPasses.insert(passKey)
+            if passInfo.passNumber >= 0 {
+                for prefixPass in 0...passInfo.passNumber {
+                    let prefixKey = (Int64(passInfo.codeBlockIndex) &<< 32) | Int64(prefixPass)
+                    selectedPasses.insert(prefixKey)
+                }
             }
 
-            // Stop if we've met the target
             if currentBytes >= targetBytes {
+                if configuration.strictRateMatching {
+                    continue
+                }
                 break
+            }
+        }
+
+        if contributions.isEmpty, let fallbackPass {
+            contributions[fallbackPass.codeBlockIndex] = fallbackPass.passNumber + 1
+            blockCumulativeBytes[fallbackPass.codeBlockIndex] = fallbackPass.cumulativeBytes
+            currentBytes = fallbackPass.cumulativeBytes
+            if fallbackPass.passNumber >= 0 {
+                for prefixPass in 0...fallbackPass.passNumber {
+                    let prefixKey = (Int64(fallbackPass.codeBlockIndex) &<< 32) | Int64(prefixPass)
+                    selectedPasses.insert(prefixKey)
+                }
+            }
+        } else if currentBytes < targetBytes, let nearTargetOvershootPass {
+            let passKey = (Int64(nearTargetOvershootPass.codeBlockIndex) &<< 32) | Int64(nearTargetOvershootPass.passNumber)
+            if !selectedPasses.contains(passKey) {
+                let previousBlockBytes = blockCumulativeBytes[nearTargetOvershootPass.codeBlockIndex] ?? 0
+                let incrementalBytes = max(0, nearTargetOvershootPass.cumulativeBytes - previousBlockBytes)
+                let overshootBytes = currentBytes + incrementalBytes - targetBytes
+                let undershootBytes = max(0, targetBytes - currentBytes)
+                let overshootWindowDivisor = configuration.passesPerBitPlane == 2 ? 8 : 16
+                let allowedOvershoot = max(1, targetBytes / overshootWindowDivisor)
+
+                if incrementalBytes > 0 && overshootBytes > 0 && overshootBytes < undershootBytes && overshootBytes <= allowedOvershoot {
+                    contributions[nearTargetOvershootPass.codeBlockIndex] = max(
+                        contributions[nearTargetOvershootPass.codeBlockIndex] ?? 0,
+                        nearTargetOvershootPass.passNumber + 1
+                    )
+                    blockCumulativeBytes[nearTargetOvershootPass.codeBlockIndex] = max(
+                        blockCumulativeBytes[nearTargetOvershootPass.codeBlockIndex] ?? 0,
+                        nearTargetOvershootPass.cumulativeBytes
+                    )
+                    currentBytes += incrementalBytes
+                    if nearTargetOvershootPass.passNumber >= 0 {
+                        for prefixPass in 0...nearTargetOvershootPass.passNumber {
+                            let prefixKey = (Int64(nearTargetOvershootPass.codeBlockIndex) &<< 32) | Int64(prefixPass)
+                            selectedPasses.insert(prefixKey)
+                        }
+                    }
+                }
             }
         }
 
@@ -893,11 +1124,124 @@ public struct J2KRateControl: Sendable {
 
         let layer = QualityLayer(
             index: layerIndex,
-            targetRate: Double(targetBytes * 8) / Double(codeBlocks.count),
+            targetRate: Double(targetBytes * 8) / Double(totalPixels),
             codeBlockContributions: contributions
         )
 
         return (layer, selectedPasses, blockCumulativeBytes)
+    }
+
+    /// Returns whether a deep HT refinement frontier should be deferred in favour
+    /// of a comparable cheaper first-pass coverage candidate from another block.
+    ///
+    /// This helps the strict single-layer HTJ2K matched-rate path avoid spending
+    /// the remaining budget on a deep late refinement when a new block can still
+    /// contribute clinically useful structure at nearly the same slope.
+    private func shouldDeferHTDeepRefinement(
+        passInfo: CodingPassInfo,
+        incrementalBytes: Int,
+        currentBytes: Int,
+        targetBytes: Int,
+        sortedPasses: [CodingPassInfo],
+        selectedPasses: Set<Int64>,
+        contributions: [Int: Int],
+        blockCumulativeBytes: [Int: Int]
+    ) -> Bool {
+        guard configuration.passesPerBitPlane == 2,
+              configuration.strictRateMatching,
+              configuration.componentCount == 1 else {
+            return false
+        }
+
+        let existingContribution = contributions[passInfo.codeBlockIndex] ?? 0
+        let remainingBudget = targetBytes - currentBytes
+
+        guard existingContribution > 0,
+              passInfo.passNumber >= 2,
+              incrementalBytes > 1,
+              remainingBudget > 0,
+              incrementalBytes >= remainingBudget,
+              remainingBudget <= max(3, targetBytes / 6) else {
+            return false
+        }
+
+        for alternativePass in sortedPasses {
+            let alternativeKey = (Int64(alternativePass.codeBlockIndex) &<< 32) | Int64(alternativePass.passNumber)
+            if selectedPasses.contains(alternativeKey) {
+                continue
+            }
+            if alternativePass.codeBlockIndex == passInfo.codeBlockIndex {
+                continue
+            }
+            if (contributions[alternativePass.codeBlockIndex] ?? 0) > 0 {
+                continue
+            }
+
+            let alternativeIncrementalBytes = max(
+                0,
+                alternativePass.cumulativeBytes - (blockCumulativeBytes[alternativePass.codeBlockIndex] ?? 0)
+            )
+            if alternativePass.passNumber > 1 {
+                continue
+            }
+            if alternativeIncrementalBytes == 0 || alternativeIncrementalBytes >= incrementalBytes {
+                continue
+            }
+            if currentBytes + alternativeIncrementalBytes > targetBytes {
+                continue
+            }
+            if alternativePass.slope < passInfo.slope * 0.90 {
+                continue
+            }
+
+            return true
+        }
+
+        return false
+    }
+
+    /// Emits optional per-layer PCRD diagnostics for debugging rate allocation.
+    private func emitLayerDiagnostics(
+        layerIndex: Int,
+        targetBytes: Int,
+        actualBytes: Int,
+        cumulativeBlockBytes: [Int: Int],
+        codeBlocks: [J2KCodeBlock]
+    ) {
+        let undershoot = targetBytes > 0
+            ? Double(targetBytes - actualBytes) / Double(targetBytes)
+            : 0.0
+        let formattedUndershoot = String(format: "%.3f", undershoot)
+        print(
+            "PCRD_SUMMARY: layer=\(layerIndex) targetBytes=\(targetBytes) actualBytes=\(actualBytes) undershoot=\(formattedUndershoot) blocks=\(cumulativeBlockBytes.count)"
+        )
+
+        var availableByComponent = [Int: Int]()
+        var actualByComponent = [Int: Int]()
+
+        for block in codeBlocks {
+            availableByComponent[block.componentIndex, default: 0] += block.data.count
+        }
+
+        let blockByIndex = Dictionary(uniqueKeysWithValues: codeBlocks.map { ($0.index, $0) })
+        for (blockIndex, bytes) in cumulativeBlockBytes {
+            guard let block = blockByIndex[blockIndex] else { continue }
+            actualByComponent[block.componentIndex, default: 0] += bytes
+        }
+
+        let totalAvailable = max(1, availableByComponent.values.reduce(0, +))
+        let components = availableByComponent.keys.sorted()
+        if components.count > 1 {
+            for component in components {
+                let availableBytes = availableByComponent[component] ?? 0
+                let targetShare = Double(availableBytes) / Double(totalAvailable)
+                let componentTarget = Int((Double(targetBytes) * targetShare).rounded())
+                let componentActual = actualByComponent[component] ?? 0
+                print(
+                    "PCRD_COMPONENT: layer=\(layerIndex) comp=\(component) targetBytes=\(componentTarget) actualBytes=\(componentActual) availableBytes=\(availableBytes)"
+                )
+            }
+        }
     }
 
     /// Creates a lossless quality layer with all coding passes.

@@ -2404,26 +2404,33 @@ final class VolumetricTestViewModelTests: XCTestCase {
         let vm = VolumetricTestViewModel()
         XCTAssertFalse(vm.isRunning)
         XCTAssertEqual(vm.progress, 0)
-        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertEqual(vm.statusMessage, "Default CT sample ready — 256×256×48")
         XCTAssertTrue(vm.sliceMetrics.isEmpty)
         XCTAssertEqual(vm.selectedPlane, .axial)
         XCTAssertEqual(vm.currentSliceIndex, 0)
         XCTAssertFalse(vm.showDifferenceImage)
+        XCTAssertNotNil(vm.originalVolume)
+        XCTAssertEqual(vm.volumeWidth, 256)
+        XCTAssertEqual(vm.volumeHeight, 256)
+        XCTAssertEqual(vm.volumeDepth, 48)
     }
 
     func testRunVolumetricTest() async {
         let vm = VolumetricTestViewModel()
-        vm.totalSlices = 4  // Use a small count for speed
+        let testVolume = makeTestVolume(width: 4, height: 3, depth: 2)
+        vm.loadVolume(testVolume, name: "Unit Test Volume")
         let session = TestSession()
         await vm.runVolumetricTest(session: session)
         XCTAssertFalse(vm.isRunning)
-        XCTAssertEqual(vm.sliceMetrics.count, 4)
+        XCTAssertEqual(vm.sliceMetrics.count, 2)
         XCTAssertEqual(vm.progress, 1.0, accuracy: 0.001)
+        XCTAssertEqual(vm.sliceMetrics.first?.width, 4)
+        XCTAssertEqual(vm.sliceMetrics.first?.height, 3)
     }
 
     func testRunVolumetricTestRecordsResult() async {
         let vm = VolumetricTestViewModel()
-        vm.totalSlices = 2
+        vm.loadVolume(makeTestVolume(width: 3, height: 2, depth: 2), name: "Recorded Volume")
         let session = TestSession()
         await vm.runVolumetricTest(session: session)
         let results = await session.results
@@ -2432,17 +2439,32 @@ final class VolumetricTestViewModelTests: XCTestCase {
 
     func testSlicePSNRAboveThreshold() async {
         let vm = VolumetricTestViewModel()
-        vm.totalSlices = 4
+        vm.loadVolume(makeTestVolume(width: 5, height: 4, depth: 3), name: "Exact Match Volume")
         let session = TestSession()
         await vm.runVolumetricTest(session: session)
         for slice in vm.sliceMetrics {
-            XCTAssertGreaterThan(slice.psnr, 30.0)
+            XCTAssertGreaterThan(slice.psnr, 60.0)
+            XCTAssertGreaterThanOrEqual(slice.ssim, 0.999)
         }
+    }
+
+    func testPlaneSelectionUsesRealVolumeDimensions() async {
+        let vm = VolumetricTestViewModel()
+        vm.loadVolume(makeTestVolume(width: 4, height: 3, depth: 2), name: "Plane Test Volume")
+        vm.selectPlane(.coronal)
+        XCTAssertEqual(vm.totalSlices, 3)
+
+        let session = TestSession()
+        await vm.runVolumetricTest(session: session)
+
+        XCTAssertEqual(vm.sliceMetrics.count, 3)
+        XCTAssertEqual(vm.sliceMetrics.first?.width, 4)
+        XCTAssertEqual(vm.sliceMetrics.first?.height, 2)
     }
 
     func testClearResults() async {
         let vm = VolumetricTestViewModel()
-        vm.totalSlices = 2
+        vm.loadVolume(makeTestVolume(width: 3, height: 2, depth: 2), name: "Clearable Volume")
         let session = TestSession()
         await vm.runVolumetricTest(session: session)
         XCTAssertFalse(vm.sliceMetrics.isEmpty)
@@ -2450,7 +2472,29 @@ final class VolumetricTestViewModelTests: XCTestCase {
         XCTAssertTrue(vm.sliceMetrics.isEmpty)
         XCTAssertEqual(vm.progress, 0)
         XCTAssertEqual(vm.currentSliceIndex, 0)
-        XCTAssertEqual(vm.statusMessage, "Ready")
+        XCTAssertEqual(vm.statusMessage, "Ready — Clearable Volume")
+    }
+
+    private func makeTestVolume(width: Int, height: Int, depth: Int) -> J2KVolume {
+        let voxelCount = width * height * depth
+        var data = Data(count: voxelCount)
+        data.withUnsafeMutableBytes { rawBuffer in
+            guard let pointer = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for index in 0..<voxelCount {
+                pointer[index] = UInt8(index % 251)
+            }
+        }
+
+        let component = J2KVolumeComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: width,
+            height: height,
+            depth: depth,
+            data: data
+        )
+        return J2KVolume(width: width, height: height, depth: depth, components: [component])
     }
 }
 

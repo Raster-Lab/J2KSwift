@@ -12,7 +12,7 @@ extension J2KCLI {
     /// Load an image from a file (PGM, PPM, TIFF, PNG, DICOM, or RAW format)
     static func loadImage(from path: String) throws -> J2KImage {
         let url = URL(fileURLWithPath: path)
-        let data = try Data(contentsOf: url)
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
 
         let ext = url.pathExtension.lowercased()
 
@@ -36,16 +36,16 @@ extension J2KCLI {
     }
 
     /// Load an image from stdin, auto-detecting the format from magic bytes.
-    static func loadImageFromStdin() throws -> J2KImage {
+    static func loadImageFromStdin() async throws -> J2KImage {
         let data = FileHandle.standardInput.readDataToEndOfFile()
         guard !data.isEmpty else {
             throw J2KError.invalidParameter("No data received on stdin")
         }
-        return try loadImageFromData(data)
+        return try await loadImageFromData(data)
     }
 
     /// Load an image from raw `Data`, auto-detecting the format from magic bytes.
-    static func loadImageFromData(_ data: Data) throws -> J2KImage {
+    static func loadImageFromData(_ data: Data) async throws -> J2KImage {
         // Auto-detect format via magic bytes
         if data.count >= 2 {
             let b0 = data[0], b1 = data[1]
@@ -57,7 +57,7 @@ extension J2KCLI {
             // JPEG 2000 codestream (SOC marker 0xFF4F)
             if b0 == 0xFF && b1 == 0x4F {
                 let decoder = J2KDecoder()
-                return try decoder.decode(data)
+                return try await decoder.decode(data)
             }
             // TIFF LE
             if b0 == 0x49 && b1 == 0x49 { return try loadTIFF(data) }
@@ -71,7 +71,7 @@ extension J2KCLI {
             let jp2Sig: [UInt8] = [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20]
             if data.prefix(8).elementsEqual(jp2Sig) {
                 let decoder = J2KDecoder()
-                return try decoder.decode(data)
+                return try await decoder.decode(data)
             }
         }
         // DICOM (DICM at offset 128)
@@ -176,81 +176,97 @@ extension J2KCLI {
         let b = image.components[2]
         let bitDepth = max(r.bitDepth, g.bitDepth, b.bitDepth)
         let maxValue = (1 << bitDepth) - 1
-        var data = Data()
         let header = "P6\n\(image.width) \(image.height)\n\(maxValue)\n"
-        data.append(header.data(using: .ascii)!)
+        let headerData = header.data(using: .ascii)!
+        let pixelCount = image.width * image.height
         let bytesPerSample = bitDepth <= 8 ? 1 : 2
-        for i in 0..<(image.width * image.height) {
-            if bytesPerSample == 1 {
-                let rVal = i < r.data.count ? r.data[i] : 0
-                let gVal = i < g.data.count ? g.data[i] : 0
-                let bVal = i < b.data.count ? b.data[i] : 0
-                data.append(rVal)
-                data.append(gVal)
-                data.append(bVal)
-            } else {
-                let idx = i * 2
-                let rVal = idx + 1 < r.data.count ? (Int(r.data[idx]) | Int(r.data[idx + 1]) << 8) : 0
-                let gVal = idx + 1 < g.data.count ? (Int(g.data[idx]) | Int(g.data[idx + 1]) << 8) : 0
-                let bVal = idx + 1 < b.data.count ? (Int(b.data[idx]) | Int(b.data[idx + 1]) << 8) : 0
-                // PPM 16-bit is big-endian
-                data.append(UInt8((rVal >> 8) & 0xFF))
-                data.append(UInt8(rVal & 0xFF))
-                data.append(UInt8((gVal >> 8) & 0xFF))
-                data.append(UInt8(gVal & 0xFF))
-                data.append(UInt8((bVal >> 8) & 0xFF))
-                data.append(UInt8(bVal & 0xFF))
+        let pixelDataSize = pixelCount * 3 * bytesPerSample
+        var data = Data(capacity: headerData.count + pixelDataSize)
+        data.append(headerData)
+        var pixelBytes = [UInt8](repeating: 0, count: pixelDataSize)
+        if bytesPerSample == 1 {
+            r.data.withUnsafeBytes { rBuf in
+                g.data.withUnsafeBytes { gBuf in
+                    b.data.withUnsafeBytes { bBuf in
+                        let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        for i in 0..<pixelCount {
+                            let off = i &* 3
+                            pixelBytes[off]     = i < r.data.count ? rp[i] : 0
+                            pixelBytes[off + 1] = i < g.data.count ? gp[i] : 0
+                            pixelBytes[off + 2] = i < b.data.count ? bp[i] : 0
+                        }
+                    }
+                }
+            }
+        } else {
+            r.data.withUnsafeBytes { rBuf in
+                g.data.withUnsafeBytes { gBuf in
+                    b.data.withUnsafeBytes { bBuf in
+                        let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        for i in 0..<pixelCount {
+                            let idx = i * 2
+                            let rVal = idx + 1 < r.data.count ? min(Int(rp[idx]) | (Int(rp[idx + 1]) << 8), maxValue) : 0
+                            let gVal = idx + 1 < g.data.count ? min(Int(gp[idx]) | (Int(gp[idx + 1]) << 8), maxValue) : 0
+                            let bVal = idx + 1 < b.data.count ? min(Int(bp[idx]) | (Int(bp[idx + 1]) << 8), maxValue) : 0
+                            let off = i * 6
+                            pixelBytes[off]     = UInt8(rVal >> 8)
+                            pixelBytes[off + 1] = UInt8(rVal & 0xFF)
+                            pixelBytes[off + 2] = UInt8(gVal >> 8)
+                            pixelBytes[off + 3] = UInt8(gVal & 0xFF)
+                            pixelBytes[off + 4] = UInt8(bVal >> 8)
+                            pixelBytes[off + 5] = UInt8(bVal & 0xFF)
+                        }
+                    }
+                }
             }
         }
+        data.append(contentsOf: pixelBytes)
         return data
     }
 
-    /// Load a PGM (Portable GrayMap) file
+    /// Load a PGM (Portable GrayMap) file.
     static func loadPGM(_ data: Data) throws -> J2KImage {
-        var offset = 0
-
-        // Read magic number
-        guard let magic = readLine(from: data, offset: &offset),
-              magic == "P5" else {
+        guard data.count >= 2, data[0] == 0x50, data[1] == 0x35 else {
             throw J2KError.invalidParameter("Invalid PGM file: wrong magic number")
         }
 
-        // Skip comments
-        while offset < data.count && data[offset] == 0x23 { // '#'
-            _ = readLine(from: data, offset: &offset)
-        }
-
-        // Read width and height
-        guard let dimensions = readLine(from: data, offset: &offset),
-              let parts = parseDimensions(dimensions) else {
+        var offset = 2
+        guard
+            let width = readPNMInt(from: data, offset: &offset),
+            let height = readPNMInt(from: data, offset: &offset)
+        else {
             throw J2KError.invalidParameter("Invalid PGM file: missing dimensions")
         }
-        let (width, height) = parts
 
-        // Read max value
-        guard let maxValStr = readLine(from: data, offset: &offset),
-              let maxValue = Int(maxValStr) else {
+        guard let maxValue = readPNMInt(from: data, offset: &offset) else {
             throw J2KError.invalidParameter("Invalid PGM file: missing max value")
         }
 
-        // Determine bit depth from max value: ceil(log2(maxValue + 1))
+        try consumePNMHeaderTerminator(in: data, offset: &offset)
+
         let bitDepth: Int = {
             if maxValue <= 255 { return 8 }
-            var bits = 0; var v = maxValue
-            while v > 0 { v >>= 1; bits += 1 }
+            var bits = 0
+            var value = maxValue
+            while value > 0 {
+                value >>= 1
+                bits += 1
+            }
             return bits
         }()
 
-        // Read pixel data
         let bytesPerPixel = bitDepth <= 8 ? 1 : 2
         let expectedBytes = width * height * bytesPerPixel
         guard offset + expectedBytes <= data.count else {
             throw J2KError.invalidParameter("Invalid PGM file: insufficient pixel data")
         }
 
-        let pixelData = data.subdata(in: offset..<(offset + expectedBytes))
+        let pixelData = Data(data[offset..<(offset + expectedBytes)])
 
-        // Create component (data is already in correct format)
         let component = J2KComponent(
             index: 0,
             bitDepth: bitDepth,
@@ -271,50 +287,44 @@ extension J2KCLI {
         )
     }
 
-    /// Load a PPM (Portable PixMap) file
+    /// Load a PPM (Portable PixMap) file.
     static func loadPPM(_ data: Data) throws -> J2KImage {
-        var offset = 0
-
-        // Read magic number
-        guard let magic = readLine(from: data, offset: &offset),
-              magic == "P6" else {
+        guard data.count >= 2, data[0] == 0x50, data[1] == 0x36 else {
             throw J2KError.invalidParameter("Invalid PPM file: wrong magic number")
         }
 
-        // Skip comments
-        while offset < data.count && data[offset] == 0x23 { // '#'
-            _ = readLine(from: data, offset: &offset)
-        }
-
-        // Read width and height
-        guard let dimensions = readLine(from: data, offset: &offset),
-              let parts = parseDimensions(dimensions) else {
+        var offset = 2
+        guard
+            let width = readPNMInt(from: data, offset: &offset),
+            let height = readPNMInt(from: data, offset: &offset)
+        else {
             throw J2KError.invalidParameter("Invalid PPM file: missing dimensions")
         }
-        let (width, height) = parts
 
-        // Read max value
-        guard let maxValStr = readLine(from: data, offset: &offset),
-              let maxValue = Int(maxValStr) else {
+        guard let maxValue = readPNMInt(from: data, offset: &offset) else {
             throw J2KError.invalidParameter("Invalid PPM file: missing max value")
         }
 
-        // Determine bit depth from max value: ceil(log2(maxValue + 1))
+        try consumePNMHeaderTerminator(in: data, offset: &offset)
+
         let bitDepth: Int = {
             if maxValue <= 255 { return 8 }
-            var bits = 0; var v = maxValue
-            while v > 0 { v >>= 1; bits += 1 }
+            var bits = 0
+            var value = maxValue
+            while value > 0 {
+                value >>= 1
+                bits += 1
+            }
             return bits
         }()
 
-        // Read pixel data (interleaved RGB)
         let bytesPerPixel = bitDepth <= 8 ? 1 : 2
         let expectedBytes = width * height * 3 * bytesPerPixel
         guard offset + expectedBytes <= data.count else {
             throw J2KError.invalidParameter("Invalid PPM file: insufficient pixel data")
         }
 
-        let pixelData = data.subdata(in: offset..<(offset + expectedBytes))
+        let pixelData = Data(data[offset..<(offset + expectedBytes)])
 
         // De-interleave into separate component Data
         var rData = Data(count: width * height * bytesPerPixel)
@@ -412,60 +422,124 @@ extension J2KCLI {
         let bitDepth = max(r.bitDepth, g.bitDepth, b.bitDepth)
         let maxValue = (1 << bitDepth) - 1
 
-        var data = Data()
-
         // Write header
         let header = "P6\n\(image.width) \(image.height)\n\(maxValue)\n"
-        data.append(header.data(using: .ascii)!)
+        let headerData = header.data(using: .ascii)!
 
-        // Write pixel data (interleaved RGB)
-        let bytesPerPixel = bitDepth <= 8 ? 1 : 2
-        for i in 0..<(image.width * image.height) {
-            let rVal = max(0, min(Int(r.data[i]), maxValue))
-            let gVal = max(0, min(Int(g.data[i]), maxValue))
-            let bVal = max(0, min(Int(b.data[i]), maxValue))
+        let pixelCount = image.width * image.height
+        let bytesPerSample = bitDepth <= 8 ? 1 : 2
+        let pixelDataSize = pixelCount * 3 * bytesPerSample
 
-            if bytesPerPixel == 1 {
-                data.append(UInt8(rVal))
-                data.append(UInt8(gVal))
-                data.append(UInt8(bVal))
-            } else {
-                data.append(UInt8(rVal >> 8))
-                data.append(UInt8(rVal & 0xFF))
-                data.append(UInt8(gVal >> 8))
-                data.append(UInt8(gVal & 0xFF))
-                data.append(UInt8(bVal >> 8))
-                data.append(UInt8(bVal & 0xFF))
+        // Pre-allocate full buffer and write pixel data in bulk
+        var data = Data(capacity: headerData.count + pixelDataSize)
+        data.append(headerData)
+
+        if bytesPerSample == 1 {
+            // 8-bit: bulk interleave R, G, B components
+            var pixelBytes = [UInt8](repeating: 0, count: pixelDataSize)
+            r.data.withUnsafeBytes { rBuf in
+                g.data.withUnsafeBytes { gBuf in
+                    b.data.withUnsafeBytes { bBuf in
+                        let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        for i in 0..<pixelCount {
+                            let rVal = Int(rp[i])
+                            let gVal = Int(gp[i])
+                            let bVal = Int(bp[i])
+                            let off = i &* 3
+                            pixelBytes[off]     = UInt8(clamping: min(rVal, maxValue))
+                            pixelBytes[off + 1] = UInt8(clamping: min(gVal, maxValue))
+                            pixelBytes[off + 2] = UInt8(clamping: min(bVal, maxValue))
+                        }
+                    }
+                }
             }
+            data.append(contentsOf: pixelBytes)
+        } else {
+            // 16-bit: big-endian interleave
+            var pixelBytes = [UInt8](repeating: 0, count: pixelDataSize)
+            r.data.withUnsafeBytes { rBuf in
+                g.data.withUnsafeBytes { gBuf in
+                    b.data.withUnsafeBytes { bBuf in
+                        let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        for i in 0..<pixelCount {
+                            let idx = i * 2
+                            let rVal = min(Int(rp[idx]) | (Int(rp[idx + 1]) << 8), maxValue)
+                            let gVal = min(Int(gp[idx]) | (Int(gp[idx + 1]) << 8), maxValue)
+                            let bVal = min(Int(bp[idx]) | (Int(bp[idx + 1]) << 8), maxValue)
+                            let off = i * 6
+                            pixelBytes[off]     = UInt8(rVal >> 8)
+                            pixelBytes[off + 1] = UInt8(rVal & 0xFF)
+                            pixelBytes[off + 2] = UInt8(gVal >> 8)
+                            pixelBytes[off + 3] = UInt8(gVal & 0xFF)
+                            pixelBytes[off + 4] = UInt8(bVal >> 8)
+                            pixelBytes[off + 5] = UInt8(bVal & 0xFF)
+                        }
+                    }
+                }
+            }
+            data.append(contentsOf: pixelBytes)
         }
 
         try data.write(to: url)
     }
 
-    /// Read a line from data
-    private static func readLine(from data: Data, offset: inout Int) -> String? {
-        var lineData = Data()
+    @inline(__always)
+    private static func isPNMWhitespace(_ byte: UInt8) -> Bool {
+        byte == 0x20 || byte == 0x0A || byte == 0x0D || byte == 0x09
+    }
+
+    /// Advances past ASCII whitespace and comment lines in a binary PNM stream.
+    private static func skipPNMWhitespaceAndComments(in data: Data, offset: inout Int) {
+        while offset < data.count {
+            let byte = data[offset]
+            if isPNMWhitespace(byte) {
+                offset += 1
+                continue
+            }
+            if byte == 0x23 { // '#'
+                while offset < data.count && data[offset] != 0x0A {
+                    offset += 1
+                }
+                continue
+            }
+            break
+        }
+    }
+
+    /// Reads a decimal integer token from a binary PNM header.
+    private static func readPNMInt(from data: Data, offset: inout Int) -> Int? {
+        skipPNMWhitespaceAndComments(in: data, offset: &offset)
+        guard offset < data.count else { return nil }
+
+        var value = 0
+        var sawDigit = false
 
         while offset < data.count {
             let byte = data[offset]
+            guard byte >= 0x30 && byte <= 0x39 else { break }
+            sawDigit = true
+            value = value * 10 + Int(byte - 0x30)
             offset += 1
-
-            if byte == 0x0A { // '\n'
-                break
-            }
-
-            if byte != 0x0D { // Ignore '\r'
-                lineData.append(byte)
-            }
         }
 
-        return String(data: lineData, encoding: .ascii)?.trimmingCharacters(in: .whitespaces)
+        return sawDigit ? value : nil
     }
 
-    /// Parse dimensions from string "width height"
-    private static func parseDimensions(_ str: String) -> (Int, Int)? {
-        let parts = str.split(separator: " ").compactMap { Int($0) }
-        guard parts.count == 2 else { return nil }
-        return (parts[0], parts[1])
+    /// Consumes the single whitespace separator between the PNM header and the raster data.
+    private static func consumePNMHeaderTerminator(in data: Data, offset: inout Int) throws {
+        guard offset < data.count, isPNMWhitespace(data[offset]) else {
+            throw J2KError.invalidParameter("Invalid PNM file: missing raster separator")
+        }
+
+        // Binary PNM requires exactly one header separator byte. Preserve any
+        // following bytes verbatim because they belong to the pixel payload.
+        offset += 1
+        if offset < data.count, data[offset - 1] == 0x0D, data[offset] == 0x0A {
+            offset += 1
+        }
     }
 }

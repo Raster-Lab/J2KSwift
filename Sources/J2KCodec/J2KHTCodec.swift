@@ -512,9 +512,11 @@ struct HTJ2KDecoder: Sendable {
         // Decode cleanup pass
         var coefficients = try decoder.decodeCleanup(from: result.cleanupPass)
         var significanceState = coefficients.map { $0 != 0 }
+        let cleanupSignificanceState = significanceState
 
         // Apply refinement passes
         for i in 0..<result.sigPropPasses.count {
+            let preSigPropState = significanceState
             let sigPropResult = try decoder.decodeSigProp(
                 coefficients: coefficients,
                 sigPropData: result.sigPropPasses[i],
@@ -522,16 +524,18 @@ struct HTJ2KDecoder: Sendable {
                 bitPlane: result.cleanupPass.bitPlane - 1 - i
             )
             coefficients = sigPropResult.coefficients
-            significanceState = sigPropResult.significanceState
 
             if i < result.magRefPasses.count {
                 coefficients = try decoder.decodeMagRef(
                     coefficients: coefficients,
                     magRefData: result.magRefPasses[i],
-                    significanceState: significanceState,
+                    significanceState: preSigPropState,
+                    cleanupSignificanceState: cleanupSignificanceState,
                     bitPlane: result.cleanupPass.bitPlane - 1 - i
                 )
             }
+
+            significanceState = sigPropResult.significanceState
         }
 
         return coefficients

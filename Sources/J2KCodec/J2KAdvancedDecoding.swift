@@ -487,7 +487,7 @@ extension J2KDecoder {
     ///   - options: ROI decoding options.
     /// - Returns: The decoded region as an image.
     /// - Throws: ``J2KError`` if decoding fails.
-    public func decodeRegion(_ data: Data, options: J2KROIDecodingOptions) throws -> J2KImage {
+    public func decodeRegion(_ data: Data, options: J2KROIDecodingOptions) async throws -> J2KImage {
         // Placeholder implementation
         // In reality, this would:
         // 1. Identify code-blocks that overlap with the region
@@ -497,7 +497,7 @@ extension J2KDecoder {
         switch options.strategy {
         case .fullImageExtraction:
             // Decode full image then extract
-            let fullImage = try decode(data)
+            let fullImage = try await decode(data)
             return try extractRegion(from: fullImage, region: options.region)
 
         case .direct, .cached:

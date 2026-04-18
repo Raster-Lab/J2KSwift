@@ -344,7 +344,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         image: J2KImage, quality: Double, lossless: Bool,
         bpp: Double? = nil,
         decompositionLevels: Int = 5
-    ) throws -> (time: Double, data: Data) {
+    ) async throws -> (time: Double, data: Data) {
         var config = J2KEncodingConfiguration(
             quality: quality, lossless: lossless,
             decompositionLevels: decompositionLevels)
@@ -360,7 +360,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
 
         let start = CFAbsoluteTimeGetCurrent()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
 
         return (elapsed, encoded)
@@ -374,7 +374,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         image: J2KImage, quality: Double, lossless: Bool,
         bpp: Double? = nil,
         decompositionLevels: Int = 5
-    ) throws -> (time: Double, data: Data) {
+    ) async throws -> (time: Double, data: Data) {
         var config = J2KEncodingConfiguration(
             quality: quality, lossless: lossless,
             decompositionLevels: decompositionLevels)
@@ -388,15 +388,15 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
 
         let start = CFAbsoluteTimeGetCurrent()
-        let encoded = try encoder.encode(image)
+        let encoded = try await encoder.encode(image)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
 
         return (elapsed, encoded)
     }
 
-    private func j2kDecode(data: Data) throws -> (time: Double, image: J2KImage) {
+    private func j2kDecode(data: Data) async throws -> (time: Double, image: J2KImage) {
         let start = CFAbsoluteTimeGetCurrent()
-        let decoded = try DecoderPipeline().decode(data)
+        let decoded = try await DecoderPipeline().decode(data)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
 
         return (elapsed, decoded)
@@ -441,7 +441,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
     // MARK: - Full Benchmark Suite
 
-    func testAcceleratedEncoderBenchmark() throws {
+    func testAcceleratedEncoderBenchmark() async throws {
         // Guard against running in debug mode — Swift debug builds are
         // 20-40× slower than release, producing meaningless benchmarks.
         #if DEBUG
@@ -485,12 +485,12 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
                 let levels = min(5, Int(log2(Double(min(w, h)))) - 1)
 
                 // --- J2KSwift encode ---
-                let (encTime, encoded) = try j2kEncode(
+                let (encTime, encoded) = try await j2kEncode(
                     image: image, quality: quality, lossless: lossless,
                     bpp: bpp, decompositionLevels: levels)
 
                 // --- J2KSwift decode ---
-                let (decTime, decoded) = try j2kDecode(data: encoded)
+                let (decTime, decoded) = try await j2kDecode(data: encoded)
 
                 // --- Quality metrics ---
                 let origData = image.components[0].data
@@ -614,48 +614,40 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
     // MARK: - Encode-only micro-benchmark (XCTest measure)
 
-    func testEncodeSpeed512x512Lossy() throws {
+    func testEncodeSpeed512x512Lossy() async throws {
         let image = generateGradientImage(width: 512, height: 512, components: 1, bitDepth: 8)
         let config = J2KEncodingConfiguration(
             quality: 0.8, lossless: false, decompositionLevels: 5)
         let encoder = J2KEncoder(encodingConfiguration: config)
 
-        measure {
-            _ = try? encoder.encode(image)
-        }
+        _ = try await encoder.encode(image)
     }
 
-    func testEncodeSpeed1024x1024Lossy() throws {
+    func testEncodeSpeed1024x1024Lossy() async throws {
         let image = generateGradientImage(width: 1024, height: 1024, components: 1, bitDepth: 8)
         let config = J2KEncodingConfiguration(
             quality: 0.8, lossless: false, decompositionLevels: 5)
         let encoder = J2KEncoder(encodingConfiguration: config)
 
-        measure {
-            _ = try? encoder.encode(image)
-        }
+        _ = try await encoder.encode(image)
     }
 
-    func testEncodeSpeed512x512Lossless() throws {
+    func testEncodeSpeed512x512Lossless() async throws {
         let image = generateGradientImage(width: 512, height: 512, components: 1, bitDepth: 8)
         let config = J2KEncodingConfiguration(
             quality: 1.0, lossless: true, decompositionLevels: 5)
         let encoder = J2KEncoder(encodingConfiguration: config)
 
-        measure {
-            _ = try? encoder.encode(image)
-        }
+        _ = try await encoder.encode(image)
     }
 
-    func testEncodeSpeedMedical512x512_12bit() throws {
+    func testEncodeSpeedMedical512x512_12bit() async throws {
         let image = generateMedicalPhantom(width: 512, height: 512, bitDepth: 12)
         let config = J2KEncodingConfiguration(
             quality: 0.9, lossless: false, decompositionLevels: 5)
         let encoder = J2KEncoder(encodingConfiguration: config)
 
-        measure {
-            _ = try? encoder.encode(image)
-        }
+        _ = try await encoder.encode(image)
     }
 
     // MARK: - Cross-Codec Interoperability Benchmark
@@ -673,7 +665,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
     /// and verify that cross-codec PSNR matches same-codec PSNR within 1 dB.
     ///
     /// Results are written to `/tmp/j2k_cross_codec/cross_codec_results.csv`.
-    func testCrossCodecInteroperability() throws {
+    func testCrossCodecInteroperability() async throws {
         #if DEBUG
         print("⚠️  WARNING: Running cross-codec benchmark in DEBUG mode. Timing results are unreliable.")
         print("   Use: swift test -c release --filter testCrossCodecInteroperability")
@@ -771,7 +763,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
                 }()
 
                 // ── A. J2KSwift encode (shared for J2K→J2K and J2K→OPJ) ──────────
-                let (j2kEncTime, j2kData) = try j2kEncode(
+                let (j2kEncTime, j2kData) = try await j2kEncode(
                     image: image, quality: quality, lossless: lossless,
                     bpp: bpp, decompositionLevels: levels)
                 let j2kFilePath = "\(crossDir)/\(tag)_j2k.j2k"
@@ -793,7 +785,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
                 // ── 1. J2KSwift → J2KSwift ───────────────────────────────────────
                 do {
-                    let (decTime, decImage) = try j2kDecode(data: j2kData)
+                    let (decTime, decImage) = try await j2kDecode(data: j2kData)
                     let decData = decImage.components[0].data
                     let psnr = computePSNR(original: origData, decoded: decData, bitDepth: bd)
                     let mae  = computeMAE(original: origData, decoded: decData, bitDepth: bd)
@@ -841,7 +833,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
                 // ── 3. OpenJPEG → J2KSwift ───────────────────────────────────────
                 do {
                     let opjRawData = try Data(contentsOf: URL(fileURLWithPath: opjJ2kPath))
-                    let (decTime, decImage) = try j2kDecode(data: opjRawData)
+                    let (decTime, decImage) = try await j2kDecode(data: opjRawData)
                     let decData = decImage.components[0].data
                     let psnr = computePSNR(original: origData, decoded: decData, bitDepth: bd)
                     let mae  = computeMAE(original: origData, decoded: decData, bitDepth: bd)
@@ -886,13 +878,13 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
                 // ── 5. HTJ2K → HTJ2K (self round-trip) ───────────────────────────
                 do {
-                    let (htEncTime, htData) = try htj2kEncode(
+                    let (htEncTime, htData) = try await htj2kEncode(
                         image: image, quality: quality, lossless: lossless,
                         bpp: bpp, decompositionLevels: levels)
                     let htFilePath = "\(crossDir)/\(tag)_htj2k.j2k"
                     try htData.write(to: URL(fileURLWithPath: htFilePath))
 
-                    let (htDecTime, htDecImage) = try j2kDecode(data: htData)
+                    let (htDecTime, htDecImage) = try await j2kDecode(data: htData)
                     let htDecData = htDecImage.components[0].data
                     let psnr = computePSNR(original: origData, decoded: htDecData, bitDepth: bd)
                     let mae  = computeMAE(original: origData, decoded: htDecData, bitDepth: bd)
@@ -1042,7 +1034,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
     // MARK: - HTJ2K Lossy Diagnostic
 
-    func testHTJ2KLossyDiagnostic() throws {
+    func testHTJ2KLossyDiagnostic() async throws {
         let width = 64, height = 64, bitDepth = 8
         // Create gradient test image using J2KImage convenience init + pixel data
         let image = generateGradientImage(width: width, height: height, components: 1, bitDepth: bitDepth)
@@ -1066,8 +1058,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         losslessCfg.useHTJ2K = true
         losslessCfg.decompositionLevels = 3
         let enc1 = J2KEncoder(encodingConfiguration: losslessCfg)
-        let data1 = try enc1.encode(image)
-        let dec1 = try DecoderPipeline().decode(data1)
+        let data1 = try await enc1.encode(image)
+        let dec1 = try await DecoderPipeline().decode(data1)
         let psnr1 = computePSNR(image, dec1)
         print("HTJ2K LOSSLESS: PSNR=\(psnr1) size=\(data1.count)")
 
@@ -1077,8 +1069,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         lossyCfg.decompositionLevels = 3
         lossyCfg.qualityLayers = 1
         let enc2 = J2KEncoder(encodingConfiguration: lossyCfg)
-        let data2 = try enc2.encode(image)
-        let dec2 = try DecoderPipeline().decode(data2)
+        let data2 = try await enc2.encode(image)
+        let dec2 = try await DecoderPipeline().decode(data2)
         let psnr2 = computePSNR(image, dec2)
         print("HTJ2K LOSSY-97: PSNR=\(psnr2) size=\(data2.count)")
 
@@ -1088,8 +1080,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         stdCfg.decompositionLevels = 3
         stdCfg.qualityLayers = 1
         let enc3 = J2KEncoder(encodingConfiguration: stdCfg)
-        let data3 = try enc3.encode(image)
-        let dec3 = try DecoderPipeline().decode(data3)
+        let data3 = try await enc3.encode(image)
+        let dec3 = try await DecoderPipeline().decode(data3)
         let psnr3 = computePSNR(image, dec3)
         print("STD LOSSY-97: PSNR=\(psnr3) size=\(data3.count)")
 
@@ -1100,8 +1092,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         rev53Cfg.qualityLayers = 1
         rev53Cfg.useReversibleFilter = true
         let enc4 = J2KEncoder(encodingConfiguration: rev53Cfg)
-        let data4 = try enc4.encode(image)
-        let dec4 = try DecoderPipeline().decode(data4)
+        let data4 = try await enc4.encode(image)
+        let dec4 = try await DecoderPipeline().decode(data4)
         let psnr4 = computePSNR(image, dec4)
         print("HTJ2K LOSSY-53: PSNR=\(psnr4) size=\(data4.count)")
 
@@ -1111,8 +1103,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         maxQCfg.decompositionLevels = 3
         maxQCfg.qualityLayers = 1
         let enc5 = J2KEncoder(encodingConfiguration: maxQCfg)
-        let data5 = try enc5.encode(image)
-        let dec5 = try DecoderPipeline().decode(data5)
+        let data5 = try await enc5.encode(image)
+        let dec5 = try await DecoderPipeline().decode(data5)
         let psnr5 = computePSNR(image, dec5)
         print("HTJ2K LOSSY-97 q=1.0: PSNR=\(psnr5) size=\(data5.count)")
 
@@ -1122,8 +1114,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         maxQStd.decompositionLevels = 3
         maxQStd.qualityLayers = 1
         let enc6 = J2KEncoder(encodingConfiguration: maxQStd)
-        let data6 = try enc6.encode(image)
-        let dec6 = try DecoderPipeline().decode(data6)
+        let data6 = try await enc6.encode(image)
+        let dec6 = try await DecoderPipeline().decode(data6)
         let psnr6 = computePSNR(image, dec6)
         print("STD LOSSY-97 q=1.0: PSNR=\(psnr6) size=\(data6.count)")
 
@@ -1162,7 +1154,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
     }
 
     /// Tests HTJ2K block coder encode→decode directly (no pipeline).
-    func testHTJ2KBlockCoderDirect() throws {
+    func testHTJ2KBlockCoderDirect() async throws {
         let w = 8, h = 8
         // Simple gradient coefficients with values 0..63
         var coefficients = [Int32](repeating: 0, count: w * h)
@@ -1175,7 +1167,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
         // Encode cleanup at topBitPlane = 5 (max value 63, 2^5=32 ≤ 63 < 64=2^6)
         let topBP = 5
-        let cleanupBlock = try encoder.encodeCleanup(
+        let cleanupBlock = try await encoder.encodeCleanup(
             coefficients: coefficients.map { Int($0) }, bitPlane: topBP)
 
         // Full decode (cleanup only)
@@ -1200,6 +1192,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
             }
         }
 
+        let cleanupSigPacked = sigPacked
         var allData = cleanupBlock.codedData
         var totalPasses = 1
         var passLengths = [cleanupBlock.codedData.count]
@@ -1209,6 +1202,7 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
                 coefficients: coefficients,
                 absMags: absMags,
                 sigPacked: &sigPacked,
+                cleanupSigPacked: cleanupSigPacked,
                 bitPlane: bp
             )
             allData.append(refResult.sigPropData)

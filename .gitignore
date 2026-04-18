@@ -96,6 +96,9 @@ $RECYCLE.BIN/
 tmp/
 temp/
 
+# Local viewer outputs for manual codec inspection
+tmp/codec-viewer/
+
 # Documentation
 .docs/
 docs/build/
@@ -123,6 +126,9 @@ benchmark_results/
 *.benchmark
 *.profiling
 profile_results*/
+
+# Local real-world medical datasets
+LocalDatasets/
 
 # Other
 *.orig

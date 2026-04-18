@@ -1823,57 +1823,58 @@ struct HTBlockEncoder: Sendable {
         coefficients: [Int32],
         absMags: [Int32],
         sigPacked: inout [UInt64],
+        cleanupSigPacked: [UInt64],
         bitPlane: Int,
         output: inout Data,
         sigPropWriter: inout HTFastBitWriter,
         magRefWriter: inout HTFastBitWriter
     ) -> (sigPropBytes: Int, magRefBytes: Int) {
         let bp32 = Int32(bitPlane)
-
         let numStripes = (height + 3) / 4
+
         absMags.withUnsafeBufferPointer { magPtr in
-            coefficients.withUnsafeBufferPointer { coefPtr in
-                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
-                    let magBase = magPtr.baseAddress!
-                    let coefBase = coefPtr.baseAddress!
-                    let sigBase = sigPtr.baseAddress!
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                        let magBase = magPtr.baseAddress!
+                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let coefBase = coefPtr.baseAddress!
+                        let sigBase = sigPtr.baseAddress!
 
-                    for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        let baseY = stripe * 4
-                        for col in 0..<width {
-                            // Batch MagRef bits per stripe column: collect up to 4
-                            // bits destined for the MagRef writer and emit them in
-                            // one emitBits call instead of up to 4 emitBit calls.
-                            var magBits = 0
-                            var magCount = 0
+                        for stripe in 0..<numStripes {
+                            let stripeHeight = min(4, height - stripe * 4)
+                            let baseY = stripe * 4
+                            for col in 0..<width {
+                                var magBits = 0
+                                var magCount = 0
 
-                            for row in 0..<stripeHeight {
-                                let y = baseY + row
-                                let idx = y * width + col
+                                for row in 0..<stripeHeight {
+                                    let y = baseY + row
+                                    let idx = y * width + col
 
-                                let wordIdx = idx >> 6
-                                let bitIdx = idx & 63
-                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wordIdx = idx >> 6
+                                    let bitIdx = idx & 63
+                                    let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                if isSignificant {
-                                    // Pack MSB-first: shift left and OR in new bit so
-                                    // row-0's bit occupies the MSB, matching the
-                                    // MSB-first emission order of emitBits.
-                                    magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
-                                    magCount += 1
-                                } else {
-                                    let bit = Int((magBase[idx] >> bp32) & 1)
-                                    sigPropWriter.emitBit(bit)
-                                    if bit != 0 {
-                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
-                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    if isSignificant {
+                                        if !wasCleanupSignificant {
+                                            magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
+                                            magCount += 1
+                                        }
+                                    } else {
+                                        let bit = Int((magBase[idx] >> bp32) & 1)
+                                        sigPropWriter.emitBit(bit)
+                                        if bit != 0 {
+                                            sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                            sigBase[wordIdx] |= 1 << bitIdx
+                                        }
                                     }
                                 }
-                            }
 
-                            if magCount > 0 {
-                                magRefWriter.emitBits(magBits, count: magCount)
+                                if magCount > 0 {
+                                    magRefWriter.emitBits(magBits, count: magCount)
+                                }
                             }
                         }
                     }
@@ -1899,50 +1900,49 @@ struct HTBlockEncoder: Sendable {
         coefficients: [Int32],
         absMags: [Int32],
         sigPacked: inout [UInt64],
+        cleanupSigPacked: [UInt64],
         bitPlane: Int
     ) -> (sigPropData: Data, magRefData: Data) {
         let count = width * height
         let bp32 = Int32(bitPlane)
-        // Worst case: 2 bits per non-significant sample (bit + sign), 1 bit per significant
         let maxBytes = max(4, (count * 2 + 7) / 8)
         var sigPropWriter = HTFastBitWriter(capacity: maxBytes)
         var magRefWriter = HTFastBitWriter(capacity: maxBytes)
 
-        // Single scan in stripe order — fuse SigProp and MagRef.
-        // Uses unsafe pointer access to eliminate bounds checking.
         let numStripes = (height + 3) / 4
         absMags.withUnsafeBufferPointer { magPtr in
-            coefficients.withUnsafeBufferPointer { coefPtr in
-                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
-                    let magBase = magPtr.baseAddress!
-                    let coefBase = coefPtr.baseAddress!
-                    let sigBase = sigPtr.baseAddress!
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                        let magBase = magPtr.baseAddress!
+                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let coefBase = coefPtr.baseAddress!
+                        let sigBase = sigPtr.baseAddress!
 
-                    for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        for col in 0..<width {
-                            for row in 0..<stripeHeight {
-                                let y = stripe * 4 + row
-                                let idx = y * width + col
+                        for stripe in 0..<numStripes {
+                            let stripeHeight = min(4, height - stripe * 4)
+                            for col in 0..<width {
+                                for row in 0..<stripeHeight {
+                                    let y = stripe * 4 + row
+                                    let idx = y * width + col
 
-                                let wordIdx = idx >> 6
-                                let bitIdx = idx & 63
-                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wordIdx = idx >> 6
+                                    let bitIdx = idx & 63
+                                    let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                if isSignificant {
-                                    // MagRef: emit the bit at this bit-plane for significant samples
-                                    let bit = Int((magBase[idx] >> bp32) & 1)
-                                    magRefWriter.emitBit(bit)
-                                } else {
-                                    // SigProp: check if this sample becomes significant at this bit-plane
-                                    let bit = Int((magBase[idx] >> bp32) & 1)
-                                    sigPropWriter.emitBit(bit)
-
-                                    if bit != 0 {
-                                        // Also encode sign
-                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
-                                        // Update significance in packed bitfield
-                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    if isSignificant {
+                                        if !wasCleanupSignificant {
+                                            let bit = Int((magBase[idx] >> bp32) & 1)
+                                            magRefWriter.emitBit(bit)
+                                        }
+                                    } else {
+                                        let bit = Int((magBase[idx] >> bp32) & 1)
+                                        sigPropWriter.emitBit(bit)
+                                        if bit != 0 {
+                                            sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                            sigBase[wordIdx] |= 1 << bitIdx
+                                        }
                                     }
                                 }
                             }
@@ -1972,6 +1972,7 @@ struct HTBlockEncoder: Sendable {
         coefficients: [Int32],
         absMags: [Int32],
         sigPacked: inout [UInt64],
+        cleanupSigPacked: [UInt64],
         bitPlane: Int,
         output: inout Data
     ) -> (sigPropBytes: Int, magRefBytes: Int) {
@@ -1983,33 +1984,38 @@ struct HTBlockEncoder: Sendable {
 
         let numStripes = (height + 3) / 4
         absMags.withUnsafeBufferPointer { magPtr in
-            coefficients.withUnsafeBufferPointer { coefPtr in
-                sigPacked.withUnsafeMutableBufferPointer { sigPtr in
-                    let magBase = magPtr.baseAddress!
-                    let coefBase = coefPtr.baseAddress!
-                    let sigBase = sigPtr.baseAddress!
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+                coefficients.withUnsafeBufferPointer { coefPtr in
+                    sigPacked.withUnsafeMutableBufferPointer { sigPtr in
+                        let magBase = magPtr.baseAddress!
+                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let coefBase = coefPtr.baseAddress!
+                        let sigBase = sigPtr.baseAddress!
 
-                    for stripe in 0..<numStripes {
-                        let stripeHeight = min(4, height - stripe * 4)
-                        for col in 0..<width {
-                            for row in 0..<stripeHeight {
-                                let y = stripe * 4 + row
-                                let idx = y * width + col
+                        for stripe in 0..<numStripes {
+                            let stripeHeight = min(4, height - stripe * 4)
+                            for col in 0..<width {
+                                for row in 0..<stripeHeight {
+                                    let y = stripe * 4 + row
+                                    let idx = y * width + col
 
-                                let wordIdx = idx >> 6
-                                let bitIdx = idx & 63
-                                let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wordIdx = idx >> 6
+                                    let bitIdx = idx & 63
+                                    let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                if isSignificant {
-                                    let bit = Int((magBase[idx] >> bp32) & 1)
-                                    magRefWriter.emitBit(bit)
-                                } else {
-                                    let bit = Int((magBase[idx] >> bp32) & 1)
-                                    sigPropWriter.emitBit(bit)
-
-                                    if bit != 0 {
-                                        sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
-                                        sigBase[wordIdx] |= 1 << bitIdx
+                                    if isSignificant {
+                                        if !wasCleanupSignificant {
+                                            let bit = Int((magBase[idx] >> bp32) & 1)
+                                            magRefWriter.emitBit(bit)
+                                        }
+                                    } else {
+                                        let bit = Int((magBase[idx] >> bp32) & 1)
+                                        sigPropWriter.emitBit(bit)
+                                        if bit != 0 {
+                                            sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                            sigBase[wordIdx] |= 1 << bitIdx
+                                        }
                                     }
                                 }
                             }
@@ -2343,6 +2349,7 @@ struct HTBlockDecoder: Sendable {
             height: height
         )
         var coefficients = try decodeCleanup(from: block)
+        let cleanupSignificanceState = coefficients.map { $0 != 0 }
 
         // Apply refinement passes (SigProp + MagRef pairs) from the remaining data.
         // The refinement data forms a continuous bit-packed stream. When per-pass
@@ -2384,6 +2391,7 @@ struct HTBlockDecoder: Sendable {
                             coefficients: coefficients,
                             magRefData: segments[passIdx],
                             significanceState: preSigPropState,
+                            cleanupSignificanceState: cleanupSignificanceState,
                             bitPlane: bp
                         )
                         passIdx += 1
@@ -2426,6 +2434,7 @@ struct HTBlockDecoder: Sendable {
                         coefficients = try decodeMagRefFromReader(
                             coefficients: coefficients,
                             significanceState: preSigPropState,
+                            cleanupSignificanceState: cleanupSignificanceState,
                             bitPlane: bp,
                             reader: &reader
                         )
@@ -2485,6 +2494,7 @@ struct HTBlockDecoder: Sendable {
     private func decodeMagRefFromReader(
         coefficients: [Int],
         significanceState: [Bool],
+        cleanupSignificanceState: [Bool],
         bitPlane: Int,
         reader: inout J2KBitReader
     ) throws -> [Int] {
@@ -2498,7 +2508,7 @@ struct HTBlockDecoder: Sendable {
                     let y = stripe * 4 + row
                     let idx = y * width + col
 
-                    if significanceState[idx] {
+                    if significanceState[idx] && !cleanupSignificanceState[idx] {
                         guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
                         let bit = try reader.readBit()
                         if bit {
@@ -2576,6 +2586,7 @@ struct HTBlockDecoder: Sendable {
         coefficients: [Int],
         magRefData: Data,
         significanceState: [Bool],
+        cleanupSignificanceState: [Bool],
         bitPlane: Int
     ) throws -> [Int] {
         var coeffs = coefficients
@@ -2589,7 +2600,7 @@ struct HTBlockDecoder: Sendable {
                     let y = stripe * 4 + row
                     let idx = y * width + col
 
-                    if significanceState[idx] {
+                    if significanceState[idx] && !cleanupSignificanceState[idx] {
                         guard reader.bytesRemaining > 0 else { break }
                         let bit = try reader.readBit()
                         if bit {

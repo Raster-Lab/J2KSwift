@@ -5,6 +5,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
+@testable import J2KCLI
 
 /// Tests for 3D volumetric decoding via the decode3d CLI command.
 final class Decode3DTests: XCTestCase {
@@ -104,5 +105,31 @@ final class Decode3DTests: XCTestCase {
         let pattern = "ct_scan_%04d.ppm"
         XCTAssertEqual(String(format: pattern, 0), "ct_scan_0000.ppm")
         XCTAssertEqual(String(format: pattern, 123), "ct_scan_0123.ppm")
+    }
+
+    func testMakeSliceImagePreserves16BitStride() throws {
+        let volume = J2KVolume(
+            width: 2,
+            height: 1,
+            depth: 2,
+            components: [
+                J2KVolumeComponent(
+                    index: 0,
+                    bitDepth: 16,
+                    signed: false,
+                    width: 2,
+                    height: 1,
+                    depth: 2,
+                    data: Data([0x00, 0x10, 0x00, 0x20, 0x00, 0x30, 0x00, 0x40])
+                )
+            ]
+        )
+
+        let slice0 = try J2KCLI.makeSliceImage(from: volume, atDepth: 0)
+        let slice1 = try J2KCLI.makeSliceImage(from: volume, atDepth: 1)
+
+        XCTAssertEqual(slice0.components[0].data, Data([0x00, 0x10, 0x00, 0x20]))
+        XCTAssertEqual(slice1.components[0].data, Data([0x00, 0x30, 0x00, 0x40]))
+        XCTAssertEqual(slice0.components[0].bitDepth, 16)
     }
 }
