@@ -112,41 +112,11 @@ extension J2KCLI {
 
             let sliceNaming = options["slice-naming"] ?? "slice_%04d"
             let sliceExt = outputFormat.isEmpty ? "pgm" : outputFormat
-            let sliceSize = resultWidth * resultHeight
-            let componentData = decodedVolume.components.first?.data ?? Data()
-            let bitDepth = decodedVolume.components.first?.bitDepth ?? 8
 
             for z in 0..<resultDepth {
                 let sliceName = String(format: sliceNaming, z) + ".\(sliceExt)"
                 let slicePath = (outputPath as NSString).appendingPathComponent(sliceName)
-
-                let sliceStart = z * sliceSize
-                let sliceEnd = min(sliceStart + sliceSize, componentData.count)
-                let sliceData: Data
-                if sliceStart < componentData.count {
-                    sliceData = componentData.subdata(in: sliceStart..<sliceEnd)
-                } else {
-                    sliceData = Data(count: sliceSize)
-                }
-
-                let component = J2KComponent(
-                    index: 0,
-                    bitDepth: bitDepth,
-                    signed: false,
-                    width: resultWidth,
-                    height: resultHeight,
-                    subsamplingX: 1,
-                    subsamplingY: 1,
-                    data: sliceData
-                )
-
-                let sliceImage = J2KImage(
-                    width: resultWidth,
-                    height: resultHeight,
-                    components: [component],
-                    colorSpace: .grayscale
-                )
-
+                let sliceImage = try makeSliceImage(from: decodedVolume, atDepth: z)
                 try saveImage(sliceImage, to: slicePath)
             }
 
@@ -188,6 +158,48 @@ extension J2KCLI {
                 print("    Throughput: \(String(format: "%.2f", vps)) Mvoxel/s")
             }
         }
+    }
+
+    // MARK: - Helpers
+
+    static func makeSliceImage(from volume: J2KVolume, atDepth z: Int) throws -> J2KImage {
+        guard z >= 0 && z < volume.depth else {
+            throw J2KError.invalidParameter(
+                "Slice index out of range: \(z) for volume depth \(volume.depth)"
+            )
+        }
+
+        let components = try volume.components.map { component in
+            let bytesPerSample = component.bytesPerSample
+            let bytesPerSlice = volume.width * volume.height * bytesPerSample
+            let sliceStart = z * bytesPerSlice
+            let sliceEnd = sliceStart + bytesPerSlice
+
+            guard sliceEnd <= component.data.count else {
+                throw J2KError.invalidParameter(
+                    "Component \(component.index) does not contain enough data for slice \(z)"
+                )
+            }
+
+            return J2KComponent(
+                index: component.index,
+                bitDepth: component.bitDepth,
+                signed: component.signed,
+                width: volume.width,
+                height: volume.height,
+                subsamplingX: component.subsamplingX,
+                subsamplingY: component.subsamplingY,
+                data: component.data.subdata(in: sliceStart..<sliceEnd)
+            )
+        }
+
+        let colorSpace: J2KColorSpace = components.count == 1 ? .grayscale : .sRGB
+        return J2KImage(
+            width: volume.width,
+            height: volume.height,
+            components: components,
+            colorSpace: colorSpace
+        )
     }
 
     // MARK: - Help

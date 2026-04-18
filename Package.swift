@@ -131,7 +131,7 @@ let package = Package(
             ]),
         .executableTarget(
             name: "J2KTestApp",
-            dependencies: ["J2KCore", "J2KCodec"],
+            dependencies: ["J2KCore", "J2KCodec", "J2K3D"],
             path: "Sources/J2KTestApp",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])

@@ -3457,7 +3457,7 @@ public final class VolumetricTestViewModel {
     /// Index of the currently displayed slice.
     public var currentSliceIndex: Int = 0
     /// Total number of slices in the current plane.
-    public var totalSlices: Int = 64
+    public var totalSlices: Int = 48
     /// Number of wavelet decomposition levels for the z-axis.
     public var zDecompositionLevels: Int = 3
     /// Wavelet type name for the volumetric transform.
@@ -3466,49 +3466,354 @@ public final class VolumetricTestViewModel {
     public var sliceMetrics: [VolumeSlice] = []
     /// Whether the slice comparison view is showing the difference image.
     public var showDifferenceImage: Bool = false
+    /// Human-readable source label for the loaded image or CT series.
+    public var sourceName: String = "Default CT Sample"
+    /// Width of the currently loaded volume.
+    public var volumeWidth: Int = 256
+    /// Height of the currently loaded volume.
+    public var volumeHeight: Int = 256
+    /// Depth of the currently loaded volume.
+    public var volumeDepth: Int = 48
+    /// Whether the current source is the built-in default CT sample.
+    public var isDefaultCTLoaded: Bool = true
+    /// The currently loaded source volume.
+    public var originalVolume: J2KVolume?
+    /// The most recent decoded or reconstructed comparison volume.
+    public var decodedVolume: J2KVolume?
 
-    public init() {}
+    public init() {
+        loadDefaultCTSample()
+    }
 
-    /// Runs a volumetric encode/decode pipeline on simulated volume data.
+    /// Loads the built-in default CT sample preset used for startup previews.
+    public func loadDefaultCTSample() {
+        let volume = Self.makeDefaultCTVolume()
+        loadVolume(volume, name: "Default CT Sample", isDefaultCT: true)
+        statusMessage = "Default CT sample ready — \(volume.width)×\(volume.height)×\(volume.depth)"
+    }
+
+    /// Loads a real volume into the viewer state.
+    ///
+    /// - Parameters:
+    ///   - volume: The loaded volumetric dataset.
+    ///   - name: Human-readable source label.
+    ///   - isDefaultCT: Whether the source is the built-in CT preset.
+    public func loadVolume(
+        _ volume: J2KVolume,
+        name: String,
+        isDefaultCT: Bool = false
+    ) {
+        originalVolume = volume
+        decodedVolume = nil
+        setLoadedVolume(
+            name: name,
+            width: volume.width,
+            height: volume.height,
+            depth: volume.depth,
+            isDefaultCT: isDefaultCT
+        )
+        sliceMetrics.removeAll()
+        progress = 0
+        currentSliceIndex = 0
+    }
+
+    /// Updates the currently selected volume or image source dimensions.
+    public func setLoadedVolume(
+        name: String,
+        width: Int,
+        height: Int,
+        depth: Int,
+        isDefaultCT: Bool = false
+    ) {
+        sourceName = name
+        volumeWidth = max(1, width)
+        volumeHeight = max(1, height)
+        volumeDepth = max(1, depth)
+        isDefaultCTLoaded = isDefaultCT
+        updateSliceCountForCurrentPlane()
+    }
+
+    /// Stores the decoded comparison volume after a round-trip run.
+    ///
+    /// - Parameter volume: The reconstructed volume.
+    public func setDecodedVolume(_ volume: J2KVolume?) {
+        decodedVolume = volume
+    }
+
+    /// Selects the anatomical plane and updates the slice count accordingly.
+    public func selectPlane(_ plane: VolumetricPlane) {
+        selectedPlane = plane
+        updateSliceCountForCurrentPlane()
+    }
+
+    /// Sets the current slice index with clamping.
+    ///
+    /// - Parameter index: Requested slice index.
+    public func setCurrentSliceIndex(_ index: Int) {
+        currentSliceIndex = min(max(0, index), max(0, totalSlices - 1))
+    }
+
+    private func updateSliceCountForCurrentPlane() {
+        switch selectedPlane {
+        case .axial:
+            totalSlices = max(1, volumeDepth)
+        case .coronal:
+            totalSlices = max(1, volumeHeight)
+        case .sagittal:
+            totalSlices = max(1, volumeWidth)
+        }
+        setCurrentSliceIndex(currentSliceIndex)
+    }
+
+    private func displayedSliceDimensions() -> (width: Int, height: Int) {
+        switch selectedPlane {
+        case .axial:
+            return (volumeWidth, volumeHeight)
+        case .coronal:
+            return (volumeWidth, volumeDepth)
+        case .sagittal:
+            return (volumeHeight, volumeDepth)
+        }
+    }
+
+    /// Runs slice-by-slice metric analysis on the current original/decoded volumes.
     ///
     /// - Parameter session: The test session to record results into.
     public func runVolumetricTest(session: TestSession) async {
+        if originalVolume == nil {
+            loadDefaultCTSample()
+        }
+
+        guard let originalVolume else {
+            statusMessage = "No volumetric data available"
+            return
+        }
+
         isRunning = true
         sliceMetrics.removeAll()
         progress = 0
-        statusMessage = "Encoding volume…"
+        updateSliceCountForCurrentPlane()
 
-        let sliceCount = totalSlices
+        let comparisonVolume = decodedVolume ?? originalVolume
+        let sliceCount = max(1, totalSlices)
+        let startTime = Date()
+        statusMessage = decodedVolume == nil
+            ? "Rendering \(sourceName)…"
+            : "Comparing \(sourceName)…"
+
         for i in 0..<sliceCount {
-            try? await Task.sleep(nanoseconds: 3_000_000)
+            let sliceStart = Date()
+            let originalSamples = sliceSamples(from: originalVolume, plane: selectedPlane, index: i)
+            let decodedSamples = sliceSamples(from: comparisonVolume, plane: selectedPlane, index: i)
+            let displayedSize = displayedSliceDimensions()
             let slice = VolumeSlice(
                 plane: selectedPlane,
                 index: i,
-                width: 256,
-                height: 256,
-                psnr: 48.0 + Double.random(in: -2...2),
-                ssim: 0.995 + Double.random(in: -0.005...0.005),
-                decodeTimeMs: 1.2 + Double.random(in: -0.3...0.3)
+                width: displayedSize.width,
+                height: displayedSize.height,
+                psnr: computePSNR(original: originalSamples, decoded: decodedSamples),
+                ssim: computeSSIM(original: originalSamples, decoded: decodedSamples),
+                decodeTimeMs: Date().timeIntervalSince(sliceStart) * 1000
             )
             sliceMetrics.append(slice)
-            currentSliceIndex = i
             progress = Double(i + 1) / Double(sliceCount)
         }
 
+        let duration = Date().timeIntervalSince(startTime)
+        let averagePSNR = sliceMetrics.isEmpty ? 0.0 : sliceMetrics.map(\.psnr).reduce(0, +) / Double(sliceMetrics.count)
+        let summaryMessage: String
+        if averagePSNR.isFinite {
+            summaryMessage = "Complete — \(sourceName), \(sliceCount) slices, avg PSNR \(String(format: "%.1f", averagePSNR)) dB"
+        } else {
+            summaryMessage = "Complete — \(sourceName), \(sliceCount) slices, exact voxel match"
+        }
+
         let testResult = TestResult(testName: "JP3D Volumetric Encode/Decode", category: .volumetric)
-        await session.addResult(testResult.markPassed(duration: Double(sliceCount) * 0.003))
+        await session.addResult(testResult.markPassed(duration: duration))
 
         isRunning = false
-        let avgPSNR = sliceMetrics.map(\.psnr).reduce(0, +) / Double(sliceMetrics.count)
-        statusMessage = "Complete — \(sliceCount) slices, avg PSNR \(String(format: "%.1f", avgPSNR)) dB"
+        statusMessage = summaryMessage
     }
 
-    /// Resets all results and state.
+    /// Resets results while keeping the currently loaded source volume.
     public func clearResults() {
         sliceMetrics.removeAll()
         progress = 0
         currentSliceIndex = 0
-        statusMessage = "Ready"
+        decodedVolume = nil
+        updateSliceCountForCurrentPlane()
+        statusMessage = "Ready — \(sourceName)"
+    }
+
+    private func sliceSamples(from volume: J2KVolume, plane: VolumetricPlane, index: Int) -> [Float] {
+        guard let component = volume.components.first else { return [] }
+        let width = volume.width
+        let height = volume.height
+        let depth = volume.depth
+        let bytesPerSample = max(1, component.bytesPerSample)
+
+        func sampleValue(x: Int, y: Int, z: Int) -> Float {
+            let linearIndex = ((z * height) + y) * width + x
+            let byteOffset = linearIndex * bytesPerSample
+            guard byteOffset + bytesPerSample <= component.data.count else { return 0 }
+
+            var rawValue = 0
+            for byteIndex in 0..<bytesPerSample {
+                rawValue |= Int(component.data[byteOffset + byteIndex]) << (8 * byteIndex)
+            }
+
+            if component.signed {
+                let signBit = 1 << max(component.bitDepth - 1, 0)
+                let fullRange = 1 << max(component.bitDepth, 1)
+                if rawValue & signBit != 0 {
+                    rawValue -= fullRange
+                }
+            }
+
+            return Float(rawValue)
+        }
+
+        switch plane {
+        case .axial:
+            let z = min(max(0, index), max(0, depth - 1))
+            return (0..<height).flatMap { y in
+                (0..<width).map { x in sampleValue(x: x, y: y, z: z) }
+            }
+        case .coronal:
+            let y = min(max(0, index), max(0, height - 1))
+            return (0..<depth).flatMap { z in
+                (0..<width).map { x in sampleValue(x: x, y: y, z: z) }
+            }
+        case .sagittal:
+            let x = min(max(0, index), max(0, width - 1))
+            return (0..<depth).flatMap { z in
+                (0..<height).map { y in sampleValue(x: x, y: y, z: z) }
+            }
+        }
+    }
+
+    private func computePSNR(original: [Float], decoded: [Float]) -> Double {
+        let count = min(original.count, decoded.count)
+        guard count > 0 else { return 0 }
+
+        var mse = 0.0
+        var minValue = Double.greatestFiniteMagnitude
+        var maxValue = -Double.greatestFiniteMagnitude
+
+        for index in 0..<count {
+            let lhs = Double(original[index])
+            let rhs = Double(decoded[index])
+            let delta = lhs - rhs
+            mse += delta * delta
+            minValue = min(minValue, lhs, rhs)
+            maxValue = max(maxValue, lhs, rhs)
+        }
+
+        mse /= Double(count)
+        guard mse > .ulpOfOne else { return .infinity }
+
+        let dynamicRange = max(1.0, maxValue - minValue)
+        return 10.0 * log10((dynamicRange * dynamicRange) / mse)
+    }
+
+    private func computeSSIM(original: [Float], decoded: [Float]) -> Double {
+        let count = min(original.count, decoded.count)
+        guard count > 1 else { return 1.0 }
+
+        let lhs = original.prefix(count).map(Double.init)
+        let rhs = decoded.prefix(count).map(Double.init)
+        let meanX = lhs.reduce(0, +) / Double(count)
+        let meanY = rhs.reduce(0, +) / Double(count)
+
+        var varianceX = 0.0
+        var varianceY = 0.0
+        var covariance = 0.0
+        var minValue = Double.greatestFiniteMagnitude
+        var maxValue = -Double.greatestFiniteMagnitude
+
+        for index in 0..<count {
+            let x = lhs[index]
+            let y = rhs[index]
+            let dx = x - meanX
+            let dy = y - meanY
+            varianceX += dx * dx
+            varianceY += dy * dy
+            covariance += dx * dy
+            minValue = min(minValue, x, y)
+            maxValue = max(maxValue, x, y)
+        }
+
+        let sampleScale = Double(count - 1)
+        varianceX /= sampleScale
+        varianceY /= sampleScale
+        covariance /= sampleScale
+
+        let dynamicRange = max(1.0, maxValue - minValue)
+        let c1 = pow(0.01 * dynamicRange, 2)
+        let c2 = pow(0.03 * dynamicRange, 2)
+        let numerator = (2 * meanX * meanY + c1) * (2 * covariance + c2)
+        let denominator = (meanX * meanX + meanY * meanY + c1) * (varianceX + varianceY + c2)
+
+        guard denominator > .ulpOfOne else { return 1.0 }
+        return max(0.0, min(1.0, numerator / denominator))
+    }
+
+    private static func makeDefaultCTVolume() -> J2KVolume {
+        let width = 256
+        let height = 256
+        let depth = 48
+        let voxelCount = width * height * depth
+        var data = Data(count: voxelCount)
+
+        data.withUnsafeMutableBytes { rawBuffer in
+            guard let pointer = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+
+            for z in 0..<depth {
+                let zNorm = Double(z) / Double(max(depth - 1, 1))
+                for y in 0..<height {
+                    let yNorm = Double(y - height / 2) / Double(height / 2)
+                    for x in 0..<width {
+                        let xNorm = Double(x - width / 2) / Double(width / 2)
+                        let radius = sqrt(xNorm * xNorm + yNorm * yNorm)
+                        let lungMask = exp(-pow((radius - 0.48) / 0.22, 2.0))
+                        let boneRing = exp(-pow((radius - 0.72) / 0.06, 2.0))
+                        let spine = exp(-(pow(xNorm / 0.14, 2.0) + pow((yNorm + 0.28) / 0.18, 2.0)))
+                        let organ = exp(-(pow((xNorm + 0.18) / 0.22, 2.0) + pow((yNorm - 0.02) / 0.28, 2.0)))
+
+                        let sliceTaper = 0.7 + 0.3 * sin(zNorm * .pi)
+                        var value = 18.0
+                        value += lungMask * 42.0 * sliceTaper
+                        value += organ * 72.0
+                        value += spine * 118.0
+                        value += boneRing * 150.0
+                        value += zNorm * 12.0
+
+                        let linearIndex = ((z * height) + y) * width + x
+                        pointer[linearIndex] = UInt8(clamping: Int(value.rounded()))
+                    }
+                }
+            }
+        }
+
+        let component = J2KVolumeComponent(
+            index: 0,
+            bitDepth: 8,
+            signed: false,
+            width: width,
+            height: height,
+            depth: depth,
+            data: data
+        )
+
+        return J2KVolume(
+            width: width,
+            height: height,
+            depth: depth,
+            components: [component],
+            spacingX: 0.7,
+            spacingY: 0.7,
+            spacingZ: 1.25
+        )
     }
 }
 

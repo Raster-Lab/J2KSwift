@@ -46,7 +46,7 @@ struct MainWindowView: View {
     @State private var showSettings: Bool = false
 
     /// Unified sidebar selection (category or app screen).
-    @State private var sidebarSelection: SidebarSelection? = nil
+    @State private var sidebarSelection: SidebarSelection? = .category(.volumetric)
 
     /// View model for the reporting dashboard.
     @State private var reportViewModel = ReportViewModel()
@@ -76,6 +76,14 @@ struct MainWindowView: View {
         )
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: viewModel.session)
+        }
+        .onAppear {
+            if sidebarSelection == nil {
+                sidebarSelection = .category(.volumetric)
+            }
+            if case .category(let category) = sidebarSelection {
+                viewModel.selectedCategory = category
+            }
         }
     }
 
