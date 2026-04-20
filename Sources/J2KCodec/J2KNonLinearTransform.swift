@@ -331,7 +331,7 @@ public struct J2KNonLinearTransform: Sendable {
                 clipped = true
             }
 
-            transformedData.append(Int32(clampedValue.rounded()))
+            transformedData.append(j2kClampedInt32(clampedValue))
         }
 
         let statistics = J2KNLTStatistics(
@@ -410,7 +410,7 @@ public struct J2KNonLinearTransform: Sendable {
                 clipped = true
             }
 
-            restoredData.append(Int32(clampedValue.rounded()))
+            restoredData.append(j2kClampedInt32(clampedValue))
         }
 
         let statistics = J2KNLTStatistics(

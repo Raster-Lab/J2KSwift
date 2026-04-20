@@ -1297,8 +1297,8 @@ public struct J2KColorTransform: Sendable {
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
             for i in 0..<data.count {
-                // Round to nearest integer
-                int32Ptr[i] = Int32(data[i].rounded())
+                // Round to nearest integer with saturation
+                int32Ptr[i] = j2kClampedInt32(data[i])
             }
         }
 

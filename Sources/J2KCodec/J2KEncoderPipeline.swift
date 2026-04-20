@@ -684,12 +684,24 @@ struct EncoderPipeline: Sendable {
                 }
             } else if component.bitDepth <= 16 {
                 let sampleCount = min(data.count / 2, pixelCount)
+                let byteOrder = j2kInfer16BitByteOrder(
+                    in: data,
+                    sampleCount: sampleCount,
+                    bitDepth: component.bitDepth,
+                    signed: component.signed
+                )
                 data.withUnsafeBytes { buffer in
                     guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                         return
                     }
                     for i in 0..<sampleCount {
-                        let value = UInt16(ptr[i * 2]) << 8 | UInt16(ptr[i * 2 + 1])
+                        let value: UInt16
+                        switch byteOrder {
+                        case .littleEndian:
+                            value = UInt16(ptr[i * 2]) | (UInt16(ptr[i * 2 + 1]) << 8)
+                        case .bigEndian:
+                            value = (UInt16(ptr[i * 2]) << 8) | UInt16(ptr[i * 2 + 1])
+                        }
                         if component.signed {
                             pixels[i] = Int32(Int16(bitPattern: value))
                         } else {
@@ -820,7 +832,7 @@ struct EncoderPipeline: Sendable {
 
         // Convert back to Int32
         return transformed.map { component in
-            component.map { Int32($0.rounded()) }
+            component.map { j2kClampedInt32($0) }
         }
     }
 
@@ -850,7 +862,7 @@ struct EncoderPipeline: Sendable {
 
         // Convert back to Int32
         return transformed.map { component in
-            component.map { Int32($0.rounded()) }
+            component.map { j2kClampedInt32($0) }
         }
     }
 
@@ -4095,7 +4107,7 @@ enum vDSPConvert: Sendable {
         }
         return output
         #else
-        return input.map { Int32($0.rounded()) }
+        return input.map { j2kClampedInt32(Double($0)) }
         #endif
     }
 
@@ -4131,7 +4143,7 @@ enum vDSPConvert: Sendable {
         }
         return output
         #else
-        return input.map { Int32($0.rounded()) }
+        return input.map { j2kClampedInt32($0) }
         #endif
     }
 }

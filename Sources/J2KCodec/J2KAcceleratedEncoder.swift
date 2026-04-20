@@ -1014,7 +1014,7 @@ struct AcceleratedQuantizer: Sendable {
         return coefficients.map { c in
             let sign: Double = c >= 0 ? 1.0 : -1.0
             let mag = abs(c) * invStep
-            return Int32(sign * mag.rounded(.down))
+            return j2kClampedInt32(sign * mag.rounded(.down))
         }
         #endif
     }
@@ -1050,7 +1050,7 @@ struct AcceleratedQuantizer: Sendable {
         return coefficients.map { c in
             let sign: Int32 = c >= 0 ? 1 : -1
             let mag = Double(abs(c)) * invStep
-            return sign * Int32(mag.rounded(.down))
+            return sign &* j2kClampedInt32(mag.rounded(.down))
         }
         #endif
     }

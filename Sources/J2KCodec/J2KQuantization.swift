@@ -671,7 +671,7 @@ public struct J2KQuantizer: Sendable {
         switch parameters.mode {
         case .noQuantization:
             // No quantization - round to nearest integer
-            return Int32(coefficient.rounded())
+            return j2kClampedInt32(coefficient)
 
         case .scalar:
             // Scalar quantization: q = sign(c) × floor(|c| / Δ)
@@ -729,8 +729,8 @@ public struct J2KQuantizer: Sendable {
             // Scalar quantization: q = sign(c) × floor(|c| / Δ)
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
-            let quantizedMag = Int32(Double(magnitude) / stepSize)
-            return sign * quantizedMag
+            let quantizedMag = j2kClampedInt32(Double(magnitude) / stepSize)
+            return sign &* quantizedMag
 
         case .deadzone:
             // Deadzone quantization with enlarged zero bin
@@ -742,22 +742,22 @@ public struct J2KQuantizer: Sendable {
                 return 0
             }
 
-            let quantizedMag = Int32((Double(magnitude) - Double(threshold)) / stepSize) + 1
-            return sign * quantizedMag
+            let quantizedMag = j2kClampedInt32((Double(magnitude) - Double(threshold)) / stepSize) &+ 1
+            return sign &* quantizedMag
 
         case .expounded:
             // Same as scalar for individual coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
-            let quantizedMag = Int32(Double(magnitude) / stepSize)
-            return sign * quantizedMag
+            let quantizedMag = j2kClampedInt32(Double(magnitude) / stepSize)
+            return sign &* quantizedMag
 
         case .trellis:
             // TCQ uses Viterbi algorithm on sequences, fall back to scalar for single coefficient
             let sign: Int32 = coefficient >= 0 ? 1 : -1
             let magnitude = abs(coefficient)
-            let quantizedMag = Int32(Double(magnitude) / stepSize)
-            return sign * quantizedMag
+            let quantizedMag = j2kClampedInt32(Double(magnitude) / stepSize)
+            return sign &* quantizedMag
         }
     }
 
@@ -1156,7 +1156,7 @@ public struct J2KQuantizer: Sendable {
 
         return indices.map { row in
             row.map { index in
-                Int32(dequantizeIndex(index, stepSize: stepSize).rounded())
+                j2kClampedInt32(dequantizeIndex(index, stepSize: stepSize))
             }
         }
     }

@@ -2323,6 +2323,7 @@ struct DecoderPipeline: Sendable {
 
             data.withUnsafeMutableBytes { rawBuf in
                 let ptr = rawBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let hostIsLittleEndian = j2kHostIsLittleEndian()
                 if compInfo.bitDepth <= 8 {
                     if compInfo.signed {
                         for i in 0..<pixelCount {
@@ -2340,15 +2341,15 @@ struct DecoderPipeline: Sendable {
                         for i in 0..<pixelCount {
                             let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             let v = UInt16(bitPattern: Int16(clamping: rounded))
-                            ptr[i * 2] = UInt8(v >> 8)
-                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
+                            ptr[i * 2] = UInt8((hostIsLittleEndian ? v : (v >> 8)) & 0xFF)
+                            ptr[i * 2 + 1] = UInt8(hostIsLittleEndian ? (v >> 8) : v & 0xFF)
                         }
                     } else {
                         for i in 0..<pixelCount {
                             let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
                             let v = UInt16(clamping: max(0, rounded))
-                            ptr[i * 2] = UInt8(v >> 8)
-                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
+                            ptr[i * 2] = UInt8((hostIsLittleEndian ? v : (v >> 8)) & 0xFF)
+                            ptr[i * 2 + 1] = UInt8(hostIsLittleEndian ? (v >> 8) : v & 0xFF)
                         }
                     }
                 }

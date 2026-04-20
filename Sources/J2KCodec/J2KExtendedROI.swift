@@ -238,7 +238,7 @@ public struct J2KExtendedROIProcessor: Sendable {
             for x in 0..<width {
                 let scale = scalingMap[y][x]
                 if scale > 1.0 {
-                    scaled[y][x] = Int32(Double(coefficients[y][x]) * scale)
+                    scaled[y][x] = j2kClampedInt32(Double(coefficients[y][x]) * scale)
                 }
             }
         }
@@ -420,7 +420,7 @@ public struct J2KExtendedROIProcessor: Sendable {
         var scaled = coefficients
         for y in 0..<height {
             for x in 0..<width where dwtMask[y][x] {
-                scaled[y][x] = Int32(Double(coefficients[y][x]) * scalingFactor)
+                scaled[y][x] = j2kClampedInt32(Double(coefficients[y][x]) * scalingFactor)
             }
         }
 
@@ -478,7 +478,7 @@ public struct J2KExtendedROIProcessor: Sendable {
             // Apply scaling
             for y in 0..<height {
                 for x in 0..<width where waveletMask[y][x] {
-                    scaled[y][x] = Int32(Double(coefficients[y][x]) * scale)
+                    scaled[y][x] = j2kClampedInt32(Double(coefficients[y][x]) * scale)
                 }
             }
         }
