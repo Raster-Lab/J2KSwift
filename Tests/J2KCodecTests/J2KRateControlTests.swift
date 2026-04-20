@@ -785,6 +785,186 @@ final class J2KRateControlTests: XCTestCase {
         XCTAssertLessThanOrEqual(layer.codeBlockContributions[0] ?? 0, 2)
     }
 
+    func testHTJ2KChainAllocatorPreservesUsefulTwoStepFrontier() throws {
+        let chainBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 6),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2, 4, 6],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [10, 40, 90]
+        )
+
+        let competingBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 4),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [4],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [35]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(2.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: false,
+            passesPerBitPlane: 2
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layer = try rateControl.optimizeLayers(
+            codeBlocks: [chainBlock, competingBlock],
+            totalPixels: 16
+        )[0]
+
+        XCTAssertEqual(
+            layer.codeBlockContributions[0],
+            2,
+            "HTJ2K should keep the useful two-step frontier when its cumulative gain beats competing isolated segments at the same strict byte budget"
+        )
+    }
+
+    func testHTJ2KMarginalRankingAllowsGatewayFrontier() throws {
+        let gatewayBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 7),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2, 4, 7],
+            coefficientSquaredSum: 120,
+            cumulativePassDistortion: [4, 64, 72]
+        )
+
+        let competingBlock = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 3),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [3],
+            coefficientSquaredSum: 120,
+            cumulativePassDistortion: [18]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(2.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: false,
+            passesPerBitPlane: 2
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layer = try rateControl.optimizeLayers(
+            codeBlocks: [gatewayBlock, competingBlock],
+            totalPixels: 16
+        )[0]
+
+        XCTAssertEqual(
+            layer.codeBlockContributions[0],
+            2,
+            "HTJ2K marginal ranking should keep a weak gateway frontier when it unlocks a much stronger immediate follow-on segment inside the same strict budget"
+        )
+    }
+
+    func testHTJ2KSignalCostAwareAllocatorPrefersDeeperPrefix() throws {
+        let chainBlock = J2KCodeBlock(
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 5),
+            passeCount: 3,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [1, 3, 5],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [2, 18, 49]
+        )
+
+        let competingBlockA = J2KCodeBlock(
+            index: 1,
+            x: 4,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 2),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [2],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [25]
+        )
+
+        let competingBlockB = J2KCodeBlock(
+            index: 2,
+            x: 8,
+            y: 0,
+            width: 4,
+            height: 4,
+            subband: .ll,
+            data: Data(count: 3),
+            passeCount: 1,
+            zeroBitPlanes: 0,
+            cumulativePassBytes: [3],
+            coefficientSquaredSum: 100,
+            cumulativePassDistortion: [25]
+        )
+
+        let config = RateControlConfiguration(
+            mode: .targetBitrate(2.0),
+            layerCount: 1,
+            strictRateMatching: true,
+            distortionEstimation: .normBased,
+            mctConfiguration: nil,
+            componentCount: 1,
+            useReversibleFilter: false,
+            passesPerBitPlane: 2
+        )
+        let rateControl = J2KRateControl(configuration: config)
+
+        let layer = try rateControl.optimizeLayers(
+            codeBlocks: [chainBlock, competingBlockA, competingBlockB],
+            totalPixels: 20
+        )[0]
+
+        XCTAssertEqual(
+            layer.codeBlockContributions[0],
+            3,
+            "HTJ2K should keep the deeper useful prefix when signaling-aware strict allocation beats a wider shallow spread at the same byte budget"
+        )
+    }
+
     func testHTCleanupSignificantCoefficientsDoNotEmitRedundantMagRefBits() throws {
         let coefficients: [Int32] = [32, -33, 47, -48,
                                      40, -41, 63, -35]

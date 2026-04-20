@@ -162,7 +162,7 @@ extension HTBlockDecoder {
         var vlcReader = J2KBitReader(data: vlcData)
         var mel = HTMELCoder()
         let vlc = HTVLCCoder()
-        let magsgn = HTMagSgnCoder()
+        var magsgn = HTMagSgnCoder()
 
         let numStripes = (height + 3) / 4
         for stripe in 0..<numStripes {

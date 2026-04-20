@@ -489,6 +489,7 @@ Specialized agents are available for focused tasks. Use `@` in chat to invoke th
 | `@file-format-dev` | File format support (JP2, JPX, JPM, JPH, MJ2, box hierarchy) |
 | `@jpip-dev` | JPIP network streaming (client/server, WebSocket, progressive delivery) |
 | `@perf-dev` | Performance optimization (profiling, benchmarking, memory, concurrency) |
+| `@optimization-loop` | Multi-agent orchestrator: fix → run report → analyze → repeat until target metrics are met |
 
 ## Skills
 
@@ -502,6 +503,7 @@ Reusable workflows available via `/` slash commands:
 | `/release-checklist` | Complete pre-release validation: build, test, lint, compliance gate |
 | `/performance-profiling` | Pipeline profiling, bottleneck identification, OpenJPEG comparison |
 | `/gpu-benchmark` | GPU vs CPU benchmarking across Metal, Vulkan, and Accelerate backends |
+| `/continuous-optimization` | Continuous multi-agent optimization loop driven by target metrics (invokes `@optimization-loop`) |
 
 ## File-Specific Instructions
 

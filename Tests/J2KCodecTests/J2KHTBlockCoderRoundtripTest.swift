@@ -248,6 +248,103 @@ final class J2KHTBlockCoderRoundtripTest: XCTestCase {
         XCTAssertEqual(mismatches, 0, "64x64 full roundtrip should be lossless")
     }
 
+    /// Test full roundtrip with checkpointed MagRef segments so truncation can
+    /// stop inside the refinement payload without breaking coding state.
+    func testFullRoundtrip64x64WithCheckpointedMagRef() throws {
+        let width = 64
+        let height = 64
+        let count = width * height
+
+        var coefficients = [Int32](repeating: 0, count: count)
+        srand48(321)
+        for i in 0..<count {
+            let r = drand48()
+            if r < 0.35 {
+                coefficients[i] = Int32.random(in: -255...255)
+            } else if r < 0.60 {
+                coefficients[i] = Int32.random(in: -31...31)
+            }
+        }
+
+        let maxMag = Int(coefficients.map { abs($0) }.max()!)
+        guard maxMag > 0 else { return }
+        let topBitPlane = Int.bitWidth - maxMag.leadingZeroBitCount - 1
+        let bitDepth = topBitPlane + 1
+
+        let encoder = HTBlockEncoder(width: width, height: height, subband: .hh)
+        let result = try encoder.encodeCleanup(coefficients: coefficients, bitPlane: topBitPlane)
+        var significanceState = result.significanceState
+        let absMags = result.absMags
+
+        var allData = result.block.codedData
+        allData.append(contentsOf: [0x48, 0x54, 0x47, 4])
+        var totalPasses = 1
+        var passSegmentLengths = [result.block.codedData.count]
+        var sawExtraMagCheckpoint = false
+
+        for bp in stride(from: topBitPlane - 1, through: 0, by: -1) {
+            let sigPropData = try encoder.encodeSigProp(
+                coefficients: coefficients.map { Int($0) },
+                significanceState: significanceState,
+                bitPlane: bp
+            )
+            allData.append(sigPropData)
+            passSegmentLengths.append(sigPropData.count)
+            totalPasses += 1
+
+            let magRefSegments = try encoder.encodeMagRefCheckpointed(
+                coefficients: coefficients,
+                significanceState: significanceState,
+                bitPlane: bp,
+                stripeGroupSpan: 4
+            )
+            if magRefSegments.count > 1 {
+                sawExtraMagCheckpoint = true
+            }
+            for segment in magRefSegments {
+                allData.append(segment)
+                passSegmentLengths.append(segment.count)
+                totalPasses += 1
+            }
+
+            for i in 0..<count {
+                if !significanceState[i] && (Int(absMags[i]) >> bp) & 1 != 0 {
+                    significanceState[i] = true
+                }
+            }
+        }
+
+        XCTAssertTrue(sawExtraMagCheckpoint, "Expected MagRef checkpointing to split at least one refinement pass")
+
+        let decoder = HTBlockDecoder(width: width, height: height, subband: .hh)
+        let decoded = try decoder.decodeFromCodestream(
+            data: allData,
+            passCount: totalPasses,
+            bitDepth: bitDepth,
+            zeroBitPlanes: 0,
+            passSegmentLengths: passSegmentLengths
+        )
+        let decodedContinuous = try decoder.decodeFromCodestream(
+            data: allData,
+            passCount: totalPasses,
+            bitDepth: bitDepth,
+            zeroBitPlanes: 0
+        )
+
+        var mismatches = 0
+        var continuousMismatches = 0
+        for i in 0..<count {
+            if decoded[i] != coefficients[i] {
+                mismatches += 1
+            }
+            if decodedContinuous[i] != coefficients[i] {
+                continuousMismatches += 1
+            }
+        }
+        XCTAssertEqual(mismatches, 0, "Checkpointed MagRef roundtrip should stay lossless")
+        XCTAssertEqual(continuousMismatches, 0, "Continuous checkpointed MagRef roundtrip should stay lossless")
+    }
+
     /// Test cleanup-only roundtrip with 64×64 block to isolate cleanup vs refinement issues
     func testCleanupOnly64x64() throws {
         let width = 64
