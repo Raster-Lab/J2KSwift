@@ -726,12 +726,12 @@ final class J2KEncoderPipelineTests: XCTestCase {
 
         XCTAssertGreaterThan(
             htj2kPSNR,
-            32.5,
+            32.9,
             "HTJ2K PSNR regressed too far on the medical-style matched-rate path: \(htj2kPSNR) dB"
         )
         XCTAssertLessThanOrEqual(
             j2kPSNR - htj2kPSNR,
-            7.4,
+            7.1,
             "HTJ2K quality gap widened too far versus J2K at the same bitrate: J2K=\(j2kPSNR) dB HTJ2K=\(htj2kPSNR) dB"
         )
     }
@@ -744,7 +744,7 @@ final class J2KEncoderPipelineTests: XCTestCase {
 
         XCTAssertGreaterThan(
             htj2kStats.psnr,
-            32.5,
+            32.9,
             "HTJ2K medical matched-rate PSNR regressed too far while tightening compression: \(htj2kStats.psnr) dB"
         )
         XCTAssertLessThanOrEqual(
