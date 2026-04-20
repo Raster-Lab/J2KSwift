@@ -428,7 +428,11 @@ def write_report(
     htj2k_lossy_psnr = fmt(summary.get("lossy::htj2k", {}).get("avg_psnr_db"))
     htj2k_lossy_mae = fmt(summary.get("lossy::htj2k", {}).get("avg_mae"))
 
-    previous_summary = history[-2]["summary"] if len(history) >= 2 and isinstance(history[-2], dict) else None
+    latest_entry = history[-1] if history and isinstance(history[-1], dict) else {}
+    generated_timestamp = str(latest_entry.get("timestamp", datetime.now(timezone.utc).isoformat()))
+    previous_entry = history[-2] if len(history) >= 2 and isinstance(history[-2], dict) else None
+    previous_summary = previous_entry["summary"] if previous_entry else None
+    previous_timestamp = str(previous_entry.get("timestamp")) if previous_entry else None
 
     def section_row(stats_map: dict[str, Any], mode: str, codec: str, include_status: bool = False) -> str:
         stats = stats_map.get(f"{mode}::{codec}", {})
@@ -456,6 +460,13 @@ def write_report(
 
     lines: list[str] = []
     lines.append("# Real Medical Dataset Regression Report")
+    lines.append("")
+    lines.append("## Run metadata")
+    lines.append("")
+    lines.append(f"- Generated UTC: {generated_timestamp}")
+    if previous_timestamp:
+        lines.append(f"- Previous recorded run UTC: {previous_timestamp}")
+    lines.append(f"- Trend snapshots retained: {len(history)}")
     lines.append("")
     lines.append("## Scope")
     lines.append("")
@@ -530,7 +541,10 @@ def write_report(
     lines.append("## Run-to-run trend tracking")
     lines.append("")
     if previous_summary:
-        lines.append(f"_Comparing this run against the immediately previous recorded run in {TREND_HISTORY_PATH.name}._")
+        if previous_timestamp:
+            lines.append(f"_Comparing this run against the previous recorded snapshot from {previous_timestamp} in {TREND_HISTORY_PATH.name}._")
+        else:
+            lines.append(f"_Comparing this run against the immediately previous recorded run in {TREND_HISTORY_PATH.name}._")
         lines.append("")
         lines.append("| Series | Current PSNR dB | Current MAE | Δ PSNR dB | Δ MAE |")
         lines.append("|---|---:|---:|---:|---:|")

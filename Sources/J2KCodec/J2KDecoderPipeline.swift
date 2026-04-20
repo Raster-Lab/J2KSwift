@@ -1160,6 +1160,32 @@ struct DecoderPipeline: Sendable {
         let doubleCoefficients: [Double]?
         let width: Int
         let height: Int
+        /// Per-coefficient mask set to `true` where the HTJ2K block decoder
+        /// applied a block-level partial-refinement midpoint. When non-empty
+        /// and for the irreversible HT path, dequantization must skip the
+        /// quantization bin midpoint (`+0.5 * stepSize`) for those coefficients
+        /// to avoid the double-midpoint bias.
+        let htPartiallyRefined: [Bool]
+
+        init(
+            componentIndex: Int,
+            level: Int,
+            subband: J2KSubband,
+            coefficients: [Int32],
+            doubleCoefficients: [Double]?,
+            width: Int,
+            height: Int,
+            htPartiallyRefined: [Bool] = []
+        ) {
+            self.componentIndex = componentIndex
+            self.level = level
+            self.subband = subband
+            self.coefficients = coefficients
+            self.doubleCoefficients = doubleCoefficients
+            self.width = width
+            self.height = height
+            self.htPartiallyRefined = htPartiallyRefined
+        }
     }
 
     /// Applies entropy decoding to code blocks.
@@ -1188,6 +1214,10 @@ struct DecoderPipeline: Sendable {
             let width: Int
             let height: Int
             let coefficients: [Int32]
+            /// Per-coefficient mask set to `true` where the HT block decoder
+            /// applied a block-level partial-refinement midpoint. Empty for
+            /// EBCOT blocks (which never carry this flag).
+            let htPartiallyRefined: [Bool]
         }
         var subbandBlocks: [String: [DecodedBlock]] = [:]
 
@@ -1211,30 +1241,33 @@ struct DecoderPipeline: Sendable {
             let coreCount = ProcessInfo.processInfo.processorCount
             let chunkSize = max(1, blockCount / coreCount)
 
-            let allResults: [(Int, [Int32])] = try await withThrowingTaskGroup(
-                of: [(Int, [Int32])].self
+            let allResults: [(Int, [Int32], [Bool])] = try await withThrowingTaskGroup(
+                of: [(Int, [Int32], [Bool])].self
             ) { group in
                 for chunkStart in stride(from: 0, to: blockCount, by: chunkSize) {
                     let chunkEnd = min(chunkStart + chunkSize, blockCount)
                     group.addTask {
-                        var chunkResults: [(Int, [Int32])] = []
+                        var chunkResults: [(Int, [Int32], [Bool])] = []
                         for i in chunkStart..<chunkEnd {
                             let block = blocks[i]
                             let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
 
                             let coeffs: [Int32]
+                            let htPartiallyRefined: [Bool]
                             if useHT {
                                 let htDecoder = HTBlockDecoder(
                                     width: block.width,
                                     height: block.height,
                                     subband: block.subband
                                 )
-                                coeffs = try htDecoder.decodeFromCodestream(
+                                let detailed = try htDecoder.decodeFromCodestreamDetailed(
                                     data: block.data,
                                     passCount: block.passCount,
                                     bitDepth: bitDepth,
                                     zeroBitPlanes: block.zeroBitPlanes
                                 )
+                                coeffs = detailed.coefficients
+                                htPartiallyRefined = detailed.isPartiallyRefined
                             } else {
                                 let blockDecoder = CodeBlockDecoder()
                                 let codeBlock = J2KCodeBlock(
@@ -1254,31 +1287,35 @@ struct DecoderPipeline: Sendable {
                                     options: decodeOptions,
                                     irreversible: isIrreversible
                                 )
+                                htPartiallyRefined = []
                             }
-                            chunkResults.append((i, coeffs))
+                            chunkResults.append((i, coeffs, htPartiallyRefined))
                         }
                         return chunkResults
                     }
                 }
-                var all: [(Int, [Int32])] = []
+                var all: [(Int, [Int32], [Bool])] = []
                 for try await chunk in group {
                     all.append(contentsOf: chunk)
                 }
                 return all
             }
 
-            // Build index → coefficients map
-            var resultsMap = [Int: [Int32]](minimumCapacity: blockCount)
-            for (i, coeffs) in allResults {
-                resultsMap[i] = coeffs
+            // Build index → (coefficients, htPartiallyRefined) map
+            var resultsMap = [Int: ([Int32], [Bool])](minimumCapacity: blockCount)
+            for (i, coeffs, mask) in allResults {
+                resultsMap[i] = (coeffs, mask)
             }
 
             // Collect results sequentially
             for i in 0..<blockCount {
                 let block = blocks[i]
-                var coeffs = resultsMap[i] ?? []
+                let entry = resultsMap[i] ?? ([], [])
+                var coeffs = entry.0
+                var htMask = entry.1
                 if coeffs.isEmpty {
                     coeffs = [Int32](repeating: 0, count: block.width * block.height)
+                    htMask = []
                 }
 
                 let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
@@ -1296,7 +1333,8 @@ struct DecoderPipeline: Sendable {
                 subbandBlocks[key]?.append(DecodedBlock(
                     x: block.x, y: block.y,
                     width: block.width, height: block.height,
-                    coefficients: coeffs
+                    coefficients: coeffs,
+                    htPartiallyRefined: htMask
                 ))
             }
         } else {
@@ -1306,6 +1344,7 @@ struct DecoderPipeline: Sendable {
                 let compInfo = metadata.components[block.componentIndex]
                 let bitDepth = block.bandKb > 0 ? block.bandKb : compInfo.bitDepth
                 let coeffs: [Int32]
+                let htMask: [Bool]
 
                 if useHT {
                     // HTJ2K path: use FBCOT block decoding
@@ -1314,12 +1353,14 @@ struct DecoderPipeline: Sendable {
                         height: block.height,
                         subband: block.subband
                     )
-                    coeffs = try htDecoder.decodeFromCodestream(
+                    let detailed = try htDecoder.decodeFromCodestreamDetailed(
                         data: block.data,
                         passCount: block.passCount,
                         bitDepth: bitDepth,
                         zeroBitPlanes: block.zeroBitPlanes
                     )
+                    coeffs = detailed.coefficients
+                    htMask = detailed.isPartiallyRefined
                 } else {
                     // Legacy path: use EBCOT bit-plane decoding
                     let decoder = CodeBlockDecoder()
@@ -1340,6 +1381,7 @@ struct DecoderPipeline: Sendable {
                         options: decodeOptions,
                         irreversible: isIrreversible
                     )
+                    htMask = []
                 }
 
                 let key = "\(block.componentIndex)_\(block.level)_\(block.subband.rawValue)"
@@ -1357,7 +1399,8 @@ struct DecoderPipeline: Sendable {
                 subbandBlocks[key]?.append(DecodedBlock(
                     x: block.x, y: block.y,
                     width: block.width, height: block.height,
-                    coefficients: coeffs
+                    coefficients: coeffs,
+                    htPartiallyRefined: htMask
                 ))
             }
         }
@@ -1375,6 +1418,12 @@ struct DecoderPipeline: Sendable {
 
             // Create subband buffer and place each code block at its correct position
             var subbandCoeffs = [Int32](repeating: 0, count: dims.width * dims.height)
+            // Parallel per-coefficient mask for HT partial refinement. Scatter only
+            // if at least one contributing block supplies a non-empty mask; keeping
+            // it empty is the fast path (cleanup-only blocks, EBCOT blocks).
+            let subbandPixelCount = dims.width * dims.height
+            let anyHTMask = decodedBlocks.contains { !$0.htPartiallyRefined.isEmpty }
+            var subbandHTMask: [Bool] = anyHTMask ? [Bool](repeating: false, count: subbandPixelCount) : []
             subbandCoeffs.withUnsafeMutableBufferPointer { dstBuf in
                 for db in decodedBlocks {
                     db.coefficients.withUnsafeBufferPointer { srcBuf in
@@ -1387,6 +1436,21 @@ struct DecoderPipeline: Sendable {
                                 .update(from: srcBuf.baseAddress!.advanced(by: srcStart), count: copyCount)
                         }
                     }
+                    if anyHTMask && !db.htPartiallyRefined.isEmpty {
+                        for row in 0..<db.height {
+                            let srcStart = row * db.width
+                            let dstStart = (db.y + row) * dims.width + db.x
+                            for col in 0..<db.width {
+                                let srcIdx = srcStart + col
+                                let dstIdx = dstStart + col
+                                guard srcIdx < db.htPartiallyRefined.count,
+                                      dstIdx < subbandHTMask.count else { continue }
+                                if db.htPartiallyRefined[srcIdx] {
+                                    subbandHTMask[dstIdx] = true
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1397,7 +1461,8 @@ struct DecoderPipeline: Sendable {
                 coefficients: subbandCoeffs,
                 doubleCoefficients: nil,
                 width: dims.width,
-                height: dims.height
+                height: dims.height,
+                htPartiallyRefined: subbandHTMask
             ))
         }
 
@@ -1452,16 +1517,35 @@ struct DecoderPipeline: Sendable {
                 // (q + 0.5) × stepSize — the midpoint of the quantization bin.
                 //
                 // HTJ2K (FBCOT) outputs coefficients at natural scale (no shift).
-                // Apply explicit midpoint reconstruction: (q + 0.5) × stepSize,
-                // which centers the value in the quantization bin and minimizes
-                // the expected quantization error (MSE).
+                // For **cleanup-only** or **fully-refined** coefficients the block
+                // decoder returns the exact integer magnitude, so dequantization
+                // adds the standard `+0.5 * stepSize` quantization-bin midpoint.
+                // For **partially-refined** coefficients the block decoder has
+                // already injected a block-level midpoint `1 << uncertaintyPlane`
+                // that centers the coefficient inside its residual-uncertainty
+                // range; in that case adding another `+0.5 * stepSize` on top
+                // produces the double-midpoint bias, so we skip the offset
+                // whenever `htPartiallyRefined[i]` is set.
                 let effectiveStepSize = useHTJ2K ? stepSize : (0.5 * stepSize)
                 let midpointOffset = useHTJ2K ? (0.5 * stepSize) : 0.0
-                let dequantizedDouble = info.coefficients.map { coeff -> Double in
-                    if coeff == 0 { return 0.0 }
-                    let sign: Double = coeff > 0 ? 1.0 : -1.0
-                    let magnitude = Double(abs(coeff))
-                    return sign * (magnitude * effectiveStepSize + midpointOffset)
+                let htMask = info.htPartiallyRefined
+                let hasHTMask = useHTJ2K && !htMask.isEmpty && htMask.count == info.coefficients.count
+                let dequantizedDouble: [Double]
+                if hasHTMask {
+                    dequantizedDouble = info.coefficients.enumerated().map { (i, coeff) -> Double in
+                        if coeff == 0 { return 0.0 }
+                        let sign: Double = coeff > 0 ? 1.0 : -1.0
+                        let magnitude = Double(abs(coeff))
+                        let offset = htMask[i] ? 0.0 : midpointOffset
+                        return sign * (magnitude * effectiveStepSize + offset)
+                    }
+                } else {
+                    dequantizedDouble = info.coefficients.map { coeff -> Double in
+                        if coeff == 0 { return 0.0 }
+                        let sign: Double = coeff > 0 ? 1.0 : -1.0
+                        let magnitude = Double(abs(coeff))
+                        return sign * (magnitude * effectiveStepSize + midpointOffset)
+                    }
                 }
 
                 result.append(SubbandInfo(
@@ -1471,7 +1555,8 @@ struct DecoderPipeline: Sendable {
                     coefficients: info.coefficients,
                     doubleCoefficients: dequantizedDouble,
                     width: info.width,
-                    height: info.height
+                    height: info.height,
+                    htPartiallyRefined: info.htPartiallyRefined
                 ))
             } else {
                 // For reversible 5/3, step size is always 1 (no quantization).

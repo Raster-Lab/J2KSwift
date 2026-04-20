@@ -754,6 +754,93 @@ final class J2KEncoderPipelineTests: XCTestCase {
         )
     }
 
+    /// Guards the next-priority HTJ2K work at a slightly tighter medical bitrate,
+    /// where wasteful late refinement passes were still inflating output size.
+    func testHTJ2KMedicalCompressionEfficiencyImprovesAtSubOneBitRate() async throws {
+        let j2kStats = try await medicalStyleEncodeStats(useHTJ2K: false, bitrate: 0.75, useReversibleFilter: true)
+        let htj2kStats = try await medicalStyleEncodeStats(useHTJ2K: true, bitrate: 0.75, useReversibleFilter: true)
+
+        XCTAssertGreaterThan(
+            htj2kStats.psnr,
+            31.0,
+            "HTJ2K sub-one-bit medical PSNR regressed too far: \(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            Double(htj2kStats.encodedBytes),
+            Double(j2kStats.encodedBytes) * 1.08,
+            "HTJ2K should stay close to J2K size at the tighter medical bitrate after the entropy-efficiency fix: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+        )
+    }
+
+    /// Guards the DX-style matched-rate path, which remained the main single-frame
+    /// medical efficiency gap in the real dataset report.
+    func testHTJ2KDXStyleCompressionEfficiencyImprovesAtMatchedBitrate() async throws {
+        let j2kStats = try await modalityStyleEncodeStats(style: .dx, useHTJ2K: false, bitrate: 1.0, useReversibleFilter: true)
+        let htj2kStats = try await modalityStyleEncodeStats(style: .dx, useHTJ2K: true, bitrate: 1.0, useReversibleFilter: true)
+
+        XCTAssertGreaterThan(
+            htj2kStats.psnr,
+            39.0,
+            "HTJ2K DX-style PSNR regressed too far at matched bitrate: \(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            j2kStats.psnr - htj2kStats.psnr,
+            4.5,
+            "HTJ2K DX-style quality gap widened too far versus J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            Double(htj2kStats.encodedBytes),
+            Double(j2kStats.encodedBytes) * 1.12,
+            "HTJ2K DX-style size should stay close to J2K after the tuning: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+        )
+    }
+
+    /// Guards the PX-style matched-rate path, which remained a clear real-data
+    /// medical quality gap despite the earlier HTJ2K tuning passes.
+    func testHTJ2KPXStyleCompressionEfficiencyImprovesAtMatchedBitrate() async throws {
+        let j2kStats = try await modalityStyleEncodeStats(style: .px, useHTJ2K: false, bitrate: 1.0, useReversibleFilter: true)
+        let htj2kStats = try await modalityStyleEncodeStats(style: .px, useHTJ2K: true, bitrate: 1.0, useReversibleFilter: true)
+
+        XCTAssertGreaterThan(
+            htj2kStats.psnr,
+            39.0,
+            "HTJ2K PX-style PSNR regressed too far at matched bitrate: \(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            j2kStats.psnr - htj2kStats.psnr,
+            4.7,
+            "HTJ2K PX-style quality gap widened too far versus J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            Double(htj2kStats.encodedBytes),
+            Double(j2kStats.encodedBytes) * 1.106,
+            "HTJ2K PX-style size should stay close to J2K after the tuning: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+        )
+    }
+
+    /// Guards the XA-style path, including the softer irreversible medical content
+    /// that still showed a noticeable HTJ2K quality gap in the report.
+    func testHTJ2KXAStyleCompressionEfficiencyImprovesAtMatchedBitrate() async throws {
+        let j2kStats = try await modalityStyleEncodeStats(style: .xa, useHTJ2K: false, bitrate: 1.0, useReversibleFilter: false)
+        let htj2kStats = try await modalityStyleEncodeStats(style: .xa, useHTJ2K: true, bitrate: 1.0, useReversibleFilter: false)
+
+        XCTAssertGreaterThan(
+            htj2kStats.psnr,
+            35.6,
+            "HTJ2K XA-style PSNR regressed too far at matched bitrate: \(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            j2kStats.psnr - htj2kStats.psnr,
+            2.9,
+            "HTJ2K XA-style quality gap widened too far versus J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+        )
+        XCTAssertLessThanOrEqual(
+            Double(htj2kStats.encodedBytes),
+            Double(j2kStats.encodedBytes) * 1.055,
+            "HTJ2K XA-style size should stay close to J2K after the tuning: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+        )
+    }
+
     private func assertMedicalLossyPSNRReasonable(useHTJ2K: Bool, minimumPSNR: Double) async throws {
         let stats = try await medicalStyleEncodeStats(useHTJ2K: useHTJ2K, bitrate: 0.5, useReversibleFilter: false)
         let codecLabel = useHTJ2K ? "HTJ2K" : "J2K"
@@ -763,6 +850,166 @@ final class J2KEncoderPipelineTests: XCTestCase {
             minimumPSNR,
             "High-bit-depth \(codecLabel) lossy PSNR regressed too far: \(stats.psnr) dB"
         )
+    }
+
+    /// Guards the HTJ2K near-lossless path against systematic off-by-one
+    /// reconstruction loss versus standard J2K at comparable size.
+    func testHTJ2KNearLosslessQualityStaysCloseToStandardJ2K() async throws {
+        let width = 128
+        let height = 128
+        var pixelData = Data(count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * width + x
+                pixelData[index] = UInt8((x * 3 + y * 5) & 0xFF)
+            }
+        }
+
+        let image = J2KImage(
+            width: width,
+            height: height,
+            components: [J2KComponent(index: 0, bitDepth: 8, signed: false, width: width, height: height, data: pixelData)]
+        )
+
+        func encodeAndMeasure(useHTJ2K: Bool) async throws -> (psnr: Double, bytes: Int) {
+            var config = J2KEncodingConfiguration(
+                quality: 1.0,
+                lossless: false,
+                decompositionLevels: 3,
+                qualityLayers: 1,
+                useHTJ2K: useHTJ2K
+            )
+            config.useReversibleFilter = false
+
+            let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
+            let decoded = try await J2KDecoder().decode(encoded)
+            let decodedData = decoded.components[0].data
+
+            var mse = 0.0
+            let count = min(pixelData.count, decodedData.count)
+            for i in 0..<count {
+                let diff = Double(pixelData[i]) - Double(decodedData[i])
+                mse += diff * diff
+            }
+            mse /= Double(max(1, count))
+            let psnr = mse > 0 ? 10.0 * log10((255.0 * 255.0) / mse) : Double.infinity
+            return (psnr, encoded.count)
+        }
+
+        let j2kStats = try await encodeAndMeasure(useHTJ2K: false)
+        let htj2kStats = try await encodeAndMeasure(useHTJ2K: true)
+
+        // Regression floor reflects the measured plateau under the current
+        // HT pipeline + current distortion model + 1.10× size constraint —
+        // not a proven mathematical ceiling. Empirical measurement
+        // (HTJ2K_OPTIMIZATION_REPORT.md, section "Measured plateau"):
+        //   - J2K 9/7 reaches lossless (∞ dB) at 5236 bytes for this gradient.
+        //   - HT 9/7 natural lossless size is 7714 bytes (~47% larger due to
+        //     cleanup-pass codestream overhead).
+        //   - The 1.10× size cap permits only 5759 bytes for HT, forcing
+        //     truncation well before full reconstruction.
+        //   - Observed HT PSNR inside the byte cap is ~62.4 dB.
+        // Moving this plateau requires one of: reducing HT cleanup-byte
+        // overhead (block-coder refactor), tighter LL-band quantization for
+        // smooth inputs, learned per-band reconstruction bias, or loosening
+        // the 1.10× size guard. Each is a distinct work item tracked in the
+        // optimization report. The 62.0 dB floor catches regressions in the
+        // landed double-midpoint fix and earlier reconstruction improvements
+        // without claiming a ceiling that has not been proven.
+        XCTAssertGreaterThan(
+            htj2kStats.psnr,
+            62.0,
+            "HTJ2K near-lossless quality regressed below measured plateau: \(htj2kStats.psnr) dB " +
+            "(HT=\(htj2kStats.bytes) bytes, J2K=\(j2kStats.bytes) bytes, " +
+            "ratio=\(Double(htj2kStats.bytes) / Double(j2kStats.bytes)))"
+        )
+        if j2kStats.psnr.isFinite {
+            XCTAssertLessThanOrEqual(
+                j2kStats.psnr - htj2kStats.psnr,
+                8.0,
+                "HTJ2K near-lossless quality gap widened too far versus standard J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+            )
+        }
+        XCTAssertLessThanOrEqual(
+            Double(htj2kStats.bytes),
+            Double(j2kStats.bytes) * 1.10,
+            "HTJ2K near-lossless size should stay close to standard J2K: J2K=\(j2kStats.bytes) bytes HTJ2K=\(htj2kStats.bytes) bytes"
+        )
+    }
+
+    /// Phase A regression: HT near-lossless PSNR must be monotone non-decreasing
+    /// as we give the encoder more bytes. A regression here is a reconstruction
+    /// pathway defect (MagRef midpoint / SigProp significance handoff / sign-bit
+    /// boundary), NOT a PCRD allocator defect.
+    func testHTJ2KNearLosslessPSNRIsMonotoneInRefinementBudget() async throws {
+        let width = 128
+        let height = 128
+        var pixelData = Data(count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * width + x
+                pixelData[index] = UInt8((x * 3 + y * 5) & 0xFF)
+            }
+        }
+
+        let image = J2KImage(
+            width: width,
+            height: height,
+            components: [J2KComponent(index: 0, bitDepth: 8, signed: false, width: width, height: height, data: pixelData)]
+        )
+
+        func encodeAndMeasure(bpp: Double) async throws -> (psnr: Double, bytes: Int) {
+            var config = J2KEncodingConfiguration(
+                quality: 1.0,
+                lossless: false,
+                decompositionLevels: 3,
+                qualityLayers: 1,
+                useHTJ2K: true
+            )
+            config.useReversibleFilter = false
+            config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+
+            let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
+            let decoded = try await J2KDecoder().decode(encoded)
+            let decodedData = decoded.components[0].data
+
+            var mse = 0.0
+            let count = min(pixelData.count, decodedData.count)
+            for i in 0..<count {
+                let diff = Double(pixelData[i]) - Double(decodedData[i])
+                mse += diff * diff
+            }
+            mse /= Double(max(1, count))
+            let psnr = mse > 0 ? 10.0 * log10((255.0 * 255.0) / mse) : Double.infinity
+            return (psnr, encoded.count)
+        }
+
+        let budgets: [Double] = [2.730, 2.750, 2.755, 2.773, 2.800]
+        var results: [(bpp: Double, psnr: Double, bytes: Int)] = []
+        for bpp in budgets {
+            let r = try await encodeAndMeasure(bpp: bpp)
+            results.append((bpp, r.psnr, r.bytes))
+        }
+
+        // Report all points up front so a failure is self-describing
+        let summary = results
+            .map { "bpp=\($0.bpp) bytes=\($0.bytes) psnr=\($0.psnr)" }
+            .joined(separator: " | ")
+
+        // Monotonicity check with a tiny tolerance for floating noise.
+        // A real reconstruction regression here is >>0.05 dB (observed 0.1-0.2 dB).
+        let tolerance = 0.05
+        for i in 1..<results.count {
+            let prev = results[i - 1]
+            let cur = results[i]
+            // Only enforce monotonicity when byte budget actually increased.
+            guard cur.bytes > prev.bytes else { continue }
+            XCTAssertGreaterThanOrEqual(
+                cur.psnr + tolerance,
+                prev.psnr,
+                "HT near-lossless PSNR regressed with more bytes — reconstruction pathway defect. Trace: \(summary)"
+            )
+        }
     }
 
     /// Verifies adaptive lossy quantization responds to local image statistics.
@@ -828,6 +1075,13 @@ final class J2KEncoderPipelineTests: XCTestCase {
         )
     }
 
+    private enum SyntheticMedicalStyle {
+        case ct
+        case dx
+        case px
+        case xa
+    }
+
     private func medicalStylePSNR(useHTJ2K: Bool, bitrate: Double, useReversibleFilter: Bool) async throws -> Double {
         try await medicalStyleEncodeStats(
             useHTJ2K: useHTJ2K,
@@ -841,11 +1095,47 @@ final class J2KEncoderPipelineTests: XCTestCase {
         bitrate: Double,
         useReversibleFilter: Bool
     ) async throws -> (psnr: Double, encodedBytes: Int) {
-        let width = 512
-        let height = 512
+        try await modalityStyleEncodeStats(
+            style: .ct,
+            useHTJ2K: useHTJ2K,
+            bitrate: bitrate,
+            useReversibleFilter: useReversibleFilter
+        )
+    }
+
+    private func modalityStyleEncodeStats(
+        style: SyntheticMedicalStyle,
+        useHTJ2K: Bool,
+        bitrate: Double,
+        useReversibleFilter: Bool
+    ) async throws -> (psnr: Double, encodedBytes: Int) {
+        let width: Int
+        let height: Int
+        let bitDepth: Int
+        switch style {
+        case .ct:
+            width = 512
+            height = 512
+            bitDepth = 16
+        case .dx:
+            width = 640
+            height = 512
+            bitDepth = 12
+        case .px:
+            width = 640
+            height = 512
+            bitDepth = 12
+        case .xa:
+            width = 512
+            height = 512
+            bitDepth = 8
+        }
+
+        let bytesPerSample = bitDepth > 8 ? 2 : 1
         let pixelCount = width * height
-        let maxValue = Double(UInt16.max)
-        var pixelData = Data(count: pixelCount * 2)
+        let maxSampleValue = (1 << bitDepth) - 1
+        let maxValue = Double(maxSampleValue)
+        var pixelData = Data(count: pixelCount * bytesPerSample)
 
         struct XorShift32 {
             var state: UInt32
@@ -876,43 +1166,140 @@ final class J2KEncoderPipelineTests: XCTestCase {
                     let distance = sqrt(deltaX * deltaX + deltaY * deltaY)
 
                     var value: Double
-                    if distance > radius * 0.95 {
-                        value = maxValue * 0.05
-                    } else if distance > radius * 0.85 {
-                        value = maxValue * 0.85
-                    } else if distance > radius * 0.50 {
-                        value = maxValue * 0.45
-                    } else if distance > radius * 0.30 {
-                        value = maxValue * 0.60
+                    switch style {
+                    case .ct:
+                        if distance > radius * 0.95 {
+                            value = maxValue * 0.05
+                        } else if distance > radius * 0.85 {
+                            value = maxValue * 0.85
+                        } else if distance > radius * 0.50 {
+                            value = maxValue * 0.45
+                        } else if distance > radius * 0.30 {
+                            value = maxValue * 0.60
+                        } else {
+                            value = maxValue * 0.35
+                        }
+
+                        let ex1 = (deltaX - radius * 0.2) / (radius * 0.15)
+                        let ey1 = (deltaY + radius * 0.1) / (radius * 0.10)
+                        if ex1 * ex1 + ey1 * ey1 < 1.0 {
+                            value = maxValue * 0.75
+                        }
+
+                        let ex2 = (deltaX + radius * 0.3) / (radius * 0.08)
+                        let ey2 = (deltaY - radius * 0.15) / (radius * 0.12)
+                        if ex2 * ex2 + ey2 * ey2 < 1.0 {
+                            value = maxValue * 0.20
+                        }
+
+                    case .dx:
+                        let normalizedX = Double(x) / Double(max(1, width - 1))
+                        let normalizedY = Double(y) / Double(max(1, height - 1))
+                        value = maxValue * (0.78 + 0.12 * normalizedY - 0.08 * normalizedX)
+
+                        let lungLeft = pow((deltaX + radius * 0.42) / (radius * 0.38), 2) +
+                            pow((deltaY + radius * 0.02) / (radius * 0.58), 2)
+                        let lungRight = pow((deltaX - radius * 0.42) / (radius * 0.38), 2) +
+                            pow((deltaY + radius * 0.02) / (radius * 0.58), 2)
+                        if lungLeft < 1.0 || lungRight < 1.0 {
+                            value -= maxValue * 0.25
+                        }
+
+                        if abs(deltaX) < radius * 0.07 {
+                            value += maxValue * 0.12
+                        }
+
+                        let ribWave = sin(Double(y) * 0.085)
+                        for rib in stride(from: -4, through: 4, by: 1) {
+                            let ribX = centerX + Double(rib) * radius * 0.16 + ribWave * radius * 0.03
+                            if abs(Double(x) - ribX) < radius * 0.012 {
+                                value += maxValue * 0.06
+                            }
+                        }
+
+                        if y > height / 2 && abs(deltaX) < radius * 0.20 && abs(deltaY - radius * 0.35) < radius * 0.018 {
+                            value += maxValue * 0.09
+                        }
+
+                    case .px:
+                        let normalizedX = Double(x) / Double(max(1, width - 1))
+                        let normalizedY = Double(y) / Double(max(1, height - 1))
+                        value = maxValue * (0.60 + 0.10 * normalizedY - 0.04 * normalizedX)
+
+                        let chestMask = pow(deltaX / (radius * 0.92), 2) + pow(deltaY / (radius * 0.82), 2)
+                        if chestMask > 1.0 {
+                            value *= 0.18
+                        }
+
+                        let spine = abs(deltaX + radius * 0.03)
+                        if spine < radius * 0.045 {
+                            value += maxValue * 0.08
+                        }
+
+                        for plate in stride(from: -3, through: 3, by: 1) {
+                            let plateY = centerY + Double(plate) * radius * 0.17 + sin(Double(x) * 0.018 + Double(plate)) * radius * 0.015
+                            if abs(Double(y) - plateY) < radius * 0.014 {
+                                value += maxValue * 0.05
+                            }
+                        }
+
+                        let lesion = pow((deltaX - radius * 0.24) / (radius * 0.09), 2) +
+                            pow((deltaY + radius * 0.10) / (radius * 0.12), 2)
+                        if lesion < 1.0 {
+                            value -= maxValue * 0.12
+                        }
+
+                    case .xa:
+                        let normalizedX = Double(x) / Double(max(1, width - 1))
+                        let normalizedY = Double(y) / Double(max(1, height - 1))
+                        value = maxValue * (0.32 + 0.18 * normalizedX + 0.10 * normalizedY)
+
+                        for vesselIndex in 0..<6 {
+                            let phase = Double(vesselIndex) * 0.7
+                            let vesselY = centerY + sin(Double(x) * (0.015 + Double(vesselIndex) * 0.002) + phase) * radius * (0.08 + Double(vesselIndex) * 0.015)
+                            if abs(Double(y) - vesselY) < Double(2 + vesselIndex / 2) {
+                                value -= maxValue * (0.18 - Double(vesselIndex) * 0.015)
+                            }
+                        }
+
+                        if abs(deltaX + radius * 0.28) < 2.0 && y > height / 5 {
+                            value += maxValue * 0.16
+                        }
+
+                        let hotspot = pow((deltaX - radius * 0.18) / (radius * 0.10), 2) +
+                            pow((deltaY + radius * 0.12) / (radius * 0.07), 2)
+                        if hotspot < 1.0 {
+                            value += maxValue * 0.22
+                        }
+                    }
+
+                    let noiseScale: Int
+                    switch style {
+                    case .ct: noiseScale = 50
+                    case .dx: noiseScale = 90
+                    case .px: noiseScale = 70
+                    case .xa: noiseScale = 40
+                    }
+                    let noiseLimit = max(maxSampleValue / noiseScale, 1)
+                    let signedNoise = Int(Int32(bitPattern: rng.next()) % Int32(noiseLimit))
+                    value += Double(signedNoise)
+
+                    let clamped = max(0.0, min(maxValue, value)).rounded()
+                    let offset = (y * width + x) * bytesPerSample
+                    if bytesPerSample == 1 {
+                        base[offset] = UInt8(clamped)
                     } else {
-                        value = maxValue * 0.35
+                        let sample = UInt16(clamped)
+                        base[offset] = UInt8(sample >> 8)
+                        base[offset + 1] = UInt8(sample & 0xFF)
                     }
-
-                    let ex1 = (deltaX - radius * 0.2) / (radius * 0.15)
-                    let ey1 = (deltaY + radius * 0.1) / (radius * 0.10)
-                    if ex1 * ex1 + ey1 * ey1 < 1.0 {
-                        value = maxValue * 0.75
-                    }
-
-                    let ex2 = (deltaX + radius * 0.3) / (radius * 0.08)
-                    let ey2 = (deltaY - radius * 0.15) / (radius * 0.12)
-                    if ex2 * ex2 + ey2 * ey2 < 1.0 {
-                        value = maxValue * 0.20
-                    }
-
-                    let noiseLimit = max(Int(maxValue) / 50, 1)
-                    let noise = Double(Int32(bitPattern: rng.next()) % Int32(noiseLimit))
-                    let sample = UInt16(max(0.0, min(maxValue, value + noise)).rounded())
-                    let offset = (y * width + x) * 2
-                    base[offset] = UInt8(sample >> 8)
-                    base[offset + 1] = UInt8(sample & 0xFF)
                 }
             }
         }
 
         let component = J2KComponent(
             index: 0,
-            bitDepth: 16,
+            bitDepth: bitDepth,
             signed: false,
             width: width,
             height: height,
@@ -935,7 +1322,7 @@ final class J2KEncoderPipelineTests: XCTestCase {
 
         let decoded = try await J2KDecoder().decode(encoded)
         let decodedBytes = decoded.components[0].data
-        let sampleCount = min(pixelData.count, decodedBytes.count) / 2
+        let sampleCount = min(pixelData.count, decodedBytes.count) / bytesPerSample
         var mse = 0.0
 
         pixelData.withUnsafeBytes { originalBuffer in
@@ -946,8 +1333,15 @@ final class J2KEncoderPipelineTests: XCTestCase {
                 }
 
                 for index in 0..<sampleCount {
-                    let source = Double(UInt16(originalBase[index * 2]) << 8 | UInt16(originalBase[index * 2 + 1]))
-                    let result = Double(UInt16(decodedBase[index * 2]) << 8 | UInt16(decodedBase[index * 2 + 1]))
+                    let source: Double
+                    let result: Double
+                    if bytesPerSample == 1 {
+                        source = Double(originalBase[index])
+                        result = Double(decodedBase[index])
+                    } else {
+                        source = Double(UInt16(originalBase[index * 2]) << 8 | UInt16(originalBase[index * 2 + 1]))
+                        result = Double(UInt16(decodedBase[index * 2]) << 8 | UInt16(decodedBase[index * 2 + 1]))
+                    }
                     let diff = source - result
                     mse += diff * diff
                 }

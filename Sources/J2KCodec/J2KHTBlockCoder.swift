@@ -604,23 +604,13 @@ struct HTMagSgnCoder: Sendable {
     /// Encodes the magnitude and sign of a significant coefficient.
     ///
     /// Uses bulk bit emission: packs sign + lower magnitude bits into a single
-    /// value and emits them in one `emitBits` call, avoiding per-bit function
-    /// call overhead.
-    ///
-    /// - Parameters:
-    ///   - magnitude: The absolute value of the coefficient (must be > 0).
-    ///   - sign: The sign bit (0 = positive, 1 = negative).
-    ///   - bitPlane: The current bit-plane being encoded.
+    /// value and emits them in one emitBits call, avoiding per-bit overhead.
     @inline(__always)
     mutating func encode(magnitude: Int, sign: Int, bitPlane: Int) {
         guard magnitude > 0 else { return }
 
-        // The significance bit (bit at bitPlane) is already communicated via
-        // VLC/MEL, so MagSgn encodes: [sign | lowerBits] where lowerBits =
-        // magnitude - (1 << bitPlane), fitting in exactly `bitPlane` bits.
         let lowerBits = magnitude - (1 << bitPlane)
-        let totalBits = 1 + bitPlane  // sign + magnitude bits
-        // Pack sign into MSB, lower bits below
+        let totalBits = 1 + bitPlane
         let packed = ((sign & 1) << bitPlane) | lowerBits
         writer.emitBits(packed, count: totalBits)
     }
@@ -629,10 +619,8 @@ struct HTMagSgnCoder: Sendable {
     var byteCount: Int { writer.byteCount }
 
     /// Flushes the MagSgn coder and returns the encoded data.
-    ///
-    /// - Returns: The MagSgn-encoded byte stream.
     mutating func flush() -> Data {
-        return writer.flush()
+        writer.flush()
     }
 
     /// Flushes and copies output directly to a destination pointer.
@@ -643,21 +631,11 @@ struct HTMagSgnCoder: Sendable {
     }
 
     /// Decodes a magnitude and sign from the MagSgn stream.
-    ///
-    /// - Parameters:
-    ///   - reader: The bit reader positioned at MagSgn data.
-    ///   - bitPlane: The current bit-plane being decoded.
-    /// - Returns: The decoded signed coefficient value.
-    /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
-    func decode(from reader: inout J2KBitReader, bitPlane: Int) throws -> Int {
-        // Read sign bit
+    mutating func decode(from reader: inout J2KBitReader, bitPlane: Int) throws -> Int {
         let sign = try reader.readBit() ? 1 : 0
 
-        // Read magnitude bits below the significance bit-plane.
-        // These represent (magnitude - (1 << bitPlane)).
-        let numBits = max(0, bitPlane)
         var lowerBits = 0
-        for _ in 0..<numBits {
+        for _ in 0..<max(0, bitPlane) {
             let bit = try reader.readBit() ? 1 : 0
             lowerBits = (lowerBits << 1) | bit
         }
@@ -692,6 +670,22 @@ struct HTMagSgnCoder: Sendable {
 /// let encoder = HTBlockEncoder(width: 32, height: 32, subband: .hh)
 /// let result = try encoder.encode(coefficients: coeffs, bitPlane: 7)
 /// ```
+@inline(__always)
+func htRefinementStripeGroupSpan(forHeight height: Int) -> Int {
+    let numStripes = max(1, (height + 3) / 4)
+    if numStripes >= 16 { return 8 }
+    if numStripes >= 12 { return 6 }
+    return numStripes
+}
+
+@inline(__always)
+func htMagRefCheckpointStripeGroupSpan(forHeight height: Int) -> Int {
+    let numStripes = max(1, (height + 3) / 4)
+    if numStripes >= 16 { return 8 }
+    if numStripes >= 8 { return 4 }
+    return numStripes
+}
+
 struct HTBlockEncoder: Sendable {
     /// The width of the code-block.
     let width: Int
@@ -1802,6 +1796,55 @@ struct HTBlockEncoder: Sendable {
         )
     }
 
+    /// Appends a compact payload length.
+    ///
+    /// Small refinement segments dominate HTJ2K near-lossless output, so use a
+    /// one-byte length for the common case and fall back to a UInt16 only when
+    /// needed. This trims per-pass framing overhead while keeping decoding simple.
+    private func appendCompactLength(_ length: Int, to payload: inout Data) {
+        if length < 0xFF {
+            payload.append(UInt8(length))
+        } else {
+            payload.append(0xFF)
+            payload.append(UInt8((length >> 8) & 0xFF))
+            payload.append(UInt8(length & 0xFF))
+        }
+    }
+
+    /// Builds the compact payload for an HT significance propagation pass.
+    ///
+    /// The payload is self-delimiting so it can be decoded either from a framed
+    /// segment or from the continuous refinement stream.
+    private func makeSigPropPayload(
+        mel: inout HTMELCoder,
+        signWriter: inout HTFastBitWriter
+    ) -> Data {
+        let melData = mel.flush()
+        let signData = signWriter.flush()
+
+        let melLen = melData.count
+        let signLen = signData.count
+        var payload = Data(capacity: 6 + melLen + signLen)
+        appendCompactLength(melLen, to: &payload)
+        appendCompactLength(signLen, to: &payload)
+        payload.append(melData)
+        payload.append(signData)
+        return payload
+    }
+
+    /// Builds the compact payload for an HT magnitude refinement pass.
+    ///
+    /// The payload is self-delimiting so it can be decoded from the continuous
+    /// refinement stream.
+    private func makeMagRefPayload(writer: inout HTFastBitWriter) -> Data {
+        let magData = writer.flush()
+        let magLen = magData.count
+        var payload = Data(capacity: 3 + magLen)
+        appendCompactLength(magLen, to: &payload)
+        payload.append(magData)
+        return payload
+    }
+
     /// Encodes a fused SigProp + MagRef refinement pass using caller-provided
     /// reusable writers and arrays.
     ///
@@ -1827,21 +1870,28 @@ struct HTBlockEncoder: Sendable {
         bitPlane: Int,
         output: inout Data,
         sigPropWriter: inout HTFastBitWriter,
-        magRefWriter: inout HTFastBitWriter
+        magRefWriter: inout HTFastBitWriter,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil
     ) -> (sigPropBytes: Int, magRefBytes: Int) {
         let bp32 = Int32(bitPlane)
         let numStripes = (height + 3) / 4
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        var sigMel = HTMELCoder(capacity: max(8, (width * height + 7) / 8))
+        var magWriter = HTFastBitWriter(capacity: max(4, (width * height + 7) / 8))
+        _ = magRefWriter
 
         absMags.withUnsafeBufferPointer { magPtr in
-            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
                     sigPacked.withUnsafeMutableBufferPointer { sigPtr in
                         let magBase = magPtr.baseAddress!
-                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let cleanupBase = cleanupPtr.baseAddress!
                         let coefBase = coefPtr.baseAddress!
                         let sigBase = sigPtr.baseAddress!
 
-                        for stripe in 0..<numStripes {
+                        for stripe in startStripe..<endStripe {
                             let stripeHeight = min(4, height - stripe * 4)
                             let baseY = stripe * 4
                             for col in 0..<width {
@@ -1851,20 +1901,17 @@ struct HTBlockEncoder: Sendable {
                                 for row in 0..<stripeHeight {
                                     let y = baseY + row
                                     let idx = y * width + col
-
                                     let wordIdx = idx >> 6
                                     let bitIdx = idx & 63
                                     let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
-                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                    if isSignificant {
-                                        if !wasCleanupSignificant {
-                                            magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
-                                            magCount += 1
-                                        }
-                                    } else {
+                                    if isSignificant && !wasCleanupSignificant {
+                                        magBits = (magBits << 1) | Int((magBase[idx] >> bp32) & 1)
+                                        magCount += 1
+                                    } else if !isSignificant {
                                         let bit = Int((magBase[idx] >> bp32) & 1)
-                                        sigPropWriter.emitBit(bit)
+                                        sigMel.encode(bit: bit)
                                         if bit != 0 {
                                             sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
                                             sigBase[wordIdx] |= 1 << bitIdx
@@ -1873,7 +1920,7 @@ struct HTBlockEncoder: Sendable {
                                 }
 
                                 if magCount > 0 {
-                                    magRefWriter.emitBits(magBits, count: magCount)
+                                    magWriter.emitBits(magBits, count: magCount)
                                 }
                             }
                         }
@@ -1882,8 +1929,19 @@ struct HTBlockEncoder: Sendable {
             }
         }
 
-        let sigPropBytes = sigPropWriter.flushAppending(to: &output)
-        let magRefBytes = magRefWriter.flushAppending(to: &output)
+        let hasSigPayload = sigMel.byteCount > 0 || sigPropWriter.byteCount > 0
+        let hasMagPayload = magWriter.byteCount > 0
+        let shouldEmitEmptyPayloads = (endStripe - startStripe) < numStripes
+        guard shouldEmitEmptyPayloads || hasSigPayload || hasMagPayload else {
+            return (0, 0)
+        }
+
+        let sigPropData = makeSigPropPayload(mel: &sigMel, signWriter: &sigPropWriter)
+        let magRefData = makeMagRefPayload(writer: &magWriter)
+        output.append(sigPropData)
+        output.append(magRefData)
+        let sigPropBytes = sigPropData.count
+        let magRefBytes = magRefData.count
         return (sigPropBytes, magRefBytes)
     }
 
@@ -1906,16 +1964,17 @@ struct HTBlockEncoder: Sendable {
         let count = width * height
         let bp32 = Int32(bitPlane)
         let maxBytes = max(4, (count * 2 + 7) / 8)
-        var sigPropWriter = HTFastBitWriter(capacity: maxBytes)
-        var magRefWriter = HTFastBitWriter(capacity: maxBytes)
+        var signWriter = HTFastBitWriter(capacity: maxBytes)
+        var sigMel = HTMELCoder(capacity: max(8, (count + 7) / 8))
+        var magWriter = HTFastBitWriter(capacity: maxBytes)
 
         let numStripes = (height + 3) / 4
         absMags.withUnsafeBufferPointer { magPtr in
-            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
                     sigPacked.withUnsafeMutableBufferPointer { sigPtr in
                         let magBase = magPtr.baseAddress!
-                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let cleanupBase = cleanupPtr.baseAddress!
                         let coefBase = coefPtr.baseAddress!
                         let sigBase = sigPtr.baseAddress!
 
@@ -1925,22 +1984,19 @@ struct HTBlockEncoder: Sendable {
                                 for row in 0..<stripeHeight {
                                     let y = stripe * 4 + row
                                     let idx = y * width + col
-
                                     let wordIdx = idx >> 6
                                     let bitIdx = idx & 63
                                     let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
-                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                    if isSignificant {
-                                        if !wasCleanupSignificant {
-                                            let bit = Int((magBase[idx] >> bp32) & 1)
-                                            magRefWriter.emitBit(bit)
-                                        }
-                                    } else {
+                                    if isSignificant && !wasCleanupSignificant {
                                         let bit = Int((magBase[idx] >> bp32) & 1)
-                                        sigPropWriter.emitBit(bit)
+                                        magWriter.emitBit(bit)
+                                    } else if !isSignificant {
+                                        let bit = Int((magBase[idx] >> bp32) & 1)
+                                        sigMel.encode(bit: bit)
                                         if bit != 0 {
-                                            sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                            signWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
                                             sigBase[wordIdx] |= 1 << bitIdx
                                         }
                                     }
@@ -1952,7 +2008,16 @@ struct HTBlockEncoder: Sendable {
             }
         }
 
-        return (sigPropWriter.flush(), magRefWriter.flush())
+        let hasSigPayload = sigMel.byteCount > 0 || signWriter.byteCount > 0
+        let hasMagPayload = magWriter.byteCount > 0
+        guard hasSigPayload || hasMagPayload else {
+            return (Data(), Data())
+        }
+
+        let sigPropData = makeSigPropPayload(mel: &sigMel, signWriter: &signWriter)
+        let magRefData = makeMagRefPayload(writer: &magWriter)
+
+        return (sigPropData, magRefData)
     }
 
     /// Encodes a fused SigProp + MagRef refinement pass, appending output directly
@@ -1974,21 +2039,25 @@ struct HTBlockEncoder: Sendable {
         sigPacked: inout [UInt64],
         cleanupSigPacked: [UInt64],
         bitPlane: Int,
-        output: inout Data
+        output: inout Data,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil
     ) -> (sigPropBytes: Int, magRefBytes: Int) {
         let count = width * height
         let bp32 = Int32(bitPlane)
-        let maxBytes = max(4, (count * 2 + 7) / 8)
-        var sigPropWriter = HTFastBitWriter(capacity: maxBytes)
-        var magRefWriter = HTFastBitWriter(capacity: maxBytes)
-
         let numStripes = (height + 3) / 4
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        let maxBytes = max(4, (count * 2 + 7) / 8)
+        var signWriter = HTFastBitWriter(capacity: maxBytes)
+        var sigMel = HTMELCoder(capacity: max(8, (count + 7) / 8))
+        var magWriter = HTFastBitWriter(capacity: maxBytes)
         absMags.withUnsafeBufferPointer { magPtr in
-            cleanupSigPacked.withUnsafeBufferPointer { cleanupSigPtr in
+            cleanupSigPacked.withUnsafeBufferPointer { cleanupPtr in
                 coefficients.withUnsafeBufferPointer { coefPtr in
                     sigPacked.withUnsafeMutableBufferPointer { sigPtr in
                         let magBase = magPtr.baseAddress!
-                        let cleanupSigBase = cleanupSigPtr.baseAddress!
+                        let cleanupBase = cleanupPtr.baseAddress!
                         let coefBase = coefPtr.baseAddress!
                         let sigBase = sigPtr.baseAddress!
 
@@ -1998,22 +2067,19 @@ struct HTBlockEncoder: Sendable {
                                 for row in 0..<stripeHeight {
                                     let y = stripe * 4 + row
                                     let idx = y * width + col
-
                                     let wordIdx = idx >> 6
                                     let bitIdx = idx & 63
                                     let isSignificant = (sigBase[wordIdx] >> bitIdx) & 1 != 0
-                                    let wasCleanupSignificant = (cleanupSigBase[wordIdx] >> bitIdx) & 1 != 0
+                                    let wasCleanupSignificant = (cleanupBase[wordIdx] >> bitIdx) & 1 != 0
 
-                                    if isSignificant {
-                                        if !wasCleanupSignificant {
-                                            let bit = Int((magBase[idx] >> bp32) & 1)
-                                            magRefWriter.emitBit(bit)
-                                        }
-                                    } else {
+                                    if isSignificant && !wasCleanupSignificant {
                                         let bit = Int((magBase[idx] >> bp32) & 1)
-                                        sigPropWriter.emitBit(bit)
+                                        magWriter.emitBit(bit)
+                                    } else if !isSignificant {
+                                        let bit = Int((magBase[idx] >> bp32) & 1)
+                                        sigMel.encode(bit: bit)
                                         if bit != 0 {
-                                            sigPropWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
+                                            signWriter.emitBit(coefBase[idx] < 0 ? 1 : 0)
                                             sigBase[wordIdx] |= 1 << bitIdx
                                         }
                                     }
@@ -2025,8 +2091,19 @@ struct HTBlockEncoder: Sendable {
             }
         }
 
-        let sigPropBytes = sigPropWriter.flushAppending(to: &output)
-        let magRefBytes = magRefWriter.flushAppending(to: &output)
+        let hasSigPayload = sigMel.byteCount > 0 || signWriter.byteCount > 0
+        let hasMagPayload = magWriter.byteCount > 0
+        let shouldEmitEmptyPayloads = (endStripe - startStripe) < numStripes
+        guard shouldEmitEmptyPayloads || hasSigPayload || hasMagPayload else {
+            return (0, 0)
+        }
+
+        let sigPropData = makeSigPropPayload(mel: &sigMel, signWriter: &signWriter)
+        let magRefData = makeMagRefPayload(writer: &magWriter)
+        output.append(sigPropData)
+        output.append(magRefData)
+        let sigPropBytes = sigPropData.count
+        let magRefBytes = magRefData.count
         return (sigPropBytes, magRefBytes)
     }
 
@@ -2056,7 +2133,8 @@ struct HTBlockEncoder: Sendable {
         let count = width * height
         let bp32 = Int32(bitPlane)
         let maxBytes = max(4, (count * 2 + 7) / 8)
-        var writer = HTFastBitWriter(capacity: maxBytes)
+        var signWriter = HTFastBitWriter(capacity: maxBytes)
+        var mel = HTMELCoder(capacity: max(8, (count + 7) / 8))
 
         // Process ALL non-significant samples in stripe order.
         let numStripes = (height + 3) / 4
@@ -2075,17 +2153,16 @@ struct HTBlockEncoder: Sendable {
                     let coeff = coefficients[idx]
                     let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
                     let bit = Int((absCoeff >> bp32) & 1)
-                    writer.emitBit(bit)
+                    mel.encode(bit: bit)
 
                     if bit != 0 {
-                        // Also encode sign
-                        writer.emitBit(coeff < 0 ? 1 : 0)
+                        signWriter.emitBit(coeff < 0 ? 1 : 0)
                     }
                 }
             }
         }
 
-        return writer.flush()
+        return makeSigPropPayload(mel: &mel, signWriter: &signWriter)
     }
 
     /// Encodes the HT significance propagation pass (convenience for `[Int]` callers).
@@ -2115,7 +2192,9 @@ struct HTBlockEncoder: Sendable {
     func encodeMagRef(
         coefficients: [Int32],
         significanceState: [Bool],
-        bitPlane: Int
+        bitPlane: Int,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil
     ) throws -> Data {
         guard coefficients.count == width * height else {
             throw J2KError.encodingError("Coefficient count mismatch")
@@ -2123,12 +2202,21 @@ struct HTBlockEncoder: Sendable {
 
         let count = width * height
         let bp32 = Int32(bitPlane)
-        let maxBytes = max(4, (count + 7) / 8)
-        var writer = HTFastBitWriter(capacity: maxBytes)
+        let topMagnitude = coefficients.reduce(Int32(0)) { current, value in
+            let absValue = value < 0 ? (0 &- value) : value
+            return max(current, absValue)
+        }
+        let cleanupThreshold = topMagnitude > 0
+            ? (Int32(1) << Int32(Int.bitWidth - Int(topMagnitude).leadingZeroBitCount - 1))
+            : 0
+        var writer = HTFastBitWriter(capacity: max(4, (count + 7) / 8))
 
-        // Process in stripe order — only already-significant samples
+        // Process in stripe order — only already-significant samples that were
+        // not already fully reconstructed by the cleanup MagSgn pass.
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        for stripe in startStripe..<endStripe {
             let stripeHeight = min(4, height - stripe * 4)
             for col in 0..<width {
                 for row in 0..<stripeHeight {
@@ -2138,6 +2226,7 @@ struct HTBlockEncoder: Sendable {
                     if significanceState[idx] {
                         let coeff = coefficients[idx]
                         let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                        if absCoeff >= cleanupThreshold { continue }
                         let bit = Int((absCoeff >> bp32) & 1)
                         writer.emitBit(bit)
                     }
@@ -2145,7 +2234,75 @@ struct HTBlockEncoder: Sendable {
             }
         }
 
-        return writer.flush()
+        return makeMagRefPayload(writer: &writer)
+    }
+
+    /// Encodes checkpointed MagRef segments for one bit-plane.
+    ///
+    /// The refinement coding state is preserved because each checkpoint covers a
+    /// deterministic stripe range of the already-significant samples; SigProp is
+    /// still emitted once for the full bit-plane.
+    func encodeMagRefCheckpointed(
+        coefficients: [Int32],
+        significanceState: [Bool],
+        bitPlane: Int,
+        stripeGroupSpan: Int? = nil
+    ) throws -> [Data] {
+        guard coefficients.count == width * height else {
+            throw J2KError.encodingError("Coefficient count mismatch")
+        }
+        guard significanceState.count == width * height else {
+            throw J2KError.encodingError("Significance state count mismatch")
+        }
+
+        let numStripes = max(1, (height + 3) / 4)
+        let groupSpan = min(numStripes, max(1, stripeGroupSpan ?? htMagRefCheckpointStripeGroupSpan(forHeight: height)))
+        guard groupSpan < numStripes else {
+            return [try encodeMagRef(
+                coefficients: coefficients,
+                significanceState: significanceState,
+                bitPlane: bitPlane
+            )]
+        }
+
+        let bp32 = Int32(bitPlane)
+        let topMagnitude = coefficients.reduce(Int32(0)) { current, value in
+            let absValue = value < 0 ? (0 &- value) : value
+            return max(current, absValue)
+        }
+        let cleanupThreshold = topMagnitude > 0
+            ? (Int32(1) << Int32(Int.bitWidth - Int(topMagnitude).leadingZeroBitCount - 1))
+            : 0
+        let count = width * height
+        let maxBytes = max(4, (count + 7) / 8)
+        var segments: [Data] = []
+        segments.reserveCapacity((numStripes + groupSpan - 1) / groupSpan)
+
+        for startStripe in stride(from: 0, to: numStripes, by: groupSpan) {
+            let endStripe = min(numStripes, startStripe + groupSpan)
+            var writer = HTFastBitWriter(capacity: maxBytes)
+
+            for stripe in startStripe..<endStripe {
+                let stripeHeight = min(4, height - stripe * 4)
+                for col in 0..<width {
+                    for row in 0..<stripeHeight {
+                        let y = stripe * 4 + row
+                        let idx = y * width + col
+
+                        guard significanceState[idx] else { continue }
+                        let coeff = coefficients[idx]
+                        let absCoeff = coeff < 0 ? (0 &- coeff) : coeff
+                        if absCoeff >= cleanupThreshold { continue }
+                        let bit = Int((absCoeff >> bp32) & 1)
+                        writer.emitBit(bit)
+                    }
+                }
+            }
+
+            segments.append(writer.flush())
+        }
+
+        return segments
     }
 
     /// Encodes the HT magnitude refinement pass (convenience for `[Int]` callers).
@@ -2241,7 +2398,7 @@ struct HTBlockDecoder: Sendable {
         var vlcReader = J2KBitReader(data: vlcData)
         var mel = HTMELCoder()
         let vlc = HTVLCCoder()
-        let magsgn = HTMagSgnCoder()
+        var magsgn = HTMagSgnCoder()
 
         // Decode in the same stripe order as encoding
         let numStripes = (height + 3) / 4
@@ -2319,8 +2476,46 @@ struct HTBlockDecoder: Sendable {
         zeroBitPlanes: Int,
         passSegmentLengths: [Int] = []
     ) throws -> [Int32] {
+        let result = try decodeFromCodestreamDetailed(
+            data: data,
+            passCount: passCount,
+            bitDepth: bitDepth,
+            zeroBitPlanes: zeroBitPlanes,
+            passSegmentLengths: passSegmentLengths
+        )
+        return result.coefficients
+    }
+
+    /// Decodes HT block coded data and also returns a per-coefficient mask
+    /// indicating which coefficients had a block-level midpoint applied (i.e.
+    /// were only partially refined at truncation time).
+    ///
+    /// Downstream irreversible dequantization must **not** add the quantization
+    /// bin midpoint (`+0.5 * stepSize`) for coefficients where this mask is
+    /// `true`, because the block-level midpoint already centers them in their
+    /// residual-uncertainty range. Adding a second midpoint is the long-known
+    /// double-midpoint bias documented in the HTJ2K optimization notes.
+    ///
+    /// - Parameters:
+    ///   - data: The encoded block data.
+    ///   - passCount: Number of coding passes.
+    ///   - bitDepth: The bit depth of the coefficients.
+    ///   - zeroBitPlanes: Number of zero bit-planes at the top.
+    ///   - passSegmentLengths: Optional per-pass byte lengths.
+    /// - Returns: A tuple `(coefficients, isPartiallyRefinedMask)` where the
+    ///   mask has the same length as `coefficients` and is `true` for any
+    ///   coefficient that carries a block-level partial-refinement midpoint.
+    /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
+    func decodeFromCodestreamDetailed(
+        data: Data,
+        passCount: Int,
+        bitDepth: Int,
+        zeroBitPlanes: Int,
+        passSegmentLengths: [Int] = []
+    ) throws -> (coefficients: [Int32], isPartiallyRefined: [Bool]) {
         guard passCount > 0 else {
-            return [Int32](repeating: 0, count: width * height)
+            let zeros = [Int32](repeating: 0, count: width * height)
+            return (zeros, [Bool](repeating: false, count: zeros.count))
         }
 
         // Determine the top bit-plane from zeroBitPlanes and bitDepth
@@ -2330,7 +2525,8 @@ struct HTBlockDecoder: Sendable {
         // The 6-byte header encodes melLen + vlcLen + magsgnLen.
         guard let header = HTStreamHeader.read(from: data) else {
             // Trivial block with no significant coefficients
-            return [Int32](repeating: 0, count: width * height)
+            let zeros = [Int32](repeating: 0, count: width * height)
+            return (zeros, [Bool](repeating: false, count: zeros.count))
         }
 
         let cleanupLen = HTStreamHeader.size + header.melLen + header.magsgnLen + header.vlcLen
@@ -2350,6 +2546,7 @@ struct HTBlockDecoder: Sendable {
         )
         var coefficients = try decodeCleanup(from: block)
         let cleanupSignificanceState = coefficients.map { $0 != 0 }
+        var uncertaintyPlane = [Int](repeating: -1, count: coefficients.count)
 
         // Apply refinement passes (SigProp + MagRef pairs) from the remaining data.
         // The refinement data forms a continuous bit-packed stream. When per-pass
@@ -2358,12 +2555,23 @@ struct HTBlockDecoder: Sendable {
         let refinementPassCount = passCount - 1
         if refinementPassCount > 0 && cleanupEnd < data.endIndex {
             var significanceState = coefficients.map { $0 != 0 }
+            let refinementStripeCount = max(1, (height + 3) / 4)
+            var refinementStripeGroupSpan = refinementStripeCount
+            var refinementStart = cleanupEnd
+            var usesProgressiveMagRef = false
+            if refinementStart + 4 <= data.endIndex,
+               data[refinementStart] == 0x48,
+               data[refinementStart + 1] == 0x54,
+               data[refinementStart + 2] == 0x47 {
+                refinementStripeGroupSpan = max(1, Int(data[refinementStart + 3]))
+                refinementStart += 4
+                usesProgressiveMagRef = refinementStripeGroupSpan < refinementStripeCount
+            }
 
             if !passSegmentLengths.isEmpty {
-                // Per-pass segments provided — split into individual segments
+                // Per-pass segments provided — split into individual segments.
                 var segments: [Data] = []
-                // Skip the first segment length (cleanup pass)
-                var offset = data.startIndex + (passSegmentLengths.isEmpty ? 0 : passSegmentLengths[0])
+                var offset = data.startIndex + refinementStart
                 for i in 1..<passSegmentLengths.count {
                     let end = min(offset + passSegmentLengths[i], data.endIndex)
                     segments.append(Data(data[offset..<end]))
@@ -2374,7 +2582,6 @@ struct HTBlockDecoder: Sendable {
                 var bp = topBitPlane - 1
 
                 while passIdx < segments.count && bp >= 0 {
-                    // Save pre-SigProp significance for MagRef (encoder uses same state)
                     let preSigPropState = significanceState
                     let sigPropResult = try decodeSigProp(
                         coefficients: coefficients,
@@ -2383,20 +2590,32 @@ struct HTBlockDecoder: Sendable {
                         bitPlane: bp
                     )
                     coefficients = sigPropResult.coefficients
+                    for i in 0..<significanceState.count {
+                        if !significanceState[i] && sigPropResult.significanceState[i] {
+                            uncertaintyPlane[i] = max(-1, bp - 1)
+                        }
+                    }
                     passIdx += 1
 
-                    if passIdx < segments.count {
-                        // Use pre-SigProp state to match encoder
+                    for stripeStart in stride(from: 0, to: refinementStripeCount, by: refinementStripeGroupSpan) {
+                        guard passIdx < segments.count else { break }
+                        let groupStripeCount = min(refinementStripeGroupSpan, refinementStripeCount - stripeStart)
                         coefficients = try decodeMagRef(
                             coefficients: coefficients,
                             magRefData: segments[passIdx],
                             significanceState: preSigPropState,
                             cleanupSignificanceState: cleanupSignificanceState,
-                            bitPlane: bp
+                            bitPlane: bp,
+                            stripeStart: stripeStart,
+                            stripeCount: groupStripeCount,
+                            rawSegment: usesProgressiveMagRef
                         )
+                        for i in 0..<preSigPropState.count where preSigPropState[i] && !cleanupSignificanceState[i] {
+                            uncertaintyPlane[i] = bp > 0 ? (bp - 1) : -1
+                        }
                         passIdx += 1
                     }
-                    // Update significance after both passes
+
                     significanceState = sigPropResult.significanceState
                     bp -= 1
                 }
@@ -2405,17 +2624,13 @@ struct HTBlockDecoder: Sendable {
                 // Each SigProp/MagRef pass is independently byte-aligned (the encoder
                 // flushes each pass to a byte boundary). After decoding each pass we
                 // must align the reader to the next byte before reading the next pass.
-                let refinementData = Data(data[cleanupEnd..<data.endIndex])
+                let refinementData = Data(data[refinementStart..<data.endIndex])
                 var reader = J2KBitReader(data: refinementData)
                 reader.setByteStuffing(false)
                 var bp = topBitPlane - 1
                 var passesDecoded = 0
 
                 while bp >= 0 && passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
-                    // SigProp pass — decode using current significance state.
-                    // IMPORTANT: save pre-SigProp significance for MagRef, because
-                    // the encoder uses the SAME significance state for both SigProp
-                    // and MagRef at the same bit-plane.
                     let preSigPropState = significanceState
                     let sigResult = try decodeSigPropFromReader(
                         coefficients: coefficients,
@@ -2424,49 +2639,101 @@ struct HTBlockDecoder: Sendable {
                         reader: &reader
                     )
                     coefficients = sigResult.coefficients
+                    for i in 0..<significanceState.count {
+                        if !significanceState[i] && sigResult.significanceState[i] {
+                            uncertaintyPlane[i] = max(-1, bp - 1)
+                        }
+                    }
                     passesDecoded += 1
-                    // Align to next byte boundary (skip padding from encoder flush)
                     try reader.alignToByte()
 
-                    // MagRef pass — use pre-SigProp significance state to match
-                    // the encoder, which hadn't updated significance yet.
-                    if passesDecoded < refinementPassCount && reader.bytesRemaining > 0 {
+                    for stripeStart in stride(from: 0, to: refinementStripeCount, by: refinementStripeGroupSpan) {
+                        guard passesDecoded < refinementPassCount && reader.bytesRemaining > 0 else { break }
+                        let groupStripeCount = min(refinementStripeGroupSpan, refinementStripeCount - stripeStart)
                         coefficients = try decodeMagRefFromReader(
                             coefficients: coefficients,
                             significanceState: preSigPropState,
                             cleanupSignificanceState: cleanupSignificanceState,
                             bitPlane: bp,
-                            reader: &reader
+                            reader: &reader,
+                            stripeStart: stripeStart,
+                            stripeCount: groupStripeCount,
+                            rawSegment: usesProgressiveMagRef
                         )
+                        for i in 0..<preSigPropState.count where preSigPropState[i] && !cleanupSignificanceState[i] {
+                            uncertaintyPlane[i] = bp > 0 ? (bp - 1) : -1
+                        }
                         passesDecoded += 1
                         try reader.alignToByte()
                     }
 
-                    // NOW update significance state (after both passes at this bp)
                     significanceState = sigResult.significanceState
                     bp -= 1
                 }
             }
         }
 
+        // Apply midpoint reconstruction for coefficients that remain only
+        // partially refined after truncation. Fully reconstructed cleanup and
+        // full-roundtrip paths keep `uncertaintyPlane == -1`, so they remain exact.
+        var isPartiallyRefined = [Bool](repeating: false, count: coefficients.count)
+        if !uncertaintyPlane.isEmpty {
+            for i in 0..<coefficients.count {
+                let plane = uncertaintyPlane[i]
+                guard plane >= 0, coefficients[i] != 0 else { continue }
+                let midpoint = 1 << plane
+                if coefficients[i] > 0 {
+                    coefficients[i] += midpoint
+                } else {
+                    coefficients[i] -= midpoint
+                }
+                isPartiallyRefined[i] = true
+            }
+        }
+
         // Convert Int to Int32
-        return coefficients.map { Int32($0) }
+        return (coefficients.map { Int32($0) }, isPartiallyRefined)
     }
 
     // MARK: - Continuous Stream Refinement Decoders
+
+    /// Reads a compact payload length written by the HT refinement encoder.
+    private func readCompactLength(from reader: inout J2KBitReader) throws -> Int {
+        let first = Int(try reader.readUInt8())
+        if first < 0xFF {
+            return first
+        }
+        return Int(try reader.readUInt16())
+    }
 
     /// Decodes the SigProp pass from a continuous reader (no per-pass framing).
     private func decodeSigPropFromReader(
         coefficients: [Int],
         significanceState: [Bool],
         bitPlane: Int,
-        reader: inout J2KBitReader
+        reader: inout J2KBitReader,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil
     ) throws -> (coefficients: [Int], significanceState: [Bool]) {
         var coeffs = coefficients
         var sigState = significanceState
 
+        guard reader.bytesRemaining > 0 else {
+            return (coeffs, sigState)
+        }
+
+        let melLen = try readCompactLength(from: &reader)
+        let signLen = try readCompactLength(from: &reader)
+        let melData = try reader.readBytes(melLen)
+        let signData = try reader.readBytes(signLen)
+        var melReader = J2KBitReader(data: melData)
+        var signReader = J2KBitReader(data: signData)
+        var mel = HTMELCoder()
+
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        for stripe in startStripe..<endStripe {
             let stripeHeight = min(4, height - stripe * 4)
             for col in 0..<width {
                 for row in 0..<stripeHeight {
@@ -2475,10 +2742,9 @@ struct HTBlockDecoder: Sendable {
 
                     if sigState[idx] { continue }
 
-                    guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
-                    let bit = try reader.readBit()
-                    if bit {
-                        let sign = try reader.readBit()
+                    let bit = try mel.decode(from: &melReader)
+                    if bit != 0 {
+                        let sign = try signReader.readBit()
                         let magnitude = 1 << bitPlane
                         coeffs[idx] = sign ? -magnitude : magnitude
                         sigState[idx] = true
@@ -2496,12 +2762,32 @@ struct HTBlockDecoder: Sendable {
         significanceState: [Bool],
         cleanupSignificanceState: [Bool],
         bitPlane: Int,
-        reader: inout J2KBitReader
+        reader: inout J2KBitReader,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil,
+        rawSegment: Bool = false
     ) throws -> [Int] {
         var coeffs = coefficients
 
+        guard reader.bytesRemaining > 0 || rawSegment else {
+            return coeffs
+        }
+
+        var magReader: J2KBitReader
+        if rawSegment {
+            magReader = reader
+            magReader.setByteStuffing(false)
+        } else {
+            let magLen = try readCompactLength(from: &reader)
+            let magData = try reader.readBytes(magLen)
+            magReader = J2KBitReader(data: magData)
+            magReader.setByteStuffing(false)
+        }
+
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        for stripe in startStripe..<endStripe {
             let stripeHeight = min(4, height - stripe * 4)
             for col in 0..<width {
                 for row in 0..<stripeHeight {
@@ -2509,8 +2795,7 @@ struct HTBlockDecoder: Sendable {
                     let idx = y * width + col
 
                     if significanceState[idx] && !cleanupSignificanceState[idx] {
-                        guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
-                        let bit = try reader.readBit()
+                        let bit = try magReader.readBit()
                         if bit {
                             let refinement = 1 << bitPlane
                             if coeffs[idx] > 0 {
@@ -2522,6 +2807,10 @@ struct HTBlockDecoder: Sendable {
                     }
                 }
             }
+        }
+
+        if rawSegment {
+            reader = magReader
         }
 
         return coeffs
@@ -2540,14 +2829,28 @@ struct HTBlockDecoder: Sendable {
         coefficients: [Int],
         sigPropData: Data,
         significanceState: [Bool],
-        bitPlane: Int
+        bitPlane: Int,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil
     ) throws -> (coefficients: [Int], significanceState: [Bool]) {
         var coeffs = coefficients
         var sigState = significanceState
-        var reader = J2KBitReader(data: sigPropData)
+        guard !sigPropData.isEmpty else {
+            return (coeffs, sigState)
+        }
+        var payloadReader = J2KBitReader(data: sigPropData)
+        let melLen = try readCompactLength(from: &payloadReader)
+        let signLen = try readCompactLength(from: &payloadReader)
+        let melData = try payloadReader.readBytes(melLen)
+        let signData = try payloadReader.readBytes(signLen)
+        var melReader = J2KBitReader(data: melData)
+        var signReader = J2KBitReader(data: signData)
+        var mel = HTMELCoder()
 
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        for stripe in startStripe..<endStripe {
             let stripeHeight = min(4, height - stripe * 4)
             for col in 0..<width {
                 for row in 0..<stripeHeight {
@@ -2558,10 +2861,9 @@ struct HTBlockDecoder: Sendable {
                         continue
                     }
 
-                    guard reader.bytesRemaining > 0 else { break }
-                    let bit = try reader.readBit()
-                    if bit {
-                        let sign = try reader.readBit()
+                    let bit = try mel.decode(from: &melReader)
+                    if bit != 0 {
+                        let sign = try signReader.readBit()
                         let magnitude = 1 << bitPlane
                         coeffs[idx] = sign ? -magnitude : magnitude
                         sigState[idx] = true
@@ -2587,13 +2889,27 @@ struct HTBlockDecoder: Sendable {
         magRefData: Data,
         significanceState: [Bool],
         cleanupSignificanceState: [Bool],
-        bitPlane: Int
+        bitPlane: Int,
+        stripeStart: Int = 0,
+        stripeCount: Int? = nil,
+        rawSegment: Bool = false
     ) throws -> [Int] {
         var coeffs = coefficients
-        var reader = J2KBitReader(data: magRefData)
+        guard !magRefData.isEmpty || rawSegment else {
+            return coeffs
+        }
+        var magReader = J2KBitReader(data: magRefData)
+        if !rawSegment {
+            let magLen = try readCompactLength(from: &magReader)
+            let magData = try magReader.readBytes(magLen)
+            magReader = J2KBitReader(data: magData)
+            magReader.setByteStuffing(false)
+        }
 
         let numStripes = (height + 3) / 4
-        for stripe in 0..<numStripes {
+        let startStripe = max(0, stripeStart)
+        let endStripe = min(numStripes, startStripe + (stripeCount ?? numStripes))
+        for stripe in startStripe..<endStripe {
             let stripeHeight = min(4, height - stripe * 4)
             for col in 0..<width {
                 for row in 0..<stripeHeight {
@@ -2601,8 +2917,7 @@ struct HTBlockDecoder: Sendable {
                     let idx = y * width + col
 
                     if significanceState[idx] && !cleanupSignificanceState[idx] {
-                        guard reader.bytesRemaining > 0 else { break }
-                        let bit = try reader.readBit()
+                        let bit = try magReader.readBit()
                         if bit {
                             let refinement = 1 << bitPlane
                             if coeffs[idx] > 0 {

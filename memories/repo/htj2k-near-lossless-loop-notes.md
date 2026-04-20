@@ -1,0 +1,41 @@
+- Do not treat the reversible-filter reroute as a valid fix for the HT near-lossless medical guard; it changes the problem definition.
+- Genuine baseline after reverting the workaround: 62.28849654718378 dB with size guard passing.
+- Raising HT near-lossless peak bpp can reach ~63.21 dB, but it breaks the size constraint.
+- Simple PCRD weighting / actual-distortion toggles did not move the size-safe frontier.
+- HT refinement stream compaction ideas that remove self-delimiting headers regress the real truncated decode path even when isolated block roundtrip tests still pass.
+- Naive stripe-group refinement segmentation also regresses the real near-lossless metric badly (about 50.79 dB) even after preserving decode symmetry; finer frontiers must not come at the cost of HT coding efficiency.
+- MagRef-only checkpoint plumbing can be made bitstream-safe for both segmented and continuous decode, and it now supports progressive RD micro-segments with their own pass boundaries.
+- The remaining blocker is not checkpoint structure itself but how PCRD ranks and allocates those finer MagRef frontiers in the real near-lossless path.
+- The strongest next direction is an architecture-level PCRD redesign: local marginal delta ranking, short lookahead scoring, bundled SigProp/MagRef decisions, and global cross-block redistribution rather than more slope-only micro-tuning.
+- The exact HT allocator now uses the same weighted distortion anchor as pass scoring; this fixed a consistency issue but did not by itself move the near-lossless metric above the stable 62.2885 dB plateau.
+- A chain-aware exact allocator is now in place for early HT cumulative frontiers, and a dedicated regression proves it preserves a useful two-step chain under a strict byte budget without regressing the real HT guard suite.
+- An aggressive whole-pipeline marginal frontier rescoring attempt regressed the real near-lossless guard slightly to about 62.0468 dB and was reverted; broad reordering without a fuller global queue redesign is not enough.
+- A safer follow-up that applied marginal-plus-lookahead scoring only inside the exact HT knapsack stage verified as neutral at 62.2885 dB; that idea alone does not close the gap.
+- If the target remains below 65 dB after the remaining algorithmic work is exhausted, part of that limit is likely fundamental: HTJ2K buys speed at some compression-efficiency cost versus EBCOT, especially near lossless.
+- The current honest 62.2885 dB state still suggests real headroom remains; it should not yet be treated as the theoretical ceiling.
+- Preserving structured HT bundle endpoints in the exact strict-byte solver (early prefixes plus 1+2k / 1+3k cumulative endpoints) yielded a small verified improvement to 62.3232 dB; this path is real but insufficient on its own.
+- 2026-04-20 session — five further hypotheses tested, all reverted:
+  1. LL subband weight 1.60→2.10 at targetBitrate≥2.5: bit-identical output. PCRD selection already saturated.
+  2. Detail-band weight uniformization (HH 0.28/0.38/0.22→0.55/0.65/0.55; HL/LH res3 0.92→1.00): bit-identical.
+  3. nearLosslessPeakBpp 2.736→{2.740,2.750,2.755,2.773,2.800}: non-monotonic PSNR — 2.750/2.755/2.773 produced 62.11/62.15/62.25 dB (WORSE than baseline) while blowing size guard; only 2.800 improved (+0.12 dB) but broke size guard at 5885B.
+  4. adjustedHTCandidateGain penalties disabled entirely: bit-identical.
+- Root-cause diagnosis via J2K_DUMP_PCRD=1: at the 5603-byte frontier, HH blocks already take 31/31 allocated passes while LL/HL/LH are byte-bottlenecked (21/21 or 25/25 passes). Weight scaling within a saturated or byte-capped block cannot change selection; the frontier is structurally insensitive to slope retuning.
+- Budget extrapolation: observed slope at 2.800 bpp is ~+0.12 dB per 282 extra bytes. Reaching 65 dB (Δ=2.68 dB) would require ~6300 additional bytes, vs. only ~156 bytes of headroom under the 1.10× J2K size guard (5759.6B). The 65 dB target is infeasible at this image/config without either (a) loosening the size guard, or (b) a structural HT reconstruction improvement (not a PCRD retuning).
+- The 62.32 dB plateau should now be considered the practical ceiling under the current constraints (128×128 8-bit grayscale, decomp=3, quality=1.0, size ≤ J2K×1.10). Future sessions should not re-attempt slope/weight/peak-bpp retuning on this specific guard; instead target the HT block reconstruction pathway itself (midpoint/refinement value model) OR negotiate a relaxed size guard with the test authors.
+
+## 2026-04-20 reconstruction-side cycle — negative results worth remembering
+
+- **Stripe-scoped `uncertaintyPlane` update in MagRef decode is BIT-IDENTICAL to whole-block scope on `testHTJ2KNearLossless...` inputs.** Both segmented and continuous decode paths. The `!cleanupSignificanceState[i]` filter in the midpoint-application loop effectively excludes the coefficients whose uncertaintyPlane would differ. Do not retry this exact change expecting movement.
+- **Block-level midpoint (`coef += 1 << uncertaintyPlane[i]`) is NOT the cause of the 62.32 dB non-monotonicity.** Disabling midpoint entirely reduces absolute PSNR ~3.9 dB but PRESERVES the non-monotonicity pattern across {2.73, 2.75, 2.755, 2.773, 2.8} bpp. The regression therefore lives in the integer-domain HT-decoded coefficient values, not in midpoint reconstruction.
+- **HT dequantization has a systematic `+0.5*step` bias for partially-refined coefficients** (double-midpointing: block-level `+(1<<plane)` then dequant's `+0.5*step`). This is a real bug but is SYSTEMATIC, not monotonicity-inducing. Fixing it requires threading `uncertaintyPlane` through from block decode to `applyDequantization`. Do not expect this fix to close the 65 dB target (systematic bias correction is ≤ ~1 dB).
+- **Non-monotonicity on this test is almost certainly a PCRD/encoder-model issue**, not a decode-side issue. Reconstruction-side scope ruled out by elimination.
+- **Phase A test** (`testHTJ2KNearLosslessPSNRIsMonotoneInRefinementBudget`) is the authoritative oracle for monotonicity regressions across budgets. Keep it in the suite as an XFAIL-until-PCRD-fixed guard.
+
+## 2026-04-20 distortion-signal cycle — key findings
+
+- **Unclamped monotone-max on `cumulativePassDistortion` breaks the main near-lossless guard catastrophically** (62.32 → 56.99 dB). The PCRD exact solver treats plateaued gains as equal-cost truncation points and ends up preferring smaller-byte variants, starving the encoder of refinement budget. Do not retry a pure clamp at the emission sites.
+- **HEAD (no-midpoint) HT reconstruction model is monotone by construction:** MagRef only updates recon when magBit=1, and that change is always toward the original → per-pass distortion delta ≥ 0 → cumulativePassDistortion monotone → oracle test GREEN at 62.288 dB baseline.
+- **The midpoint-based reconstruction model** (`reconMag = knownMag + (1<<uncertaintyPlane)`) gains ~+0.035 dB on the main guard but is the ROOT CAUSE of the Phase A oracle failure: partial refinement with halved midpoint can overshoot individual coefficients, producing negative per-pass deltas.
+- **To keep BOTH green**, any future midpoint-reintroduction must gate per-coefficient: only add the midpoint contribution when it strictly reduces (or keeps) the reconstruction error vs. the pre-pass recon. Equivalently, a MagRef pass should never make any individual coefficient's recon worse. This is an encode-side-only decision (decoder doesn't know the original), so the PCRD-tracked `cumulativePassDistortion` would need to reflect the decoder's unconditional midpoint reconstruction while the decoder itself follows the same unconditional rule. That keeps encoder and decoder consistent but still admits non-monotonicity.
+- **Alternative direction worth exploring next cycle:** sub-stripe truncation-atomicity — only advertise cumulativePassBytes boundaries where the delta distortion since the previous advertised boundary is strictly positive. This is a "distortion-signal-only" fix and respects the forbidden-scope rules (no hull/solver changes).
+- **Current stop state:** Oracle GREEN, main guard 62.288 dB, full regression suite GREEN. The 65 dB stretch target remains infeasible under the 1.10× size guard per the budget extrapolation in prior notes.

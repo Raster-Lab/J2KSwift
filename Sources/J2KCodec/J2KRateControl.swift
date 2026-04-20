@@ -450,6 +450,138 @@ public struct J2KRateControl: Sendable {
     /// Replaces expensive pow() calls in distortion estimation hot loops.
     private static let pow4Table: [Double] = (0..<32).map { Double(1 << (2 * $0)) }
 
+    private func effectiveDistortionWeight(
+        for codeBlock: J2KCodeBlock,
+        maxResolutionLevel: Int
+    ) -> Double {
+        var subbandWeight: Double
+        if maxResolutionLevel > 0 {
+            let resLevel = codeBlock.resolutionLevel
+            let orient: Int
+            let dwtLevel: Int
+
+            if resLevel == 0 {
+                orient = 0
+                dwtLevel = maxResolutionLevel - 1
+            } else {
+                dwtLevel = maxResolutionLevel - resLevel
+                switch codeBlock.subband {
+                case .ll: orient = 0
+                case .hl: orient = 1
+                case .lh: orient = 2
+                case .hh: orient = 3
+                }
+            }
+
+            if configuration.useReversibleFilter {
+                let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
+                let norm = Self.dwtNorms53[orient][clampedLevel]
+                subbandWeight = norm * norm
+            } else {
+                subbandWeight = 1.0
+            }
+        } else {
+            subbandWeight = 1.0
+        }
+
+        if configuration.passesPerBitPlane == 2 &&
+            configuration.componentCount == 1 &&
+            !configuration.useReversibleFilter {
+            let targetBitrate: Double
+            switch configuration.mode {
+            case .targetBitrate(let bitrate):
+                targetBitrate = bitrate
+            case .constantQuality(let quality):
+                targetBitrate = qualityToBitrate(quality)
+            case .lossless:
+                targetBitrate = Double.greatestFiniteMagnitude
+            }
+
+            if targetBitrate >= 2.5 {
+                switch codeBlock.subband {
+                case .ll:
+                    subbandWeight *= 1.60
+                case .hl, .lh:
+                    if codeBlock.resolutionLevel <= 1 {
+                        subbandWeight *= 1.35
+                    } else if codeBlock.resolutionLevel == 2 {
+                        subbandWeight *= 1.15
+                    } else {
+                        subbandWeight *= 0.92
+                    }
+                case .hh:
+                    if codeBlock.resolutionLevel <= 1 {
+                        subbandWeight *= 0.28
+                    } else if codeBlock.resolutionLevel == 2 {
+                        subbandWeight *= 0.38
+                    } else {
+                        subbandWeight *= 0.22
+                    }
+                }
+            }
+        }
+
+        let componentWeight: Double
+        if !configuration.useReversibleFilter && configuration.componentCount >= 3 {
+            switch codeBlock.componentIndex {
+            case 0:
+                componentWeight = 1.35
+            case 1, 2:
+                componentWeight = 0.90
+            default:
+                componentWeight = 1.0
+            }
+        } else {
+            componentWeight = 1.0
+        }
+
+        return subbandWeight * componentWeight
+    }
+
+    private func weightedInitialDistortion(
+        for codeBlock: J2KCodeBlock,
+        maxResolutionLevel: Int
+    ) -> Double {
+        estimateInitialDistortion(codeBlock: codeBlock) * effectiveDistortionWeight(
+            for: codeBlock,
+            maxResolutionLevel: maxResolutionLevel
+        )
+    }
+
+    private func adjustedHTCandidateGain(
+        rawGain: Double,
+        bytes: Int,
+        passCount: Int,
+        codeBlock: J2KCodeBlock
+    ) -> Double {
+        guard configuration.passesPerBitPlane == 2,
+              configuration.componentCount == 1,
+              !configuration.useReversibleFilter else {
+            return rawGain
+        }
+
+        var factor = 1.0
+        if passCount <= 1 {
+            if bytes <= 2 {
+                factor *= 0.88
+            } else if bytes <= 4 {
+                factor *= 0.94
+            }
+        } else {
+            factor *= 1.0 + min(0.10, 0.04 * Double(passCount - 1))
+        }
+
+        if codeBlock.subband == .ll && codeBlock.resolutionLevel == 0 {
+            if passCount >= 12 {
+                factor *= 1.06
+            } else if passCount >= 8 {
+                factor *= 1.03
+            }
+        }
+
+        return rawGain * factor
+    }
+
     /// Computes coding pass information with rate-distortion slopes.
     private func computeCodingPassInfo(
         codeBlocks: [J2KCodeBlock]
@@ -466,99 +598,18 @@ public struct J2KRateControl: Sendable {
         for codeBlock in codeBlocks {
             guard codeBlock.passeCount > 0 else { continue }
 
-            // Wavelet synthesis norm weighting for PCRD (WMSE model).
-            //
-            // For the 5/3 reversible wavelet: coefficient-domain distortion
-            // does NOT equal pixel-domain MSE because the wavelet is
-            // biorthogonal and integer coefficients have no quantization
-            // step normalization. Weight by the full squared L2 norm.
-            //
-            // For the 9/7 irreversible wavelet:
-            //   step_b = Δ_base / K_b  (K_b = synthesis L2 norm)
-            //   c_q    = coeff / step_b = coeff × K_b / Δ_base
-            //   Pixel error from 1 unit of c_q error = step_b × K_b = Δ_base
-            //
-            // Therefore MSE_pixel = Δ_base² × Σ e_q², which is the SAME
-            // constant for all subbands. For cross-subband PCRD comparison,
-            // pixel distortion = coeff_distortion × (1/K_b)² ∝ 1/norm_b².
-            // This lets PCRD correctly prioritize LL (energy-dominant) over
-            // fine-detail HL/HH subbands without double-counting the norms.
-            let subbandWeight: Double
-            if maxResLevel > 0 {
-                let resLevel = codeBlock.resolutionLevel
-                let orient: Int
-                let dwtLevel: Int  // 0-indexed decomposition level (0 = finest detail)
-
-                if resLevel == 0 {
-                    // LL subband at the coarsest level
-                    orient = 0  // LL
-                    dwtLevel = maxResLevel - 1
-                } else {
-                    // Detail subband: DWT level = NL - resolutionLevel (0-indexed)
-                    dwtLevel = maxResLevel - resLevel
-                    switch codeBlock.subband {
-                    case .ll: orient = 0
-                    case .hl: orient = 1
-                    case .lh: orient = 2
-                    case .hh: orient = 3
-                    }
-                }
-
-                if configuration.useReversibleFilter {
-                    // 5/3 reversible: full squared norm weighting needed because
-                    // integer coefficients have no quantization step normalization.
-                    let clampedLevel = min(dwtLevel, Self.dwtNorms53[0].count - 1)
-                    let norm = Self.dwtNorms53[orient][clampedLevel]
-                    subbandWeight = norm * norm
-                } else {
-                    // 9/7 irreversible: quantization step sizes FULLY incorporate
-                    // the wavelet norms (Δ_b = Δ_base / K_b). The pixel-domain MSE
-                    // contribution from subband b is:
-                    //
-                    //   MSE_pixel = step_b² × K_b² × Σ(error_q)²
-                    //             = (Δ_base/K_b)² × K_b² × Σ(error_q)²
-                    //             = Δ_base² × Σ(error_q)²
-                    //
-                    // Since Δ_base is constant across subbands, all subbands
-                    // contribute equally to pixel MSE per unit of quantized-domain
-                    // distortion. This matches OpenJPEG's t1_getwmsedec() which
-                    // computes w2 = 8192 × step² × norm² = 8192 × Δ_base² (constant).
-                    //
-                    // Therefore, equal PCRD weight for all subbands is correct.
-                    subbandWeight = 1.0
-                }
-            } else {
-                subbandWeight = 1.0
-            }
-
-            // For multi-component lossy images using ICT, prioritize the first
-            // transformed component (luminance-like Y) slightly over chroma.
-            // This improves low-bitrate RGB quality without altering the overall
-            // byte budget or affecting grayscale/high-bit-depth single-component paths.
-            let componentWeight: Double
-            if !configuration.useReversibleFilter && configuration.componentCount >= 3 {
-                switch codeBlock.componentIndex {
-                case 0:
-                    componentWeight = 1.35
-                case 1, 2:
-                    componentWeight = 0.90
-                default:
-                    componentWeight = 1.0
-                }
-            } else {
-                componentWeight = 1.0
-            }
-            let effectiveWeight = subbandWeight * componentWeight
+            let effectiveWeight = effectiveDistortionWeight(
+                for: codeBlock,
+                maxResolutionLevel: maxResLevel
+            )
 
             // Use tracked per-pass byte counts when available, otherwise estimate
             let hasPerPassBytes = !codeBlock.cumulativePassBytes.isEmpty
                 && codeBlock.cumulativePassBytes.count >= codeBlock.passeCount
 
-            // Use actual per-pass distortion when the encoder provided it.
-            // This is especially important for HTJ2K medical workloads, where
-            // the coarse population-only fallback can mis-rank truncation points
-            // even though the block coder has already measured real distortion
-            // reduction for each emitted pass.
+            // Use measured cumulative per-pass distortion whenever the encoder
+            // provided it. This lets checkpointed HT MagRef micro-segments carry
+            // their own RD slopes instead of being flattened into one coarse pass.
             let hasActualDistortion = !codeBlock.cumulativePassDistortion.isEmpty
                 && codeBlock.cumulativePassDistortion.count >= codeBlock.passeCount
 
@@ -581,9 +632,46 @@ public struct J2KRateControl: Sendable {
 
                 let passBytes = max(0, cumulativeBytes - previousCumulativeBytes)
 
+                let distortion: Double
+                if hasActualDistortion {
+                    // Actual remaining distortion from the encoder's tracked pass data.
+                    // These cumulativePassDistortion values are interpreted in the
+                    // quantised coefficient domain (sum of m²−e² reductions).
+                    // Apply the same subbandWeight to convert to pixel MSE.
+                    let remaining = max(0.0, codeBlock.coefficientSquaredSum - codeBlock.cumulativePassDistortion[passNum])
+                    distortion = remaining * effectiveWeight
+                } else {
+                    // Fallback: model-based estimate
+                    distortion = estimateDistortion(
+                        codeBlock: codeBlock,
+                        passNumber: passNum,
+                        totalPasses: codeBlock.passeCount
+                    ) * effectiveWeight
+                }
+
                 let htPassWeight: Double
                 if configuration.passesPerBitPlane == 2 && configuration.componentCount == 1 {
-                    if passNum == 0 {
+                    let targetBitrate: Double
+                    switch configuration.mode {
+                    case .targetBitrate(let bitrate):
+                        targetBitrate = bitrate
+                    case .constantQuality(let quality):
+                        targetBitrate = qualityToBitrate(quality)
+                    case .lossless:
+                        targetBitrate = Double.greatestFiniteMagnitude
+                    }
+
+                    if !configuration.useReversibleFilter && targetBitrate >= 2.5 {
+                        if passNum <= 2 {
+                            htPassWeight = 1.18
+                        } else if passNum >= 12 {
+                            htPassWeight = 0.84
+                        } else if passNum >= 8 {
+                            htPassWeight = 0.94
+                        } else {
+                            htPassWeight = 1.04
+                        }
+                    } else if passNum == 0 {
                         htPassWeight = configuration.useReversibleFilter ? 0.82 : 0.92
                     } else if passNum.isMultiple(of: 2) {
                         htPassWeight = configuration.useReversibleFilter ? 1.32 : 1.14
@@ -594,37 +682,21 @@ public struct J2KRateControl: Sendable {
                     htPassWeight = 1.0
                 }
 
-                let distortion: Double
-                if hasActualDistortion {
-                    // Actual remaining distortion from the encoder's tracked pass data.
-                    // These cumulativePassDistortion values are interpreted in the
-                    // quantised coefficient domain (sum of m²−e² reductions).
-                    // Apply the same subbandWeight to convert to pixel MSE.
-                    let remaining = max(0.0, codeBlock.coefficientSquaredSum - codeBlock.cumulativePassDistortion[passNum])
-                    distortion = remaining * effectiveWeight * htPassWeight
-                } else {
-                    // Fallback: model-based estimate
-                    distortion = estimateDistortion(
-                        codeBlock: codeBlock,
-                        passNumber: passNum,
-                        totalPasses: codeBlock.passeCount
-                    ) * effectiveWeight * htPassWeight
-                }
-
                 // Compute rate-distortion slope.
                 // Some refinement passes do not increase the terminated byte count;
                 // they should be treated as effectively free quality gains rather
                 // than penalized as a synthetic 1-byte increase.
                 let deltaDistortion = max(0.0, previousDistortion - distortion)
+                let weightedDeltaDistortion = deltaDistortion * htPassWeight
                 let deltaRate = Double(passBytes * 8) // bits
 
                 let slope: Double
-                if deltaDistortion <= 0 {
+                if weightedDeltaDistortion <= 0 {
                     slope = 0.0
                 } else if deltaRate == 0 {
                     slope = Double.greatestFiniteMagnitude
                 } else {
-                    slope = deltaDistortion / deltaRate
+                    slope = weightedDeltaDistortion / deltaRate
                 }
 
                 blockPassInfos.append(CodingPassInfo(
@@ -645,12 +717,9 @@ public struct J2KRateControl: Sendable {
             // Later zero-byte refinement passes dominate earlier ones at the same
             // rate, so keep only the furthest pass and recompute the effective
             // slope against the previous distinct-byte point.
-            var collapsedPassInfos = [CodingPassInfo]()
-            collapsedPassInfos.reserveCapacity(blockPassInfos.count)
+            var distinctPassInfos = [CodingPassInfo]()
+            distinctPassInfos.reserveCapacity(blockPassInfos.count)
             var groupStart = 0
-            var previousFrontierBytes = 0
-            var previousFrontierDistortion = initialDistortion
-            var previousFrontierSlope = Double.greatestFiniteMagnitude
 
             while groupStart < blockPassInfos.count {
                 let groupBytes = blockPassInfos[groupStart].cumulativeBytes
@@ -660,34 +729,58 @@ public struct J2KRateControl: Sendable {
                     groupEnd += 1
                 }
 
-                let representative = blockPassInfos[groupEnd]
-                let frontierDeltaDistortion = max(0.0, previousFrontierDistortion - representative.distortion)
-                let frontierDeltaRate = Double(max(0, representative.cumulativeBytes - previousFrontierBytes) * 8)
+                distinctPassInfos.append(blockPassInfos[groupEnd])
+                groupStart = groupEnd + 1
+            }
+
+            func makeFrontierInfo(
+                representative: CodingPassInfo,
+                previous: CodingPassInfo?
+            ) -> CodingPassInfo {
+                let previousBytes = previous?.cumulativeBytes ?? 0
+                let previousDistortion = previous?.distortion ?? initialDistortion
+                let deltaDistortion = max(0.0, previousDistortion - representative.distortion)
+                let deltaRate = Double(max(0, representative.cumulativeBytes - previousBytes) * 8)
 
                 let frontierSlope: Double
-                if frontierDeltaDistortion <= 0 {
+                if deltaDistortion <= 0 {
                     frontierSlope = 0.0
-                } else if frontierDeltaRate == 0 {
+                } else if deltaRate == 0 {
                     frontierSlope = Double.greatestFiniteMagnitude
                 } else {
-                    frontierSlope = min(frontierDeltaDistortion / frontierDeltaRate, previousFrontierSlope)
-                    previousFrontierSlope = frontierSlope
+                    frontierSlope = deltaDistortion / deltaRate
                 }
 
-                collapsedPassInfos.append(CodingPassInfo(
+                return CodingPassInfo(
                     codeBlockIndex: representative.codeBlockIndex,
                     passNumber: representative.passNumber,
                     cumulativeBytes: representative.cumulativeBytes,
                     distortion: representative.distortion,
                     slope: frontierSlope
-                ))
-
-                previousFrontierBytes = representative.cumulativeBytes
-                previousFrontierDistortion = representative.distortion
-                groupStart = groupEnd + 1
+                )
             }
 
-            passInfos.append(contentsOf: collapsedPassInfos)
+            var hullPassInfos = [CodingPassInfo]()
+            hullPassInfos.reserveCapacity(distinctPassInfos.count)
+
+            for representative in distinctPassInfos {
+                var candidate = makeFrontierInfo(representative: representative, previous: hullPassInfos.last)
+
+                while let last = hullPassInfos.last {
+                    let previous = hullPassInfos.count >= 2 ? hullPassInfos[hullPassInfos.count - 2] : nil
+                    let merged = makeFrontierInfo(representative: representative, previous: previous)
+                    if merged.slope >= last.slope {
+                        hullPassInfos.removeLast()
+                        candidate = merged
+                    } else {
+                        break
+                    }
+                }
+
+                hullPassInfos.append(candidate)
+            }
+
+            passInfos.append(contentsOf: hullPassInfos)
         }
 
         return passInfos
@@ -943,11 +1036,13 @@ public struct J2KRateControl: Sendable {
     /// - q=0.50 → ~0.4 bpp/component (medium quality, matches OpenJPEG -r 20 for 8-bit)
     /// - q=0.20 → ~0.15 bpp/component (low quality)
     private func qualityToBitrate(_ quality: Double) -> Double {
+        let nearLosslessPeakBpp = configuration.passesPerBitPlane == 2 ? 2.736 : 8.0
         let baseBpp: Double
         if quality >= 1.0 {
-            baseBpp = 8.0 // Near-lossless
+            baseBpp = nearLosslessPeakBpp
         } else if quality >= 0.95 {
-            baseBpp = 2.0 + (quality - 0.95) * 120.0   // 2.0→8.0 for q 0.95→1.0
+            let slope = (nearLosslessPeakBpp - 2.0) / 0.05
+            baseBpp = 2.0 + (quality - 0.95) * slope
         } else if quality >= 0.80 {
             baseBpp = 1.0 + (quality - 0.80) * 6.667   // 1.0→2.0 for q 0.80→0.95
         } else if quality >= 0.50 {
@@ -1032,7 +1127,9 @@ public struct J2KRateControl: Sendable {
                     let overshootWindowDivisor = configuration.passesPerBitPlane == 2 ? 8 : 16
                     let allowedOvershoot = max(1, targetBytes / overshootWindowDivisor)
 
-                    if overshootBytes > 0 && overshootBytes < undershootBytes && overshootBytes <= allowedOvershoot {
+                    if overshootBytes > 0 &&
+                        overshootBytes * 2 <= undershootBytes &&
+                        overshootBytes <= allowedOvershoot {
                         let isBetterNearTarget = overshootBytes < nearTargetOvershootBytes ||
                             (overshootBytes == nearTargetOvershootBytes && passInfo.slope > (nearTargetOvershootPass?.slope ?? 0.0))
                         if isBetterNearTarget {
@@ -1098,7 +1195,10 @@ public struct J2KRateControl: Sendable {
                 let overshootWindowDivisor = configuration.passesPerBitPlane == 2 ? 8 : 16
                 let allowedOvershoot = max(1, targetBytes / overshootWindowDivisor)
 
-                if incrementalBytes > 0 && overshootBytes > 0 && overshootBytes < undershootBytes && overshootBytes <= allowedOvershoot {
+                if incrementalBytes > 0 &&
+                    overshootBytes > 0 &&
+                    overshootBytes * 2 <= undershootBytes &&
+                    overshootBytes <= allowedOvershoot {
                     contributions[nearTargetOvershootPass.codeBlockIndex] = max(
                         contributions[nearTargetOvershootPass.codeBlockIndex] ?? 0,
                         nearTargetOvershootPass.passNumber + 1
@@ -1115,6 +1215,38 @@ public struct J2KRateControl: Sendable {
                         }
                     }
                 }
+            }
+        }
+
+        if configuration.strictRateMatching &&
+            configuration.componentCount == 1 &&
+            configuration.layerCount == 1 &&
+            !contributions.isEmpty {
+            if configuration.passesPerBitPlane == 2 {
+                let improved = improveHTNearTargetAllocation(
+                    targetBytes: targetBytes,
+                    sortedPasses: sortedPasses,
+                    codeBlocks: codeBlocks,
+                    previousPasses: previousPasses,
+                    contributions: contributions,
+                    blockCumulativeBytes: blockCumulativeBytes
+                )
+                contributions = improved.contributions
+                blockCumulativeBytes = improved.blockCumulativeBytes
+                selectedPasses = improved.selectedPasses
+                currentBytes = improved.currentBytes
+            }
+
+            if let exact = optimizeHTSingleLayerExactly(
+                targetBytes: targetBytes,
+                codeBlocks: codeBlocks,
+                sortedPasses: sortedPasses,
+                previousPasses: previousPasses
+            ) {
+                contributions = exact.contributions
+                blockCumulativeBytes = exact.blockCumulativeBytes
+                selectedPasses = exact.selectedPasses
+                currentBytes = exact.currentBytes
             }
         }
 
@@ -1200,6 +1332,640 @@ public struct J2KRateControl: Sendable {
         return false
     }
 
+    /// Performs a small local exchange search near the byte target.
+    ///
+    /// The greedy global slope ordering gets very close to optimal, but the last
+    /// few HT frontiers can still be limited by discrete byte jumps. A single
+    /// swap of one weak selected frontier for a stronger skipped frontier from a
+    /// different block often improves clinical detail while staying inside the
+    /// same strict byte budget.
+    private func improveHTNearTargetAllocation(
+        targetBytes: Int,
+        sortedPasses: [CodingPassInfo],
+        codeBlocks: [J2KCodeBlock],
+        previousPasses: Set<Int64>,
+        contributions: [Int: Int],
+        blockCumulativeBytes: [Int: Int]
+    ) -> (contributions: [Int: Int], blockCumulativeBytes: [Int: Int], selectedPasses: Set<Int64>, currentBytes: Int) {
+        guard targetBytes > 0 else {
+            return (contributions, blockCumulativeBytes, previousPasses, blockCumulativeBytes.values.reduce(0, +))
+        }
+
+        var frontiersByBlock = [Int: [CodingPassInfo]]()
+        for passInfo in sortedPasses {
+            frontiersByBlock[passInfo.codeBlockIndex, default: []].append(passInfo)
+        }
+
+        let maxResLevel = codeBlocks.map(\.resolutionLevel).max() ?? 0
+        let initialDistortionByBlock = Dictionary(uniqueKeysWithValues: codeBlocks.map {
+            ($0.index, weightedInitialDistortion(for: $0, maxResolutionLevel: maxResLevel))
+        })
+        for blockIndex in frontiersByBlock.keys {
+            frontiersByBlock[blockIndex]?.sort { lhs, rhs in
+                if lhs.passNumber != rhs.passNumber {
+                    return lhs.passNumber < rhs.passNumber
+                }
+                return lhs.cumulativeBytes < rhs.cumulativeBytes
+            }
+        }
+
+        var localContributions = contributions
+        var localBlockBytes = blockCumulativeBytes
+        var currentBytes = localBlockBytes.values.reduce(0, +)
+
+        func selectedFrontier(blockIndex: Int) -> CodingPassInfo? {
+            guard let frontiers = frontiersByBlock[blockIndex] else { return nil }
+            let selectedCount = localContributions[blockIndex] ?? 0
+            guard selectedCount > 0 else { return nil }
+            return frontiers.last { $0.passNumber + 1 <= selectedCount }
+        }
+
+        func previousFrontier(before frontier: CodingPassInfo?) -> CodingPassInfo? {
+            guard let frontier,
+                  let frontiers = frontiersByBlock[frontier.codeBlockIndex] else {
+                return nil
+            }
+            return frontiers.last { $0.passNumber < frontier.passNumber }
+        }
+
+        func nextFrontier(blockIndex: Int) -> CodingPassInfo? {
+            guard let frontiers = frontiersByBlock[blockIndex] else { return nil }
+            let selectedCount = localContributions[blockIndex] ?? 0
+            return frontiers.first { $0.passNumber + 1 > selectedCount }
+        }
+
+        for _ in 0..<4 {
+            let remainingBudget = targetBytes - currentBytes
+            var bestNetGain = 0.0
+            var bestAdd: CodingPassInfo?
+            var bestRemove: CodingPassInfo?
+            var bestPrevious: CodingPassInfo?
+            var bestAddBytes = 0
+            var bestRemoveBytes = 0
+
+            for blockIndex in frontiersByBlock.keys.sorted() {
+                guard let addFrontier = nextFrontier(blockIndex: blockIndex) else { continue }
+                let currentBlockBytes = localBlockBytes[blockIndex] ?? 0
+                let addBytes = max(0, addFrontier.cumulativeBytes - currentBlockBytes)
+                guard addBytes > 0 else { continue }
+
+                let currentDistortion = selectedFrontier(blockIndex: blockIndex)?.distortion
+                    ?? initialDistortionByBlock[blockIndex]
+                    ?? addFrontier.distortion
+                let addGain = max(0.0, currentDistortion - addFrontier.distortion)
+                guard addGain > 0 else { continue }
+
+                if addBytes <= remainingBudget {
+                    if addGain > bestNetGain {
+                        bestNetGain = addGain
+                        bestAdd = addFrontier
+                        bestRemove = nil
+                        bestPrevious = nil
+                        bestAddBytes = addBytes
+                        bestRemoveBytes = 0
+                    }
+                    continue
+                }
+
+                for removeBlockIndex in localContributions.keys.sorted() {
+                    if removeBlockIndex == blockIndex { continue }
+                    guard let removeFrontier = selectedFrontier(blockIndex: removeBlockIndex) else { continue }
+                    let priorFrontier = previousFrontier(before: removeFrontier)
+                    let priorBytes = priorFrontier?.cumulativeBytes ?? 0
+                    let removeBytes = max(0, removeFrontier.cumulativeBytes - priorBytes)
+                    guard removeBytes > 0, remainingBudget + removeBytes >= addBytes else { continue }
+
+                    let priorDistortion = priorFrontier?.distortion
+                        ?? initialDistortionByBlock[removeBlockIndex]
+                        ?? removeFrontier.distortion
+                    let removeLoss = max(0.0, priorDistortion - removeFrontier.distortion)
+                    let netGain = addGain - removeLoss
+                    guard netGain > bestNetGain else { continue }
+
+                    bestNetGain = netGain
+                    bestAdd = addFrontier
+                    bestRemove = removeFrontier
+                    bestPrevious = priorFrontier
+                    bestAddBytes = addBytes
+                    bestRemoveBytes = removeBytes
+                }
+            }
+
+            guard bestNetGain > 0, let addFrontier = bestAdd else {
+                break
+            }
+
+            if let removeFrontier = bestRemove {
+                if let priorFrontier = bestPrevious {
+                    localContributions[removeFrontier.codeBlockIndex] = priorFrontier.passNumber + 1
+                    localBlockBytes[removeFrontier.codeBlockIndex] = priorFrontier.cumulativeBytes
+                } else {
+                    localContributions.removeValue(forKey: removeFrontier.codeBlockIndex)
+                    localBlockBytes.removeValue(forKey: removeFrontier.codeBlockIndex)
+                }
+                currentBytes -= bestRemoveBytes
+            }
+
+            localContributions[addFrontier.codeBlockIndex] = addFrontier.passNumber + 1
+            localBlockBytes[addFrontier.codeBlockIndex] = addFrontier.cumulativeBytes
+            currentBytes += bestAddBytes
+        }
+
+        var rebuiltSelectedPasses = previousPasses
+        for (blockIndex, contributionCount) in localContributions {
+            guard contributionCount > 0 else { continue }
+            for prefixPass in 0..<contributionCount {
+                let prefixKey = (Int64(blockIndex) &<< 32) | Int64(prefixPass)
+                rebuiltSelectedPasses.insert(prefixKey)
+            }
+        }
+
+        return (localContributions, localBlockBytes, rebuiltSelectedPasses, currentBytes)
+    }
+
+    /// Performs a dependency-aware global marginal upgrade search for single-layer HT allocation.
+    ///
+    /// Each block contributes cumulative prefix options, and the solver repeatedly
+    /// picks the best next global upgrade step, with a short bundled lookahead so
+    /// weak gateway frontiers can still win when they unlock a stronger immediate
+    /// follow-on segment.
+    private func optimizeHTSingleLayerMarginally(
+        targetBytes: Int,
+        codeBlocks: [J2KCodeBlock],
+        previousPasses: Set<Int64>
+    ) -> (contributions: [Int: Int], blockCumulativeBytes: [Int: Int], selectedPasses: Set<Int64>, currentBytes: Int)? {
+        guard configuration.strictRateMatching,
+              configuration.passesPerBitPlane == 2,
+              configuration.componentCount == 1,
+              !configuration.useReversibleFilter,
+              previousPasses.isEmpty,
+              !codeBlocks.isEmpty else {
+            return nil
+        }
+
+        struct PrefixOption {
+            let passCount: Int
+            let bytes: Int
+            let gain: Double
+        }
+
+        func effectiveBits(for deltaBytes: Int) -> Double {
+            let overheadBytes: Int
+            switch deltaBytes {
+            case ...2:
+                overheadBytes = 3
+            case ...4:
+                overheadBytes = 2
+            case ...8:
+                overheadBytes = 1
+            default:
+                overheadBytes = 0
+            }
+            return Double(max(1, deltaBytes + overheadBytes) * 8)
+        }
+
+        let maxResLevel = codeBlocks.map(\.resolutionLevel).max() ?? 0
+        var optionsByBlock = [Int: [PrefixOption]]()
+
+        for block in codeBlocks {
+            guard block.cumulativePassBytes.count >= block.passeCount,
+                  block.cumulativePassDistortion.count >= block.passeCount else {
+                return nil
+            }
+
+            let effectiveWeight = effectiveDistortionWeight(
+                for: block,
+                maxResolutionLevel: maxResLevel
+            )
+            var bestForBytes = [Int: PrefixOption]()
+            for passIndex in 0..<block.passeCount {
+                let bytes = block.cumulativePassBytes[passIndex]
+                guard bytes > 0, bytes <= targetBytes else { continue }
+                let gain = max(0.0, min(
+                    weightedInitialDistortion(for: block, maxResolutionLevel: maxResLevel),
+                    block.cumulativePassDistortion[passIndex] * effectiveWeight
+                ))
+                let option = PrefixOption(passCount: passIndex + 1, bytes: bytes, gain: gain)
+                if let existing = bestForBytes[bytes] {
+                    if option.gain > existing.gain + 1.0e-9 ||
+                        (abs(option.gain - existing.gain) <= 1.0e-9 && option.passCount > existing.passCount) {
+                        bestForBytes[bytes] = option
+                    }
+                } else {
+                    bestForBytes[bytes] = option
+                }
+            }
+
+            var options = [PrefixOption(passCount: 0, bytes: 0, gain: 0.0)]
+            var bestGain = 0.0
+            for option in bestForBytes.values.sorted(by: { lhs, rhs in
+                if lhs.bytes != rhs.bytes { return lhs.bytes < rhs.bytes }
+                return lhs.passCount < rhs.passCount
+            }) {
+                if option.gain > bestGain + 1.0e-9 {
+                    options.append(option)
+                    bestGain = option.gain
+                }
+            }
+            optionsByBlock[block.index] = options
+        }
+
+        let blockIndices = codeBlocks.map(\.index).sorted()
+        var selectedOptionIndex = Dictionary(uniqueKeysWithValues: blockIndices.map { ($0, 0) })
+        var currentBytes = 0
+
+        while currentBytes < targetBytes {
+            var bestChoice: (blockIndex: Int, optionIndex: Int, deltaBytes: Int, score: Double, deltaGain: Double)?
+
+            for blockIndex in blockIndices {
+                guard let options = optionsByBlock[blockIndex] else { continue }
+                let currentIndex = selectedOptionIndex[blockIndex] ?? 0
+                guard currentIndex + 1 < options.count else { continue }
+
+                let current = options[currentIndex]
+                let single = options[currentIndex + 1]
+                var chosenIndex = currentIndex + 1
+                var chosenDeltaBytes = max(0, single.bytes - current.bytes)
+                var chosenDeltaGain = max(0.0, single.gain - current.gain)
+                var chosenScore = chosenDeltaGain > 0
+                    ? chosenDeltaGain / effectiveBits(for: chosenDeltaBytes)
+                    : 0.0
+
+                if currentIndex + 2 < options.count {
+                    let bundled = options[currentIndex + 2]
+                    let bundledDeltaBytes = max(0, bundled.bytes - current.bytes)
+                    let bundledDeltaGain = max(0.0, bundled.gain - current.gain)
+                    let bundledScore = bundledDeltaGain > 0
+                        ? bundledDeltaGain / effectiveBits(for: bundledDeltaBytes)
+                        : 0.0
+
+                    if bundledDeltaBytes <= max(chosenDeltaBytes * 4, 96) &&
+                        bundledScore > chosenScore * 0.98 {
+                        chosenIndex = currentIndex + 2
+                        chosenDeltaBytes = bundledDeltaBytes
+                        chosenDeltaGain = bundledDeltaGain
+                        chosenScore = bundledScore
+                    }
+                }
+
+                guard chosenDeltaBytes > 0,
+                      chosenDeltaGain > 0,
+                      currentBytes + chosenDeltaBytes <= targetBytes else {
+                    continue
+                }
+
+                if let currentBest = bestChoice {
+                    if chosenScore > currentBest.score + 1.0e-9 ||
+                        (abs(chosenScore - currentBest.score) <= 1.0e-9 && chosenDeltaGain > currentBest.deltaGain + 1.0e-9) ||
+                        (abs(chosenScore - currentBest.score) <= 1.0e-9 && abs(chosenDeltaGain - currentBest.deltaGain) <= 1.0e-9 && chosenDeltaBytes < currentBest.deltaBytes) {
+                        bestChoice = (blockIndex, chosenIndex, chosenDeltaBytes, chosenScore, chosenDeltaGain)
+                    }
+                } else {
+                    bestChoice = (blockIndex, chosenIndex, chosenDeltaBytes, chosenScore, chosenDeltaGain)
+                }
+            }
+
+            guard let bestChoice else { break }
+            selectedOptionIndex[bestChoice.blockIndex] = bestChoice.optionIndex
+            currentBytes += bestChoice.deltaBytes
+        }
+
+        guard currentBytes >= max(1, targetBytes * 9 / 10) else {
+            return nil
+        }
+
+        var contributions = [Int: Int]()
+        var blockCumulativeBytes = [Int: Int]()
+        var selectedPasses = previousPasses
+
+        for blockIndex in blockIndices {
+            guard let options = optionsByBlock[blockIndex] else { continue }
+            let optionIndex = selectedOptionIndex[blockIndex] ?? 0
+            let option = options[optionIndex]
+            guard option.passCount > 0 else { continue }
+            contributions[blockIndex] = option.passCount
+            blockCumulativeBytes[blockIndex] = option.bytes
+            for prefixPass in 0..<option.passCount {
+                let prefixKey = (Int64(blockIndex) &<< 32) | Int64(prefixPass)
+                selectedPasses.insert(prefixKey)
+            }
+        }
+
+        return (contributions, blockCumulativeBytes, selectedPasses, currentBytes)
+    }
+
+    /// Solves the final strict matched-rate HT allocation exactly for small single-layer cases.
+    ///
+    /// HTJ2K near-lossless medical paths often have only a handful of blocks but
+    /// relatively coarse frontier byte steps. A lightweight knapsack search over
+    /// the already-pruned block frontiers can therefore recover clinically useful
+    /// detail that the greedy PCRD order leaves behind, while still respecting the
+    /// strict byte budget.
+    private func optimizeHTSingleLayerExactly(
+        targetBytes: Int,
+        codeBlocks: [J2KCodeBlock],
+        sortedPasses: [CodingPassInfo],
+        previousPasses: Set<Int64>
+    ) -> (contributions: [Int: Int], blockCumulativeBytes: [Int: Int], selectedPasses: Set<Int64>, currentBytes: Int)? {
+        guard configuration.strictRateMatching,
+              configuration.componentCount == 1,
+              configuration.layerCount == 1,
+              previousPasses.isEmpty,
+              !codeBlocks.isEmpty,
+              codeBlocks.count <= 64,
+              targetBytes > 0,
+              targetBytes <= 32768 else {
+            return nil
+        }
+
+        let allowedOvershoot: Int
+        if configuration.passesPerBitPlane == 2 {
+            allowedOvershoot = min(24, max(1, targetBytes / 256))
+        } else {
+            allowedOvershoot = max(1, targetBytes / 16)
+        }
+        let searchLimit = min(32768, targetBytes + allowedOvershoot)
+
+        struct AllocationCandidate {
+            let passCount: Int
+            let bytes: Int
+            let gain: Double
+        }
+
+        let blockIndices = codeBlocks.map { $0.index }.sorted()
+        let blockByIndex = Dictionary(uniqueKeysWithValues: codeBlocks.map { ($0.index, $0) })
+        let maxResLevel = codeBlocks.map(\.resolutionLevel).max() ?? 0
+        var candidatesByBlock = [Int: [AllocationCandidate]]()
+
+        for blockIndex in blockIndices {
+            guard let block = blockByIndex[blockIndex] else { continue }
+            let initialDistortion = weightedInitialDistortion(for: block, maxResolutionLevel: maxResLevel)
+            var candidates = [AllocationCandidate(passCount: 0, bytes: 0, gain: 0.0)]
+
+            let useHTChainOptions = configuration.passesPerBitPlane == 2 &&
+                !configuration.useReversibleFilter &&
+                configuration.componentCount == 1 &&
+                block.cumulativePassBytes.count >= block.passeCount &&
+                block.cumulativePassDistortion.count >= block.passeCount
+
+            if useHTChainOptions {
+                let effectiveWeight = effectiveDistortionWeight(
+                    for: block,
+                    maxResolutionLevel: maxResLevel
+                )
+                var preservedBytes = Set<Int>()
+
+                for passIndex in 0..<block.passeCount {
+                    let passCount = passIndex + 1
+                    let preservesBundleEndpoint = passCount <= 8 ||
+                        (passCount > 1 && ((passCount - 1).isMultiple(of: 2) || (passCount - 1).isMultiple(of: 3)))
+                    guard preservesBundleEndpoint else { continue }
+
+                    let bytes = block.cumulativePassBytes[passIndex]
+                    guard bytes > 0, bytes <= searchLimit else { continue }
+
+                    let gain = min(
+                        initialDistortion,
+                        max(0.0, block.cumulativePassDistortion[passIndex] * effectiveWeight)
+                    )
+                    let candidate = AllocationCandidate(
+                        passCount: passCount,
+                        bytes: bytes,
+                        gain: adjustedHTCandidateGain(
+                            rawGain: gain,
+                            bytes: bytes,
+                            passCount: passCount,
+                            codeBlock: block
+                        )
+                    )
+
+                    if let last = candidates.last, last.bytes == bytes {
+                        if candidate.gain > last.gain {
+                            candidates[candidates.count - 1] = candidate
+                        }
+                    } else {
+                        candidates.append(candidate)
+                        preservedBytes.insert(bytes)
+                    }
+                }
+
+                let frontiers = sortedPasses
+                    .filter { $0.codeBlockIndex == blockIndex }
+                    .sorted {
+                        if $0.cumulativeBytes != $1.cumulativeBytes {
+                            return $0.cumulativeBytes < $1.cumulativeBytes
+                        }
+                        return $0.passNumber < $1.passNumber
+                    }
+
+                var bestGainAtOrBelowBytes = candidates.map(\.gain).max() ?? 0.0
+                for frontier in frontiers {
+                    let bytes = frontier.cumulativeBytes
+                    guard bytes > 0, bytes <= searchLimit, !preservedBytes.contains(bytes) else { continue }
+
+                    let gain = max(0.0, initialDistortion - frontier.distortion)
+                    if gain <= bestGainAtOrBelowBytes + 1.0e-9 {
+                        continue
+                    }
+
+                    candidates.append(AllocationCandidate(
+                        passCount: frontier.passNumber + 1,
+                        bytes: bytes,
+                        gain: adjustedHTCandidateGain(
+                            rawGain: gain,
+                            bytes: bytes,
+                            passCount: frontier.passNumber + 1,
+                            codeBlock: block
+                        )
+                    ))
+                    bestGainAtOrBelowBytes = gain
+                }
+            } else if block.cumulativePassBytes.count >= block.passeCount,
+                      block.cumulativePassDistortion.count >= block.passeCount {
+                let effectiveWeight = effectiveDistortionWeight(
+                    for: block,
+                    maxResolutionLevel: maxResLevel
+                )
+                var bestForBytes = [Int: AllocationCandidate]()
+
+                for passIndex in 0..<block.passeCount {
+                    let passCount = passIndex + 1
+                    let bytes = block.cumulativePassBytes[passIndex]
+                    guard bytes > 0, bytes <= searchLimit else { continue }
+
+                    let gain = min(
+                        initialDistortion,
+                        max(0.0, block.cumulativePassDistortion[passIndex] * effectiveWeight)
+                    )
+                    let candidate = AllocationCandidate(
+                        passCount: passCount,
+                        bytes: bytes,
+                        gain: gain
+                    )
+
+                    if let existing = bestForBytes[bytes] {
+                        if candidate.gain > existing.gain + 1.0e-9 ||
+                            (abs(candidate.gain - existing.gain) <= 1.0e-9 && candidate.passCount > existing.passCount) {
+                            bestForBytes[bytes] = candidate
+                        }
+                    } else {
+                        bestForBytes[bytes] = candidate
+                    }
+                }
+
+                var bestGainAtOrBelowBytes = 0.0
+                for candidate in bestForBytes.values.sorted(by: { lhs, rhs in
+                    if lhs.bytes != rhs.bytes { return lhs.bytes < rhs.bytes }
+                    return lhs.passCount < rhs.passCount
+                }) {
+                    if candidate.gain <= bestGainAtOrBelowBytes + 1.0e-9 {
+                        continue
+                    }
+                    candidates.append(candidate)
+                    bestGainAtOrBelowBytes = candidate.gain
+                }
+            } else {
+                let frontiers = sortedPasses
+                    .filter { $0.codeBlockIndex == blockIndex }
+                    .sorted {
+                        if $0.cumulativeBytes != $1.cumulativeBytes {
+                            return $0.cumulativeBytes < $1.cumulativeBytes
+                        }
+                        return $0.passNumber < $1.passNumber
+                    }
+
+                var bestGainAtOrBelowBytes = 0.0
+                for frontier in frontiers {
+                    let bytes = frontier.cumulativeBytes
+                    guard bytes > 0, bytes <= searchLimit else { continue }
+
+                    let gain = max(0.0, initialDistortion - frontier.distortion)
+                    if gain <= bestGainAtOrBelowBytes {
+                        continue
+                    }
+
+                    candidates.append(AllocationCandidate(
+                        passCount: frontier.passNumber + 1,
+                        bytes: bytes,
+                        gain: gain
+                    ))
+                    bestGainAtOrBelowBytes = gain
+                }
+            }
+
+            candidatesByBlock[blockIndex] = candidates
+        }
+
+        let negativeInfinity = -Double.greatestFiniteMagnitude
+        var dp = [Double](repeating: negativeInfinity, count: searchLimit + 1)
+        dp[0] = 0.0
+        var chosenCandidate = Array(
+            repeating: Array(repeating: -1, count: searchLimit + 1),
+            count: blockIndices.count
+        )
+        var previousBudget = Array(
+            repeating: Array(repeating: -1, count: searchLimit + 1),
+            count: blockIndices.count
+        )
+
+        for (blockPosition, blockIndex) in blockIndices.enumerated() {
+            guard let candidates = candidatesByBlock[blockIndex] else { continue }
+            var next = [Double](repeating: negativeInfinity, count: searchLimit + 1)
+
+            for usedBytes in 0...searchLimit where dp[usedBytes] > negativeInfinity / 2 {
+                for (candidateIndex, candidate) in candidates.enumerated() {
+                    let newBytes = usedBytes + candidate.bytes
+                    guard newBytes <= searchLimit else { continue }
+
+                    let newGain = dp[usedBytes] + candidate.gain
+                    if newGain > next[newBytes] + 1.0e-9 {
+                        next[newBytes] = newGain
+                        chosenCandidate[blockPosition][newBytes] = candidateIndex
+                        previousBudget[blockPosition][newBytes] = usedBytes
+                    } else if abs(newGain - next[newBytes]) <= 1.0e-9 {
+                        let currentChoice = chosenCandidate[blockPosition][newBytes]
+                        let currentPassCount = currentChoice >= 0 ? candidates[currentChoice].passCount : -1
+                        if candidate.passCount > currentPassCount {
+                            chosenCandidate[blockPosition][newBytes] = candidateIndex
+                            previousBudget[blockPosition][newBytes] = usedBytes
+                        }
+                    }
+                }
+            }
+
+            dp = next
+        }
+
+        var bestBytes = 0
+        var bestGain = negativeInfinity
+        for bytes in 0...targetBytes where dp[bytes] > negativeInfinity / 2 {
+            if dp[bytes] > bestGain + 1.0e-9 || (abs(dp[bytes] - bestGain) <= 1.0e-9 && bytes > bestBytes) {
+                bestGain = dp[bytes]
+                bestBytes = bytes
+            }
+        }
+
+        if configuration.passesPerBitPlane == 2 {
+            let baselinePenaltyPerByte: Double
+            if bestGain > negativeInfinity / 2 {
+                baselinePenaltyPerByte = max(1.0, (bestGain / Double(max(1, max(bestBytes, targetBytes)))) * 0.25)
+            } else {
+                baselinePenaltyPerByte = 1.0
+            }
+
+            var bestScore = bestGain
+            for bytes in (targetBytes + 1)...searchLimit where dp[bytes] > negativeInfinity / 2 {
+                let overshootBytes = bytes - targetBytes
+                guard overshootBytes <= allowedOvershoot else { continue }
+
+                let candidateScore = dp[bytes] - baselinePenaltyPerByte * Double(overshootBytes)
+                let currentDistance = abs(targetBytes - bestBytes)
+                let candidateDistance = overshootBytes
+
+                if candidateScore > bestScore + 1.0e-9 ||
+                    (abs(candidateScore - bestScore) <= 1.0e-9 && candidateDistance < currentDistance) {
+                    bestScore = candidateScore
+                    bestGain = dp[bytes]
+                    bestBytes = bytes
+                }
+            }
+        }
+
+        guard bestGain > negativeInfinity / 2 else {
+            return nil
+        }
+
+        var contributions = [Int: Int]()
+        var blockCumulativeBytes = [Int: Int]()
+        var selectedPasses = previousPasses
+        var remainingBytes = bestBytes
+
+        for blockPosition in stride(from: blockIndices.count - 1, through: 0, by: -1) {
+            let blockIndex = blockIndices[blockPosition]
+            guard let candidates = candidatesByBlock[blockIndex] else { continue }
+            let candidateIndex = chosenCandidate[blockPosition][remainingBytes]
+            guard candidateIndex >= 0 else { continue }
+
+            let candidate = candidates[candidateIndex]
+            if candidate.passCount > 0 {
+                contributions[blockIndex] = candidate.passCount
+                blockCumulativeBytes[blockIndex] = candidate.bytes
+                for prefixPass in 0..<candidate.passCount {
+                    let prefixKey = (Int64(blockIndex) &<< 32) | Int64(prefixPass)
+                    selectedPasses.insert(prefixKey)
+                }
+            }
+
+            let previous = previousBudget[blockPosition][remainingBytes]
+            if previous >= 0 {
+                remainingBytes = previous
+            }
+        }
+
+        let currentBytes = blockCumulativeBytes.values.reduce(0, +)
+        return (contributions, blockCumulativeBytes, selectedPasses, currentBytes)
+    }
+
     /// Emits optional per-layer PCRD diagnostics for debugging rate allocation.
     private func emitLayerDiagnostics(
         layerIndex: Int,
@@ -1239,6 +2005,24 @@ public struct J2KRateControl: Sendable {
                 let componentActual = actualByComponent[component] ?? 0
                 print(
                     "PCRD_COMPONENT: layer=\(layerIndex) comp=\(component) targetBytes=\(componentTarget) actualBytes=\(componentActual) availableBytes=\(availableBytes)"
+                )
+            }
+        }
+
+        let dumpPCRD = ProcessInfo.processInfo.environment["J2K_DUMP_PCRD"] != nil
+        if dumpPCRD {
+            let sortedBlocks = cumulativeBlockBytes.keys.sorted { lhs, rhs in
+                let left = cumulativeBlockBytes[lhs] ?? 0
+                let right = cumulativeBlockBytes[rhs] ?? 0
+                if left != right { return left > right }
+                return lhs < rhs
+            }
+            for blockIndex in sortedBlocks {
+                guard let block = blockByIndex[blockIndex] else { continue }
+                let bytes = cumulativeBlockBytes[blockIndex] ?? 0
+                let formattedSqSum = String(format: "%.1f", block.coefficientSquaredSum)
+                print(
+                    "PCRD_BLOCK: layer=\(layerIndex) block=\(blockIndex) sub=\(block.subband) res=\(block.resolutionLevel) bytes=\(bytes) passes=\(block.passeCount) sqSum=\(formattedSqSum)"
                 )
             }
         }
