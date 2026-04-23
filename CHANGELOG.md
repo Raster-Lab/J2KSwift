@@ -5,6 +5,37 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] — 2026-04-24
+
+**Major Release — Medical-grade production readiness**
+
+### Added
+- `J2KComponent.ByteOrder` — new public `Sendable` enum (`.littleEndian`, `.bigEndian`)
+- `J2KComponent.sampleByteOrder: ByteOrder?` property and init parameter for deterministic 16-bit sample byte-order handling
+- `J2KCodeBlock.quantizationStep: Double?` public getter used by PCRD
+- `testHDRAndColorCoverage` — 19 configurations (8/10/12/14/16-bit × grayscale/RGB at 512²–2048²)
+- `testDICOMWholeSlideImaging` — 10 tile configurations (256²–4096² at 8/16-bit RGB) with synthetic H&E pathology generator, lossless round-trip and lossy rate-distortion measurement
+- `testHTJ2KvsOpenJPH` — 7 configurations benchmarking HTJ2K path against OpenJPH
+- `testDecodeHotspotProfile` — per-configuration decode timing with 10-run medians (including 256² lossy configs)
+
+### Changed
+- PCRD subband weights derived from theoretical 9/7 L2 norms × stepsize² with HVS-aware refinement across resolution levels
+- HVS subband refinement (LL×1.25, HH×0.55, etc.) now applies to multi-component lossy (RGB) as well as grayscale
+- 16-bit byte-order inferencer uses a strided 4096-sample sweep and defaults to big-endian on tie, restoring correct MG/MR modality output
+- IDWT: skip-memset optimization on multi-level 9/7 and 5/3 inverse transforms when all cells are written
+- WSI lossy-RGB benchmark OpenJPEG ratio formula corrected from `24 / (bpp * 3)` to `24 / bpp`, removing a phantom 3–8 dB PSNR deficit in benchmark output
+- DICOMKit Phase 1 integration regressions addressed
+- `J2KCore` and `J2KCodec` release builds enable `-O -whole-module-optimization`
+- `VERSION` bumped from `3.0.1` to `4.0.0`
+
+### Fixed
+- 1024²+ 16-bit lossless corruption where the heuristic byte-order inferencer tied between LE/BE interpretations
+- MG/MR modality byte-order inferencer scope (was too narrow on strided samples)
+
+### Known limitations
+- HTJ2K block format in this release is a non-standard custom layout used by the J2KSwift fast path; not bit-compatible with OpenJPH or other Part-15 conformant decoders. Full Part-15 conformance is tracked as a follow-up work item.
+- 256² lossy decode is ~0.73× of OpenJPEG in absolute throughput (1.36 ms median vs ~1.0 ms); the gap is in the Swift MQ-coder hot loop and is not addressed in this release.
+
 ## [3.0.1] — 2026-04-18
 
 **Patch Release — Version bump to 3.0.1**
