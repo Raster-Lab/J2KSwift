@@ -36,4 +36,31 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
             block: block, width: 1, height: 1, missingMSBs: 0)
         XCTAssertEqual(decoded, [0])
     }
+
+    /// Bin-centered positive coefficient: input aligned to the
+    /// `(2μ_p + 1) << (p - 1)` quantization-bin center at p=30
+    /// should round-trip exactly. μ_p=1 → input 0x6000_0000.
+    func testSingleBinCenteredPositiveRoundTrip() throws {
+        let coefs: [UInt32] = [0x6000_0000]
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 1, height: 1, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 1, height: 1, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
+
+    /// Bin-centered negative coefficient: sign bit set at bit 31.
+    /// μ_p=1, negative → input = 0xE000_0000.
+    func testSingleBinCenteredNegativeRoundTrip() throws {
+        let coefs: [UInt32] = [0xE000_0000]
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 1, height: 1, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 1, height: 1, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
 }

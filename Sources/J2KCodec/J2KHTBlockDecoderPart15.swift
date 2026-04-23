@@ -314,7 +314,8 @@ public enum HTBlockDecoderPart15 {
     }
 
     /// Read magnitude-sign bits for up to 4 samples of a quad,
-    /// placing reconstructed coefficients into `coefs`.
+    /// reconstructing coefficients at bin center (OpenJPH's
+    /// `(v_n + 2) << (p - 1)` formula) with sign in bit 31.
     fileprivate static func readQuadSamples(
         baseX: Int, baseY: Int,
         rho: Int, Uq: Int,
@@ -327,33 +328,31 @@ public enum HTBlockDecoderPart15 {
         for i in 0..<4 {
             let bit = (rho >> i) & 1
             if bit == 0 { continue }
-            // e_bit = 1 when this sample's e_q hit e_qmax (indicated
-            // by e_k bit at position i, with e_1 bit at position i
-            // telling us the value of the sample's top bit).
-            let eBit = (e_k >> i) & 1
+            let eBit = (e_k >> i) & 1         // "e_k" nibble, per sample
+            let e1Bit = (e_1 >> i) & 1        // EMB e_1 nibble, per sample
             let m = Uq - eBit
             let payload = magsgnDec.read(count: m)
-            // Reconstruct magnitude and sign from payload. The
-            // encoder packed `s = 2*(μ_p - 1) + sign` masked to m
-            // bits. To undo: magnitude high bit is implicit (from
-            // e_qmax); sign is payload LSB.
+            // Sign is bit 0 of the payload (per encoder
+            // `s = 2(μ_p - 1) + sign`). The remaining m-1 magnitude
+            // bits live at positions 1..m-1 of the payload.
             let sign = UInt32(payload & 1)
-            let magLow = payload >> 1
-            // When the sample's e_q equals e_qmax (e_bit == 1), the
-            // implicit top bit lies at position (Uq - 1); otherwise
-            // the encoder emitted full Uq bits so no implicit.
-            let topBit: UInt32 = (eBit == 1) ? (UInt32(1) << (Uq - 1)) : 0
-            let mag = magLow | topBit
-            // Also honor the per-sample e_1 bit: when set, the
-            // sample's e_q equals e_qmax so the payload's high bit
-            // is also implicit. The (e_k, e_1) selection by the
-            // encoder guarantees these bits match.
-            _ = e_1
+            // v_n assembly per ojph_block_decoder64.cpp:1175-1178:
+            //   v_n = payload low m bits | (e_1 << m) | 1
+            // The `| 1` is the center-of-bin refinement; the
+            // `(e_1 << m)` reinserts the EMB e_1 bit when the VLC
+            // codeword covered it.
+            let mask: UInt32 = (m >= 32) ? ~UInt32(0)
+                                         : ((UInt32(1) << m) - 1)
+            var v_n: UInt32 = payload & mask
+            v_n |= UInt32(e1Bit) << m
+            v_n |= 1
             let (dx, dy) = offsets[i]
             let xi = baseX + dx
             let yi = baseY + dy
             if xi >= width || yi >= height { continue }
-            var coef = (mag + 1) << p
+            // (v_n + 2) << (p - 1) yields bin-center-reconstructed
+            // magnitude at the proper bit position.
+            var coef: UInt32 = (v_n &+ 2) << (p &- 1)
             if sign != 0 { coef |= 0x8000_0000 }
             coefs[yi * width + xi] = coef
         }
