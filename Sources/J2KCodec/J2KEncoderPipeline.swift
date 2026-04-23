@@ -192,8 +192,10 @@ struct EncoderPipeline: Sendable {
     ///
     /// Selective bypass remains available in the codec, but stays disabled here
     /// because it regresses rate-distortion quality at the fixed comparison bitrate.
+    /// For lossless, distortion tracking is disabled — all passes are always retained
+    /// so the Int64 multiply/Double accumulation in each inner loop is dead work.
     private var standardEBCOTCodingOptions: CodingOptions {
-        .default
+        CodingOptions(trackDistortion: !config.lossless)
     }
 
     /// Returns an EBCOT pass cap for the current quality target.
@@ -684,12 +686,36 @@ struct EncoderPipeline: Sendable {
                 }
             } else if component.bitDepth <= 16 {
                 let sampleCount = min(data.count / 2, pixelCount)
+                // Prefer the caller's explicit byte-order hint when available.
+                // Auto-inference via `j2kInfer16BitByteOrder` is reliable for
+                // ≤ 14-bit content but can tie at full 16-bit (both readings
+                // fit UInt16), producing hard-to-debug round-trip failures on
+                // large 16-bit images. Keep inference as a fallback so legacy
+                // callers without a hint still work.
+                let byteOrder: J2KSampleByteOrder
+                switch component.sampleByteOrder {
+                case .littleEndian: byteOrder = .littleEndian
+                case .bigEndian:    byteOrder = .bigEndian
+                case nil:
+                    byteOrder = j2kInfer16BitByteOrder(
+                        in: data,
+                        sampleCount: sampleCount,
+                        bitDepth: component.bitDepth,
+                        signed: component.signed
+                    )
+                }
                 data.withUnsafeBytes { buffer in
                     guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                         return
                     }
                     for i in 0..<sampleCount {
-                        let value = UInt16(ptr[i * 2]) << 8 | UInt16(ptr[i * 2 + 1])
+                        let value: UInt16
+                        switch byteOrder {
+                        case .littleEndian:
+                            value = UInt16(ptr[i * 2]) | (UInt16(ptr[i * 2 + 1]) << 8)
+                        case .bigEndian:
+                            value = (UInt16(ptr[i * 2]) << 8) | UInt16(ptr[i * 2 + 1])
+                        }
                         if component.signed {
                             pixels[i] = Int32(Int16(bitPattern: value))
                         } else {
@@ -767,7 +793,66 @@ struct EncoderPipeline: Sendable {
                 red: components[0], green: components[1], blue: components[2]
             )
         } else {
-            // Use ICT (floating-point, irreversible) for lossy mode
+            // Float32 ICT: 2× bandwidth vs Double, sufficient for ≤16-bit images.
+            // Eliminates the Int32→Double→Int32 round-trip by computing directly in Float.
+            #if canImport(Accelerate)
+            let count = components[0].count
+            let n = vDSP_Length(count)
+            var redF   = [Float](repeating: 0, count: count)
+            var greenF = [Float](repeating: 0, count: count)
+            var blueF  = [Float](repeating: 0, count: count)
+            components[0].withUnsafeBufferPointer { vDSP_vflt32($0.baseAddress!, 1, &redF,   1, n) }
+            components[1].withUnsafeBufferPointer { vDSP_vflt32($0.baseAddress!, 1, &greenF, 1, n) }
+            components[2].withUnsafeBufferPointer { vDSP_vflt32($0.baseAddress!, 1, &blueF,  1, n) }
+
+            var yF  = [Float](repeating: 0, count: count)
+            var cbF = [Float](repeating: 0, count: count)
+            var crF = [Float](repeating: 0, count: count)
+
+            // Y = 0.299R + 0.587G + 0.114B
+            var cYR: Float = 0.299; vDSP_vsmul(redF, 1, &cYR, &yF, 1, n)
+            var cYG: Float = 0.587; yF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(greenF, 1, &cYG, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+            var cYB: Float = 0.114; yF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(blueF,  1, &cYB, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+
+            // Cb = -0.168736R - 0.331264G + 0.5B
+            var cCbR: Float = -0.168736; vDSP_vsmul(redF, 1, &cCbR, &cbF, 1, n)
+            var cCbG: Float = -0.331264; cbF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(greenF, 1, &cCbG, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+            var cCbB: Float = 0.5; cbF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(blueF,  1, &cCbB, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+
+            // Cr = 0.5R - 0.418688G - 0.081312B
+            var cCrR: Float = 0.5; vDSP_vsmul(redF, 1, &cCrR, &crF, 1, n)
+            var cCrG: Float = -0.418688; crF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(greenF, 1, &cCrG, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+            var cCrB: Float = -0.081312; crF.withUnsafeMutableBufferPointer { b in
+                vDSP_vsma(blueF,  1, &cCrB, b.baseAddress!, 1, b.baseAddress!, 1, n)
+            }
+
+            // Float → Int32 with rounding for the EBCOT coefficient path
+            var yI  = [Int32](repeating: 0, count: count)
+            var cbI = [Int32](repeating: 0, count: count)
+            var crI = [Int32](repeating: 0, count: count)
+            vDSP_vfixr32(&yF,  1, &yI,  1, n)
+            vDSP_vfixr32(&cbF, 1, &cbI, 1, n)
+            vDSP_vfixr32(&crF, 1, &crI, 1, n)
+            y = yI; cb = cbI; cr = crI
+
+            // Float output for 9/7 DWT path — no extra conversion needed
+            var flt: [[Float]] = [yF, cbF, crF]
+            if components.count > 3 {
+                flt.append(contentsOf: components[3...].map { vDSPConvert.int32sToFloats($0) })
+            }
+            floatResult = flt
+            #else
+            // Fallback: Double-precision ICT (non-Apple platforms)
             let redD = vDSPConvert.int32sToDoubles(components[0])
             let greenD = vDSPConvert.int32sToDoubles(components[1])
             let blueD = vDSPConvert.int32sToDoubles(components[2])
@@ -777,8 +862,6 @@ struct EncoderPipeline: Sendable {
             y = vDSPConvert.doublesToInt32s(yD)
             cb = vDSPConvert.doublesToInt32s(cbD)
             cr = vDSPConvert.doublesToInt32s(crD)
-            // Convert ICT Double output directly to Float for the 9/7 DWT path,
-            // avoiding the previous Double→store→Double→Float round-trip.
             var flt: [[Float]] = [
                 vDSPConvert.doublesToFloats(yD),
                 vDSPConvert.doublesToFloats(cbD),
@@ -788,6 +871,7 @@ struct EncoderPipeline: Sendable {
                 flt.append(contentsOf: components[3...].map { vDSPConvert.int32sToFloats($0) })
             }
             floatResult = flt
+            #endif
         }
 
         var result = [y, cb, cr]
@@ -820,7 +904,7 @@ struct EncoderPipeline: Sendable {
 
         // Convert back to Int32
         return transformed.map { component in
-            component.map { Int32($0.rounded()) }
+            component.map { j2kClampedInt32($0) }
         }
     }
 
@@ -850,7 +934,7 @@ struct EncoderPipeline: Sendable {
 
         // Convert back to Int32
         return transformed.map { component in
-            component.map { Int32($0.rounded()) }
+            component.map { j2kClampedInt32($0) }
         }
     }
 
@@ -1129,311 +1213,169 @@ struct EncoderPipeline: Sendable {
         let maxLevels = max(0, Int(log2(Double(min(width, height)))) - 1)
         let levels = min(config.decompositionLevels, maxLevels)
 
-        var allSubbands: [[SubbandInfo]] = []
-
-        for (compIdx, compData) in components.enumerated() {
-            // Select filter for this component (if per-tile-component is enabled)
-            let componentFilter: J2KDWT1D.Filter
-            if case .perTileComponent(let kernelMap) = config.waveletKernelConfiguration {
-                // For now, assume tile index 0 for non-tiled images
-                // TODO: Add proper tile support
-                let key = J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: compIdx)
-                if let kernel = kernelMap[key] {
-                    componentFilter = kernel.toDWTFilter()
-                } else {
-                    // Fall back to standard filter
-                    componentFilter = config.useReversibleFilter ? .reversible53 : .irreversible97
-                }
-            } else {
-                componentFilter = filter
-            }
-
-            // Convert 1D array to 2D for DWT — only needed for non-accelerated paths.
-            // The accelerated paths (9/7 Float, 5/3 Int32) work on flat arrays directly.
-            // Deferring this allocation saves `height` array copies for the common case.
-
-            // If no decomposition, treat entire image as LL subband
-            guard levels >= 1 else {
-                let subbands = [SubbandInfo(
-                    componentIndex: compIdx,
-                    level: 0,
-                    subband: .ll,
-                    coefficients: compData,
-                    doubleCoefficients: nil,
-                    width: width,
-                    height: height
+        // No-decomp fast path: all components share the same `levels` value, so
+        // handle the levels==0 case before spinning up the task group.
+        guard levels >= 1 else {
+            let allSubbands = components.enumerated().map { (compIdx, compData) in
+                [SubbandInfo(
+                    componentIndex: compIdx, level: 0, subband: .ll,
+                    coefficients: compData, doubleCoefficients: nil,
+                    width: width, height: height
                 )]
-                allSubbands.append(subbands)
-                continue
             }
+            return (allSubbands, levels)
+        }
 
-            // For 9/7 irreversible wavelet, use Double-precision forward DWT to
-            // avoid accumulated rounding error from Int32 truncation at each level.
-            // For 5/3 reversible, use Int32 (exact integer arithmetic).
-            var subbands: [SubbandInfo] = []
-
-            let use97DoublePrecision: Bool
-            if case .irreversible97 = componentFilter {
-                use97DoublePrecision = true
-            } else {
-                use97DoublePrecision = false
+        // Pre-compute per-component filter outside the task group to avoid
+        // capturing `config` (non-Sendable) in @Sendable task closures.
+        let componentFilters: [J2KDWT1D.Filter] = (0..<components.count).map { compIdx in
+            if case .perTileComponent(let kernelMap) = config.waveletKernelConfiguration {
+                let key = J2KWaveletKernelConfiguration.TileComponentKey(tileIndex: 0, componentIndex: compIdx)
+                if let kernel = kernelMap[key] { return kernel.toDWTFilter() }
+                return config.useReversibleFilter ? .reversible53 : .irreversible97
             }
+            return filter
+        }
 
-            // Determine if we can use the accelerated flat-buffer DWT path.
-            // The accelerated path avoids [[Double]]/[[Int32]] array-of-arrays
-            // overhead and uses vDSP on Apple platforms.
-            let useAcceleratedPath: Bool
-            switch componentFilter {
-            case .irreversible97, .reversible53:
-                useAcceleratedPath = true
-            case .custom:
-                useAcceleratedPath = false
-            }
-
-            if use97DoublePrecision && useAcceleratedPath {
-                // Accelerated Float-precision CDF 9/7 path.
-                // Float32's 23-bit mantissa is sufficient for 16-bit images
-                // through 5+ DWT levels, and provides 2× bandwidth/SIMD throughput.
-                let flatFloat: [Float]
-                if let fc = floatComponents, compIdx < fc.count {
-                    flatFloat = fc[compIdx]
-                } else {
-                    flatFloat = vDSPConvert.int32sToFloats(compData)
+        var allSubbands: [[SubbandInfo]] = Array(repeating: [], count: components.count)
+        try await withThrowingTaskGroup(of: (Int, [SubbandInfo]).self) { group in
+            for (compIdx, compData) in components.enumerated() {
+                let componentFilter = componentFilters[compIdx]
+                let floatComp: [Float]? = floatComponents.flatMap { fc in
+                    compIdx < fc.count ? fc[compIdx] : nil
                 }
 
-                let decomposition = await AcceleratedDWT2D.forwardDecomposition(
-                    data: flatFloat, width: width, height: height, levels: levels
-                )
+                group.addTask {
+                    let use97DoublePrecision: Bool
+                    if case .irreversible97 = componentFilter { use97DoublePrecision = true }
+                    else { use97DoublePrecision = false }
 
-                for (levelIdx, level) in decomposition.levels.enumerated() {
-                    let decomLevel = levelIdx + 1
-
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hl,
-                        coefficients: [],
-                        doubleCoefficients: nil,
-                        width: level.hlW,
-                        height: level.hlH,
-                        floatCoefficients: level.hl
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .lh,
-                        coefficients: [],
-                        doubleCoefficients: nil,
-                        width: level.lhW,
-                        height: level.lhH,
-                        floatCoefficients: level.lh
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hh,
-                        coefficients: [],
-                        doubleCoefficients: nil,
-                        width: level.hhW,
-                        height: level.hhH,
-                        floatCoefficients: level.hh
-                    ))
-                }
-
-                subbands.insert(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: 0,
-                    subband: .ll,
-                    coefficients: [],
-                    doubleCoefficients: nil,
-                    width: decomposition.llW,
-                    height: decomposition.llH,
-                    floatCoefficients: decomposition.coarsestLL
-                ), at: 0)
-
-            } else if !use97DoublePrecision && useAcceleratedPath {
-                // Accelerated Int32 Le Gall 5/3 path.
-                let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
-                    data: compData, width: width, height: height, levels: levels
-                )
-
-                for (levelIdx, level) in decomposition.levels.enumerated() {
-                    let decomLevel = levelIdx + 1
-
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hl,
-                        coefficients: level.hl,
-                        doubleCoefficients: nil,
-                        width: level.hlW,
-                        height: level.hlH
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .lh,
-                        coefficients: level.lh,
-                        doubleCoefficients: nil,
-                        width: level.lhW,
-                        height: level.lhH
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hh,
-                        coefficients: level.hh,
-                        doubleCoefficients: nil,
-                        width: level.hhW,
-                        height: level.hhH
-                    ))
-                }
-
-                subbands.insert(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: 0,
-                    subband: .ll,
-                    coefficients: decomposition.coarsestLL,
-                    doubleCoefficients: nil,
-                    width: decomposition.llW,
-                    height: decomposition.llH
-                ), at: 0)
-
-            } else if use97DoublePrecision {
-                // Fallback: original [[Double]] path for custom filters
-                let doubleImage: [[Double]]
-                if let fc = floatComponents, compIdx < fc.count {
-                    // Convert Float to Double for custom filter path
-                    var img2D: [[Double]] = []
-                    img2D.reserveCapacity(height)
-                    for row in 0..<height {
-                        let rowStart = row * width
-                        let rowEnd = rowStart + width
-                        img2D.append(fc[compIdx][rowStart..<rowEnd].map { Double($0) })
+                    let useAcceleratedPath: Bool
+                    switch componentFilter {
+                    case .irreversible97, .reversible53: useAcceleratedPath = true
+                    case .custom: useAcceleratedPath = false
                     }
-                    doubleImage = img2D
-                } else {
-                    // Build [[Double]] from Int32 flat data
-                    var img2D: [[Double]] = []
-                    img2D.reserveCapacity(height)
-                    for row in 0..<height {
-                        let rowStart = row * width
-                        let rowEnd = rowStart + width
-                        img2D.append(compData[rowStart..<rowEnd].map { Double($0) })
+
+                    var subbands: [SubbandInfo] = []
+
+                    if use97DoublePrecision && useAcceleratedPath {
+                        let flatFloat: [Float] = floatComp ?? vDSPConvert.int32sToFloats(compData)
+                        let decomposition = await AcceleratedDWT2D.forwardDecomposition(
+                            data: flatFloat, width: width, height: height, levels: levels
+                        )
+                        for (levelIdx, level) in decomposition.levels.enumerated() {
+                            let decomLevel = levelIdx + 1
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                coefficients: [], doubleCoefficients: nil,
+                                width: level.hlW, height: level.hlH, floatCoefficients: level.hl))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                coefficients: [], doubleCoefficients: nil,
+                                width: level.lhW, height: level.lhH, floatCoefficients: level.lh))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                coefficients: [], doubleCoefficients: nil,
+                                width: level.hhW, height: level.hhH, floatCoefficients: level.hh))
+                        }
+                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                            coefficients: [], doubleCoefficients: nil,
+                            width: decomposition.llW, height: decomposition.llH,
+                            floatCoefficients: decomposition.coarsestLL), at: 0)
+
+                    } else if !use97DoublePrecision && useAcceleratedPath {
+                        let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
+                            data: compData, width: width, height: height, levels: levels
+                        )
+                        for (levelIdx, level) in decomposition.levels.enumerated() {
+                            let decomLevel = levelIdx + 1
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                coefficients: level.hl, doubleCoefficients: nil,
+                                width: level.hlW, height: level.hlH))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                coefficients: level.lh, doubleCoefficients: nil,
+                                width: level.lhW, height: level.lhH))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                coefficients: level.hh, doubleCoefficients: nil,
+                                width: level.hhW, height: level.hhH))
+                        }
+                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                            coefficients: decomposition.coarsestLL, doubleCoefficients: nil,
+                            width: decomposition.llW, height: decomposition.llH), at: 0)
+
+                    } else if use97DoublePrecision {
+                        var img2D: [[Double]] = []
+                        img2D.reserveCapacity(height)
+                        if let fc = floatComp {
+                            for row in 0..<height {
+                                let rs = row * width
+                                img2D.append(fc[rs..<rs + width].map { Double($0) })
+                            }
+                        } else {
+                            for row in 0..<height {
+                                let rs = row * width
+                                img2D.append(compData[rs..<rs + width].map { Double($0) })
+                            }
+                        }
+                        let decomposition = try J2KDWT2D.forwardDecompositionDouble(
+                            image: img2D, levels: levels, filter: componentFilter
+                        )
+                        for levelIdx in 0..<decomposition.levelCount {
+                            let level = decomposition.levels[levelIdx]
+                            let decomLevel = levelIdx + 1
+                            let hlFlat = level.hl.flatMap { $0 }
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                coefficients: vDSPConvert.doublesToInt32s(hlFlat), doubleCoefficients: hlFlat,
+                                width: level.hl.isEmpty ? 0 : level.hl[0].count, height: level.hl.count))
+                            let lhFlat = level.lh.flatMap { $0 }
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                coefficients: vDSPConvert.doublesToInt32s(lhFlat), doubleCoefficients: lhFlat,
+                                width: level.lh.isEmpty ? 0 : level.lh[0].count, height: level.lh.count))
+                            let hhFlat = level.hh.flatMap { $0 }
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                coefficients: vDSPConvert.doublesToInt32s(hhFlat), doubleCoefficients: hhFlat,
+                                width: level.hh.isEmpty ? 0 : level.hh[0].count, height: level.hh.count))
+                        }
+                        let coarsestLL = decomposition.coarsestLL
+                        let llFlat = coarsestLL.flatMap { $0 }
+                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                            coefficients: vDSPConvert.doublesToInt32s(llFlat), doubleCoefficients: llFlat,
+                            width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
+                            height: coarsestLL.count), at: 0)
+
+                    } else {
+                        var image2D: [[Int32]] = []
+                        image2D.reserveCapacity(height)
+                        for row in 0..<height {
+                            let rs = row * width
+                            image2D.append(Array(compData[rs..<rs + width]))
+                        }
+                        let decomposition = try J2KDWT2D.forwardDecomposition(
+                            image: image2D, levels: levels, filter: componentFilter
+                        )
+                        for levelIdx in 0..<decomposition.levelCount {
+                            let level = decomposition.levels[levelIdx]
+                            let decomLevel = levelIdx + 1
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                coefficients: level.hl.flatMap { $0 }, doubleCoefficients: nil,
+                                width: level.hl.isEmpty ? 0 : level.hl[0].count, height: level.hl.count))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                coefficients: level.lh.flatMap { $0 }, doubleCoefficients: nil,
+                                width: level.lh.isEmpty ? 0 : level.lh[0].count, height: level.lh.count))
+                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                coefficients: level.hh.flatMap { $0 }, doubleCoefficients: nil,
+                                width: level.hh.isEmpty ? 0 : level.hh[0].count, height: level.hh.count))
+                        }
+                        let coarsestLL = decomposition.coarsestLL
+                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                            coefficients: coarsestLL.flatMap { $0 }, doubleCoefficients: nil,
+                            width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
+                            height: coarsestLL.count), at: 0)
                     }
-                    doubleImage = img2D
+
+                    return (compIdx, subbands)
                 }
-                let decomposition = try J2KDWT2D.forwardDecompositionDouble(
-                    image: doubleImage, levels: levels, filter: componentFilter
-                )
-
-                for levelIdx in 0..<decomposition.levelCount {
-                    let level = decomposition.levels[levelIdx]
-                    let decomLevel = levelIdx + 1
-
-                    let hlFlat = level.hl.flatMap { $0 }
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hl,
-                        coefficients: vDSPConvert.doublesToInt32s(hlFlat),
-                        doubleCoefficients: hlFlat,
-                        width: level.hl.isEmpty ? 0 : level.hl[0].count,
-                        height: level.hl.count
-                    ))
-                    let lhFlat = level.lh.flatMap { $0 }
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .lh,
-                        coefficients: vDSPConvert.doublesToInt32s(lhFlat),
-                        doubleCoefficients: lhFlat,
-                        width: level.lh.isEmpty ? 0 : level.lh[0].count,
-                        height: level.lh.count
-                    ))
-                    let hhFlat = level.hh.flatMap { $0 }
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hh,
-                        coefficients: vDSPConvert.doublesToInt32s(hhFlat),
-                        doubleCoefficients: hhFlat,
-                        width: level.hh.isEmpty ? 0 : level.hh[0].count,
-                        height: level.hh.count
-                    ))
-                }
-
-                let coarsestLL = decomposition.coarsestLL
-                let llFlat = coarsestLL.flatMap { $0 }
-                subbands.insert(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: 0,
-                    subband: .ll,
-                    coefficients: vDSPConvert.doublesToInt32s(llFlat),
-                    doubleCoefficients: llFlat,
-                    width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
-                    height: coarsestLL.count
-                ), at: 0)
-            } else {
-                // Fallback: original Int32 path for custom filters
-                // Build [[Int32]] from flat data (only needed for custom filters)
-                var image2D: [[Int32]] = []
-                image2D.reserveCapacity(height)
-                for row in 0..<height {
-                    let rowStart = row * width
-                    let rowEnd = rowStart + width
-                    image2D.append(Array(compData[rowStart..<rowEnd]))
-                }
-                let decomposition = try J2KDWT2D.forwardDecomposition(
-                    image: image2D, levels: levels, filter: componentFilter
-                )
-
-                for levelIdx in 0..<decomposition.levelCount {
-                    let level = decomposition.levels[levelIdx]
-                    let decomLevel = levelIdx + 1
-
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hl,
-                        coefficients: level.hl.flatMap { $0 },
-                        doubleCoefficients: nil,
-                        width: level.hl.isEmpty ? 0 : level.hl[0].count,
-                        height: level.hl.count
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .lh,
-                        coefficients: level.lh.flatMap { $0 },
-                        doubleCoefficients: nil,
-                        width: level.lh.isEmpty ? 0 : level.lh[0].count,
-                        height: level.lh.count
-                    ))
-                    subbands.append(SubbandInfo(
-                        componentIndex: compIdx,
-                        level: decomLevel,
-                        subband: .hh,
-                        coefficients: level.hh.flatMap { $0 },
-                        doubleCoefficients: nil,
-                        width: level.hh.isEmpty ? 0 : level.hh[0].count,
-                        height: level.hh.count
-                    ))
-                }
-
-                let coarsestLL = decomposition.coarsestLL
-                subbands.insert(SubbandInfo(
-                    componentIndex: compIdx,
-                    level: 0,
-                    subband: .ll,
-                    coefficients: coarsestLL.flatMap { $0 },
-                    doubleCoefficients: nil,
-                    width: coarsestLL.isEmpty ? 0 : coarsestLL[0].count,
-                    height: coarsestLL.count
-                ), at: 0)
             }
-
-            allSubbands.append(subbands)
+            for try await (idx, subbands) in group {
+                allSubbands[idx] = subbands
+            }
         }
 
         return (allSubbands, levels)
@@ -1458,26 +1400,35 @@ struct EncoderPipeline: Sendable {
 
         let scaleFactor: Double
         if bitDepth > 8 {
+            // High-bit-depth quantizer — bpp-aware ramp. At low bpp the
+            // stepsize stays coarse so PCRD doesn't over-populate the pass
+            // stack. At high bpp the stepsize shrinks so the encoder
+            // generates a deep enough bit-plane stack to reach near-lossless
+            // quality. A mid-range transition (1.25 → 2.0 bpp) prevents the
+            // discontinuity that previously caused MG/XA to undershoot their
+            // byte budget at bpp=2.0.
             if let target = perComponentTargetBpp {
                 if target <= 0.35 {
-                    scaleFactor = 12.0
+                    scaleFactor = 2.5
                 } else if target <= 0.50 {
-                    scaleFactor = 8.0
+                    scaleFactor = 1.75
                 } else if target <= 0.75 {
-                    scaleFactor = 6.0
-                } else if target <= 1.00 {
-                    scaleFactor = 3.5
+                    scaleFactor = 1.25
+                } else if target <= 2.0 {
+                    scaleFactor = 1.0
+                } else if target <= 3.0 {
+                    scaleFactor = 0.60
                 } else {
-                    scaleFactor = 2.0
+                    scaleFactor = 0.40
                 }
             } else if config.quality <= 0.55 {
-                scaleFactor = 8.0
+                scaleFactor = 1.75
             } else if config.quality <= 0.75 {
-                scaleFactor = 6.0
+                scaleFactor = 1.25
             } else if config.quality <= 0.90 {
-                scaleFactor = 4.0
+                scaleFactor = 1.0
             } else {
-                scaleFactor = 2.0
+                scaleFactor = 0.60
             }
         } else if let target = perComponentTargetBpp, componentCount > 1 {
             if target <= 0.20 {
@@ -1760,6 +1711,11 @@ struct EncoderPipeline: Sendable {
                     bandKb = epsilon + guardBits - 1
                 }
 
+                // Compute the effective quantizer stepsize for this subband once,
+                // and keep it for PCRD (passed as `pcrdStep` below) so per-pass
+                // distortion can be converted from quantized-coefficient units
+                // to subband MSE. Lossless / already-quantized paths use step = 1.
+                let pcrdStep: Double
                 let fusedInvStep: Float?
                 if info.floatCoefficients != nil && !config.useReversibleFilter {
                     let step = lossyStepSize(
@@ -1770,6 +1726,7 @@ struct EncoderPipeline: Sendable {
                         adaptiveStepSizes: adaptiveStepSizes
                     )
                     fusedInvStep = Float(1.0 / step)
+                    pcrdStep = step
                 } else if info.doubleCoefficients != nil && !config.useReversibleFilter && info.coefficients.isEmpty {
                     let step = lossyStepSize(
                         for: info,
@@ -1779,7 +1736,19 @@ struct EncoderPipeline: Sendable {
                         adaptiveStepSizes: adaptiveStepSizes
                     )
                     fusedInvStep = Float(1.0 / step)
+                    pcrdStep = step
+                } else if !config.useReversibleFilter {
+                    // Pre-quantized integer subband path — recover the nominal step.
+                    pcrdStep = lossyStepSize(
+                        for: info,
+                        imageBitDepth: imageBitDepth,
+                        componentCount: image.components.count,
+                        totalLevels: actualLevels,
+                        adaptiveStepSizes: adaptiveStepSizes
+                    )
+                    fusedInvStep = nil
                 } else {
+                    pcrdStep = 1.0
                     fusedInvStep = nil
                 }
 
@@ -1832,7 +1801,7 @@ struct EncoderPipeline: Sendable {
                             originX: bx * cbWidth,
                             originY: by * cbHeight,
                             floatSubbandCoefficients: nil,
-                            quantizationStep: 1.0
+                            quantizationStep: Float(pcrdStep)
                         ))
                         blockIndex += 1
                     }
@@ -1943,7 +1912,8 @@ struct EncoderPipeline: Sendable {
                     cumulativePassDistortion: codeBlock.cumulativePassDistortion,
                     perPassSnapshotData: codeBlock.perPassSnapshotData,
                     mqCheckpoints: codeBlock.mqCheckpoints,
-                    rawMQOutput: codeBlock.rawMQOutput
+                    rawMQOutput: codeBlock.rawMQOutput,
+                    quantizationStep: config.useReversibleFilter ? nil : Double(d.quantizationStep)
                 )
                 orderedResults.write(codeBlock, at: d.index)
             }
@@ -3774,10 +3744,9 @@ struct EncoderPipeline: Sendable {
         decompositionLevels: Int, componentCount: Int
     ) throws -> Data {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
-        // Pre-size data buffer based on total code block data
+        // Pre-size writer buffer based on total code block data
         let totalBlockBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
-        var data = Data()
-        data.reserveCapacity(totalBlockBytes + totalBlockBytes / 8 + 1024)
+        var tileWriter = J2KBitWriter(capacity: totalBlockBytes + totalBlockBytes / 8 + 1024)
 
         // Apply rate control truncation: truncate code blocks per the quality layer
         var truncStart: CFAbsoluteTime = 0
@@ -3818,34 +3787,35 @@ struct EncoderPipeline: Sendable {
                     bandBlocksList.append(blocksByBand[key] ?? [])
                 }
 
-                let packetData = try encodePacket(
+                try writePacket(
+                    into: &tileWriter,
                     bandBlocks: bandBlocksList,
                     codeBlockWidth: cbWidth,
                     codeBlockHeight: cbHeight
                 )
-                data.append(packetData)
             }
         }
 
-        return data
+        return tileWriter.data
     }
 
-    /// Encodes a single JPEG 2000 packet with ISO/IEC 15444-1 compliant packet header.
+    /// Writes a single JPEG 2000 packet directly into a shared bit writer.
     ///
     /// Per ISO/IEC 15444-1 Annex B.10, inclusion and zero bit-plane information
     /// are encoded using tag trees. Code-block order within each band follows
     /// raster (row-major) scan order.
     ///
     /// - Parameters:
+    ///   - writer: The shared bit writer to append the packet into.
     ///   - bandBlocks: Array of code-block arrays, one per sub-band.
     ///   - codeBlockWidth: Nominal code-block width.
     ///   - codeBlockHeight: Nominal code-block height.
-    private func encodePacket(
+    private func writePacket(
+        into writer: inout J2KBitWriter,
         bandBlocks: [[J2KCodeBlock]],
         codeBlockWidth: Int,
         codeBlockHeight: Int
-    ) throws -> Data {
-        var writer = J2KBitWriter()
+    ) throws {
         // Enable JPEG 2000 byte stuffing for packet headers (ISO 15444-1 B.10.1)
         writer.setByteStuffing(true)
 
@@ -3857,7 +3827,8 @@ struct EncoderPipeline: Sendable {
         if !anyIncluded {
             writer.writeBit(false) // empty packet
             writer.alignToByte()
-            return writer.data
+            writer.setByteStuffing(false)
+            return
         }
 
         // Non-empty packet
@@ -3945,17 +3916,14 @@ struct EncoderPipeline: Sendable {
             }
         }
 
-        // Pad to byte boundary
+        // Pad header to byte boundary, then disable stuffing for raw block data
         writer.alignToByte()
+        writer.setByteStuffing(false)
 
-        var packetData = writer.data
-
-        // Append code-block bitstream data in band order
+        // Append code-block bitstream data in band order directly into shared writer
         for block in allIncludedBlocks {
-            packetData.append(block.data)
+            writer.appendRawBytes(block.data)
         }
-
-        return packetData
     }
 
     // MARK: - Progress Reporting
@@ -4095,7 +4063,7 @@ enum vDSPConvert: Sendable {
         }
         return output
         #else
-        return input.map { Int32($0.rounded()) }
+        return input.map { j2kClampedInt32(Double($0)) }
         #endif
     }
 
@@ -4131,7 +4099,7 @@ enum vDSPConvert: Sendable {
         }
         return output
         #else
-        return input.map { Int32($0.rounded()) }
+        return input.map { j2kClampedInt32($0) }
         #endif
     }
 }

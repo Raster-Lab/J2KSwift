@@ -140,9 +140,39 @@ extension J2KCLI {
         } else {
             modes.append(.cpu)
         }
+        if compareOJ {
+            modes.append(.openjpeg)
+        }
 
         // Run benchmarks for each mode
         for mode in modes {
+            // OpenJPEG uses subprocess CLI tools — handled separately
+            if mode == .openjpeg {
+                if outputFmt == "text" {
+                    print("═══════════════════════════════════════════════════════════════")
+                    print(" \(mode.title)")
+                    print(" Note: times include process startup overhead (~5–20 ms)")
+                    print("═══════════════════════════════════════════════════════════════")
+                    print("")
+                }
+                do {
+                    let ojResults = try benchmarkOpenJPEG(
+                        image: image,
+                        runs: runs,
+                        warmupRuns: warmupRuns,
+                        encodeOnly: encodeOnly,
+                        decodeOnly: decodeOnly,
+                        outputFmt: outputFmt
+                    )
+                    if let encStats = ojResults["encode"] { results["openjpeg_encode"] = encStats }
+                    if let decStats = ojResults["decode"] { results["openjpeg_decode"] = decStats }
+                } catch {
+                    print("OpenJPEG benchmark failed: \(error)")
+                }
+                if outputFmt == "text" { print("") }
+                continue
+            }
+
             // Warn about GPU fallback if needed
             if (mode == .gpu || mode == .gpuHtj2k) && !gpuAvailable && outputFmt == "text" {
                 print("⚠ GPU requested but not available — running with CPU fallback")
@@ -215,10 +245,6 @@ extension J2KCLI {
             printComparisonTable(results: results, modes: modes, gpuAvailable: gpuAvailable)
         }
 
-        if compareOJ {
-            print("Note: OpenJPEG comparison is not available on this platform.")
-        }
-
         // Output results
         switch outputFmt {
         case "json":
@@ -250,19 +276,21 @@ extension J2KCLI {
     // MARK: - Benchmark Modes
 
     private enum BenchmarkMode: String {
-        case cpu      = "cpu"
-        case gpu      = "gpu"
-        case htj2k    = "htj2k"
-        case gpuHtj2k = "gpu_htj2k"
+        case cpu        = "cpu"
+        case gpu        = "gpu"
+        case htj2k      = "htj2k"
+        case gpuHtj2k   = "gpu_htj2k"
+        case openjpeg   = "openjpeg"
 
         var label: String { rawValue }
 
         var title: String {
             switch self {
-            case .cpu:      return "CPU Benchmark (Part 1 EBCOT)"
-            case .gpu:      return "GPU Benchmark (Metal Pipeline)"
-            case .htj2k:    return "HTJ2K Benchmark (Part 15 FBCOT)"
-            case .gpuHtj2k: return "GPU+HTJ2K Benchmark (Metal DWT + FBCOT)"
+            case .cpu:        return "CPU Benchmark (Part 1 EBCOT)"
+            case .gpu:        return "GPU Benchmark (Metal Pipeline)"
+            case .htj2k:      return "HTJ2K Benchmark (Part 15 FBCOT)"
+            case .gpuHtj2k:   return "GPU+HTJ2K Benchmark (Metal DWT + FBCOT)"
+            case .openjpeg:   return "OpenJPEG Benchmark (opj_compress / opj_decompress)"
             }
         }
     }
@@ -406,6 +434,145 @@ extension J2KCLI {
         return buildStatsDict(stats, times: decodeTimes, pixels: pixels, compressedSize: nil)
     }
 
+    // MARK: - OpenJPEG Benchmark
+
+    private static func benchmarkOpenJPEG(
+        image: J2KImage,
+        runs: Int,
+        warmupRuns: Int,
+        encodeOnly: Bool,
+        decodeOnly: Bool,
+        outputFmt: String
+    ) throws -> [String: Any] {
+        guard let compressorPath = OpenJPEGAvailability.findTool("opj_compress") else {
+            throw J2KError.internalError("opj_compress not found — install via: brew install openjpeg")
+        }
+        guard let decompressorPath = OpenJPEGAvailability.findTool("opj_decompress") else {
+            throw J2KError.internalError("opj_decompress not found — install via: brew install openjpeg")
+        }
+
+        let tmpDir = FileManager.default.temporaryDirectory
+        let nComps = image.componentCount
+        let ext    = nComps == 3 ? "ppm" : "pgm"
+        let tmpInputURL   = tmpDir.appendingPathComponent("j2k_bench_oj_input.\(ext)")
+        let tmpOutputURL  = tmpDir.appendingPathComponent("j2k_bench_oj_output.j2k")
+        let tmpDecodedURL = tmpDir.appendingPathComponent("j2k_bench_oj_decoded.\(ext)")
+
+        defer {
+            try? FileManager.default.removeItem(at: tmpInputURL)
+            try? FileManager.default.removeItem(at: tmpOutputURL)
+            try? FileManager.default.removeItem(at: tmpDecodedURL)
+        }
+
+        // Write the input image to a temp file once
+        if nComps == 3 {
+            try savePPM(image, to: tmpInputURL)
+        } else {
+            try savePGM(image, to: tmpInputURL)
+        }
+
+        var results: [String: Any] = [:]
+        let pixels = image.width * image.height
+
+        // ── Encode ──────────────────────────────────────────────────────────
+        if !decodeOnly {
+            let encArgs = ["-i", tmpInputURL.path, "-o", tmpOutputURL.path]
+
+            if warmupRuns > 0 && outputFmt == "text" {
+                print("Warming up OpenJPEG encoder (\(warmupRuns) run(s))…")
+            }
+            for _ in 0..<warmupRuns {
+                let r = OpenJPEGCLIWrapper.runTool(
+                    toolPath: compressorPath, arguments: encArgs, outputPath: tmpOutputURL.path)
+                if !r.success {
+                    throw J2KError.internalError("opj_compress warmup failed:\n\(r.stderr)")
+                }
+            }
+
+            if outputFmt == "text" { print("Benchmarking OpenJPEG encoding (\(runs) runs)…") }
+            var encodeTimes: [Double] = []
+            var firstSize: Int?
+
+            for run in 1...runs {
+                let r = OpenJPEGCLIWrapper.runTool(
+                    toolPath: compressorPath, arguments: encArgs, outputPath: tmpOutputURL.path)
+                if !r.success {
+                    throw J2KError.internalError("opj_compress run \(run) failed:\n\(r.stderr)")
+                }
+                encodeTimes.append(r.elapsedTime)
+
+                if run == 1 {
+                    let sz = (try? FileManager.default.attributesOfItem(
+                        atPath: tmpOutputURL.path))?[.size] as? Int
+                    firstSize = sz
+                    let inputBytes = pixels * nComps
+                    let ratio = sz.map { Double(inputBytes) / Double($0) } ?? 0
+                    if outputFmt == "text" {
+                        let sizeStr = sz.map { formatBytes($0) } ?? "unknown"
+                        print("  Run \(run): \(String(format: "%.3f", r.elapsedTime * 1000)) ms "
+                            + "(compressed to \(sizeStr), ratio \(String(format: "%.2f", ratio)):1)")
+                    }
+                } else if outputFmt == "text" {
+                    print("  Run \(run): \(String(format: "%.3f", r.elapsedTime * 1000)) ms")
+                }
+            }
+
+            let stats = computeStats(encodeTimes)
+            if outputFmt == "text" { printStats(label: "OpenJPEG Encode", stats: stats, pixels: pixels) }
+            results["encode"] = buildStatsDict(stats, times: encodeTimes, pixels: pixels,
+                                               compressedSize: firstSize)
+        }
+
+        // ── Decode ──────────────────────────────────────────────────────────
+        if !encodeOnly {
+            // If encode was skipped, produce the encoded file now
+            if !FileManager.default.fileExists(atPath: tmpOutputURL.path) {
+                let r = OpenJPEGCLIWrapper.runTool(
+                    toolPath: compressorPath,
+                    arguments: ["-i", tmpInputURL.path, "-o", tmpOutputURL.path],
+                    outputPath: tmpOutputURL.path)
+                if !r.success {
+                    throw J2KError.internalError("opj_compress (for decode setup) failed:\n\(r.stderr)")
+                }
+            }
+
+            let decArgs = ["-i", tmpOutputURL.path, "-o", tmpDecodedURL.path]
+
+            if warmupRuns > 0 && outputFmt == "text" {
+                print("Warming up OpenJPEG decoder (\(warmupRuns) run(s))…")
+            }
+            for _ in 0..<warmupRuns {
+                let r = OpenJPEGCLIWrapper.runTool(
+                    toolPath: decompressorPath, arguments: decArgs, outputPath: tmpDecodedURL.path)
+                if !r.success {
+                    throw J2KError.internalError("opj_decompress warmup failed:\n\(r.stderr)")
+                }
+            }
+
+            if outputFmt == "text" { print("Benchmarking OpenJPEG decoding (\(runs) runs)…") }
+            var decodeTimes: [Double] = []
+
+            for run in 1...runs {
+                let r = OpenJPEGCLIWrapper.runTool(
+                    toolPath: decompressorPath, arguments: decArgs, outputPath: tmpDecodedURL.path)
+                if !r.success {
+                    throw J2KError.internalError("opj_decompress run \(run) failed:\n\(r.stderr)")
+                }
+                decodeTimes.append(r.elapsedTime)
+                if outputFmt == "text" {
+                    print("  Run \(run): \(String(format: "%.3f", r.elapsedTime * 1000)) ms")
+                }
+            }
+
+            let stats = computeStats(decodeTimes)
+            if outputFmt == "text" { printStats(label: "OpenJPEG Decode", stats: stats, pixels: pixels) }
+            results["decode"] = buildStatsDict(stats, times: decodeTimes, pixels: pixels,
+                                               compressedSize: nil)
+        }
+
+        return results
+    }
+
     // MARK: - Comparison Table
 
     private static func printComparisonTable(
@@ -418,64 +585,67 @@ extension J2KCLI {
         print("═══════════════════════════════════════════════════════════════")
         print("")
 
+        // Safe column-padding helpers (avoids %s crash with Swift strings)
+        func padLeft(_ s: String, _ w: Int) -> String {
+            s.count >= w ? s : String(repeating: " ", count: w - s.count) + s
+        }
+        func padRight(_ s: String, _ w: Int) -> String {
+            s.count >= w ? s : s + String(repeating: " ", count: w - s.count)
+        }
+
         // Header
-        var header = String(format: "%-12s", "Metric")
+        var header = padRight("Metric", 12)
         for mode in modes {
             var label = mode.label.uppercased()
-            if mode == .gpu && !gpuAvailable {
-                label += "*"
-            }
-            if mode == .gpuHtj2k && !gpuAvailable {
-                label += "*"
-            }
-            header += String(format: "  %14s", label)
+            if (mode == .gpu || mode == .gpuHtj2k) && !gpuAvailable { label += "*" }
+            header += "  " + padLeft(label, 14)
         }
         print(header)
         print(String(repeating: "─", count: 12 + modes.count * 16))
 
         // Encode row
-        var encLine = String(format: "%-12s", "Encode (ms)")
+        var encLine = padRight("Encode (ms)", 12)
         for mode in modes {
             if let d = results["\(mode.label)_encode"] as? [String: Any],
                let avg = d["average_ms"] as? Double {
-                encLine += String(format: "  %14.3f", avg)
+                encLine += "  " + padLeft(String(format: "%.3f", avg), 14)
             } else {
-                encLine += String(format: "  %14s", "—")
+                encLine += "  " + padLeft("—", 14)
             }
         }
         print(encLine)
 
         // Decode row
-        var decLine = String(format: "%-12s", "Decode (ms)")
+        var decLine = padRight("Decode (ms)", 12)
         for mode in modes {
             if let d = results["\(mode.label)_decode"] as? [String: Any],
                let avg = d["average_ms"] as? Double {
-                decLine += String(format: "  %14.3f", avg)
+                decLine += "  " + padLeft(String(format: "%.3f", avg), 14)
             } else {
-                decLine += String(format: "  %14s", "—")
+                decLine += "  " + padLeft("—", 14)
             }
         }
         print(decLine)
 
         // Throughput rows
-        var encTPLine = String(format: "%-12s", "Enc MP/s")
+        var encTPLine = padRight("Enc MP/s", 12)
         for mode in modes {
             if let d = results["\(mode.label)_encode"] as? [String: Any],
                let mpps = d["throughput_mpps"] as? Double {
-                encTPLine += String(format: "  %14.2f", mpps)
+                encTPLine += "  " + padLeft(String(format: "%.2f", mpps), 14)
             } else {
-                encTPLine += String(format: "  %14s", "—")
+                encTPLine += "  " + padLeft("—", 14)
             }
         }
         print(encTPLine)
 
-        var decTPLine = String(format: "%-12s", "Dec MP/s")
+        var decTPLine = padRight("Dec MP/s", 12)
         for mode in modes {
             if let d = results["\(mode.label)_decode"] as? [String: Any],
                let mpps = d["throughput_mpps"] as? Double {
-                decTPLine += String(format: "  %14.2f", mpps)
+                decTPLine += "  " + padLeft(String(format: "%.2f", mpps), 14)
             } else {
-                decTPLine += String(format: "  %14s", "—")
+                decTPLine += "  " + padLeft("—", 14)
             }
         }
         print(decTPLine)
@@ -487,22 +657,21 @@ extension J2KCLI {
             let baseEncAvg = (results["\(baseline.label)_encode"] as? [String: Any])?["average_ms"] as? Double
             let baseDecAvg = (results["\(baseline.label)_decode"] as? [String: Any])?["average_ms"] as? Double
 
-            var speedLine = String(format: "%-12s", "Speedup")
+            var speedLine = padRight("Speedup", 12)
             for mode in modes {
                 if mode == baseline {
-                    speedLine += String(format: "  %14s", "1.00x (base)")
+                    speedLine += "  " + padLeft("1.00x (base)", 14)
                 } else {
                     let encAvg = (results["\(mode.label)_encode"] as? [String: Any])?["average_ms"] as? Double
                     let decAvg = (results["\(mode.label)_decode"] as? [String: Any])?["average_ms"] as? Double
-                    // Use encode speedup if available, else decode
                     if let be = baseEncAvg, let ce = encAvg, ce > 0 {
                         let speedup = be / ce
-                        speedLine += String(format: "  %11.2fx enc", speedup)
+                        speedLine += "  " + padLeft(String(format: "%.2fx enc", speedup), 14)
                     } else if let bd = baseDecAvg, let cd = decAvg, cd > 0 {
                         let speedup = bd / cd
-                        speedLine += String(format: "  %11.2fx dec", speedup)
+                        speedLine += "  " + padLeft(String(format: "%.2fx dec", speedup), 14)
                     } else {
-                        speedLine += String(format: "  %14s", "—")
+                        speedLine += "  " + padLeft("—", 14)
                     }
                 }
             }
@@ -624,6 +793,9 @@ extension J2KCLI {
             --htj2k                     HTJ2K Part 15 FBCOT benchmark
             --compare-all               Run CPU, GPU, and HTJ2K side-by-side
                                         with a comparison summary table
+            --compare-openjpeg          Add OpenJPEG (opj_compress/opj_decompress)
+                                        to the benchmark for a side-by-side
+                                        comparison (requires openjpeg installed)
 
         OPTIONS:
             -i, --input PATH            Input image file
@@ -634,7 +806,13 @@ extension J2KCLI {
             --encode-only               Only benchmark encoding
             --decode-only               Only benchmark decoding
             --preset fast|balanced|quality  Encoding preset
-            --compare-openjpeg          Note if OpenJPEG comparison is available
+
+        OPENJPEG NOTES:
+            OpenJPEG times are measured as wall-clock time for the full
+            opj_compress/opj_decompress process, including ~5–20 ms of
+            process startup overhead. Warmup runs ensure input files are
+            in the OS page cache before measurement begins.
+            Install OpenJPEG with: brew install openjpeg
 
         GPU NOTES:
             When --gpu or --compare-all is used and Metal is not available
@@ -647,6 +825,8 @@ extension J2KCLI {
             j2k benchmark -i test.pgm --gpu
             j2k benchmark -i test.pgm --htj2k --encode-only
             j2k benchmark -i test.pgm --compare-all --format csv -o results.csv
+            j2k benchmark -i test.pgm --compare-openjpeg
+            j2k benchmark -i test.pgm --compare-all --compare-openjpeg -r 5
         """)
     }
 }

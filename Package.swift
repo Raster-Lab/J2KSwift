@@ -52,10 +52,16 @@ let package = Package(
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "J2KCore"),
+            name: "J2KCore",
+            swiftSettings: [
+                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
+            ]),
         .target(
             name: "J2KCodec",
-            dependencies: ["J2KCore", "J2KMetal"]),
+            dependencies: ["J2KCore", "J2KMetal"],
+            swiftSettings: [
+                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
+            ]),
         .target(
             name: "J2KAccelerate",
             dependencies: ["J2KCore", "J2KCodec"]),

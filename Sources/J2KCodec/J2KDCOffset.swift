@@ -181,7 +181,7 @@ public struct J2KDCOffsetValue: Sendable, Equatable {
     ///
     /// Used for integer arithmetic in the reversible (lossless) path.
     public var integerValue: Int32 {
-        Int32(value.rounded())
+        j2kClampedInt32(value)
     }
 
     /// Creates a DC offset value.

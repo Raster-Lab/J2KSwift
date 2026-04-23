@@ -299,7 +299,7 @@ final class J2KContextModelingTests: XCTestCase {
 
     func testContextStateArrayInitialization() throws {
         let array = ContextStateArray()
-        XCTAssertEqual(array.contexts.count, 19)
+        XCTAssertEqual(array.toArray().count, 19)
     }
 
     func testContextStateArrayAccess() throws {

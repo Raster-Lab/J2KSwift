@@ -47,11 +47,7 @@ import J2KCore
 public struct J2KDWT1D: Sendable {
     @inline(__always)
     private static func saturatingInt32(_ value: Double) -> Int32 {
-        let rounded = value.rounded()
-        if rounded.isNaN { return 0 }
-        if rounded >= Double(Int32.max) { return Int32.max }
-        if rounded <= Double(Int32.min) { return Int32.min }
-        return Int32(rounded)
+        j2kClampedInt32(value)
     }
     // MARK: - Filter Types
 

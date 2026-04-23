@@ -2285,10 +2285,27 @@ public final class InteropViewModel {
     /// Test direction: encode-with-J2KSwift/decode-with-OpenJPEG, or vice versa.
     public var isBidirectional: Bool = true
 
-    /// J2KSwift decoded image data (simulated).
+    /// J2KSwift decoded image data (planar, 8-bit per component).
     public var j2kSwiftImageData: Data?
-    /// OpenJPEG decoded image data (simulated).
+    /// OpenJPEG decoded image data (planar, 8-bit per component).
     public var openJPEGImageData: Data?
+
+    /// Decoded image width (from last successful decode).
+    public var decodedWidth: Int = 0
+    /// Decoded image height (from last successful decode).
+    public var decodedHeight: Int = 0
+    /// Decoded component count (from last successful decode).
+    public var decodedComponentCount: Int = 0
+
+    /// Real J2KSwift decoder function. When set, used in place of synthetic timings.
+    ///
+    /// Returns `(planarPixelData, width, height, componentCount, wallClockSeconds)`.
+    public var j2kSwiftDecoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval))?
+
+    /// Real OpenJPEG decoder function. When set, used in place of synthetic timings.
+    ///
+    /// Returns `(planarPixelData, width, height, componentCount, wallClockSeconds)`.
+    public var openJPEGDecoderFunction: (@Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval))?
 
     public init() {}
 
@@ -2309,6 +2326,19 @@ public final class InteropViewModel {
         comparisonResult = nil
         statusMessage = "Comparing J2KSwift vs OpenJPEG…"
 
+        // If real decoder functions are wired, run the real comparison.
+        if let j2kSwiftDecoder = j2kSwiftDecoderFunction,
+           let openJPEGDecoder = openJPEGDecoderFunction {
+            await runRealComparison(
+                url: url,
+                session: session,
+                j2kSwiftDecoder: j2kSwiftDecoder,
+                openJPEGDecoder: openJPEGDecoder
+            )
+            return
+        }
+
+        // Fallback: synthetic comparison (no real codecs wired).
         // Step 1: Decode with J2KSwift
         try? await Task.sleep(nanoseconds: 10_000_000)
         let j2kSwiftTime = 0.035
@@ -2359,6 +2389,136 @@ public final class InteropViewModel {
 
         isRunning = false
         statusMessage = String(format: "Comparison complete — max diff: %d, speedup: %.2f×", maxDiff, result.speedup)
+    }
+
+    /// Runs a real decode comparison using wired J2KSwift and OpenJPEG decoder functions.
+    private func runRealComparison(
+        url: URL,
+        session: TestSession,
+        j2kSwiftDecoder: @escaping @Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval),
+        openJPEGDecoder: @escaping @Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval)
+    ) async {
+        // Load codestream bytes off the main actor.
+        let codestreamResult: Result<Data, Error> = await Task.detached {
+            do { return .success(try Data(contentsOf: url)) }
+            catch { return .failure(error) }
+        }.value
+        let codestream: Data
+        switch codestreamResult {
+        case .success(let d): codestream = d
+        case .failure(let e):
+            statusMessage = "Failed to load codestream: \(e.localizedDescription)"
+            isRunning = false
+            return
+        }
+
+        // Step 1: Decode with J2KSwift on a background task.
+        statusMessage = "Decoding with J2KSwift…"
+        let j2kSwiftResult: Result<(Data, Int, Int, Int, TimeInterval), Error> = await Task.detached {
+            do { return .success(try j2kSwiftDecoder(codestream)) }
+            catch { return .failure(error) }
+        }.value
+        progress = 0.33
+
+        // Step 2: Decode with OpenJPEG on a background task.
+        statusMessage = "Decoding with OpenJPEG…"
+        let openJPEGResult: Result<(Data, Int, Int, Int, TimeInterval), Error> = await Task.detached {
+            do { return .success(try openJPEGDecoder(codestream)) }
+            catch { return .failure(error) }
+        }.value
+        progress = 0.66
+
+        // Handle failures: surface first error with any partial timing info available.
+        switch (j2kSwiftResult, openJPEGResult) {
+        case (.failure(let e), _):
+            statusMessage = "J2KSwift decode failed: \(e.localizedDescription)"
+            let testResult = TestResult(testName: "Interop: \(url.lastPathComponent)", category: .conformance)
+            await session.addResult(testResult.markFailed(duration: 0, message: e.localizedDescription))
+            isRunning = false
+            return
+        case (_, .failure(let e)):
+            statusMessage = "OpenJPEG decode failed: \(e.localizedDescription)"
+            let testResult = TestResult(testName: "Interop: \(url.lastPathComponent)", category: .conformance)
+            await session.addResult(testResult.markFailed(duration: 0, message: e.localizedDescription))
+            isRunning = false
+            return
+        case (.success(let a), .success(let b)):
+            let (aData, aW, aH, aC, aTime) = a
+            let (bData, bW, bH, bC, bTime) = b
+            j2kSwiftImageData = aData
+            openJPEGImageData = bData
+            decodedWidth = aW
+            decodedHeight = aH
+            decodedComponentCount = aC
+
+            // Step 3: Compute real pixel differences.
+            statusMessage = "Computing pixel differences…"
+            let (maxDiff, meanDiff) = Self.computePixelDifference(
+                a: aData, b: bData,
+                aDims: (aW, aH, aC), bDims: (bW, bH, bC)
+            )
+            progress = 0.9
+
+            // Step 4: Keep synthetic diff tree for now (codestream structure parsing TBD).
+            diffNodes = Self.syntheticDiffTree()
+
+            let result = InteropComparisonResult(
+                codestreamName: url.lastPathComponent,
+                maxPixelDifference: maxDiff,
+                meanPixelDifference: meanDiff,
+                withinTolerance: maxDiff <= toleranceThreshold,
+                j2kSwiftTime: aTime,
+                openJPEGTime: bTime
+            )
+            comparisonResult = result
+            allResults.append(result)
+            progress = 1.0
+
+            let testResult = TestResult(testName: "Interop: \(url.lastPathComponent)", category: .conformance)
+            await session.addResult(result.withinTolerance
+                ? testResult.markPassed(duration: aTime + bTime, metrics: [
+                    "maxPixelDiff": Double(maxDiff),
+                    "meanPixelDiff": meanDiff,
+                    "speedup": result.speedup,
+                    "j2kSwiftTime": aTime,
+                    "openJPEGTime": bTime
+                  ])
+                : testResult.markFailed(duration: aTime + bTime,
+                                        message: "Max pixel diff \(maxDiff) exceeds tolerance \(toleranceThreshold)")
+            )
+
+            isRunning = false
+            statusMessage = String(
+                format: "Comparison complete — max diff: %d, J2KSwift: %.1f ms, OpenJPEG: %.1f ms, speedup: %.2f×",
+                maxDiff, aTime * 1000, bTime * 1000, result.speedup
+            )
+        }
+    }
+
+    /// Computes max/mean absolute pixel difference between two planar images.
+    /// Returns `(Int.max, .infinity)` if dimensions do not match.
+    private static func computePixelDifference(
+        a: Data, b: Data,
+        aDims: (Int, Int, Int), bDims: (Int, Int, Int)
+    ) -> (maxDiff: Int, meanDiff: Double) {
+        guard aDims == bDims else { return (Int.max, .infinity) }
+        let count = min(a.count, b.count)
+        guard count > 0 else { return (0, 0.0) }
+        var maxDiff: Int = 0
+        var sumDiff: UInt64 = 0
+        a.withUnsafeBytes { aBuf in
+            b.withUnsafeBytes { bBuf in
+                let ap = aBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                for i in 0..<count {
+                    let d = Int(ap[i]) - Int(bp[i])
+                    let ad = d < 0 ? -d : d
+                    if ad > maxDiff { maxDiff = ad }
+                    sumDiff &+= UInt64(ad)
+                }
+            }
+        }
+        return (maxDiff, Double(sumDiff) / Double(count))
     }
 
     private static func syntheticDiffTree() -> [CodestreamDiffNode] {

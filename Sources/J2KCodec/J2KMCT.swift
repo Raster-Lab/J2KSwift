@@ -466,7 +466,7 @@ public struct J2KMCT: Sendable {
 
         return transformed.map { component in
             component.map { value in
-                Int32(value.rounded())
+                j2kClampedInt32(value)
             }
         }
     }
@@ -511,7 +511,7 @@ public struct J2KMCT: Sendable {
 
         return transformed.map { component in
             component.map { value in
-                Int32(value.rounded())
+                j2kClampedInt32(value)
             }
         }
     }
@@ -652,7 +652,7 @@ public struct J2KMCT: Sendable {
             } else {
                 // For larger bit depths, use Int32
                 for i in 0..<data.count {
-                    ptr.storeBytes(of: Int32(data[i].rounded()), toByteOffset: i * 4, as: Int32.self)
+                    ptr.storeBytes(of: j2kClampedInt32(data[i]), toByteOffset: i * 4, as: Int32.self)
                 }
             }
         }

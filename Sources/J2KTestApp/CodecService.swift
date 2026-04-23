@@ -399,6 +399,202 @@ enum CodecService {
         }
     }
 
+    // MARK: - Interop Decoders (measured)
+
+    /// Returns a closure that decodes a JPEG 2000 codestream with J2KSwift
+    /// and reports the measured wall-clock time.
+    ///
+    /// Output: `(planarPixelData, width, height, componentCount, wallClockSeconds)`.
+    static var j2kSwiftInteropDecoder: @Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval) {
+        { codestreamData in
+            let fn = Self.decoderFunction
+            let start = DispatchTime.now()
+            let (data, w, h, c) = try fn(codestreamData)
+            let end = DispatchTime.now()
+            let elapsed = Double(end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
+            return (data, w, h, c, elapsed)
+        }
+    }
+
+    /// Returns a closure that decodes a JPEG 2000 codestream by invoking the
+    /// OpenJPEG `opj_decompress` CLI tool, and reports the measured wall-clock
+    /// time (CLI elapsedTime, subprocess-only, excluding file I/O).
+    ///
+    /// Output: `(planarPixelData, width, height, componentCount, wallClockSeconds)`.
+    ///
+    /// - Throws: ``J2KError/internalError(_:)`` if OpenJPEG is unavailable or
+    ///   the CLI tool fails.
+    static var openJPEGInteropDecoder: @Sendable (Data) throws -> (Data, Int, Int, Int, TimeInterval) {
+        { codestreamData in
+            let wrapper = OpenJPEGCLIWrapper()
+            guard let decompressor = wrapper.decompressorPath else {
+                throw J2KError.internalError("OpenJPEG opj_decompress not found in PATH")
+            }
+
+            let tmp = FileManager.default.temporaryDirectory
+            let base = UUID().uuidString
+            // Detect codestream signature: JP2 box header (0x0000000C 'jP  ') or raw J2K SOC (0xFF4F).
+            let ext: String = {
+                if codestreamData.count >= 4 {
+                    let b0 = codestreamData[codestreamData.startIndex]
+                    let b1 = codestreamData[codestreamData.startIndex + 1]
+                    if b0 == 0xFF && b1 == 0x4F { return "j2k" }
+                }
+                return "jp2"
+            }()
+            let inURL = tmp.appendingPathComponent("\(base)_in.\(ext)")
+            let outURL = tmp.appendingPathComponent("\(base)_out.ppm")
+
+            defer {
+                try? FileManager.default.removeItem(at: inURL)
+                try? FileManager.default.removeItem(at: outURL)
+                // opj_decompress may emit .pgm for grayscale
+                let altOut = tmp.appendingPathComponent("\(base)_out.pgm")
+                try? FileManager.default.removeItem(at: altOut)
+            }
+
+            try codestreamData.write(to: inURL)
+
+            let args = OpenJPEGCLIWrapper.buildDecodeArguments(
+                inputPath: inURL.path,
+                outputPath: outURL.path
+            )
+            let result = OpenJPEGCLIWrapper.runTool(
+                toolPath: decompressor,
+                arguments: args,
+                outputPath: outURL.path
+            )
+            guard result.success else {
+                throw J2KError.internalError(
+                    "opj_decompress failed (exit \(result.exitCode)): \(result.stderr)"
+                )
+            }
+
+            // Find actual output file (opj_decompress rewrites .ppm → .pgm for grayscale).
+            let candidates = [outURL, tmp.appendingPathComponent("\(base)_out.pgm")]
+            guard let outputURL = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+                  let outputData = try? Data(contentsOf: outputURL) else {
+                throw J2KError.internalError("opj_decompress produced no output file")
+            }
+
+            let (planar, w, h, cc) = try Self.parseNetpbm(outputData)
+            return (planar, w, h, cc, result.elapsedTime)
+        }
+    }
+
+    /// Parses a Netpbm image (P5 = PGM grayscale, P6 = PPM RGB) into planar 8-bit data.
+    ///
+    /// For 16-bit maxval, values are scaled to 8-bit.
+    ///
+    /// - Returns: `(planarPixelData, width, height, componentCount)`.
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if the file is not a valid PGM/PPM.
+    static func parseNetpbm(_ data: Data) throws -> (Data, Int, Int, Int) {
+        // Read ASCII header tokens until we've consumed magic, width, height, maxval.
+        var cursor = data.startIndex
+        let end = data.endIndex
+
+        @inline(__always) func skipWhitespaceAndComments() {
+            while cursor < end {
+                let b = data[cursor]
+                if b == 0x23 { // '#' — comment, skip to newline
+                    while cursor < end, data[cursor] != 0x0A { cursor = data.index(after: cursor) }
+                } else if b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D {
+                    cursor = data.index(after: cursor)
+                } else {
+                    return
+                }
+            }
+        }
+        @inline(__always) func readToken() throws -> String {
+            skipWhitespaceAndComments()
+            let start = cursor
+            while cursor < end {
+                let b = data[cursor]
+                if b == 0x20 || b == 0x09 || b == 0x0A || b == 0x0D { break }
+                cursor = data.index(after: cursor)
+            }
+            guard start < cursor, let s = String(data: data[start..<cursor], encoding: .ascii) else {
+                throw J2KError.invalidParameter("Malformed Netpbm header")
+            }
+            return s
+        }
+
+        let magic = try readToken()
+        let components: Int
+        switch magic {
+        case "P5": components = 1
+        case "P6": components = 3
+        default:
+            throw J2KError.invalidParameter("Unsupported Netpbm magic: \(magic)")
+        }
+        guard let width = Int(try readToken()), width > 0 else {
+            throw J2KError.invalidParameter("Invalid Netpbm width")
+        }
+        guard let height = Int(try readToken()), height > 0 else {
+            throw J2KError.invalidParameter("Invalid Netpbm height")
+        }
+        guard let maxval = Int(try readToken()), maxval > 0 else {
+            throw J2KError.invalidParameter("Invalid Netpbm maxval")
+        }
+        // Exactly one whitespace byte separates header from binary payload.
+        guard cursor < end else {
+            throw J2KError.invalidParameter("Netpbm missing binary payload")
+        }
+        cursor = data.index(after: cursor)
+
+        let pixelCount = width * height
+        let bytesPerSample = maxval > 255 ? 2 : 1
+        let expected = pixelCount * components * bytesPerSample
+        guard data.distance(from: cursor, to: end) >= expected else {
+            throw J2KError.invalidParameter("Netpbm payload truncated")
+        }
+
+        var planar = Data(count: pixelCount * components)
+        data.withUnsafeBytes { rawBuf in
+            planar.withUnsafeMutableBytes { outBuf in
+                let rawBase = rawBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                let offset = data.distance(from: data.startIndex, to: cursor)
+                let src = rawBase.advanced(by: offset)
+                let dst = outBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+
+                if bytesPerSample == 1 {
+                    if components == 1 {
+                        // PGM: already planar.
+                        for i in 0..<pixelCount { dst[i] = src[i] }
+                    } else {
+                        // PPM interleaved RGB → planar.
+                        for i in 0..<pixelCount {
+                            dst[i] = src[i * 3]
+                            dst[pixelCount + i] = src[i * 3 + 1]
+                            dst[pixelCount * 2 + i] = src[i * 3 + 2]
+                        }
+                    }
+                } else {
+                    // 16-bit: big-endian Netpbm → scale to 8-bit.
+                    let scale = 255.0 / Double(maxval)
+                    if components == 1 {
+                        for i in 0..<pixelCount {
+                            let hi = UInt16(src[i * 2])
+                            let lo = UInt16(src[i * 2 + 1])
+                            let v = (hi << 8) | lo
+                            dst[i] = UInt8(min(255, Int(Double(v) * scale)))
+                        }
+                    } else {
+                        for i in 0..<pixelCount {
+                            for c in 0..<3 {
+                                let hi = UInt16(src[(i * 3 + c) * 2])
+                                let lo = UInt16(src[(i * 3 + c) * 2 + 1])
+                                let v = (hi << 8) | lo
+                                dst[c * pixelCount + i] = UInt8(min(255, Int(Double(v) * scale)))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return (planar, width, height, components)
+    }
+
     // MARK: - View Model Wiring
 
     /// Injects real codec functions into all view models.
@@ -406,7 +602,8 @@ enum CodecService {
     static func wireViewModels(
         encode: EncodeViewModel,
         decode: DecodeViewModel,
-        roundTrip: RoundTripViewModel
+        roundTrip: RoundTripViewModel,
+        interop: InteropViewModel? = nil
     ) {
         encode.encoderFunction = encoderFunction
         encode.decoderFunction = decoderFunction
@@ -422,7 +619,17 @@ enum CodecService {
         roundTrip.encodeViewModel.decoderFunction = decoderFunction
         roundTrip.encodeViewModel.imageParserFunction = imageParserFunction
         roundTrip.encodeViewModel.imageRendererFunction = imageRendererFunction
+
+        if let interop = interop {
+            interop.j2kSwiftDecoderFunction = j2kSwiftInteropDecoder
+            // Only wire OpenJPEG if the tool is available; otherwise leave nil
+            // so the view model falls back to synthetic comparison.
+            if OpenJPEGAvailability.findTool("opj_decompress") != nil {
+                interop.openJPEGDecoderFunction = openJPEGInteropDecoder
+            }
+        }
     }
+
 
     // MARK: - DICOM Pixel Data Parser
 

@@ -150,6 +150,16 @@ public struct J2KBitWriter: Sendable {
         }
     }
 
+    /// Appends raw bytes directly to the buffer without byte stuffing.
+    /// The writer must be byte-aligned; the caller is responsible for disabling
+    /// byte stuffing before calling this (used for code-block data after packet headers).
+    public mutating func appendRawBytes(_ data: Data) {
+        assert(bitPosition == 0, "Must be byte-aligned before appending raw bytes")
+        data.withUnsafeBytes { src in
+            buffer.append(contentsOf: src.bindMemory(to: UInt8.self))
+        }
+    }
+
     // MARK: - Bit-Level Writing
 
     /// Writes a single bit to the stream.

@@ -276,14 +276,14 @@ public struct J2KColorTransform: Sendable {
         }
 
         let count = y.count
-        var red = [Double](repeating: 0, count: count)
+        var red   = [Double](repeating: 0, count: count)
         var green = [Double](repeating: 0, count: count)
-        var blue = [Double](repeating: 0, count: count)
+        var blue  = [Double](repeating: 0, count: count)
 
         #if canImport(Accelerate)
         if count >= 64 {
             // vDSP-accelerated inverse RCT
-            var sum = [Double](repeating: 0, count: count)
+            var sum      = [Double](repeating: 0, count: count)
             var floorDiv = [Double](repeating: 0, count: count)
             let n = vDSP_Length(count)
 
@@ -493,10 +493,11 @@ public struct J2KColorTransform: Sendable {
         #if canImport(Accelerate)
         if count >= 64 {
             // vDSP-accelerated ICT: Y/Cb/Cr = a*R + b*G + c*B via vector multiply-add
-            var y = [Double](repeating: 0, count: count)
-            var cb = [Double](repeating: 0, count: count)
-            var cr = [Double](repeating: 0, count: count)
-            var temp = [Double](repeating: 0, count: count)
+            // Skip zero-init: all elements written by vDSP before any read.
+            var y    = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
+            var cb   = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
+            var cr   = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
+            var temp = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
             let n = vDSP_Length(count)
 
             // Y = coeffY_R * R
@@ -539,9 +540,9 @@ public struct J2KColorTransform: Sendable {
         }
         #endif
 
-        var y = [Double](repeating: 0, count: count)
-        var cb = [Double](repeating: 0, count: count)
-        var cr = [Double](repeating: 0, count: count)
+        var y  = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
+        var cb = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
+        var cr = [Double](unsafeUninitializedCapacity: count) { _, s in s = count }
 
         // SIMD-optimized ICT: process 4 pixels at a time using SIMD4<Double>
         let sYR = SIMD4<Double>(repeating: coeffY_R)
@@ -617,9 +618,9 @@ public struct J2KColorTransform: Sendable {
         }
 
         let count = y.count
-        var red = [Double](repeating: 0, count: count)
+        var red   = [Double](repeating: 0, count: count)
         var green = [Double](repeating: 0, count: count)
-        var blue = [Double](repeating: 0, count: count)
+        var blue  = [Double](repeating: 0, count: count)
 
         // Inverse ICT coefficients from ISO/IEC 15444-1 Annex G.3
         let coeffR_Cr: Double = 1.402
@@ -629,27 +630,15 @@ public struct J2KColorTransform: Sendable {
 
         #if canImport(Accelerate)
         if count >= 64 {
-            // vDSP-accelerated inverse ICT
-            var temp = [Double](repeating: 0, count: count)
+            // vDSP_vsmaD: D = A*b + C  (no temp array needed — 4 calls vs 7)
             let n = vDSP_Length(count)
+            var cRCr = coeffR_Cr; var cGCb = coeffG_Cb
+            var cGCr = coeffG_Cr; var cBCb = coeffB_Cb
 
-            // R = Y + 1.402 * Cr
-            var cRCr = coeffR_Cr
-            vDSP_vsmulD(cr, 1, &cRCr, &temp, 1, n)
-            vDSP_vaddD(y, 1, temp, 1, &red, 1, n)
-
-            // G = Y - 0.344136 * Cb - 0.714136 * Cr
-            var cGCb = coeffG_Cb
-            vDSP_vsmulD(cb, 1, &cGCb, &green, 1, n)
-            var cGCr = coeffG_Cr
-            vDSP_vsmulD(cr, 1, &cGCr, &temp, 1, n)
-            vDSP_vaddD(green, 1, temp, 1, &green, 1, n)
-            vDSP_vaddD(y, 1, green, 1, &green, 1, n)
-
-            // B = Y + 1.772 * Cb
-            var cBCb = coeffB_Cb
-            vDSP_vsmulD(cb, 1, &cBCb, &temp, 1, n)
-            vDSP_vaddD(y, 1, temp, 1, &blue, 1, n)
+            vDSP_vsmaD(cr, 1, &cRCr, y,     1, &red,   1, n)  // R = Cr*1.402 + Y
+            vDSP_vsmaD(cb, 1, &cGCb, y,     1, &green, 1, n)  // G = Cb*(-0.344136) + Y
+            vDSP_vsmaD(cr, 1, &cGCr, green, 1, &green, 1, n)  // G += Cr*(-0.714136)
+            vDSP_vsmaD(cb, 1, &cBCb, y,     1, &blue,  1, n)  // B = Cb*1.772 + Y
 
             return (red, green, blue)
         }
@@ -1297,8 +1286,8 @@ public struct J2KColorTransform: Sendable {
             guard let baseAddress = buffer.baseAddress else { return }
             let int32Ptr = baseAddress.assumingMemoryBound(to: Int32.self)
             for i in 0..<data.count {
-                // Round to nearest integer
-                int32Ptr[i] = Int32(data[i].rounded())
+                // Round to nearest integer with saturation
+                int32Ptr[i] = j2kClampedInt32(data[i])
             }
         }
 

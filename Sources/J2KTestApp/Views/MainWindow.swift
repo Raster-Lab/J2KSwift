@@ -321,7 +321,8 @@ struct CategoryDetailView: View {
             CodecService.wireViewModels(
                 encode: encodeViewModel,
                 decode: decodeViewModel,
-                roundTrip: roundTripViewModel
+                roundTrip: roundTripViewModel,
+                interop: interopViewModel
             )
         }
     }

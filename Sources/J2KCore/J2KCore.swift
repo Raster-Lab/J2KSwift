@@ -226,6 +226,19 @@ public struct J2KImage: Sendable {
 /// Each component has its own bit depth, sign, and dimensions. Components can be
 /// subsampled relative to the full image resolution.
 public struct J2KComponent: Sendable {
+    /// Byte order of 16-bit sample data inside `data`. Only meaningful when
+    /// `bitDepth > 8`. When nil (the default), the encoder auto-detects the
+    /// byte order via a statistical heuristic — this works well for natural
+    /// images but can flip at full 16-bit bit-depth (where both orderings
+    /// fit UInt16 range). Set explicitly when you know the input format to
+    /// guarantee a correct round-trip.
+    public enum ByteOrder: Sendable {
+        /// Low byte first (DICOM Explicit VR LE, native Apple Silicon).
+        case littleEndian
+        /// High byte first (PGM, DICOM Explicit VR BE, our decoder's output).
+        case bigEndian
+    }
+
     /// The index of this component (0-based).
     public let index: Int
 
@@ -250,17 +263,12 @@ public struct J2KComponent: Sendable {
     /// The pixel data for this component.
     public var data: Data
 
-    /// Creates a new component with the specified parameters.
-    ///
-    /// - Parameters:
-    ///   - index: The index of this component (0-based).
-    ///   - bitDepth: The bit depth (1-38 bits).
-    ///   - signed: Whether this component uses signed values (default: false).
-    ///   - width: The width in pixels.
-    ///   - height: The height in pixels.
-    ///   - subsamplingX: The horizontal subsampling factor (default: 1).
-    ///   - subsamplingY: The vertical subsampling factor (default: 1).
-    ///   - data: The pixel data (default: empty).
+    /// Explicit byte-order hint for 16-bit sample data (see `ByteOrder`).
+    /// Ignored for 8-bit components. When nil, the encoder infers the order
+    /// from the sample distribution — reliable for ≤ 14-bit data, less so at
+    /// full 16-bit where both interpretations always fit UInt16.
+    public let sampleByteOrder: ByteOrder?
+
     public init(
         index: Int,
         bitDepth: Int,
@@ -269,7 +277,8 @@ public struct J2KComponent: Sendable {
         height: Int,
         subsamplingX: Int = 1,
         subsamplingY: Int = 1,
-        data: Data = Data()
+        data: Data = Data(),
+        sampleByteOrder: ByteOrder? = nil
     ) {
         self.index = index
         self.bitDepth = bitDepth
@@ -279,6 +288,7 @@ public struct J2KComponent: Sendable {
         self.subsamplingX = subsamplingX
         self.subsamplingY = subsamplingY
         self.data = data
+        self.sampleByteOrder = sampleByteOrder
     }
 
     // MARK: - Convenience Properties
@@ -587,28 +597,14 @@ public struct J2KCodeBlock: Sendable {
     /// ``mqCheckpoints`` to reconstruct terminated data on-demand.
     public var rawMQOutput: [UInt8]
 
-    /// Creates a new code-block.
+    /// The quantizer step size used for this code-block's coefficients.
     ///
-    /// - Parameters:
-    ///   - index: The code-block index.
-    ///   - x: The x-coordinate.
-    ///   - y: The y-coordinate.
-    ///   - width: The width.
-    ///   - height: The height.
-    ///   - subband: The subband.
-    ///   - componentIndex: The component index (default: 0).
-    ///   - resolutionLevel: The JPEG 2000 resolution level (default: 0).
-    ///   - data: The encoded data.
-    ///   - passeCount: The number of coding passes (default: 0). (Note: historical spelling preserved for API compatibility.)
-    ///   - zeroBitPlanes: The number of missing MSB planes (default: 0).
-    ///   - passSegmentLengths: Byte lengths per pass segment (default: empty).
-    ///   - cumulativePassBytes: Cumulative bytes after each pass (default: empty).
-    ///   - coefficientSquaredSum: Sum of squared quantized coefficient magnitudes (default: 0).
-    ///   - bitPlanePopulation: Per-bit-plane coefficient counts (default: empty).
-    ///   - cumulativePassDistortion: Per-pass distortion decrements (default: empty).
-    ///   - perPassSnapshotData: Terminated MQ data at each pass boundary (default: empty).
-    ///   - mqCheckpoints: Lightweight MQ encoder checkpoints (default: empty).
-    ///   - rawMQOutput: Raw MQ output bytes for checkpoint reconstruction (default: empty).
+    /// Nil for lossless (5/3) encoding where coefficients are integers. Non-nil
+    /// for lossy (9/7) encoding, where it supplies the stepsize² factor PCRD
+    /// needs to convert quantized-coefficient MSE to dequantized-subband MSE
+    /// (matching OpenJPEG / ISO 15444-1 Annex E).
+    public var quantizationStep: Double?
+
     public init(
         index: Int,
         x: Int,
@@ -628,7 +624,8 @@ public struct J2KCodeBlock: Sendable {
         cumulativePassDistortion: [Double] = [],
         perPassSnapshotData: [Data] = [],
         mqCheckpoints: [MQCheckpointData] = [],
-        rawMQOutput: [UInt8] = []
+        rawMQOutput: [UInt8] = [],
+        quantizationStep: Double? = nil
     ) {
         self.index = index
         self.x = x
@@ -649,6 +646,7 @@ public struct J2KCodeBlock: Sendable {
         self.perPassSnapshotData = perPassSnapshotData
         self.mqCheckpoints = mqCheckpoints
         self.rawMQOutput = rawMQOutput
+        self.quantizationStep = quantizationStep
     }
 }
 
