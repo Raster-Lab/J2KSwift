@@ -63,4 +63,35 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
             block: block, width: 1, height: 1, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
+
+    /// 4x2 block with scattered bin-centered samples: exercises the
+    /// quad-pair iterator, c_q propagation, per-sample sign handling.
+    func testScattered4x2BinCenteredRoundTrip() throws {
+        var coefs = [UInt32](repeating: 0, count: 8)
+        // Two quads, each with one active sample at bin center.
+        coefs[0] = 0x6000_0000    // quad 0, sample (0,0): +μ_p=1
+        coefs[6] = 0xE000_0000    // quad 1, sample (0,1): -μ_p=1
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 4, height: 2, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 4, height: 2, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
+
+    /// 8x2 block: two full quad-pairs, exercises c_q propagation
+    /// across pair boundaries.
+    func testWidth8TwoQuadPairsRoundTrip() throws {
+        var coefs = [UInt32](repeating: 0, count: 16)
+        coefs[0] = 0x6000_0000
+        coefs[8] = 0x6000_0000
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 8, height: 2, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 8, height: 2, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
 }
