@@ -517,8 +517,7 @@ public struct J2KRateControl: Sendable {
         // more dB per byte than HH does, even when HH has real signal. The
         // right fix for XA's residual gap is a global algorithm change
         // (Kakadu-style per-block λ) rather than a local per-block bias.
-        if configuration.componentCount == 1 &&
-            !configuration.useReversibleFilter {
+        if !configuration.useReversibleFilter {
             switch codeBlock.subband {
             case .ll:
                 subbandWeight *= 1.25

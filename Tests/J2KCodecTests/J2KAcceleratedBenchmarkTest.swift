@@ -1291,7 +1291,11 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
                 let opjOut = "\(outDir)/wsi_lossy_opj_\(size)_\(bpp)_out.ppm"
                 var opjPSNR: Double = .nan
                 do {
-                    let ratio = 24.0 / (bpp * 3)
+                    // Raw is 24 bits/pixel (8-bit × 3 channels); `bpp` is the
+                    // total compressed bits per pixel across all channels,
+                    // matching J2KSwift's `constantBitrate(bitsPerPixel:)`
+                    // semantics. So the compression ratio is 24 / bpp.
+                    let ratio = 24.0 / bpp
                     _ = try opjEncode(
                         pgmPath: pgmSrc, j2kPath: opjJ2k,
                         compressionRatio: ratio, lossless: false)
@@ -1474,6 +1478,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         emit("\n==DECODE-PROFILE== \(runs) runs each, median ms")
 
         var configs: [(label: String, image: J2KImage, lossless: Bool, bpp: Double)] = []
+        configs.append(("Grad-256-8b  lossy 1b", generateGradientImage(width: 256, height: 256, components: 1, bitDepth: 8), false, 1.0))
+        configs.append(("Grad-256-8b  lossy 2b", generateGradientImage(width: 256, height: 256, components: 1, bitDepth: 8), false, 2.0))
         configs.append(("Grad-1024-8b lossless", generateGradientImage(width: 1024, height: 1024, components: 1, bitDepth: 8), true, 0))
         configs.append(("Grad-1024-8b lossy 1b", generateGradientImage(width: 1024, height: 1024, components: 1, bitDepth: 8), false, 1.0))
         configs.append(("Med-512-12b  lossless", generateMedicalPhantom(width: 512, height: 512, bitDepth: 12), true, 0))
