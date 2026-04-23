@@ -166,9 +166,14 @@ struct AcceleratedDWT2D: Sendable {
         let evenPtr = ws.even.baseAddress!
         let oddPtr  = ws.odd.baseAddress!
 
-        // Split: gather even/odd from interleaved input
+        // Deinterleave input → even/odd using BLAS gather (vld2 NEON under the hood)
+        #if canImport(Accelerate)
+        cblas_scopy(Int32(lowCount),  input,     2, evenPtr, 1)
+        cblas_scopy(Int32(highCount), input + 1, 2, oddPtr,  1)
+        #else
         for i in 0..<lowCount  { evenPtr[i] = input[i &* 2] }
         for i in 0..<highCount { oddPtr[i]  = input[i &* 2 &+ 1] }
+        #endif
 
         // 4 lifting steps with vDSP vectorization
         #if canImport(Accelerate)

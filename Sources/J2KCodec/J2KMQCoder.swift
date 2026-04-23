@@ -152,34 +152,30 @@ let mqSwitchMPS: [UInt8] = mqStateTable.map { $0.switchMPS ? 1 : 0 }
 // MARK: - MQ Context
 
 /// Represents a context used by the MQ-coder.
+///
+/// Stored as 2 bytes (UInt8 stateIndex + Bool mps) so that ContextStateArray's
+/// 19-element inline tuple fits in 38 bytes — one cache line — eliminating the
+/// heap allocation and pointer-chasing cost of the former [MQContext] array.
 struct MQContext: Sendable {
-    /// The current index into the state table.
-    var stateIndex: Int
+    /// The current index into the state table (0–46).
+    var stateIndex: UInt8
 
     /// The current most probable symbol (0 or 1).
     var mps: Bool
 
-    /// Creates a new context with the specified initial state.
-    init(stateIndex: Int = 0, mps: Bool = false) {
+    init(stateIndex: UInt8 = 0, mps: Bool = false) {
         self.stateIndex = stateIndex
         self.mps = mps
     }
 
-    /// Creates a new context (UInt8 compatibility).
-    init(stateIndex: UInt8, mps: Bool = false) {
-        self.stateIndex = Int(stateIndex)
+    /// Int overload retained for call sites that pass integer literals.
+    init(stateIndex: Int, mps: Bool = false) {
+        self.stateIndex = UInt8(stateIndex)
         self.mps = mps
     }
 
-    /// Returns the current state from the state table.
-    var state: MQState {
-        mqStateTable[stateIndex]
-    }
-
-    /// Returns the current Qe value.
-    var qe: UInt32 {
-        state.qe
-    }
+    var state: MQState { mqStateTable[Int(stateIndex)] }
+    var qe: UInt32 { state.qe }
 }
 
 // MARK: - Fast Output Buffer
@@ -489,14 +485,14 @@ struct MQEncoder: Sendable {
             operationCount += 1
             let preA = a
             let preC = c
-            let preCtxState = context.stateIndex
+            let preCtxState = Int(context.stateIndex)
             if EBCOTDebugTrace.shared.enabled {
                 EBCOTDebugTrace.shared.encoderSymbols.append(
                     (operationCount, preCtxState, symbol, preA, UInt32(EBCOTDebugTrace.shared.currentContextLabel), preC)
                 )
             }
         }
-        let si = context.stateIndex
+        let si = Int(context.stateIndex)
         let qe = mqQe[si]
 
         a -= qe
@@ -510,7 +506,7 @@ struct MQEncoder: Sendable {
                 } else {
                     c += qe
                 }
-                context.stateIndex = Int(mqNextMPS[si])
+                context.stateIndex = mqNextMPS[si]
                 renormalize()
             } else {
                 c += qe
@@ -526,7 +522,7 @@ struct MQEncoder: Sendable {
             if mqSwitchMPS[si] != 0 {
                 context.mps.toggle()
             }
-            context.stateIndex = Int(mqNextLPS[si])
+            context.stateIndex = mqNextLPS[si]
             renormalize()
         }
     }
@@ -558,12 +554,15 @@ struct MQEncoder: Sendable {
     /// Renormalizes the encoder state.
     @inline(__always)
     private mutating func renormalize() {
-        while a < 0x8000 {
-            a <<= 1
-            c <<= 1
-            ct -= 1
-            if ct == 0 {
-                emitByte()
+        guard a < 0x8000 else { return }
+        let shifts = a.leadingZeroBitCount - 16  // exact left-shifts to reach a >= 0x8000
+        if ct >= shifts {
+            a <<= shifts; c <<= shifts; ct -= shifts
+            if ct == 0 { emitByte() }
+        } else {
+            while a < 0x8000 {
+                a <<= 1; c <<= 1; ct -= 1
+                if ct == 0 { emitByte() }
             }
         }
     }
@@ -719,11 +718,18 @@ struct MQEncoder: Sendable {
 // MARK: - MQ Decoder
 
 /// Decodes binary symbols using the MQ arithmetic coding algorithm.
-struct MQDecoder: Sendable {
+///
+/// Marked `@unchecked Sendable` because it stores a raw pointer into `dataStorage`.
+/// Safety: `dataStorage` is a `let` (immutable) field, so its backing buffer is never
+/// reallocated or freed while `self` is alive. The pointer therefore remains valid
+/// for the entire lifetime of the struct. MQDecoder instances are never shared between
+/// tasks — each pass owns its own instance.
+struct MQDecoder: @unchecked Sendable {
     private var c: UInt32 = 0
     private var a: UInt32 = 0x8000
     private var ct: Int = 0
-    private let dataBytes: [UInt8]
+    private let dataStorage: [UInt8]   // Keeps backing buffer alive
+    private let dataPtr: UnsafePointer<UInt8>  // Stable pointer into dataStorage
     private let dataCount: Int
     private var position: Int = 0
     private var buffer: UInt8 = 0
@@ -738,10 +744,42 @@ struct MQDecoder: Sendable {
     /// Debug operation counter
     var operationCount: Int = 0
 
-    /// Creates a new MQ decoder with the specified compressed data.
+    /// Creates a new MQ decoder with the specified compressed data (convenience, copies Data).
     init(data: Data) {
-        self.dataBytes = Array(data)
-        self.dataCount = dataBytes.count
+        let bytes = [UInt8](data)
+        self.dataStorage = bytes
+        self.dataCount = bytes.count
+        // Extract stable pointer. dataStorage is 'let' so its heap buffer won't be
+        // reallocated; the pointer is valid for the entire lifetime of this struct.
+        self.dataPtr = dataStorage.withUnsafeBufferPointer { $0.baseAddress ?? UnsafePointer(bitPattern: 1)! }
+        initializeDecoder()
+    }
+
+    /// Creates a new MQ decoder directly from a pre-built byte array (no copy).
+    ///
+    /// - Parameters:
+    ///   - bytes: The owner array.  Must outlive (or equal) `self`.
+    ///   - offset: Byte offset within `bytes` where this segment starts.
+    ///   - count:  Number of bytes in this segment.
+    init(bytes: [UInt8], offset: Int, count: Int) {
+        self.dataStorage = bytes
+        self.dataCount = count
+        let base = dataStorage.withUnsafeBufferPointer { $0.baseAddress ?? UnsafePointer(bitPattern: 1)! }
+        self.dataPtr = base + offset
+        initializeDecoder()
+    }
+
+    /// Creates a new MQ decoder using a raw pointer — no copy, no array ownership.
+    /// Caller must guarantee the pointed-to buffer outlives this instance.
+    ///
+    /// - Parameters:
+    ///   - unsafePtr: Base pointer of the byte buffer.
+    ///   - offset: Byte offset within the buffer where this segment starts.
+    ///   - count: Number of bytes in this segment.
+    init(unsafePtr: UnsafePointer<UInt8>, offset: Int, count: Int) {
+        self.dataStorage = []   // unused — caller owns the buffer
+        self.dataCount = count
+        self.dataPtr = unsafePtr + offset
         initializeDecoder()
     }
 
@@ -756,17 +794,20 @@ struct MQDecoder: Sendable {
     }
 
     /// Reads a byte from the input.
+    ///
+    /// Uses a stored raw pointer for direct array access with no per-call closure overhead.
     @inline(__always)
     private mutating func readByte() -> UInt8 {
         if position < dataCount {
-            let b = dataBytes[position]
-            position += 1
+            let b = dataPtr[position]
+            position &+= 1
             return b
         }
         return 0xFF
     }
 
     /// Fills the C register with more data.
+    @inline(__always)
     private mutating func fillC() {
         if buffer == 0xFF {
             let prevPosition = position
@@ -797,7 +838,7 @@ struct MQDecoder: Sendable {
     /// Uses flat state arrays to avoid struct copies in the critical path.
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
-        let si = context.stateIndex
+        let si = Int(context.stateIndex)
         let qe = mqQe[si]
 
         a -= qe
@@ -811,7 +852,7 @@ struct MQDecoder: Sendable {
                 // Conditional exchange — return MPS
                 a = qe
                 symbol = mps
-                context.stateIndex = Int(mqNextMPS[si])
+                context.stateIndex = mqNextMPS[si]
             } else {
                 // Normal LPS
                 a = qe
@@ -819,7 +860,7 @@ struct MQDecoder: Sendable {
                 if mqSwitchMPS[si] != 0 {
                     context.mps.toggle()
                 }
-                context.stateIndex = Int(mqNextLPS[si])
+                context.stateIndex = mqNextLPS[si]
             }
             renormalizeDecoder()
         } else {
@@ -832,11 +873,11 @@ struct MQDecoder: Sendable {
                     if mqSwitchMPS[si] != 0 {
                         context.mps.toggle()
                     }
-                    context.stateIndex = Int(mqNextLPS[si])
+                    context.stateIndex = mqNextLPS[si]
                 } else {
                     // Normal MPS
                     symbol = mps
-                    context.stateIndex = Int(mqNextMPS[si])
+                    context.stateIndex = mqNextMPS[si]
                 }
                 renormalizeDecoder()
             } else {
@@ -884,13 +925,19 @@ struct MQDecoder: Sendable {
     /// Renormalizes the decoder state.
     @inline(__always)
     private mutating func renormalizeDecoder() {
-        while a < 0x8000 {
-            if ct == 0 {
-                fillC()
-            }
-            a <<= 1
-            c <<= 1
-            ct -= 1
+        guard a < 0x8000 else { return }
+        let shifts = Int(a.leadingZeroBitCount) - 16   // bits needed to reach a >= 0x8000
+        if shifts > 0 && ct >= shifts {
+            // All required bits are buffered — bulk shift without fillC overhead
+            a <<= shifts
+            c <<= shifts
+            ct -= shifts
+        } else {
+            // Need byte refill mid-shift — use per-step loop
+            repeat {
+                if ct == 0 { fillC() }
+                a <<= 1; c <<= 1; ct -= 1
+            } while a < 0x8000
         }
     }
 
@@ -996,45 +1043,43 @@ struct RawBypassEncoder: Sendable {
 /// This decoder reads raw bits packed MSB-first from bytes, with 0xFF byte
 /// stuffing handling. It is separate from the MQ decoder to avoid
 /// bit-positioning issues.
-struct RawBypassDecoder: Sendable {
+struct RawBypassDecoder: @unchecked Sendable {
     /// Current byte value.
     private var c: UInt32 = 0
     /// Number of remaining bits in the current byte.
     private var ct: Int = 0
-    /// Input data.
-    private let data: Data
-    /// Current read position in data.
+    /// Owner array — retains the buffer so the pointer stays valid.
+    private let owner: [UInt8]
+    /// Raw pointer into owner at the segment start offset.
+    private let dataPtr: UnsafePointer<UInt8>
+    /// Number of bytes in this segment.
+    private let dataCount: Int
+    /// Current read position within the segment.
     private var position: Int = 0
 
-    /// Creates a new raw bypass decoder.
-    init(data: Data) {
-        self.data = data
+    /// Creates a bypass decoder that borrows a slice of an existing byte array.
+    /// No copy is made — `bytes` must outlive `self`.
+    init(bytes: [UInt8], offset: Int, count: Int) {
+        self.owner     = bytes
+        self.dataCount = count
+        self.dataPtr   = owner.withUnsafeBufferPointer { $0.baseAddress! + offset }
     }
 
-    /// Decodes a single raw bit.
-    ///
-    /// Bits are read MSB-first. After a 0xFF byte, only 7 bits are read
-    /// from the next byte to avoid JPEG 2000 marker conflicts.
+    /// Decodes a single raw bit (MSB-first, 0xFF stuffing as per JPEG 2000).
     @inline(__always)
     mutating func decode() -> Bool {
         if ct == 0 {
-            // Read next byte
-            if position < data.count {
+            if position < dataCount {
                 let prevByte = c
-                c = UInt32(data[position])
-                position += 1
-                // After 0xFF, use only 7 bits
-                if prevByte == 0xFF {
-                    ct = 7
-                } else {
-                    ct = 8
-                }
+                c = UInt32(dataPtr[position])
+                position &+= 1
+                ct = prevByte == 0xFF ? 7 : 8
             } else {
                 c = 0xFF
                 ct = 8
             }
         }
-        ct -= 1
+        ct &-= 1
         return ((c >> ct) & 0x01) != 0
     }
 }

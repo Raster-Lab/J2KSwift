@@ -84,7 +84,16 @@ final class J2KDICOMKitIntegrationTests: XCTestCase {
         XCTAssertEqual(decoded.components[0].data.count, pixels.count)
         XCTAssertEqual(decoded.components[0].bitDepth, bitDepth, "Bit depth must round-trip")
 
-        XCTAssertEqual(decoded.components[0].data, pixels, "Lossless 12-in-16 must preserve payload bytes")
+        // The decoder emits 16-bit samples in big-endian byte order (PGM / DICOM
+        // Explicit VR BE convention). DICOMKit integration byte-swaps to the
+        // LE transfer syntax at its boundary, which is what we emulate here.
+        let decodedBytes = decoded.components[0].data
+        var expected = Data(count: pixels.count)
+        for i in 0..<(width * height) {
+            expected[i * 2]     = pixels[i * 2 + 1]
+            expected[i * 2 + 1] = pixels[i * 2]
+        }
+        XCTAssertEqual(decodedBytes, expected, "Lossless 12-in-16 must preserve payload (BE output)")
     }
 
     // MARK: - Bug 3: Lossless RGB round-trip preserves component count
@@ -124,7 +133,14 @@ final class J2KDICOMKitIntegrationTests: XCTestCase {
         let decoded = try await J2KDecoder().decode(encoded)
         XCTAssertEqual(decoded.components.count, 1)
         XCTAssertEqual(decoded.components[0].bitDepth, 16)
-        XCTAssertEqual(decoded.components[0].data, pixels, "Lossless 16-bit round-trip must preserve payload bytes")
+
+        // Decoder emits BE; LE input is byte-swapped at integration.
+        var expected = Data(count: pixels.count)
+        for i in 0..<(width * height) {
+            expected[i * 2]     = pixels[i * 2 + 1]
+            expected[i * 2 + 1] = pixels[i * 2]
+        }
+        XCTAssertEqual(decoded.components[0].data, expected, "Lossless 16-bit round-trip must preserve payload (BE output)")
     }
 
     func testLossyGrayscaleDoesNotCrash() async throws {

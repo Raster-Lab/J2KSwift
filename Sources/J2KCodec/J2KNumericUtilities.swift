@@ -34,10 +34,18 @@ func j2kInfer16BitByteOrder(
     signed: Bool
 ) -> J2KSampleByteOrder {
     guard sampleCount > 0 else {
-        return j2kHostIsLittleEndian() ? .littleEndian : .bigEndian
+        return .bigEndian
     }
 
-    let inspected = min(sampleCount, 512)
+    // Strided sample across the entire frame. Medical images (mammography,
+    // MRI) routinely have zero-filled margins at the top of the raster, so
+    // sampling only the first few hundred pixels produces a penalty tie that
+    // silently falls back to host byte order. Walking every `stride`-th sample
+    // across the whole frame guarantees we hit informative pixels.
+    let kInspectedBudget = 4096
+    let stride = max(1, sampleCount / kInspectedBudget)
+    let inspected = min(sampleCount, kInspectedBudget)
+
     let lowerBound: Int32
     let upperBound: Int32
     if signed {
@@ -51,6 +59,7 @@ func j2kInfer16BitByteOrder(
 
     var littlePenalty = 0.0
     var bigPenalty = 0.0
+    var informativeSamples = 0
     var previousLittle: Int32?
     var previousBig: Int32?
 
@@ -59,12 +68,19 @@ func j2kInfer16BitByteOrder(
             return
         }
 
-        for i in 0..<inspected {
+        for k in 0..<inspected {
+            let i = k * stride
+            guard i * 2 + 1 < buffer.count else { break }
             let littleRaw = UInt16(ptr[i * 2]) | (UInt16(ptr[i * 2 + 1]) << 8)
             let bigRaw = (UInt16(ptr[i * 2]) << 8) | UInt16(ptr[i * 2 + 1])
 
             let littleValue = signed ? Int32(Int16(bitPattern: littleRaw)) : Int32(littleRaw)
             let bigValue = signed ? Int32(Int16(bitPattern: bigRaw)) : Int32(bigRaw)
+
+            // Any sample where the two interpretations diverge is informative.
+            if littleRaw != bigRaw {
+                informativeSamples += 1
+            }
 
             func rangePenalty(for value: Int32) -> Double {
                 if value < lowerBound {
@@ -91,8 +107,11 @@ func j2kInfer16BitByteOrder(
         }
     }
 
-    if littlePenalty == bigPenalty {
-        return j2kHostIsLittleEndian() ? .littleEndian : .bigEndian
+    // If we never saw a single informative sample (all bytes palindromic —
+    // typically all-zero data) the byte order cannot be decided. Default to
+    // big-endian, the conventional canonical layout for image pixel data.
+    if informativeSamples == 0 || littlePenalty == bigPenalty {
+        return .bigEndian
     }
     return littlePenalty < bigPenalty ? .littleEndian : .bigEndian
 }

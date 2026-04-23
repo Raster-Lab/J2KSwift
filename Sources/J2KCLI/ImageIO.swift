@@ -154,13 +154,20 @@ extension J2KCLI {
             if bytesPerPixel == 1 {
                 data.append(contentsOf: buffer)
             } else {
-                for i in 0..<(image.width * image.height) {
-                    let offset = i * 2
-                    if offset + 1 < buffer.count {
-                        data.append(buffer[offset])
-                        data.append(buffer[offset + 1])
+                // 16-bit: PGM spec requires big-endian byte order
+                // Bulk byte-swap into a pre-allocated buffer (avoids 500K+ append calls)
+                let pixelCount = image.width * image.height
+                var swapped = [UInt8](repeating: 0, count: pixelCount * 2)
+                let src = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                swapped.withUnsafeMutableBufferPointer { dst in
+                    let d = dst.baseAddress!
+                    for i in 0..<pixelCount {
+                        let s = i &* 2
+                        d[s]     = src[s &+ 1]  // high byte first
+                        d[s &+ 1] = src[s]      // low byte second
                     }
                 }
+                data.append(contentsOf: swapped)
             }
         }
         return data
@@ -395,14 +402,20 @@ extension J2KCLI {
                 // 8-bit: copy directly
                 data.append(contentsOf: buffer)
             } else {
-                // 16-bit: need to copy
-                for i in 0..<(image.width * image.height) {
-                    let offset = i * 2
-                    if offset + 1 < buffer.count {
-                        data.append(buffer[offset])
-                        data.append(buffer[offset + 1])
+                // 16-bit: PGM spec requires big-endian byte order
+                // Bulk byte-swap into a pre-allocated buffer (avoids 500K+ append calls)
+                let pixelCount = image.width * image.height
+                var swapped = [UInt8](repeating: 0, count: pixelCount * 2)
+                let src = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                swapped.withUnsafeMutableBufferPointer { dst in
+                    let d = dst.baseAddress!
+                    for i in 0..<pixelCount {
+                        let s = i &* 2
+                        d[s]     = src[s &+ 1]  // high byte first
+                        d[s &+ 1] = src[s]      // low byte second
                     }
                 }
+                data.append(contentsOf: swapped)
             }
         }
 

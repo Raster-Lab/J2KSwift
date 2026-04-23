@@ -478,45 +478,65 @@ public struct J2KRateControl: Sendable {
                 let norm = Self.dwtNorms53[orient][clampedLevel]
                 subbandWeight = norm * norm
             } else {
-                subbandWeight = 1.0
+                // Base weight = L2-norm² of the 9/7 synthesis basis function for
+                // this subband/level (ISO 15444-1 Annex E). Combined with the
+                // per-subband quantizer stepsize² (see initial/per-pass distortion
+                // scaling below), this is the orthonormalization that converts
+                // quantized-coefficient squared error into pixel-domain MSE —
+                // matching OpenJPEG's PCRD.
+                let clampedLevel = min(dwtLevel, Self.dwtNorms97[0].count - 1)
+                let norm = Self.dwtNorms97[orient][clampedLevel]
+                subbandWeight = norm * norm
             }
         } else {
             subbandWeight = 1.0
         }
 
-        if configuration.passesPerBitPlane == 2 &&
-            configuration.componentCount == 1 &&
-            !configuration.useReversibleFilter {
-            let targetBitrate: Double
-            switch configuration.mode {
-            case .targetBitrate(let bitrate):
-                targetBitrate = bitrate
-            case .constantQuality(let quality):
-                targetBitrate = qualityToBitrate(quality)
-            case .lossless:
-                targetBitrate = Double.greatestFiniteMagnitude
-            }
+        // Per-subband stepsize² scaling. `coefficientSquaredSum` and the per-pass
+        // distortion reductions are both in quantized-coefficient units; multiplying
+        // by stepsize² converts to dequantized-subband MSE, after which the L2-norm²
+        // weight above completes the conversion to pixel-domain MSE. Lossless
+        // (5/3) has stepsize = 1 by construction, so this is a no-op.
+        if !configuration.useReversibleFilter,
+           let step = codeBlock.quantizationStep, step > 0 {
+            subbandWeight *= step * step
+        }
 
-            if targetBitrate >= 2.5 {
-                switch codeBlock.subband {
-                case .ll:
-                    subbandWeight *= 1.60
-                case .hl, .lh:
-                    if codeBlock.resolutionLevel <= 1 {
-                        subbandWeight *= 1.35
-                    } else if codeBlock.resolutionLevel == 2 {
-                        subbandWeight *= 1.15
-                    } else {
-                        subbandWeight *= 0.92
-                    }
-                case .hh:
-                    if codeBlock.resolutionLevel <= 1 {
-                        subbandWeight *= 0.28
-                    } else if codeBlock.resolutionLevel == 2 {
-                        subbandWeight *= 0.38
-                    } else {
-                        subbandWeight *= 0.22
-                    }
+        // Empirical HVS refinement on top of the theoretical weighting.
+        // Mildly re-emphasises LL and all detail bands (HL/LH at every level)
+        // where perceptually-important edge/texture structure lives, and damps
+        // HH where noise dominates. Fine HL/LH bands (resolutionLevel > 2)
+        // now get a small positive boost because angiography/MR content puts
+        // 2× more signal in fine detail than in coarse bands — without this,
+        // our PCRD under-allocates bits to vessels and thin structures.
+        //
+        // NOTE: per-codeblock adaptive weighting (gate on bitPlanePopulation
+        // fraction) was evaluated and rejected — it shifts too many bits
+        // from LL/HL/LH into HH for signal-dense codeblocks, hurting the
+        // total-image PSNR because high-energy LL/HL/LH refinement gives
+        // more dB per byte than HH does, even when HH has real signal. The
+        // right fix for XA's residual gap is a global algorithm change
+        // (Kakadu-style per-block λ) rather than a local per-block bias.
+        if configuration.componentCount == 1 &&
+            !configuration.useReversibleFilter {
+            switch codeBlock.subband {
+            case .ll:
+                subbandWeight *= 1.25
+            case .hl, .lh:
+                if codeBlock.resolutionLevel <= 1 {
+                    subbandWeight *= 1.20
+                } else if codeBlock.resolutionLevel == 2 {
+                    subbandWeight *= 1.15
+                } else {
+                    subbandWeight *= 1.05
+                }
+            case .hh:
+                if codeBlock.resolutionLevel <= 1 {
+                    subbandWeight *= 0.55
+                } else if codeBlock.resolutionLevel == 2 {
+                    subbandWeight *= 0.65
+                } else {
+                    subbandWeight *= 0.55
                 }
             }
         }
@@ -649,34 +669,23 @@ public struct J2KRateControl: Sendable {
                     ) * effectiveWeight
                 }
 
+                // Pass-number weighting on top of the theoretical slope. Only
+                // applied for the lossless 5/3 path (where it mildly compensates
+                // for EBCOT's per-pass byte granularity). The lossy 9/7 path
+                // now uses pure norm²×stepsize² weighting with no per-pass
+                // bias — the previous hand-tuned per-passNum weights were
+                // calibrated for a PCRD formulation that lacked L2 norms, and
+                // they systematically under-refine the tail on medical content.
                 let htPassWeight: Double
-                if configuration.passesPerBitPlane == 2 && configuration.componentCount == 1 {
-                    let targetBitrate: Double
-                    switch configuration.mode {
-                    case .targetBitrate(let bitrate):
-                        targetBitrate = bitrate
-                    case .constantQuality(let quality):
-                        targetBitrate = qualityToBitrate(quality)
-                    case .lossless:
-                        targetBitrate = Double.greatestFiniteMagnitude
-                    }
-
-                    if !configuration.useReversibleFilter && targetBitrate >= 2.5 {
-                        if passNum <= 2 {
-                            htPassWeight = 1.18
-                        } else if passNum >= 12 {
-                            htPassWeight = 0.84
-                        } else if passNum >= 8 {
-                            htPassWeight = 0.94
-                        } else {
-                            htPassWeight = 1.04
-                        }
-                    } else if passNum == 0 {
-                        htPassWeight = configuration.useReversibleFilter ? 0.82 : 0.92
+                if configuration.passesPerBitPlane == 2 &&
+                    configuration.componentCount == 1 &&
+                    configuration.useReversibleFilter {
+                    if passNum == 0 {
+                        htPassWeight = 0.82
                     } else if passNum.isMultiple(of: 2) {
-                        htPassWeight = configuration.useReversibleFilter ? 1.32 : 1.14
+                        htPassWeight = 1.32
                     } else {
-                        htPassWeight = configuration.useReversibleFilter ? 1.14 : 1.06
+                        htPassWeight = 1.14
                     }
                 } else {
                     htPassWeight = 1.0
@@ -1076,7 +1085,12 @@ public struct J2KRateControl: Sendable {
         var currentBytes = blockCumulativeBytes.values.reduce(0, +)
 
         var consecutiveSkips = 0
-        let maxConsecutiveSkips = 64
+        // Scale the skip horizon with total passes so long tails of
+        // large refinement passes don't stall rate control prematurely —
+        // the previous hard-coded 64 was leaving 100+ KB of unused budget
+        // on high-bpp medical content (XA at 4 bpp plateaued at 373 KB
+        // when target was 524 KB).
+        let maxConsecutiveSkips = max(64, sortedPasses.count / 8)
         var fallbackPass: CodingPassInfo?
         var fallbackIncrementalBytes = Int.max
         var nearTargetOvershootPass: CodingPassInfo?

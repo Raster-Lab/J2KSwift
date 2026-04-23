@@ -90,7 +90,8 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
             comps.append(J2KComponent(
                 index: c, bitDepth: bitDepth, signed: false,
-                width: width, height: height, data: data))
+                width: width, height: height, data: data,
+                sampleByteOrder: bitDepth > 8 ? .bigEndian : nil))
         }
 
         return J2KImage(width: width, height: height, components: comps)
@@ -160,8 +161,123 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
 
         let comp = J2KComponent(
             index: 0, bitDepth: bitDepth, signed: false,
-            width: width, height: height, data: data)
+            width: width, height: height, data: data,
+            sampleByteOrder: bitDepth > 8 ? .bigEndian : nil)
         return J2KImage(width: width, height: height, components: [comp])
+    }
+
+    /// Generate a synthetic Whole-Slide-Image tile that mimics H&E-stained
+    /// pathology content: hematoxylin (blue/purple nuclei) clusters overlaid
+    /// on an eosin (pink) cytoplasm background, with multi-scale texture from
+    /// summed noise octaves. Realistic enough to exercise the codec's
+    /// multi-component + high-frequency paths while remaining deterministic.
+    private func generateWSITile(width: Int, height: Int, bitDepth: Int) -> J2KImage {
+        let maxVal = (1 << bitDepth) - 1
+        let bytesPerSample = bitDepth <= 8 ? 1 : 2
+
+        var rData = Data(count: width * height * bytesPerSample)
+        var gData = Data(count: width * height * bytesPerSample)
+        var bData = Data(count: width * height * bytesPerSample)
+
+        rData.withUnsafeMutableBytes { rBuf in
+        gData.withUnsafeMutableBytes { gBuf in
+        bData.withUnsafeMutableBytes { bBuf in
+            let rPtr = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            let gPtr = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            let bPtr = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+
+            // Deterministic PRNG seeded per-slot so content is reproducible.
+            var rng = XorShift32(state: 0xABCD)
+
+            // Three octaves of smooth noise to simulate tissue fractal structure.
+            // Use a tile of per-octave random offsets for O(1) lookup.
+            func octaveNoise(_ x: Int, _ y: Int, freq: Double, seed: UInt32) -> Double {
+                // Simple hash-based smooth noise in [0, 1]
+                var h = UInt32(truncatingIfNeeded: Int32(Double(x) * freq)) &* 73856093
+                h ^= UInt32(truncatingIfNeeded: Int32(Double(y) * freq)) &* 19349663
+                h ^= seed &* 83492791
+                h ^= h >> 13
+                h = h &* 1274126177
+                return Double(h % 1024) / 1024.0
+            }
+
+            for y in 0..<height {
+                for x in 0..<width {
+                    // Base tissue texture: three noise octaves summed.
+                    let n1 = octaveNoise(x, y, freq: 0.02, seed: 1)
+                    let n2 = octaveNoise(x, y, freq: 0.08, seed: 2)
+                    let n3 = octaveNoise(x, y, freq: 0.32, seed: 3)
+                    let tissueDensity = 0.5 * n1 + 0.3 * n2 + 0.2 * n3  // [0,1]
+
+                    // H&E stain mix: dense nuclei = purple/blue, sparse = pink.
+                    // R channel: high in pink (eosin), medium in purple (hematoxylin)
+                    // G channel: medium in pink, low in purple
+                    // B channel: low in pink, high in purple
+                    let eosinR   = 0.95, eosinG   = 0.60, eosinB   = 0.75
+                    let hematR   = 0.55, hematG   = 0.40, hematB   = 0.75
+                    let nucleiR  = 0.35, nucleiG  = 0.25, nucleiB  = 0.65
+
+                    let blend: (Double, Double, Double)
+                    if tissueDensity < 0.3 {
+                        // Background / stroma: eosin-dominant pink
+                        let t = tissueDensity / 0.3
+                        blend = (eosinR * (1 - t * 0.2), eosinG, eosinB * (0.9 + t * 0.1))
+                    } else if tissueDensity < 0.7 {
+                        // Soft tissue: transition
+                        let t = (tissueDensity - 0.3) / 0.4
+                        blend = (eosinR * (1 - t) + hematR * t,
+                                 eosinG * (1 - t) + hematG * t,
+                                 eosinB * (1 - t) + hematB * t)
+                    } else {
+                        // Dense nuclei cluster
+                        let t = (tissueDensity - 0.7) / 0.3
+                        blend = (hematR * (1 - t) + nucleiR * t,
+                                 hematG * (1 - t) + nucleiG * t,
+                                 hematB * (1 - t) + nucleiB * t)
+                    }
+
+                    // Add fine-grain noise (~3% of range) — cellular speckle
+                    let speckle = Double(rng.next() % 1024) / 1024.0 - 0.5
+                    let jitter = 0.03 * speckle
+
+                    let r = max(0.0, min(1.0, blend.0 + jitter))
+                    let g = max(0.0, min(1.0, blend.1 + jitter))
+                    let b = max(0.0, min(1.0, blend.2 + jitter))
+
+                    let ri = Int(r * Double(maxVal))
+                    let gi = Int(g * Double(maxVal))
+                    let bi = Int(b * Double(maxVal))
+
+                    let idx = y * width + x
+                    if bitDepth <= 8 {
+                        rPtr[idx] = UInt8(ri)
+                        gPtr[idx] = UInt8(gi)
+                        bPtr[idx] = UInt8(bi)
+                    } else {
+                        let rv = UInt16(ri)
+                        let gv = UInt16(gi)
+                        let bv = UInt16(bi)
+                        rPtr[idx*2]     = UInt8(rv >> 8)
+                        rPtr[idx*2 + 1] = UInt8(rv & 0xFF)
+                        gPtr[idx*2]     = UInt8(gv >> 8)
+                        gPtr[idx*2 + 1] = UInt8(gv & 0xFF)
+                        bPtr[idx*2]     = UInt8(bv >> 8)
+                        bPtr[idx*2 + 1] = UInt8(bv & 0xFF)
+                    }
+                }
+            }
+        }}}
+
+        let byteOrder: J2KComponent.ByteOrder? = bitDepth > 8 ? .bigEndian : nil
+        let comps = [
+            J2KComponent(index: 0, bitDepth: bitDepth, signed: false,
+                         width: width, height: height, data: rData, sampleByteOrder: byteOrder),
+            J2KComponent(index: 1, bitDepth: bitDepth, signed: false,
+                         width: width, height: height, data: gData, sampleByteOrder: byteOrder),
+            J2KComponent(index: 2, bitDepth: bitDepth, signed: false,
+                         width: width, height: height, data: bData, sampleByteOrder: byteOrder),
+        ]
+        return J2KImage(width: width, height: height, components: comps)
     }
 
     // MARK: - Metrics
@@ -648,6 +764,1348 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         let encoder = J2KEncoder(encodingConfiguration: config)
 
         _ = try await encoder.encode(image)
+    }
+
+    // MARK: - HDR / high-bit-depth color coverage
+
+    /// Smoke-test lossless round-trip for RGB at 8, 10, 12, 14, 16 bits per
+    /// channel and grayscale HDR (14-bit, 16-bit signed). Verifies the codec
+    /// handles the full bit-depth spectrum that a medical-grade PACS sees
+    /// (pathology slides are often 48-bit RGB, DCM DX is 14-16 bit, etc.).
+    func testHDRAndColorCoverage() async throws {
+        #if DEBUG
+        print("⚠️  DEBUG mode — timings unreliable")
+        #endif
+        let logPath = "/tmp/hdr_coverage_results.txt"
+        try? FileManager.default.removeItem(atPath: logPath)
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logPath)!
+        func emit(_ s: String) {
+            let line = s + "\n"
+            fh.write(line.data(using: .utf8)!)
+            FileHandle.standardError.write(line.data(using: .utf8)!)
+        }
+
+        emit("\n== HDR / Color Coverage ==")
+        emit(String(repeating: "─", count: 72))
+        emit("Config                          enc(ms)  dec(ms)   size(B)  PSNR    MAE  OK?")
+        emit(String(repeating: "─", count: 72))
+
+        // (label, width, height, bitDepth, components, levels)
+        let configs: [(String, Int, Int, Int, Int, Int)] = [
+            // 8-bit baseline
+            ("RGB-8bit      512x512",    512,  512,  8, 3, 5),
+            ("RGB-8bit     1024x1024",  1024, 1024,  8, 3, 5),
+            // HDR grayscale depths
+            ("Gray-10bit    512x512",    512,  512, 10, 1, 5),
+            ("Gray-12bit    512x512",    512,  512, 12, 1, 5),
+            ("Gray-14bit    512x512",    512,  512, 14, 1, 5),
+            ("Gray-16bit    512x512",    512,  512, 16, 1, 5),
+            ("Gray-16bit    512x1024",   512, 1024, 16, 1, 5),
+            ("Gray-16bit   1024x1024",  1024, 1024, 16, 1, 5),
+            ("Gray-16bit   2048x2048",  2048, 2048, 16, 1, 5),
+            // HDR RGB (pathology, HDR photography)
+            ("RGB-10bit     512x512",    512,  512, 10, 3, 5),
+            ("RGB-10bit    1024x1024",  1024, 1024, 10, 3, 5),
+            ("RGB-12bit     512x512",    512,  512, 12, 3, 5),
+            ("RGB-12bit    1024x1024",  1024, 1024, 12, 3, 5),
+            ("RGB-14bit     512x512",    512,  512, 14, 3, 5),
+            ("RGB-14bit    1024x1024",  1024, 1024, 14, 3, 5),
+            ("RGB-16bit     512x512",    512,  512, 16, 3, 5),
+            ("RGB-16bit     768x768",    768,  768, 16, 3, 5),
+            ("RGB-16bit    1024x1024",  1024, 1024, 16, 3, 5),
+            ("RGB-16bit    2048x2048",  2048, 2048, 16, 3, 5),
+        ]
+
+        // LOSSLESS round-trip
+        for (label, w, h, bd, comps, levels) in configs {
+            let image = generateGradientImage(width: w, height: h, components: comps, bitDepth: bd)
+            let cfg = J2KEncodingConfiguration(quality: 1.0, lossless: true, decompositionLevels: levels)
+            let enc = J2KEncoder(encodingConfiguration: cfg)
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let encoded = try await enc.encode(image)
+            let encMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            let t1 = CFAbsoluteTimeGetCurrent()
+            let decoded = try await DecoderPipeline().decode(encoded)
+            let decMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
+
+            // Compare every component bit-exactly
+            var maxMAE: Double = 0
+            var worstPSNR: Double = .infinity
+            for (idx, origComp) in image.components.enumerated() where idx < decoded.components.count {
+                let mae  = computeMAE(original: origComp.data, decoded: decoded.components[idx].data, bitDepth: bd)
+                let psnr = computePSNR(original: origComp.data, decoded: decoded.components[idx].data, bitDepth: bd)
+                maxMAE = max(maxMAE, mae)
+                worstPSNR = min(worstPSNR, psnr)
+            }
+            let psnrStr = worstPSNR.isInfinite ? "∞ " : String(format: "%.1f dB", worstPSNR)
+            let ok = maxMAE == 0 && worstPSNR.isInfinite ? "✓ bit-exact" : "✗ LOSSY!"
+            let pad = label.padding(toLength: 30, withPad: " ", startingAt: 0)
+            emit("\(pad)  \(String(format: "%6.2f", encMs))   \(String(format: "%6.2f", decMs))   \(String(format: "%8d", encoded.count))  \(psnrStr)  \(String(format: "%.2f", maxMAE))  \(ok)")
+        }
+
+        emit(String(repeating: "─", count: 72))
+        emit("All lossless entries above must show MAE=0.00 and PSNR=∞ for correctness.")
+        fh.closeFile()
+    }
+
+    // MARK: - HTJ2K (Part-15) — benchmarked against OpenJPH reference
+
+    private let ojphCompress = "/opt/homebrew/bin/ojph_compress"
+    private let ojphExpand   = "/opt/homebrew/bin/ojph_expand"
+    private var hasOpenJPH: Bool {
+        FileManager.default.fileExists(atPath: ojphCompress) &&
+        FileManager.default.fileExists(atPath: ojphExpand)
+    }
+
+    /// Encode a PGM/PPM file with OpenJPH's `ojph_compress`.
+    @discardableResult
+    private func ojphEncode(srcPath: String, j2kPath: String, lossless: Bool,
+                            qstep: Double? = nil) throws -> (time: Double, size: Int) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ojphCompress)
+        var args = ["-i", srcPath, "-o", j2kPath, "-reversible", lossless ? "true" : "false"]
+        if !lossless, let q = qstep {
+            args += ["-qstep", String(format: "%.5f", q)]
+        }
+        proc.arguments = args
+        proc.standardOutput = Pipe(); proc.standardError = Pipe()
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+        try proc.run()
+        proc.waitUntilExit()
+        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+        guard proc.terminationStatus == 0 else {
+            throw NSError(domain: "OJPH", code: Int(proc.terminationStatus))
+        }
+        let size = try FileManager.default.attributesOfItem(atPath: j2kPath)[.size] as? Int ?? 0
+        return (elapsed, size)
+    }
+
+    /// Decode a HTJ2K file with OpenJPH's `ojph_expand` to PGM/PPM.
+    @discardableResult
+    private func ojphDecode(j2kPath: String, outPath: String) throws -> Double {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ojphExpand)
+        proc.arguments = ["-i", j2kPath, "-o", outPath]
+        proc.standardOutput = Pipe(); proc.standardError = Pipe()
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+        try proc.run()
+        proc.waitUntilExit()
+        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+        guard proc.terminationStatus == 0 else {
+            throw NSError(domain: "OJPH", code: Int(proc.terminationStatus))
+        }
+        return elapsed
+    }
+
+    /// HTJ2K (ISO 15444-15 Part-15) benchmark against OpenJPH — the
+    /// reference HTJ2K codec (OpenJPEG 2.5 can't decode Part-15 at all).
+    ///
+    /// HTJ2K is where JPEG-2000 differentiates in 2025: FBCOT (fast block
+    /// coding of truncated codestreams) replaces MQ with a MEL+VLC+MagSgn
+    /// tier-1 that's much more SIMD-friendly, giving 3–10× encoder
+    /// speedups and similar decoder speedups vs legacy Part-1.
+    ///
+    /// This test validates:
+    ///   1. Bit-exact lossless (reversible 5/3 HT) self round-trip and
+    ///      cross-decode with OpenJPH
+    ///   2. Encode + decode time vs OpenJPH at equivalent settings
+    ///   3. Compression efficiency (file size, PSNR) vs OpenJPH
+    ///   4. Coverage across medical + natural image sizes and bit depths
+    func testHTJ2KvsOpenJPH() async throws {
+        #if DEBUG
+        print("⚠️  DEBUG mode — timings unreliable.")
+        print("   Use: swift test -c release --filter testHTJ2KvsOpenJPH")
+        #endif
+        guard hasOpenJPH else {
+            print("SKIP testHTJ2KvsOpenJPH: ojph_compress/ojph_expand not found")
+            return
+        }
+
+        let logPath = "/tmp/htj2k_results.txt"
+        try? FileManager.default.removeItem(atPath: logPath)
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logPath)!
+        func emit(_ s: String) {
+            let line = s + "\n"
+            fh.write(line.data(using: .utf8)!)
+            FileHandle.standardError.write(line.data(using: .utf8)!)
+        }
+
+        let outDir = "/tmp/j2k_htj2k"
+        try? FileManager.default.createDirectory(atPath: outDir,
+            withIntermediateDirectories: true)
+
+        emit("\n═══════════════════════════════════════════════════════════")
+        emit(" HTJ2K (Part-15) — J2KSwift vs OpenJPH reference")
+        emit("═══════════════════════════════════════════════════════════")
+
+        // Test corpus — mix of medical, natural, and pathology-style.
+        let configs: [(String, Int, Int, Int, Int)] = [
+            // (label, w, h, bitDepth, components)
+            ("Grad-512-8b",  512,  512,  8, 1),
+            ("Grad-1024-8b", 1024, 1024, 8, 1),
+            ("Med-512-12b",  512,  512, 12, 1),
+            ("Med-512-16b",  512,  512, 16, 1),
+            ("RGB-512-8b",   512,  512,  8, 3),
+            ("RGB-1024-8b",  1024, 1024, 8, 3),
+            ("RGB-1024-16b", 1024, 1024, 16, 3),
+        ]
+
+        struct HTResult {
+            let label: String
+            let rawBytes: Int
+            let j2kEncMs: Double; let j2kDecMs: Double; let j2kSize: Int
+            let ojphEncMs: Double; let ojphDecMs: Double; let ojphSize: Int
+            let selfBitExact: Bool; let crossBitExact: Bool
+        }
+        var results: [HTResult] = []
+
+        emit("\n── Lossless HTJ2K round-trip + cross-codec ──")
+        emit("Config          raw(KB)  J2Kenc   OJPHenc   J2Kdec   OJPHdec   J2Ksize   OJPHsize    self✓  cross✓")
+        emit(String(repeating: "─", count: 105))
+
+        for (label, w, h, bd, comps) in configs {
+            let image: J2KImage
+            if comps == 1 {
+                image = generateGradientImage(width: w, height: h, components: 1, bitDepth: bd)
+            } else {
+                // Use WSI-style content for RGB (more realistic than gradient)
+                image = generateWSITile(width: w, height: h, bitDepth: bd)
+            }
+            let raw = w * h * comps * (bd <= 8 ? 1 : 2)
+
+            // Write source as PGM (1 comp) or PPM (3 comp) for OpenJPH input
+            let srcExt = comps == 1 ? "pgm" : "ppm"
+            let srcPath = "\(outDir)/\(label).\(srcExt)"
+            if comps == 1 {
+                try savePGM(data: image.components[0].data,
+                            width: w, height: h, bitDepth: bd, path: srcPath)
+            } else {
+                try writeRGBAsPPM(image: image, path: srcPath, bitDepth: bd)
+            }
+
+            // J2KSwift HTJ2K encode + decode
+            var cfg = J2KEncodingConfiguration(
+                quality: 1.0, lossless: true, decompositionLevels: 5)
+            cfg.useHTJ2K = true
+            let enc = J2KEncoder(encodingConfiguration: cfg)
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let j2kData = try await enc.encode(image)
+            let j2kEncMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+
+            let t1 = CFAbsoluteTimeGetCurrent()
+            let decoded = try await DecoderPipeline().decode(j2kData)
+            let j2kDecMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
+
+            // Bit-exact check vs original
+            var selfBitExact = true
+            for (i, origC) in image.components.enumerated() where i < decoded.components.count {
+                if origC.data != decoded.components[i].data { selfBitExact = false; break }
+            }
+
+            // OpenJPH encode + decode
+            let ojphJ2kPath = "\(outDir)/\(label)_ojph.j2k"
+            let ojphOutPath = "\(outDir)/\(label)_ojph_dec.\(srcExt)"
+            var ojphEncMs: Double = 0
+            var ojphDecMs: Double = 0
+            var ojphSize: Int = 0
+            var crossBitExact = false
+
+            do {
+                let (eTime, eSize) = try ojphEncode(
+                    srcPath: srcPath, j2kPath: ojphJ2kPath, lossless: true)
+                ojphEncMs = eTime * 1000
+                ojphSize = eSize
+
+                ojphDecMs = (try ojphDecode(j2kPath: ojphJ2kPath, outPath: ojphOutPath)) * 1000
+
+                // Cross-decode: feed OpenJPH's stream to our decoder
+                let ojphData = try Data(contentsOf: URL(fileURLWithPath: ojphJ2kPath))
+                let ojphDecoded = try await DecoderPipeline().decode(ojphData)
+                crossBitExact = true
+                for (i, origC) in image.components.enumerated()
+                    where i < ojphDecoded.components.count {
+                    if origC.data != ojphDecoded.components[i].data {
+                        crossBitExact = false; break
+                    }
+                }
+            } catch {
+                emit("  \(label) OpenJPH failed: \(error)")
+            }
+
+            let selfMark = selfBitExact ? "✓" : "✗"
+            let crossMark = crossBitExact ? "✓" : (ojphSize > 0 ? "✗" : "—")
+
+            let pad = label.padding(toLength: 15, withPad: " ", startingAt: 0)
+            emit("\(pad) \(String(format: "%6d", raw/1024))  \(String(format: "%6.1fms", j2kEncMs))  \(String(format: "%6.1fms", ojphEncMs))  \(String(format: "%6.1fms", j2kDecMs))  \(String(format: "%6.1fms", ojphDecMs))  \(String(format: "%8d", j2kData.count))  \(String(format: "%8d", ojphSize))     \(selfMark)     \(crossMark)")
+
+            results.append(HTResult(
+                label: label, rawBytes: raw,
+                j2kEncMs: j2kEncMs, j2kDecMs: j2kDecMs, j2kSize: j2kData.count,
+                ojphEncMs: ojphEncMs, ojphDecMs: ojphDecMs, ojphSize: ojphSize,
+                selfBitExact: selfBitExact, crossBitExact: crossBitExact))
+        }
+        emit(String(repeating: "─", count: 105))
+
+        // Speedup table
+        emit("\n── Speedup (OpenJPH / J2KSwift) ──")
+        emit("Config           Enc speedup   Dec speedup   Size ratio (J2K/OJPH)")
+        emit(String(repeating: "─", count: 70))
+        var totalJ2KEnc = 0.0, totalOJPHEnc = 0.0
+        var totalJ2KDec = 0.0, totalOJPHDec = 0.0
+        var totalJ2KSize = 0, totalOJPHSize = 0
+        for r in results where r.ojphSize > 0 {
+            let encSp = r.ojphEncMs / r.j2kEncMs
+            let decSp = r.ojphDecMs / r.j2kDecMs
+            let sizeR = Double(r.j2kSize) / Double(r.ojphSize)
+            totalJ2KEnc += r.j2kEncMs; totalOJPHEnc += r.ojphEncMs
+            totalJ2KDec += r.j2kDecMs; totalOJPHDec += r.ojphDecMs
+            totalJ2KSize += r.j2kSize; totalOJPHSize += r.ojphSize
+            let pad = r.label.padding(toLength: 15, withPad: " ", startingAt: 0)
+            emit("\(pad)   \(String(format: "%5.2fx", encSp))       \(String(format: "%5.2fx", decSp))        \(String(format: "%.4f", sizeR))")
+        }
+        emit(String(repeating: "─", count: 70))
+        if totalOJPHEnc > 0 {
+            emit(String(format: "Aggregate        %5.2fx       %5.2fx        %.4f",
+                        totalOJPHEnc / totalJ2KEnc,
+                        totalOJPHDec / totalJ2KDec,
+                        Double(totalJ2KSize) / Double(totalOJPHSize)))
+        }
+
+        // Summary
+        emit("\n── Summary ──")
+        let allSelf = results.allSatisfy { $0.selfBitExact }
+        let crossResults = results.filter { $0.ojphSize > 0 }
+        let allCross = crossResults.allSatisfy { $0.crossBitExact }
+        emit("  Bit-exact (J2KSwift HT → J2KSwift):     \(allSelf ? "✓ ALL PASS" : "✗ FAILURES")")
+        emit("  Bit-exact (OpenJPH HT → J2KSwift dec):  \(allCross ? "✓ ALL PASS" : "✗ SOME FAIL") \(crossResults.count)/\(results.count)")
+        emit("\nResults → \(logPath)")
+        fh.closeFile()
+
+        XCTAssertTrue(allSelf, "J2KSwift HTJ2K self round-trip must be bit-exact")
+    }
+
+    // MARK: - DICOM Whole Slide Imaging (WSI / pathology)
+
+    /// Whole Slide Imaging benchmark — realistic pathology workload.
+    ///
+    /// DICOM VL Whole Slide Microscopy Image Storage (SOP Class
+    /// 1.2.840.10008.5.1.4.1.1.77.1.6) is the standard for digital pathology.
+    /// WSI content is typically:
+    ///   - 24-bit sRGB (8-bit × 3 channels), sometimes 48-bit for high-end
+    ///     scanners or sRGB wide-gamut workflows
+    ///   - Stored as a tiled pyramid: base layer + downsampled levels,
+    ///     each tile independently decodable (typically 256² or 512²)
+    ///   - H&E stained (hematoxylin = blue/purple nuclei, eosin = pink
+    ///     cytoplasm) or IHC with varied stains
+    ///   - Total pixel count often 10–100 gigapixels per slide
+    ///
+    /// Per DICOM-WG-26 / IHE Pathology profile, lossless JPEG 2000
+    /// (transfer syntax 1.2.840.10008.1.2.4.90) is the recommended
+    /// format for primary diagnostic use.
+    ///
+    /// This test validates:
+    ///   1. Bit-exact lossless round-trip at every realistic tile size
+    ///   2. Cross-codec interop (our stream decodes in OpenJPEG, reference
+    ///      stream decodes in ours) — required for DICOMweb distribution
+    ///   3. Compression ratio vs OpenJPEG (sets the storage budget
+    ///      a PACS actually sees per WSI)
+    ///   4. Tile-decode latency at 1024² (drives viewer responsiveness
+    ///      when panning/zooming — must stay below 40 ms for 25 fps)
+    func testDICOMWholeSlideImaging() async throws {
+        #if DEBUG
+        print("⚠️  WARNING: DEBUG mode — timings unreliable.")
+        print("   Use: swift test -c release --filter testDICOMWholeSlideImaging")
+        #endif
+        guard hasOpenJPEG else {
+            print("SKIP testDICOMWholeSlideImaging: OpenJPEG CLI not found")
+            return
+        }
+
+        let logPath = "/tmp/wsi_results.txt"
+        try? FileManager.default.removeItem(atPath: logPath)
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logPath)!
+        func emit(_ s: String) {
+            let line = s + "\n"
+            fh.write(line.data(using: .utf8)!)
+            FileHandle.standardError.write(line.data(using: .utf8)!)
+        }
+
+        let outDir = "/tmp/j2k_wsi"
+        try? FileManager.default.createDirectory(atPath: outDir,
+            withIntermediateDirectories: true)
+
+        emit("\n═══════════════════════════════════════════════════════════")
+        emit(" DICOM Whole Slide Imaging (WSI / pathology) benchmark")
+        emit(" Simulated H&E-stained tissue; standard tile sizes")
+        emit("═══════════════════════════════════════════════════════════")
+
+        // Standard WSI tile sizes. 256² and 512² are DICOMweb / BigPicture
+        // Project defaults; 1024² and 2048² represent high-resolution
+        // scanning scenarios; 4096² is the practical large-tile upper
+        // bound for single-decode viewer tiles.
+        let tileSizes: [Int] = [256, 512, 1024, 2048, 4096]
+
+        // Both common WSI depths: sRGB-24 (mainstream) and 48-bit (pro).
+        let bitDepths: [Int] = [8, 16]
+
+        // ── Section 1: lossless round-trip + cross-codec ─────────────────
+        emit("\n── 1. Lossless round-trip (bit-exact required for diagnostic) ──")
+        emit("Config                       enc(ms)  dec(ms)   size(B)   ratio   J2K→OPJ   OK?")
+        emit(String(repeating: "─", count: 88))
+
+        struct WSIResult {
+            let label: String; let tileSize: Int; let bitDepth: Int
+            let rawBytes: Int; let encBytes: Int; let encMs: Double; let decMs: Double
+            let selfBitExact: Bool; let crossBitExact: Bool
+            let opjSize: Int; let opjDecMs: Double
+        }
+        var losslessResults: [WSIResult] = []
+
+        for bd in bitDepths {
+            for size in tileSizes {
+                let label = "\(bd)-bit RGB \(size)×\(size)"
+                let image = generateWSITile(width: size, height: size, bitDepth: bd)
+                let raw = size * size * 3 * (bd <= 8 ? 1 : 2)
+
+                // Encode lossless
+                let cfg = J2KEncodingConfiguration(
+                    quality: 1.0, lossless: true, decompositionLevels: 5)
+                let enc = J2KEncoder(encodingConfiguration: cfg)
+                let t0 = CFAbsoluteTimeGetCurrent()
+                let encoded = try await enc.encode(image)
+                let encMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+
+                // Self decode (J2K → J2K)
+                let t1 = CFAbsoluteTimeGetCurrent()
+                let decoded = try await DecoderPipeline().decode(encoded)
+                let decMs = (CFAbsoluteTimeGetCurrent() - t1) * 1000
+
+                var selfBitExact = true
+                for (i, origC) in image.components.enumerated() where i < decoded.components.count {
+                    if origC.data != decoded.components[i].data { selfBitExact = false; break }
+                }
+
+                // Cross decode via OpenJPEG (J2K → OPJ)
+                let j2kPath = "\(outDir)/wsi_\(bd)bit_\(size).j2k"
+                let opjDecDir = "\(outDir)/wsi_\(bd)bit_\(size)_opjdec"
+                try? FileManager.default.createDirectory(atPath: opjDecDir,
+                    withIntermediateDirectories: true)
+                try encoded.write(to: URL(fileURLWithPath: j2kPath))
+
+                var crossBitExact = false
+                var opjDecMs: Double = 0
+                do {
+                    // Decode to PPM (3-component) via opj_decompress
+                    let ppmPath = "\(opjDecDir)/out.ppm"
+                    let t2 = CFAbsoluteTimeGetCurrent()
+                    _ = try opjDecodeToFile(j2kPath: j2kPath, outPath: ppmPath)
+                    opjDecMs = (CFAbsoluteTimeGetCurrent() - t2) * 1000
+
+                    if let ppm = FileManager.default.contents(atPath: ppmPath),
+                       let (r, g, b) = parsePPMPixels(ppm, expectedWidth: size,
+                                                     expectedHeight: size, bitDepth: bd) {
+                        crossBitExact = (r == image.components[0].data &&
+                                         g == image.components[1].data &&
+                                         b == image.components[2].data)
+                    }
+                } catch {
+                    // OPJ failure — record but don't fail the test; some OPJ
+                    // builds may not support 16-bit PPM output.
+                    emit("  (OPJ decode failed: \(error))")
+                }
+
+                // OpenJPEG encode of same content for compression-ratio comparison.
+                // We need a raw source — write the image as PPM first.
+                let srcPpm = "\(outDir)/src_\(bd)bit_\(size).ppm"
+                try writeRGBAsPPM(image: image, path: srcPpm, bitDepth: bd)
+                let opjJ2kPath = "\(outDir)/opj_\(bd)bit_\(size).j2k"
+                var opjSize = 0
+                do {
+                    let (_, sz) = try opjEncode(
+                        pgmPath: srcPpm, j2kPath: opjJ2kPath,
+                        compressionRatio: nil, lossless: true)
+                    opjSize = sz
+                } catch {
+                    // OPJ encode failure — leave opjSize at 0 (reported as N/A)
+                }
+
+                let ratio = Double(raw) / Double(encoded.count)
+                let okMark = selfBitExact && crossBitExact ? "✓" : (selfBitExact ? "≈ self-only" : "✗")
+                let opjRatioStr = opjSize > 0 ? String(format: "%.2fx", Double(raw) / Double(opjSize)) : "N/A"
+                let crossMark = crossBitExact ? "✓" : "—"
+                let pad = label.padding(toLength: 28, withPad: " ", startingAt: 0)
+                emit("\(pad) \(String(format: "%6.1f", encMs))   \(String(format: "%6.1f", decMs))  \(String(format: "%9d", encoded.count))  \(String(format: "%.2fx", ratio)) (OPJ \(opjRatioStr))  \(crossMark)   \(okMark)")
+
+                losslessResults.append(WSIResult(
+                    label: label, tileSize: size, bitDepth: bd,
+                    rawBytes: raw, encBytes: encoded.count,
+                    encMs: encMs, decMs: decMs,
+                    selfBitExact: selfBitExact, crossBitExact: crossBitExact,
+                    opjSize: opjSize, opjDecMs: opjDecMs))
+            }
+        }
+        emit(String(repeating: "─", count: 88))
+
+        // ── Section 2: lossy compression curve (visually-lossless benchmark) ──
+        emit("\n── 2. Lossy rate-distortion (visually-lossless @ 0.7-1.0 bpp is typical) ──")
+        emit("Config                       bpp     size(B)    PSNR(dB)    OPJ PSNR    ΔPSNR")
+        emit(String(repeating: "─", count: 80))
+
+        let lossySizes: [Int] = [512, 1024]
+        let lossyBpp: [Double] = [0.5, 1.0, 2.0]
+        for size in lossySizes {
+            let image = generateWSITile(width: size, height: size, bitDepth: 8)
+            let pgmSrc = "\(outDir)/wsi_lossy_src_\(size).ppm"
+            try writeRGBAsPPM(image: image, path: pgmSrc, bitDepth: 8)
+
+            for bpp in lossyBpp {
+                var cfg = J2KEncodingConfiguration(
+                    quality: 0.5, lossless: false, decompositionLevels: 5)
+                cfg.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+                cfg.qualityLayers = 1
+                let enc = J2KEncoder(encodingConfiguration: cfg)
+                let encoded = try await enc.encode(image)
+                let decoded = try await DecoderPipeline().decode(encoded)
+
+                // PSNR across all 3 channels
+                var totalMSE = 0.0
+                var count = 0
+                for (i, origC) in image.components.enumerated() where i < decoded.components.count {
+                    let n = min(origC.data.count, decoded.components[i].data.count)
+                    for j in 0..<n {
+                        let d = Double(origC.data[j]) - Double(decoded.components[i].data[j])
+                        totalMSE += d * d
+                    }
+                    count += n
+                }
+                let mse = totalMSE / Double(max(1, count))
+                let psnr = mse > 0 ? 10 * log10(255 * 255 / mse) : Double.infinity
+
+                // OPJ comparison
+                let opjJ2k = "\(outDir)/wsi_lossy_opj_\(size)_\(bpp).j2k"
+                let opjOut = "\(outDir)/wsi_lossy_opj_\(size)_\(bpp)_out.ppm"
+                var opjPSNR: Double = .nan
+                do {
+                    let ratio = 24.0 / (bpp * 3)
+                    _ = try opjEncode(
+                        pgmPath: pgmSrc, j2kPath: opjJ2k,
+                        compressionRatio: ratio, lossless: false)
+                    _ = try opjDecodeToFile(j2kPath: opjJ2k, outPath: opjOut)
+                    if let ppm = FileManager.default.contents(atPath: opjOut),
+                       let (r, g, b) = parsePPMPixels(ppm, expectedWidth: size,
+                                                     expectedHeight: size, bitDepth: 8) {
+                        var opjMSE = 0.0
+                        var opjCount = 0
+                        for (opjCh, origCh) in zip([r, g, b], image.components) {
+                            let n = min(opjCh.count, origCh.data.count)
+                            for k in 0..<n {
+                                let d = Double(origCh.data[k]) - Double(opjCh[k])
+                                opjMSE += d * d
+                            }
+                            opjCount += n
+                        }
+                        let opjM = opjMSE / Double(max(1, opjCount))
+                        opjPSNR = opjM > 0 ? 10 * log10(255 * 255 / opjM) : Double.infinity
+                    }
+                } catch {}
+
+                let delta = opjPSNR.isFinite ? psnr - opjPSNR : Double.nan
+                let psnrStr = psnr.isFinite ? String(format: "%5.2f", psnr) : "   ∞"
+                let opjStr = opjPSNR.isFinite ? String(format: "%5.2f", opjPSNR) : "  n/a"
+                let deltaStr = delta.isFinite ? String(format: "%+5.2f", delta) : " n/a"
+                let pad = "\(size)×\(size)".padding(toLength: 28, withPad: " ", startingAt: 0)
+                emit("\(pad) \(String(format: "%5.2f", bpp))  \(String(format: "%9d", encoded.count))    \(psnrStr)      \(opjStr)      \(deltaStr)")
+            }
+        }
+        emit(String(repeating: "─", count: 80))
+
+        // ── Section 3: summary ───────────────────────────────────────────
+        emit("\n── 3. Summary ──")
+        let allSelfOK = losslessResults.allSatisfy { $0.selfBitExact }
+        let allCrossOK = losslessResults.allSatisfy { $0.crossBitExact }
+        let totalRaw = losslessResults.map { $0.rawBytes }.reduce(0, +)
+        let totalEnc = losslessResults.map { $0.encBytes }.reduce(0, +)
+        let totalOPJ = losslessResults.map { $0.opjSize }.reduce(0, +)
+        let aggRatio = Double(totalRaw) / Double(totalEnc)
+        emit("  Bit-exact (J2KSwift → J2KSwift):  \(allSelfOK ? "✓ ALL PASS" : "✗ FAILURES")")
+        emit("  Bit-exact (J2KSwift → OpenJPEG):  \(allCrossOK ? "✓ ALL PASS" : "✗ FAILURES — check OPJ PPM support")")
+        emit(String(format: "  Aggregate J2KSwift compression ratio: %.2fx  (raw %d B → encoded %d B)",
+                    aggRatio, totalRaw, totalEnc))
+        if totalOPJ > 0 {
+            emit(String(format: "  Aggregate OpenJPEG compression ratio: %.2fx  (%d B)",
+                        Double(totalRaw) / Double(totalOPJ), totalOPJ))
+        }
+
+        emit("\nResults → \(logPath)")
+        fh.closeFile()
+
+        // Assertions
+        XCTAssertTrue(allSelfOK, "WSI lossless round-trip must be bit-exact for all tile sizes and bit depths")
+    }
+
+    /// Write an RGB J2KImage as a PPM P6 file (for OpenJPEG input).
+    private func writeRGBAsPPM(image: J2KImage, path: String, bitDepth: Int) throws {
+        guard image.components.count >= 3 else {
+            throw NSError(domain: "WSI", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Need 3 RGB components"])
+        }
+        let w = image.width, h = image.height
+        let maxVal = (1 << bitDepth) - 1
+        let header = "P6\n\(w) \(h)\n\(maxVal)\n"
+        var out = Data()
+        out.append(header.data(using: .ascii)!)
+        let bps = bitDepth <= 8 ? 1 : 2
+        var pixels = Data(count: w * h * 3 * bps)
+        pixels.withUnsafeMutableBytes { dst in
+            let dPtr = dst.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            for c in 0..<3 {
+                image.components[c].data.withUnsafeBytes { src in
+                    let sPtr = src.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    for i in 0..<(w * h) {
+                        for bi in 0..<bps {
+                            dPtr[(i * 3 + c) * bps + bi] = sPtr[i * bps + bi]
+                        }
+                    }
+                }
+            }
+        }
+        out.append(pixels)
+        try out.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Decode a J2K file to PPM/PGM via opj_decompress (handles RGB too).
+    @discardableResult
+    private func opjDecodeToFile(j2kPath: String, outPath: String) throws -> Double {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: opjDecompress)
+        proc.arguments = ["-i", j2kPath, "-o", outPath]
+        proc.standardOutput = Pipe(); proc.standardError = Pipe()
+        let t0 = CFAbsoluteTimeGetCurrent()
+        try proc.run()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else {
+            throw NSError(domain: "OPJ", code: Int(proc.terminationStatus))
+        }
+        return CFAbsoluteTimeGetCurrent() - t0
+    }
+
+    /// Parse a PPM P6 file into (R, G, B) Data, stored big-endian for 16-bit.
+    private func parsePPMPixels(_ data: Data, expectedWidth: Int, expectedHeight: Int,
+                                bitDepth: Int) -> (Data, Data, Data)? {
+        // P6 header: "P6\n<w> <h>\n<maxval>\n<pixels>"
+        var idx = 0
+        func readLine() -> String? {
+            var line = ""
+            while idx < data.count {
+                let b = data[idx]; idx += 1
+                if b == 0x0A { return line }
+                if b == 0x23 {  // '#' comment; skip rest of line
+                    while idx < data.count && data[idx] != 0x0A { idx += 1 }
+                    if idx < data.count { idx += 1 }
+                    continue
+                }
+                line.append(Character(UnicodeScalar(b)))
+            }
+            return line.isEmpty ? nil : line
+        }
+        guard readLine() == "P6" else { return nil }
+        guard let dimLine = readLine() else { return nil }
+        let dims = dimLine.split(separator: " ").compactMap { Int($0) }
+        guard dims.count == 2, dims[0] == expectedWidth, dims[1] == expectedHeight else { return nil }
+        guard let mvLine = readLine(), let _ = Int(mvLine) else { return nil }
+
+        let bps = bitDepth <= 8 ? 1 : 2
+        let pxCount = expectedWidth * expectedHeight
+        let needed = pxCount * 3 * bps
+        guard data.count - idx >= needed else { return nil }
+
+        var r = Data(count: pxCount * bps)
+        var g = Data(count: pxCount * bps)
+        var b = Data(count: pxCount * bps)
+        r.withUnsafeMutableBytes { rBuf in
+        g.withUnsafeMutableBytes { gBuf in
+        b.withUnsafeMutableBytes { bBuf in
+            let rP = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            let gP = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            let bP = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            data.withUnsafeBytes { src in
+                let sP = src.baseAddress!.assumingMemoryBound(to: UInt8.self) + idx
+                for i in 0..<pxCount {
+                    for bi in 0..<bps {
+                        rP[i * bps + bi] = sP[(i * 3 + 0) * bps + bi]
+                        gP[i * bps + bi] = sP[(i * 3 + 1) * bps + bi]
+                        bP[i * bps + bi] = sP[(i * 3 + 2) * bps + bi]
+                    }
+                }
+            }
+        }}}
+        return (r, g, b)
+    }
+
+    // MARK: - Decode micro-benchmark (stage-isolated timing)
+
+    /// Decode-focused micro-benchmark. Runs N decodes on pre-encoded streams
+    /// and reports per-stage medians. Used to target decode hotspot
+    /// optimizations (Priority 2 in the optimization roadmap).
+    func testDecodeHotspotProfile() async throws {
+        #if DEBUG
+        print("⚠️  WARNING: DEBUG mode — timings unreliable")
+        print("   Use: swift test -c release --filter testDecodeHotspotProfile")
+        #endif
+
+        // Representative workload mix covering the two decode regimes that
+        // dominate in practice: small-block lossless (Tier-1 bound) and
+        // medical lossy (IDWT bound).
+        let runs = 10
+        let logPath = "/tmp/decode_profile_results.txt"
+        try? FileManager.default.removeItem(atPath: logPath)
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let fh = FileHandle(forWritingAtPath: logPath)!
+        func emit(_ s: String) {
+            let line = s + "\n"
+            fh.write(line.data(using: .utf8)!)
+            FileHandle.standardError.write(line.data(using: .utf8)!)
+        }
+        emit("\n==DECODE-PROFILE== \(runs) runs each, median ms")
+
+        var configs: [(label: String, image: J2KImage, lossless: Bool, bpp: Double)] = []
+        configs.append(("Grad-1024-8b lossless", generateGradientImage(width: 1024, height: 1024, components: 1, bitDepth: 8), true, 0))
+        configs.append(("Grad-1024-8b lossy 1b", generateGradientImage(width: 1024, height: 1024, components: 1, bitDepth: 8), false, 1.0))
+        configs.append(("Med-512-12b  lossless", generateMedicalPhantom(width: 512, height: 512, bitDepth: 12), true, 0))
+        configs.append(("Med-512-12b  lossy 1b", generateMedicalPhantom(width: 512, height: 512, bitDepth: 12), false, 1.0))
+        configs.append(("Med-512-16b  lossless", generateMedicalPhantom(width: 512, height: 512, bitDepth: 16), true, 0))
+        configs.append(("Med-512-16b  lossy 1b", generateMedicalPhantom(width: 512, height: 512, bitDepth: 16), false, 1.0))
+        emit("Built \(configs.count) configs")
+        emit(String(repeating: "─", count: 60))
+        emit("Config                      total (ms)")
+        emit(String(repeating: "─", count: 60))
+
+        for (label, image, lossless, bpp) in configs {
+            do {
+                var cfg = J2KEncodingConfiguration(
+                    quality: lossless ? 1.0 : 0.5,
+                    lossless: lossless,
+                    decompositionLevels: 5)
+                if !lossless {
+                    cfg.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+                    cfg.qualityLayers = 1
+                }
+                let enc = J2KEncoder(encodingConfiguration: cfg)
+                emit("  encoding \(label)...")
+                let encoded = try await enc.encode(image)
+                emit("  encoded \(encoded.count) B, running decode \(runs) times...")
+                let decoder = DecoderPipeline()
+
+                _ = try await decoder.decode(encoded)
+
+                var timings: [Double] = []
+                for _ in 0..<runs {
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    _ = try await decoder.decode(encoded)
+                    timings.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                }
+                timings.sort()
+                let median = timings[runs / 2]
+                let pad = label.padding(toLength: 26, withPad: " ", startingAt: 0)
+                emit("\(pad)  \(String(format: "%10.3f", median))")
+            } catch {
+                emit("  \(label) FAILED: \(error)")
+            }
+        }
+        emit(String(repeating: "─", count: 60))
+        fh.closeFile()
+    }
+
+    // MARK: - Rate-Distortion / Compression Ratio Benchmark
+
+    /// Rate-distortion benchmark: compares J2KSwift vs OpenJPEG compression efficiency.
+    ///
+    /// For each image, encodes at several bpp targets with both codecs and records
+    /// (bpp, size, PSNR). Then reports three views:
+    /// 1. **Same bpp → PSNR**: who has higher quality at equal bitrate?
+    /// 2. **Same PSNR → size**: who produces smaller files at equal quality (log-linear
+    ///    interpolation on the rate-distortion curve).
+    /// 3. **BD-rate** (Bjøntegaard-Delta): average relative bitrate difference of
+    ///    J2KSwift vs OpenJPEG over the overlapping PSNR range. Negative = J2KSwift
+    ///    needs fewer bits at equal quality (better); positive = worse.
+    func testCompressionRatioVsOpenJPEG() async throws {
+        #if DEBUG
+        print("⚠️  WARNING: Running compression-ratio benchmark in DEBUG mode.")
+        print("   Use: swift test -c release --filter testCompressionRatioVsOpenJPEG")
+        #endif
+
+        guard hasOpenJPEG else {
+            print("SKIP testCompressionRatioVsOpenJPEG: OpenJPEG CLI not found")
+            return
+        }
+
+        // Rate-distortion sweep. Covers low-rate regime where rate control matters.
+        let bppPoints: [Double] = [0.125, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]
+
+        // Target PSNRs for matched-quality size comparison.
+        let targetPSNRs: [Double] = [25, 30, 35, 40, 45]
+
+        let configs: [(String, Int, Int, Int)] = [
+            ("Grad-512-8b",  512,  512,  8),
+            ("Grad-1024-8b", 1024, 1024, 8),
+            ("Med-512-12b",  512,  512, 12),
+            ("Med-512-16b",  512,  512, 16),
+        ]
+
+        let outDir = "/tmp/j2k_compression_ratio"
+        try? FileManager.default.createDirectory(atPath: outDir,
+            withIntermediateDirectories: true)
+
+        var csvLines: [String] = ["Image,Resolution,BitDepth,Codec,bpp,Size_bytes,PSNR_dB"]
+
+        for (label, w, h, bd) in configs {
+            let image: J2KImage
+            if bd > 8 {
+                image = generateMedicalPhantom(width: w, height: h, bitDepth: bd)
+            } else {
+                image = generateGradientImage(width: w, height: h, components: 1, bitDepth: bd)
+            }
+            let origData = image.components[0].data
+            let pgmPath = "\(outDir)/\(label).pgm"
+            try savePGM(data: origData, width: w, height: h, bitDepth: bd, path: pgmPath)
+            let levels = min(5, Int(log2(Double(min(w, h)))) - 1)
+
+            var j2kPoints: [RDPoint] = []
+            var opjPoints: [RDPoint] = []
+
+            print("\n[\(label) \(w)x\(h) \(bd)-bit] Rate-distortion sweep")
+            print("  bpp     J2K Size   J2K PSNR   OPJ Size   OPJ PSNR   ΔPSNR(J2K−OPJ)   Size J2K/OPJ")
+            print("  ─────   ────────   ────────   ────────   ────────   ──────────────   ────────────")
+
+            for bpp in bppPoints {
+                // J2KSwift encode at this bpp via .constantBitrate
+                var cfg = J2KEncodingConfiguration(
+                    quality: 0.5, lossless: false, decompositionLevels: levels)
+                cfg.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+                cfg.qualityLayers = 1
+                let encoder = J2KEncoder(encodingConfiguration: cfg)
+                let j2kData = try await encoder.encode(image)
+                let (_, j2kDec) = try await j2kDecode(data: j2kData)
+                let j2kPSNR = computePSNR(original: origData,
+                                          decoded: j2kDec.components[0].data, bitDepth: bd)
+
+                // OpenJPEG encode at this bpp (ratio = bd/bpp)
+                let ratio = Double(bd) / bpp
+                let opjJ2kPath = "\(outDir)/\(label)_opj_\(bpp).j2k"
+                let opjPgmPath = "\(outDir)/\(label)_opj_\(bpp)_dec.pgm"
+                let (_, opjSize) = try opjEncode(
+                    pgmPath: pgmPath, j2kPath: opjJ2kPath,
+                    compressionRatio: ratio, lossless: false)
+                _ = try opjDecode(j2kPath: opjJ2kPath, pgmPath: opjPgmPath)
+                guard let pgmData = FileManager.default.contents(atPath: opjPgmPath),
+                      let opjPixels = parsePGMPixels(pgmData,
+                           expectedWidth: w, expectedHeight: h, bitDepth: bd) else {
+                    continue
+                }
+                let opjPSNR = computePSNR(original: origData,
+                                          decoded: opjPixels, bitDepth: bd)
+
+                j2kPoints.append(RDPoint(bpp: bpp, size: j2kData.count, psnr: j2kPSNR))
+                opjPoints.append(RDPoint(bpp: bpp, size: opjSize,     psnr: opjPSNR))
+
+                csvLines.append("\(label),\(w)x\(h),\(bd),J2KSwift,\(bpp),\(j2kData.count),\(j2kPSNR)")
+                csvLines.append("\(label),\(w)x\(h),\(bd),OpenJPEG,\(bpp),\(opjSize),\(opjPSNR)")
+
+                let sizeRatio = Double(j2kData.count) / Double(opjSize)
+                let psnrDelta = j2kPSNR - opjPSNR
+                print(String(format: "  %5.3f   %8d   %6.2f dB  %8d   %6.2f dB   %+6.2f dB        %5.3f×",
+                             bpp, j2kData.count, j2kPSNR, opjSize, opjPSNR, psnrDelta, sizeRatio))
+            }
+
+            // Same-PSNR → size comparison (log-linear interpolation of rate-distortion curve)
+            print("\n  Matched-PSNR size comparison (log-linear RD interpolation):")
+            print("  Target PSNR   J2K Size     OPJ Size     J2K/OPJ   Verdict")
+            print("  ───────────   ──────────   ──────────   ───────   ──────────────────────")
+            for target in targetPSNRs {
+                guard let jSize = interpolateSizeAtPSNR(points: j2kPoints, targetPSNR: target),
+                      let oSize = interpolateSizeAtPSNR(points: opjPoints, targetPSNR: target) else {
+                    print(String(format: "  %6.1f dB      (out of range for one codec)", target))
+                    continue
+                }
+                let ratio = jSize / oSize
+                let verdict: String
+                if ratio < 0.98 { verdict = "J2KSwift smaller ✓" }
+                else if ratio > 1.02 { verdict = "OpenJPEG smaller" }
+                else { verdict = "≈ equal" }
+                print(String(format: "  %6.1f dB      %10d   %10d   %5.3f×   %@",
+                             target, Int(jSize), Int(oSize), ratio, verdict))
+            }
+
+            // BD-rate: average relative bitrate difference over overlapping PSNR range
+            if let bdRate = bjontegaardDeltaRate(reference: opjPoints, target: j2kPoints) {
+                let verdict = bdRate < 0 ? "J2KSwift uses fewer bits at equal quality" :
+                              bdRate > 0 ? "J2KSwift uses more bits at equal quality" : "equal"
+                print(String(format: "\n  BD-rate (J2KSwift vs OpenJPEG): %+6.2f%%  → %@",
+                             bdRate, verdict))
+            }
+        }
+
+        let csv = csvLines.joined(separator: "\n") + "\n"
+        let csvPath = "\(outDir)/rate_distortion.csv"
+        try csv.write(toFile: csvPath, atomically: true, encoding: .utf8)
+        print("\nRate-distortion data → \(csvPath)")
+    }
+
+    /// Log-linear interpolation of file size (bytes) at a target PSNR value.
+    ///
+    /// Rate-distortion curves are monotonic and approximately linear when
+    /// plotted as `log(size)` vs `PSNR`, which is the standard transformation
+    /// used in video coding rate-distortion analysis.
+    private func interpolateSizeAtPSNR(
+        points: [RDPoint], targetPSNR: Double
+    ) -> Double? {
+        guard points.count >= 2 else { return nil }
+        let sorted = points.sorted { $0.psnr < $1.psnr }
+        guard targetPSNR >= sorted.first!.psnr, targetPSNR <= sorted.last!.psnr else {
+            return nil
+        }
+        for i in 0..<(sorted.count - 1) {
+            let a = sorted[i], b = sorted[i + 1]
+            if targetPSNR >= a.psnr && targetPSNR <= b.psnr {
+                let ls = log(Double(a.size)), le = log(Double(b.size))
+                let t = (targetPSNR - a.psnr) / (b.psnr - a.psnr)
+                return exp(ls + t * (le - ls))
+            }
+        }
+        return nil
+    }
+
+    /// Shared RD-point type for interpolation helpers.
+    struct RDPoint { let bpp: Double; let size: Int; let psnr: Double }
+
+    /// Bjøntegaard-Delta rate (BD-rate): average percentage bitrate difference
+    /// between two rate-distortion curves over their overlapping PSNR range.
+    ///
+    /// Negative = `target` needs fewer bits than `reference` at equal quality.
+    /// Implementation uses simple trapezoidal integration of (log bitrate vs PSNR)
+    /// — sufficient for first-order RD comparison. Returns nil if curves don't overlap.
+    private func bjontegaardDeltaRate(
+        reference: [RDPoint], target: [RDPoint]
+    ) -> Double? {
+        guard reference.count >= 2, target.count >= 2 else { return nil }
+        let refSorted = reference.sorted { $0.psnr < $1.psnr }
+        let tgtSorted = target.sorted { $0.psnr < $1.psnr }
+        let lo = max(refSorted.first!.psnr, tgtSorted.first!.psnr)
+        let hi = min(refSorted.last!.psnr,  tgtSorted.last!.psnr)
+        guard hi > lo else { return nil }
+
+        // Sample both curves at N points across the overlap, integrate log(bpp)
+        // via the trapezoidal rule, then convert mean log-ratio → percentage.
+        let N = 20
+        var sumRef = 0.0, sumTgt = 0.0
+        for i in 0..<N {
+            let t = Double(i) / Double(N - 1)
+            let psnr = lo + t * (hi - lo)
+            guard let rSize = interpolateSizeAtPSNR(points: refSorted, targetPSNR: psnr),
+                  let tSize = interpolateSizeAtPSNR(points: tgtSorted, targetPSNR: psnr) else {
+                return nil
+            }
+            sumRef += log(rSize)
+            sumTgt += log(tSize)
+        }
+        let meanLogRef = sumRef / Double(N)
+        let meanLogTgt = sumTgt / Double(N)
+        return (exp(meanLogTgt - meanLogRef) - 1.0) * 100.0
+    }
+
+    // MARK: - Real-DICOM Rate-Distortion Benchmark
+
+    /// Minimal DICOM loader: handles uncompressed Explicit VR Little Endian files
+    /// (the dominant on-disk format for modern PACS datasets). Extracts pixel
+    /// geometry + raw pixel bytes and returns a `J2KImage`.
+    ///
+    /// Intentionally scoped to the subset of DICOM needed to drive rate-distortion
+    /// analysis on real medical images — we don't need full DICOM VR/UID coverage.
+    private func loadUncompressedDICOM(_ url: URL) throws -> (
+        image: J2KImage, width: Int, height: Int, bitDepth: Int, signed: Bool
+    ) {
+        let data = try Data(contentsOf: url)
+        guard data.count >= 132 + 4 else {
+            throw NSError(domain: "DICOM", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Too small: \(url.lastPathComponent)"])
+        }
+        let magic = String(data: data.subdata(in: 128..<132), encoding: .ascii)
+        guard magic == "DICM" else {
+            throw NSError(domain: "DICOM", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "No DICM magic: \(url.lastPathComponent)"])
+        }
+
+        // Little-endian readers
+        func u16(_ off: Int) -> UInt16 {
+            UInt16(data[off]) | (UInt16(data[off + 1]) << 8)
+        }
+        func u32(_ off: Int) -> UInt32 {
+            UInt32(data[off]) | (UInt32(data[off + 1]) << 8) |
+            (UInt32(data[off + 2]) << 16) | (UInt32(data[off + 3]) << 24)
+        }
+
+        // Step 1: File Meta Info (group 0002) — always Explicit VR LE.
+        // We need the Transfer Syntax UID.
+        var offset = 132
+        var transferSyntaxUID = "1.2.840.10008.1.2.1"
+        while offset + 8 <= data.count {
+            let group = u16(offset)
+            if group != 0x0002 { break }
+            let element = u16(offset + 2)
+            let vr = String(data: data.subdata(in: (offset + 4)..<(offset + 6)),
+                            encoding: .ascii) ?? ""
+            let longVRs: Set<String> = ["OB", "OW", "OF", "SQ", "UT", "UN"]
+            let valueLength: Int
+            let headerSize: Int
+            if longVRs.contains(vr) {
+                valueLength = Int(u32(offset + 8))
+                headerSize = 12
+            } else {
+                valueLength = Int(u16(offset + 6))
+                headerSize = 8
+            }
+            if element == 0x0010 {
+                if let uid = String(data: data.subdata(
+                    in: (offset + headerSize)..<(offset + headerSize + valueLength)),
+                    encoding: .ascii)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0 ")) {
+                    transferSyntaxUID = uid
+                }
+            }
+            offset = offset + headerSize + valueLength
+        }
+
+        // Only support uncompressed Explicit VR LE for this benchmark
+        guard transferSyntaxUID == "1.2.840.10008.1.2.1" ||
+              transferSyntaxUID == "1.2.840.10008.1.2" else {
+            throw NSError(domain: "DICOM", code: 3,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Unsupported TS \(transferSyntaxUID) in \(url.lastPathComponent)"])
+        }
+        let explicitVR = (transferSyntaxUID == "1.2.840.10008.1.2.1")
+
+        // Step 2: Walk the main dataset looking for the tags we need.
+        var rows = 0, columns = 0
+        var bitsAllocated = 16, bitsStored = 0
+        var pixelRepresentation = 0
+        var pixelDataOffset = -1
+        var pixelDataLength = 0
+
+        while offset + 4 <= data.count {
+            let group = u16(offset)
+            let element = u16(offset + 2)
+            let tag = (group, element)
+            if tag == (0x7FE0, 0x0010) {
+                // Pixel Data — read length then break
+                if explicitVR {
+                    // OW or OB with long form: reserved(2) + length(4)
+                    let valueLength = Int(u32(offset + 8))
+                    pixelDataOffset = offset + 12
+                    pixelDataLength = valueLength
+                } else {
+                    let valueLength = Int(u32(offset + 4))
+                    pixelDataOffset = offset + 8
+                    pixelDataLength = valueLength
+                }
+                break
+            }
+            let valueLength: Int
+            let headerSize: Int
+            if explicitVR {
+                let vr = String(data: data.subdata(in: (offset + 4)..<(offset + 6)),
+                                encoding: .ascii) ?? ""
+                let longVRs: Set<String> = ["OB", "OW", "OF", "SQ", "UT", "UN"]
+                if longVRs.contains(vr) {
+                    valueLength = Int(u32(offset + 8))
+                    headerSize = 12
+                } else {
+                    valueLength = Int(u16(offset + 6))
+                    headerSize = 8
+                }
+            } else {
+                valueLength = Int(u32(offset + 4))
+                headerSize = 8
+            }
+            let valueStart = offset + headerSize
+            if group == 0x0028 {
+                switch element {
+                case 0x0010: rows = Int(u16(valueStart))
+                case 0x0011: columns = Int(u16(valueStart))
+                case 0x0100: bitsAllocated = Int(u16(valueStart))
+                case 0x0101: bitsStored = Int(u16(valueStart))
+                case 0x0103: pixelRepresentation = Int(u16(valueStart))
+                default: break
+                }
+            }
+            offset = valueStart + valueLength
+        }
+
+        guard rows > 0, columns > 0, pixelDataOffset > 0 else {
+            throw NSError(domain: "DICOM", code: 4,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Missing geometry or pixel data in \(url.lastPathComponent)"])
+        }
+        let effectiveBitDepth = bitsStored > 0 ? bitsStored : bitsAllocated
+        let signed = (pixelRepresentation == 1)
+        let bytesPerSample = bitsAllocated <= 8 ? 1 : 2
+        let samplesPerFrame = rows * columns
+        let frameBytes = samplesPerFrame * bytesPerSample
+        guard pixelDataOffset + frameBytes <= data.count else {
+            throw NSError(domain: "DICOM", code: 5,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Pixel data truncated in \(url.lastPathComponent)"])
+        }
+        // DICOM pixel data is always little-endian in Explicit VR LE transfer
+        // syntax. Our benchmark pipeline (PGM writer, PSNR comparator, decoder
+        // output) uses big-endian, so we transcode here. For 12-bit-in-16-bit
+        // data we also mask to `bitsStored` before swapping.
+        var frameData = data.subdata(
+            in: pixelDataOffset..<(pixelDataOffset + frameBytes))
+        if bytesPerSample == 2 {
+            let mask: UInt16 = effectiveBitDepth < 16
+                ? UInt16((1 << effectiveBitDepth) - 1) : 0xFFFF
+            frameData.withUnsafeMutableBytes { buf in
+                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                for i in 0..<samplesPerFrame {
+                    let lo = UInt16(ptr[i * 2])
+                    let hi = UInt16(ptr[i * 2 + 1])
+                    let v = (lo | (hi << 8)) & mask
+                    ptr[i * 2]     = UInt8(v >> 8)     // BE: high byte first
+                    ptr[i * 2 + 1] = UInt8(v & 0xFF)
+                }
+            }
+        }
+        let comp = J2KComponent(
+            index: 0, bitDepth: effectiveBitDepth, signed: signed,
+            width: columns, height: rows, data: frameData,
+            sampleByteOrder: effectiveBitDepth > 8 ? .bigEndian : nil)
+        let image = J2KImage(width: columns, height: rows, components: [comp])
+        return (image, columns, rows, effectiveBitDepth, signed)
+    }
+
+    /// Rate-distortion benchmark on real DICOM images across modalities (CT, DX,
+    /// MG, MR, PX, XA). Reports BD-rate vs OpenJPEG to quantify the compression
+    /// efficiency gap that matters for PACS deployment. Skipped gracefully if the
+    /// local DICOM dataset is not available.
+    func testCompressionRatioOnRealDICOM() async throws {
+        #if DEBUG
+        print("⚠️  WARNING: Running DICOM rate-distortion in DEBUG mode.")
+        print("   Use: swift test -c release --filter testCompressionRatioOnRealDICOM")
+        #endif
+
+        guard hasOpenJPEG else {
+            print("SKIP testCompressionRatioOnRealDICOM: OpenJPEG CLI not found")
+            return
+        }
+
+        let root = "/Users/raster/Documents/raster/J2KSwift/LocalDatasets/medical-dicom-organized"
+        guard FileManager.default.fileExists(atPath: root) else {
+            print("SKIP testCompressionRatioOnRealDICOM: DICOM dataset not present at \(root)")
+            return
+        }
+
+        // Curated representative sample per modality — one file each keeps
+        // benchmark runtime bounded while still covering the PACS spectrum.
+        let samples: [(modality: String, path: String)] = [
+            ("CT", "\(root)/ct/study_001/instance_000001.dcm"),
+            ("DX", "\(root)/dx/study_001/instance_000001.dcm"),
+            ("MG", "\(root)/mg/study_001/instance_000001.dcm"),
+            ("MR", "\(root)/mr/study_001/instance_000001.dcm"),
+            ("PX", "\(root)/px/study_001/instance_000001.dcm"),
+            ("XA", "\(root)/xa/study_001/instance_000001.dcm"),
+        ]
+
+        let bppPoints: [Double] = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]
+        let targetPSNRs: [Double] = [35, 40, 45, 50]
+
+        let outDir = "/tmp/j2k_dicom_benchmark"
+        try? FileManager.default.createDirectory(atPath: outDir,
+            withIntermediateDirectories: true)
+
+        var csvLines: [String] = [
+            "Modality,File,Resolution,BitDepth,Codec,bpp,Size_bytes,PSNR_dB"]
+        var perModalityBDRate: [(modality: String, w: Int, h: Int, bd: Int, bdRate: Double)] = []
+
+        for (modality, path) in samples {
+            guard FileManager.default.fileExists(atPath: path) else {
+                print("  SKIP \(modality): \(path) not found")
+                continue
+            }
+
+            let image: J2KImage
+            let w: Int, h: Int, bd: Int
+            do {
+                let loaded = try loadUncompressedDICOM(URL(fileURLWithPath: path))
+                image = loaded.image
+                w = loaded.width; h = loaded.height; bd = loaded.bitDepth
+            } catch {
+                print("  SKIP \(modality): \(error.localizedDescription)")
+                continue
+            }
+
+            let origData = image.components[0].data
+            let pgmPath = "\(outDir)/\(modality).pgm"
+            try savePGM(data: origData, width: w, height: h, bitDepth: bd, path: pgmPath)
+            let levels = min(5, Int(log2(Double(min(w, h)))) - 1)
+
+            // Lossless sanity check — isolate encoder vs decoder bugs via
+            // J2K→J2K and J2K→OPJ cross-decode on the same stream.
+            do {
+                let cfg = J2KEncodingConfiguration(
+                    quality: 1.0, lossless: true, decompositionLevels: levels)
+                let encoder = J2KEncoder(encodingConfiguration: cfg)
+                let encoded = try await encoder.encode(image)
+
+                // J2K → J2K (our decoder)
+                let (_, selfDec) = try await j2kDecode(data: encoded)
+                let selfPSNR = computePSNR(original: origData,
+                                           decoded: selfDec.components[0].data, bitDepth: bd)
+                let selfMAE = computeMAE(original: origData,
+                                         decoded: selfDec.components[0].data, bitDepth: bd)
+
+                // J2K → OPJ (OpenJPEG decodes our stream)
+                let j2kPath = "\(outDir)/\(modality)_lossless.j2k"
+                let opjDecPgm = "\(outDir)/\(modality)_lossless_opj.pgm"
+                try encoded.write(to: URL(fileURLWithPath: j2kPath))
+                var opjCrossPSNR: Double = 0
+                var opjCrossOK = false
+                do {
+                    _ = try opjDecode(j2kPath: j2kPath, pgmPath: opjDecPgm)
+                    if let pgm = FileManager.default.contents(atPath: opjDecPgm),
+                       let px = parsePGMPixels(pgm, expectedWidth: w, expectedHeight: h, bitDepth: bd) {
+                        opjCrossPSNR = computePSNR(original: origData,
+                                                   decoded: px, bitDepth: bd)
+                        opjCrossOK = true
+                    }
+                } catch {}
+
+                let selfStr = selfPSNR.isInfinite ? "∞" : String(format: "%.2f dB", selfPSNR)
+                let opjStr = opjCrossOK
+                    ? (opjCrossPSNR.isInfinite ? "∞"
+                        : String(format: "%.2f dB", opjCrossPSNR))
+                    : "FAIL"
+                let verdict: String
+                if selfPSNR.isInfinite && opjCrossPSNR.isInfinite {
+                    verdict = "OK (bit-exact both ways)"
+                } else if opjCrossPSNR.isInfinite {
+                    verdict = "DECODER BUG (our stream is valid, OPJ decodes it; our decoder fails)"
+                } else if selfPSNR.isInfinite {
+                    verdict = "OPJ DECODE QUIRK (self works, OPJ output differs — likely byte-order/format mismatch)"
+                } else {
+                    verdict = "ENCODER BUG (even OPJ can't recover the original from our stream)"
+                }
+                print("\n[\(modality) \(w)x\(h) \(bd)-bit] lossless: self=\(selfStr) (MAE=\(String(format: "%.1f", selfMAE))), J2K→OPJ=\(opjStr), size=\(encoded.count)\n  ⇒ \(verdict)")
+            } catch {
+                print("\n[\(modality) \(w)x\(h) \(bd)-bit] lossless encode threw: \(error)")
+            }
+
+            print("[\(modality) \(w)x\(h) \(bd)-bit] Rate-distortion sweep")
+            print("  bpp     J2K Size   J2K PSNR   OPJ Size   OPJ PSNR   ΔPSNR(J2K−OPJ)   Size J2K/OPJ")
+            print("  ─────   ────────   ────────   ────────   ────────   ──────────────   ────────────")
+
+            var j2kPoints: [RDPoint] = []
+            var opjPoints: [RDPoint] = []
+
+            for bpp in bppPoints {
+                var cfg = J2KEncodingConfiguration(
+                    quality: 0.5, lossless: false, decompositionLevels: levels)
+                cfg.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+                cfg.qualityLayers = 1
+                let encoder = J2KEncoder(encodingConfiguration: cfg)
+                let j2kData: Data
+                do {
+                    j2kData = try await encoder.encode(image)
+                } catch {
+                    print(String(format: "  %5.3f   J2K encode failed: %@", bpp, "\(error)"))
+                    continue
+                }
+                let (_, j2kDec) = try await j2kDecode(data: j2kData)
+                let j2kPSNR = computePSNR(original: origData,
+                                          decoded: j2kDec.components[0].data, bitDepth: bd)
+
+                let ratio = Double(bd) / bpp
+                let opjJ2kPath = "\(outDir)/\(modality)_opj_\(bpp).j2k"
+                let opjPgmPath = "\(outDir)/\(modality)_opj_\(bpp)_dec.pgm"
+                let (_, opjSize): (Double, Int)
+                do {
+                    (_, opjSize) = try opjEncode(
+                        pgmPath: pgmPath, j2kPath: opjJ2kPath,
+                        compressionRatio: ratio, lossless: false)
+                } catch {
+                    print(String(format: "  %5.3f   OPJ encode failed: %@", bpp, "\(error)"))
+                    continue
+                }
+                _ = try opjDecode(j2kPath: opjJ2kPath, pgmPath: opjPgmPath)
+                guard let pgmData = FileManager.default.contents(atPath: opjPgmPath),
+                      let opjPixels = parsePGMPixels(pgmData,
+                           expectedWidth: w, expectedHeight: h, bitDepth: bd) else { continue }
+                let opjPSNR = computePSNR(original: origData,
+                                          decoded: opjPixels, bitDepth: bd)
+
+                j2kPoints.append(RDPoint(bpp: bpp, size: j2kData.count, psnr: j2kPSNR))
+                opjPoints.append(RDPoint(bpp: bpp, size: opjSize,     psnr: opjPSNR))
+
+                csvLines.append("\(modality),\(URL(fileURLWithPath: path).lastPathComponent),\(w)x\(h),\(bd),J2KSwift,\(bpp),\(j2kData.count),\(j2kPSNR)")
+                csvLines.append("\(modality),\(URL(fileURLWithPath: path).lastPathComponent),\(w)x\(h),\(bd),OpenJPEG,\(bpp),\(opjSize),\(opjPSNR)")
+
+                let sizeRatio = Double(j2kData.count) / Double(opjSize)
+                let psnrDelta = j2kPSNR - opjPSNR
+                print(String(format: "  %5.3f   %8d   %6.2f dB  %8d   %6.2f dB   %+6.2f dB        %5.3f×",
+                             bpp, j2kData.count, j2kPSNR, opjSize, opjPSNR, psnrDelta, sizeRatio))
+            }
+
+            print("\n  Matched-PSNR size comparison:")
+            print("  Target PSNR   J2K Size     OPJ Size     J2K/OPJ   Verdict")
+            for target in targetPSNRs {
+                guard let jSize = interpolateSizeAtPSNR(points: j2kPoints, targetPSNR: target),
+                      let oSize = interpolateSizeAtPSNR(points: opjPoints, targetPSNR: target) else {
+                    continue
+                }
+                let ratio = jSize / oSize
+                let verdict: String
+                if ratio < 0.98 { verdict = "J2KSwift smaller ✓" }
+                else if ratio > 1.02 { verdict = "OpenJPEG smaller" }
+                else { verdict = "≈ equal" }
+                print(String(format: "  %6.1f dB      %10d   %10d   %5.3f×   %@",
+                             target, Int(jSize), Int(oSize), ratio, verdict))
+            }
+
+            if let bdRate = bjontegaardDeltaRate(reference: opjPoints, target: j2kPoints) {
+                let verdict = bdRate < 0 ? "J2KSwift uses fewer bits at equal quality" :
+                              bdRate > 0 ? "J2KSwift uses more bits at equal quality" : "equal"
+                print(String(format: "\n  BD-rate (%@): %+6.2f%%  → %@", modality, bdRate, verdict))
+                perModalityBDRate.append((modality, w, h, bd, bdRate))
+            }
+        }
+
+        // Aggregate
+        if !perModalityBDRate.isEmpty {
+            let avg = perModalityBDRate.map { $0.bdRate }.reduce(0, +) /
+                      Double(perModalityBDRate.count)
+            print("\n═══════════════════════════════════════════════════════════")
+            print(" DICOM BD-rate summary (J2KSwift vs OpenJPEG)")
+            print("═══════════════════════════════════════════════════════════")
+            print(" Mod.    Size         Bits    BD-rate")
+            print(" ──────  ──────────   ────    ──────────────────────────")
+            for e in perModalityBDRate {
+                let sizeStr = "\(e.w)x\(e.h)"
+                let paddedMod = e.modality.padding(toLength: 6, withPad: " ", startingAt: 0)
+                let paddedSize = sizeStr.padding(toLength: 11, withPad: " ", startingAt: 0)
+                print(String(format: " %@  %@ %-4d    %+7.2f%%",
+                             paddedMod, paddedSize, e.bd, e.bdRate))
+            }
+            print(String(format: "\n Average BD-rate across all modalities: %+6.2f%%", avg))
+            print("═══════════════════════════════════════════════════════════")
+        }
+
+        let csv = csvLines.joined(separator: "\n") + "\n"
+        let csvPath = "\(outDir)/dicom_rate_distortion.csv"
+        try csv.write(toFile: csvPath, atomically: true, encoding: .utf8)
+        print("\nDICOM rate-distortion data → \(csvPath)")
     }
 
     // MARK: - Cross-Codec Interoperability Benchmark

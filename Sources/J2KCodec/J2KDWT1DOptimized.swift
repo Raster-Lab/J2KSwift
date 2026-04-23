@@ -405,6 +405,291 @@ public struct J2KDWT2DOptimizer: Sendable {
 
         return result
     }
+
+    // MARK: - In-Place 5/3 Lifting (Strided)
+
+    /// Performs inverse Le Gall 5/3 lifting in-place on interleaved even/odd
+    /// samples stored at `base` with the given `stride`.
+    ///
+    /// On entry: `base[0], base[s], base[2s], ...` hold the interleaved signal:
+    ///   positions `2i*s` = even (lowpass), `(2i+1)*s` = odd (highpass).
+    ///
+    /// On exit: the reconstructed signal occupies the same locations.
+    ///
+    /// - Parameters:
+    ///   - base: Pointer to the start of the interleaved signal.
+    ///   - evenCount: Number of even (lowpass) samples.
+    ///   - oddCount: Number of odd (highpass) samples.
+    ///   - stride s: Distance in elements between adjacent samples.
+    /// Cache-friendly tiled transpose of an Int32 `rows × cols` matrix.
+    /// Tile size 64 keeps each tile in L1 cache (16 KB on Apple Silicon).
+    @inline(__always)
+    static func transposeInt32(
+        src: UnsafePointer<Int32>, dst: UnsafeMutablePointer<Int32>,
+        rows: Int, cols: Int
+    ) {
+        let tileSize = 64
+        for tileRow in stride(from: 0, to: rows, by: tileSize) {
+            let rowEnd = min(tileRow + tileSize, rows)
+            for tileCol in stride(from: 0, to: cols, by: tileSize) {
+                let colEnd = min(tileCol + tileSize, cols)
+                for r in tileRow..<rowEnd {
+                    let srcRow = src + r &* cols
+                    for c in tileCol..<colEnd {
+                        dst[c &* rows &+ r] = srcRow[c]
+                    }
+                }
+            }
+        }
+    }
+
+    @inline(__always)
+    static func inverseLift53InPlace(
+        _ base: UnsafeMutablePointer<Int32>,
+        evenCount: Int,
+        oddCount: Int,
+        stride s: Int
+    ) {
+        guard evenCount > 0 && oddCount > 0 else { return }
+
+        // Step 1: Undo update — even[i] -= floor((hp[i-1] + hp[i] + 2) / 4)
+        // Left boundary: hp[-1] = hp[0]
+        let hp0 = base[s]
+        base[0] = base[0] &- ((hp0 &+ hp0 &+ 2) >> 2)
+
+        let limit = min(evenCount, oddCount)
+        for i in 1..<limit {
+            let prevHP = base[(i &* 2 &- 1) &* s]
+            let curHP  = base[(i &* 2 &+ 1) &* s]
+            base[(i &* 2) &* s] = base[(i &* 2) &* s] &- ((prevHP &+ curHP &+ 2) >> 2)
+        }
+
+        // Right boundary: hp[evenCount] = hp[oddCount-1] (symmetric)
+        if evenCount > oddCount {
+            let lastHP = base[(oddCount &* 2 &- 1) &* s]
+            base[(evenCount &- 1) &* 2 &* s] = base[(evenCount &- 1) &* 2 &* s] &-
+                ((lastHP &+ lastHP &+ 2) >> 2)
+        }
+
+        // Step 2: Undo predict — odd[i] += floor((even[i] + even[i+1]) / 2)
+        let lastOdd = oddCount &- 1
+        for i in 0..<lastOdd {
+            let evenL = base[(i &* 2) &* s]
+            let evenR = base[(i &* 2 &+ 2) &* s]
+            base[(i &* 2 &+ 1) &* s] = base[(i &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
+        }
+
+        // Last odd: right boundary — even[oddCount] = even[evenCount-1]
+        let evenRightIdx = min((lastOdd &+ 1) &* 2, (evenCount &- 1) &* 2)
+        let evenL = base[lastOdd &* 2 &* s]
+        let evenR = base[evenRightIdx &* s]
+        base[(lastOdd &* 2 &+ 1) &* s] = base[(lastOdd &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
+    }
+
+    // MARK: - Flat-Buffer Multi-Level IDWT (5/3 Lossless)
+
+    /// Performs a complete multi-level inverse Le Gall 5/3 DWT on flat subband data.
+    ///
+    /// Accepts subbands as flat `[Int32]` arrays with explicit dimensions,
+    /// bypassing all `[[Int32]]` intermediate jagged-array conversions. All DWT
+    /// levels are processed in sequence using a single raw pointer that is grown
+    /// level by level, eliminating hundreds of short-lived heap allocations and
+    /// the cache-unfriendly pointer-chasing that occurs during column gathering
+    /// in the per-level `inverseTransform2DOptimized` path.
+    ///
+    /// The algorithm mirrors `inverseTransformMultiLevel97` for the 9/7 path:
+    /// 1. Place LL at even rows, LH at odd rows, HL at even-row high columns,
+    ///    HH at odd-row high columns in a flat workspace.
+    /// 2. Apply strided in-place column lifting via `inverseLift53InPlace`.
+    /// 3. Apply row lifting via a per-task temp buffer + `inverseLift53InPlace`.
+    ///
+    /// - Parameters:
+    ///   - ll: LL subband coefficients (flat, row-major).
+    ///   - llW: Width of the LL subband.
+    ///   - llH: Height of the LL subband.
+    ///   - subbands: Per-level subbands ordered deepest-first (smallest → largest).
+    ///     Each element carries `(lh, lhW, lhH, hl, hlW, hlH, hh, hhW, hhH)`.
+    /// - Returns: Tuple `(data, width, height)` — flat row-major `[Int32]`.
+    public func inverseTransformMultiLevel53(
+        ll: [Int32], llW: Int, llH: Int,
+        subbands: [(lh: [Int32], lhW: Int, lhH: Int,
+                     hl: [Int32], hlW: Int, hlH: Int,
+                     hh: [Int32], hhW: Int, hhH: Int)]
+    ) async -> (data: [Int32], width: Int, height: Int) {
+        guard !subbands.isEmpty else {
+            return (data: ll, width: llW, height: llH)
+        }
+
+        // Keep the working buffer as a raw pointer between levels to avoid
+        // Swift Array COW copies. Convert to [Int32] only at the final step.
+        let initSize = llW * llH
+        var currentBuf = UnsafeMutablePointer<Int32>.allocate(capacity: max(initSize, 1))
+        ll.withUnsafeBufferPointer { src in
+            currentBuf.initialize(from: src.baseAddress!, count: initSize)
+        }
+        var curW = llW
+        var curH = llH
+
+        for level in subbands {
+            let lhH = level.lhH
+            let lhW = level.lhW
+            let hlW = level.hlW
+            let hlH = level.hlH
+            let hhW = level.hhW
+            let hhH = level.hhH
+            let outH = curH + lhH
+            let outW = curW + hlW
+
+            // Allocate fresh workspace for this level
+            let bufSize = outH * outW
+            let base = UnsafeMutablePointer<Int32>.allocate(capacity: bufSize)
+            // Only zero-fill when a source dimension is smaller than the
+            // destination (asymmetric halving on odd parents). For dyadic
+            // dimensions — the common case — every cell is written by the
+            // four placement loops below.
+            let allCellsWritten = curW == lhW &&
+                                  curH == hlH && lhH == hhH &&
+                                  hlW > 0 && hlW == hhW
+            if !allCellsWritten {
+                base.initialize(repeating: 0, count: bufSize)
+            }
+
+            // Place LL at even rows, low cols (columns 0..<curW, rows 0,2,4,...)
+            for r in 0..<curH {
+                (base + r &* 2 &* outW).update(from: currentBuf + r &* curW, count: curW)
+            }
+            currentBuf.deallocate()
+
+            // Place LH at odd rows, low cols (rows 1,3,5,...)
+            level.lh.withUnsafeBufferPointer { src in
+                let p = src.baseAddress!
+                let copyW = min(curW, lhW)
+                for r in 0..<lhH {
+                    (base + (r &* 2 &+ 1) &* outW).update(from: p + r &* lhW, count: copyW)
+                }
+            }
+
+            // Place HL at even rows, high cols (columns curW..<outW, rows 0,2,4,...)
+            if hlW > 0 {
+                let srcHlW = level.hlW
+                level.hl.withUnsafeBufferPointer { src in
+                    let p = src.baseAddress!
+                    let copyW = min(hlW, srcHlW)
+                    for r in 0..<hlH {
+                        let dstOff = r &* 2 &* outW &+ curW
+                        (base + dstOff).update(from: p + r &* srcHlW, count: copyW)
+                    }
+                }
+            }
+
+            // Place HH at odd rows, high cols (rows 1,3,5,...)
+            if hlW > 0 {
+                level.hh.withUnsafeBufferPointer { src in
+                    let p = src.baseAddress!
+                    let copyW = min(hlW, hhW)
+                    for r in 0..<hhH {
+                        let dstOff = (r &* 2 &+ 1) &* outW &+ curW
+                        (base + dstOff).update(from: p + r &* hhW, count: copyW)
+                    }
+                }
+            }
+
+            // Row lifting (FIRST): interleave low/high cols into temp, lift in-place, copy back.
+            // After placement each row has: low cols 0..<curW (even = H lowpass),
+            // high cols curW..<outW (odd = H highpass). Applying H inverse per row gives
+            // back the full-width horizontal-reconstructed rows. The even/odd row
+            // parity (V lowpass / V highpass) is preserved for the column pass.
+            let lowCols = curW
+            let safeBaseRow = SendablePointer(base)
+            if outH >= 128 {
+                let coreCount = ProcessInfo.processInfo.processorCount
+                let chunkSize = max(1, outH / coreCount)
+                await withTaskGroup(of: Void.self) { group in
+                    for chunkStart in stride(from: 0, to: outH, by: chunkSize) {
+                        let chunkEnd = min(chunkStart + chunkSize, outH)
+                        group.addTask {
+                            let b = safeBaseRow.pointer
+                            // tmp is fully overwritten by the scatter before any read — skip zero-init.
+                            var tmp = [Int32](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                            tmp.withUnsafeMutableBufferPointer { tmpBuf in
+                                let tp = tmpBuf.baseAddress!
+                                for r in chunkStart..<chunkEnd {
+                                    let rowBase = b + r &* outW
+                                    for i in 0..<lowCols { tp[i &* 2] = rowBase[i] }
+                                    for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCols &+ i] }
+                                    J2KDWT2DOptimizer.inverseLift53InPlace(
+                                        tp, evenCount: lowCols, oddCount: hlW, stride: 1
+                                    )
+                                    rowBase.update(from: tp, count: outW)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                var tmp = [Int32](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                tmp.withUnsafeMutableBufferPointer { tmpBuf in
+                    let tp = tmpBuf.baseAddress!
+                    for r in 0..<outH {
+                        let rowBase = base + r &* outW
+                        for i in 0..<lowCols { tp[i &* 2] = rowBase[i] }
+                        for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCols &+ i] }
+                        J2KDWT2DOptimizer.inverseLift53InPlace(
+                            tp, evenCount: lowCols, oddCount: hlW, stride: 1
+                        )
+                        rowBase.update(from: tp, count: outW)
+                    }
+                }
+            }
+
+            // Column lifting (SECOND): transpose → stride-1 lift → untranspose.
+            // Transposing first eliminates the stride-outW cache thrash that
+            // occurs when lifting each column directly in the row-major buffer.
+            let evenRows = curH
+            let coreCountCol = ProcessInfo.processInfo.processorCount
+            if outH >= 32 && outW >= 32 {
+                let tBuf = UnsafeMutablePointer<Int32>.allocate(capacity: bufSize)
+                defer { tBuf.deallocate() }
+                // Transpose: outH×outW → outW×outH  (cols become stride-1 rows)
+                J2KDWT2DOptimizer.transposeInt32(src: base, dst: tBuf, rows: outH, cols: outW)
+                let safeT = SendablePointer(tBuf)
+                let colChunk = max(1, outW / coreCountCol)
+                await withTaskGroup(of: Void.self) { group in
+                    for chunkStart in stride(from: 0, to: outW, by: colChunk) {
+                        let chunkEnd = min(chunkStart + colChunk, outW)
+                        group.addTask {
+                            let tp = safeT.pointer
+                            for col in chunkStart..<chunkEnd {
+                                J2KDWT2DOptimizer.inverseLift53InPlace(
+                                    tp + col &* outH, evenCount: evenRows, oddCount: lhH, stride: 1
+                                )
+                            }
+                        }
+                    }
+                }
+                // Untranspose: outW×outH → outH×outW
+                J2KDWT2DOptimizer.transposeInt32(src: tBuf, dst: base, rows: outW, cols: outH)
+            } else {
+                for col in 0..<outW {
+                    J2KDWT2DOptimizer.inverseLift53InPlace(
+                        base + col, evenCount: evenRows, oddCount: lhH, stride: outW
+                    )
+                }
+            }
+
+            // Hand off to next level without copying
+            currentBuf = base
+            curW = outW
+            curH = outH
+        }
+
+        // Final conversion to Swift Array (single allocation at the end)
+        let finalSize = curW * curH
+        let result = Array(UnsafeBufferPointer(start: currentBuf, count: finalSize))
+        currentBuf.deallocate()
+
+        return (data: result, width: curW, height: curH)
+    }
 }
 
 // MARK: - 2D Optimised Transform (9/7 Irreversible)
@@ -443,31 +728,24 @@ public struct J2KDWT2DOptimizer97: Sendable {
         _ base: UnsafeMutablePointer<Double>,
         evenCount: Int,
         oddCount: Int,
-        stride s: Int
+        stride s: Int,
+        externalScratch: UnsafeMutablePointer<Double>
     ) {
         let n = evenCount + oddCount
         guard n > 1, oddCount > 0 else { return }
-
         #if canImport(Accelerate)
-        // vDSP path for contiguous data (stride=1) — ~30% faster via NEON SIMD
         if s == 1 && n >= 32 {
-            // Undo scaling: even *= K, odd /= K (stride=2 in interleaved buffer)
-            var kVal = k
-            var iKVal = invK
+            var kVal = k; var iKVal = invK
             vDSP_vsmulD(base, 2, &kVal, base, 2, vDSP_Length(evenCount))
             vDSP_vsmulD(base + 1, 2, &iKVal, base + 1, 2, vDSP_Length(oddCount))
-
-            // Workspace for neighbor sums
-            let scratch = UnsafeMutablePointer<Double>.allocate(capacity: n)
-            defer { scratch.deallocate() }
-
-            // --- Undo update 2: even[i] -= delta * (odd[i-1] + odd[i]) ---
+            let scratch = externalScratch
+            // Undo update 2
             base[0] -= delta * 2.0 * base[1]
             if evenCount > 2 {
                 let interiorCount = min(evenCount - 2, oddCount - 1)
                 if interiorCount > 0 {
                     vDSP_vaddD(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(interiorCount))
-                    var d = -delta  // negate: vsmaD adds, but we need subtract
+                    var d = -delta
                     vDSP_vsmaD(scratch, 1, &d, base + 2, 2, base + 2, 2, vDSP_Length(interiorCount))
                 }
             }
@@ -478,12 +756,11 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 let rightOdd = rightIdx < n ? base[rightIdx] : base[(n - 1) | 1]
                 base[i * 2] -= delta * (leftOdd + rightOdd)
             }
-
-            // --- Undo predict 2: odd[i] -= gamma * (even[i] + even[i+1]) ---
+            // Undo predict 2
             if oddCount > 1 {
                 let interiorCount = oddCount - 1
                 vDSP_vaddD(base, 2, base + 2, 2, scratch, 1, vDSP_Length(interiorCount))
-                var g = -gamma  // negate: vsmaD adds, but we need subtract
+                var g = -gamma
                 vDSP_vsmaD(scratch, 1, &g, base + 1, 2, base + 1, 2, vDSP_Length(interiorCount))
             }
             do {
@@ -493,14 +770,13 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 let rightEven = rightIdx < n ? base[rightIdx] : base[(n - 1) & ~1]
                 base[i * 2 + 1] -= gamma * (leftEven + rightEven)
             }
-
-            // --- Undo update 1: even[i] -= beta * (odd[i-1] + odd[i]) ---
+            // Undo update 1
             base[0] -= beta * 2.0 * base[1]
             if evenCount > 2 {
                 let interiorCount = min(evenCount - 2, oddCount - 1)
                 if interiorCount > 0 {
                     vDSP_vaddD(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(interiorCount))
-                    var b = -beta  // negate: vsmaD adds, but we need subtract
+                    var b = -beta
                     vDSP_vsmaD(scratch, 1, &b, base + 2, 2, base + 2, 2, vDSP_Length(interiorCount))
                 }
             }
@@ -511,12 +787,11 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 let rightOdd = rightIdx < n ? base[rightIdx] : base[(n - 1) | 1]
                 base[i * 2] -= beta * (leftOdd + rightOdd)
             }
-
-            // --- Undo predict 1: odd[i] -= alpha * (even[i] + even[i+1]) ---
+            // Undo predict 1
             if oddCount > 1 {
                 let interiorCount = oddCount - 1
                 vDSP_vaddD(base, 2, base + 2, 2, scratch, 1, vDSP_Length(interiorCount))
-                var a = -alpha  // negate: vsmaD adds, but we need subtract
+                var a = -alpha
                 vDSP_vsmaD(scratch, 1, &a, base + 1, 2, base + 1, 2, vDSP_Length(interiorCount))
             }
             do {
@@ -526,17 +801,12 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 let rightEven = rightIdx < n ? base[rightIdx] : base[(n - 1) & ~1]
                 base[i * 2 + 1] -= alpha * (leftEven + rightEven)
             }
-
             return
         }
         #endif
-
-        // Scalar path (strided data or small signals) Undo scaling: even *= K, odd /= K
+        // Scalar fallback (strided or small)
         for i in 0..<evenCount { base[i &* 2 &* s] *= k }
         for i in 0..<oddCount  { base[(i &* 2 &+ 1) &* s] *= invK }
-
-        // Undo update 2: even[i] -= delta * (odd[i-1] + odd[i])
-        // Left boundary: odd[-1] = odd[0]
         base[0] -= delta * 2.0 * base[s]
         for i in 1..<evenCount {
             let leftOdd  = base[((i &* 2) &- 1) &* s]
@@ -544,16 +814,12 @@ public struct J2KDWT2DOptimizer97: Sendable {
             let rightOdd = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) | 1) &* s]
             base[i &* 2 &* s] -= delta * (leftOdd + rightOdd)
         }
-
-        // Undo predict 2: odd[i] -= gamma * (even[i] + even[i+1])
         for i in 0..<oddCount {
             let leftEven  = base[i &* 2 &* s]
             let rightIdx  = (i &+ 1) &* 2
             let rightEven = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) & ~1) &* s]
             base[(i &* 2 &+ 1) &* s] -= gamma * (leftEven + rightEven)
         }
-
-        // Undo update 1: even[i] -= beta * (odd[i-1] + odd[i])
         base[0] -= beta * 2.0 * base[s]
         for i in 1..<evenCount {
             let leftOdd  = base[((i &* 2) &- 1) &* s]
@@ -561,13 +827,34 @@ public struct J2KDWT2DOptimizer97: Sendable {
             let rightOdd = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) | 1) &* s]
             base[i &* 2 &* s] -= beta * (leftOdd + rightOdd)
         }
-
-        // Undo predict 1: odd[i] -= alpha * (even[i] + even[i+1])
         for i in 0..<oddCount {
             let leftEven  = base[i &* 2 &* s]
             let rightIdx  = (i &+ 1) &* 2
             let rightEven = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) & ~1) &* s]
             base[(i &* 2 &+ 1) &* s] -= alpha * (leftEven + rightEven)
+        }
+    }
+
+    /// Convenience overload: allocates its own scratch for one-off calls (stride≠1 or small n).
+    @inline(__always)
+    private static func inverseLift97InPlace(
+        _ base: UnsafeMutablePointer<Double>,
+        evenCount: Int,
+        oddCount: Int,
+        stride s: Int
+    ) {
+        let n = evenCount + oddCount
+        guard n > 1, oddCount > 0 else { return }
+        if s == 1 && n >= 32 {
+            // vDSP path: allocate scratch for this one-off call
+            let scratch = UnsafeMutablePointer<Double>.allocate(capacity: n)
+            defer { scratch.deallocate() }
+            inverseLift97InPlace(base, evenCount: evenCount, oddCount: oddCount, stride: s,
+                                 externalScratch: scratch)
+        } else {
+            // Scalar path: externalScratch is unused — pass base as harmless non-nil dummy
+            inverseLift97InPlace(base, evenCount: evenCount, oddCount: oddCount, stride: s,
+                                 externalScratch: base)
         }
     }
 
@@ -585,6 +872,90 @@ public struct J2KDWT2DOptimizer97: Sendable {
     /// Performs inverse CDF 9/7 lifting in-place on interleaved even/odd
     /// samples stored contiguously (stride=1). Uses vDSP for vectorized
     /// operations when available, providing ~2× throughput vs Double.
+    /// Float variant with caller-supplied scratch (avoids per-call malloc for column loops).
+    @inline(__always)
+    private static func inverseLift97InPlaceFloat(
+        _ base: UnsafeMutablePointer<Float>,
+        evenCount: Int,
+        oddCount: Int,
+        stride s: Int,
+        externalScratch: UnsafeMutablePointer<Float>
+    ) {
+        let n = evenCount + oddCount
+        guard n > 1, oddCount > 0 else { return }
+        #if canImport(Accelerate)
+        if s == 1 && n >= 32 {
+            var kVal = kF; var iKVal = invKF
+            vDSP_vsmul(base, 2, &kVal, base, 2, vDSP_Length(evenCount))
+            vDSP_vsmul(base + 1, 2, &iKVal, base + 1, 2, vDSP_Length(oddCount))
+            let scratch = externalScratch
+            base[0] -= deltaF * 2.0 * base[1]
+            if evenCount > 2 {
+                let ic = min(evenCount - 2, oddCount - 1)
+                if ic > 0 {
+                    vDSP_vadd(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(ic))
+                    var d = -deltaF; vDSP_vsma(scratch, 1, &d, base + 2, 2, base + 2, 2, vDSP_Length(ic))
+                }
+            }
+            if evenCount > 1 {
+                let i = evenCount - 1
+                base[i*2] -= deltaF * (base[(i*2)-1] + (i*2+1 < n ? base[i*2+1] : base[(n-1)|1]))
+            }
+            if oddCount > 1 {
+                let ic = oddCount - 1
+                vDSP_vadd(base, 2, base + 2, 2, scratch, 1, vDSP_Length(ic))
+                var g = -gammaF; vDSP_vsma(scratch, 1, &g, base + 1, 2, base + 1, 2, vDSP_Length(ic))
+            }
+            do {
+                let i = oddCount - 1
+                base[i*2+1] -= gammaF * (base[i*2] + ((i+1)*2 < n ? base[(i+1)*2] : base[(n-1) & ~1]))
+            }
+            base[0] -= betaF * 2.0 * base[1]
+            if evenCount > 2 {
+                let ic = min(evenCount - 2, oddCount - 1)
+                if ic > 0 {
+                    vDSP_vadd(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(ic))
+                    var b = -betaF; vDSP_vsma(scratch, 1, &b, base + 2, 2, base + 2, 2, vDSP_Length(ic))
+                }
+            }
+            if evenCount > 1 {
+                let i = evenCount - 1
+                base[i*2] -= betaF * (base[(i*2)-1] + (i*2+1 < n ? base[i*2+1] : base[(n-1)|1]))
+            }
+            if oddCount > 1 {
+                let ic = oddCount - 1
+                vDSP_vadd(base, 2, base + 2, 2, scratch, 1, vDSP_Length(ic))
+                var a = -alphaF; vDSP_vsma(scratch, 1, &a, base + 1, 2, base + 1, 2, vDSP_Length(ic))
+            }
+            do {
+                let i = oddCount - 1
+                base[i*2+1] -= alphaF * (base[i*2] + ((i+1)*2 < n ? base[(i+1)*2] : base[(n-1) & ~1]))
+            }
+            return
+        }
+        #endif
+        for i in 0..<evenCount { base[i &* 2 &* s] *= kF }
+        for i in 0..<oddCount  { base[(i &* 2 &+ 1) &* s] *= invKF }
+        base[0] -= deltaF * 2.0 * base[s]
+        for i in 1..<evenCount {
+            let lo = base[((i*2)-1)*s]; let ri = i*2+1
+            base[i*2*s] -= deltaF * (lo + (ri < n ? base[ri*s] : base[((n-1)|1)*s]))
+        }
+        for i in 0..<oddCount {
+            let le = base[i*2*s]; let ri = (i+1)*2
+            base[(i*2+1)*s] -= gammaF * (le + (ri < n ? base[ri*s] : base[((n-1) & ~1)*s]))
+        }
+        base[0] -= betaF * 2.0 * base[s]
+        for i in 1..<evenCount {
+            let lo = base[((i*2)-1)*s]; let ri = i*2+1
+            base[i*2*s] -= betaF * (lo + (ri < n ? base[ri*s] : base[((n-1)|1)*s]))
+        }
+        for i in 0..<oddCount {
+            let le = base[i*2*s]; let ri = (i+1)*2
+            base[(i*2+1)*s] -= alphaF * (le + (ri < n ? base[ri*s] : base[((n-1) & ~1)*s]))
+        }
+    }
+
     @inline(__always)
     private static func inverseLift97InPlaceFloat(
         _ base: UnsafeMutablePointer<Float>,
@@ -594,138 +965,107 @@ public struct J2KDWT2DOptimizer97: Sendable {
     ) {
         let n = evenCount + oddCount
         guard n > 1, oddCount > 0 else { return }
-
-        #if canImport(Accelerate)
         if s == 1 && n >= 32 {
-            // Contiguous vDSP path — 2× SIMD throughput over Double
-
-            // Undo scaling: even *= K, odd /= K
-            var kVal = kF
-            var iKVal = invKF
-            vDSP_vsmul(base, 2, &kVal, base, 2, vDSP_Length(evenCount))
-            vDSP_vsmul(base + 1, 2, &iKVal, base + 1, 2, vDSP_Length(oddCount))
-
-            // Workspace for neighbor sums
             let scratch = UnsafeMutablePointer<Float>.allocate(capacity: n)
             defer { scratch.deallocate() }
+            inverseLift97InPlaceFloat(base, evenCount: evenCount, oddCount: oddCount, stride: s,
+                                      externalScratch: scratch)
+            return
+        }
+        // Scalar/small path — externalScratch unused; pass base as harmless dummy
+        inverseLift97InPlaceFloat(base, evenCount: evenCount, oddCount: oddCount, stride: s,
+                                  externalScratch: base)
+    }
+
+    /// Separated-array inverse CDF 9/7 lifting (stride-1 vDSP — fully NEON vectorized).
+    ///
+    /// Operates on **pre-separated** low-frequency (`even`) and high-frequency (`odd`)
+    /// arrays, avoiding the stride-2 gather/scatter pattern of the interleaved variant.
+    /// All vDSP operations run at stride-1, enabling 4-wide NEON SIMD throughout.
+    ///
+    /// - Parameters:
+    ///   - even: Low-pass samples (in-place). After return: even-indexed output.
+    ///   - evenCount: Number of low-pass samples.
+    ///   - odd: High-pass samples (in-place). After return: odd-indexed output.
+    ///   - oddCount: Number of high-pass samples.
+    ///   - scratch: Caller-provided temporary buffer of at least `evenCount + oddCount` Floats
+    ///     (the scalar fallback for small n uses it as an interleave buffer).
+    @inline(__always)
+    private static func inverseLift97SeparatedInPlaceFloat(
+        even: UnsafeMutablePointer<Float>, evenCount: Int,
+        odd:  UnsafeMutablePointer<Float>, oddCount:  Int,
+        scratch: UnsafeMutablePointer<Float>
+    ) {
+        guard evenCount > 0, oddCount > 0 else { return }
+
+        #if canImport(Accelerate)
+        if evenCount + oddCount >= 32 {
+            // Undo scaling: all stride-1
+            var kVal  = kF
+            var iKVal = invKF
+            vDSP_vsmul(even, 1, &kVal,  even, 1, vDSP_Length(evenCount))
+            vDSP_vsmul(odd,  1, &iKVal, odd,  1, vDSP_Length(oddCount))
 
             // Undo update 2: even[i] -= delta * (odd[i-1] + odd[i])
-            base[0] -= deltaF * 2.0 * base[1]
-            if evenCount > 2 {
-                // Interior: scratch[j] = odd[j-1] + odd[j] for j in 1..<evenCount-1
-                let interiorCount = min(evenCount - 2, oddCount - 1)
-                if interiorCount > 0 {
-                    // odd[0..<interiorCount] + odd[1..<interiorCount+1]
-                    vDSP_vadd(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(interiorCount))
-                    var d = -deltaF  // negate: vsma adds, but we need subtract
-                    // even[1..<interiorCount+1] -= delta * scratch
-                    vDSP_vsma(scratch, 1, &d, base + 2, 2, base + 2, 2, vDSP_Length(interiorCount))
-                    // NOTE: d is negative, so vsma does even += delta*scratch, need negate
-                }
+            even[0] -= deltaF * 2.0 * odd[0]
+            let iu2 = min(evenCount - 2, oddCount - 1)
+            if iu2 > 0 {
+                vDSP_vadd(odd, 1, odd + 1, 1, scratch, 1, vDSP_Length(iu2))
+                var nd = -deltaF
+                vDSP_vsma(scratch, 1, &nd, even + 1, 1, even + 1, 1, vDSP_Length(iu2))
             }
-            // Handle remaining even elements at boundaries scalar
             if evenCount > 1 {
-                let i = evenCount - 1
-                let leftOdd = base[(i * 2) - 1]
-                let rightIdx = i * 2 + 1
-                let rightOdd = rightIdx < n ? base[rightIdx] : base[(n - 1) | 1]
-                base[i * 2] -= deltaF * (leftOdd + rightOdd)
+                let j = evenCount - 1
+                even[j] -= deltaF * (odd[j - 1] + (j < oddCount ? odd[j] : odd[oddCount - 1]))
             }
-            // Fix interior elements (vDSP_vsma adds, but we need subtract)
-            // Actually vDSP_vsma: D = A*S + B, so with negative delta it works correctly.
 
             // Undo predict 2: odd[i] -= gamma * (even[i] + even[i+1])
-            if oddCount > 1 {
-                // Interior: even[0..<oddCount-1] + even[1..<oddCount]
-                let interiorCount = oddCount - 1
-                vDSP_vadd(base, 2, base + 2, 2, scratch, 1, vDSP_Length(interiorCount))
-                var g = -gammaF  // negate: vsma adds, but we need subtract
-                vDSP_vsma(scratch, 1, &g, base + 1, 2, base + 1, 2, vDSP_Length(interiorCount))
+            let ip2 = oddCount - 1
+            if ip2 > 0 {
+                vDSP_vadd(even, 1, even + 1, 1, scratch, 1, vDSP_Length(ip2))
+                var ng = -gammaF
+                vDSP_vsma(scratch, 1, &ng, odd, 1, odd, 1, vDSP_Length(ip2))
             }
-            // Last odd element
             do {
                 let i = oddCount - 1
-                let leftEven = base[i * 2]
-                let rightIdx = (i + 1) * 2
-                let rightEven = rightIdx < n ? base[rightIdx] : base[(n - 1) & ~1]
-                base[i * 2 + 1] -= gammaF * (leftEven + rightEven)
+                odd[i] -= gammaF * (even[i] + (i + 1 < evenCount ? even[i + 1] : even[evenCount - 1]))
             }
 
             // Undo update 1: even[i] -= beta * (odd[i-1] + odd[i])
-            base[0] -= betaF * 2.0 * base[1]
-            if evenCount > 2 {
-                let interiorCount = min(evenCount - 2, oddCount - 1)
-                if interiorCount > 0 {
-                    vDSP_vadd(base + 1, 2, base + 3, 2, scratch, 1, vDSP_Length(interiorCount))
-                    var b = -betaF  // negate: vsma adds, but we need subtract
-                    vDSP_vsma(scratch, 1, &b, base + 2, 2, base + 2, 2, vDSP_Length(interiorCount))
-                }
+            even[0] -= betaF * 2.0 * odd[0]
+            let iu1 = min(evenCount - 2, oddCount - 1)
+            if iu1 > 0 {
+                vDSP_vadd(odd, 1, odd + 1, 1, scratch, 1, vDSP_Length(iu1))
+                var nb = -betaF
+                vDSP_vsma(scratch, 1, &nb, even + 1, 1, even + 1, 1, vDSP_Length(iu1))
             }
             if evenCount > 1 {
-                let i = evenCount - 1
-                let leftOdd = base[(i * 2) - 1]
-                let rightIdx = i * 2 + 1
-                let rightOdd = rightIdx < n ? base[rightIdx] : base[(n - 1) | 1]
-                base[i * 2] -= betaF * (leftOdd + rightOdd)
+                let j = evenCount - 1
+                even[j] -= betaF * (odd[j - 1] + (j < oddCount ? odd[j] : odd[oddCount - 1]))
             }
 
             // Undo predict 1: odd[i] -= alpha * (even[i] + even[i+1])
-            if oddCount > 1 {
-                let interiorCount = oddCount - 1
-                vDSP_vadd(base, 2, base + 2, 2, scratch, 1, vDSP_Length(interiorCount))
-                var a = -alphaF  // negate: vsma adds, but we need subtract
-                vDSP_vsma(scratch, 1, &a, base + 1, 2, base + 1, 2, vDSP_Length(interiorCount))
+            let ip1 = oddCount - 1
+            if ip1 > 0 {
+                vDSP_vadd(even, 1, even + 1, 1, scratch, 1, vDSP_Length(ip1))
+                var na = -alphaF
+                vDSP_vsma(scratch, 1, &na, odd, 1, odd, 1, vDSP_Length(ip1))
             }
             do {
                 let i = oddCount - 1
-                let leftEven = base[i * 2]
-                let rightIdx = (i + 1) * 2
-                let rightEven = rightIdx < n ? base[rightIdx] : base[(n - 1) & ~1]
-                base[i * 2 + 1] -= alphaF * (leftEven + rightEven)
+                odd[i] -= alphaF * (even[i] + (i + 1 < evenCount ? even[i + 1] : even[evenCount - 1]))
             }
-
             return
         }
         #endif
 
-        // Scalar fallback (small signals or non-Apple platforms)
-        // Undo scaling: even *= K, odd /= K
-        for i in 0..<evenCount { base[i &* 2 &* s] *= kF }
-        for i in 0..<oddCount  { base[(i &* 2 &+ 1) &* s] *= invKF }
-
-        // Undo update 2
-        base[0] -= deltaF * 2.0 * base[s]
-        for i in 1..<evenCount {
-            let leftOdd  = base[((i &* 2) &- 1) &* s]
-            let rightIdx = i &* 2 &+ 1
-            let rightOdd = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) | 1) &* s]
-            base[i &* 2 &* s] -= deltaF * (leftOdd + rightOdd)
-        }
-
-        // Undo predict 2
-        for i in 0..<oddCount {
-            let leftEven  = base[i &* 2 &* s]
-            let rightIdx  = (i &+ 1) &* 2
-            let rightEven = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) & ~1) &* s]
-            base[(i &* 2 &+ 1) &* s] -= gammaF * (leftEven + rightEven)
-        }
-
-        // Undo update 1
-        base[0] -= betaF * 2.0 * base[s]
-        for i in 1..<evenCount {
-            let leftOdd  = base[((i &* 2) &- 1) &* s]
-            let rightIdx = i &* 2 &+ 1
-            let rightOdd = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) | 1) &* s]
-            base[i &* 2 &* s] -= betaF * (leftOdd + rightOdd)
-        }
-
-        // Undo predict 1
-        for i in 0..<oddCount {
-            let leftEven  = base[i &* 2 &* s]
-            let rightIdx  = (i &+ 1) &* 2
-            let rightEven = rightIdx < n ? base[rightIdx &* s] : base[((n &- 1) & ~1) &* s]
-            base[(i &* 2 &+ 1) &* s] -= alphaF * (leftEven + rightEven)
-        }
+        // Scalar fallback for small n: delegate to the interleaved function via scratch
+        let scrI = scratch    // reuse scratch as interleave buffer (needs even+odd elements)
+        for i in 0..<evenCount { scrI[i &* 2]     = even[i] }
+        for i in 0..<oddCount  { scrI[i &* 2 + 1] = odd[i]  }
+        inverseLift97InPlaceFloat(scrI, evenCount: evenCount, oddCount: oddCount, stride: 1)
+        for i in 0..<evenCount { even[i] = scrI[i &* 2]     }
+        for i in 0..<oddCount  { odd[i]  = scrI[i &* 2 + 1] }
     }
 
     // MARK: - 2D Inverse Transform (Flat Buffer)
@@ -852,14 +1192,17 @@ public struct J2KDWT2DOptimizer97: Sendable {
                     let chunkEnd = min(chunkStart + chunkSize, outH)
                     group.addTask {
                         let base = safeBase.pointer
-                        var tmp = [Double](repeating: 0, count: outW)
+                        var tmp = [Double](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                        let rowScratch = UnsafeMutablePointer<Double>.allocate(capacity: outW)
+                        defer { rowScratch.deallocate() }
                         tmp.withUnsafeMutableBufferPointer { tmpBuf in
                             let tp = tmpBuf.baseAddress!
                             for r in chunkStart..<chunkEnd {
                                 let rowBase = base + r &* outW
-                                for i in 0..<llW { tp[i &* 2] = rowBase[i] }
-                                for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[llW &+ i] }
-                                Self.inverseLift97InPlace(tp, evenCount: llW, oddCount: hlW, stride: 1)
+                                cblas_dcopy(Int32(llW), rowBase, 1, tp, 2)
+                                cblas_dcopy(Int32(hlW), rowBase + llW, 1, tp + 1, 2)
+                                Self.inverseLift97InPlace(tp, evenCount: llW, oddCount: hlW,
+                                                          stride: 1, externalScratch: rowScratch)
                                 rowBase.update(from: tp, count: outW)
                             }
                         }
@@ -867,14 +1210,17 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 }
             }
         } else {
-            var tmp = [Double](repeating: 0, count: outW)
+            var tmp = [Double](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+            let rowScratch = UnsafeMutablePointer<Double>.allocate(capacity: outW)
+            defer { rowScratch.deallocate() }
             tmp.withUnsafeMutableBufferPointer { tmpBuf in
                 let tp = tmpBuf.baseAddress!
                 for r in 0..<outH {
                     let rowBase = base + r &* outW
-                    for i in 0..<llW { tp[i &* 2] = rowBase[i] }
-                    for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[llW &+ i] }
-                    Self.inverseLift97InPlace(tp, evenCount: llW, oddCount: hlW, stride: 1)
+                    cblas_dcopy(Int32(llW), rowBase, 1, tp, 2)
+                    cblas_dcopy(Int32(hlW), rowBase + llW, 1, tp + 1, 2)
+                    Self.inverseLift97InPlace(tp, evenCount: llW, oddCount: hlW,
+                                              stride: 1, externalScratch: rowScratch)
                     rowBase.update(from: tp, count: outW)
                 }
             }
@@ -925,6 +1271,7 @@ public struct J2KDWT2DOptimizer97: Sendable {
         }
         var curW = llW
         var curH = llH
+        let coreCount97 = ProcessInfo.processInfo.processorCount
 
         for level in subbands {
             let lhH = level.lhH
@@ -935,15 +1282,12 @@ public struct J2KDWT2DOptimizer97: Sendable {
             // Allocate shared flat buffer for cross-task access
             let bufSize = outH * outW
             let base = UnsafeMutablePointer<Double>.allocate(capacity: bufSize)
-            base.initialize(repeating: 0.0, count: bufSize)
+            memset(base, 0, bufSize &* MemoryLayout<Double>.size)
 
-            // Place LL (even rows, low-freq cols) from currentBuf
+            // Place LL (even rows, low-freq cols) from currentBuf — contiguous row copy
             for r in 0..<curH {
-                let srcOff = r * curW
-                let dstRow = r &* 2 &* outW
-                for c in 0..<curW {
-                    base[dstRow &+ c] = currentBuf[srcOff &+ c]
-                }
+                memcpy(base + r * 2 * outW, currentBuf + r * curW,
+                       curW &* MemoryLayout<Double>.size)
             }
 
             // Free previous buffer now that LL data has been placed
@@ -951,12 +1295,11 @@ public struct J2KDWT2DOptimizer97: Sendable {
 
             // Place LH (odd rows, low-freq cols)
             let lhW = level.lhW
-            for r in 0..<lhH {
-                let srcOff = r * lhW
-                let dstRow = (r &* 2 &+ 1) &* outW
-                let count = min(curW, lhW)
-                for c in 0..<count {
-                    base[dstRow &+ c] = level.lh[srcOff &+ c]
+            level.lh.withUnsafeBufferPointer { lhBuf in
+                for r in 0..<lhH {
+                    let count = min(curW, lhW)
+                    memcpy(base + (r * 2 + 1) * outW, lhBuf.baseAddress! + r * lhW,
+                           count &* MemoryLayout<Double>.size)
                 }
             }
 
@@ -964,12 +1307,11 @@ public struct J2KDWT2DOptimizer97: Sendable {
             if hlW > 0 {
                 let hlH = level.hlH
                 let srcHlW = level.hlW
-                for r in 0..<hlH {
-                    let srcOff = r * srcHlW
-                    let dstRow = r &* 2 &* outW + curW
-                    let count = min(hlW, srcHlW)
-                    for c in 0..<count {
-                        base[dstRow &+ c] = level.hl[srcOff &+ c]
+                level.hl.withUnsafeBufferPointer { hlBuf in
+                    for r in 0..<hlH {
+                        let count = min(hlW, srcHlW)
+                        memcpy(base + r * 2 * outW + curW, hlBuf.baseAddress! + r * srcHlW,
+                               count &* MemoryLayout<Double>.size)
                     }
                 }
             }
@@ -978,39 +1320,47 @@ public struct J2KDWT2DOptimizer97: Sendable {
             if hlW > 0 {
                 let hhW = level.hhW
                 let hhH = level.hhH
-                for r in 0..<hhH {
-                    let srcOff = r * hhW
-                    let dstRow = (r &* 2 &+ 1) &* outW + curW
-                    let count = min(hlW, hhW)
-                    for c in 0..<count {
-                        base[dstRow &+ c] = level.hh[srcOff &+ c]
+                level.hh.withUnsafeBufferPointer { hhBuf in
+                    for r in 0..<hhH {
+                        let count = min(hlW, hhW)
+                        memcpy(base + (r * 2 + 1) * outW + curW, hhBuf.baseAddress! + r * hhW,
+                               count &* MemoryLayout<Double>.size)
                     }
                 }
             }
 
-            // Column lifting
+            // Column lifting via transpose: converts stride=outW to stride=1,
+            // enabling the vDSP NEON fast path for all column lifting passes.
             let colCount = outW
             let evenCount = curH
-            if colCount >= 8 {
-                let safeBase = SendablePointer(base)
-                let coreCount = ProcessInfo.processInfo.processorCount
-                let chunkSize = max(1, colCount / coreCount)
+            if outH >= 32 && colCount >= 8 {
+                // Transpose outH×outW → outW×outH so columns become contiguous rows.
+                let tBuf = UnsafeMutablePointer<Double>.allocate(capacity: bufSize)
+                vDSP_mtransD(base, 1, tBuf, 1, vDSP_Length(outH), vDSP_Length(outW))
+                let safeT = SendablePointer(tBuf)
+                let chunkSizeT = max(1, colCount / coreCount97)
                 await withTaskGroup(of: Void.self) { group in
-                    for chunkStart in stride(from: 0, to: colCount, by: chunkSize) {
-                        let chunkEnd = min(chunkStart + chunkSize, colCount)
+                    for chunkStart in stride(from: 0, to: colCount, by: chunkSizeT) {
+                        let chunkEnd = min(chunkStart + chunkSizeT, colCount)
                         group.addTask {
-                            let base = safeBase.pointer
+                            let tp = safeT.pointer
+                            // One scratch buffer per task, reused across all columns in chunk.
+                            let colScratch = UnsafeMutablePointer<Double>.allocate(capacity: outH)
+                            defer { colScratch.deallocate() }
                             for col in chunkStart..<chunkEnd {
                                 Self.inverseLift97InPlace(
-                                    base + col,
+                                    tp + col &* outH,
                                     evenCount: evenCount,
                                     oddCount: lhH,
-                                    stride: outW
+                                    stride: 1,
+                                    externalScratch: colScratch
                                 )
                             }
                         }
                     }
                 }
+                vDSP_mtransD(tBuf, 1, base, 1, vDSP_Length(outW), vDSP_Length(outH))
+                tBuf.deallocate()
             } else {
                 for col in 0..<colCount {
                     Self.inverseLift97InPlace(
@@ -1026,21 +1376,25 @@ public struct J2KDWT2DOptimizer97: Sendable {
             let lowCount = curW
             if outH >= 8 {
                 let safeBase = SendablePointer(base)
-                let coreCount = ProcessInfo.processInfo.processorCount
-                let chunkSize = max(1, outH / coreCount)
+                let chunkSize = max(1, outH / coreCount97)
                 await withTaskGroup(of: Void.self) { group in
                     for chunkStart in stride(from: 0, to: outH, by: chunkSize) {
                         let chunkEnd = min(chunkStart + chunkSize, outH)
                         group.addTask {
                             let base = safeBase.pointer
-                            var tmp = [Double](repeating: 0, count: outW)
+                            // Allocate tmp (interleave buffer) and rowScratch once per task.
+                            // tmp is fully overwritten by cblas_dcopy before any read — skip zero-init.
+                            var tmp = [Double](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                            let rowScratch = UnsafeMutablePointer<Double>.allocate(capacity: outW)
+                            defer { rowScratch.deallocate() }
                             tmp.withUnsafeMutableBufferPointer { tmpBuf in
                                 let tp = tmpBuf.baseAddress!
                                 for r in chunkStart..<chunkEnd {
                                     let rowBase = base + r &* outW
-                                    for i in 0..<lowCount { tp[i &* 2] = rowBase[i] }
-                                    for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCount &+ i] }
-                                    Self.inverseLift97InPlace(tp, evenCount: lowCount, oddCount: hlW, stride: 1)
+                                    cblas_dcopy(Int32(lowCount), rowBase, 1, tp, 2)
+                                    cblas_dcopy(Int32(hlW), rowBase + lowCount, 1, tp + 1, 2)
+                                    Self.inverseLift97InPlace(tp, evenCount: lowCount, oddCount: hlW,
+                                                              stride: 1, externalScratch: rowScratch)
                                     rowBase.update(from: tp, count: outW)
                                 }
                             }
@@ -1048,14 +1402,17 @@ public struct J2KDWT2DOptimizer97: Sendable {
                     }
                 }
             } else {
-                var tmp = [Double](repeating: 0, count: outW)
+                var tmp = [Double](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                let rowScratch = UnsafeMutablePointer<Double>.allocate(capacity: outW)
+                defer { rowScratch.deallocate() }
                 tmp.withUnsafeMutableBufferPointer { tmpBuf in
                     let tp = tmpBuf.baseAddress!
                     for r in 0..<outH {
                         let rowBase = base + r &* outW
-                        for i in 0..<lowCount { tp[i &* 2] = rowBase[i] }
-                        for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCount &+ i] }
-                        Self.inverseLift97InPlace(tp, evenCount: lowCount, oddCount: hlW, stride: 1)
+                        cblas_dcopy(Int32(lowCount), rowBase, 1, tp, 2)
+                        cblas_dcopy(Int32(hlW), rowBase + lowCount, 1, tp + 1, 2)
+                        Self.inverseLift97InPlace(tp, evenCount: lowCount, oddCount: hlW,
+                                                  stride: 1, externalScratch: rowScratch)
                         rowBase.update(from: tp, count: outW)
                     }
                 }
@@ -1104,95 +1461,132 @@ public struct J2KDWT2DOptimizer97: Sendable {
         // intermediate Array copies between DWT levels.
         let initSize = llW * llH
         var currentBuf = UnsafeMutablePointer<Float>.allocate(capacity: initSize)
-        for i in 0..<initSize { currentBuf[i] = Float(ll[i]) }
+        ll.withUnsafeBufferPointer { src in
+            vDSP_vdpsp(src.baseAddress!, 1, currentBuf, 1, vDSP_Length(initSize))
+        }
         var currentBufSize = initSize
         var curW = llW
         var curH = llH
+        let coreCountF = ProcessInfo.processInfo.processorCount
 
         for level in subbands {
             let lhH = level.lhH
+            let lhW = level.lhW
             let hlW = level.hlW
+            let hlH = level.hlH
+            let hhW = level.hhW
+            let hhH = level.hhH
             let outH = curH + lhH
             let outW = curW + hlW
             let bufSize = outH * outW
 
             let base = UnsafeMutablePointer<Float>.allocate(capacity: bufSize)
-            base.initialize(repeating: 0.0, count: bufSize)
+            // Skip the bufSize-wide memset when every output position will be
+            // written by the four placement loops below — the common case for
+            // dyadic dimensions. Only zero-fill when a source dimension is
+            // smaller than the destination (asymmetric halving on odd parents).
+            let allCellsWritten = curW == lhW &&
+                                  curH == hlH && lhH == hhH &&
+                                  hlW > 0 && hlW == hhW
+            if !allCellsWritten {
+                memset(base, 0, bufSize &* MemoryLayout<Float>.size)
+            }
 
-            // Place LL (even rows, low-freq cols) from currentBuf
+            // Place LL (even rows, low-freq cols) from currentBuf using memcpy per row
             for r in 0..<curH {
-                let srcOff = r * curW
-                let dstRow = r &* 2 &* outW
-                for c in 0..<curW {
-                    base[dstRow &+ c] = currentBuf[srcOff &+ c]
-                }
+                (base + r &* 2 &* outW).initialize(from: currentBuf + r &* curW, count: curW)
             }
 
             // Free previous buffer
             currentBuf.deallocate()
 
-            // Place LH (odd rows, low-freq cols)
-            let lhW = level.lhW
-            for r in 0..<lhH {
-                let srcOff = r * lhW
-                let dstRow = (r &* 2 &+ 1) &* outW
-                let count = min(curW, lhW)
-                for c in 0..<count {
-                    base[dstRow &+ c] = Float(level.lh[srcOff &+ c])
+            // Place LH (odd rows, low-freq cols) — vectorised Double→Float conversion
+            level.lh.withUnsafeBufferPointer { src in
+                for r in 0..<lhH {
+                    let count = min(curW, lhW)
+                    let dst = base + (r * 2 + 1) * outW
+                    vDSP_vdpsp(src.baseAddress! + r * lhW, 1, dst, 1, vDSP_Length(count))
                 }
             }
 
-            // Place HL (even rows, high-freq cols)
+            // Place HL (even rows, high-freq cols) — vectorised Double→Float conversion
             if hlW > 0 {
-                let hlH = level.hlH
                 let srcHlW = level.hlW
-                for r in 0..<hlH {
-                    let srcOff = r * srcHlW
-                    let dstRow = r &* 2 &* outW + curW
-                    let count = min(hlW, srcHlW)
-                    for c in 0..<count {
-                        base[dstRow &+ c] = Float(level.hl[srcOff &+ c])
+                level.hl.withUnsafeBufferPointer { src in
+                    for r in 0..<hlH {
+                        let count = min(hlW, srcHlW)
+                        let dst = base + r * 2 * outW + curW
+                        vDSP_vdpsp(src.baseAddress! + r * srcHlW, 1, dst, 1, vDSP_Length(count))
                     }
                 }
             }
 
-            // Place HH (odd rows, high-freq cols)
+            // Place HH (odd rows, high-freq cols) — vectorised Double→Float conversion
             if hlW > 0 {
-                let hhW = level.hhW
-                let hhH = level.hhH
-                for r in 0..<hhH {
-                    let srcOff = r * hhW
-                    let dstRow = (r &* 2 &+ 1) &* outW + curW
-                    let count = min(hlW, hhW)
-                    for c in 0..<count {
-                        base[dstRow &+ c] = Float(level.hh[srcOff &+ c])
+                level.hh.withUnsafeBufferPointer { src in
+                    for r in 0..<hhH {
+                        let count = min(hlW, hhW)
+                        let dst = base + (r * 2 + 1) * outW + curW
+                        vDSP_vdpsp(src.baseAddress! + r * hhW, 1, dst, 1, vDSP_Length(count))
                     }
                 }
             }
 
-            // Column lifting
+            // Column lifting via transpose: stride=outW → stride=1 for vDSP NEON path.
+            //
+            // Three-way dispatch tuned on Med-512 lossy (where IDWT overhead vs
+            // OpenJPEG was the dominant deficit):
+            //  • ≥256: parallel transpose + task-group column lifts. Big enough
+            //    that task-spawn overhead is amortised by the stride-1 NEON win.
+            //  • ≥64 but <256: serial transpose + stride-1 lifts (still NEON-
+            //    friendly, but no task-group overhead). Sweet spot for 64–128
+            //    levels of small images.
+            //  • <64: direct stride-outW scalar lifts — fastest for tiny levels
+            //    where any transpose is pure waste.
             let colCount = outW
             let evenCount = curH
-            if colCount >= 8 {
-                let safeBase = SendablePointer(base)
-                let coreCount = ProcessInfo.processInfo.processorCount
-                let chunkSize = max(1, colCount / coreCount)
+            if outH >= 256 && colCount >= 64 {
+                let tBuf = UnsafeMutablePointer<Float>.allocate(capacity: bufSize)
+                vDSP_mtrans(base, 1, tBuf, 1, vDSP_Length(outH), vDSP_Length(outW))
+                let safeT = SendablePointer(tBuf)
+                let chunkSizeT = max(1, colCount / coreCountF)
                 await withTaskGroup(of: Void.self) { group in
-                    for chunkStart in stride(from: 0, to: colCount, by: chunkSize) {
-                        let chunkEnd = min(chunkStart + chunkSize, colCount)
+                    for chunkStart in stride(from: 0, to: colCount, by: chunkSizeT) {
+                        let chunkEnd = min(chunkStart + chunkSizeT, colCount)
                         group.addTask {
-                            let base = safeBase.pointer
+                            let tp = safeT.pointer
+                            let colScratch = UnsafeMutablePointer<Float>.allocate(capacity: outH)
+                            defer { colScratch.deallocate() }
                             for col in chunkStart..<chunkEnd {
                                 Self.inverseLift97InPlaceFloat(
-                                    base + col,
+                                    tp + col &* outH,
                                     evenCount: evenCount,
                                     oddCount: lhH,
-                                    stride: outW
+                                    stride: 1,
+                                    externalScratch: colScratch
                                 )
                             }
                         }
                     }
                 }
+                vDSP_mtrans(tBuf, 1, base, 1, vDSP_Length(outW), vDSP_Length(outH))
+                tBuf.deallocate()
+            } else if outH >= 64 && colCount >= 16 {
+                let tBuf = UnsafeMutablePointer<Float>.allocate(capacity: bufSize)
+                defer { tBuf.deallocate() }
+                vDSP_mtrans(base, 1, tBuf, 1, vDSP_Length(outH), vDSP_Length(outW))
+                let colScratch = UnsafeMutablePointer<Float>.allocate(capacity: outH)
+                defer { colScratch.deallocate() }
+                for col in 0..<colCount {
+                    Self.inverseLift97InPlaceFloat(
+                        tBuf + col &* outH,
+                        evenCount: evenCount,
+                        oddCount: lhH,
+                        stride: 1,
+                        externalScratch: colScratch
+                    )
+                }
+                vDSP_mtrans(tBuf, 1, base, 1, vDSP_Length(outW), vDSP_Length(outH))
             } else {
                 for col in 0..<colCount {
                     Self.inverseLift97InPlaceFloat(
@@ -1204,41 +1598,60 @@ public struct J2KDWT2DOptimizer97: Sendable {
                 }
             }
 
-            // Row lifting
+            // Row lifting — mirror the column threshold: only parallel dispatch
+            // when there's enough work per core to amortise task-spawn cost.
             let lowCount = curW
-            if outH >= 8 {
+            if outH >= 256 {
                 let safeBase = SendablePointer(base)
-                let coreCount = ProcessInfo.processInfo.processorCount
-                let chunkSize = max(1, outH / coreCount)
+                let chunkSize = max(1, outH / coreCountF)
                 await withTaskGroup(of: Void.self) { group in
                     for chunkStart in stride(from: 0, to: outH, by: chunkSize) {
                         let chunkEnd = min(chunkStart + chunkSize, outH)
                         group.addTask {
                             let base = safeBase.pointer
-                            var tmp = [Float](repeating: 0, count: outW)
+                            // tmp and scrBuf are fully overwritten before any read — skip zero-init.
+                            // scrBuf must hold the full interleaved row (evenCount + oddCount == outW)
+                            // because the scalar-path lifter uses it as an interleave buffer.
+                            var tmp    = [Float](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                            var scrBuf = [Float](unsafeUninitializedCapacity: outW) { _, s in s = outW }
                             tmp.withUnsafeMutableBufferPointer { tmpBuf in
-                                let tp = tmpBuf.baseAddress!
-                                for r in chunkStart..<chunkEnd {
-                                    let rowBase = base + r &* outW
-                                    for i in 0..<lowCount { tp[i &* 2] = rowBase[i] }
-                                    for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCount &+ i] }
-                                    Self.inverseLift97InPlaceFloat(tp, evenCount: lowCount, oddCount: hlW, stride: 1)
-                                    rowBase.update(from: tp, count: outW)
+                                scrBuf.withUnsafeMutableBufferPointer { scBuf in
+                                    let tp = tmpBuf.baseAddress!
+                                    let sc = scBuf.baseAddress!
+                                    for r in chunkStart..<chunkEnd {
+                                        let rowBase = base + r &* outW
+                                        Self.inverseLift97SeparatedInPlaceFloat(
+                                            even: rowBase, evenCount: lowCount,
+                                            odd: rowBase + lowCount, oddCount: hlW,
+                                            scratch: sc)
+                                        cblas_scopy(Int32(lowCount), rowBase, 1, tp, 2)
+                                        cblas_scopy(Int32(hlW), rowBase + lowCount, 1, tp + 1, 2)
+                                        rowBase.update(from: tp, count: outW)
+                                    }
                                 }
                             }
                         }
                     }
                 }
             } else {
-                var tmp = [Float](repeating: 0, count: outW)
+                // scrBuf must hold the full interleaved row (evenCount + oddCount == outW)
+                // because the scalar-path lifter uses it as an interleave buffer.
+                var tmp    = [Float](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+                var scrBuf = [Float](unsafeUninitializedCapacity: outW) { _, s in s = outW }
                 tmp.withUnsafeMutableBufferPointer { tmpBuf in
-                    let tp = tmpBuf.baseAddress!
-                    for r in 0..<outH {
-                        let rowBase = base + r &* outW
-                        for i in 0..<lowCount { tp[i &* 2] = rowBase[i] }
-                        for i in 0..<hlW { tp[i &* 2 &+ 1] = rowBase[lowCount &+ i] }
-                        Self.inverseLift97InPlaceFloat(tp, evenCount: lowCount, oddCount: hlW, stride: 1)
-                        rowBase.update(from: tp, count: outW)
+                    scrBuf.withUnsafeMutableBufferPointer { scBuf in
+                        let tp = tmpBuf.baseAddress!
+                        let sc = scBuf.baseAddress!
+                        for r in 0..<outH {
+                            let rowBase = base + r &* outW
+                            Self.inverseLift97SeparatedInPlaceFloat(
+                                even: rowBase, evenCount: lowCount,
+                                odd: rowBase + lowCount, oddCount: hlW,
+                                scratch: sc)
+                            cblas_scopy(Int32(lowCount), rowBase, 1, tp, 2)
+                            cblas_scopy(Int32(hlW), rowBase + lowCount, 1, tp + 1, 2)
+                            rowBase.update(from: tp, count: outW)
+                        }
                     }
                 }
             }
@@ -1250,8 +1663,9 @@ public struct J2KDWT2DOptimizer97: Sendable {
             curH = outH
         }
 
-        // Convert final Float buffer to [Double] for pipeline compatibility
-        var result = [Double](repeating: 0.0, count: currentBufSize)
+        // Convert final Float buffer to [Double] for pipeline compatibility.
+        // All elements written by vDSP_vspdp before any read — skip zero-init.
+        var result = [Double](unsafeUninitializedCapacity: currentBufSize) { _, s in s = currentBufSize }
         #if canImport(Accelerate)
         vDSP_vspdp(currentBuf, 1, &result, 1, vDSP_Length(currentBufSize))
         #else
