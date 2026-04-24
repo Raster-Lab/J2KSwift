@@ -192,9 +192,15 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
         let (w, h, decoded) = try ojphDecode(j2c)
         XCTAssertEqual(w, width)
         XCTAssertEqual(h, height)
-        let reference = try ojphSelfRoundTrip(
-            pixels: pixels, width: width, height: height, cb: 8)
-        XCTAssertEqual(decoded, reference)
+        // v5.1.1+: J2KSwift's conformant encoder bumps ε by 1 so
+        // pixel value 0 round-trips correctly (OpenJPH 0.26's native
+        // epsilon rolls |2^(B-1)| to 0, see memory note #5). OpenJPH
+        // as a *decoder* follows whatever ε is in QCD, so compare
+        // directly against the input — stricter than the prior
+        // "match OpenJPH's buggy self round-trip" baseline.
+        XCTAssertEqual(decoded, pixels,
+            "J2KSwift `.conformant` → OpenJPH decode must be bit-exact " +
+            "for lossless inputs")
     }
 
     /// 32×32 deterministic noise, lossless. Exercises multiple
@@ -229,8 +235,10 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
         let (w, h, decoded) = try ojphDecode(j2c)
         XCTAssertEqual(w, width)
         XCTAssertEqual(h, height)
-        let reference = try ojphSelfRoundTrip(
-            pixels: pixels, width: width, height: height, cb: 32)
-        XCTAssertEqual(decoded, reference)
+        // v5.1.1+: bit-exact against the input (see 8×8 gradient
+        // comment above for why the reference is no longer OpenJPH's
+        // self round-trip).
+        XCTAssertEqual(decoded, pixels,
+            "J2KSwift `.conformant` → OpenJPH decode must be bit-exact")
     }
 }

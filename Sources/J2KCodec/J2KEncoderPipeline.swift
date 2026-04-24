@@ -2801,15 +2801,26 @@ struct EncoderPipeline: Sendable {
         precondition(pending.coefficients.count == count,
                      "Part-15 dispatch: coefficient count mismatch")
 
-        // K_max must match what OpenJPH computes from our QCD segment.
-        // With the Part-15-aware QCD writer (emits epsilon = B + G -
-        // guardBits instead of B + G for reversible), the reader's
-        // `(SPqcd >> 3) - 1 + guardBits` lands on `B + G - 1`, which
-        // equals `pending.bitDepth - guardBits` since pending.bitDepth
+        // K_max must match what a Part-15 decoder recovers from our
+        // QCD segment. `writeQCDMarker`'s conformant-reversible branch
+        // emits ε_b = B + G_b + 1 - guardBits (see v5.1.1 fix). A
+        // Part-15 decoder reconstructs K_max = (ε - 1) + guardBits,
+        // which lands on `B + G_b`. That equals
+        // `pending.bitDepth - guardBits + 1`, since pending.bitDepth
         // is `B + G + guardBits - 1`.
+        //
+        // The `+1` over the v5.0/v5.1.0 K_max fixes the pixel-0 edge
+        // case: for an unsigned B-bit input, DC-shifting maps 0 to
+        // -2^(B-1), whose |magnitude| equals 2^(B-1). The old
+        // K_max = B + G - 1 could only represent magnitudes up to
+        // 2^(B+G-1) - 1, so the extreme point rolled over to zero and
+        // 16-bit medical DICOM samples lost every pixel-0 voxel.
+        // OpenJPH 0.26 exhibits the same rollover with its native
+        // ε = B + G - guardBits, so the new ε is also upstream of any
+        // interop work with third-party Part-15 decoders.
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
         let guardBits = Int(quantExt.extendedGuardBits)
-        let kMax = pending.bitDepth - guardBits
+        let kMax = pending.bitDepth - guardBits + 1
         let shift = 31 - kMax
         let missingMSBs = kMax - 1
 
@@ -3562,32 +3573,38 @@ struct EncoderPipeline: Sendable {
             let bitDepth = image.components.first?.bitDepth ?? 8
             let guardBits = Int(quantExt.extendedGuardBits)
 
-            // Part-15 uses OpenJPH's convention where the encoded SPqcd
-            // carries `(B + G - guard_bits)` so the decoder's
-            // `K_max = (SPqcd >> 3) - 1 + guard_bits` lands on `B - 1 + G`
-            // rather than `B + G + guard_bits - 1`. Align our codestream
-            // with that convention when Part-15 is selected so OpenJPH
-            // reads back the same K_max our Part-15 block encoder used.
+            // Part-15 conformant path encodes ε_b = B + G_b + 1 -
+            // guardBits for each subband. A Part-15 decoder computes
+            // K_max = (ε - 1) + guardBits = B + G_b, giving a
+            // magnitude range of [0, 2^(B+G_b) - 1] that covers the
+            // DC-shifted extreme `|2^(B-1)|` cleanly.
+            //
+            // This is one more than OpenJPH 0.26's native ε
+            // (`B + G - guardBits`). Its block decoder's magnitude
+            // range is driven entirely by the signalled K_max, so
+            // raising ε by 1 preserves Part-15 interop while fixing
+            // the pixel-0 rollover that OpenJPH itself exhibits with
+            // its native epsilon (memory note #5 / v5.1.1 fix).
             //
             // Gate on `useHTJ2K` as well as the block-format flag —
             // `htj2kBlockFormat` is documented as having effect only
             // when HTJ2K is enabled, and gating here prevents the
-            // Part-15 epsilon bias from leaking into legacy EBCOT
+            // Part-15 epsilon shift from leaking into legacy EBCOT
             // codestreams if a caller sets `.conformant` without also
             // enabling HTJ2K.
-            let epsilonBias =
-                (config.useHTJ2K && config.htj2kBlockFormat == .conformant)
-                ? guardBits : 0
+            let conformant = config.useHTJ2K && config.htj2kBlockFormat == .conformant
+            let epsilonBias = conformant ? guardBits : 0
+            let epsilonConformantAdjust = conformant ? 1 : 0
 
             // LL subband at coarsest level
-            let epsilonLL = UInt8(max(1, bitDepth - epsilonBias))
+            let epsilonLL = UInt8(max(1, bitDepth + epsilonConformantAdjust - epsilonBias))
             segment.writeUInt8(epsilonLL << 3) // Exponent in bits 3-7
 
             // Detail subbands (HL, LH, HH) at each level (from coarsest to finest)
             for _ in 0..<decompositionLevels {
-                let epsilonHL = UInt8(max(1, bitDepth + 1 - epsilonBias)) // G_HL = 1
-                let epsilonLH = UInt8(max(1, bitDepth + 1 - epsilonBias)) // G_LH = 1
-                let epsilonHH = UInt8(max(1, bitDepth + 2 - epsilonBias)) // G_HH = 2
+                let epsilonHL = UInt8(max(1, bitDepth + 1 + epsilonConformantAdjust - epsilonBias)) // G_HL = 1
+                let epsilonLH = UInt8(max(1, bitDepth + 1 + epsilonConformantAdjust - epsilonBias)) // G_LH = 1
+                let epsilonHH = UInt8(max(1, bitDepth + 2 + epsilonConformantAdjust - epsilonBias)) // G_HH = 2
                 segment.writeUInt8(epsilonHL << 3)
                 segment.writeUInt8(epsilonLH << 3)
                 segment.writeUInt8(epsilonHH << 3)

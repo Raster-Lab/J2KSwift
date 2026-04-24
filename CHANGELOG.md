@@ -5,6 +5,25 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.1] — 2026-04-24
+
+**Patch Release — `.conformant` HTJ2K pixel-0 lossless fix**
+
+### Fixed
+- `.conformant` HTJ2K lossless round-trip corrupted every pixel-value-0 sample on unsigned inputs (reported by DICOMKit: CT / MR 16-bit DICOM payloads surfaced `2^(B-1)` instead of `0`). Root cause was a K_max off-by-one: the encoder emitted `K_max = B + G − 1` via OpenJPH's native `ε = B + G − guardBits`, and the magnitude range `[0, 2^(B+G-1) − 1]` rolled over for the DC-shifted extreme `|2^(B-1)|`. Fix bumps K_max to `B + G` and emits `ε_b = B + G_b + 1 − guardBits` in QCD so any Part-15 decoder (including OpenJPH) reconstructs the full range. Also clears the v5.0.0 `project_htj2k_deferred` memory note #5 ("sample 0 → 128 on 8-bit decode") edge case.
+
+### Added
+- `J2KHTConformantMedicalRoundTripTests` (J2KCLITests target) — 3 regression tests running the downstream DICOMKit repro: encode a staged DICOM sample with `.conformant`, decode through J2KSwift's own API, assert bit-exact across CT + MR at 16-bit, decomp=0 and decomp=3.
+
+### Changed
+- OpenJPH cross-codec tests (`testEndToEnd8x8GradientLossless`, `testEndToEnd32x32NoiseLossless`) now compare the decoded output against the **original input** rather than OpenJPH's own self round-trip. The prior baseline masked the pixel-0 rollover because both codecs hit the same bug simultaneously.
+- `J2KHTConformantSelfRoundTripTests.selfRoundTripNoise` no longer filters pixel value 0 from the random stream — the `v5.1.1` K_max bump makes the previously-documented workaround obsolete.
+- `VERSION` bumped from `5.1.0` to `5.1.1`.
+
+### Known limitations (unchanged from 5.1.0)
+- Default `J2KEncodingConfiguration.htj2kBlockFormat` remains `.custom` pending a fix for a pre-existing non-power-of-2 subband geometry issue in the shared Part-15 block coder.
+- Fused MEL/VLC terminate byte optimization (~1 byte/block) and SIMD block coder (SSSE3/AVX2/AVX512) not yet applied.
+
 ## [5.1.0] — 2026-04-24
 
 **Minor Release — HTJ2K `.conformant` round-trip + UVLC bug fix**
