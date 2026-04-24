@@ -2647,6 +2647,9 @@ struct EncoderPipeline: Sendable {
     /// - Returns: A `J2KCodeBlock` with HT-encoded data.
     /// - Throws: ``J2KError/encodingError(_:)`` if HT encoding fails.
     private func encodeCodeBlockHTJ2K(_ pending: PendingCodeBlock) throws -> J2KCodeBlock {
+        if config.htj2kBlockFormat == .part15 {
+            return try encodeCodeBlockPart15(pending)
+        }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
             height: pending.height,
@@ -2779,6 +2782,96 @@ struct EncoderPipeline: Sendable {
     ///
     /// This is the fast path called from `encodeCodeBlocksParallel`. It eliminates
     /// per-block allocation of `absMags`, `sigPacked`, and per-refinement-pass
+    // MARK: - Part-15 dispatch
+
+    /// Encode one code-block using the Part-15 cleanup-pass coder.
+    /// Produces a single-cleanup-pass J2KCodeBlock; SigProp/MagRef
+    /// refinement passes are intentionally not emitted (Part-15
+    /// scalar is cleanup-only per OpenJPH's scalar path).
+    ///
+    /// `pending.bitDepth` is J2KSwift's `bandKb = bitDepth + gain +
+    /// guardBits - 1`. OpenJPH reads the SAME value from QCD (our
+    /// QCD writer emits `SPqcd = bitDepth + gain` without OpenJPH's
+    /// `- guardBits` subtraction), so the encoder/decoder shift is
+    /// consistent as long as we use `pending.bitDepth` directly.
+    private func encodeCodeBlockPart15(_ pending: PendingCodeBlock) throws
+        -> J2KCodeBlock
+    {
+        let count = pending.width * pending.height
+        precondition(pending.coefficients.count == count,
+                     "Part-15 dispatch: coefficient count mismatch")
+
+        // K_max must match what OpenJPH computes from our QCD segment.
+        // With the Part-15-aware QCD writer (emits epsilon = B + G -
+        // guardBits instead of B + G for reversible), the reader's
+        // `(SPqcd >> 3) - 1 + guardBits` lands on `B + G - 1`, which
+        // equals `pending.bitDepth - guardBits` since pending.bitDepth
+        // is `B + G + guardBits - 1`.
+        let quantExt = J2KPart2QuantizationExtensions(configuration: config)
+        let guardBits = Int(quantExt.extendedGuardBits)
+        let kMax = pending.bitDepth - guardBits
+        let shift = 31 - kMax
+        let missingMSBs = kMax - 1
+
+        // Zero-block short-circuit (mirrors OpenJPH's
+        // `if (mv >= 1u << (31 - K_max))` guard). Emits no block
+        // bytes — tier-2 packet header signals zero-block instead.
+        var maxAbs: Int32 = 0
+        for v in pending.coefficients {
+            let a = v < 0 ? -v : v
+            if a > maxAbs { maxAbs = a }
+        }
+        guard maxAbs > 0 else {
+            return J2KCodeBlock(
+                index: pending.index, x: pending.x, y: pending.y,
+                width: pending.width, height: pending.height,
+                subband: pending.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
+                data: Data(), passeCount: 0,
+                zeroBitPlanes: pending.bitDepth,
+                passSegmentLengths: [], cumulativePassBytes: [],
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation)
+        }
+
+        // Convert pipeline's Int32 2's-complement coefficients to
+        // OpenJPH sign-magnitude convention: `sign_bit | |v| << shift`
+        // (matches `gen_rev_tx_to_cb32` in OpenJPH 0.26).
+        var part15In = [UInt32](repeating: 0, count: count)
+        for i in 0..<count {
+            let v = pending.coefficients[i]
+            let sign: UInt32 = (v < 0) ? 0x8000_0000 : 0
+            let mag = UInt32(v < 0 ? -Int64(v) : Int64(v))
+            part15In[i] = sign | (mag << shift)
+        }
+
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: part15In,
+            width: pending.width, height: pending.height,
+            missingMSBs: missingMSBs)
+        let blockBytes = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+
+        // zeroBitPlanes is encoded into the packet-header tag tree as
+        // missing_msbs. OpenJPH requires `missing_msbs < K_max`.
+        // OpenJPH itself writes `missing_msbs = K_max - 1`, so we
+        // match that.
+        return J2KCodeBlock(
+            index: pending.index, x: pending.x, y: pending.y,
+            width: pending.width, height: pending.height,
+            subband: pending.subband,
+            componentIndex: pending.componentIndex,
+            resolutionLevel: pending.resolutionLevel,
+            data: Data(blockBytes),
+            passeCount: 1,
+            zeroBitPlanes: missingMSBs,
+            passSegmentLengths: [blockBytes.count],
+            cumulativePassBytes: [blockBytes.count],
+            coefficientSquaredSum: pending.coefficientSquaredSum,
+            bitPlanePopulation: pending.bitPlanePopulation)
+    }
+
     /// writer allocations by reusing caller-provided buffers.
     ///
     /// - Parameters:
@@ -2802,6 +2895,9 @@ struct EncoderPipeline: Sendable {
         vlc: inout HTVLCCoder,
         magsgn: inout HTMagSgnCoder
     ) throws -> J2KCodeBlock {
+        if config.htj2kBlockFormat == .part15 {
+            return try encodeCodeBlockPart15(pending)
+        }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
             height: pending.height,
@@ -3442,16 +3538,25 @@ struct EncoderPipeline: Sendable {
             //   epsilon_b = R_I + G_b  where R_I = bit depth, G_b = subband gain exponent
             //   LL: G=0, HL/LH: G=1, HH: G=2
             let bitDepth = image.components.first?.bitDepth ?? 8
+            let guardBits = Int(quantExt.extendedGuardBits)
+
+            // Part-15 uses OpenJPH's convention where the encoded SPqcd
+            // carries `(B + G - guard_bits)` so the decoder's
+            // `K_max = (SPqcd >> 3) - 1 + guard_bits` lands on `B - 1 + G`
+            // rather than `B + G + guard_bits - 1`. Align our codestream
+            // with that convention when Part-15 is selected so OpenJPH
+            // reads back the same K_max our Part-15 block encoder used.
+            let epsilonBias = (config.htj2kBlockFormat == .part15) ? guardBits : 0
 
             // LL subband at coarsest level
-            let epsilonLL = UInt8(bitDepth)
+            let epsilonLL = UInt8(max(1, bitDepth - epsilonBias))
             segment.writeUInt8(epsilonLL << 3) // Exponent in bits 3-7
 
             // Detail subbands (HL, LH, HH) at each level (from coarsest to finest)
             for _ in 0..<decompositionLevels {
-                let epsilonHL = UInt8(bitDepth + 1) // G_HL = 1
-                let epsilonLH = UInt8(bitDepth + 1) // G_LH = 1
-                let epsilonHH = UInt8(bitDepth + 2) // G_HH = 2
+                let epsilonHL = UInt8(max(1, bitDepth + 1 - epsilonBias)) // G_HL = 1
+                let epsilonLH = UInt8(max(1, bitDepth + 1 - epsilonBias)) // G_LH = 1
+                let epsilonHH = UInt8(max(1, bitDepth + 2 - epsilonBias)) // G_HH = 2
                 segment.writeUInt8(epsilonHL << 3)
                 segment.writeUInt8(epsilonLH << 3)
                 segment.writeUInt8(epsilonHH << 3)
