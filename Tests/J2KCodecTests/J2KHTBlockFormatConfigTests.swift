@@ -10,8 +10,9 @@ import XCTest
 
 final class HTBlockFormatConfigTests: XCTestCase {
 
-    /// Default configuration must still produce the legacy custom
-    /// format so v4.x deployments are not silently upgraded.
+    /// v5.0.0 default: `.custom` (v4.x-compatible; decoder side of
+    /// Part-15 pipeline still pending). Users opt into `.part15`
+    /// for OpenJPH interop.
     func testDefaultIsCustomFormat() {
         let config = J2KEncodingConfiguration()
         XCTAssertEqual(config.htj2kBlockFormat, .custom)

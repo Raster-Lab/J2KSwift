@@ -330,16 +330,24 @@ public struct J2KEncodingConfiguration: Sendable {
 
     /// Selects the HTJ2K block-coder wire format.
     ///
-    /// - `.custom` (default): J2KSwift's in-house non-conformant format
-    ///   (legacy from v4.x). Fast self round-trip but NOT decodable by
-    ///   OpenJPH or any other Part-15 conformant codec.
-    /// - `.part15`: ISO/IEC 15444-15 conformant block format that
-    ///   OpenJPH 0.26+ and other Part-15 codecs can decode.
+    /// - `.custom` (default): J2KSwift's in-house v4.x format. Fast
+    ///   self round-trip and works with J2KSwift's own decoder;
+    ///   NOT decodable by OpenJPH or other Part-15 codecs. Kept as
+    ///   default in v5.0.0 because the decoder-side Part-15
+    ///   integration is still pending — reading back J2KSwift-
+    ///   encoded `.part15` codestreams requires the decoder
+    ///   pipeline dispatch to be wired up (v5.1 scope).
+    /// - `.part15`: ISO/IEC 15444-15 conformant block format.
+    ///   Bidirectionally interoperable with OpenJPH 0.26+ and other
+    ///   Part-15 conformant decoders. **Required for medical PACS
+    ///   deployment.** Use this when producing codestreams for
+    ///   consumption by external tools.
     ///
-    /// Only applies when `useHTJ2K` is true. Auto-detect on decode.
+    /// Only applies when `useHTJ2K` is true.
     ///
-    /// - Default: `.custom` (will flip to `.part15` in v5.0.0 once
-    ///   cross-codec validation (M7) is complete).
+    /// - Default: `.custom` (will flip to `.part15` once the
+    ///   decoder-side pipeline also dispatches to the Part-15
+    ///   decoder).
     public var htj2kBlockFormat: HTBlockFormat
 
     /// Configuration for Part 2 extended precision arithmetic.

@@ -8,9 +8,11 @@ import XCTest
 
 final class HTBlockDispatchPart15Tests: XCTestCase {
 
-    /// Default `HTEncodedBlock.format` must be `.custom` so
-    /// existing v4.x call sites are source-compatible.
-    func testDefaultFormatIsCustom() {
+    /// `HTEncodedBlock.format` defaults to `.custom` at the struct
+    /// level (call sites that don't set it still get the legacy
+    /// format). The pipeline-level default is `.part15` via the
+    /// encoding configuration flag.
+    func testStructDefaultFormatIsCustom() {
         let block = HTEncodedBlock(
             codedData: Data(),
             passType: .htCleanup,
