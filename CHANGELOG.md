@@ -5,6 +5,49 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] — 2026-04-24
+
+**Minor Release — HTJ2K `.conformant` round-trip + UVLC bug fix**
+
+### Added
+- `DecoderConfiguration.htj2kBlockFormat` — internal field set by parsing a J2KSwift-private `COM` marker in the main header.
+- `HTBlockFormatCOMSignature.conformant` — shared `"J2KSWIFT-HT:conformant"` ASCII signature used by the encoder to flag Part-15 codestreams and by the decoder to recognize them.
+- `writeHTBlockFormatCOM` / `parseHTBlockFormatCOM` helpers in the encoder / decoder pipelines.
+- `J2KHTConformantSelfRoundTripTests` — 10 tests covering 4×4 through 32×32 code blocks, uniform and noise, both block formats, plus an OpenJPH interop probe.
+
+### Changed
+- Decoder pipeline block-decode dispatch (parallel and sequential paths) routes to `HTBlockDecoder.decodeCleanupConformant(rawBytes:missingMSBs:)` when the codestream carries the COM signature; otherwise continues to use the legacy `.custom` decoder.
+- `VERSION` bumped from `5.0.0` to `5.1.0`.
+
+### Fixed
+- v5.0 decoder pipeline could not decode its own `.conformant` HTJ2K output — block dispatch unconditionally called the v4.x custom-format decoder.
+- `HTBlockDecoderConformant` UVLC pair decode was interleaved (`pre0, suf0, pre1, suf1`) but the encoder writes `pre0, pre1, suf0, suf1`; the mismatch desynced the VLC stream and garbled samples whenever any quad had `u_q > 2`. Both `decodeUVLCPairInitial` and `decodeUVLCPairSubsequent` now mirror the encoder's emission order.
+- Initial-row UVLC `u_q0 > 2 && u_q1 > 0` branch now reads `u_q1`'s 1-bit marker before `suf0`, matching `J2KHTConformantBlockEncoder.swift:224-227`.
+- `writeQCDMarker` reversible branch now gates its Part-15 epsilon bias on `config.useHTJ2K` as well as `htj2kBlockFormat == .conformant`, preventing the bias from leaking into legacy EBCOT encodes when a caller sets `.conformant` without enabling HTJ2K.
+
+### Known limitations
+- Default `J2KEncodingConfiguration.htj2kBlockFormat` stays `.custom`. Flipping to `.conformant` awaits a fix for a pre-existing non-power-of-2 subband geometry issue in the shared Part-15 block coder (confirmed with `ojph_expand` decoding the same bytes, so the bug is upstream of decoder dispatch). Tracked for v5.1.1.
+- 8-bit reversible `.conformant` encodes of pixel value 0 decode back as 128 — `|DC-shift(0)| = 128 = 2^7` overflows the 7-bit magnitude range signaled by `K_max = 7`. OpenJPH has identical behavior.
+- Fused MEL/VLC terminate byte optimization (~1 byte/block) and SIMD block coder (SSSE3/AVX2/AVX512) not yet applied.
+
+## [5.0.0] — 2026-04-24
+
+**Major Release — HTJ2K Part-15 conformance (encoder-side)**
+
+### Added
+- `J2KEncodingConfiguration.htj2kBlockFormat: HTBlockFormat` — new encoder flag selecting `.custom` (v4.x private) or `.conformant` (ISO/IEC 15444-15) HT block wire format.
+- `HTBlockEncoderConformant`, `HTBlockDecoderConformant` — scalar Part-15 block coder port from OpenJPH 0.26.
+- 82 block-level conformant tests + 3 end-to-end OpenJPH cross-codec tests.
+- `CAP` (0xFF50) and `CPF` (0xFF63) marker emission for HTJ2K codestreams.
+
+### Changed
+- `writeQCDMarker` reversible branch emits `SPqcd = (B + G - guardBits) << 3` when `htj2kBlockFormat == .conformant` to match OpenJPH's encoder convention.
+- `VERSION` bumped from `4.0.0` to `5.0.0`.
+
+### Known limitations (addressed in 5.1.0)
+- Decoder-side Part-15 block dispatch pending; reading J2KSwift-produced `.conformant` codestreams back through J2KSwift's own decoder was not supported in 5.0.0.
+- `.custom` remained the default `htj2kBlockFormat` in 5.0.0.
+
 ## [4.0.0] — 2026-04-24
 
 **Major Release — Medical-grade production readiness**

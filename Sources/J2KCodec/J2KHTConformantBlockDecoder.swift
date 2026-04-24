@@ -157,6 +157,16 @@ fileprivate struct DecodeState {
 
     /// Decode a u-value pair per OpenJPH's branch structure for the
     /// initial row (with MEL arbitration when both u_off are set).
+    ///
+    /// Encoder wire layout (matches every branch in
+    /// `HTBlockEncoderConformant.encode` initial-row UVLC):
+    /// - No-u-values branch: nothing emitted.
+    /// - Both u_off=1 + MEL=1 (both u > 2 after +2 shift): `pre0, pre1,
+    ///   suf0, suf1` — prefixes first, then suffixes.
+    /// - Both u_off=1 + MEL=0 + u_q0 > 2: `pre0, 1-bit-for-u_q1, suf0`.
+    /// - Both u_off=1 + MEL=0 + u_q0 ≤ 2: `pre0, pre1, (suf0=∅), suf1`
+    ///   — u_q0 has no suffix so only u_q1's suffix is read.
+    /// - One u_off: `pre, suf` for the active quad.
     mutating func decodeUVLCPairInitial(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
@@ -166,29 +176,45 @@ fileprivate struct DecodeState {
             if melEvent {
                 let p0 = readPrefix()
                 let p1 = readPrefix()
-                return (decodeFromPrefix(p0) + 2, decodeFromPrefix(p1) + 2)
+                let s0 = decodeFromPrefix(p0)
+                let s1 = decodeFromPrefix(p1)
+                return (s0 + 2, s1 + 2)
             }
             let p0 = readPrefix()
-            let u0 = decodeFromPrefix(p0)
-            if u0 > 2 {
+            // Encoder emits u_q1's 1-bit marker BEFORE suf0 when
+            // u_q0 > 2 (i.e. prefix length 3 or 4). Read that bit
+            // first, then let decodeFromPrefix(p0) consume suf0.
+            if p0 >= 3 {
                 let bit = Int(vlcReader.read(count: 1))
+                let u0 = decodeFromPrefix(p0)
                 return (u0, bit + 1)
             }
+            // u_q0 ≤ 2 path: encoder writes `pre0, pre1, (no suf0), suf1`.
             let p1 = readPrefix()
-            return (u0, decodeFromPrefix(p1))
+            let u0 = decodeFromPrefix(p0)
+            let u1 = decodeFromPrefix(p1)
+            return (u0, u1)
         }
+        // Exactly one u_off is set: encoder wrote `pre, suf` for that
+        // quad; decoder reads the same in sequence.
         let u0 = (u_off0 != 0) ? decodeFromPrefix(readPrefix()) : 0
         let u1 = (u_off1 != 0) ? decodeFromPrefix(readPrefix()) : 0
         return (u0, u1)
     }
 
-    /// Subsequent-row UVLC: encoder always emits both prefixes then
-    /// both suffixes unconditionally; u is 0 when u_off is 0.
+    /// Subsequent-row UVLC: encoder writes `pre0, pre1, suf0, suf1` in
+    /// that order unconditionally (with the suffix slots being empty
+    /// when the prefix length is 1 or 2). The decoder must read both
+    /// prefixes first and only then consume the suffixes — reading
+    /// prefix+suffix interleaved per quad desyncs the stream whenever
+    /// the first quad has a non-empty suffix.
     mutating func decodeUVLCPairSubsequent(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
-        let u0 = (u_off0 != 0) ? decodeFromPrefix(readPrefix()) : 0
-        let u1 = (u_off1 != 0) ? decodeFromPrefix(readPrefix()) : 0
+        let len0 = (u_off0 != 0) ? readPrefix() : 0
+        let len1 = (u_off1 != 0) ? readPrefix() : 0
+        let u0 = (u_off0 != 0) ? decodeFromPrefix(len0) : 0
+        let u1 = (u_off1 != 0) ? decodeFromPrefix(len1) : 0
         return (u0, u1)
     }
 

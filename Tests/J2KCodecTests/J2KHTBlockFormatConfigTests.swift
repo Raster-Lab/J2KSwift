@@ -10,9 +10,12 @@ import XCTest
 
 final class HTBlockFormatConfigTests: XCTestCase {
 
-    /// v5.0.0 default: `.custom` (v4.x-compatible; decoder side of
-    /// Part-15 pipeline still pending). Users opt into `.conformant`
-    /// for OpenJPH interop.
+    /// Default stays `.custom` in v5.1.0. The v5.1 work brought the
+    /// decoder-side dispatch online (so `.conformant` now fully
+    /// round-trips through J2KSwift's own decode API at power-of-2
+    /// code block sizes), but a remaining non-power-of-2 subband
+    /// issue in the shared block-coder keeps us from flipping the
+    /// default until the encoder geometry is fixed.
     func testDefaultIsCustomFormat() {
         let config = J2KEncodingConfiguration()
         XCTAssertEqual(config.htj2kBlockFormat, .custom)

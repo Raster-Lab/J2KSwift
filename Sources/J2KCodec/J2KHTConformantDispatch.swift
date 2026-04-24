@@ -107,6 +107,20 @@ extension HTBlockDecoder {
     }
 }
 
+/// COM-marker payloads used by the encoder to signal the HTJ2K
+/// block-format selection to the decoder side. Standards-compliant
+/// decoders (OpenJPH, Kakadu) ignore unknown COM payloads.
+enum HTBlockFormatCOMSignature {
+    /// Ccom bytes that flag the codestream as using the Part-15
+    /// conformant block layout. ISO-8859-15 ASCII.
+    static let conformant: [UInt8] = [
+        0x4A, 0x32, 0x4B, 0x53, 0x57, 0x49, 0x46, 0x54, // "J2KSWIFT"
+        0x2D, 0x48, 0x54, 0x3A,                         // "-HT:"
+        0x63, 0x6F, 0x6E, 0x66, 0x6F, 0x72, 0x6D, 0x61, // "conforma"
+        0x6E, 0x74                                      // "nt"
+    ]
+}
+
 /// Heuristic detector for the conformant (Part-15) block wire format.
 ///
 /// The custom v4.x format starts each block with a 6-byte header

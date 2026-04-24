@@ -331,23 +331,22 @@ public struct J2KEncodingConfiguration: Sendable {
     /// Selects the HTJ2K block-coder wire format.
     ///
     /// - `.custom` (default): J2KSwift's in-house v4.x format. Fast
-    ///   self round-trip and works with J2KSwift's own decoder;
-    ///   NOT decodable by OpenJPH or other Part-15 codecs. Kept as
-    ///   default in v5.0.0 because the decoder-side Part-15
-    ///   integration is still pending — reading back J2KSwift-
-    ///   encoded `.conformant` codestreams requires the decoder
-    ///   pipeline dispatch to be wired up (v5.1 scope).
-    /// - `.conformant`: ISO/IEC 15444-15 conformant block format.
-    ///   Bidirectionally interoperable with OpenJPH 0.26+ and other
-    ///   Part-15 conformant decoders. **Required for medical PACS
-    ///   deployment.** Use this when producing codestreams for
-    ///   consumption by external tools.
+    ///   self round-trip with J2KSwift's own decoder at every
+    ///   supported dimension; NOT decodable by OpenJPH or other
+    ///   Part-15 codecs.
+    /// - `.conformant`: ISO/IEC 15444-15 conformant block format,
+    ///   bidirectionally interoperable with OpenJPH 0.26+ and other
+    ///   Part-15 decoders. v5.1 adds the COM-marker-driven decoder
+    ///   dispatch so J2KSwift can round-trip its own `.conformant`
+    ///   codestreams at power-of-2 code block sizes. Non-power-of-2
+    ///   subband dimensions (typical in multi-resolution decodes of
+    ///   arbitrary image sizes) are known to be lossy in the
+    ///   conformant encoder path — the same behavior is observed
+    ///   when the encoder output is handed to OpenJPH, so the bug
+    ///   lives in the shared block-coder geometry — tracked for
+    ///   follow-up.
     ///
     /// Only applies when `useHTJ2K` is true.
-    ///
-    /// - Default: `.custom` (will flip to `.conformant` once the
-    ///   decoder-side pipeline also dispatches to the Part-15
-    ///   decoder).
     public var htj2kBlockFormat: HTBlockFormat
 
     /// Configuration for Part 2 extended precision arithmetic.
