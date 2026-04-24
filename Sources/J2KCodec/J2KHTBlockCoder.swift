@@ -3012,4 +3012,10 @@ struct HTEncodedBlock: Sendable {
 
     /// The code-block height.
     let height: Int
+
+    /// Which HT block wire format `codedData` uses. Defaults to
+    /// `.custom` for source compatibility with v4.x callers; new
+    /// call sites opt in to `.conformant` to signal the ISO/IEC 15444-15
+    /// conformant layout.
+    var format: HTBlockFormat = .custom
 }
