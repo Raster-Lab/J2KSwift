@@ -108,24 +108,24 @@ fileprivate struct DecodeState {
         return isOne
     }
 
-    /// Linear-scan VLC lookup against the source tables. Picks the
-    /// longest-matching cwd via OpenJPH's "last match wins" policy.
+    /// Fast VLC lookup via OpenJPH's 1024-entry reverse-table
+    /// (indexed by `(c_q << 7) | bits7`, packed as
+    /// `e_k|e_1|rho|u_off|cwd_len`). Constant-time per codeword.
+    @inline(__always)
     func lookupVLC(
         c_q: Int, bits: Int, initialLine: Bool
     ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
-        let src = initialLine ? vlcSrcTable0 : vlcSrcTable1
-        var best: VLCSrc? = nil
-        for e in src where e.c_q == c_q {
-            let mask = (1 << e.cwd_len) - 1
-            if (bits & mask) == e.cwd {
-                best = e
-            }
-        }
-        guard let b = best else {
-            preconditionFailure(
-                "no VLC match for c_q=\(c_q) bits=0x\(String(bits, radix: 16))")
-        }
-        return (b.rho, b.u_off, b.cwd_len, b.e_k, b.e_1)
+        let tbl = initialLine
+            ? vlcDecoderTable0Part15
+            : vlcDecoderTable1Part15
+        let idx = (c_q << 7) | (bits & 0x7F)
+        let entry = Int(tbl[idx])
+        let cwd_len = entry & 0x7
+        let u_off   = (entry >> 3) & 0x1
+        let rho     = (entry >> 4) & 0xF
+        let e_1     = (entry >> 8) & 0xF
+        let e_k     = (entry >> 12) & 0xF
+        return (rho: rho, u_off: u_off, cwd_len: cwd_len, e_k: e_k, e_1: e_1)
     }
 
     /// Unary prefix reader for UVLC: 1→1, 01→2, 001→3, 000→4.
