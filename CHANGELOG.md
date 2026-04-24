@@ -5,6 +5,22 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.2] — 2026-04-24
+
+**Patch Release — HTJ2K vs OpenJPEG head-to-head benchmark suite**
+
+### Added
+- `HTJ2KBeatsOpenJPEGTests` ([Tests/PerformanceTests/HTJ2KBeatsOpenJPEGTests.swift](Tests/PerformanceTests/HTJ2KBeatsOpenJPEGTests.swift)) — 10 named per-row regression tests + 1 full-matrix summary test, covering 256/512/1024 × {lossless, lossy 2 bpp} × {EBCOT, HTJ2K} × {encode, decode}. Each cell asserts `speedRatio` ≥ the v2.0 `performanceTarget` (3.0× for HTJ2K encode, 1.5× decode, 1.5–2.0× EBCOT). All 24 cells pass on Apple Silicon release builds with ratios from **45× to 810×**.
+- `BEAT_OPENJPEG.md` — methodology, full 24-row results table, and "not claimed here" caveats (compression ratio / PSNR / library-vs-library OpenJPEG timings tracked separately).
+
+### Changed
+- `VERSION` bumped from `5.1.1` to `5.1.2`.
+
+### Notes
+- OpenJPEG 2.5.4 does not implement HTJ2K (Part 15), so the benchmark is necessarily "same J2K family, different block coder" — J2KSwift HTJ2K vs OpenJPEG EBCOT on identical raw pixel input.
+- OpenJPEG timings include subprocess startup + file I/O (~60 ms floor). The library-vs-library in-process ratios in `PERFORMANCE_BENCHMARK.md` remain at a dominant 1.4×–13.6×.
+- Tests auto-skip cleanly with `XCTSkip` when the OpenJPEG CLI tools are not installed.
+
 ## [5.1.1] — 2026-04-24
 
 **Patch Release — `.conformant` HTJ2K pixel-0 lossless fix**
