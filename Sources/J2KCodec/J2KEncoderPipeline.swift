@@ -3569,11 +3569,12 @@ struct EncoderPipeline: Sendable {
             // with that convention when Part-15 is selected so OpenJPH
             // reads back the same K_max our Part-15 block encoder used.
             //
-            // Must also gate on `useHTJ2K` — `htj2kBlockFormat` is
-            // documented as having effect only when HTJ2K is enabled,
-            // but since v5.1.0 flipped its default to `.conformant` we
-            // would otherwise silently rewrite QCD for every legacy
-            // (EBCOT / non-HT) codestream.
+            // Gate on `useHTJ2K` as well as the block-format flag —
+            // `htj2kBlockFormat` is documented as having effect only
+            // when HTJ2K is enabled, and gating here prevents the
+            // Part-15 epsilon bias from leaking into legacy EBCOT
+            // codestreams if a caller sets `.conformant` without also
+            // enabling HTJ2K.
             let epsilonBias =
                 (config.useHTJ2K && config.htj2kBlockFormat == .conformant)
                 ? guardBits : 0
