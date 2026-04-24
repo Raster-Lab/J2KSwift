@@ -1283,12 +1283,12 @@ struct DecoderPipeline: Sendable {
                                     height: block.height,
                                     subband: block.subband
                                 )
-                                let detailed = try htDecoder.decodeFromCodestreamDetailed(
-                                    data: block.data,
-                                    passCount: block.passCount,
-                                    bitDepth: bitDepth,
-                                    zeroBitPlanes: block.zeroBitPlanes
-                                )
+                                let detailed = try htDecoder
+                                    .decodeFromCodestreamDetailed(
+                                        data: block.data,
+                                        passCount: block.passCount,
+                                        bitDepth: bitDepth,
+                                        zeroBitPlanes: block.zeroBitPlanes)
                                 coeffs = detailed.coefficients
                                 htPartiallyRefined = detailed.isPartiallyRefined
                             } else {
@@ -1370,7 +1370,7 @@ struct DecoderPipeline: Sendable {
                 let htMask: [Bool]
 
                 if useHT {
-                    // HTJ2K path: use FBCOT block decoding
+                    // HTJ2K path: use FBCOT block decoding.
                     let htDecoder = HTBlockDecoder(
                         width: block.width,
                         height: block.height,

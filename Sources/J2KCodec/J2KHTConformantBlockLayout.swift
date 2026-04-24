@@ -1,4 +1,4 @@
-// J2KHTBlockLayoutPart15.swift
+// J2KHTBlockLayoutConformant.swift
 // ISO/IEC 15444-15 codeblock layout assembler + parser.
 //
 // Ports the block-assembly code from `ojph_block_encoder.cpp` and
@@ -27,11 +27,11 @@
 
 import Foundation
 
-public enum HTBlockLayoutPart15 {
+public enum HTBlockLayoutConformant {
 
     /// Assemble a Part-15 codeblock from the three pre-terminated
     /// streams. `vlc` must be the forward on-wire order returned by
-    /// `HTReverseBitEmitterPart15.finish()` (last element is the
+    /// `HTReverseBitEmitterConformant.finish()` (last element is the
     /// 0xFF sentinel).
     ///
     /// Returns the full block including the 12-bit Scup interface
@@ -46,7 +46,7 @@ public enum HTBlockLayoutPart15 {
     ) throws -> [UInt8] {
         let scup = mel.count + vlc.count
         if scup < 2 || scup > 4079 {
-            throw HTBlockLayoutPart15Error.scupOutOfRange(scup)
+            throw HTBlockLayoutConformantError.scupOutOfRange(scup)
         }
         var block = [UInt8]()
         block.reserveCapacity(magsgn.count + scup)
@@ -86,7 +86,7 @@ public enum HTBlockLayoutPart15 {
     }
 }
 
-public enum HTBlockLayoutPart15Error: Error, Equatable {
+public enum HTBlockLayoutConformantError: Error, Equatable {
     /// Total MEL + VLC byte count falls outside the 12-bit Scup
     /// representable range (valid range: [2, 4079] per T.814).
     case scupOutOfRange(Int)

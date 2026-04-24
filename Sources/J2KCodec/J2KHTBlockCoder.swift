@@ -3015,7 +3015,7 @@ struct HTEncodedBlock: Sendable {
 
     /// Which HT block wire format `codedData` uses. Defaults to
     /// `.custom` for source compatibility with v4.x callers; new
-    /// call sites opt in to `.part15` to signal the ISO/IEC 15444-15
+    /// call sites opt in to `.conformant` to signal the ISO/IEC 15444-15
     /// conformant layout.
     var format: HTBlockFormat = .custom
 }

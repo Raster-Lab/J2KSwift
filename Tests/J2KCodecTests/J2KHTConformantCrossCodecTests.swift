@@ -1,4 +1,4 @@
-// J2KHTCrossCodecPart15Tests.swift
+// J2KHTCrossCodecConformantTests.swift
 // Direct bit-level comparison between J2KSwift's Part-15 block
 // encoder and OpenJPH's reference output on a known coefficient
 // input. The two encoders are deterministic and implement the same
@@ -13,14 +13,14 @@
 //    end of the codeblock.
 // 3. Reproduce the coefficient input OpenJPH's block encoder
 //    would see (sample - DC shift, scaled to bit (31 - K_max)),
-//    feed through HTBlockEncoderPart15, and compare the raw
+//    feed through HTBlockEncoderConformant, and compare the raw
 //    block bytes to what we can find in OpenJPH's codestream.
 
 import XCTest
 import Foundation
 @testable import J2KCodec
 
-final class HTCrossCodecPart15Tests: XCTestCase {
+final class HTCrossCodecConformantTests: XCTestCase {
 
     private let ojphCompress = "/opt/homebrew/bin/ojph_compress"
     private let ojphExpand   = "/opt/homebrew/bin/ojph_expand"
@@ -123,7 +123,7 @@ final class HTCrossCodecPart15Tests: XCTestCase {
     ///
     /// `totalBlockBytes` is provided by the caller — we know it
     /// exactly from the J2KSwift encode run for the same input.
-    private func extractPart15Block(from sodPayload: Data,
+    private func extractConformantBlock(from sodPayload: Data,
                                     totalBlockBytes: Int) -> Data?
     {
         guard sodPayload.count >= totalBlockBytes else { return nil }
@@ -172,17 +172,17 @@ final class HTCrossCodecPart15Tests: XCTestCase {
         }
         let missingMSBs = kMax - 1
 
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: missingMSBs)
-        let ourBlock = try HTBlockLayoutPart15.assemble(
+        let ourBlock = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
 
         guard let sod = extractSODPayload(from: j2cData) else {
             XCTFail("failed to locate SOD payload", file: file, line: line)
             return
         }
-        guard let theirBlock = extractPart15Block(
+        guard let theirBlock = extractConformantBlock(
             from: sod, totalBlockBytes: ourBlock.count) else
         {
             XCTFail("Part-15 block tail shorter than our block " +
@@ -299,10 +299,10 @@ final class HTCrossCodecPart15Tests: XCTestCase {
         let coefs: [UInt32] = pixels.map {
             ojphCoefficient(value: Int($0) - 128, kMax: kMax)
         }
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 8, height: 8,
             missingMSBs: kMax - 1)
-        let ours = try HTBlockLayoutPart15.assemble(
+        let ours = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
         // Our block should be within 2 bytes of OpenJPH's (accounting
         // for packet header + fused-terminate difference).

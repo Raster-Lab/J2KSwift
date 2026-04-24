@@ -1,4 +1,4 @@
-// J2KHTBitStreamPart15.swift
+// J2KHTBitStreamConformant.swift
 // ISO/IEC 15444-15 (HTJ2K) bit-stream emitters.
 //
 // Ports OpenJPH 0.26's `mel_struct` / `vlc_struct` byte emitters from
@@ -6,12 +6,12 @@
 //
 // Two emitters, both byte-aligned on termination:
 //
-// - `HTForwardBitEmitterPart15` writes bits MSB-first into a forward
+// - `HTForwardBitEmitterConformant` writes bits MSB-first into a forward
 //   buffer, FF-stuffing (one reserved high bit after any 0xFF byte so
 //   no 0xFF can appear followed by another byte starting with `1`).
 //   Used for MEL and MagSgn streams.
 //
-// - `HTReverseBitEmitterPart15` writes bits from the buffer END
+// - `HTReverseBitEmitterConformant` writes bits from the buffer END
 //   backwards, with reverse FF-stuffing (one reserved low bit after any
 //   `> 0x8F` byte). Used for the VLC stream which Part-15 stores at the
 //   end of the block, read backwards by the decoder.
@@ -22,7 +22,7 @@ import Foundation
 /// bytes. When a `0xFF` byte is emitted, the next byte reserves its
 /// high bit as `0` (the stuffed bit), so a Part-15 decoder can tell
 /// `0xFF` codeword data apart from marker segments.
-public struct HTForwardBitEmitterPart15 {
+public struct HTForwardBitEmitterConformant {
     /// Emitted bytes, in order.
     public private(set) var bytes: [UInt8] = []
 
@@ -98,7 +98,7 @@ public struct HTForwardBitEmitterPart15 {
 /// array is the byte the Part-15 decoder reads *last* (adjacent to
 /// the MagSgn stream). The first byte of the buffer is always `0xFF`
 /// (end-of-stream sentinel) as required by the standard.
-public struct HTReverseBitEmitterPart15 {
+public struct HTReverseBitEmitterConformant {
     /// Bytes already written to the "reversed" tail of the stream,
     /// **in the order they were emitted** (i.e. reversed relative to
     /// the final on-wire stream). The first element is the 0xFF

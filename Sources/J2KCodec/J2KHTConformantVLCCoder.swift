@@ -1,4 +1,4 @@
-// J2KHTVLCCoderPart15.swift
+// J2KHTVLCCoderConformant.swift
 // ISO/IEC 15444-15 cleanup-pass VLC helpers (codebook lookup + UVLC).
 //
 // The cleanup pass emits one codeword per 4-sample quad into a
@@ -18,10 +18,10 @@
 import Foundation
 
 /// Cleanup-pass VLC primitives over the reverse bit emitter. Two
-/// table flavours: `initialLine == true` picks `vlcTable0Part15` for
+/// table flavours: `initialLine == true` picks `vlcTable0Conformant` for
 /// the first row of quads in a codeblock; subsequent rows use
-/// `vlcTable1Part15`.
-public enum HTVLCCoderPart15 {
+/// `vlcTable1Conformant`.
+public enum HTVLCCoderConformant {
 
     /// Looks up the cleanup-pass codeword for one quad. Returns
     /// `(cwd, cwdLen, e_k)` where `cwd` holds the `cwdLen` bits to
@@ -42,7 +42,7 @@ public enum HTVLCCoderPart15 {
         precondition((0..<8).contains(c_q), "c_q out of range")
         precondition((0..<16).contains(rho), "rho out of range")
         precondition((0..<16).contains(emb), "emb out of range")
-        let tbl = initialLine ? vlcTable0Part15 : vlcTable1Part15
+        let tbl = initialLine ? vlcTable0Conformant : vlcTable1Conformant
         let entry = Int(tbl[(c_q << 8) | (rho << 4) | emb])
         return (cwd: entry >> 8, cwdLen: (entry >> 4) & 0x7, e_k: entry & 0xF)
     }
@@ -54,7 +54,7 @@ public enum HTVLCCoderPart15 {
         c_q: Int,
         rho: Int,
         emb: Int,
-        into emitter: inout HTReverseBitEmitterPart15
+        into emitter: inout HTReverseBitEmitterConformant
     ) {
         let (cwd, cwdLen, _) = lookupQuad(
             initialLine: initialLine, c_q: c_q, rho: rho, emb: emb)
@@ -71,10 +71,10 @@ public enum HTVLCCoderPart15 {
     /// - `u in 33...74`: same as above + 4-bit extension.
     public static func encodeUVLC(
         u: Int,
-        into emitter: inout HTReverseBitEmitterPart15
+        into emitter: inout HTReverseBitEmitterConformant
     ) {
         precondition((0..<75).contains(u), "u out of range for UVLC")
-        let entry = uvlcTablePart15[u]
+        let entry = uvlcTableConformant[u]
         if entry.preLen > 0 {
             emitter.encode(codeword: Int(entry.pre), count: Int(entry.preLen))
         }

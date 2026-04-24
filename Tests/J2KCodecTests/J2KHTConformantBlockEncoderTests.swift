@@ -1,4 +1,4 @@
-// J2KHTBlockEncoderPart15Tests.swift
+// J2KHTBlockEncoderConformantTests.swift
 // Structural tests for the cleanup-pass codeblock encoder.
 //
 // A full self round-trip needs the decoder (M5c / M7); for now we
@@ -10,14 +10,14 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTBlockEncoderPart15Tests: XCTestCase {
+final class HTBlockEncoderConformantTests: XCTestCase {
 
     /// Encoding an all-zero 4x4 block must produce no significant
     /// MagSgn data: all samples are zero so rho=0 for every quad
     /// and no magnitude bits are emitted.
     func testAllZeroBlockProducesEmptyMagSgn() {
         let coefs = [UInt32](repeating: 0, count: 16)
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
         XCTAssertEqual(ms.count, 0, "no magnitude bits for zero block")
         // MEL + VLC are non-empty because we still emit signalling
@@ -38,11 +38,11 @@ final class HTBlockEncoderPart15Tests: XCTestCase {
         coefs[0] = 0x0000_0004    // +4
         coefs[5] = 0x0000_0002    // +2
         coefs[10] = 0x8000_0008   // -8
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        guard let parsed = HTBlockLayoutPart15.parse(block: block) else {
+        guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
             XCTFail("assembled block failed to parse"); return
         }
         XCTAssertEqual(parsed.scup, mel.count + vlc.count)
@@ -56,7 +56,7 @@ final class HTBlockEncoderPart15Tests: XCTestCase {
             for height in [1, 2, 3, 4, 7, 8] {
                 let coefs = [UInt32](
                     repeating: 0x0000_0010, count: width * height)
-                let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+                let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
                     coefficients: coefs, width: width, height: height,
                     missingMSBs: 0)
                 XCTAssertGreaterThan(vlc.count, 0,
@@ -71,10 +71,10 @@ final class HTBlockEncoderPart15Tests: XCTestCase {
     /// Encode a 1x1 block with a significant sample — must still
     /// produce a valid structure (no crashes in edge-case branches).
     func testSinglePixelBlock() throws {
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: [0x0000_0008], width: 1, height: 1, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        XCTAssertNotNil(HTBlockLayoutPart15.parse(block: block))
+        XCTAssertNotNil(HTBlockLayoutConformant.parse(block: block))
     }
 }

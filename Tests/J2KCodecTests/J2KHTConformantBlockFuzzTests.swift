@@ -1,4 +1,4 @@
-// J2KHTBlockFuzzPart15Tests.swift
+// J2KHTBlockFuzzConformantTests.swift
 // Randomized self-round-trip tests for the Part-15 cleanup-pass
 // codeblock encoder + decoder. Feeds randomly-placed bin-centered
 // samples at various magnitudes through the encode/assemble/parse/
@@ -11,7 +11,7 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTBlockFuzzPart15Tests: XCTestCase {
+final class HTBlockFuzzConformantTests: XCTestCase {
 
     /// Deterministic LCG for reproducible fuzz runs.
     private struct SeededRNG {
@@ -56,12 +56,12 @@ final class HTBlockFuzzPart15Tests: XCTestCase {
             }
         }
 
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: missingMSBs)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: width, height: height,
             missingMSBs: missingMSBs)
         XCTAssertEqual(decoded, coefs,
@@ -86,12 +86,12 @@ final class HTBlockFuzzPart15Tests: XCTestCase {
                 coefs[i] = Self.binCenter(
                     mu: 1, sign: (i & 1) == 1, p: p)
             }
-            let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: width, height: height,
                 missingMSBs: 0)
-            let block = try HTBlockLayoutPart15.assemble(
+            let block = try HTBlockLayoutConformant.assemble(
                 magsgn: ms, mel: mel, vlc: vlc)
-            let decoded = try HTBlockDecoderPart15.decode(
+            let decoded = try HTBlockDecoderConformant.decode(
                 block: block, width: width, height: height, missingMSBs: 0)
             XCTAssertEqual(decoded, coefs,
                 "dense \(width)x\(height) round-trip failed")
@@ -118,12 +118,12 @@ final class HTBlockFuzzPart15Tests: XCTestCase {
             var coefs = [UInt32](repeating: 0, count: 8)
             coefs[0] = Self.binCenter(mu: c.muPair.0, sign: false, p: p)
             coefs[4] = Self.binCenter(mu: c.muPair.1, sign: true,  p: p)
-            let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: 4, height: 2,
                 missingMSBs: c.missingMSBs)
-            let block = try HTBlockLayoutPart15.assemble(
+            let block = try HTBlockLayoutConformant.assemble(
                 magsgn: ms, mel: mel, vlc: vlc)
-            let decoded = try HTBlockDecoderPart15.decode(
+            let decoded = try HTBlockDecoderConformant.decode(
                 block: block, width: 4, height: 2,
                 missingMSBs: c.missingMSBs)
             XCTAssertEqual(decoded, coefs,

@@ -1,6 +1,6 @@
 // J2KHTEndToEndCrossCodecTests.swift
 // Full-codestream cross-codec validation: encode with J2KSwift's
-// public API using `htj2kBlockFormat: .part15`, then hand the
+// public API using `htj2kBlockFormat: .conformant`, then hand the
 // resulting .j2c bytes to OpenJPH's `ojph_expand` and verify the
 // reconstructed image matches the input.
 //
@@ -144,7 +144,7 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
         var cfg = J2KEncodingConfiguration()
         cfg.lossless = true
         cfg.useHTJ2K = true
-        cfg.htj2kBlockFormat = .part15
+        cfg.htj2kBlockFormat = .conformant
         cfg.decompositionLevels = 0
         cfg.codeBlockSize = (4, 4)
 
@@ -177,7 +177,7 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
         var cfg = J2KEncodingConfiguration()
         cfg.lossless = true
         cfg.useHTJ2K = true
-        cfg.htj2kBlockFormat = .part15
+        cfg.htj2kBlockFormat = .conformant
         cfg.decompositionLevels = 0
         cfg.codeBlockSize = (8, 8)
 
@@ -214,7 +214,7 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
         var cfg = J2KEncodingConfiguration()
         cfg.lossless = true
         cfg.useHTJ2K = true
-        cfg.htj2kBlockFormat = .part15
+        cfg.htj2kBlockFormat = .conformant
         cfg.decompositionLevels = 0
         cfg.codeBlockSize = (32, 32)
 

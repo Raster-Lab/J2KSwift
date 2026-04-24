@@ -10,7 +10,7 @@
 
 v5.0.0's headline deliverable is an **ISO/IEC 15444-15 (HTJ2K)
 conformant encoder** that is bit-stream compatible with OpenJPH
-0.26+. Opt in with `htj2kBlockFormat: .part15` and J2KSwift-produced
+0.26+. Opt in with `htj2kBlockFormat: .conformant` and J2KSwift-produced
 codestreams are decodable by OpenJPH's `ojph_expand` and — by
 extension — the whole downstream ecosystem of Part-15 consumers used
 in medical PACS, broadcast archives, and DICOM workflows.
@@ -49,7 +49,7 @@ the J2KSwift Part-15 encoder on the same input, and asserts byte-for-
 byte equality against OpenJPH's codestream region.
 
 **End-to-end codestream interop**: encode a PGM via the J2KSwift
-public `encode()` API with `.part15`, feed the resulting .j2c to
+public `encode()` API with `.conformant`, feed the resulting .j2c to
 `ojph_expand`, and assert the decoded output matches OpenJPH's own
 self round-trip. 3/3 pass for 4×4 uniform, 8×8 gradient, 32×32
 deterministic noise.
@@ -75,7 +75,7 @@ to-end pipeline (1.0 Ms/s) at the block level. Decoder: 2.5 Ms/s on
 ```swift
 let config = J2KEncodingConfiguration(
     useHTJ2K: true,
-    htj2kBlockFormat: .part15   // opt in for OpenJPH interop
+    htj2kBlockFormat: .conformant   // opt in for OpenJPH interop
 )
 let encoder = J2KEncoder(encodingConfiguration: config)
 let j2c = try await encoder.encode(image)
@@ -116,19 +116,22 @@ Opt in:
 ```swift
 var cfg = J2KEncodingConfiguration()
 cfg.useHTJ2K = true
-cfg.htj2kBlockFormat = .part15
+cfg.htj2kBlockFormat = .conformant
 ```
 
 The resulting codestream is decodable by OpenJPH 0.26+ — `ojph_expand
 -i your.j2c -o out.pgm` works.
 
-### Reading back `.part15` codestreams
+### Reading back `.conformant` codestreams
 
-J2KSwift v5.0.0's decoder does **not** yet dispatch to the Part-15
-block decoder — it still expects the v4.x custom format. For now,
-reading Part-15 codestreams produced by J2KSwift requires piping
-them through OpenJPH or using `HTBlockDecoderPart15.decode` at the
-block-coder API level. Pipeline-side decoder dispatch is v5.1.
+J2KSwift v5.0.0's decoder does **not** yet dispatch to the conformant
+block decoder — it still expects the v4.x custom format. Reading
+conformant codestreams produced by J2KSwift requires piping them
+through OpenJPH or calling `HTBlockDecoder.decodeCleanupConformant`
+at the block-coder API level. Pipeline-side decoder dispatch is v5.1
+scope, gated on a reliable format-detection mechanism (heuristic
+detection is too fragile for mixed-format codestreams; we will
+likely propagate format via CAP bit or decoder config).
 
 ---
 
@@ -140,9 +143,10 @@ block-coder API level. Pipeline-side decoder dispatch is v5.1.
 - **Fused MEL/VLC terminate byte optimization** is skipped; each
   stream terminates independently for a 1-byte/block overhead versus
   OpenJPH. Functionally conformant but not byte-minimal.
-- **Decoder-side pipeline dispatch** is not yet wired. Part-15
+- **Decoder-side pipeline dispatch** is not yet wired. Conformant
   codestreams produced by J2KSwift need to round-trip through
-  OpenJPH or use the block-level Part-15 decoder directly.
+  OpenJPH or use `HTBlockDecoder.decodeCleanupConformant` at the
+  block level directly.
 - **8-bit edge case (sample value 0 → 128 on decode)**: for 8-bit
   reversible with 0 decomps, K_max = 7 signals 7-bit magnitude
   capacity, but |DC-shifted 0| = 128 = 2^7 overflows the sign-
@@ -156,8 +160,8 @@ block-coder API level. Pipeline-side decoder dispatch is v5.1.
 | Encoder | Decoder | Interop |
 |---------|---------|---------|
 | J2KSwift (custom) | J2KSwift (custom) | ✅ lossless |
-| J2KSwift (part15) | OpenJPH 0.26+ | ✅ **proven end-to-end** |
-| J2KSwift (part15, block-level) | J2KSwift Part-15 block decoder | ✅ |
+| J2KSwift (conformant) | OpenJPH 0.26+ | ✅ **proven end-to-end** |
+| J2KSwift (conformant, block-level) | J2KSwift Part-15 block decoder | ✅ |
 | OpenJPH | J2KSwift (pipeline) | 🟡 block decoder works; pipeline dispatch in v5.1 |
 | J2KSwift (custom) | OpenJPH | ❌ not supported (by design) |
 
@@ -176,7 +180,7 @@ Development on branch `feature/htj2k-part15-conformance`:
 - M5c — Reference decoder with conditional FF-unstuff.
 - M6 — `HTBlockFormat` configuration flag.
 - M7 — Benchmark + byte-equality cross-codec validation.
-- **Pipeline integration** — `encodeCodeBlockPart15` dispatch wired
+- **Pipeline integration** — `encodeCodeBlockConformant` dispatch wired
   into `J2KEncoderPipeline`, QCD writer aligned with OpenJPH's
   reversible epsilon convention.
 - **End-to-end cross-codec** — J2KSwift → `ojph_expand` decodes

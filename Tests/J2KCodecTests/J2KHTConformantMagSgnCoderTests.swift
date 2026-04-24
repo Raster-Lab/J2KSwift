@@ -1,4 +1,4 @@
-// J2KHTMagSgnCoderPart15Tests.swift
+// J2KHTMagSgnCoderConformantTests.swift
 // Unit tests for the ISO/IEC 15444-15 MagSgn forward bit coder.
 //
 // Validates LSB-first bit packing, FF-stuffing at byte boundaries,
@@ -9,7 +9,7 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTMagSgnCoderPart15Tests: XCTestCase {
+final class HTMagSgnCoderConformantTests: XCTestCase {
 
     // MARK: - Round-trip
 
@@ -17,8 +17,8 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
         let items: [(UInt32, Int)] = [
             (0b1010_0110, 8)
         ]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [8])
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [8])
         XCTAssertEqual(decoded, [0b1010_0110])
     }
 
@@ -26,8 +26,8 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
         let items: [(UInt32, Int)] = [
             (0b101, 3), (0b1, 1), (0b11, 2)
         ]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [3, 1, 2])
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [3, 1, 2])
         XCTAssertEqual(decoded, [0b101, 0b1, 0b11])
     }
 
@@ -39,8 +39,8 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
             (0b0110011, 7),
             (0b1111000, 7)
         ]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [7, 7, 7])
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [7, 7, 7])
         XCTAssertEqual(decoded, [0b1010101, 0b0110011, 0b1111000])
     }
 
@@ -48,8 +48,8 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
         let items: [(UInt32, Int)] = [
             (0xDEADBEEF, 32)
         ]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [32])
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [32])
         XCTAssertEqual(decoded, [0xDEADBEEF])
     }
 
@@ -65,7 +65,7 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
             (0xFF, 8),   // emits 0xFF
             (0xFF, 8)    // second run of ones
         ]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
         // First byte must be 0xFF.
         XCTAssertEqual(bytes[0], 0xFF)
         // Second byte's high bit must be 0 (reserved stuff bit).
@@ -73,7 +73,7 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
                        "byte after 0xFF must reserve high bit as 0")
         // Round-trip equivalence confirms the decoder unstuffs
         // correctly.
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [8, 8])
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [8, 8])
         XCTAssertEqual(decoded, [0xFF, 0xFF])
     }
 
@@ -86,7 +86,7 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
     /// are the 1-pad, low 4 are the real data.
     func testTerminatePadsWithOnes() {
         let items: [(UInt32, Int)] = [(0x0, 4)]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
         XCTAssertEqual(bytes.count, 1)
         XCTAssertEqual(bytes[0], 0xF0)
     }
@@ -95,12 +95,12 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
     /// `0b1111_1111 = 0xFF` which is dropped.
     func testTerminateDropsTrailingFF() {
         let items: [(UInt32, Int)] = [(0xF, 4)]
-        let bytes = HTMagSgnCoderPart15.encodeBits(items)
+        let bytes = HTMagSgnCoderConformant.encodeBits(items)
         XCTAssertEqual(bytes.count, 0,
                        "trailing 0xFF after 1-pad must be dropped")
         // Decoder still round-trips because it feeds 0xFF when the
         // stream is exhausted.
-        let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: [4])
+        let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: [4])
         XCTAssertEqual(decoded, [0xF])
     }
 
@@ -120,8 +120,8 @@ final class HTMagSgnCoderPart15Tests: XCTestCase {
                 items.append((v, w))
                 widths.append(w)
             }
-            let bytes = HTMagSgnCoderPart15.encodeBits(items)
-            let decoded = HTMagSgnCoderPart15.decodeBits(bytes, widths: widths)
+            let bytes = HTMagSgnCoderConformant.encodeBits(items)
+            let decoded = HTMagSgnCoderConformant.decodeBits(bytes, widths: widths)
             let expected = items.map { $0.0 }
             XCTAssertEqual(decoded, expected,
                            "trial \(trial) round-trip failed")

@@ -11,7 +11,7 @@ import XCTest
 final class HTBlockFormatConfigTests: XCTestCase {
 
     /// v5.0.0 default: `.custom` (v4.x-compatible; decoder side of
-    /// Part-15 pipeline still pending). Users opt into `.part15`
+    /// Part-15 pipeline still pending). Users opt into `.conformant`
     /// for OpenJPH interop.
     func testDefaultIsCustomFormat() {
         let config = J2KEncodingConfiguration()
@@ -19,17 +19,17 @@ final class HTBlockFormatConfigTests: XCTestCase {
     }
 
     /// Opt-in to the Part-15 format via the init parameter.
-    func testExplicitPart15Selectable() {
-        let config = J2KEncodingConfiguration(htj2kBlockFormat: .part15)
-        XCTAssertEqual(config.htj2kBlockFormat, .part15)
+    func testExplicitConformantSelectable() {
+        let config = J2KEncodingConfiguration(htj2kBlockFormat: .conformant)
+        XCTAssertEqual(config.htj2kBlockFormat, .conformant)
     }
 
     /// Mutation after construction must be allowed (useful for
     /// per-call overrides during testing / migration).
     func testHTBlockFormatMutable() {
         var config = J2KEncodingConfiguration()
-        config.htj2kBlockFormat = .part15
-        XCTAssertEqual(config.htj2kBlockFormat, .part15)
+        config.htj2kBlockFormat = .conformant
+        XCTAssertEqual(config.htj2kBlockFormat, .conformant)
     }
 
     /// The enum must be `CaseIterable` so CLI / config surfaces can
@@ -37,6 +37,6 @@ final class HTBlockFormatConfigTests: XCTestCase {
     func testHTBlockFormatIsCaseIterable() {
         XCTAssertEqual(HTBlockFormat.allCases.count, 2)
         XCTAssertTrue(HTBlockFormat.allCases.contains(.custom))
-        XCTAssertTrue(HTBlockFormat.allCases.contains(.part15))
+        XCTAssertTrue(HTBlockFormat.allCases.contains(.conformant))
     }
 }

@@ -1,4 +1,4 @@
-// J2KHTBitStreamPart15Tests.swift
+// J2KHTBitStreamConformantTests.swift
 // Unit tests for the ISO/IEC 15444-15 (HTJ2K) bit-stream emitters.
 //
 // Validates byte-level equivalence with OpenJPH 0.26's `mel_struct` and
@@ -8,14 +8,14 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTBitStreamPart15Tests: XCTestCase {
+final class HTBitStreamConformantTests: XCTestCase {
 
     // MARK: - Forward bit emitter
 
     /// Emitting `0b10101010` one bit at a time produces a single
     /// 0xAA byte.
     func testForwardEmitterPacksBitsMSBFirst() {
-        var emitter = HTForwardBitEmitterPart15()
+        var emitter = HTForwardBitEmitterConformant()
         for b in [1, 0, 1, 0, 1, 0, 1, 0] {
             emitter.emit(bit: b)
         }
@@ -27,7 +27,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// produces `0x7F` (not 0xFE), because the high bit of that byte
     /// is the stuff bit (always 0).
     func testForwardEmitterFFStuffs() {
-        var emitter = HTForwardBitEmitterPart15()
+        var emitter = HTForwardBitEmitterConformant()
         for _ in 0..<8 {
             emitter.emit(bit: 1)
         }
@@ -43,7 +43,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// Emitting fewer than 8 bits and finishing pads with zeros on
     /// the LSB side (bits shifted left fill the MSB positions).
     func testForwardEmitterPadsPartialByte() {
-        var emitter = HTForwardBitEmitterPart15()
+        var emitter = HTForwardBitEmitterConformant()
         emitter.emit(bit: 1)
         emitter.emit(bit: 1)
         emitter.emit(bit: 0)
@@ -54,7 +54,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
 
     /// `emit(bits:count:)` emits MSB-first within the value.
     func testForwardEmitterBitsHelper() {
-        var emitter = HTForwardBitEmitterPart15()
+        var emitter = HTForwardBitEmitterConformant()
         emitter.emit(bits: 0b101, count: 3)  // emits 1, 0, 1
         emitter.emit(bits: 0b11001, count: 5) // emits 1, 1, 0, 0, 1
         // Together: 1 0 1 1 1 0 0 1 = 0b10111001 = 0xB9
@@ -67,7 +67,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// Part-15 requires the terminating byte of any block's reverse
     /// stream to be 0xFF (conceptually adjacent to Scup).
     func testReverseEmitterEmptyIsJustSentinel() {
-        var emitter = HTReverseBitEmitterPart15()
+        var emitter = HTReverseBitEmitterConformant()
         // After init, usedBits=4 (because sentinel already consumed
         // 4 bits of downstream adjacency), tmp=0x0F, nothing encoded.
         // Finishing flushes the 0x0F prefix byte.
@@ -79,7 +79,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// (the low nibble of the partial byte already contains 0xF from
     /// the init).
     func testReverseEmitterSingleBit() {
-        var emitter = HTReverseBitEmitterPart15()
+        var emitter = HTReverseBitEmitterConformant()
         emitter.encode(codeword: 0, count: 1)
         // tmp = 0x0F | (0 << 4) = 0x0F, usedBits = 5
         // finish → emits 0x0F; forward: [0x0F, 0xFF].
@@ -95,7 +95,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// Then finish() emits tmp=0xAF.
     /// Forward order: [0xAF, 0xFF].
     func testReverseEmitter4BitCodeword() {
-        var emitter = HTReverseBitEmitterPart15()
+        var emitter = HTReverseBitEmitterConformant()
         emitter.encode(codeword: 0b1010, count: 4)
         XCTAssertEqual(emitter.finish(), [0xAF, 0xFF])
     }
@@ -105,7 +105,7 @@ final class HTBitStreamPart15Tests: XCTestCase {
     /// 0xFF (needs stuff check). After stuff, continues with 4 more
     /// `1`s into the next byte.
     func testReverseEmitterSpansBytesWithStuff() {
-        var emitter = HTReverseBitEmitterPart15()
+        var emitter = HTReverseBitEmitterConformant()
         // 12 ones:
         //   iter 1: availBits = 8 - 1(stuff) - 4(used) = 3
         //     tmp |= 0b111 << 4 = 0x7F, used=7, cwd = (0xFFF >> 3) = 0x1FF, len=9

@@ -335,9 +335,9 @@ public struct J2KEncodingConfiguration: Sendable {
     ///   NOT decodable by OpenJPH or other Part-15 codecs. Kept as
     ///   default in v5.0.0 because the decoder-side Part-15
     ///   integration is still pending — reading back J2KSwift-
-    ///   encoded `.part15` codestreams requires the decoder
+    ///   encoded `.conformant` codestreams requires the decoder
     ///   pipeline dispatch to be wired up (v5.1 scope).
-    /// - `.part15`: ISO/IEC 15444-15 conformant block format.
+    /// - `.conformant`: ISO/IEC 15444-15 conformant block format.
     ///   Bidirectionally interoperable with OpenJPH 0.26+ and other
     ///   Part-15 conformant decoders. **Required for medical PACS
     ///   deployment.** Use this when producing codestreams for
@@ -345,7 +345,7 @@ public struct J2KEncodingConfiguration: Sendable {
     ///
     /// Only applies when `useHTJ2K` is true.
     ///
-    /// - Default: `.custom` (will flip to `.part15` once the
+    /// - Default: `.custom` (will flip to `.conformant` once the
     ///   decoder-side pipeline also dispatches to the Part-15
     ///   decoder).
     public var htj2kBlockFormat: HTBlockFormat
@@ -514,7 +514,7 @@ public enum HTBlockFormat: String, Sendable, CaseIterable {
 
     /// ISO/IEC 15444-15 conformant format — bidirectional interop
     /// with OpenJPH 0.26+ (scalar path).
-    case part15
+    case conformant
 }
 
 // MARK: - Progression Order

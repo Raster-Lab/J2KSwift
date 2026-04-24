@@ -1,4 +1,4 @@
-// J2KHTBlockDecoderPart15.swift
+// J2KHTBlockDecoderConformant.swift
 // ISO/IEC 15444-15 cleanup-pass codeblock decoder (scalar, 32-bit).
 //
 // Reference implementation that mirrors the encoder (M5b) step-for-
@@ -12,10 +12,10 @@
 
 import Foundation
 
-public enum HTBlockDecoderPart15 {
+public enum HTBlockDecoderConformant {
 
     /// Decode a Part-15 codeblock produced by
-    /// `HTBlockEncoderPart15.encode` + `HTBlockLayoutPart15.assemble`.
+    /// `HTBlockEncoderConformant.encode` + `HTBlockLayoutConformant.assemble`.
     /// Returns the reconstructed `width * height` coefficient array
     /// in OpenJPH sign-magnitude convention (bit 31 = sign, magnitude
     /// in bits below `p = 30 - missingMSBs`).
@@ -25,8 +25,8 @@ public enum HTBlockDecoderPart15 {
         height: Int,
         missingMSBs: Int
     ) throws -> [UInt32] {
-        guard let parsed = HTBlockLayoutPart15.parse(block: block) else {
-            throw HTBlockDecoderPart15Error.malformedBlock
+        guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
+            throw HTBlockDecoderConformantError.malformedBlock
         }
         let magsgnBytes = Array(parsed.magsgn)
         let melVlcBytes = Array(parsed.melVlc)
@@ -60,9 +60,9 @@ public enum HTBlockDecoderPart15 {
 /// stream readers, scratch buffers for inter-row context, and the
 /// output coefficient array.
 fileprivate struct DecodeState {
-    var melDec: HTMELDecoderPart15
+    var melDec: HTMELDecoderConformant
     var vlcReader: VLCReverseReader
-    var magsgnDec: HTMagSgnDecoderPart15
+    var magsgnDec: HTMagSgnDecoderConformant
     let width: Int
     let height: Int
     let p: UInt32
@@ -85,10 +85,10 @@ fileprivate struct DecodeState {
         magsgnBytes: [UInt8],
         width: Int, height: Int, p: UInt32
     ) {
-        self.melDec = HTMELDecoderPart15(bytes: melVlcBytes)
+        self.melDec = HTMELDecoderConformant(bytes: melVlcBytes)
         self.vlcReader = VLCReverseReader(
             melVlcBytes: melVlcBytes, scup: scup)
-        self.magsgnDec = HTMagSgnDecoderPart15(bytes: magsgnBytes)
+        self.magsgnDec = HTMagSgnDecoderConformant(bytes: magsgnBytes)
         self.width = width
         self.height = height
         self.p = p
@@ -116,8 +116,8 @@ fileprivate struct DecodeState {
         c_q: Int, bits: Int, initialLine: Bool
     ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
         let tbl = initialLine
-            ? vlcDecoderTable0Part15
-            : vlcDecoderTable1Part15
+            ? vlcDecoderTable0Conformant
+            : vlcDecoderTable1Conformant
         let idx = (c_q << 7) | (bits & 0x7F)
         let entry = Int(tbl[idx])
         let cwd_len = entry & 0x7
@@ -469,7 +469,7 @@ fileprivate struct DecodeState {
     }
 }
 
-public enum HTBlockDecoderPart15Error: Error {
+public enum HTBlockDecoderConformantError: Error {
     case malformedBlock
 }
 

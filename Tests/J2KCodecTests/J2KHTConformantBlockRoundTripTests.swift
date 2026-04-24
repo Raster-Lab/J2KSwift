@@ -1,4 +1,4 @@
-// J2KHTBlockRoundTripPart15Tests.swift
+// J2KHTBlockRoundTripConformantTests.swift
 // Self round-trip tests for the Part-15 codeblock encoder + decoder.
 //
 // These tests feed coefficients through the cleanup-pass encoder
@@ -10,17 +10,17 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTBlockRoundTripPart15Tests: XCTestCase {
+final class HTBlockRoundTripConformantTests: XCTestCase {
 
     /// All-zero block: MagSgn is empty; the decoder must reconstruct
     /// all zeros. Smallest possible case.
     func testAllZeroRoundTrip() throws {
         let coefs = [UInt32](repeating: 0, count: 8)
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 2, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 4, height: 2, missingMSBs: 0)
         XCTAssertEqual(decoded, [UInt32](repeating: 0, count: 8))
     }
@@ -28,11 +28,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
     /// 1x1 zero: smallest possible block.
     func testSingleZeroRoundTrip() throws {
         let coefs: [UInt32] = [0]
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 1, height: 1, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 1, height: 1, missingMSBs: 0)
         XCTAssertEqual(decoded, [0])
     }
@@ -42,11 +42,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
     /// should round-trip exactly. μ_p=1 → input 0x6000_0000.
     func testSingleBinCenteredPositiveRoundTrip() throws {
         let coefs: [UInt32] = [0x6000_0000]
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 1, height: 1, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 1, height: 1, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -55,11 +55,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
     /// μ_p=1, negative → input = 0xE000_0000.
     func testSingleBinCenteredNegativeRoundTrip() throws {
         let coefs: [UInt32] = [0xE000_0000]
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 1, height: 1, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 1, height: 1, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -71,11 +71,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
         // Two quads, each with one active sample at bin center.
         coefs[0] = 0x6000_0000    // quad 0, sample (0,0): +μ_p=1
         coefs[6] = 0xE000_0000    // quad 1, sample (0,1): -μ_p=1
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 2, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 4, height: 2, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -86,11 +86,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
         var coefs = [UInt32](repeating: 0, count: 16)
         coefs[0] = 0x6000_0000
         coefs[8] = 0x6000_0000
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 8, height: 2, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 8, height: 2, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -99,11 +99,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
     /// path against an encoder with empty eVal/cxVal carryover.
     func testAllZero4x4RoundTrip() throws {
         let coefs = [UInt32](repeating: 0, count: 16)
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 4, height: 4, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -115,11 +115,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
         var coefs = [UInt32](repeating: 0, count: 16)
         coefs[0]  = 0x6000_0000  // (0, 0) in initial quad row
         coefs[9]  = 0xE000_0000  // (1, 2) in subsequent quad row
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 4, height: 4, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
@@ -133,11 +133,11 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
         coefs[9]  = 0x6000_0000
         coefs[18] = 0xE000_0000
         coefs[27] = 0xE000_0000
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: 8, height: 4, missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
-        let decoded = try HTBlockDecoderPart15.decode(
+        let decoded = try HTBlockDecoderConformant.decode(
             block: block, width: 8, height: 4, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }

@@ -1,4 +1,4 @@
-// J2KHTMagSgnCoderPart15.swift
+// J2KHTMagSgnCoderConformant.swift
 // ISO/IEC 15444-15 MagSgn (magnitude-and-sign) stream coder.
 //
 // Ports OpenJPH 0.26's `ms_struct` encoder (`ojph_block_encoder.cpp`)
@@ -29,7 +29,7 @@ import Foundation
 
 /// MagSgn forward bit emitter. Bits are packed LSB-first. After each
 /// `0xFF` byte, the next byte reserves its high bit as a 0 stuff bit.
-public struct HTMagSgnEncoderPart15 {
+public struct HTMagSgnEncoderConformant {
     public private(set) var bytes: [UInt8] = []
     private var tmp: UInt32 = 0
     private var usedBits: Int = 0
@@ -93,7 +93,7 @@ public struct HTMagSgnEncoderPart15 {
 /// byte that follows a `0xFF` byte contributes only 7 bits (its high
 /// bit is a reserved stuff bit). When the byte stream is exhausted,
 /// `0xFF` is fed — matching OpenJPH's `frwd_read<X=0xFF>` convention.
-public struct HTMagSgnDecoderPart15 {
+public struct HTMagSgnDecoderConformant {
     private let bytes: [UInt8]
     private var readIndex: Int = 0
     private var tmp: UInt64 = 0
@@ -143,9 +143,9 @@ public struct HTMagSgnDecoderPart15 {
 /// High-level round-trip helpers for testing. `encodeBits` concatenates
 /// a list of `(codeword, length)` pairs into a MagSgn byte stream;
 /// `decodeBits` reads the same `(length)` widths back.
-public enum HTMagSgnCoderPart15 {
+public enum HTMagSgnCoderConformant {
     public static func encodeBits(_ items: [(value: UInt32, bits: Int)]) -> [UInt8] {
-        var encoder = HTMagSgnEncoderPart15()
+        var encoder = HTMagSgnEncoderConformant()
         for item in items {
             encoder.encode(codeword: item.value, count: item.bits)
         }
@@ -153,7 +153,7 @@ public enum HTMagSgnCoderPart15 {
     }
 
     public static func decodeBits(_ bytes: [UInt8], widths: [Int]) -> [UInt32] {
-        var decoder = HTMagSgnDecoderPart15(bytes: bytes)
+        var decoder = HTMagSgnDecoderConformant(bytes: bytes)
         var out = [UInt32]()
         out.reserveCapacity(widths.count)
         for w in widths {

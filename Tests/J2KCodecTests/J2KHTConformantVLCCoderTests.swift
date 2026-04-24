@@ -1,7 +1,7 @@
-// J2KHTVLCCoderPart15Tests.swift
+// J2KHTVLCCoderConformantTests.swift
 // Unit tests for the ISO/IEC 15444-15 VLC + UVLC codebook primitives.
 //
-// Validates the 2048-entry `vlcTable0Part15` / `vlcTable1Part15`
+// Validates the 2048-entry `vlcTable0Conformant` / `vlcTable1Conformant`
 // lookup tables against hand-computed entries derived from OpenJPH's
 // `table0.h` / `table1.h`, and verifies the 75-entry UVLC codebook
 // against the prefix/suffix/extension structure documented in
@@ -10,21 +10,21 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTVLCCoderPart15Tests: XCTestCase {
+final class HTVLCCoderConformantTests: XCTestCase {
 
     // MARK: - VLC lookup table
 
     /// Guard: index 0 (c_q = 0, rho = 0, emb = 0) must be 0.
     func testTable0GuardZero() {
-        XCTAssertEqual(vlcTable0Part15[0], 0)
-        XCTAssertEqual(vlcTable1Part15[0], 0)
+        XCTAssertEqual(vlcTable0Conformant[0], 0)
+        XCTAssertEqual(vlcTable1Conformant[0], 0)
     }
 
     /// For indices where `(emb & rho) != emb` the guard clause zeroes
     /// the entry. Spot-check: c_q=0, rho=0x1, emb=0x2 → 2 & 1 = 0 != 2.
     func testTable0InvalidEmb() {
         let idx = (0 << 8) | (0x1 << 4) | 0x2
-        XCTAssertEqual(vlcTable0Part15[idx], 0)
+        XCTAssertEqual(vlcTable0Conformant[idx], 0)
     }
 
     /// Table0 entry for c_q=0, rho=1, emb=0 corresponds to the source
@@ -33,7 +33,7 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     func testTable0KnownU0Entry() {
         let idx = (0 << 8) | (0x1 << 4) | 0x0
         let expected: UInt16 = UInt16((0x06 << 8) | (4 << 4) | 0)
-        XCTAssertEqual(vlcTable0Part15[idx], expected)
+        XCTAssertEqual(vlcTable0Conformant[idx], expected)
     }
 
     /// Table0 entry for c_q=0, rho=1, emb=1: u_off=1 row
@@ -41,7 +41,7 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     func testTable0KnownU1Entry() {
         let idx = (0 << 8) | (0x1 << 4) | 0x1
         let expected: UInt16 = UInt16((0x3F << 8) | (7 << 4) | 0x1)
-        XCTAssertEqual(vlcTable0Part15[idx], expected)
+        XCTAssertEqual(vlcTable0Conformant[idx], expected)
     }
 
     /// Table1 entry for c_q=0, rho=1, emb=0 corresponds to the source
@@ -49,12 +49,12 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     func testTable1KnownU0Entry() {
         let idx = (0 << 8) | (0x1 << 4) | 0x0
         let expected: UInt16 = UInt16((0x00 << 8) | (3 << 4) | 0)
-        XCTAssertEqual(vlcTable1Part15[idx], expected)
+        XCTAssertEqual(vlcTable1Conformant[idx], expected)
     }
 
-    /// Verify `HTVLCCoderPart15.lookupQuad` unpacks entries correctly.
+    /// Verify `HTVLCCoderConformant.lookupQuad` unpacks entries correctly.
     func testLookupQuadUnpack() {
-        let (cwd, len, ek) = HTVLCCoderPart15.lookupQuad(
+        let (cwd, len, ek) = HTVLCCoderConformant.lookupQuad(
             initialLine: true, c_q: 0, rho: 0x1, emb: 0x1)
         XCTAssertEqual(cwd, 0x3F)
         XCTAssertEqual(len, 7)
@@ -78,7 +78,7 @@ final class HTVLCCoderPart15Tests: XCTestCase {
             + Array(repeating: 3 + 5 + 4, count: 75 - 33) // u in 33..74
 
         for u in 0..<75 {
-            let e = uvlcTablePart15[u]
+            let e = uvlcTableConformant[u]
             let actual = Int(e.preLen) + Int(e.sufLen) + Int(e.extLen)
             XCTAssertEqual(actual, expectedTotalBits[u],
                            "u=\(u) total bits")
@@ -87,27 +87,27 @@ final class HTVLCCoderPart15Tests: XCTestCase {
 
     /// Specific entries documented in `uvlc_init_tables`.
     func testUVLCEntries0Through4() {
-        XCTAssertEqual(uvlcTablePart15[0].pre,    0)
-        XCTAssertEqual(uvlcTablePart15[0].preLen, 0)
-        XCTAssertEqual(uvlcTablePart15[1].pre,    1)
-        XCTAssertEqual(uvlcTablePart15[1].preLen, 1)
-        XCTAssertEqual(uvlcTablePart15[2].pre,    2)
-        XCTAssertEqual(uvlcTablePart15[2].preLen, 2)
-        XCTAssertEqual(uvlcTablePart15[3].pre,    4)
-        XCTAssertEqual(uvlcTablePart15[3].preLen, 3)
-        XCTAssertEqual(uvlcTablePart15[3].suf,    0)
-        XCTAssertEqual(uvlcTablePart15[3].sufLen, 1)
-        XCTAssertEqual(uvlcTablePart15[4].suf,    1)
+        XCTAssertEqual(uvlcTableConformant[0].pre,    0)
+        XCTAssertEqual(uvlcTableConformant[0].preLen, 0)
+        XCTAssertEqual(uvlcTableConformant[1].pre,    1)
+        XCTAssertEqual(uvlcTableConformant[1].preLen, 1)
+        XCTAssertEqual(uvlcTableConformant[2].pre,    2)
+        XCTAssertEqual(uvlcTableConformant[2].preLen, 2)
+        XCTAssertEqual(uvlcTableConformant[3].pre,    4)
+        XCTAssertEqual(uvlcTableConformant[3].preLen, 3)
+        XCTAssertEqual(uvlcTableConformant[3].suf,    0)
+        XCTAssertEqual(uvlcTableConformant[3].sufLen, 1)
+        XCTAssertEqual(uvlcTableConformant[4].suf,    1)
     }
 
     /// u = 5..32: prefix is always 0 with 3 bits, suffix is `u - 5`.
     func testUVLCMidRange() {
         for u in 5..<33 {
-            XCTAssertEqual(uvlcTablePart15[u].pre,    0,  "u=\(u)")
-            XCTAssertEqual(uvlcTablePart15[u].preLen, 3,  "u=\(u)")
-            XCTAssertEqual(uvlcTablePart15[u].suf,    UInt8(u - 5), "u=\(u)")
-            XCTAssertEqual(uvlcTablePart15[u].sufLen, 5,  "u=\(u)")
-            XCTAssertEqual(uvlcTablePart15[u].extLen, 0,  "u=\(u)")
+            XCTAssertEqual(uvlcTableConformant[u].pre,    0,  "u=\(u)")
+            XCTAssertEqual(uvlcTableConformant[u].preLen, 3,  "u=\(u)")
+            XCTAssertEqual(uvlcTableConformant[u].suf,    UInt8(u - 5), "u=\(u)")
+            XCTAssertEqual(uvlcTableConformant[u].sufLen, 5,  "u=\(u)")
+            XCTAssertEqual(uvlcTableConformant[u].extLen, 0,  "u=\(u)")
         }
     }
 
@@ -116,7 +116,7 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     /// reused cyclically in `28..31`.
     func testUVLCHighRange() {
         for u in 33..<75 {
-            let e = uvlcTablePart15[u]
+            let e = uvlcTableConformant[u]
             XCTAssertEqual(e.preLen, 3, "u=\(u)")
             XCTAssertEqual(e.sufLen, 5, "u=\(u)")
             XCTAssertEqual(e.extLen, 4, "u=\(u)")
@@ -131,8 +131,8 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     /// produce any extra bytes beyond the 0xFF sentinel frame, since
     /// u = 0 carries zero bits.
     func testEncodeUVLCZeroProducesNoPayload() {
-        var emitter = HTReverseBitEmitterPart15()
-        HTVLCCoderPart15.encodeUVLC(u: 0, into: &emitter)
+        var emitter = HTReverseBitEmitterConformant()
+        HTVLCCoderConformant.encodeUVLC(u: 0, into: &emitter)
         let bytes = emitter.finish()
         // The reverse emitter seeds with an initial sentinel byte and
         // a nibble of framing bits; emitting zero VLC bits cannot add
@@ -145,8 +145,8 @@ final class HTVLCCoderPart15Tests: XCTestCase {
     /// bits land in the single framing byte; no new byte should be
     /// appended.
     func testEncodeUVLCSmallUFitsInFrame() {
-        var emitter = HTReverseBitEmitterPart15()
-        HTVLCCoderPart15.encodeUVLC(u: 4, into: &emitter)
+        var emitter = HTReverseBitEmitterConformant()
+        HTVLCCoderConformant.encodeUVLC(u: 4, into: &emitter)
         let bytes = emitter.finish()
         XCTAssertLessThanOrEqual(bytes.count, 2)
     }

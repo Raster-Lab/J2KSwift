@@ -1,4 +1,4 @@
-// J2KHTBlockEncoderPart15.swift
+// J2KHTBlockEncoderConformant.swift
 // ISO/IEC 15444-15 cleanup-pass codeblock encoder (scalar, 32-bit).
 //
 // Ports OpenJPH 0.26's `ojph_encode_codeblock32` from
@@ -20,8 +20,8 @@ import Foundation
 
 /// Cleanup-pass codeblock encoder (32-bit signed-magnitude path).
 /// Produces the three Part-15 sub-streams separately; wrap with
-/// `HTBlockLayoutPart15.assemble` to get the final on-wire block.
-public enum HTBlockEncoderPart15 {
+/// `HTBlockLayoutConformant.assemble` to get the final on-wire block.
+public enum HTBlockEncoderConformant {
 
     /// Encode a codeblock's cleanup pass.
     ///
@@ -34,7 +34,7 @@ public enum HTBlockEncoderPart15 {
     ///     sign-magnitude representation (= `Kmsbs` / "missing MSBs"
     ///     from ITU T.814).
     /// - Returns: `(magsgn, mel, vlc)` tuple, each ready to hand to
-    ///   `HTBlockLayoutPart15.assemble`. Note: `vlc` is in forward
+    ///   `HTBlockLayoutConformant.assemble`. Note: `vlc` is in forward
     ///   on-wire byte order (ending with `0xFF` sentinel).
     public static func encode(
         coefficients: [UInt32],
@@ -46,9 +46,9 @@ public enum HTBlockEncoderPart15 {
                      "coefficient count mismatch")
         precondition(missingMSBs < 30, "missingMSBs must leave room for data")
 
-        var magsgnEnc = HTMagSgnEncoderPart15()
-        var melEnc = HTMELEncoderPart15()
-        var vlcEnc = HTReverseBitEmitterPart15()
+        var magsgnEnc = HTMagSgnEncoderConformant()
+        var melEnc = HTMELEncoderConformant()
+        var vlcEnc = HTReverseBitEmitterConformant()
 
         let p = UInt32(30 - missingMSBs)
 
@@ -147,7 +147,7 @@ public enum HTBlockEncoderPart15 {
                 cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
                 cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
 
-                let tuple0 = Int(vlcTable0Part15[
+                let tuple0 = Int(vlcTable0Conformant[
                     (c_q0 << 8) | (rho0 << 4) | eps0])
                 vlcEnc.encode(codeword: tuple0 >> 8, count: (tuple0 >> 4) & 0x7)
 
@@ -189,7 +189,7 @@ public enum HTBlockEncoderPart15 {
                     cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
                     cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
 
-                    let tuple1 = Int(vlcTable0Part15[
+                    let tuple1 = Int(vlcTable0Conformant[
                         (c_q1 << 8) | (rho1 << 4) | eps1])
                     vlcEnc.encode(codeword: tuple1 >> 8, count: (tuple1 >> 4) & 0x7)
 
@@ -214,20 +214,20 @@ public enum HTBlockEncoderPart15 {
                     melEnc.encode(eventIsOne: min(u_q0, u_q1) > 2)
                 }
                 if u_q0 > 2 && u_q1 > 2 {
-                    let e0 = uvlcTablePart15[u_q0 - 2]
-                    let e1 = uvlcTablePart15[u_q1 - 2]
+                    let e0 = uvlcTableConformant[u_q0 - 2]
+                    let e1 = uvlcTableConformant[u_q1 - 2]
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
                     vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
                     vlcEnc.encode(codeword: Int(e1.suf), count: Int(e1.sufLen))
                 } else if u_q0 > 2 && u_q1 > 0 {
-                    let e0 = uvlcTablePart15[u_q0]
+                    let e0 = uvlcTableConformant[u_q0]
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
                     vlcEnc.encode(codeword: u_q1 - 1, count: 1)
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
                 } else {
-                    let e0 = uvlcTablePart15[u_q0]
-                    let e1 = uvlcTablePart15[u_q1]
+                    let e0 = uvlcTableConformant[u_q0]
+                    let e1 = uvlcTableConformant[u_q1]
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
                     vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
@@ -272,7 +272,7 @@ public enum HTBlockEncoderPart15 {
                 var c_q1 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
                 cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
 
-                let tuple0 = Int(vlcTable1Part15[
+                let tuple0 = Int(vlcTable1Conformant[
                     (c_q0 << 8) | (rho0 << 4) | eps0])
                 vlcEnc.encode(codeword: tuple0 >> 8, count: (tuple0 >> 4) & 0x7)
                 if c_q0 == 0 {
@@ -313,7 +313,7 @@ public enum HTBlockEncoderPart15 {
                     c_q0 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
                     cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
 
-                    let tuple1 = Int(vlcTable1Part15[
+                    let tuple1 = Int(vlcTable1Conformant[
                         (c_q1 << 8) | (rho1 << 4) | eps1])
                     vlcEnc.encode(codeword: tuple1 >> 8, count: (tuple1 >> 4) & 0x7)
                     if c_q1 == 0 {
@@ -332,8 +332,8 @@ public enum HTBlockEncoderPart15 {
                 }
 
                 // Subsequent rows use unconditional UVLC per quad.
-                let e0 = uvlcTablePart15[u_q0]
-                let e1 = uvlcTablePart15[u_q1]
+                let e0 = uvlcTableConformant[u_q0]
+                let e1 = uvlcTableConformant[u_q1]
                 vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
                 vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
                 vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))

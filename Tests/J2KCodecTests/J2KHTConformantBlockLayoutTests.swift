@@ -1,4 +1,4 @@
-// J2KHTBlockLayoutPart15Tests.swift
+// J2KHTBlockLayoutConformantTests.swift
 // Unit tests for the ISO/IEC 15444-15 codeblock layout assembler
 // and parser. Validates Scup round-trip, stream region offsets, and
 // boundary/error conditions.
@@ -6,7 +6,7 @@
 import XCTest
 @testable import J2KCodec
 
-final class HTBlockLayoutPart15Tests: XCTestCase {
+final class HTBlockLayoutConformantTests: XCTestCase {
 
     // MARK: - Assembly + parse round-trip
 
@@ -15,11 +15,11 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
         let mel:    [UInt8] = [0x10, 0x20, 0x30]
         let vlc:    [UInt8] = [0xAA, 0xBB, 0xCC, 0xFF]   // last = sentinel
 
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: magsgn, mel: mel, vlc: vlc)
         XCTAssertEqual(block.count, magsgn.count + mel.count + vlc.count)
 
-        guard let parsed = HTBlockLayoutPart15.parse(block: block) else {
+        guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
             XCTFail("parse returned nil for valid block")
             return
         }
@@ -38,7 +38,7 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
         // scup low-nibble merge + high-byte clobber.
         let vlc:    [UInt8] = [0xAA, 0x50, 0xFF] // high nibble of 0x50 = 0x5
         let scup = mel.count + vlc.count             // 6
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: magsgn, mel: mel, vlc: vlc)
         let lcup = block.count
 
@@ -56,9 +56,9 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
         // Need scup = 4080 = mel + vlc. Any split works.
         let mel = [UInt8](repeating: 0x00, count: 2000)
         let vlc = [UInt8](repeating: 0x00, count: 2080)
-        XCTAssertThrowsError(try HTBlockLayoutPart15.assemble(
+        XCTAssertThrowsError(try HTBlockLayoutConformant.assemble(
             magsgn: [], mel: mel, vlc: vlc)) { err in
-            XCTAssertEqual(err as? HTBlockLayoutPart15Error,
+            XCTAssertEqual(err as? HTBlockLayoutConformantError,
                            .scupOutOfRange(4080))
         }
     }
@@ -68,9 +68,9 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
     func testScupAtUpperBoundarySucceeds() throws {
         let mel = [UInt8](repeating: 0x00, count: 2000)
         let vlc = [UInt8](repeating: 0x55, count: 2079)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: [], mel: mel, vlc: vlc)
-        guard let parsed = HTBlockLayoutPart15.parse(block: block) else {
+        guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
             XCTFail("parse returned nil for valid block"); return
         }
         XCTAssertEqual(parsed.scup, 4079)
@@ -80,8 +80,8 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
 
     /// Parse must reject blocks that are too short to contain Scup.
     func testParseRejectsEmptyBlock() {
-        XCTAssertNil(HTBlockLayoutPart15.parse(block: []))
-        XCTAssertNil(HTBlockLayoutPart15.parse(block: [0x00]))
+        XCTAssertNil(HTBlockLayoutConformant.parse(block: []))
+        XCTAssertNil(HTBlockLayoutConformant.parse(block: [0x00]))
     }
 
     /// Parse must reject blocks whose Scup value is > block length.
@@ -91,15 +91,15 @@ final class HTBlockLayoutPart15Tests: XCTestCase {
         var block = [UInt8](repeating: 0x00, count: 10)
         block[9] = 0x0F
         block[8] = 0x0F // low nibble = 0xF
-        XCTAssertNil(HTBlockLayoutPart15.parse(block: block))
+        XCTAssertNil(HTBlockLayoutConformant.parse(block: block))
     }
 
     /// Assembly must reject too-small streams where Scup would
     /// collapse below 2 bytes.
     func testAssembleRejectsTinyStreams() {
-        XCTAssertThrowsError(try HTBlockLayoutPart15.assemble(
+        XCTAssertThrowsError(try HTBlockLayoutConformant.assemble(
             magsgn: [], mel: [0x01], vlc: [])) { err in
-            XCTAssertEqual(err as? HTBlockLayoutPart15Error,
+            XCTAssertEqual(err as? HTBlockLayoutConformantError,
                            .scupOutOfRange(1))
         }
     }

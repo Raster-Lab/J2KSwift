@@ -1,4 +1,4 @@
-// J2KHTMELCoderPart15.swift
+// J2KHTMELCoderConformant.swift
 // ISO/IEC 15444-15 (HTJ2K) MEL coder.
 //
 // Ports OpenJPH 0.26's `mel_struct` encoder (`ojph_block_encoder.cpp`)
@@ -24,17 +24,17 @@ import Foundation
 /// Shared MEL exponent table: threshold at state `k` is `1 << melExp[k]`.
 /// State 12 caps out at exponent 5 (threshold 32).
 @usableFromInline
-internal let melExpPart15: [Int] = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5]
+internal let melExpConformant: [Int] = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5]
 
 // MARK: - Encoder
 
 /// MEL-stream encoder producing FF-stuffed output bytes. Feed binary
 /// events via `encode(eventIsOne:)`; call `finish()` to flush.
-public struct HTMELEncoderPart15 {
-    private var emitter = HTForwardBitEmitterPart15()
+public struct HTMELEncoderConformant {
+    private var emitter = HTForwardBitEmitterConformant()
     private var state: Int = 0
     private var run: Int = 0
-    private var threshold: Int = 1  // 1 << melExpPart15[0]
+    private var threshold: Int = 1  // 1 << melExpConformant[0]
 
     public init() {}
 
@@ -47,18 +47,18 @@ public struct HTMELEncoderPart15 {
                 emitter.emit(bit: 1)
                 run = 0
                 state = min(12, state + 1)
-                threshold = 1 << melExpPart15[state]
+                threshold = 1 << melExpConformant[state]
             }
         } else {
             emitter.emit(bit: 0)
-            var t = melExpPart15[state]
+            var t = melExpConformant[state]
             while t > 0 {
                 t -= 1
                 emitter.emit(bit: (run >> t) & 1)
             }
             run = 0
             state = max(0, state - 1)
-            threshold = 1 << melExpPart15[state]
+            threshold = 1 << melExpConformant[state]
         }
     }
 
@@ -81,8 +81,8 @@ public struct HTMELEncoderPart15 {
 /// successive calls to `nextRun()` return packed run values where the
 /// low bit is a terminator flag and the upper bits hold the event
 /// count. Callers consume events by subtracting 2 per event and
-/// checking `run == -1` for the terminator — see `HTMELCoderPart15`.
-public struct HTMELDecoderPart15 {
+/// checking `run == -1` for the terminator — see `HTMELCoderConformant`.
+public struct HTMELDecoderConformant {
     private let bytes: [UInt8]
     private var readIndex: Int = 0
     private var tmp: UInt64 = 0         // bit buffer, MSB-first consumption
@@ -115,7 +115,7 @@ public struct HTMELDecoderPart15 {
         if bits < 6 {
             refill()
         }
-        let eval = melExpPart15[state]
+        let eval = melExpConformant[state]
         var run: Int
         if (tmp & (UInt64(1) << 63)) != 0 {
             // 1-bit: threshold consecutive zero events, no terminator.
@@ -166,10 +166,10 @@ public struct HTMELDecoderPart15 {
 /// an explicit list of events (`false` = 0, `true` = 1) and
 /// `decodeEvents` reconstructs the original list given an expected
 /// event count, mirroring OpenJPH's caller-side MEL consumption.
-public enum HTMELCoderPart15 {
+public enum HTMELCoderConformant {
     /// Encode a list of MEL events, returning the raw byte stream.
     public static func encodeEvents(_ events: [Bool]) -> [UInt8] {
-        var encoder = HTMELEncoderPart15()
+        var encoder = HTMELEncoderConformant()
         for e in events {
             encoder.encode(eventIsOne: e)
         }
@@ -178,7 +178,7 @@ public enum HTMELCoderPart15 {
 
     /// Decode `count` MEL events from `bytes`.
     public static func decodeEvents(_ bytes: [UInt8], count: Int) -> [Bool] {
-        var decoder = HTMELDecoderPart15(bytes: bytes)
+        var decoder = HTMELDecoderConformant(bytes: bytes)
         var events: [Bool] = []
         events.reserveCapacity(count)
         var run = decoder.nextRun()

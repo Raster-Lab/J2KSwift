@@ -1,4 +1,4 @@
-// J2KHTPart15Tables.swift
+// J2KHTConformantTables.swift
 // ISO/IEC 15444-15 VLC + UVLC codebooks.
 //
 // Ports OpenJPH 0.26's `table0.h`, `table1.h` raw entries and the
@@ -963,17 +963,17 @@ internal func buildVLCDecoderLookup(from src: [VLCSrc]) -> [UInt16] {
 
 /// Lazily-initialized VLC / UVLC lookup tables. Building is pure so a
 /// simple `let` binding suffices for thread-safe one-shot init.
-internal let vlcTable0Part15: [UInt16] = buildVLCLookup(from: vlcSrcTable0)
+internal let vlcTable0Conformant: [UInt16] = buildVLCLookup(from: vlcSrcTable0)
 
-internal let vlcTable1Part15: [UInt16] = buildVLCLookup(from: vlcSrcTable1)
+internal let vlcTable1Conformant: [UInt16] = buildVLCLookup(from: vlcSrcTable1)
 
 /// Decoder-side reverse-lookup tables keyed by `(c_q, cwd_bits)`.
 /// ~1 cycle per codeword lookup vs O(n) linear scan over the source
 /// table. 15–20× decode speedup on blocks with many codewords.
-internal let vlcDecoderTable0Part15: [UInt16]
+internal let vlcDecoderTable0Conformant: [UInt16]
     = buildVLCDecoderLookup(from: vlcSrcTable0)
 
-internal let vlcDecoderTable1Part15: [UInt16]
+internal let vlcDecoderTable1Conformant: [UInt16]
     = buildVLCDecoderLookup(from: vlcSrcTable1)
 
-internal let uvlcTablePart15: [UVLCEntry] = buildUVLCTable()
+internal let uvlcTableConformant: [UVLCEntry] = buildUVLCTable()

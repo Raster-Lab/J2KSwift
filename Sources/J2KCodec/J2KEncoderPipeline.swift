@@ -2647,8 +2647,8 @@ struct EncoderPipeline: Sendable {
     /// - Returns: A `J2KCodeBlock` with HT-encoded data.
     /// - Throws: ``J2KError/encodingError(_:)`` if HT encoding fails.
     private func encodeCodeBlockHTJ2K(_ pending: PendingCodeBlock) throws -> J2KCodeBlock {
-        if config.htj2kBlockFormat == .part15 {
-            return try encodeCodeBlockPart15(pending)
+        if config.htj2kBlockFormat == .conformant {
+            return try encodeCodeBlockConformant(pending)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
@@ -2794,7 +2794,7 @@ struct EncoderPipeline: Sendable {
     /// QCD writer emits `SPqcd = bitDepth + gain` without OpenJPH's
     /// `- guardBits` subtraction), so the encoder/decoder shift is
     /// consistent as long as we use `pending.bitDepth` directly.
-    private func encodeCodeBlockPart15(_ pending: PendingCodeBlock) throws
+    private func encodeCodeBlockConformant(_ pending: PendingCodeBlock) throws
         -> J2KCodeBlock
     {
         let count = pending.width * pending.height
@@ -2838,19 +2838,19 @@ struct EncoderPipeline: Sendable {
         // Convert pipeline's Int32 2's-complement coefficients to
         // OpenJPH sign-magnitude convention: `sign_bit | |v| << shift`
         // (matches `gen_rev_tx_to_cb32` in OpenJPH 0.26).
-        var part15In = [UInt32](repeating: 0, count: count)
+        var conformantIn = [UInt32](repeating: 0, count: count)
         for i in 0..<count {
             let v = pending.coefficients[i]
             let sign: UInt32 = (v < 0) ? 0x8000_0000 : 0
             let mag = UInt32(v < 0 ? -Int64(v) : Int64(v))
-            part15In[i] = sign | (mag << shift)
+            conformantIn[i] = sign | (mag << shift)
         }
 
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
-            coefficients: part15In,
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
+            coefficients: conformantIn,
             width: pending.width, height: pending.height,
             missingMSBs: missingMSBs)
-        let blockBytes = try HTBlockLayoutPart15.assemble(
+        let blockBytes = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
 
         // zeroBitPlanes is encoded into the packet-header tag tree as
@@ -2895,8 +2895,8 @@ struct EncoderPipeline: Sendable {
         vlc: inout HTVLCCoder,
         magsgn: inout HTMagSgnCoder
     ) throws -> J2KCodeBlock {
-        if config.htj2kBlockFormat == .part15 {
-            return try encodeCodeBlockPart15(pending)
+        if config.htj2kBlockFormat == .conformant {
+            return try encodeCodeBlockConformant(pending)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
@@ -3546,7 +3546,7 @@ struct EncoderPipeline: Sendable {
             // rather than `B + G + guard_bits - 1`. Align our codestream
             // with that convention when Part-15 is selected so OpenJPH
             // reads back the same K_max our Part-15 block encoder used.
-            let epsilonBias = (config.htj2kBlockFormat == .part15) ? guardBits : 0
+            let epsilonBias = (config.htj2kBlockFormat == .conformant) ? guardBits : 0
 
             // LL subband at coarsest level
             let epsilonLL = UInt8(max(1, bitDepth - epsilonBias))

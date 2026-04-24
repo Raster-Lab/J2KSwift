@@ -1,4 +1,4 @@
-// J2KHTBlockBenchmarkPart15Tests.swift
+// J2KHTBlockBenchmarkConformantTests.swift
 // Throughput benchmarks for the ISO/IEC 15444-15 block coder.
 //
 // Measures encode / decode wall-clock time across representative
@@ -15,7 +15,7 @@ import XCTest
 import Foundation
 @testable import J2KCodec
 
-final class HTBlockBenchmarkPart15Tests: XCTestCase {
+final class HTBlockBenchmarkConformantTests: XCTestCase {
 
     // MARK: - Helpers
 
@@ -89,11 +89,11 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let iters = 500
 
         let stats = timeIt(iterations: iters) {
-            _ = HTBlockEncoderPart15.encode(
+            _ = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: width, height: height,
                 missingMSBs: 0)
         }
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: 0)
         report("encode 32x32 @ 50%",
@@ -110,11 +110,11 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let iters = 200
 
         let stats = timeIt(iterations: iters) {
-            _ = HTBlockEncoderPart15.encode(
+            _ = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: width, height: height,
                 missingMSBs: 0)
         }
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: 0)
         report("encode 64x64 @ 25%",
@@ -129,11 +129,11 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let iters = 2000
 
         let stats = timeIt(iterations: iters) {
-            _ = HTBlockEncoderPart15.encode(
+            _ = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: width, height: height,
                 missingMSBs: 0)
         }
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: 0)
         report("encode 32x32 all-zeros",
@@ -149,15 +149,15 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let width = 32, height = 32
         let coefs = Self.makeCoefficients(
             width: width, height: height, density: 0.5, seed: 0x1234)
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
         let iters = 100  // Reference decoder is slow.
 
         let stats = timeIt(iterations: iters) {
-            _ = try? HTBlockDecoderPart15.decode(
+            _ = try? HTBlockDecoderConformant.decode(
                 block: block, width: width, height: height,
                 missingMSBs: 0)
         }
@@ -168,15 +168,15 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let width = 64, height = 64
         let coefs = Self.makeCoefficients(
             width: width, height: height, density: 0.25, seed: 0x5678)
-        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
             coefficients: coefs, width: width, height: height,
             missingMSBs: 0)
-        let block = try HTBlockLayoutPart15.assemble(
+        let block = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
         let iters = 50
 
         let stats = timeIt(iterations: iters) {
-            _ = try? HTBlockDecoderPart15.decode(
+            _ = try? HTBlockDecoderConformant.decode(
                 block: block, width: width, height: height,
                 missingMSBs: 0)
         }
@@ -193,12 +193,12 @@ final class HTBlockBenchmarkPart15Tests: XCTestCase {
         let iters = 100
 
         let stats = timeIt(iterations: iters) {
-            let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
                 coefficients: coefs, width: width, height: height,
                 missingMSBs: 0)
-            if let block = try? HTBlockLayoutPart15.assemble(
+            if let block = try? HTBlockLayoutConformant.assemble(
                 magsgn: ms, mel: mel, vlc: vlc) {
-                _ = try? HTBlockDecoderPart15.decode(
+                _ = try? HTBlockDecoderConformant.decode(
                     block: block, width: width, height: height,
                     missingMSBs: 0)
             }
