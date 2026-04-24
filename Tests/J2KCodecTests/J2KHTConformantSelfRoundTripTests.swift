@@ -206,12 +206,11 @@ final class J2KHTConformantSelfRoundTripTests: XCTestCase {
         for i in 0..<pixels.count {
             state &*= 6364136223846793005
             state &+= 1442695040888963407
-            // Keep pixels in [1, 255] to avoid the documented 8-bit
-            // K_max=7 overflow: sample value 0 decodes to 128 because
-            // |DC-shift(0)| = 128 = 2^7 exceeds the 7-bit magnitude
-            // range (OpenJPH has the same behavior).
-            let byte = UInt8((state >> 56) & 0xFF)
-            pixels[i] = byte == 0 ? 1 : byte
+            // v5.1.1 bumped the conformant K_max by 1, so the
+            // historical 8-bit pixel-0 edge case (|DC-shift(0)| = 128
+            // overflowing K_max=7) no longer applies and the full
+            // byte range round-trips bit-exactly.
+            pixels[i] = UInt8((state >> 56) & 0xFF)
         }
         let image = makeGrayscale(width: w, height: h, pixels: pixels)
 
