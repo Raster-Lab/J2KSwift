@@ -12,16 +12,13 @@
 
 import Foundation
 
-/// Forward bit reader for the MEL stream (shared with the M2
-/// decoder). Re-exported here as a thin alias to keep the
-/// block-decoder's API self-contained.
 public enum HTBlockDecoderPart15 {
 
     /// Decode a Part-15 codeblock produced by
-    /// `HTBlockEncoderPart15.encode` followed by
-    /// `HTBlockLayoutPart15.assemble`. Returns the reconstructed
-    /// `width * height` coefficient array in OpenJPH sign-magnitude
-    /// convention (bit 31 = sign, magnitude in bits below `p`).
+    /// `HTBlockEncoderPart15.encode` + `HTBlockLayoutPart15.assemble`.
+    /// Returns the reconstructed `width * height` coefficient array
+    /// in OpenJPH sign-magnitude convention (bit 31 = sign, magnitude
+    /// in bits below `p = 30 - missingMSBs`).
     public static func decode(
         block: [UInt8],
         width: Int,
@@ -35,312 +32,384 @@ public enum HTBlockDecoderPart15 {
         let melVlcBytes = Array(parsed.melVlc)
         let scup = parsed.scup
 
-        // MEL reads forward from the start of the MEL+VLC region.
-        // VLC reads backward from the end (after the Scup bytes).
-        // For the reverse-VLC reader we need a forward bit reader
-        // starting at the end of the block and progressing toward
-        // the front — we materialize the VLC bit stream by reading
-        // bits LSB-first from `block[lcup-2]`'s high nibble then
-        // back through earlier bytes.
-        //
-        // Because my reference decoder doesn't need tight buffer
-        // management, I rematerialize both streams as `[UInt8]` and
-        // parse linearly.
+        var state = DecodeState(
+            melVlcBytes: melVlcBytes, scup: scup, magsgnBytes: magsgnBytes,
+            width: width, height: height,
+            p: UInt32(30 - missingMSBs))
 
-        var melDec = HTMELDecoderPart15(bytes: melVlcBytes)
-        var vlcReader = VLCReverseReader(melVlcBytes: melVlcBytes, scup: scup)
-        var magsgnDec = HTMagSgnDecoderPart15(bytes: magsgnBytes)
+        // Initial quad row (y = 0, 1) uses table0 with implicit
+        // kappa = 1.
+        state.decodeInitialRow()
 
-        let p = UInt32(30 - missingMSBs)
-
-        var coefs = [UInt32](repeating: 0, count: width * height)
-
-        // Build "decoder lookups" from the source tables on demand:
-        // given (c_q, next bits, is-initial-row), find the matching
-        // `(rho, u_off, cwd_len, e_k, e_1)`.
-        func lookup(
-            c_q: Int,
-            bits: Int,
-            initialLine: Bool
-        ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
-            let src = initialLine ? vlcSrcTable0 : vlcSrcTable1
-            var best: VLCSrc? = nil
-            for e in src where e.c_q == c_q {
-                let mask = (1 << e.cwd_len) - 1
-                if (bits & mask) == e.cwd {
-                    // Last match wins (mirrors OpenJPH's
-                    // overwrite-on-collision decoder-table build).
-                    best = e
-                }
-            }
-            guard let b = best else {
-                preconditionFailure(
-                    "no VLC match for c_q=\(c_q) bits=0x\(String(bits, radix: 16))")
-            }
-            return (b.rho, b.u_off, b.cwd_len, b.e_k, b.e_1)
+        // Subsequent quad rows (y = 2, 4, ...) use table1. max_e
+        // and c_q0 flow from eVal/cxVal buffers populated by the
+        // previous row.
+        var y = 2
+        while y < height {
+            state.decodeSubsequentRow(y: y)
+            y += 2
         }
 
-        /// MEL run state: repeatedly produce events via the run
-        /// packing convention.
-        var melRun = melDec.nextRun()
-        func nextMELEvent() -> Bool {
-            melRun -= 2
-            let isOne = (melRun == -1)
-            if melRun < 0 {
-                melRun = melDec.nextRun()
-            }
-            return isOne
-        }
+        return state.coefs
+    }
+}
 
-        // Decode a U-value from the reverse VLC stream. Mirrors
-        // OpenJPH's per-quad UVLC prefix+suffix layout. For a pair
-        // of quads, OpenJPH emits in the order:
-        //    pre_q0, pre_q1, suf_q0, suf_q1
-        // with u_q0 > 2 && u_q1 > 2 using tbl[u-2] entries, the
-        // (>2, >0) asymmetric case using tbl[u_q0] + 1-bit for q1,
-        // and the default using tbl[u_q0] + tbl[u_q1].
-        //
-        // Decoding requires knowing which branch was taken — which
-        // depends on u_off flags from the VLC tuple plus MEL events
-        // (for initial row when both u_offs are set).
-        func decodeUVLCPair(
-            u_off0: Int,
-            u_off1: Int,
-            initialRow: Bool
-        ) -> (Int, Int) {
-            if u_off0 == 0 && u_off1 == 0 {
-                return (0, 0)
-            }
-            // Read u-prefix unary for each active u_off. Prefix is
-            // 1..3 bits depending on value: "1" = 1, "01" = 2,
-            // "001" = 3, "000" = 4.
-            func readPrefix() -> Int {
-                let b0 = Int(vlcReader.read(count: 1))
-                if b0 == 1 { return 1 }
-                let b1 = Int(vlcReader.read(count: 1))
-                if b1 == 1 { return 2 }
-                let b2 = Int(vlcReader.read(count: 1))
-                if b2 == 1 { return 3 }
-                return 4
-            }
-            if initialRow && u_off0 == 1 && u_off1 == 1 {
-                // MEL event tells us whether u_q0 > 2 || u_q1 > 2.
-                let melEvent = nextMELEvent()
-                if melEvent {
-                    // min(u_q0, u_q1) > 2: both use tbl[u-2] layout.
-                    let pre0 = readPrefix()
-                    let pre1 = readPrefix()
-                    let u0 = decodeFromPrefix(pre0) + 2
-                    let u1 = decodeFromPrefix(pre1) + 2
-                    return (u0, u1)
-                } else {
-                    // At least one <= 2.
-                    let pre0 = readPrefix()
-                    let u0Candidate = decodeFromPrefix(pre0)
-                    if u0Candidate > 2 {
-                        // u_q0 > 2, u_q1 ∈ {1, 2} — 1-bit for q1.
-                        let bit = Int(vlcReader.read(count: 1))
-                        return (u0Candidate, bit + 1)
-                    }
-                    let pre1 = readPrefix()
-                    let u1Candidate = decodeFromPrefix(pre1)
-                    return (u0Candidate, u1Candidate)
-                }
-            } else {
-                // Non-initial row or u_off = 0 for one quad.
-                let u0: Int
-                let u1: Int
-                if u_off0 != 0 {
-                    let p0 = readPrefix()
-                    u0 = decodeFromPrefix(p0)
-                } else {
-                    u0 = 0
-                }
-                if u_off1 != 0 {
-                    let p1 = readPrefix()
-                    u1 = decodeFromPrefix(p1)
-                } else {
-                    u1 = 0
-                }
-                return (u0, u1)
-            }
-        }
+// MARK: - Decode state machine
 
-        // Prefix-to-u decoding for u ∈ 0..4: prefix length 1..4
-        // maps to 1..4. (u = 0 yields no prefix, handled by caller
-        // via u_off == 0.)
-        func decodeFromPrefix(_ len: Int) -> Int {
-            // OpenJPH's uvlc_tbl encoding: u=1 → "1", u=2 → "10",
-            // u=3 → "100" + "0" suffix, u=4 → "100" + "1" suffix.
-            // So the 3-bit "001" prefix means "u ∈ {3, 4}" and we
-            // read 1 more suffix bit; otherwise u == len directly.
-            if len == 3 {
-                let suf = Int(vlcReader.read(count: 1))
-                return 3 + suf
-            }
-            if len == 4 {
-                // 4-bit "0001" prefix → u ∈ {5..36} via 5-bit suffix
-                // + optional 4-bit extension for u >= 33.
-                let suf = Int(vlcReader.read(count: 5))
-                if suf < 28 {
-                    return 5 + suf
-                }
-                let ext = Int(vlcReader.read(count: 4))
-                return 33 + (suf - 28) + 4 * ext
-            }
-            return len
-        }
+/// All mutable state for a codeblock decode session. Holds the three
+/// stream readers, scratch buffers for inter-row context, and the
+/// output coefficient array.
+fileprivate struct DecodeState {
+    var melDec: HTMELDecoderPart15
+    var vlcReader: VLCReverseReader
+    var magsgnDec: HTMagSgnDecoderPart15
+    let width: Int
+    let height: Int
+    let p: UInt32
 
-        // Write the decoded coefficient at (x, y), reconstructing
-        // sign-magnitude value from (eQ, m-bit MagSgn payload).
-        func placeSample(
-            x: Int, y: Int,
-            eQ: Int,
-            m: Int
-        ) {
-            guard x < width, y < height else { return }
-            // Build payload high bits from eQ; low m bits from
-            // MagSgn stream. OpenJPH encoder wrote
-            // `s = (μ_p - 2) + sign` (i.e. 2μ_p minus 2 with sign
-            // added). The decoder inverts:
-            //   mag = 2^eQ ... 2^(eQ+1) range, i.e. μ_p - 1 has top
-            //   bit at position eQ-1.
-            //
-            // Concretely: payload (m bits) = (μ_p - 1) low bits |
-            // sign. The high bits of (μ_p - 1) equal (1 << (eQ-1))
-            // when eQ > 0.
-            let payload = magsgnDec.read(count: m)
-            // Reconstruct (μ_p - 1): the eQ-th bit (counting from 1)
-            // is always 1 for significant samples with exponent eQ;
-            // the bits below encode the remainder.
-            //
-            // m = Uq - e_bit; when e_bit == 1 the remaining bits are
-            // below the implicit top bit (position eQ-1).
-            //
-            // Full (μ_p - 1) = top_bit | (payload low m bits,
-            // shifted so the sign bit is in the LSB).
-            let sign = UInt32(payload & 1)
-            let mag = (payload >> 1) | (UInt32(1) << (eQ - 1))
-            // Coefficient in OpenJPH convention: value = mag << p;
-            // sign bit in MSB.
-            var coef: UInt32 = (mag + 1) << p
-            if sign != 0 {
-                coef |= 0x8000_0000
-            }
-            coefs[y * width + x] = coef
-        }
+    /// Per-row scratch: max e_q from the bottom row of each quad in
+    /// the previous row (consumed when computing max_e for subsequent
+    /// rows). Sized with +2 guard slots.
+    var eVal: [UInt8]
+    /// Per-row scratch: rho's bottom-row bits from the previous row
+    /// (feeds c_q context for subsequent rows).
+    var cxVal: [UInt8]
 
-        // --- Decode quad row y = 0 (initial line using table0) ---
+    var coefs: [UInt32]
 
-        var c_q0 = 0
-        var y = 0
-        var x = 0
-        while x < width {
-            let head = Int(vlcReader.peek(maxBits: 7))
-            let look0 = lookup(c_q: c_q0, bits: head, initialLine: true)
-            _ = vlcReader.read(count: look0.cwd_len)
-            let rho0 = look0.rho
-            // If c_q0 == 0 we have a MEL event telling us whether
-            // rho is zero or non-zero. If MEL says "zero", override
-            // the VLC-derived rho to 0.
-            var effectiveRho0 = rho0
-            if c_q0 == 0 {
-                let melSig = nextMELEvent()
-                if !melSig { effectiveRho0 = 0 }
-            }
-            // The `emb` bits are read AFTER the codeword when
-            // u_off == 1, embedded in the MagSgn magnitude stream?
-            // No — in OpenJPH the embedded e_k/e_1 are implicit from
-            // the VLC entry selection. The encoder emitted
-            // eps = which-of-4-samples-had-max-exponent bits in the
-            // VLC codeword; the decoder recovers them from the
-            // tuple's e_k + e_1 fields.
+    /// MEL run-state: OpenJPH's packed "2*count | terminator" value.
+    var melRun: Int
 
-            // Compute next quad's context from this quad's rho.
-            let rho1Ctx = (effectiveRho0 >> 1) | (effectiveRho0 & 1)
-
-            // Second quad of the pair (if fits in block width).
-            var effectiveRho1 = 0
-            var look1 = (rho: 0, u_off: 0, cwd_len: 0, e_k: 0, e_1: 0)
-            if x + 2 < width {
-                let c_q1 = rho1Ctx
-                let head1 = Int(vlcReader.peek(maxBits: 7))
-                look1 = lookup(c_q: c_q1, bits: head1, initialLine: true)
-                _ = vlcReader.read(count: look1.cwd_len)
-                effectiveRho1 = look1.rho
-                if c_q1 == 0 {
-                    let melSig = nextMELEvent()
-                    if !melSig { effectiveRho1 = 0 }
-                }
-            }
-
-            let (u_q0, u_q1) = decodeUVLCPair(
-                u_off0: look0.u_off, u_off1: look1.u_off, initialRow: true)
-            let Uq0 = u_q0 + 1
-            let Uq1 = u_q1 + 1
-
-            // Read MagSgn bits for each significant sample in the
-            // first quad.
-            readQuadSamples(baseX: x, baseY: 0,
-                            rho: effectiveRho0, Uq: Uq0,
-                            e_k: look0.e_k, e_1: look0.e_1,
-                            magsgnDec: &magsgnDec,
-                            coefs: &coefs, width: width, height: height,
-                            p: p)
-            if x + 2 < width {
-                readQuadSamples(baseX: x + 2, baseY: 0,
-                                rho: effectiveRho1, Uq: Uq1,
-                                e_k: look1.e_k, e_1: look1.e_1,
-                                magsgnDec: &magsgnDec,
-                                coefs: &coefs, width: width, height: height,
-                                p: p)
-            }
-
-            c_q0 = (effectiveRho1 >> 1) | (effectiveRho1 & 1)
-            x += 4
-        }
-
-        // Subsequent rows: implementation parked pending M5c
-        // refinement — the initial-row logic above validates the
-        // encoder/decoder interface for height <= 2. Blocks taller
-        // than 2 are flagged as unsupported by this reference
-        // decoder.
-        _ = y
-        if height > 2 {
-            throw HTBlockDecoderPart15Error.heightGreaterThanOneRowUnsupported
-        }
-
-        return coefs
+    init(
+        melVlcBytes: [UInt8], scup: Int,
+        magsgnBytes: [UInt8],
+        width: Int, height: Int, p: UInt32
+    ) {
+        self.melDec = HTMELDecoderPart15(bytes: melVlcBytes)
+        self.vlcReader = VLCReverseReader(
+            melVlcBytes: melVlcBytes, scup: scup)
+        self.magsgnDec = HTMagSgnDecoderPart15(bytes: magsgnBytes)
+        self.width = width
+        self.height = height
+        self.p = p
+        let guarded = ((width + 3) / 4) * 2 + 2
+        self.eVal = [UInt8](repeating: 0, count: guarded)
+        self.cxVal = [UInt8](repeating: 0, count: guarded)
+        self.coefs = [UInt32](repeating: 0, count: width * height)
+        self.melRun = self.melDec.nextRun()
     }
 
-    /// Read magnitude-sign bits for up to 4 samples of a quad,
-    /// reconstructing coefficients at bin center (OpenJPH's
-    /// `(v_n + 2) << (p - 1)` formula) with sign in bit 31.
-    fileprivate static func readQuadSamples(
+    mutating func nextMELEvent() -> Bool {
+        melRun -= 2
+        let isOne = (melRun == -1)
+        if melRun < 0 {
+            melRun = melDec.nextRun()
+        }
+        return isOne
+    }
+
+    /// Linear-scan VLC lookup against the source tables. Picks the
+    /// longest-matching cwd via OpenJPH's "last match wins" policy.
+    func lookupVLC(
+        c_q: Int, bits: Int, initialLine: Bool
+    ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
+        let src = initialLine ? vlcSrcTable0 : vlcSrcTable1
+        var best: VLCSrc? = nil
+        for e in src where e.c_q == c_q {
+            let mask = (1 << e.cwd_len) - 1
+            if (bits & mask) == e.cwd {
+                best = e
+            }
+        }
+        guard let b = best else {
+            preconditionFailure(
+                "no VLC match for c_q=\(c_q) bits=0x\(String(bits, radix: 16))")
+        }
+        return (b.rho, b.u_off, b.cwd_len, b.e_k, b.e_1)
+    }
+
+    /// Unary prefix reader for UVLC: 1→1, 01→2, 001→3, 000→4.
+    mutating func readPrefix() -> Int {
+        let b0 = Int(vlcReader.read(count: 1))
+        if b0 == 1 { return 1 }
+        let b1 = Int(vlcReader.read(count: 1))
+        if b1 == 1 { return 2 }
+        let b2 = Int(vlcReader.read(count: 1))
+        if b2 == 1 { return 3 }
+        return 4
+    }
+
+    /// Map a prefix length to the base u value, reading any
+    /// additional suffix/extension bits as required.
+    mutating func decodeFromPrefix(_ len: Int) -> Int {
+        if len == 3 {
+            let suf = Int(vlcReader.read(count: 1))
+            return 3 + suf
+        }
+        if len == 4 {
+            let suf = Int(vlcReader.read(count: 5))
+            if suf < 28 { return 5 + suf }
+            let ext = Int(vlcReader.read(count: 4))
+            return 33 + (suf - 28) + 4 * ext
+        }
+        return len
+    }
+
+    /// Decode a u-value pair per OpenJPH's branch structure for the
+    /// initial row (with MEL arbitration when both u_off are set).
+    mutating func decodeUVLCPairInitial(
+        u_off0: Int, u_off1: Int
+    ) -> (Int, Int) {
+        if u_off0 == 0 && u_off1 == 0 { return (0, 0) }
+        if u_off0 == 1 && u_off1 == 1 {
+            let melEvent = nextMELEvent()
+            if melEvent {
+                let p0 = readPrefix()
+                let p1 = readPrefix()
+                return (decodeFromPrefix(p0) + 2, decodeFromPrefix(p1) + 2)
+            }
+            let p0 = readPrefix()
+            let u0 = decodeFromPrefix(p0)
+            if u0 > 2 {
+                let bit = Int(vlcReader.read(count: 1))
+                return (u0, bit + 1)
+            }
+            let p1 = readPrefix()
+            return (u0, decodeFromPrefix(p1))
+        }
+        let u0 = (u_off0 != 0) ? decodeFromPrefix(readPrefix()) : 0
+        let u1 = (u_off1 != 0) ? decodeFromPrefix(readPrefix()) : 0
+        return (u0, u1)
+    }
+
+    /// Subsequent-row UVLC: encoder always emits both prefixes then
+    /// both suffixes unconditionally; u is 0 when u_off is 0.
+    mutating func decodeUVLCPairSubsequent(
+        u_off0: Int, u_off1: Int
+    ) -> (Int, Int) {
+        let u0 = (u_off0 != 0) ? decodeFromPrefix(readPrefix()) : 0
+        let u1 = (u_off1 != 0) ? decodeFromPrefix(readPrefix()) : 0
+        return (u0, u1)
+    }
+
+    // MARK: - Row decoding
+
+    mutating func decodeInitialRow() {
+        var lep = 0
+        var lcxp = 0
+        var c_q0 = 0
+        var x = 0
+        while x < width {
+            // When c_q=0 the encoder reads a MEL event first and
+            // only emits a VLC codeword if rho is non-zero. Mirror
+            // that sequence or we eat into the next token's bits.
+            var rho0 = 0
+            var look0: (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int)
+                = (0, 0, 0, 0, 0)
+            if c_q0 == 0 {
+                if nextMELEvent() {
+                    let head = Int(vlcReader.peek(maxBits: 7))
+                    look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: true)
+                    _ = vlcReader.read(count: look0.cwd_len)
+                    rho0 = look0.rho
+                }
+            } else {
+                let head = Int(vlcReader.peek(maxBits: 7))
+                look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: true)
+                _ = vlcReader.read(count: look0.cwd_len)
+                rho0 = look0.rho
+            }
+
+            var rho1 = 0
+            var look1: (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int)
+                = (0, 0, 0, 0, 0)
+            if x + 2 < width {
+                let c_q1 = (rho0 >> 1) | (rho0 & 1)
+                if c_q1 == 0 {
+                    if nextMELEvent() {
+                        let head1 = Int(vlcReader.peek(maxBits: 7))
+                        look1 = lookupVLC(c_q: c_q1, bits: head1,
+                                          initialLine: true)
+                        _ = vlcReader.read(count: look1.cwd_len)
+                        rho1 = look1.rho
+                    }
+                } else {
+                    let head1 = Int(vlcReader.peek(maxBits: 7))
+                    look1 = lookupVLC(c_q: c_q1, bits: head1, initialLine: true)
+                    _ = vlcReader.read(count: look1.cwd_len)
+                    rho1 = look1.rho
+                }
+            }
+
+            let (u_q0, u_q1) = decodeUVLCPairInitial(
+                u_off0: rho0 != 0 ? look0.u_off : 0,
+                u_off1: rho1 != 0 ? look1.u_off : 0)
+            let Uq0 = u_q0 + 1  // kappa = 1 for initial row
+            let Uq1 = u_q1 + 1
+
+            readQuadSamples(
+                baseX: x, baseY: 0,
+                rho: rho0, Uq: Uq0,
+                e_k: look0.e_k, e_1: look0.e_1)
+            if x + 2 < width {
+                readQuadSamples(
+                    baseX: x + 2, baseY: 0,
+                    rho: rho1, Uq: Uq1,
+                    e_k: look1.e_k, e_1: look1.e_1)
+            }
+
+            // Mirror encoder's e_q/rho recovery for bookkeeping.
+            // For the decoder we can recover eQ[1] and eQ[3] from
+            // whether the samples were significant and their
+            // reconstructed magnitude bit widths. We use them only to
+            // populate eVal/cxVal for the next row.
+            let eQ0 = recoverEQ(rho: rho0, baseX: x, baseY: 0)
+            eVal[lep] = max(eVal[lep], UInt8(eQ0.1)); lep += 1
+            eVal[lep] = UInt8(eQ0.3)
+            cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
+            cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
+            if x + 2 < width {
+                let eQ1 = recoverEQ(rho: rho1, baseX: x + 2, baseY: 0)
+                eVal[lep] = max(eVal[lep], UInt8(eQ1.1)); lep += 1
+                eVal[lep] = UInt8(eQ1.3)
+                cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
+                cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
+            }
+
+            c_q0 = (rho1 >> 1) | (rho1 & 1)
+            x += 4
+        }
+        if lep + 1 < eVal.count { eVal[lep + 1] = 0 }
+    }
+
+    mutating func decodeSubsequentRow(y: Int) {
+        var lep = 0
+        var lcxp = 0
+        var maxE = max(Int(eVal[0]), Int(eVal[1])) - 1
+        eVal[0] = 0
+        var c_q0 = Int(cxVal[0]) + (Int(cxVal[1]) << 2)
+        cxVal[0] = 0
+
+        var x = 0
+        while x < width {
+            // Step 1: decode VLC (+MEL gate) for both quads of the
+            // pair. c_q1 is read from cxVal AFTER the first quad's
+            // lcxp update — mirrors encoder's read-then-overwrite
+            // ordering.
+            var rho0 = 0
+            var look0: (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int)
+                = (0, 0, 0, 0, 0)
+            if c_q0 == 0 {
+                if nextMELEvent() {
+                    let head = Int(vlcReader.peek(maxBits: 7))
+                    look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: false)
+                    _ = vlcReader.read(count: look0.cwd_len)
+                    rho0 = look0.rho
+                }
+            } else {
+                let head = Int(vlcReader.peek(maxBits: 7))
+                look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: false)
+                _ = vlcReader.read(count: look0.cwd_len)
+                rho0 = look0.rho
+            }
+            let kappaA = ((rho0 & (rho0 - 1)) != 0) ? max(1, maxE) : 1
+
+            // Advance lcxp partially to discover c_q1's source slot
+            // (the encoder reads c_q1 BEFORE writing its own lcxp).
+            cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
+            var c_q1 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
+            cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
+
+            var rho1 = 0
+            var look1: (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int)
+                = (0, 0, 0, 0, 0)
+            if x + 2 < width {
+                c_q1 |= ((rho0 & 4) >> 1) | ((rho0 & 8) >> 2)
+                if c_q1 == 0 {
+                    if nextMELEvent() {
+                        let head1 = Int(vlcReader.peek(maxBits: 7))
+                        look1 = lookupVLC(c_q: c_q1, bits: head1,
+                                          initialLine: false)
+                        _ = vlcReader.read(count: look1.cwd_len)
+                        rho1 = look1.rho
+                    }
+                } else {
+                    let head1 = Int(vlcReader.peek(maxBits: 7))
+                    look1 = lookupVLC(c_q: c_q1, bits: head1, initialLine: false)
+                    _ = vlcReader.read(count: look1.cwd_len)
+                    rho1 = look1.rho
+                }
+                cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
+                c_q0 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
+                cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
+            }
+
+            // Step 2: UVLC for the pair (encoder emits both quads'
+            // u values after both VLC codewords).
+            let (u_q0, u_q1) = decodeUVLCPairSubsequent(
+                u_off0: rho0 != 0 ? look0.u_off : 0,
+                u_off1: rho1 != 0 ? look1.u_off : 0)
+
+            // Step 3: decode MagSgn for quad 0. Must happen before we
+            // can derive eQ0 for the eVal/max_e bookkeeping that
+            // feeds kappaB.
+            let Uq0 = u_q0 + kappaA
+            readQuadSamples(
+                baseX: x, baseY: y,
+                rho: rho0, Uq: Uq0,
+                e_k: look0.e_k, e_1: look0.e_1)
+
+            // Step 4: update eVal using quad 0's reconstructed e_q.
+            // The encoder's equivalent sequence is:
+            //   lep[0] = max(lep[0], e_q[1]); lep++;
+            //   max_e = max(lep[0], lep[1]) - 1;
+            //   lep[0] = e_q[3];
+            let eQ0pair = recoverEQ(rho: rho0, baseX: x, baseY: y)
+            eVal[lep] = max(eVal[lep], UInt8(eQ0pair.1)); lep += 1
+            let maxEAfterQ0 = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
+            eVal[lep] = UInt8(eQ0pair.3)
+
+            // Step 5: kappaB and MagSgn for quad 1.
+            var kappaB = 1
+            if x + 2 < width {
+                kappaB = ((rho1 & (rho1 - 1)) != 0) ? max(1, maxEAfterQ0) : 1
+                let Uq1 = u_q1 + kappaB
+                readQuadSamples(
+                    baseX: x + 2, baseY: y,
+                    rho: rho1, Uq: Uq1,
+                    e_k: look1.e_k, e_1: look1.e_1)
+
+                let eQ1pair = recoverEQ(rho: rho1, baseX: x + 2, baseY: y)
+                eVal[lep] = max(eVal[lep], UInt8(eQ1pair.1)); lep += 1
+                maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
+                eVal[lep] = UInt8(eQ1pair.3)
+            } else {
+                maxE = maxEAfterQ0
+            }
+
+            c_q0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2)
+            x += 4
+        }
+    }
+
+    // MARK: - Sample reconstruction
+
+    /// Read MagSgn bits for each significant sample of the quad and
+    /// place reconstructed (bin-center) coefficients into `coefs`.
+    mutating func readQuadSamples(
         baseX: Int, baseY: Int,
         rho: Int, Uq: Int,
-        e_k: Int, e_1: Int,
-        magsgnDec: inout HTMagSgnDecoderPart15,
-        coefs: inout [UInt32], width: Int, height: Int,
-        p: UInt32
+        e_k: Int, e_1: Int
     ) {
         let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
         for i in 0..<4 {
             let bit = (rho >> i) & 1
             if bit == 0 { continue }
-            let eBit = (e_k >> i) & 1         // "e_k" nibble, per sample
-            let e1Bit = (e_1 >> i) & 1        // EMB e_1 nibble, per sample
+            let eBit = (e_k >> i) & 1
+            let e1Bit = (e_1 >> i) & 1
             let m = Uq - eBit
             let payload = magsgnDec.read(count: m)
-            // Sign is bit 0 of the payload (per encoder
-            // `s = 2(μ_p - 1) + sign`). The remaining m-1 magnitude
-            // bits live at positions 1..m-1 of the payload.
             let sign = UInt32(payload & 1)
-            // v_n assembly per ojph_block_decoder64.cpp:1175-1178:
-            //   v_n = payload low m bits | (e_1 << m) | 1
-            // The `| 1` is the center-of-bin refinement; the
-            // `(e_1 << m)` reinserts the EMB e_1 bit when the VLC
-            // codeword covered it.
             let mask: UInt32 = (m >= 32) ? ~UInt32(0)
                                          : ((UInt32(1) << m) - 1)
             var v_n: UInt32 = payload & mask
@@ -350,18 +419,58 @@ public enum HTBlockDecoderPart15 {
             let xi = baseX + dx
             let yi = baseY + dy
             if xi >= width || yi >= height { continue }
-            // (v_n + 2) << (p - 1) yields bin-center-reconstructed
-            // magnitude at the proper bit position.
             var coef: UInt32 = (v_n &+ 2) << (p &- 1)
             if sign != 0 { coef |= 0x8000_0000 }
             coefs[yi * width + xi] = coef
         }
     }
+
+    /// Derive e_q for the 4 samples of a quad from the reconstructed
+    /// coefficients already placed in `coefs`. Returns a 4-tuple
+    /// indexed by in-quad position (col * 2 + row). Only indices 1
+    /// and 3 are used by the eVal bookkeeping, but the helper returns
+    /// all four for uniformity.
+    func recoverEQ(rho: Int, baseX: Int, baseY: Int)
+        -> (Int, Int, Int, Int)
+    {
+        let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        var result = (0, 0, 0, 0)
+        for i in 0..<4 {
+            if (rho >> i) & 1 == 0 { continue }
+            let (dx, dy) = offsets[i]
+            let xi = baseX + dx
+            let yi = baseY + dy
+            if xi >= width || yi >= height { continue }
+            let mag = coefs[yi * width + xi] & 0x7FFF_FFFF
+            // Invert (v_n + 2) << (p - 1). Ignoring sign:
+            //   v_n + 2 = mag >> (p - 1)
+            //   v_n = (mag >> (p-1)) - 2
+            // Then eQ is position of top bit of (v_n + 1) in
+            // 2-indexed terms matching encoder's
+            // `eQ = 32 - leadingZeroBitCount(val)` convention where
+            // `val = 2μ_p - 1`.
+            let v_n = (mag >> (p &- 1)) &- 2
+            // v_n has bit structure `... e1 | payload | 1`, so
+            // effectively `v_n | 1 = (v_n + 1)` rounds to the encoder's
+            // `2μ_p - 1`.
+            // The encoder's eQ was `32 - leadingZeroBits(2μ_p - 1)`,
+            // i.e. 1-indexed position of MSB of (2μ_p - 1).
+            let twoMuMinusOne = v_n | 1
+            let eQ = 32 - twoMuMinusOne.leadingZeroBitCount
+            switch i {
+            case 0: result.0 = eQ
+            case 1: result.1 = eQ
+            case 2: result.2 = eQ
+            case 3: result.3 = eQ
+            default: break
+            }
+        }
+        return result
+    }
 }
 
 public enum HTBlockDecoderPart15Error: Error {
     case malformedBlock
-    case heightGreaterThanOneRowUnsupported
 }
 
 /// Forward bit reader over the reverse VLC stream. Reads LSB-first
@@ -370,7 +479,7 @@ public enum HTBlockDecoderPart15Error: Error {
 fileprivate struct VLCReverseReader {
     private let melVlcBytes: [UInt8]
     private let scup: Int
-    private var byteIdx: Int  // index within melVlcBytes, walks down
+    private var byteIdx: Int
     private var tmp: UInt64 = 0
     private var bits: Int = 0
     private var unstuff: Bool = false
@@ -378,11 +487,7 @@ fileprivate struct VLCReverseReader {
     init(melVlcBytes: [UInt8], scup: Int) {
         self.melVlcBytes = melVlcBytes
         self.scup = scup
-        // Start at scup - 2 (the second-to-last byte of the
-        // MEL+VLC region). The last byte is Scup's high 8 bits.
         self.byteIdx = scup - 2
-        // Load the high nibble of melVlcBytes[scup-2] as the first
-        // 4 bits (LSB-first).
         if byteIdx >= 0 {
             let b = melVlcBytes[byteIdx]
             let highNibble = UInt64(b >> 4)
@@ -404,8 +509,13 @@ fileprivate struct VLCReverseReader {
             } else {
                 byte = 0
             }
-            let dBits = 8 - (unstuff ? 1 : 0)
-            let mask: UInt8 = UInt8(0xFF) >> (unstuff ? 1 : 0)
+            // FF-stuff rule: drop bit 7 only when prior byte was
+            // > 0x8F AND this byte's low 7 bits are all ones
+            // (i.e. val is 0x7F or 0xFF). Mirrors OpenJPH's
+            // `rev_read8` precisely — see ojph_block_decoder64.cpp:322.
+            let t: Int = (unstuff && (Int(byte) & 0x7F) == 0x7F) ? 1 : 0
+            let dBits = 8 - t
+            let mask: UInt8 = (t == 1) ? 0x7F : 0xFF
             let value = UInt64(byte & mask)
             tmp |= value << bits
             bits += dBits

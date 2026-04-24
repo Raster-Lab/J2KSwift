@@ -94,4 +94,51 @@ final class HTBlockRoundTripPart15Tests: XCTestCase {
             block: block, width: 8, height: 2, missingMSBs: 0)
         XCTAssertEqual(decoded, coefs)
     }
+
+    /// 4x4 all-zero block: tests the subsequent-row (y >= 2) decoder
+    /// path against an encoder with empty eVal/cxVal carryover.
+    func testAllZero4x4RoundTrip() throws {
+        let coefs = [UInt32](repeating: 0, count: 16)
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 4, height: 4, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
+
+    /// 4x4 block with samples in both the initial row (y=0,1) and
+    /// subsequent row (y=2,3) — exercises the max_e + kappa context
+    /// flow between rows.
+    func testTwoRowSamples4x4RoundTrip() throws {
+        var coefs = [UInt32](repeating: 0, count: 16)
+        coefs[0]  = 0x6000_0000  // (0, 0) in initial quad row
+        coefs[9]  = 0xE000_0000  // (1, 2) in subsequent quad row
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 4, height: 4, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 4, height: 4, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
+
+    /// 8x4 block: two quad-pairs by two quad-rows. Validates the
+    /// full context cascade (c_q across pairs AND max_e across rows).
+    func testDense8x4RoundTrip() throws {
+        var coefs = [UInt32](repeating: 0, count: 32)
+        // Plant a diagonal of bin-centered samples.
+        coefs[0]  = 0x6000_0000
+        coefs[9]  = 0x6000_0000
+        coefs[18] = 0xE000_0000
+        coefs[27] = 0xE000_0000
+        let (ms, mel, vlc) = HTBlockEncoderPart15.encode(
+            coefficients: coefs, width: 8, height: 4, missingMSBs: 0)
+        let block = try HTBlockLayoutPart15.assemble(
+            magsgn: ms, mel: mel, vlc: vlc)
+        let decoded = try HTBlockDecoderPart15.decode(
+            block: block, width: 8, height: 4, missingMSBs: 0)
+        XCTAssertEqual(decoded, coefs)
+    }
 }
