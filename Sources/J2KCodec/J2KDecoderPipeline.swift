@@ -81,6 +81,13 @@ struct DecoderConfiguration: Sendable {
     /// Whether HTJ2K block coding is used (from COD marker bit 6).
     var useHTJ2K: Bool = false
 
+    /// HTJ2K code-block wire format. `.custom` is the v4.x layout that
+    /// only round-trips with J2KSwift itself; `.conformant` is the
+    /// ISO/IEC 15444-15 layout. Promoted to `.conformant` when the
+    /// main header carries the J2KSwift block-format COM marker. Only
+    /// meaningful when `useHTJ2K` is true.
+    var htj2kBlockFormat: HTBlockFormat = .custom
+
     /// Whether selective arithmetic coding bypass is enabled (from COD marker bit 0).
     var useSelectiveArithmeticBypass: Bool = false
 
@@ -578,6 +585,15 @@ struct DecoderPipeline: Sendable {
                 // Parse QCD marker
                 let bitDepth = metadata?.components.first?.bitDepth ?? 8
                 quantizationSteps = try parseQCDMarker(&reader, config: configuration, bitDepth: bitDepth)
+
+            case J2KMarker.com.rawValue:
+                // COM carries the J2KSwift private block-format signal.
+                // Promote the configuration to `.conformant` when we
+                // recognize the payload; otherwise ignore the comment.
+                if try parseHTBlockFormatCOM(&reader) {
+                    configuration.htj2kBlockFormat = .conformant
+                }
+
             case J2KMarker.sot.rawValue:
                 // Start of tile-part — collect all tiles
                 let (tileIndex, tilepartData) = try parseSOTMarker(&reader)
@@ -911,6 +927,26 @@ struct DecoderPipeline: Sendable {
         return (steps: stepSizes, guardBits: guardBits, bandKb: bandKb)
     }
 
+    /// Parses a COM (comment) marker and returns `true` iff the
+    /// payload matches the J2KSwift block-format signature that
+    /// signals `.conformant` HTJ2K blocks.
+    private func parseHTBlockFormatCOM(_ reader: inout J2KBitReader) throws -> Bool {
+        let length = Int(try reader.readUInt16())
+        // Lcom includes the length field itself but not the marker.
+        // Payload = Rcom(2) + Ccom(length - 4).
+        guard length >= 4 else {
+            // Malformed but non-fatal — skip.
+            if length > 2 { try reader.skip(length - 2) }
+            return false
+        }
+        _ = try reader.readUInt16() // Rcom, ignored for signature match
+        let ccomLen = length - 4
+        let payload = try reader.readBytes(ccomLen)
+        let signature = HTBlockFormatCOMSignature.conformant
+        guard payload.count == signature.count else { return false }
+        return zip(payload, signature).allSatisfy { $0 == $1 }
+    }
+
     /// Parses the SOT marker segment and extracts tile data.
     private func parseSOTMarker(_ reader: inout J2KBitReader) throws -> (Int, Data) {
         _ = Int(try reader.readUInt16())
@@ -1222,6 +1258,7 @@ struct DecoderPipeline: Sendable {
             isIrreversible = false
         }
         let useHT = metadata.configuration.useHTJ2K
+        let useConformant = useHT && metadata.configuration.htj2kBlockFormat == .conformant
 
         // Struct key avoids per-block string interpolation allocations.
         struct SubbandKey: Hashable {
@@ -1283,14 +1320,27 @@ struct DecoderPipeline: Sendable {
                                     height: block.height,
                                     subband: block.subband
                                 )
-                                let detailed = try htDecoder
-                                    .decodeFromCodestreamDetailed(
-                                        data: block.data,
-                                        passCount: block.passCount,
-                                        bitDepth: bitDepth,
-                                        zeroBitPlanes: block.zeroBitPlanes)
-                                coeffs = detailed.coefficients
-                                htPartiallyRefined = detailed.isPartiallyRefined
+                                if useConformant {
+                                    // Part-15 conformant blocks are cleanup-only; no refinement
+                                    // passes, so the partial-refinement mask is empty.
+                                    if block.data.isEmpty || block.passCount == 0 {
+                                        coeffs = [Int32](repeating: 0, count: block.width * block.height)
+                                    } else {
+                                        coeffs = try htDecoder.decodeCleanupConformant(
+                                            rawBytes: [UInt8](block.data),
+                                            missingMSBs: block.zeroBitPlanes)
+                                    }
+                                    htPartiallyRefined = []
+                                } else {
+                                    let detailed = try htDecoder
+                                        .decodeFromCodestreamDetailed(
+                                            data: block.data,
+                                            passCount: block.passCount,
+                                            bitDepth: bitDepth,
+                                            zeroBitPlanes: block.zeroBitPlanes)
+                                    coeffs = detailed.coefficients
+                                    htPartiallyRefined = detailed.isPartiallyRefined
+                                }
                             } else {
                                 let blockDecoder = CodeBlockDecoder()
                                 let codeBlock = J2KCodeBlock(
@@ -1376,14 +1426,25 @@ struct DecoderPipeline: Sendable {
                         height: block.height,
                         subband: block.subband
                     )
-                    let detailed = try htDecoder.decodeFromCodestreamDetailed(
-                        data: block.data,
-                        passCount: block.passCount,
-                        bitDepth: bitDepth,
-                        zeroBitPlanes: block.zeroBitPlanes
-                    )
-                    coeffs = detailed.coefficients
-                    htMask = detailed.isPartiallyRefined
+                    if useConformant {
+                        if block.data.isEmpty || block.passCount == 0 {
+                            coeffs = [Int32](repeating: 0, count: block.width * block.height)
+                        } else {
+                            coeffs = try htDecoder.decodeCleanupConformant(
+                                rawBytes: [UInt8](block.data),
+                                missingMSBs: block.zeroBitPlanes)
+                        }
+                        htMask = []
+                    } else {
+                        let detailed = try htDecoder.decodeFromCodestreamDetailed(
+                            data: block.data,
+                            passCount: block.passCount,
+                            bitDepth: bitDepth,
+                            zeroBitPlanes: block.zeroBitPlanes
+                        )
+                        coeffs = detailed.coefficients
+                        htMask = detailed.isPartiallyRefined
+                    }
                 } else {
                     // Legacy path: use EBCOT bit-plane decoding
                     let decoder = CodeBlockDecoder()

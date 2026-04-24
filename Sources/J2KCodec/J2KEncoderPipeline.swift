@@ -3279,6 +3279,14 @@ struct EncoderPipeline: Sendable {
             adaptiveStepSizes: adaptiveStepSizes
         )
 
+        // COM — J2KSwift-private block-format signal. Emitted only when
+        // HTJ2K + .conformant so the decoder can dispatch to the Part-15
+        // block decoder. Standards-compliant decoders (OpenJPH, Kakadu)
+        // treat unrecognized COM payloads as comments and ignore them.
+        if config.useHTJ2K && config.htj2kBlockFormat == .conformant {
+            try writeHTBlockFormatCOM(&writer)
+        }
+
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
         let tileData = try generateTileData(
@@ -3365,6 +3373,20 @@ struct EncoderPipeline: Sendable {
         segment.writeUInt16(ccap15)
 
         writer.writeMarkerSegment(J2KMarker.cap.rawValue, segmentData: segment.data)
+    }
+
+    /// Writes a COM (comment) marker carrying a J2KSwift-private signal
+    /// that the HTJ2K code-blocks use the `.conformant` (ISO/IEC 15444-15)
+    /// wire format rather than the v4.x `.custom` layout. Read back by
+    /// the decoder at `parseCodestream` to route dispatch.
+    private func writeHTBlockFormatCOM(_ writer: inout J2KBitWriter) throws {
+        var segment = J2KBitWriter()
+        // Rcom = 1: ISO-8859-15 text payload.
+        segment.writeUInt16(1)
+        for byte in HTBlockFormatCOMSignature.conformant {
+            segment.writeUInt8(byte)
+        }
+        writer.writeMarkerSegment(J2KMarker.com.rawValue, segmentData: segment.data)
     }
 
     /// Writes the CPF marker segment (Corresponding Profile) for HTJ2K.
@@ -3546,7 +3568,16 @@ struct EncoderPipeline: Sendable {
             // rather than `B + G + guard_bits - 1`. Align our codestream
             // with that convention when Part-15 is selected so OpenJPH
             // reads back the same K_max our Part-15 block encoder used.
-            let epsilonBias = (config.htj2kBlockFormat == .conformant) ? guardBits : 0
+            //
+            // Gate on `useHTJ2K` as well as the block-format flag —
+            // `htj2kBlockFormat` is documented as having effect only
+            // when HTJ2K is enabled, and gating here prevents the
+            // Part-15 epsilon bias from leaking into legacy EBCOT
+            // codestreams if a caller sets `.conformant` without also
+            // enabling HTJ2K.
+            let epsilonBias =
+                (config.useHTJ2K && config.htj2kBlockFormat == .conformant)
+                ? guardBits : 0
 
             // LL subband at coarsest level
             let epsilonLL = UInt8(max(1, bitDepth - epsilonBias))
