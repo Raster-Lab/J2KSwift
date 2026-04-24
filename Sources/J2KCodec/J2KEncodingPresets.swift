@@ -328,6 +328,20 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: `.disabled` (Part 1 compatible behavior)
     public var dcOffsetConfiguration: J2KDCOffsetConfiguration
 
+    /// Selects the HTJ2K block-coder wire format.
+    ///
+    /// - `.custom` (default): J2KSwift's in-house non-conformant format
+    ///   (legacy from v4.x). Fast self round-trip but NOT decodable by
+    ///   OpenJPH or any other Part-15 conformant codec.
+    /// - `.part15`: ISO/IEC 15444-15 conformant block format that
+    ///   OpenJPH 0.26+ and other Part-15 codecs can decode.
+    ///
+    /// Only applies when `useHTJ2K` is true. Auto-detect on decode.
+    ///
+    /// - Default: `.custom` (will flip to `.part15` in v5.0.0 once
+    ///   cross-codec validation (M7) is complete).
+    public var htj2kBlockFormat: HTBlockFormat
+
     /// Configuration for Part 2 extended precision arithmetic.
     ///
     /// Controls the precision, rounding behavior, and guard bit usage
@@ -410,7 +424,8 @@ public struct J2KEncodingConfiguration: Sendable {
         dcOffsetConfiguration: J2KDCOffsetConfiguration = .disabled,
         extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
         waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard,
-        mctConfiguration: J2KMCTEncodingConfiguration = .disabled
+        mctConfiguration: J2KMCTEncodingConfiguration = .disabled,
+        htj2kBlockFormat: HTBlockFormat = .custom
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -440,6 +455,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.extendedPrecisionConfiguration = extendedPrecisionConfiguration
         self.waveletKernelConfiguration = waveletKernelConfiguration
         self.mctConfiguration = mctConfiguration
+        self.htj2kBlockFormat = htj2kBlockFormat
     }
 
     /// Validates the configuration parameters.
@@ -474,6 +490,23 @@ public struct J2KEncodingConfiguration: Sendable {
             throw J2KError.invalidParameter("Max threads must be non-negative, got \(maxThreads)")
         }
     }
+}
+
+// MARK: - HT Block Format
+
+/// HTJ2K code-block wire format selector.
+///
+/// v4.x shipped with a custom, non-conformant block layout that only
+/// round-trips with itself. The Part-15 variant is wire-compatible
+/// with OpenJPH and other ISO/IEC 15444-15 conformant codecs.
+public enum HTBlockFormat: String, Sendable, CaseIterable {
+    /// J2KSwift v4.x legacy custom format — fast self round-trip,
+    /// not decodable by OpenJPH.
+    case custom
+
+    /// ISO/IEC 15444-15 conformant format — bidirectional interop
+    /// with OpenJPH 0.26+ (scalar path).
+    case part15
 }
 
 // MARK: - Progression Order
