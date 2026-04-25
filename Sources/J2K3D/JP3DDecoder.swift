@@ -19,6 +19,7 @@
 
 import Foundation
 import J2KCore
+import J2KCodec
 
 /// Configuration for the JP3D decoder.
 public struct JP3DDecoderConfiguration: Sendable {
@@ -157,7 +158,6 @@ public actor JP3DDecoder {
         let parser = JP3DCodestreamParser()
         let codestream = try parser.parse(data)
         let siz = codestream.siz
-        let cod = codestream.cod
 
         reportProgress(.parsing, stageProgress: 1.0, tilesDone: 0,
                        tilesTotal: codestream.tiles.count)
@@ -178,9 +178,6 @@ public actor JP3DDecoder {
         var isPartial = false
 
         for (tileIdx, parsedTile) in codestream.tiles.enumerated() {
-            // Cache for HTJ2K-decoded all-component coefficients of the current tile.
-            // Scoped here so it is naturally reset on each tile iteration.
-            var htj2kTileCache: [Float]?
             let index = parsedTile.tileIndex
             let iz = index / (grid.tilesX * grid.tilesY)
             let rem = index % (grid.tilesX * grid.tilesY)
@@ -204,100 +201,45 @@ public actor JP3DDecoder {
                 continue
             }
 
-            // Clamp levels to actual tile dimensions
-            let lx = clampLevels(cod.levelsX, for: tw)
-            let ly = clampLevels(cod.levelsY, for: th)
-            let lz = clampLevels(cod.levelsZ, for: td)
-            let voxelsPerComp = tw * th * td
-
-            // Detect whether the tile was HTJ2K-encoded by checking for a JP3DHTTileInfo prefix.
-            let tileInfo = JP3DHTTileInfo.deserialise(from: parsedTile.data)
-            let tileIsHTJ2K = tileInfo?.isHT ?? false
-
-            // Parse coefficient bytes for each component
-            let expectedBytesPerComp = voxelsPerComp * 4 // Int32 = 4 bytes
-            let expectedTotal = expectedBytesPerComp * siz.componentCount
-
-            // For HTJ2K tiles the payload includes the 4-byte tile-info prefix plus
-            // a 4-byte ZBP prefix per component.  Skip the length check for those.
-            if !tileIsHTJ2K && parsedTile.data.count < expectedTotal {
+            // M2: every tile written by the new encoder is a slice-stack
+            // payload (J3DS magic). Older tile shapes (raw Int32 dump,
+            // legacy JP3DHTJ2K) are no longer produced — they only ever
+            // round-tripped via the same broken stub anyway.
+            guard JP3DSliceStackCodec.hasMagic(parsedTile.data) else {
+                let msg = "Tile \(index): not a JP3D slice-stack payload " +
+                    "(missing 'J3DS' magic). " +
+                    "This decoder requires JP3D codestreams produced by " +
+                    "JP3DEncoder v5.2.0+ — older J2KSwift JP3D output is " +
+                    "no longer supported."
                 if configuration.tolerateErrors {
-                    warnings.append(
-                        "Tile \(index): data truncated (\(parsedTile.data.count) < \(expectedTotal) bytes)"
-                    )
+                    warnings.append(msg)
                     isPartial = true
-                } else {
-                    throw J2KError.decodingError(
-                        "Tile \(index): data truncated (\(parsedTile.data.count) < \(expectedTotal) bytes)"
-                    )
+                    continue
                 }
+                throw J2KError.decodingError(msg)
+            }
+
+            let perCompBuffers: [[Float]]
+            do {
+                perCompBuffers = try await JP3DSliceStackCodec().decode(
+                    payload: parsedTile.data,
+                    expectedTile: JP3DSliceStackCodec.ExpectedTile(
+                        width: tw, height: th, depth: td,
+                        componentCount: siz.componentCount
+                    )
+                )
+            } catch {
+                if configuration.tolerateErrors {
+                    warnings.append("Tile \(index) slice-stack decode failed: \(error)")
+                    isPartial = true
+                    continue
+                }
+                throw error
             }
 
             for comp in 0..<siz.componentCount {
-                // Read quantized Int32 coefficients
-                var coefficients = [Float](repeating: 0, count: voxelsPerComp)
-
-                if tileIsHTJ2K {
-                    // HTJ2K-encoded: the tile payload contains all components interleaved
-                    // after the 4-byte tile-info prefix.  Decode the whole tile for the
-                    // first component and store; subsequent components read from the cache.
-                    if comp == 0 {
-                        let codec = JP3DHTJ2KCodec(configuration: .default)
-                        do {
-                            let allComps = try codec.decodeTile(
-                                tileData: parsedTile.data,
-                                expectedVoxels: voxelsPerComp * siz.componentCount
-                            )
-                            // Cache the full decode for use by remaining components
-                            htj2kTileCache = allComps
-                        } catch {
-                            if configuration.tolerateErrors {
-                                warnings.append(
-                                    "Tile \(index) HTJ2K decode failed: \(error)"
-                                )
-                                isPartial = true
-                                htj2kTileCache = nil
-                                continue
-                            }
-                            throw error
-                        }
-                    }
-                    // Extract the per-component slice from the cache
-                    if let cache = htj2kTileCache {
-                        let start = comp * voxelsPerComp
-                        let end = min(start + voxelsPerComp, cache.count)
-                        if start < end {
-                            coefficients.replaceSubrange(0..<(end - start), with: cache[start..<end])
-                        }
-                    }
-                } else {
-                    readLegacyCoefficients(
-                        from: parsedTile.data,
-                        compOffset: comp * expectedBytesPerComp,
-                        expectedBytes: expectedBytesPerComp,
-                        into: &coefficients,
-                        isLossless: codestream.isLosslessQuantization
-                    )
-                }
-                // Apply inverse 3D wavelet transform
-                let floatCoeffs: [Float]
-                do {
-                    floatCoeffs = try await inverseWaveletTransform(
-                        coefficients: coefficients, cod: cod,
-                        tw: tw, th: th, td: td, lx: lx, ly: ly, lz: lz
-                    )
-                } catch {
-                    if configuration.tolerateErrors {
-                        warnings.append("Tile \(index) comp \(comp): inverse DWT failed – \(error)")
-                        isPartial = true
-                        continue
-                    }
-                    throw error
-                }
-
-                // Write reconstructed voxels into the output component buffer
                 copyVoxelsToBuffer(
-                    from: floatCoeffs, to: &componentBuffers[comp],
+                    from: perCompBuffers[comp], to: &componentBuffers[comp],
                     tileDims: (tw, th, td),
                     tileOrigin: (x0, y0, z0),
                     outWidth: siz.width, outHeight: siz.height

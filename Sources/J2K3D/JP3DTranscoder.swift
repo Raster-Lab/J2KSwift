@@ -145,6 +145,20 @@ public actor JP3DTranscoder {
         let parser = JP3DCodestreamParser()
         let source = try parser.parse(sourceData)
 
+        // M2: slice-stack tiles do not contain raw quantized coefficient
+        // bytes — every slice is its own 2D J2K codestream — so the
+        // legacy bit-shuffle transcoders below cannot operate on them.
+        // Take the correct (and only) path: full decode → re-encode with
+        // the target compression mode. Slower than per-tile transcode,
+        // but the slice-stack format is the only modern code path.
+        if source.tiles.contains(where: { JP3DSliceStackCodec.hasMagic($0.data) }) {
+            return try await transcodeViaFullRoundTrip(
+                sourceData: sourceData,
+                source: source,
+                configuration: configuration
+            )
+        }
+
         // Build the target codestream
         let builder = JP3DCodestreamBuilder()
         var warnings: [String] = []
@@ -219,6 +233,51 @@ public actor JP3DTranscoder {
             direction: configuration.direction,
             metadataPreserved: true,
             warnings: warnings
+        )
+    }
+
+    // MARK: - Private slice-stack path
+
+    /// Decodes the entire source volume and re-encodes it with the
+    /// target compression mode. Used when the input was produced by
+    /// the M2 slice-stack codec — its tile payloads are sequences of
+    /// 2D J2K codestreams, not raw coefficient bytes, so the legacy
+    /// per-tile transcoders cannot operate on them in place.
+    private func transcodeViaFullRoundTrip(
+        sourceData: Data,
+        source: JP3DParsedCodestream,
+        configuration: JP3DTranscoderConfiguration
+    ) async throws -> JP3DTranscoderResult {
+        let decoder = JP3DDecoder()
+        let decoded = try await decoder.decode(sourceData)
+
+        let targetMode: JP3DCompressionMode
+        switch configuration.direction {
+        case .standardToHTJ2K:
+            targetMode = source.cod.isLossless ? .losslessHTJ2K : .lossyHTJ2K(psnr: 40)
+        case .htj2kToStandard:
+            targetMode = source.cod.isLossless ? .lossless : .lossy(psnr: 40)
+        }
+
+        let encoder = JP3DEncoder(configuration: JP3DEncoderConfiguration(
+            compressionMode: targetMode,
+            tiling: JP3DTilingConfiguration(
+                tileSizeX: source.siz.tileSizeX,
+                tileSizeY: source.siz.tileSizeY,
+                tileSizeZ: source.siz.tileSizeZ
+            ),
+            levelsX: source.cod.levelsX,
+            levelsY: source.cod.levelsY,
+            levelsZ: source.cod.levelsZ
+        ))
+        let result = try await encoder.encode(decoded.volume)
+
+        return JP3DTranscoderResult(
+            data: result.data,
+            tilesTranscoded: result.tileCount,
+            direction: configuration.direction,
+            metadataPreserved: true,
+            warnings: []
         )
     }
 
@@ -515,11 +574,15 @@ extension JP3DCodestreamBuilder {
 extension JP3DParsedCodestream {
     /// Whether this codestream was encoded with HTJ2K tile coding.
     ///
-    /// Returns `true` when at least one tile has a `JP3DHTTileInfo` prefix
-    /// indicating HT block coding.
+    /// Returns `true` when at least one tile is a slice-stack payload
+    /// (M2 format) whose flags byte advertises HTJ2K, or — for legacy
+    /// codestreams — has a `JP3DHTTileInfo` prefix marking HT blocks.
     public var containsHTJ2KTiles: Bool {
         for tile in tiles {
-            if let info = JP3DHTTileInfo.deserialise(from: tile.data), info.isHT {
+            if JP3DSliceStackCodec.hasMagic(tile.data) {
+                if Self.sliceStackUsesHTJ2K(tile.data) { return true }
+            } else if let info = JP3DHTTileInfo.deserialise(from: tile.data),
+                      info.isHT {
                 return true
             }
         }
@@ -531,7 +594,10 @@ extension JP3DParsedCodestream {
         var hasHT = false
         var hasLegacy = false
         for tile in tiles {
-            if let info = JP3DHTTileInfo.deserialise(from: tile.data) {
+            if JP3DSliceStackCodec.hasMagic(tile.data) {
+                if Self.sliceStackUsesHTJ2K(tile.data) { hasHT = true }
+                else                                   { hasLegacy = true }
+            } else if let info = JP3DHTTileInfo.deserialise(from: tile.data) {
                 if info.isHT { hasHT = true } else { hasLegacy = true }
             } else {
                 hasLegacy = true
@@ -539,5 +605,14 @@ extension JP3DParsedCodestream {
             if hasHT && hasLegacy { return true }
         }
         return false
+    }
+
+    /// Bit 0 of the flags word in the slice-stack header signals HTJ2K
+    /// (matches `JP3DSliceStackCodec.assemble`'s bit layout).
+    private static func sliceStackUsesHTJ2K(_ data: Data) -> Bool {
+        let flagsOffset = data.startIndex.advanced(by: 8)
+        guard data.endIndex >= flagsOffset.advanced(by: 4) else { return false }
+        let b3 = UInt32(data[flagsOffset.advanced(by: 3)])
+        return (b3 & 0x1) != 0
     }
 }

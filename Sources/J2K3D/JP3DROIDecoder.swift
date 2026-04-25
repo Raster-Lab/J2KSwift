@@ -98,7 +98,6 @@ public actor JP3DROIDecoder {
         let parser = JP3DCodestreamParser()
         let codestream = try parser.parse(data)
         let siz = codestream.siz
-        let cod = codestream.cod
 
         // Clamp the requested region to valid volume bounds
         let clampedXLower = max(0, requestedRegion.x.lowerBound)
@@ -195,37 +194,40 @@ public actor JP3DROIDecoder {
             let th = tileInfo.height
             let td = tileInfo.depth
 
-            let lx = clampLevels(cod.levelsX, for: tw)
-            let ly = clampLevels(cod.levelsY, for: th)
-            let lz = clampLevels(cod.levelsZ, for: td)
-            let voxelsPerComp = tw * th * td
-            let expectedBytesPerComp = voxelsPerComp * 4
+            // M2: each tile is now a JP3D slice-stack payload — decode
+            // the entire tile (the slice-stack codec runs per-Z-slice
+            // 2D J2K) then crop the intersection into the ROI buffer.
+            // True per-component / per-resolution sub-decoding is a
+            // future ROI optimisation; this preserves correctness.
+            guard JP3DSliceStackCodec.hasMagic(parsedTile.data) else {
+                if configuration.tolerateErrors {
+                    warnings.append("Tile \(idx): not a JP3D slice-stack payload (missing 'J3DS' magic)")
+                    continue
+                }
+                throw J2KError.decodingError(
+                    "Tile \(idx): not a JP3D slice-stack payload (missing 'J3DS' magic)"
+                )
+            }
+
+            let perCompBuffers: [[Float]]
+            do {
+                perCompBuffers = try await JP3DSliceStackCodec().decode(
+                    payload: parsedTile.data,
+                    expectedTile: JP3DSliceStackCodec.ExpectedTile(
+                        width: tw, height: th, depth: td,
+                        componentCount: siz.componentCount
+                    )
+                )
+            } catch {
+                if configuration.tolerateErrors {
+                    warnings.append("Tile \(idx): slice-stack decode failed – \(error)")
+                    continue
+                }
+                throw error
+            }
 
             for comp in 0..<siz.componentCount {
-                var coefficients = [Float](repeating: 0, count: voxelsPerComp)
-                readLegacyCoefficients(
-                    from: parsedTile.data,
-                    compOffset: comp * expectedBytesPerComp,
-                    expectedBytes: expectedBytesPerComp,
-                    into: &coefficients
-                )
-
-                // Inverse wavelet
-                let floatCoeffs: [Float]
-                do {
-                    floatCoeffs = try await inverseWaveletTransform(
-                        coefficients: coefficients, cod: cod,
-                        tw: tw, th: th, td: td, lx: lx, ly: ly, lz: lz
-                    )
-                } catch {
-                    if configuration.tolerateErrors {
-                        warnings.append("Tile \(idx) comp \(comp): \(error)")
-                        continue
-                    }
-                    throw error
-                }
-
-                // Copy the intersecting sub-region into ROI buffer
+                let floatCoeffs = perCompBuffers[comp]
                 let intX0 = max(x0, clampedX.lowerBound)
                 let intY0 = max(y0, clampedY.lowerBound)
                 let intZ0 = max(z0, clampedZ.lowerBound)
