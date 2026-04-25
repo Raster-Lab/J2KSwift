@@ -520,34 +520,43 @@ the trailing samples to a byte alignment.
 
 ## Interpretation
 
-- **Real medical (CT/MR/XA, every study × every slice preset)** — J2KSwift
-  beats OpenJPEG on ratio in *every* row by 0.6–5.5 %, and runs 2.2–3.4×
-  faster on both encode and decode. The 3D-EBCOT inter-slice gain that
-  one might assume favours OpenJPEG does not materialise on real anatomy
-  at clinical bit depths: medical Z correlation is real but irregular,
-  and the slice-stack 2D EBCOT path's per-slice rate-distortion search
-  more than recovers the gap.
+- **Z-delta predictive coding (`JP3DSliceStackCodec`)** — landed in
+  M4 to close the seismic + hyperspectral failures that the M3
+  matrix exposed. For each tile the encoder runs a 4-position L1
+  probe across the Z range; if every probe shows residuals ≪ slice
+  L1 it commits the tile to per-slice try-both encoding (raw + Z-
+  residual, ship whichever is smaller). The `J3DS` v2 wire format
+  carries a per-slice flag so individual slices fall back to raw
+  silently when the residual happens to lose. Decoder always
+  accumulates correctly. Bit-exact round-trip is unconditional.
 
-- **Synthetic thin-slice CT** (σ = 5, 20, 80 noise across Z) — these
-  mimic 0.5–2 mm-spacing CT and are the closest synthetic analog to
-  real high-resolution clinical data. All three pass; J2KSwift wins
-  ratio by 1.7–5.7 %.
+- **Synthetic seismic-like wavefield + hyperspectral cube** — the
+  original M3 ratio failures. With Z-delta, J2KSwift now *crushes*
+  OpenJPEG on these: **3.96× and 2.86× smaller** respectively, plus
+  ≥ 1.9× encode and ≥ 3.5× decode speedups. The 12–15 % ratio gap
+  that 3D-EBCOT used to extract is now a ratio gain in J2KSwift's
+  favour by the same margins — the algorithmic seam is closed.
 
-- **Synthetic seismic-like wavefield + hyperspectral cube** — the only
-  failures. These are the *worst case* for slice-stack: pathologically
-  smooth, perfectly-periodic Z evolution that gives OpenJPEG's 3D
-  wavelet a 12–15 % ratio advantage. Even here, J2KSwift bit-exactly
-  round-trips, runs ≥ 2.3× faster on both encode and decode, and the
-  failure is purely on the `ratio_delta ≥ 0.99` honesty gate. This is
-  the documented seam in `docs/JP3D_BEAT_OPENJPEG_PLAN.md` — closing
-  it requires an optional Z-axis DWT prior to slice serialisation
-  inside `JP3DSliceStackCodec` (open follow-up). Non-medical earth-
-  observation / seismic users should expect that gap until that lands.
+- **Synthetic thin-slice CT** (σ = 5 / 20 / 80) — closest analog
+  to clinical 0.5–2 mm CT. Z-delta engages on all three; J2KSwift
+  wins ratio by 1.7–5.7 % and is 1.6–1.7× faster on encode (down
+  from 2.7–3.0× without Z-delta — the deliberate speed-for-ratio
+  trade).
 
-- **Uncorrelated 12-bit noise** — entropy ceiling for every codec; the
-  0.5 % ratio gap (1.233 vs 1.239) is rate-control overhead, not
-  algorithmic. Speed wins still hold (2.17× / 1.69×), and the row
-  passes.
+- **Real medical (CT, MR, XA)** — the tile-level L1 probe correctly
+  *disengages* Z-delta on most natural anatomy where J2K's 2D
+  wavelet already exploits inter-slice DC structure, so encode
+  speed stays at the no-Z-delta baseline of 1.6–3.4× faster across
+  CT, MR/study_001/002/004, and XA. The remaining failures are all
+  in `mr/study_003` (176×256, 12-bit) and `mr/study_005` (192×192,
+  12-bit) — small enough volumes that the per-slice probe overhead
+  alone (~50 ms over a 100 ms baseline) drops encode speedup to
+  1.36–1.49× — *still beating OpenJPEG, but under the 1.5× gate*.
+  Bit-exact + ratio gates still pass on every row.
+
+- **Uncorrelated 12-bit noise** — entropy ceiling for every codec;
+  the 0.5 % ratio gap (1.233 vs 1.239) is rate-control overhead,
+  not algorithmic. Speed wins still hold and the row passes.
 """
     report_path.write_text(text)
 
