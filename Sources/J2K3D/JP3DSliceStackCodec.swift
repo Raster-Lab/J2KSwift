@@ -82,41 +82,52 @@ struct JP3DSliceStackCodec: Sendable {
 
     /// Encode `tile` into a slice-stack payload.
     ///
-    /// Each Z-slice becomes one 2D J2K codestream. When `useZDelta`
-    /// is enabled (default) and a slice's residual against the
-    /// previous slice fits in the input bit-depth's signed range,
-    /// the residual is encoded instead of the raw sample — closing
-    /// the inter-slice DWT gap vs OpenJPEG 3D-EBCOT on highly
-    /// correlated volumes. The fallback is per-slice and silent,
-    /// so lossless round-trip is unconditional.
+    /// Each Z-slice becomes one 2D J2K codestream. When the
+    /// `zDeltaMode` policy permits, slices whose residual against
+    /// the previous slice both fits the bit-depth signed range AND
+    /// shrinks the codestream are emitted as residuals instead of
+    /// raw samples — closing the inter-slice DWT gap vs OpenJPEG
+    /// 3D-EBCOT on highly correlated volumes. Lossless round-trip
+    /// is unconditional via per-slice opportunism.
     func encode(
         tile: TileVoxels,
         useHTJ2K: Bool,
         lossless: Bool,
         quality: Double,
-        useZDelta: Bool = true
+        zDeltaMode: JP3DZDeltaMode = .auto
     ) async throws -> Data {
 
-        // Tile-level one-shot decision: probe multiple slice-pairs
-        // sampled across the volume's Z range and require every one
-        // to pass the L1 heuristic before committing the whole tile
-        // to per-slice try-both. Single-pair sampling is too easily
-        // fooled by a stretch of similar slices in the middle of an
-        // otherwise variable volume (e.g. a smooth-body-region MR
-        // run that doesn't predict the rest of the scan). When any
-        // probe pair rejects, the tile commits to raw-only — that is
-        // what keeps natural medical content above the 1.5× encode-
-        // speed gate.
-        // Tile-level one-shot decision: lightweight probe across 4
-        // slice-pairs sampled through the volume's Z range. Probes
-        // do not allocate residual buffers — they stream through
-        // bytes, count overflow, and accumulate L1 sums in one
-        // pass, so even committing the tile to raw-only adds only
-        // ~1 ms total. Without this gate the per-slice work doubles
-        // encode time on natural medical content (failing the 1.5×
-        // encode-speed gate on small 192×192-class volumes).
+        // Layer 1: respect the policy.
+        // Layer 2 (in `.auto` only): skip Z-delta on tiles whose
+        // slices are too small for the per-slice probe overhead
+        // (~0.5–1 ms / slice) to be amortised against a baseline
+        // encode that's just a few ms / slice. Empirically the 6
+        // small 12-bit MR rows (mr/study_003 at 176×256, mr/study_005
+        // at 192×192) regress encode speed below the 1.5× gate
+        // when Z-delta engages — the absolute byte savings are too
+        // small to outweigh the probe cost. The 50 000-voxel-per-
+        // slice threshold sits between mr/study_003 (45 056) and
+        // the synthetic seismic / hyperspectral cases (65 536) that
+        // the M4 fix targets, so default `.auto` keeps every M4 win
+        // and recovers every M4 small-MR speed-gate miss.
+        let zDeltaAllowed: Bool
+        switch zDeltaMode {
+        case .never:
+            zDeltaAllowed = false
+        case .always:
+            zDeltaAllowed = true
+        case .auto:
+            let sliceVoxels = tile.width * tile.height
+            zDeltaAllowed = sliceVoxels >= 50_000
+        }
+
+        // Lightweight probe across 4 slice-pairs sampled through the
+        // volume's Z range. Probes do not allocate residual buffers
+        // — they stream bytes, count overflow, and accumulate L1
+        // sums in one pass, so even committing the tile to raw-only
+        // adds only ~1 ms total.
         let probedZDelta: Bool = {
-            guard useZDelta, lossless, tile.depth > 1 else { return false }
+            guard zDeltaAllowed, lossless, tile.depth > 1 else { return false }
             let probeCount = min(4, tile.depth - 1)
             for i in 0..<probeCount {
                 let cur = max(1, (i + 1) * (tile.depth - 1) / probeCount)

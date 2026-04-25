@@ -57,6 +57,12 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
     /// Whether to enable parallel tile encoding.
     public let parallelEncoding: Bool
 
+    /// Z-axis predictive coding policy. `.auto` (default) lets the
+    /// codec engage Z-delta only on volumes where it materially
+    /// improves ratio without violating the encode-speed budget;
+    /// see ``JP3DZDeltaMode`` for the other options.
+    public let zDeltaMode: JP3DZDeltaMode
+
     /// Creates an encoder configuration.
     ///
     /// - Parameters:
@@ -68,6 +74,7 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
     ///   - levelsY: Decomposition levels along Y (default: 3).
     ///   - levelsZ: Decomposition levels along Z (default: 1).
     ///   - parallelEncoding: Enable parallel tile encoding (default: true).
+    ///   - zDeltaMode: Z-axis predictive coding policy (default: `.auto`).
     public init(
         compressionMode: JP3DCompressionMode = .lossless,
         tiling: JP3DTilingConfiguration = .default,
@@ -76,7 +83,8 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
         levelsX: Int = 3,
         levelsY: Int = 3,
         levelsZ: Int = 1,
-        parallelEncoding: Bool = true
+        parallelEncoding: Bool = true,
+        zDeltaMode: JP3DZDeltaMode = .auto
     ) {
         self.compressionMode = compressionMode
         self.tiling = tiling
@@ -86,6 +94,7 @@ public struct JP3DEncoderConfiguration: Sendable, Equatable {
         self.levelsY = max(0, levelsY)
         self.levelsZ = max(0, levelsZ)
         self.parallelEncoding = parallelEncoding
+        self.zDeltaMode = zDeltaMode
     }
 
     // MARK: - Presets
@@ -330,7 +339,8 @@ public actor JP3DEncoder {
                 tile: tileVoxels,
                 useHTJ2K: useHTJ2K,
                 lossless: isLossless,
-                quality: qualityHint
+                quality: qualityHint,
+                zDeltaMode: configuration.zDeltaMode
             )
             encodedTileData.append(payload)
 

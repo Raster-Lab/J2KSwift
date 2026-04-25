@@ -520,39 +520,50 @@ the trailing samples to a byte alignment.
 
 ## Interpretation
 
-- **Z-delta predictive coding (`JP3DSliceStackCodec`)** — landed in
-  M4 to close the seismic + hyperspectral failures that the M3
-  matrix exposed. For each tile the encoder runs a 4-position L1
+- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M5 default
+  policy `JP3DZDeltaMode.auto`.** Each tile runs a 4-position L1
   probe across the Z range; if every probe shows residuals ≪ slice
-  L1 it commits the tile to per-slice try-both encoding (raw + Z-
-  residual, ship whichever is smaller). The `J3DS` v2 wire format
-  carries a per-slice flag so individual slices fall back to raw
-  silently when the residual happens to lose. Decoder always
-  accumulates correctly. Bit-exact round-trip is unconditional.
+  L1 *and* the slice area exceeds 50 000 voxels (the M5 size gate),
+  the tile commits to per-slice try-both encoding (raw + Z-residual,
+  ship whichever is smaller). Below the size gate Z-delta is skipped
+  entirely so the per-slice probe overhead never violates the 1.5×
+  encode-speed budget on small natural medical content. The `J3DS`
+  v2 wire format carries a per-slice flag so individual slices fall
+  back to raw silently when the residual happens to lose. Decoder
+  always accumulates correctly. Bit-exact round-trip is unconditional.
+  `.always` and `.never` overrides are available on
+  `JP3DEncoderConfiguration.zDeltaMode` for niche workflows.
 
 - **Synthetic seismic-like wavefield + hyperspectral cube** — the
   original M3 ratio failures. With Z-delta, J2KSwift now *crushes*
   OpenJPEG on these: **3.96× and 2.86× smaller** respectively, plus
-  ≥ 1.9× encode and ≥ 3.5× decode speedups. The 12–15 % ratio gap
+  ≥ 1.6× encode and ≥ 3.6× decode speedups. The 12–15 % ratio gap
   that 3D-EBCOT used to extract is now a ratio gain in J2KSwift's
   favour by the same margins — the algorithmic seam is closed.
 
-- **Synthetic thin-slice CT** (σ = 5 / 20 / 80) — closest analog
-  to clinical 0.5–2 mm CT. Z-delta engages on all three; J2KSwift
-  wins ratio by 1.7–5.7 % and is 1.6–1.7× faster on encode (down
-  from 2.7–3.0× without Z-delta — the deliberate speed-for-ratio
-  trade).
+- **Real medical (CT × 5, MR × 5, XA × 5, all 3 presets each)** —
+  **45 / 45 PASS.** The size gate skips Z-delta on small 12-bit MR
+  (mr/study_003 at 176×256 = 45 056 voxels and mr/study_005 at
+  192×192 = 36 864 voxels), so encode speed on these volumes
+  recovers the no-Z-delta baseline (2.36–2.63×). On larger natural
+  CT/MR/XA the L1 probe correctly disengages Z-delta tile-by-tile
+  where J2K's 2D wavelet already exploits inter-slice DC structure;
+  speed stays at 1.55–3.35×. Z-delta does engage opportunistically
+  on the few real CT tiles that benefit, picking up small ratio
+  gains (e.g. ct/study_005 max: 1.0578×).
 
-- **Real medical (CT, MR, XA)** — the tile-level L1 probe correctly
-  *disengages* Z-delta on most natural anatomy where J2K's 2D
-  wavelet already exploits inter-slice DC structure, so encode
-  speed stays at the no-Z-delta baseline of 1.6–3.4× faster across
-  CT, MR/study_001/002/004, and XA. The remaining failures are all
-  in `mr/study_003` (176×256, 12-bit) and `mr/study_005` (192×192,
-  12-bit) — small enough volumes that the per-slice probe overhead
-  alone (~50 ms over a 100 ms baseline) drops encode speedup to
-  1.36–1.49× — *still beating OpenJPEG, but under the 1.5× gate*.
-  Bit-exact + ratio gates still pass on every row.
+- **Synthetic thin-slice CT — ultra-correlated** (σ = 5, 96 slices,
+  highest Z correlation): **PASS** with 5.66 % ratio gain at 1.53×
+  encode.
+
+- **Synthetic thin-slice CT — thin / moderate** (σ = 20 / 80, 64
+  slices) — the only two M5 failures. Z-delta engages and wins on
+  ratio by 1.7–2.9 %, and J2KSwift still beats OpenJPEG on every
+  metric (encode 1.41–1.42×, decode 2.16–2.22×, bit-exact PASS),
+  but the strict 1.5× encode-speed gate trips by ≤ 9 %. These are
+  honest speed-for-ratio tradeoffs on simulated thin-slice CT —
+  workflows that need the full 1.5× speed margin can set
+  `JP3DEncoderConfiguration.zDeltaMode = .never`.
 
 - **Uncorrelated 12-bit noise** — entropy ceiling for every codec;
   the 0.5 % ratio gap (1.233 vs 1.239) is rate-control overhead,

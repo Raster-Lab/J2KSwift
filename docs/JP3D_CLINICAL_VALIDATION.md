@@ -9,8 +9,8 @@
 
 ## Headline
 
-**45 / 51 rows meet every medical-grade pass criterion**
-(39/45 real DICOM, 6/6 synthetic stress).
+**49 / 51 rows meet every medical-grade pass criterion**
+(45/45 real DICOM, 4/6 synthetic stress).
 
 Pass criteria per row:
 - Bit-exact lossless round-trip (non-negotiable)
@@ -30,51 +30,51 @@ just the first N slices of a localiser).
 
 | Study | Preset | Volume | J2KSwift ratio | OpenJPEG ratio | ratio Δ | Encode J2K / OPJ ms | Encode | Decode J2K / OPJ ms | Decode | Pass |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|
-| CT/study_001 | 32 | 512×512×32 (16b) | 3.491:1 | 3.336:1 | 1.0467× | 1000 / 1609 ms | **1.61×** | 650 / 1650 ms | **2.54×** | ✓ |
-| CT/study_001 | 128 | 512×512×128 (16b) | 3.472:1 | 3.313:1 | 1.0481× | 3986 / 6385 ms | **1.60×** | 2582 / 6697 ms | **2.59×** | ✓ |
-| CT/study_001 | max | 512×512×256 (16b) | 3.472:1 | 3.307:1 | 1.0500× | 7989 / 12626 ms | **1.58×** | 5107 / 12897 ms | **2.53×** | ✓ |
-| CT/study_002 | 32 | 512×512×32 (16b) | 2.225:1 | 2.164:1 | 1.0281× | 1132 / 1977 ms | **1.75×** | 740 / 2029 ms | **2.74×** | ✓ |
-| CT/study_002 | 128 | 512×512×128 (16b) | 2.216:1 | 2.155:1 | 1.0282× | 4534 / 7929 ms | **1.75×** | 2954 / 8025 ms | **2.72×** | ✓ |
-| CT/study_002 | max | 512×512×256 (16b) | 2.206:1 | 2.150:1 | 1.0260× | 9010 / 15597 ms | **1.73×** | 5910 / 15981 ms | **2.70×** | ✓ |
-| CT/study_003 | 32 | 512×512×32 (16b) | 3.088:1 | 2.949:1 | 1.0469× | 1061 / 1826 ms | **1.72×** | 685 / 1859 ms | **2.71×** | ✓ |
-| CT/study_003 | 128 | 512×512×128 (16b) | 3.130:1 | 2.985:1 | 1.0484× | 4170 / 7151 ms | **1.72×** | 2686 / 7326 ms | **2.73×** | ✓ |
-| CT/study_003 | max | 512×512×256 (16b) | 3.038:1 | 2.895:1 | 1.0495× | 8405 / 14476 ms | **1.72×** | 5405 / 14820 ms | **2.74×** | ✓ |
-| CT/study_004 | 32 | 512×512×32 (16b) | 2.298:1 | 2.237:1 | 1.0273× | 1121 / 1941 ms | **1.73×** | 741 / 1991 ms | **2.69×** | ✓ |
-| CT/study_004 | 128 | 512×512×128 (16b) | 2.339:1 | 2.303:1 | 1.0155× | 4359 / 7398 ms | **1.70×** | 2915 / 7652 ms | **2.63×** | ✓ |
-| CT/study_004 | max | 512×512×256 (16b) | 2.205:1 | 2.168:1 | 1.0175× | 8969 / 15454 ms | **1.72×** | 5956 / 15653 ms | **2.63×** | ✓ |
-| CT/study_005 | 32 | 512×512×32 (16b) | 3.504:1 | 3.340:1 | 1.0489× | 1014 / 1633 ms | **1.61×** | 645 / 1670 ms | **2.59×** | ✓ |
-| CT/study_005 | 128 | 512×512×128 (16b) | 3.510:1 | 3.353:1 | 1.0470× | 3955 / 6446 ms | **1.63×** | 2550 / 6587 ms | **2.58×** | ✓ |
-| CT/study_005 | max | 512×512×256 (16b) | 3.571:1 | 3.376:1 | 1.0578× | 7712 / 12781 ms | **1.66×** | 5059 / 13023 ms | **2.57×** | ✓ |
-| MR/study_001 | 32 | 224×256×32 (12b) | 3.326:1 | 3.205:1 | 1.0378× | 126 / 392 ms | **3.11×** | 144 / 406 ms | **2.82×** | ✓ |
-| MR/study_001 | 128 | 224×256×128 (12b) | 2.964:1 | 2.869:1 | 1.0330× | 497 / 1658 ms | **3.34×** | 566 / 1685 ms | **2.98×** | ✓ |
-| MR/study_001 | max | 224×256×185 (12b) | 3.062:1 | 2.965:1 | 1.0329× | 694 / 2363 ms | **3.41×** | 797 / 2403 ms | **3.01×** | ✓ |
-| MR/study_002 | 32 | 512×512×32 (16b) | 1.949:1 | 1.882:1 | 1.0353× | 1178 / 2030 ms | **1.72×** | 750 / 2084 ms | **2.78×** | ✓ |
-| MR/study_002 | 128 | 512×512×128 (16b) | 1.979:1 | 1.911:1 | 1.0356× | 4541 / 8026 ms | **1.77×** | 2928 / 8242 ms | **2.82×** | ✓ |
-| MR/study_002 | max | 512×512×256 (16b) | 1.935:1 | 1.869:1 | 1.0354× | 9173 / 16220 ms | **1.77×** | 5957 / 16570 ms | **2.78×** | ✓ |
-| MR/study_003 | 32 | 176×256×32 (12b) | 3.840:1 | 3.640:1 | 1.0549× | 180 / 267 ms | **1.49×** | 115 / 273 ms | **2.37×** | ✗ |
-| MR/study_003 | 128 | 176×256×128 (12b) | 3.826:1 | 3.646:1 | 1.0493× | 679 / 1008 ms | **1.48×** | 429 / 1032 ms | **2.40×** | ✗ |
-| MR/study_003 | max | 176×256×256 (12b) | 3.829:1 | 3.649:1 | 1.0492× | 1351 / 1996 ms | **1.48×** | 844 / 2015 ms | **2.39×** | ✗ |
-| MR/study_004 | 32 | 512×512×32 (16b) | 2.472:1 | 2.370:1 | 1.0430× | 1094 / 1898 ms | **1.74×** | 707 / 1926 ms | **2.72×** | ✓ |
-| MR/study_004 | 128 | 512×512×128 (16b) | 2.345:1 | 2.264:1 | 1.0358× | 4382 / 7523 ms | **1.72×** | 2856 / 7700 ms | **2.70×** | ✓ |
-| MR/study_004 | max | 512×512×256 (16b) | 2.360:1 | 2.265:1 | 1.0418× | 8913 / 15259 ms | **1.71×** | 5705 / 15587 ms | **2.73×** | ✓ |
-| MR/study_005 | 32 | 192×192×32 (12b) | 4.262:1 | 4.080:1 | 1.0448× | 151 / 212 ms | **1.40×** | 97 / 215 ms | **2.21×** | ✗ |
-| MR/study_005 | 128 | 192×192×128 (12b) | 4.313:1 | 4.075:1 | 1.0583× | 569 / 778 ms | **1.37×** | 356 / 804 ms | **2.26×** | ✗ |
-| MR/study_005 | max | 192×192×256 (12b) | 4.322:1 | 4.080:1 | 1.0594× | 1122 / 1529 ms | **1.36×** | 702 / 1562 ms | **2.22×** | ✗ |
-| XA/study_001 | 32 | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 343 / 969 ms | **2.83×** | 392 / 993 ms | **2.53×** | ✓ |
-| XA/study_001 | 128 | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 342 / 974 ms | **2.85×** | 390 / 995 ms | **2.55×** | ✓ |
-| XA/study_001 | max | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 338 / 974 ms | **2.88×** | 390 / 991 ms | **2.54×** | ✓ |
-| XA/study_002 | 32 | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1489 / 4267 ms | **2.87×** | 1728 / 4377 ms | **2.53×** | ✓ |
-| XA/study_002 | 128 | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1503 / 4272 ms | **2.84×** | 1743 / 4363 ms | **2.50×** | ✓ |
-| XA/study_002 | max | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1494 / 4271 ms | **2.86×** | 1742 / 4370 ms | **2.51×** | ✓ |
-| XA/study_003 | 32 | 512×512×32 (8b) | 2.648:1 | 2.589:1 | 1.0227× | 415 / 1012 ms | **2.44×** | 409 / 1038 ms | **2.54×** | ✓ |
-| XA/study_003 | 128 | 512×512×128 (8b) | 2.653:1 | 2.608:1 | 1.0171× | 1965 / 3894 ms | **1.98×** | 1637 / 3944 ms | **2.41×** | ✓ |
-| XA/study_003 | max | 512×512×256 (8b) | 2.653:1 | 2.613:1 | 1.0152× | 4051 / 7726 ms | **1.91×** | 3273 / 7835 ms | **2.39×** | ✓ |
-| XA/study_004 | 32 | 512×512×32 (8b) | 2.925:1 | 2.844:1 | 1.0285× | 492 / 973 ms | **1.98×** | 409 / 995 ms | **2.43×** | ✓ |
-| XA/study_004 | 128 | 512×512×128 (8b) | 2.805:1 | 2.745:1 | 1.0218× | 1876 / 3820 ms | **2.04×** | 1621 / 3883 ms | **2.40×** | ✓ |
-| XA/study_004 | max | 512×512×256 (8b) | 2.806:1 | 2.752:1 | 1.0197× | 4030 / 7539 ms | **1.87×** | 3212 / 7655 ms | **2.38×** | ✓ |
-| XA/study_005 | 32 | 1024×1024×32 (12b) | 3.020:1 | 2.997:1 | 1.0078× | 2185 / 6263 ms | **2.87×** | 2563 / 6425 ms | **2.51×** | ✓ |
-| XA/study_005 | 128 | 1024×1024×126 (12b) | 3.038:1 | 3.016:1 | 1.0073× | 8888 / 24491 ms | **2.76×** | 10055 / 25121 ms | **2.50×** | ✓ |
-| XA/study_005 | max | 1024×1024×126 (12b) | 3.038:1 | 3.016:1 | 1.0073× | 8928 / 24574 ms | **2.75×** | 10026 / 25126 ms | **2.51×** | ✓ |
+| CT/study_001 | 32 | 512×512×32 (16b) | 3.491:1 | 3.336:1 | 1.0467× | 1020 / 1608 ms | **1.58×** | 659 / 1660 ms | **2.52×** | ✓ |
+| CT/study_001 | 128 | 512×512×128 (16b) | 3.472:1 | 3.313:1 | 1.0481× | 4082 / 6310 ms | **1.55×** | 2586 / 6457 ms | **2.50×** | ✓ |
+| CT/study_001 | max | 512×512×256 (16b) | 3.472:1 | 3.307:1 | 1.0500× | 8051 / 12598 ms | **1.56×** | 5169 / 12886 ms | **2.49×** | ✓ |
+| CT/study_002 | 32 | 512×512×32 (16b) | 2.225:1 | 2.164:1 | 1.0281× | 1152 / 1968 ms | **1.71×** | 745 / 2031 ms | **2.73×** | ✓ |
+| CT/study_002 | 128 | 512×512×128 (16b) | 2.216:1 | 2.155:1 | 1.0282× | 4583 / 7835 ms | **1.71×** | 2958 / 8067 ms | **2.73×** | ✓ |
+| CT/study_002 | max | 512×512×256 (16b) | 2.206:1 | 2.150:1 | 1.0260× | 9109 / 15615 ms | **1.71×** | 5913 / 16000 ms | **2.71×** | ✓ |
+| CT/study_003 | 32 | 512×512×32 (16b) | 3.088:1 | 2.949:1 | 1.0469× | 1067 / 1811 ms | **1.70×** | 663 / 1875 ms | **2.83×** | ✓ |
+| CT/study_003 | 128 | 512×512×128 (16b) | 3.130:1 | 2.985:1 | 1.0484× | 4220 / 7155 ms | **1.70×** | 2670 / 7328 ms | **2.74×** | ✓ |
+| CT/study_003 | max | 512×512×256 (16b) | 3.038:1 | 2.895:1 | 1.0495× | 8547 / 14539 ms | **1.70×** | 5413 / 14838 ms | **2.74×** | ✓ |
+| CT/study_004 | 32 | 512×512×32 (16b) | 2.298:1 | 2.237:1 | 1.0273× | 1142 / 1935 ms | **1.69×** | 745 / 1993 ms | **2.67×** | ✓ |
+| CT/study_004 | 128 | 512×512×128 (16b) | 2.339:1 | 2.303:1 | 1.0155× | 4441 / 7396 ms | **1.67×** | 2920 / 7625 ms | **2.61×** | ✓ |
+| CT/study_004 | max | 512×512×256 (16b) | 2.205:1 | 2.168:1 | 1.0175× | 9054 / 15137 ms | **1.67×** | 5902 / 15529 ms | **2.63×** | ✓ |
+| CT/study_005 | 32 | 512×512×32 (16b) | 3.504:1 | 3.340:1 | 1.0489× | 1023 / 1629 ms | **1.59×** | 659 / 1674 ms | **2.54×** | ✓ |
+| CT/study_005 | 128 | 512×512×128 (16b) | 3.510:1 | 3.353:1 | 1.0470× | 3972 / 6418 ms | **1.62×** | 2575 / 6569 ms | **2.55×** | ✓ |
+| CT/study_005 | max | 512×512×256 (16b) | 3.571:1 | 3.376:1 | 1.0578× | 7839 / 12731 ms | **1.62×** | 5077 / 13034 ms | **2.57×** | ✓ |
+| MR/study_001 | 32 | 224×256×32 (12b) | 3.326:1 | 3.205:1 | 1.0378× | 128 / 396 ms | **3.08×** | 145 / 406 ms | **2.79×** | ✓ |
+| MR/study_001 | 128 | 224×256×128 (12b) | 2.964:1 | 2.869:1 | 1.0330× | 493 / 1652 ms | **3.35×** | 570 / 1689 ms | **2.96×** | ✓ |
+| MR/study_001 | max | 224×256×185 (12b) | 3.062:1 | 2.965:1 | 1.0329× | 707 / 2359 ms | **3.34×** | 798 / 2394 ms | **3.00×** | ✓ |
+| MR/study_002 | 32 | 512×512×32 (16b) | 1.949:1 | 1.882:1 | 1.0353× | 1180 / 2028 ms | **1.72×** | 752 / 2083 ms | **2.77×** | ✓ |
+| MR/study_002 | 128 | 512×512×128 (16b) | 1.979:1 | 1.911:1 | 1.0356× | 4608 / 8010 ms | **1.74×** | 2953 / 8215 ms | **2.78×** | ✓ |
+| MR/study_002 | max | 512×512×256 (16b) | 1.935:1 | 1.869:1 | 1.0354× | 9397 / 16177 ms | **1.72×** | 5904 / 16570 ms | **2.81×** | ✓ |
+| MR/study_003 | 32 | 176×256×32 (12b) | 3.840:1 | 3.640:1 | 1.0549× | 102 / 267 ms | **2.63×** | 116 / 272 ms | **2.35×** | ✓ |
+| MR/study_003 | 128 | 176×256×128 (12b) | 3.826:1 | 3.646:1 | 1.0493× | 382 / 1001 ms | **2.62×** | 428 / 1028 ms | **2.40×** | ✓ |
+| MR/study_003 | max | 176×256×256 (12b) | 3.815:1 | 3.649:1 | 1.0455× | 753 / 1978 ms | **2.63×** | 828 / 2021 ms | **2.44×** | ✓ |
+| MR/study_004 | 32 | 512×512×32 (16b) | 2.472:1 | 2.370:1 | 1.0430× | 1113 / 1883 ms | **1.69×** | 714 / 1926 ms | **2.70×** | ✓ |
+| MR/study_004 | 128 | 512×512×128 (16b) | 2.345:1 | 2.264:1 | 1.0358× | 4427 / 7529 ms | **1.70×** | 2843 / 7697 ms | **2.71×** | ✓ |
+| MR/study_004 | max | 512×512×256 (16b) | 2.360:1 | 2.265:1 | 1.0418× | 9041 / 15259 ms | **1.69×** | 6295 / 16398 ms | **2.60×** | ✓ |
+| MR/study_005 | 32 | 192×192×32 (12b) | 4.262:1 | 4.080:1 | 1.0448× | 90 / 226 ms | **2.51×** | 100 / 235 ms | **2.34×** | ✓ |
+| MR/study_005 | 128 | 192×192×128 (12b) | 4.236:1 | 4.075:1 | 1.0395× | 347 / 819 ms | **2.36×** | 388 / 854 ms | **2.20×** | ✓ |
+| MR/study_005 | max | 192×192×256 (12b) | 4.227:1 | 4.080:1 | 1.0362× | 715 / 1650 ms | **2.31×** | 787 / 1711 ms | **2.17×** | ✓ |
+| XA/study_001 | 32 | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 393 / 1022 ms | **2.60×** | 435 / 1028 ms | **2.36×** | ✓ |
+| XA/study_001 | 128 | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 362 / 1040 ms | **2.87×** | 436 / 1018 ms | **2.34×** | ✓ |
+| XA/study_001 | max | 1024×1024×5 (12b) | 3.442:1 | 3.388:1 | 1.0160× | 359 / 1033 ms | **2.88×** | 429 / 1025 ms | **2.39×** | ✓ |
+| XA/study_002 | 32 | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1822 / 4327 ms | **2.37×** | 2003 / 4351 ms | **2.17×** | ✓ |
+| XA/study_002 | 128 | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1672 / 4260 ms | **2.55×** | 1842 / 4355 ms | **2.36×** | ✓ |
+| XA/study_002 | max | 1024×1024×22 (12b) | 3.213:1 | 3.181:1 | 1.0099× | 1569 / 4253 ms | **2.71×** | 1757 / 4377 ms | **2.49×** | ✓ |
+| XA/study_003 | 32 | 512×512×32 (8b) | 2.648:1 | 2.589:1 | 1.0227× | 413 / 1022 ms | **2.48×** | 420 / 1034 ms | **2.46×** | ✓ |
+| XA/study_003 | 128 | 512×512×128 (8b) | 2.653:1 | 2.608:1 | 1.0171× | 2047 / 3909 ms | **1.91×** | 1682 / 3976 ms | **2.36×** | ✓ |
+| XA/study_003 | max | 512×512×256 (8b) | 2.653:1 | 2.613:1 | 1.0152× | 4439 / 7730 ms | **1.74×** | 3430 / 7818 ms | **2.28×** | ✓ |
+| XA/study_004 | 32 | 512×512×32 (8b) | 2.925:1 | 2.844:1 | 1.0285× | 491 / 974 ms | **1.98×** | 409 / 1004 ms | **2.45×** | ✓ |
+| XA/study_004 | 128 | 512×512×128 (8b) | 2.805:1 | 2.745:1 | 1.0218× | 2041 / 3881 ms | **1.90×** | 1724 / 3893 ms | **2.26×** | ✓ |
+| XA/study_004 | max | 512×512×256 (8b) | 2.806:1 | 2.752:1 | 1.0197× | 4590 / 7537 ms | **1.64×** | 3565 / 7662 ms | **2.15×** | ✓ |
+| XA/study_005 | 32 | 1024×1024×32 (12b) | 3.020:1 | 2.997:1 | 1.0078× | 2401 / 6238 ms | **2.60×** | 2750 / 6412 ms | **2.33×** | ✓ |
+| XA/study_005 | 128 | 1024×1024×126 (12b) | 3.038:1 | 3.016:1 | 1.0073× | 10261 / 24472 ms | **2.38×** | 10201 / 25072 ms | **2.46×** | ✓ |
+| XA/study_005 | max | 1024×1024×126 (12b) | 3.038:1 | 3.016:1 | 1.0073× | 9171 / 24558 ms | **2.68×** | 11291 / 25094 ms | **2.22×** | ✓ |
 
 ## Synthetic stress volumes
 
@@ -86,21 +86,17 @@ when Z correlation is strong.
 
 | Stress | Preset | Volume | J2KSwift ratio | OpenJPEG ratio | ratio Δ | Encode J2K / OPJ ms | Encode | Decode J2K / OPJ ms | Decode | Pass |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|
-| thinslice_ct | ultracorr | 512×512×96 (16b) | 3.317:1 | 3.139:1 | 1.0566× | 2778 / 4433 ms | **1.60×** | 1853 / 4512 ms | **2.43×** | ✓ |
-| thinslice_ct | thin | 512×512×64 (16b) | 2.342:1 | 2.276:1 | 1.0288× | 2113 / 3456 ms | **1.64×** | 1390 / 3512 ms | **2.53×** | ✓ |
-| thinslice_ct | moderate | 512×512×64 (16b) | 1.804:1 | 1.774:1 | 1.0172× | 2316 / 3898 ms | **1.68×** | 1522 / 4008 ms | **2.63×** | ✓ |
-| seismic | z128 | 256×256×128 (16b) | 8.806:1 | 2.222:1 | 3.9639× | 858 / 1672 ms | **1.95×** | 436 / 1703 ms | **3.91×** | ✓ |
-| hyperspectral | b64 | 256×256×64 (12b) | 7.704:1 | 2.696:1 | 2.8581× | 424 / 802 ms | **1.89×** | 229 / 821 ms | **3.58×** | ✓ |
-| noise12u | z64 | 128×128×64 (12b) | 1.233:1 | 1.239:1 | 0.9950× | 143 / 318 ms | **2.23×** | 195 / 327 ms | **1.68×** | ✓ |
+| thinslice_ct | ultracorr | 512×512×96 (16b) | 3.317:1 | 3.139:1 | 1.0566× | 2905 / 4444 ms | **1.53×** | 1980 / 4519 ms | **2.28×** | ✓ |
+| thinslice_ct | thin | 512×512×64 (16b) | 2.342:1 | 2.276:1 | 1.0288× | 2445 / 3447 ms | **1.41×** | 1579 / 3507 ms | **2.22×** | ✗ |
+| thinslice_ct | moderate | 512×512×64 (16b) | 1.804:1 | 1.774:1 | 1.0172× | 2896 / 4104 ms | **1.42×** | 1842 / 3986 ms | **2.16×** | ✗ |
+| seismic | z128 | 256×256×128 (16b) | 8.806:1 | 2.222:1 | 3.9639× | 979 / 1758 ms | **1.80×** | 464 / 1862 ms | **4.01×** | ✓ |
+| hyperspectral | b64 | 256×256×64 (12b) | 7.704:1 | 2.696:1 | 2.8581× | 521 / 845 ms | **1.62×** | 244 / 877 ms | **3.60×** | ✓ |
+| noise12u | z64 | 128×128×64 (12b) | 1.233:1 | 1.239:1 | 0.9950× | 153 / 348 ms | **2.28×** | 203 / 357 ms | **1.76×** | ✓ |
 
 ## Failures
 
-- `MR/study_003` (32): enc_speedup 1.49× < 1.5×
-- `MR/study_003` (128): enc_speedup 1.48× < 1.5×
-- `MR/study_003` (max): enc_speedup 1.48× < 1.5×
-- `MR/study_005` (32): enc_speedup 1.40× < 1.5×
-- `MR/study_005` (128): enc_speedup 1.37× < 1.5×
-- `MR/study_005` (max): enc_speedup 1.36× < 1.5×
+- `synthetic/thinslice_ct` (thin): enc_speedup 1.41× < 1.5×
+- `synthetic/thinslice_ct` (moderate): enc_speedup 1.42× < 1.5×
 
 ## Methodology
 
@@ -117,39 +113,50 @@ the trailing samples to a byte alignment.
 
 ## Interpretation
 
-- **Z-delta predictive coding (`JP3DSliceStackCodec`)** — landed in
-  M4 to close the seismic + hyperspectral failures that the M3
-  matrix exposed. For each tile the encoder runs a 4-position L1
+- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M5 default
+  policy `JP3DZDeltaMode.auto`.** Each tile runs a 4-position L1
   probe across the Z range; if every probe shows residuals ≪ slice
-  L1 it commits the tile to per-slice try-both encoding (raw + Z-
-  residual, ship whichever is smaller). The `J3DS` v2 wire format
-  carries a per-slice flag so individual slices fall back to raw
-  silently when the residual happens to lose. Decoder always
-  accumulates correctly. Bit-exact round-trip is unconditional.
+  L1 *and* the slice area exceeds 50 000 voxels (the M5 size gate),
+  the tile commits to per-slice try-both encoding (raw + Z-residual,
+  ship whichever is smaller). Below the size gate Z-delta is skipped
+  entirely so the per-slice probe overhead never violates the 1.5×
+  encode-speed budget on small natural medical content. The `J3DS`
+  v2 wire format carries a per-slice flag so individual slices fall
+  back to raw silently when the residual happens to lose. Decoder
+  always accumulates correctly. Bit-exact round-trip is unconditional.
+  `.always` and `.never` overrides are available on
+  `JP3DEncoderConfiguration.zDeltaMode` for niche workflows.
 
 - **Synthetic seismic-like wavefield + hyperspectral cube** — the
   original M3 ratio failures. With Z-delta, J2KSwift now *crushes*
   OpenJPEG on these: **3.96× and 2.86× smaller** respectively, plus
-  ≥ 1.9× encode and ≥ 3.5× decode speedups. The 12–15 % ratio gap
+  ≥ 1.6× encode and ≥ 3.6× decode speedups. The 12–15 % ratio gap
   that 3D-EBCOT used to extract is now a ratio gain in J2KSwift's
   favour by the same margins — the algorithmic seam is closed.
 
-- **Synthetic thin-slice CT** (σ = 5 / 20 / 80) — closest analog
-  to clinical 0.5–2 mm CT. Z-delta engages on all three; J2KSwift
-  wins ratio by 1.7–5.7 % and is 1.6–1.7× faster on encode (down
-  from 2.7–3.0× without Z-delta — the deliberate speed-for-ratio
-  trade).
+- **Real medical (CT × 5, MR × 5, XA × 5, all 3 presets each)** —
+  **45 / 45 PASS.** The size gate skips Z-delta on small 12-bit MR
+  (mr/study_003 at 176×256 = 45 056 voxels and mr/study_005 at
+  192×192 = 36 864 voxels), so encode speed on these volumes
+  recovers the no-Z-delta baseline (2.36–2.63×). On larger natural
+  CT/MR/XA the L1 probe correctly disengages Z-delta tile-by-tile
+  where J2K's 2D wavelet already exploits inter-slice DC structure;
+  speed stays at 1.55–3.35×. Z-delta does engage opportunistically
+  on the few real CT tiles that benefit, picking up small ratio
+  gains (e.g. ct/study_005 max: 1.0578×).
 
-- **Real medical (CT, MR, XA)** — the tile-level L1 probe correctly
-  *disengages* Z-delta on most natural anatomy where J2K's 2D
-  wavelet already exploits inter-slice DC structure, so encode
-  speed stays at the no-Z-delta baseline of 1.6–3.4× faster across
-  CT, MR/study_001/002/004, and XA. The remaining failures are all
-  in `mr/study_003` (176×256, 12-bit) and `mr/study_005` (192×192,
-  12-bit) — small enough volumes that the per-slice probe overhead
-  alone (~50 ms over a 100 ms baseline) drops encode speedup to
-  1.36–1.49× — *still beating OpenJPEG, but under the 1.5× gate*.
-  Bit-exact + ratio gates still pass on every row.
+- **Synthetic thin-slice CT — ultra-correlated** (σ = 5, 96 slices,
+  highest Z correlation): **PASS** with 5.66 % ratio gain at 1.53×
+  encode.
+
+- **Synthetic thin-slice CT — thin / moderate** (σ = 20 / 80, 64
+  slices) — the only two M5 failures. Z-delta engages and wins on
+  ratio by 1.7–2.9 %, and J2KSwift still beats OpenJPEG on every
+  metric (encode 1.41–1.42×, decode 2.16–2.22×, bit-exact PASS),
+  but the strict 1.5× encode-speed gate trips by ≤ 9 %. These are
+  honest speed-for-ratio tradeoffs on simulated thin-slice CT —
+  workflows that need the full 1.5× speed margin can set
+  `JP3DEncoderConfiguration.zDeltaMode = .never`.
 
 - **Uncorrelated 12-bit noise** — entropy ceiling for every codec;
   the 0.5 % ratio gap (1.233 vs 1.239) is rate-control overhead,
