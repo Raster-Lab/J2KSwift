@@ -79,7 +79,7 @@ let package = Package(
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"]),
         .target(
             name: "J2K3D",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KCore", "J2KCodec"]),
         .target(
             name: "J2KXS",
             dependencies: ["J2KCore"]),

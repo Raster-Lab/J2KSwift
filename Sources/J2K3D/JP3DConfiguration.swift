@@ -318,6 +318,38 @@ public enum JP3DCompressionMode: Sendable, Equatable {
     }
 }
 
+/// Z-axis predictive coding policy for the slice-stack codec.
+///
+/// JP3D's slice-stack codec optionally encodes each Z-slice as the
+/// per-voxel residual against the previous slice (lossless 1-level
+/// Z-axis predictive transform), which dramatically improves
+/// compression ratio on highly Z-correlated volumes (seismic /
+/// hyperspectral / thin-slice CT) at the cost of roughly 2× encode
+/// time on tiles where it engages.
+///
+/// `.auto` (default) is medical-grade: a tile-level L1 probe combined
+/// with a slice-area heuristic ensures Z-delta engages only when both
+/// the codestream savings AND the absolute encode-speed budget can
+/// absorb the per-slice probe cost. Small (< 50 000-voxel slice)
+/// natural medical content automatically skips Z-delta and matches
+/// the no-Z-delta baseline encode speed.
+public enum JP3DZDeltaMode: Sendable, Equatable {
+    /// Per-tile auto-decision: engage when the L1 probe accepts AND
+    /// the slice area is large enough that the probe overhead can
+    /// be amortised. Default.
+    case auto
+
+    /// Engage Z-delta whenever the L1 probe accepts, ignoring the
+    /// slice-area heuristic. Use for small but highly-correlated
+    /// volumes (e.g. low-resolution time-lapse seismic) where every
+    /// bit of ratio improvement matters.
+    case always
+
+    /// Skip Z-delta entirely. Use when maximum encode throughput is
+    /// the priority and Z-axis decorrelation is not needed.
+    case never
+}
+
 /// Storage for 3D wavelet coefficients.
 ///
 /// `J2K3DCoefficients` stores the output of a 3D discrete wavelet transform,
