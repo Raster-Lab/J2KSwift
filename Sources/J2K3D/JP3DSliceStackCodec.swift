@@ -160,25 +160,55 @@ struct JP3DSliceStackCodec: Sendable {
         // holds even on small 192×192 / 256×256 volumes.
 
         // Empirical savings gate (M6): after the first try-both pair,
-        // measure the *actual* compressed-size delta. If signed didn't
-        // beat raw by `firstSliceSavingsThreshold` or more, the tile
-        // commits to raw-only for the remaining slices — skipping
-        // both the residual allocation AND the second J2K encode call
-        // for slices 2..N. This is what closes the M5 thin/moderate
-        // thin-slice CT failures: their slices have low L1 (so the
-        // probe accepts) but high entropy in the raw, so signed
-        // encoding only saves 1-3 % per slice — not enough to absorb
-        // the 2× encode cost. For seismic / hyperspectral / ultra-
-        // correlated CT the first slice's signed wins by ≥ 5 %, so
-        // the tile happily stays in try-both mode.
+        // measure the *actual* compressed-size delta and commit the
+        // tile to one of three modes for slices 2..N:
+        //
+        //   savings ≥ signedOnlyThreshold (≥ 20 %)
+        //     → tileSignedOnlyActive: skip the raw encode entirely,
+        //       just emit the signed residual codestream. This is the
+        //       M7 fix — on tiles where Z-delta is a clear win
+        //       (seismic / hyperspectral / strongly-correlated CT),
+        //       skipping ~3 ms/slice of redundant raw encoding closes
+        //       the lone hyperspectral 1.48× speed-gate miss from M6.
+        //
+        //   firstSliceSavingsThreshold (≥ 3 %) ≤ savings < 20 %
+        //     → keep tileTryBothActive: per-slice opportunism with
+        //       try-both. Used when slice-by-slice gain is real but
+        //       modest enough that occasional slices may lose to raw.
+        //
+        //   savings < firstSliceSavingsThreshold (< 3 %)
+        //     → commit tile to raw-only: skip residual allocation
+        //       AND second encode for slices 2..N. Used for tiles
+        //       where probe accepted but actual J2K savings are too
+        //       marginal to absorb the 2× encode cost (the M6 fix
+        //       for thin-slice CT σ=20/80).
         let firstSliceSavingsThreshold: Double = 0.03
+        let signedOnlyThreshold: Double = 0.20
         var tileTryBothActive = probedZDelta
+        var tileSignedOnlyActive = false
 
         for z in 0..<tile.depth {
-            // Per-slice gating is two-tier when try-both is active:
+            // Fast path: tile committed to signed-only after seeing
+            // huge savings on slice 1. Encode just the residual,
+            // falling back to raw only when the bit-depth signed
+            // range overflows on this particular slice.
+            if tileSignedOnlyActive && z > 0 {
+                if let candidate = computeResidualCandidate(
+                    currentZ: z, previousZ: z - 1, in: tile) {
+                    let signedImage = makeSignedImage(
+                        from: candidate.perComponent, in: tile)
+                    let signedCS = try await signedEncoder.encode(signedImage)
+                    slicePayloads.append((Self.sliceFlagIsResidual, signedCS))
+                    continue
+                }
+                // Residual overflowed — must fall through to raw for
+                // this slice. The next slice still tries the residual
+                // path; tileSignedOnlyActive is preserved.
+            }
+
+            // Per-slice gating when try-both is active:
             //   1) Allocation-free probe (`probeResidualLooksGood`)
-            //      streams the bytes once, keeps natural-medical
-            //      slices that don't benefit from the second encode
+            //      keeps natural-medical slices that won't benefit
             //      out of the heavyweight path.
             //   2) Only when tier 1 passes does
             //      `computeResidualCandidate` allocate the residual
@@ -212,9 +242,11 @@ struct JP3DSliceStackCodec: Sendable {
 
             // After the first slice that actually attempted try-both,
             // commit a tile-wide decision based on the empirical
-            // savings — see `firstSliceSavingsThreshold` above.
+            // savings (see thresholds above).
             if tileTryBothActive && z == 1 {
-                if measuredSavings < firstSliceSavingsThreshold {
+                if measuredSavings >= signedOnlyThreshold {
+                    tileSignedOnlyActive = true
+                } else if measuredSavings < firstSliceSavingsThreshold {
                     tileTryBothActive = false
                 }
             }

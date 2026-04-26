@@ -520,26 +520,33 @@ the trailing samples to a byte alignment.
 
 ## Interpretation
 
-- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M6 default
-  policy `JP3DZDeltaMode.auto`.** Three-stage gating ensures Z-delta
-  engages only where it materially helps:
+- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M7 default
+  policy `JP3DZDeltaMode.auto`.** Four-stage gating ensures Z-delta
+  engages only where it materially helps and runs at full speed when
+  it does:
    1. **Slice-area gate** (M5): tiles with `width × height < 50 000`
       voxels skip Z-delta entirely so the per-slice probe overhead
       never violates the 1.5× encode-speed budget on small medical.
-   2. **L1 probe** (M4): a 4-position allocation-free probe across
-      the Z range admits the tile only when residual L1 ≪ slice L1.
+   2. **L1 probe** (M4): 4-position allocation-free probe across the
+      Z range admits the tile only when residual L1 ≪ slice L1.
    3. **Empirical-savings gate** (M6): after the *first* try-both
       pair, if the signed codestream didn't beat raw by ≥ 3 %, the
       tile commits to raw-only for the remaining slices — closes
-      the M5 thin-slice CT (σ=20 / σ=80) failures where L1 looked
-      promising but the J2K wavelet already captured most of the
-      compressible structure in raw, leaving only marginal residual
-      gains that didn't justify the 2× try-both encode cost.
+      the M5 thin-slice CT failures where L1 looked promising but
+      the J2K wavelet already captured most of the compressible
+      structure in raw.
+   4. **Signed-only commit** (M7): if slice 1's signed encode beats
+      raw by ≥ 20 %, the tile commits to *signed-only* — every
+      remaining slice emits just the residual codestream, skipping
+      the redundant raw encode entirely. This roughly halves
+      per-slice cost on tiles where Z-delta is a clear win and
+      closes the lone hyperspectral 1.48× speed-gate miss from M6.
   The `J3DS` v2 wire format carries a per-slice flag so individual
   slices fall back to raw silently when the residual happens to
-  lose. Decoder always accumulates correctly. Bit-exact round-trip
-  is unconditional. `.always` and `.never` overrides are available
-  on `JP3DEncoderConfiguration.zDeltaMode` for niche workflows.
+  lose or overflow. Decoder always accumulates correctly. Bit-exact
+  round-trip is unconditional. `.always` and `.never` overrides are
+  available on `JP3DEncoderConfiguration.zDeltaMode` for niche
+  workflows.
 
 - **Synthetic seismic-like wavefield + hyperspectral cube** — the
   original M3 ratio failures. With Z-delta, J2KSwift now *crushes*
