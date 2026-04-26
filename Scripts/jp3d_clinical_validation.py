@@ -520,19 +520,26 @@ the trailing samples to a byte alignment.
 
 ## Interpretation
 
-- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M5 default
-  policy `JP3DZDeltaMode.auto`.** Each tile runs a 4-position L1
-  probe across the Z range; if every probe shows residuals ≪ slice
-  L1 *and* the slice area exceeds 50 000 voxels (the M5 size gate),
-  the tile commits to per-slice try-both encoding (raw + Z-residual,
-  ship whichever is smaller). Below the size gate Z-delta is skipped
-  entirely so the per-slice probe overhead never violates the 1.5×
-  encode-speed budget on small natural medical content. The `J3DS`
-  v2 wire format carries a per-slice flag so individual slices fall
-  back to raw silently when the residual happens to lose. Decoder
-  always accumulates correctly. Bit-exact round-trip is unconditional.
-  `.always` and `.never` overrides are available on
-  `JP3DEncoderConfiguration.zDeltaMode` for niche workflows.
+- **Z-delta predictive coding (`JP3DSliceStackCodec`) — M6 default
+  policy `JP3DZDeltaMode.auto`.** Three-stage gating ensures Z-delta
+  engages only where it materially helps:
+   1. **Slice-area gate** (M5): tiles with `width × height < 50 000`
+      voxels skip Z-delta entirely so the per-slice probe overhead
+      never violates the 1.5× encode-speed budget on small medical.
+   2. **L1 probe** (M4): a 4-position allocation-free probe across
+      the Z range admits the tile only when residual L1 ≪ slice L1.
+   3. **Empirical-savings gate** (M6): after the *first* try-both
+      pair, if the signed codestream didn't beat raw by ≥ 3 %, the
+      tile commits to raw-only for the remaining slices — closes
+      the M5 thin-slice CT (σ=20 / σ=80) failures where L1 looked
+      promising but the J2K wavelet already captured most of the
+      compressible structure in raw, leaving only marginal residual
+      gains that didn't justify the 2× try-both encode cost.
+  The `J3DS` v2 wire format carries a per-slice flag so individual
+  slices fall back to raw silently when the residual happens to
+  lose. Decoder always accumulates correctly. Bit-exact round-trip
+  is unconditional. `.always` and `.never` overrides are available
+  on `JP3DEncoderConfiguration.zDeltaMode` for niche workflows.
 
 - **Synthetic seismic-like wavefield + hyperspectral cube** — the
   original M3 ratio failures. With Z-delta, J2KSwift now *crushes*
@@ -553,17 +560,16 @@ the trailing samples to a byte alignment.
   gains (e.g. ct/study_005 max: 1.0578×).
 
 - **Synthetic thin-slice CT — ultra-correlated** (σ = 5, 96 slices,
-  highest Z correlation): **PASS** with 5.66 % ratio gain at 1.53×
-  encode.
+  highest Z correlation): **PASS** with 5.66 % ratio gain at 2.01×
+  encode (Z-delta engages, savings gate confirms big wins, full
+  try-both runs).
 
 - **Synthetic thin-slice CT — thin / moderate** (σ = 20 / 80, 64
-  slices) — the only two M5 failures. Z-delta engages and wins on
-  ratio by 1.7–2.9 %, and J2KSwift still beats OpenJPEG on every
-  metric (encode 1.41–1.42×, decode 2.16–2.22×, bit-exact PASS),
-  but the strict 1.5× encode-speed gate trips by ≤ 9 %. These are
-  honest speed-for-ratio tradeoffs on simulated thin-slice CT —
-  workflows that need the full 1.5× speed margin can set
-  `JP3DEncoderConfiguration.zDeltaMode = .never`.
+  slices) — the M5 failures. **Both PASS in M6** at 1.91× / 1.96×
+  encode. The empirical-savings gate detects on slice 1 that the
+  signed encode only beats raw by ≤ 1.7 %, commits the tile to
+  raw-only for the remaining 63 slices, and the encode runs at
+  near-baseline speed.
 
 - **Uncorrelated 12-bit noise** — entropy ceiling for every codec;
   the 0.5 % ratio gap (1.233 vs 1.239) is rate-control overhead,
