@@ -432,7 +432,7 @@ public struct J2KEncodingConfiguration: Sendable {
         extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
         waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard,
         mctConfiguration: J2KMCTEncodingConfiguration = .disabled,
-        htj2kBlockFormat: HTBlockFormat = .custom
+        htj2kBlockFormat: HTBlockFormat = .conformant
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless

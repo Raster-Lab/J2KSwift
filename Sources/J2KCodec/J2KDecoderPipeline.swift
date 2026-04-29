@@ -83,10 +83,22 @@ struct DecoderConfiguration: Sendable {
 
     /// HTJ2K code-block wire format. `.custom` is the v4.x layout that
     /// only round-trips with J2KSwift itself; `.conformant` is the
-    /// ISO/IEC 15444-15 layout. Promoted to `.conformant` when the
-    /// main header carries the J2KSwift block-format COM marker. Only
-    /// meaningful when `useHTJ2K` is true.
-    var htj2kBlockFormat: HTBlockFormat = .custom
+    /// ISO/IEC 15444-15 layout — the same byte stream emitted by
+    /// OpenJPH and other Part-15 reference encoders. The default is
+    /// `.conformant` so any third-party HTJ2K codestream decodes
+    /// out of the box; J2KSwift `.custom` codestreams carry a
+    /// J2KSwift-private COM marker that the decoder still recognises
+    /// (kept for legacy archives — see `parseHTBlockFormatCOM`).
+    /// Only meaningful when `useHTJ2K` is true.
+    var htj2kBlockFormat: HTBlockFormat = .conformant
+
+    /// Whether `htj2kBlockFormat` was set from an explicit codestream
+    /// signal (e.g. the J2KSwift block-format COM marker) versus
+    /// inherited from the default. When `false`, the entropy decoder
+    /// is allowed to run a structural heuristic on the first non-empty
+    /// codeblock to recover the format — this catches legacy J2KSwift
+    /// `.custom` archives that pre-date marker-based signalling.
+    var htBlockFormatExplicit: Bool = false
 
     /// Whether selective arithmetic coding bypass is enabled (from COD marker bit 0).
     var useSelectiveArithmeticBypass: Bool = false
@@ -649,6 +661,7 @@ struct DecoderPipeline: Sendable {
                 // recognize the payload; otherwise ignore the comment.
                 if try parseHTBlockFormatCOM(&reader) {
                     configuration.htj2kBlockFormat = .conformant
+                    configuration.htBlockFormatExplicit = true
                 }
 
             case J2KMarker.sot.rawValue:
@@ -1315,7 +1328,22 @@ struct DecoderPipeline: Sendable {
             isIrreversible = false
         }
         let useHT = metadata.configuration.useHTJ2K
-        let useConformant = useHT && metadata.configuration.htj2kBlockFormat == .conformant
+        // Format dispatch:
+        //   1. If the codestream carried an explicit J2KSwift HT block-format
+        //      COM marker, trust it.
+        //   2. Otherwise default to `.conformant` (matches the ISO Part-15
+        //      bytes emitted by OpenJPH / Kakadu).
+        //   3. Run a structural heuristic on the first non-empty codeblock
+        //      so legacy J2KSwift `.custom` archives (which pre-date the COM
+        //      marker) are still picked up automatically.
+        var resolvedFormat = metadata.configuration.htj2kBlockFormat
+        if useHT && !metadata.configuration.htBlockFormatExplicit {
+            for block in blocks where !block.data.isEmpty {
+                resolvedFormat = detectHTBlockFormat(block.data)
+                break
+            }
+        }
+        let useConformant = useHT && resolvedFormat == .conformant
 
         // Struct key avoids per-block string interpolation allocations.
         struct SubbandKey: Hashable {

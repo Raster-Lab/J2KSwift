@@ -12,8 +12,8 @@ The headline:
 | **OpenJPEG self-test** (J2K Part 1 LL)               | 10 / 10  | Reference baseline. |
 | **OpenJPH self-test** (HTJ2K LL)                     | 10 / 10  | Reference baseline. |
 | **J2KSwift ↔ OpenJPEG interop** (J2K Part 1 LL)      | 40 / 40* | Pixel-equal modulo PGM byte order (see §Note on PGM endianness). |
-| **J2KSwift ↔ OpenJPH interop** (HTJ2K LL)            |  0 / 40  | **Pre-existing interop break, NOT introduced by this branch.** |
-| **Total**                                            | **140 / 180** | All failures are HTJ2K↔OpenJPH; all J2KSwift code paths pass. |
+| **J2KSwift ↔ OpenJPH interop** (HTJ2K LL)            | **40 / 40\*** | **Fixed in this branch** — see §HTJ2K interop fix. |
+| **Total**                                            | **180 / 180** | All cross-codec mismatches are PGM byte-order serialisation, not codec disagreements. |
 
 > * "swap" — pixel values agree byte-for-byte after a 16-bit byte swap. The codestream encodes the correct values; the only difference is whether the decoder serialises 16-bit pixels as big-endian (PGM spec) or little-endian (the byte order of the original PGMs).
 
@@ -23,16 +23,16 @@ The headline:
 
 | #  | File          | Dim         | jc/jc P1 | jc/jg P1 | jg/jc P1 | jg/jg P1 | jc→opj | jg→opj | opj→jc | opj→jg | opj→opj | jc/jc HT | jc/jg HT | jg/jc HT | jg/jg HT | jc→oph | jg→oph | oph→jc | oph→jg | oph→oph |
 | --:| ------------- | ----------- | :------: | :------: | :------: | :------: | :----: | :----: | :----: | :----: | :-----: | :------: | :------: | :------: | :------: | :----: | :----: | :----: | :----: | :-----: |
-|  1 | ct_s001       |   512×512   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  2 | ct_s003_50    |   512×512   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  3 | dx_s001       |  2544×3056  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  4 | dx_s002       |  2800×2288  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  5 | mg_s001       |  3520×4784  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  6 | mg_s002       |  3521×4784  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  7 | mr_s001       |   886×886   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  8 | mr_s002_100   |   180×180   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-|  9 | px_s001       |  2459×1316  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
-| 10 | xa_s001       |  1024×1024  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |   ✗    |   ✗    |   ✗    |   ✗    |    ✓    |
+|  1 | ct_s001       |   512×512   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  2 | ct_s003_50    |   512×512   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  3 | dx_s001       |  2544×3056  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  4 | dx_s002       |  2800×2288  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  5 | mg_s001       |  3520×4784  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  6 | mg_s002       |  3521×4784  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  7 | mr_s001       |   886×886   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  8 | mr_s002_100   |   180×180   |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+|  9 | px_s001       |  2459×1316  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
+| 10 | xa_s001       |  1024×1024  |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |    ✓     |    ✓     |    ✓     |    ✓     |  swap  |  swap  |  swap  |  swap  |    ✓    |
 
 **Column legend** (each cell answers "does the round-trip recover the original pixel data byte-for-byte?"):
 
@@ -83,11 +83,15 @@ J2KSwift and OpenJPEG agree on **every pixel value** in **every direction**:
 
 The "swap" is purely a PGM serialisation difference (see Note below), not a codec bug.
 
-### Cross-codec HTJ2K: pre-existing interop break with OpenJPH (0 / 40)
+### Cross-codec HTJ2K: full bidirectional interop with OpenJPH (40 / 40 *)
 
-J2KSwift's HTJ2K codestreams cannot be decoded by `ojph_expand` (errors `ojph error 0x000300A1: Error decoding a codeblock`), and OpenJPH's HTJ2K codestreams cannot be decoded by `j2k decode` (errors `Decoding error: Invalid stream lengths in HT encoded block`). Both directions break consistently across all 10 images.
+J2KSwift HTJ2K codestreams now decode cleanly through `ojph_expand`, and OpenJPH HTJ2K codestreams decode cleanly through `j2k decode`. Pixel-equal in every direction modulo PGM byte order — same `swap` semantics as the J2KSwift ↔ OpenJPEG cells.
 
-**This is not introduced by this branch** — J2KSwift × J2KSwift HTJ2K passes 40 / 40, and OpenJPH × OpenJPH HTJ2K passes 10 / 10. Both codecs are internally self-consistent. The break is a pre-existing format-level disagreement (likely codeblock pass-count or SPP marker variation) that this branch did not cause and does not fix. Worth opening as its own ticket.
+This required two fixes (see §HTJ2K interop fix below):
+
+1. **Encoder default flipped from `.custom` to `.conformant`.** The CLI's `--htj2k` flag was previously defaulting to a J2KSwift-private block layout that no third-party Part-15 decoder could read. The default now matches OpenJPH and the spec; `--htj2k-custom` opts into the legacy private format for backward compatibility.
+
+2. **Decoder format auto-detection.** The decoder now structurally sniffs the first non-empty codeblock when no explicit J2KSwift HT-block-format COM marker is present. OpenJPH-encoded codestreams (no marker, conformant block layout) are detected and routed through the conformant decoder; legacy J2KSwift `.custom` archives (no marker, custom 6-byte header) are still detected and routed through the custom decoder.
 
 ---
 
@@ -145,6 +149,45 @@ Crossover is around 1–2 megapixels; below that, Metal command-buffer dispatch 
 The reason this is invisible at the end-to-end level: on dx_s001 the IDWT is the difference between 99 ms and 24 ms, but entropy decoding adds ~300 ms regardless — so wall-clock stays at ~330 ms either way. **Parallelizing entropy decode is the next lever to expose this 4× to users.** (Tile-level parallelism has already shipped, but on single-tile DICOMs the inner code-block parallelism is already saturating the cores; a smarter scheduler that picks tile-vs-codeblock parallelism based on tile count would close the gap.)
 
 Reproduce: `swift test -c release --filter J2KMetalDWT53IntBenchmarkTests`. Source: [Tests/J2KMetalTests/J2KMetalDWT53IntBenchmarkTests.swift](Tests/J2KMetalTests/J2KMetalDWT53IntBenchmarkTests.swift).
+
+---
+
+## HTJ2K interop fix
+
+### What was broken
+
+The CLI's `--htj2k` flag built a `J2KEncodingConfiguration` with `htj2kBlockFormat = .custom`. That's a **J2KSwift-private** block layout that prepends each codeblock with a 6-byte `[melLen | vlcLen | magsgnLen]` header — convenient for J2KSwift's own decoder, but not part of ISO/IEC 15444-15. OpenJPH (and Kakadu) reject those codestreams at the codeblock layer:
+
+```
+ojph info  0x00030092: cleanup segment cannot contain less than 2 bytes
+ojph warning 0x00010001: malformed codeblock that has more than one coding pass, but zero length for 2nd and potential 3rd pass
+ojph info  0x000300A1: Error decoding a codeblock.
+```
+
+Conversely, the J2KSwift decoder defaulted to `htj2kBlockFormat = .custom` and only flipped to `.conformant` when it saw the J2KSwift-private COM marker. OpenJPH-encoded codestreams don't carry that marker, so the J2KSwift decoder mis-routed them through the custom decoder, which threw on the very first block:
+
+```
+J2KError.decodingError("Invalid stream lengths in HT encoded block")
+```
+
+Both directions broke for the same reason: J2KSwift's "default HTJ2K" was J2KSwift-private, not Part-15.
+
+### The fix
+
+Two changes:
+
+1. **`Sources/J2KCodec/J2KEncodingPresets.swift` and `Sources/J2KCLI/Commands.swift`**: the encoder default for `useHTJ2K = true` is now `htj2kBlockFormat = .conformant`. The CLI's `--htj2k` flag follows; a new `--htj2k-custom` flag opts into the legacy private format.
+
+2. **`Sources/J2KCodec/J2KDecoderPipeline.swift`**: the decoder default flipped to `.conformant`, and the entropy decoder now runs `detectHTBlockFormat` (already present at `Sources/J2KCodec/J2KHTConformantDispatch.swift:138`) on the first non-empty codeblock when no explicit COM marker is present. This catches:
+   - OpenJPH / Kakadu codestreams (no marker, conformant layout) → conformant decoder.
+   - Legacy J2KSwift `.custom` archives (no marker, custom 6-byte header) → custom decoder.
+   - New J2KSwift conformant codestreams (COM marker present) → conformant decoder, marker-confirmed.
+
+The fix is content-driven, not magic-byte-driven, so it stays robust if a future encoder version adds different markers.
+
+### Performance note
+
+The conformant block path is currently slower than the J2KSwift-private custom path for some workloads — pre-existing aspirational SLO tests in `HTJ2KBeatsOpenJPEGTests` (which never beat 1.9× encode / 0.5× decode against OpenJPEG when run on this dataset, regardless of this branch) flag the gap. Those tests use a synthetic CPU simulation, not the real codec, so my changes don't move their numbers — but the gap is real in the actual codec and worth a follow-up commit to optimise the conformant block coder.
 
 ---
 
