@@ -312,58 +312,34 @@ struct DecoderPipeline: Sendable {
             return [Double](repeating: 0.0, count: w * h)
         }
 
-        for (tileIdx, tile) in tiles.enumerated() {
-            let tileProgress = Double(tileIdx) / Double(tiles.count)
-            reportProgress(progress, stage: .tileExtraction, stageProgress: tileProgress)
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
 
-            let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tile.tileIndex)
-
-            var tileMeta = metadata
-            tileMeta.width = tileW
-            tileMeta.height = tileH
-            tileMeta.tileSize = (width: tileW, height: tileH)
-
-            let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
-            let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
-            let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
-
-            // GPU inverse wavelet transform for this tile
-            let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta)
-            var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
-
-            for (compIdx, compInfo) in metadata.components.enumerated() {
-                guard compIdx < tileRGB.count else { break }
-                if !compInfo.signed {
-                    var dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                    tileRGB[compIdx].withUnsafeMutableBufferPointer { buf in
-                        vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset, buf.baseAddress!, 1, vDSP_Length(buf.count))
-                    }
+        // See decodeMultiTile for the rationale; this variant routes the
+        // inverse wavelet + colour transform stages through the GPU pipeline.
+        let decodedTiles = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
+            for tile in tiles {
+                let captured = tile
+                let metadataCopy = metadata
+                group.addTask {
+                    try await self.decodeTilePayloadGPU(
+                        metadata: metadataCopy,
+                        tileIndex: captured.tileIndex,
+                        tileData: captured.tileData
+                    )
                 }
             }
-
-            for compIdx in 0..<min(numComponents, tileRGB.count) {
-                let compInfo = metadata.components[compIdx]
-                let fullW = metadata.width / compInfo.subsamplingX
-                let compTileX = tileX / compInfo.subsamplingX
-                let compTileY = tileY / compInfo.subsamplingY
-                let compTileW = tileW / compInfo.subsamplingX
-                let compTileH = tileH / compInfo.subsamplingY
-
-                let tileCompData = tileRGB[compIdx]
-                tileCompData.withUnsafeBufferPointer { srcBuf in
-                    fullComponents[compIdx].withUnsafeMutableBufferPointer { dstBuf in
-                        let srcP = srcBuf.baseAddress!
-                        let dstP = dstBuf.baseAddress!
-                        for row in 0..<compTileH {
-                            let srcOffset = row * compTileW
-                            let dstOffset = (compTileY + row) * fullW + compTileX
-                            let copyW = min(compTileW, srcBuf.count - srcOffset)
-                            guard copyW > 0, dstOffset + copyW <= dstBuf.count else { continue }
-                            (dstP + dstOffset).update(from: srcP + srcOffset, count: copyW)
-                        }
-                    }
-                }
+            var results: [DecodedTile] = []
+            results.reserveCapacity(tiles.count)
+            for try await decoded in group {
+                results.append(decoded)
             }
+            return results
+        }
+
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
+
+        for tile in decodedTiles {
+            compositeTile(tile, into: &fullComponents, metadata: metadata)
         }
 
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
@@ -466,6 +442,114 @@ struct DecoderPipeline: Sendable {
 
     /// Decodes a multi-tile codestream by processing each tile independently
     /// and assembling the results into the full image.
+    /// Result of a per-tile decode: the spatial-domain pixels plus the
+    /// destination rectangle so the caller can composite into the full image.
+    private struct DecodedTile: Sendable {
+        let tileX: Int
+        let tileY: Int
+        let tileW: Int
+        let tileH: Int
+        let rgb: [[Double]]
+    }
+
+    /// End-to-end decode of a single tile (extract → entropy → dequant →
+    /// IDWT → colour transform → DC level unshift). Pure function on
+    /// `tileMeta` and `tileData`; safe to invoke concurrently across tiles
+    /// since each task gets its own metadata copy and the inner stages
+    /// allocate their own scratch buffers.
+    private func decodeTilePayload(
+        metadata: CodestreamMetadata,
+        tileIndex: Int,
+        tileData: Data
+    ) async throws -> DecodedTile {
+        let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tileIndex)
+        var tileMeta = metadata
+        tileMeta.width = tileW
+        tileMeta.height = tileH
+        tileMeta.tileSize = (width: tileW, height: tileH)
+
+        let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
+        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
+        var spatialDataTile = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
+        try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
+
+        for (compIdx, compInfo) in metadata.components.enumerated() {
+            guard compIdx < spatialDataTile.count else { break }
+            if !compInfo.signed {
+                var dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                spatialDataTile[compIdx].withUnsafeMutableBufferPointer { buf in
+                    vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset, buf.baseAddress!, 1, vDSP_Length(buf.count))
+                }
+            }
+        }
+        return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: spatialDataTile)
+    }
+
+    /// Same as `decodeTilePayload` but routes the inverse wavelet transform
+    /// through the GPU pipeline.
+    private func decodeTilePayloadGPU(
+        metadata: CodestreamMetadata,
+        tileIndex: Int,
+        tileData: Data
+    ) async throws -> DecodedTile {
+        let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tileIndex)
+        var tileMeta = metadata
+        tileMeta.width = tileW
+        tileMeta.height = tileH
+        tileMeta.tileSize = (width: tileW, height: tileH)
+
+        let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
+        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
+        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta)
+        var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
+
+        for (compIdx, compInfo) in metadata.components.enumerated() {
+            guard compIdx < tileRGB.count else { break }
+            if !compInfo.signed {
+                var dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                tileRGB[compIdx].withUnsafeMutableBufferPointer { buf in
+                    vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset, buf.baseAddress!, 1, vDSP_Length(buf.count))
+                }
+            }
+        }
+        return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: tileRGB)
+    }
+
+    /// Composites a decoded tile into the full-image component buffers.
+    /// Each tile writes to a non-overlapping rectangle, so calling this
+    /// sequentially after all tiles have decoded is safe and fast.
+    private func compositeTile(
+        _ tile: DecodedTile,
+        into fullComponents: inout [[Double]],
+        metadata: CodestreamMetadata
+    ) {
+        let numComponents = metadata.componentCount
+        for compIdx in 0..<min(numComponents, tile.rgb.count) {
+            let compInfo = metadata.components[compIdx]
+            let fullW = metadata.width / compInfo.subsamplingX
+            let compTileX = tile.tileX / compInfo.subsamplingX
+            let compTileY = tile.tileY / compInfo.subsamplingY
+            let compTileW = tile.tileW / compInfo.subsamplingX
+            let compTileH = tile.tileH / compInfo.subsamplingY
+
+            tile.rgb[compIdx].withUnsafeBufferPointer { srcBuf in
+                fullComponents[compIdx].withUnsafeMutableBufferPointer { dstBuf in
+                    let srcP = srcBuf.baseAddress!
+                    let dstP = dstBuf.baseAddress!
+                    for row in 0..<compTileH {
+                        let srcOffset = row * compTileW
+                        let dstOffset = (compTileY + row) * fullW + compTileX
+                        let copyW = min(compTileW, srcBuf.count - srcOffset)
+                        guard copyW > 0, dstOffset + copyW <= dstBuf.count else { continue }
+                        (dstP + dstOffset).update(from: srcP + srcOffset, count: copyW)
+                    }
+                }
+            }
+        }
+    }
+
     private func decodeMultiTile(
         metadata: CodestreamMetadata,
         tiles: [(tileIndex: Int, tileData: Data)],
@@ -481,70 +565,43 @@ struct DecoderPipeline: Sendable {
             return [Double](repeating: 0.0, count: w * h)
         }
 
-        // Process each tile
-        for (tileIdx, tile) in tiles.enumerated() {
-            let tileProgress = Double(tileIdx) / Double(tiles.count)
-            reportProgress(progress, stage: .tileExtraction, stageProgress: tileProgress)
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
 
-            let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tile.tileIndex)
-
-            // Create tile-specific metadata with tile dimensions as the "image" dimensions
-            var tileMeta = metadata
-            tileMeta.width = tileW
-            tileMeta.height = tileH
-            // For tile processing, tileSize should be the actual tile dimensions
-            tileMeta.tileSize = (width: tileW, height: tileH)
-
-            // Stage 2-4: Extract, entropy decode, dequantize for this tile
-            let codeBlocks = try extractTileData(tile.tileData, metadata: tileMeta)
-            let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
-            let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
-
-            // Stage 5: Inverse wavelet transform for this tile
-            var spatialDataTile = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
-
-            // Stage 6: Inverse colour transform for this tile (in-place)
-            try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
-            var tileRGB = spatialDataTile
-
-            // DC level unshift for this tile
-            for (compIdx, compInfo) in metadata.components.enumerated() {
-                guard compIdx < tileRGB.count else { break }
-                if !compInfo.signed {
-                    var dcOffset = Double(1 << (compInfo.bitDepth - 1))
-                    tileRGB[compIdx].withUnsafeMutableBufferPointer { buf in
-                        vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset, buf.baseAddress!, 1, vDSP_Length(buf.count))
-                    }
+        // Tiles are independent: extract → entropy decode → dequant → IDWT
+        // → colour transform → DC unshift can run concurrently because each
+        // task allocates its own scratch buffers and writes to its own
+        // tileRGB. Composition into `fullComponents` runs sequentially after
+        // all tiles complete (each tile occupies a unique rectangle, so the
+        // writes don't collide, but Swift's [Double] would CoW under
+        // concurrent withUnsafeMutableBufferPointer — sequential composite
+        // sidesteps that without measurable cost since composite is just
+        // memcpy).
+        let decodedTiles = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
+            for tile in tiles {
+                let captured = tile
+                let metadataCopy = metadata
+                group.addTask {
+                    try await self.decodeTilePayload(
+                        metadata: metadataCopy,
+                        tileIndex: captured.tileIndex,
+                        tileData: captured.tileData
+                    )
                 }
             }
-
-            // Place tile data into full image buffers
-            for compIdx in 0..<min(numComponents, tileRGB.count) {
-                let compInfo = metadata.components[compIdx]
-                let fullW = metadata.width / compInfo.subsamplingX
-                let compTileX = tileX / compInfo.subsamplingX
-                let compTileY = tileY / compInfo.subsamplingY
-                let compTileW = tileW / compInfo.subsamplingX
-                let compTileH = tileH / compInfo.subsamplingY
-
-                let tileCompData = tileRGB[compIdx]
-                tileCompData.withUnsafeBufferPointer { srcBuf in
-                    fullComponents[compIdx].withUnsafeMutableBufferPointer { dstBuf in
-                        let srcP = srcBuf.baseAddress!
-                        let dstP = dstBuf.baseAddress!
-                        for row in 0..<compTileH {
-                            let srcOffset = row * compTileW
-                            let dstOffset = (compTileY + row) * fullW + compTileX
-                            let copyW = min(compTileW, srcBuf.count - srcOffset)
-                            guard copyW > 0, dstOffset + copyW <= dstBuf.count else { continue }
-                            (dstP + dstOffset).update(from: srcP + srcOffset, count: copyW)
-                        }
-                    }
-                }
+            var results: [DecodedTile] = []
+            results.reserveCapacity(tiles.count)
+            for try await decoded in group {
+                results.append(decoded)
             }
+            return results
         }
 
-        // Stage 7: Reconstruct final image
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
+
+        for tile in decodedTiles {
+            compositeTile(tile, into: &fullComponents, metadata: metadata)
+        }
+
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
         let image = try reconstructImage(fullComponents, metadata: metadata)
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
