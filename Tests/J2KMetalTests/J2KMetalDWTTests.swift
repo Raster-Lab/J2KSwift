@@ -712,8 +712,9 @@ final class J2KMetalDWTTests: XCTestCase {
     /// Tests that all shader functions are defined.
     func testShaderFunctionCount() {
         let allCases = J2KMetalShaderFunction.allCases
-        // 15 original + 8 DWT (arbitrary + lifting) + 7 color/MCT/NLT + 5 ROI + 8 quantization = 43
-        XCTAssertEqual(allCases.count, 43)
+        // 15 original + 8 DWT (arbitrary + lifting) + 7 color/MCT/NLT + 5 ROI + 8 quantization
+        // + 2 bit-exact integer 5/3 inverse kernels = 45
+        XCTAssertEqual(allCases.count, 45)
     }
 
     /// Tests new DWT shader function raw values.

@@ -2258,12 +2258,19 @@ struct DecoderPipeline: Sendable {
             return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
-        // Select filter based on configuration
+        // Select filter and dispatch path based on configuration. Reversible
+        // 5/3 takes the bit-exact Int32 GPU path: subbands stay as Int32
+        // throughout multi-level reconstruction, so the result matches
+        // J2KDWT1D.inverseTransform53 byte-for-byte regardless of backend.
+        // Lossless verifyEncodedRoundTrip in DICOMKit relies on this.
         let metalFilter: J2KMetalDWTFilter
+        let useReversible53Int: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
             metalFilter = .irreversible97
+            useReversible53Int = false
         } else {
             metalFilter = .reversible53
+            useReversible53Int = true
         }
 
         let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
@@ -2294,53 +2301,131 @@ struct DecoderPipeline: Sendable {
                 levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
             }
 
-            // Get initial LL subband as Float
             let llSubband = compSubbands.first(where: { $0.subband == .ll })
             let expectedLLW = levelSizes[levels].width
             let expectedLLH = levelSizes[levels].height
 
-            var currentLL: [Float]
-            if let ll = llSubband {
-                if let dc = ll.doubleCoefficients {
-                    currentLL = padFlatFloat(vDSPConvert.doublesToFloats(dc), srcW: ll.width, srcH: ll.height,
+            if useReversible53Int {
+                // Bit-exact reversible 5/3 path on Int32 buffers.
+                var currentLL: [Int32]
+                if let ll = llSubband {
+                    currentLL = padFlatInt32(ll.coefficients, srcW: ll.width, srcH: ll.height,
                                               dstW: expectedLLW, dstH: expectedLLH)
                 } else {
-                    currentLL = padFlatFloat(vDSPConvert.int32sToFloats(ll.coefficients), srcW: ll.width, srcH: ll.height,
-                                              dstW: expectedLLW, dstH: expectedLLH)
+                    currentLL = [Int32](repeating: 0, count: expectedLLW * expectedLLH)
                 }
+
+                for level in (1...levels).reversed() {
+                    let parentW = levelSizes[level - 1].width
+                    let parentH = levelSizes[level - 1].height
+                    let llW = levelSizes[level].width
+                    let llH = levelSizes[level].height
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
+
+                    let hlInt = getSubbandAsInt32(compSubbands, level: level, subband: .hl,
+                                                   dstW: hlW, dstH: llH)
+                    let lhInt = getSubbandAsInt32(compSubbands, level: level, subband: .lh,
+                                                   dstW: llW, dstH: lhH)
+                    let hhInt = getSubbandAsInt32(compSubbands, level: level, subband: .hh,
+                                                   dstW: hlW, dstH: lhH)
+
+                    let subbandData = J2KMetalDWTSubbandsInt32(
+                        ll: currentLL, lh: lhInt, hl: hlInt, hh: hhInt,
+                        llWidth: llW, llHeight: llH,
+                        originalWidth: parentW, originalHeight: parentH
+                    )
+
+                    currentLL = try await metalDWT.inverse2DInt32(subbands: subbandData, backend: .auto)
+                }
+
+                componentData.append(currentLL.map { Double($0) })
             } else {
-                currentLL = [Float](repeating: 0, count: expectedLLW * expectedLLH)
+                // 9/7 irreversible — Float path (non-lossless, byte-equality
+                // not enforced downstream, so existing FP tolerance is fine).
+                var currentLL: [Float]
+                if let ll = llSubband {
+                    if let dc = ll.doubleCoefficients {
+                        currentLL = padFlatFloat(vDSPConvert.doublesToFloats(dc), srcW: ll.width, srcH: ll.height,
+                                                  dstW: expectedLLW, dstH: expectedLLH)
+                    } else {
+                        currentLL = padFlatFloat(vDSPConvert.int32sToFloats(ll.coefficients), srcW: ll.width, srcH: ll.height,
+                                                  dstW: expectedLLW, dstH: expectedLLH)
+                    }
+                } else {
+                    currentLL = [Float](repeating: 0, count: expectedLLW * expectedLLH)
+                }
+
+                for level in (1...levels).reversed() {
+                    let parentW = levelSizes[level - 1].width
+                    let parentH = levelSizes[level - 1].height
+                    let llW = levelSizes[level].width
+                    let llH = levelSizes[level].height
+                    let hlW = parentW - llW
+                    let lhH = parentH - llH
+
+                    let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
+                                                     dstW: hlW, dstH: llH)
+                    let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
+                                                     dstW: llW, dstH: lhH)
+                    let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
+                                                     dstW: hlW, dstH: lhH)
+
+                    let subbandData = J2KMetalDWTSubbands(
+                        ll: currentLL, lh: lhFloat, hl: hlFloat, hh: hhFloat,
+                        llWidth: llW, llHeight: llH,
+                        originalWidth: parentW, originalHeight: parentH
+                    )
+
+                    currentLL = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
+                }
+
+                componentData.append(vDSPConvert.floatsToDoubles(currentLL))
             }
-
-            // Inverse DWT from coarsest to finest using Metal GPU
-            for level in (1...levels).reversed() {
-                let parentW = levelSizes[level - 1].width
-                let parentH = levelSizes[level - 1].height
-                let llW = levelSizes[level].width
-                let llH = levelSizes[level].height
-                let hlW = parentW - llW
-                let lhH = parentH - llH
-
-                let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
-                                                 dstW: hlW, dstH: llH)
-                let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
-                                                 dstW: llW, dstH: lhH)
-                let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
-                                                 dstW: hlW, dstH: lhH)
-
-                let subbandData = J2KMetalDWTSubbands(
-                    ll: currentLL, lh: lhFloat, hl: hlFloat, hh: hhFloat,
-                    llWidth: llW, llHeight: llH,
-                    originalWidth: parentW, originalHeight: parentH
-                )
-
-                currentLL = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
-            }
-
-            componentData.append(vDSPConvert.floatsToDoubles(currentLL))
         }
 
         return componentData
+    }
+
+    /// Extracts a subband as an Int32 array with zero-padding to expected dimensions.
+    private func getSubbandAsInt32(_ subbands: [SubbandInfo], level: Int, subband: J2KSubband,
+                                     dstW: Int, dstH: Int) -> [Int32] {
+        if let sb = subbands.first(where: { $0.level == level && $0.subband == subband }) {
+            // Reversible 5/3 path stores integer coefficients in `coefficients`.
+            // Some HTJ2K paths populate `doubleCoefficients` after dequant — in
+            // that case round to nearest Int32 (lossless dequant produces values
+            // exactly representable as Int32 since stepSize == 1 for reversible).
+            if let dc = sb.doubleCoefficients {
+                let srcData: [Int32] = dc.map { val in
+                    let rounded = (val < 0) ? Int32((val - 0.5).rounded(.up)) : Int32((val + 0.5).rounded(.down))
+                    return rounded
+                }
+                return padFlatInt32(srcData, srcW: sb.width, srcH: sb.height, dstW: dstW, dstH: dstH)
+            }
+            return padFlatInt32(sb.coefficients, srcW: sb.width, srcH: sb.height, dstW: dstW, dstH: dstH)
+        }
+        return [Int32](repeating: 0, count: dstW * dstH)
+    }
+
+    /// Zero-pads a flat Int32 array from source to destination dimensions.
+    private func padFlatInt32(_ data: [Int32], srcW: Int, srcH: Int, dstW: Int, dstH: Int) -> [Int32] {
+        if srcW == dstW && srcH == dstH && data.count == dstW * dstH { return data }
+        var result = [Int32](repeating: 0, count: dstW * dstH)
+        let copyW = min(srcW, dstW)
+        let copyH = min(srcH, dstH)
+        data.withUnsafeBufferPointer { srcBuf in
+            result.withUnsafeMutableBufferPointer { dstBuf in
+                let dst = dstBuf.baseAddress!
+                let src = srcBuf.baseAddress!
+                for row in 0..<copyH {
+                    let srcOffset = row * srcW
+                    let dstOffset = row * dstW
+                    guard srcOffset + copyW <= srcBuf.count else { return }
+                    (dst + dstOffset).update(from: src + srcOffset, count: copyW)
+                }
+            }
+        }
+        return result
     }
 
     /// Extracts a subband as a Float array with zero-padding to expected dimensions.

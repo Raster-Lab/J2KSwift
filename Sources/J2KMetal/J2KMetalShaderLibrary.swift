@@ -30,6 +30,10 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse53Horizontal = "j2k_dwt_inverse_53_horizontal"
     /// Inverse 5/3 reversible wavelet transform (vertical).
     case dwtInverse53Vertical = "j2k_dwt_inverse_53_vertical"
+    /// Inverse 5/3 reversible wavelet transform (horizontal, integer / bit-exact).
+    case dwtInverse53HorizontalInt = "j2k_dwt_inverse_53_horizontal_int"
+    /// Inverse 5/3 reversible wavelet transform (vertical, integer / bit-exact).
+    case dwtInverse53VerticalInt = "j2k_dwt_inverse_53_vertical_int"
     /// Forward 9/7 irreversible wavelet transform (horizontal).
     case dwtForward97Horizontal = "j2k_dwt_forward_97_horizontal"
     /// Forward 9/7 irreversible wavelet transform (vertical).
@@ -736,6 +740,104 @@ enum J2KMetalShaderSource {
             float top = output[(2 * i) * width + col];
             float bottom = (2 * i + 2 < height) ? output[(2 * i + 2) * width + col] : output[(2 * i) * width + col];
             output[(2 * i + 1) * width + col] = highpass[i * width + col] + (top + bottom) / 2.0f;
+        }
+    }
+
+    // MARK: - Inverse 5/3 Reversible DWT (Horizontal, integer / bit-exact)
+    //
+    // Bit-exact match for J2KDWT1D.inverseTransform53 (symmetric extension):
+    //   even[i] = lowpass[i] - ((hp[i-1] + hp[i] + 2) >> 2)
+    //   odd[i]  = highpass[i] + ((even[i] + even[i+1]) >> 1)
+    // Floor-divide via arithmetic right shift on signed int matches Swift's
+    // `>> 2` / `>> 1` on Int32 (both perform sign-preserving shift).
+
+    kernel void j2k_dwt_inverse_53_horizontal_int(
+        device const int* lowpass [[buffer(0)]],
+        device const int* highpass [[buffer(1)]],
+        device int* output [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth = (width + 1) / 2;
+        uint halfWidthH = width / 2;
+
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+        uint oBase = row * width;
+
+        // Edge tile with no highpass samples → output equals lowpass.
+        if (halfWidthH == 0) {
+            for (uint i = 0; i < halfWidth; i++) {
+                output[oBase + 2 * i] = lowpass[lBase + i];
+            }
+            return;
+        }
+
+        // Step 1 (undo update). Symmetric: hp[-1] = hp[0], hp[halfWidthH] = hp[halfWidthH-1].
+        for (uint i = 0; i < halfWidth; i++) {
+            int dLeft  = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            output[oBase + 2 * i] = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+        }
+
+        // Step 2 (undo predict). Symmetric: even[halfWidth] = even[halfWidth-1].
+        for (uint i = 0; i < halfWidthH; i++) {
+            int eLeft  = output[oBase + 2 * i];
+            int eRight = (2 * i + 2 < width)
+                ? output[oBase + 2 * i + 2]
+                : output[oBase + 2 * i];
+            output[oBase + 2 * i + 1] = highpass[hBase + i] + ((eLeft + eRight) >> 1);
+        }
+    }
+
+    // MARK: - Inverse 5/3 Reversible DWT (Vertical, integer / bit-exact)
+
+    kernel void j2k_dwt_inverse_53_vertical_int(
+        device const int* lowpass [[buffer(0)]],
+        device const int* highpass [[buffer(1)]],
+        device int* output [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight = (height + 1) / 2;
+        uint halfHeightH = height / 2;
+
+        // Edge tile with no highpass rows → copy lowpass rows into even slots.
+        if (halfHeightH == 0) {
+            for (uint i = 0; i < halfHeight; i++) {
+                output[(2 * i) * width + col] = lowpass[i * width + col];
+            }
+            return;
+        }
+
+        // Step 1 (undo update). Symmetric column boundaries.
+        for (uint i = 0; i < halfHeight; i++) {
+            int dTop = (i > 0)
+                ? highpass[(i - 1) * width + col]
+                : highpass[col];
+            int dBot = (i < halfHeightH)
+                ? highpass[i * width + col]
+                : highpass[(halfHeightH - 1) * width + col];
+            output[(2 * i) * width + col] = lowpass[i * width + col] - ((dTop + dBot + 2) >> 2);
+        }
+
+        // Step 2 (undo predict).
+        for (uint i = 0; i < halfHeightH; i++) {
+            int eTop = output[(2 * i) * width + col];
+            int eBot = (2 * i + 2 < height)
+                ? output[(2 * i + 2) * width + col]
+                : output[(2 * i) * width + col];
+            output[(2 * i + 1) * width + col] = highpass[i * width + col] + ((eTop + eBot) >> 1);
         }
     }
 

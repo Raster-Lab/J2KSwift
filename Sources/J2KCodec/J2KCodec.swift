@@ -204,8 +204,15 @@ public struct J2KDecoder: Sendable {
 
     /// Decodes JPEG 2000 data into an image with GPU acceleration.
     ///
-    /// Uses Metal GPU for the CDF 9/7 inverse wavelet transform stage when available.
-    /// Falls back to CPU for lossless (5/3) and custom wavelet filters.
+    /// Uses Metal GPU for both wavelet families:
+    /// - **Reversible 5/3 (lossless):** Int32 integer kernels with arithmetic-
+    ///   shift lifting, **bit-exact** with the JPEG 2000 spec. Output is
+    ///   identical to the CPU path, so lossless byte-equality round-trips
+    ///   (e.g. DICOM HTJ2K-Lossless verify) succeed on GPU.
+    /// - **Irreversible 9/7 (lossy):** Float kernels.
+    ///
+    /// Falls back to CPU when Metal is unavailable, for custom wavelet
+    /// kernels, or for images smaller than the GPU dispatch threshold.
     ///
     /// - Parameter data: The JPEG 2000 codestream data to decode.
     /// - Returns: The decoded image.

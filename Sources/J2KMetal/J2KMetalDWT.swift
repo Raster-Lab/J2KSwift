@@ -221,6 +221,39 @@ public struct J2KMetalDWTSubbands: Sendable {
     }
 }
 
+// MARK: - Int32 Decomposition Subbands (bit-exact reversible path)
+
+/// Result of a 2D wavelet decomposition with `Int32` subbands.
+///
+/// Used by the bit-exact reversible 5/3 GPU path so that no Float
+/// conversion happens at the dispatch boundary. The arithmetic in
+/// the integer Metal kernels matches the JPEG 2000 spec exactly.
+public struct J2KMetalDWTSubbandsInt32: Sendable {
+    public let ll: [Int32]
+    public let lh: [Int32]
+    public let hl: [Int32]
+    public let hh: [Int32]
+    public let llWidth: Int
+    public let llHeight: Int
+    public let originalWidth: Int
+    public let originalHeight: Int
+
+    public init(
+        ll: [Int32], lh: [Int32], hl: [Int32], hh: [Int32],
+        llWidth: Int, llHeight: Int,
+        originalWidth: Int, originalHeight: Int
+    ) {
+        self.ll = ll
+        self.lh = lh
+        self.hl = hl
+        self.hh = hh
+        self.llWidth = llWidth
+        self.llHeight = llHeight
+        self.originalWidth = originalWidth
+        self.originalHeight = originalHeight
+    }
+}
+
 // MARK: - Multi-level Decomposition Result
 
 /// Result of a multi-level 2D wavelet decomposition.
@@ -595,6 +628,43 @@ public actor J2KMetalDWT {
             _statistics.gpuOperations += 1
         } else {
             result = inverse2DCPU(subbands: subbands)
+            _statistics.cpuOperations += 1
+        }
+
+        _statistics.totalProcessingTime += currentTime() - startTime
+        return result
+    }
+
+    /// Bit-exact reversible 5/3 single-level inverse 2D DWT on `Int32` subbands.
+    ///
+    /// Routes through dedicated integer Metal kernels (or the integer CPU
+    /// reference when Metal is unavailable / `backend == .cpu`). Output
+    /// equals the canonical `J2KDWT1D.inverseTransform53` result for every
+    /// row/column, so the encoder→decoder byte-equality check holds for
+    /// lossless transfer syntaxes regardless of which backend ran.
+    public func inverse2DInt32(
+        subbands: J2KMetalDWTSubbandsInt32,
+        backend: J2KMetalDWTBackend = .auto
+    ) async throws -> [Int32] {
+        let width = subbands.originalWidth
+        let height = subbands.originalHeight
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Subband dimensions must produce at least 2×2 output"
+            )
+        }
+
+        let startTime = currentTime()
+        _statistics.totalOperations += 1
+
+        let effective = effectiveBackend(width: width, height: height, backend: backend)
+
+        let result: [Int32]
+        if effective == .gpu {
+            result = try await inverse2DGPUInt32(subbands: subbands)
+            _statistics.gpuOperations += 1
+        } else {
+            result = inverse2DCPUInt32(subbands: subbands)
             _statistics.cpuOperations += 1
         }
 
@@ -1691,6 +1761,253 @@ public actor J2KMetalDWT {
         return result
     }
 
+    // MARK: - Bit-exact Reversible 5/3 (Int32) GPU/CPU paths
+
+    private func inverse2DGPUInt32(
+        subbands: J2KMetalDWTSubbandsInt32
+    ) async throws -> [Int32] {
+        try await ensureInitialized()
+
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+
+        let width = subbands.originalWidth
+        let height = subbands.originalHeight
+        let llW = subbands.llWidth
+        let llH = subbands.llHeight
+        let halfWH = width / 2
+        let halfHH = height / 2
+
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let stride32 = MemoryLayout<Int32>.stride
+        let llBuffer = try makeBuffer(size: subbands.ll.count * stride32)
+        let lhBuffer = try makeBuffer(size: max(subbands.lh.count, 1) * stride32)
+        let hlBuffer = try makeBuffer(size: max(subbands.hl.count, 1) * stride32)
+        let hhBuffer = try makeBuffer(size: max(subbands.hh.count, 1) * stride32)
+        // Intermediate buffers after horizontal pass:
+        //   colLow  (width × llH)    = horizontal inverse of (LL + HL) per row
+        //   colHigh (width × halfHH) = horizontal inverse of (LH + HH) per row
+        let colLowBuffer = try makeBuffer(size: width * llH * stride32)
+        let colHighBuffer = try makeBuffer(size: max(width * halfHH, 1) * stride32)
+        let outputBuffer = try makeBuffer(size: width * height * stride32)
+
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53HorizontalInt
+        )
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53VerticalInt
+        )
+
+        subbands.ll.withUnsafeBytes { src in
+            llBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+        if !subbands.lh.isEmpty {
+            subbands.lh.withUnsafeBytes { src in
+                lhBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+        if !subbands.hl.isEmpty {
+            subbands.hl.withUnsafeBytes { src in
+                hlBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+        if !subbands.hh.isEmpty {
+            subbands.hh.withUnsafeBytes { src in
+                hhBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+
+        // Step 1 (horizontal inverse): per row, merge (LL+HL) into colLow
+        // and (LH+HH) into colHigh. Order matches CPU
+        // J2KDWT2DOptimizer.inverseTransform2DOptimized and the JPEG 2000
+        // spec (Annex F): inverse applies horizontal first, then vertical.
+        guard let cb1 = queue.makeCommandBuffer(),
+              let enc1 = cb1.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        enc1.setComputePipelineState(hPipeline)
+        var widthVal = UInt32(width)
+
+        // (LL + HL) → colLow, llH rows of width `width`
+        enc1.setBuffer(llBuffer, offset: 0, index: 0)
+        enc1.setBuffer(hlBuffer, offset: 0, index: 1)
+        enc1.setBuffer(colLowBuffer, offset: 0, index: 2)
+        var llHVal = UInt32(llH)
+        enc1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc1.setBytes(&llHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        let hThreads1 = MTLSize(width: 1, height: llH, depth: 1)
+        let hThreadgroup1 = MTLSize(width: 1, height: min(llH, 64), depth: 1)
+        enc1.dispatchThreads(hThreads1, threadsPerThreadgroup: hThreadgroup1)
+
+        // (LH + HH) → colHigh, halfHH rows of width `width`
+        if halfHH > 0 {
+            enc1.setBuffer(lhBuffer, offset: 0, index: 0)
+            enc1.setBuffer(hhBuffer, offset: 0, index: 1)
+            enc1.setBuffer(colHighBuffer, offset: 0, index: 2)
+            var halfHHVal = UInt32(halfHH)
+            enc1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            let hThreads2 = MTLSize(width: 1, height: halfHH, depth: 1)
+            let hThreadgroup2 = MTLSize(width: 1, height: min(halfHH, 64), depth: 1)
+            enc1.dispatchThreads(hThreads2, threadsPerThreadgroup: hThreadgroup2)
+        }
+
+        enc1.endEncoding()
+        cb1.commit()
+        await cb1.completed()
+
+        // Step 2 (vertical inverse): per column, merge (colLow + colHigh)
+        // into final output of full height.
+        guard let cb2 = queue.makeCommandBuffer(),
+              let enc2 = cb2.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        enc2.setComputePipelineState(vPipeline)
+        enc2.setBuffer(colLowBuffer, offset: 0, index: 0)
+        enc2.setBuffer(colHighBuffer, offset: 0, index: 1)
+        enc2.setBuffer(outputBuffer, offset: 0, index: 2)
+        var hVal = UInt32(height)
+        enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+
+        let vThreads = MTLSize(width: width, height: 1, depth: 1)
+        let vThreadgroup = MTLSize(width: min(width, 64), height: 1, depth: 1)
+        enc2.dispatchThreads(vThreads, threadsPerThreadgroup: vThreadgroup)
+        enc2.endEncoding()
+        cb2.commit()
+        await cb2.completed()
+
+        return readInt32Array(from: outputBuffer, elementCount: width * height)
+    }
+
+    private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {
+        guard elementCount > 0 else { return [] }
+        var result = [Int32](repeating: 0, count: elementCount)
+        let ptr = buffer.contents()
+        result.withUnsafeMutableBytes { dst in
+            dst.copyBytes(from: UnsafeRawBufferPointer(
+                start: ptr,
+                count: elementCount * MemoryLayout<Int32>.stride
+            ))
+        }
+        return result
+    }
+
+    /// Bit-exact 1D inverse 5/3 reversible transform on `Int32` subbands with
+    /// JPEG 2000 symmetric boundary extension. Matches `J2KDWT1D.inverseTransform53`
+    /// in the J2KCodec module — duplicated here so J2KMetal stays free of any
+    /// J2KCodec dependency.
+    private func inverse1D53Int(lowpass: [Int32], highpass: [Int32]) -> [Int32] {
+        let lpSize = lowpass.count
+        let hpSize = highpass.count
+        if hpSize == 0 { return lowpass }
+        let n = lpSize + hpSize
+        var even = lowpass
+
+        // Step 1 (undo update). Symmetric: hp[-1] = hp[0], hp[hpSize] = hp[hpSize-1].
+        for i in 0..<lpSize {
+            let left  = (i > 0) ? highpass[i - 1] : highpass[0]
+            let right = (i < hpSize) ? highpass[i] : highpass[hpSize - 1]
+            even[i] = lowpass[i] &- ((left &+ right &+ 2) >> 2)
+        }
+
+        var odd = [Int32](repeating: 0, count: hpSize)
+        // Step 2 (undo predict). Symmetric: even[lpSize] = even[lpSize-1].
+        for i in 0..<hpSize {
+            let left  = even[i]
+            let right = (i + 1 < lpSize) ? even[i + 1] : even[lpSize - 1]
+            odd[i] = highpass[i] &+ ((left &+ right) >> 1)
+        }
+
+        var result = [Int32](repeating: 0, count: n)
+        for i in 0..<lpSize { result[2 * i] = even[i] }
+        for i in 0..<hpSize { result[2 * i + 1] = odd[i] }
+        return result
+    }
+
+    private func inverse2DCPUInt32(subbands: J2KMetalDWTSubbandsInt32) -> [Int32] {
+        // Per JPEG 2000 spec (ISO 15444-1 Annex F): inverse 2D applies
+        // horizontal pass first (per row: LL+HL → colLow, LH+HH → colHigh),
+        // then vertical pass (per column: colLow+colHigh → final output).
+        // Identical sequencing to `inverse2DGPUInt32` above and to the CPU
+        // optimiser at `J2KDWT2DOptimizer.inverseTransform2DOptimized`.
+        let width = subbands.originalWidth
+        let height = subbands.originalHeight
+        let llW = subbands.llWidth
+        let llH = subbands.llHeight
+        let halfHH = height / 2
+        let halfWH = width / 2
+
+        // Step 1: horizontal pass
+        var colLow  = [Int32](repeating: 0, count: width * llH)
+        var colHigh = [Int32](repeating: 0, count: max(width, 1) * halfHH)
+
+        for y in 0..<llH {
+            let lpRow = Array(subbands.ll[(y * llW)..<(y * llW + llW)])
+            let hpRow: [Int32]
+            if subbands.hl.isEmpty || halfWH == 0 {
+                hpRow = []
+            } else {
+                hpRow = Array(subbands.hl[(y * halfWH)..<(y * halfWH + halfWH)])
+            }
+            let merged = inverse1D53Int(lowpass: lpRow, highpass: hpRow)
+            for x in 0..<min(width, merged.count) {
+                colLow[y * width + x] = merged[x]
+            }
+        }
+
+        if halfHH > 0 {
+            for y in 0..<halfHH {
+                let lpRow: [Int32]
+                if subbands.lh.isEmpty {
+                    lpRow = [Int32](repeating: 0, count: llW)
+                } else {
+                    lpRow = Array(subbands.lh[(y * llW)..<(y * llW + llW)])
+                }
+                let hpRow: [Int32]
+                if subbands.hh.isEmpty || halfWH == 0 {
+                    hpRow = []
+                } else {
+                    hpRow = Array(subbands.hh[(y * halfWH)..<(y * halfWH + halfWH)])
+                }
+                let merged = inverse1D53Int(lowpass: lpRow, highpass: hpRow)
+                for x in 0..<min(width, merged.count) {
+                    colHigh[y * width + x] = merged[x]
+                }
+            }
+        }
+
+        // Step 2: vertical pass — for each column x, merge colLow[*][x] (lowpass)
+        // and colHigh[*][x] (highpass) into the final column.
+        var result = [Int32](repeating: 0, count: width * height)
+        for x in 0..<width {
+            var lpCol = [Int32](repeating: 0, count: llH)
+            for y in 0..<llH { lpCol[y] = colLow[y * width + x] }
+            var hpCol: [Int32] = []
+            if halfHH > 0 {
+                hpCol = [Int32](repeating: 0, count: halfHH)
+                for y in 0..<halfHH { hpCol[y] = colHigh[y * width + x] }
+            }
+            let merged = inverse1D53Int(lowpass: lpCol, highpass: hpCol)
+            for y in 0..<min(height, merged.count) {
+                result[y * width + x] = merged[y]
+            }
+        }
+
+        return result
+    }
+
     private func ensureInitialized() async throws {
         if !isInitialized {
             try await initialize()
@@ -1770,6 +2087,12 @@ public actor J2KMetalDWT {
     private func inverse2DGPU(
         subbands: J2KMetalDWTSubbands
     ) async throws -> [Float] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+
+    private func inverse2DGPUInt32(
+        subbands: J2KMetalDWTSubbandsInt32
+    ) async throws -> [Int32] {
         throw J2KError.unsupportedFeature("Metal is not available on this platform")
     }
     #endif
