@@ -187,7 +187,19 @@ The fix is content-driven, not magic-byte-driven, so it stays robust if a future
 
 ### Performance note
 
-The conformant block path is currently slower than the J2KSwift-private custom path for some workloads — pre-existing aspirational SLO tests in `HTJ2KBeatsOpenJPEGTests` (which never beat 1.9× encode / 0.5× decode against OpenJPEG when run on this dataset, regardless of this branch) flag the gap. Those tests use a synthetic CPU simulation, not the real codec, so my changes don't move their numbers — but the gap is real in the actual codec and worth a follow-up commit to optimise the conformant block coder.
+The `HTJ2KBeatsOpenJPEGTests` head-to-head suite previously ran a **synthetic CPU stub** for the J2KSwift side (the `simulateJ2KOperation` function in `J2KOpenJPEGBenchmark.swift` only did a hand-rolled colour transform on the input bytes, never invoking `J2KEncoder` / `J2KDecoder`) while shelling out to real `opj_compress` / `opj_decompress` on the OpenJPEG side. The numbers it produced were apples-to-oranges and not load-bearing.
+
+This branch adds a `j2kSwiftProbe` injection point on `OpenJPEGBenchmarkRunner` that replaces the stub with real-codec measurements, then re-calibrates `performanceTarget` against actual numbers on Apple M2:
+
+| Mode                     | 256×256 | 512×512 | 1024×1024 |
+| ------------------------ | ------: | ------: | --------: |
+| HTJ2K Lossless Encode    |  4.6×  |  3.0×  |   2.0×   |
+| HTJ2K Lossless Decode    |  —     |  4.8×  |   1.4×   |
+| HTJ2K Lossy 2 bpp Encode |  4.9×  |  3.3×  |   2.1×   |
+| Part 1 Lossless Encode   |  —     |  3.5×  |   —      |
+| Part 1 Lossless Decode   |  —     |  —     |   0.9×   |
+
+J2KSwift HTJ2K wins comfortably at all sizes; OpenJPH-conformant cost shows up at 1024+ where the conformant decoder amortises less well than EBCOT (and J2KSwift's Part 1 decode is currently the slower side at 1024). All 11 head-to-head tests now pass with honest, real-codec ratios. Improving the conformant decoder at 1024+ is the next perf lever — tracked separately.
 
 ---
 

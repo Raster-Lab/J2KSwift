@@ -121,7 +121,7 @@ let package = Package(
             dependencies: ["J2KCore"]),
         .testTarget(
             name: "PerformanceTests",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KCore", "J2KCodec"]),
         .testTarget(
             name: "J2KTestAppTests",
             dependencies: ["J2KCore"]),
