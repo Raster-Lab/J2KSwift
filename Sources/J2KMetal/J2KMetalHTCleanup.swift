@@ -147,9 +147,12 @@ public struct J2KMetalHTCleanup: Sendable {
         var bc = UInt32(blockCount)
         encoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 5)
 
-        let threadsPerGroup = MTLSize(width: min(blockCount, 64), height: 1, depth: 1)
-        let gridSize = MTLSize(width: blockCount, height: 1, depth: 1)
-        encoder.dispatchThreads(gridSize, threadsPerThreadgroup: threadsPerGroup)
+        // dispatchThreadgroups: one thread per codeblock, one threadgroup
+        // per codeblock. Avoids the simd-width padding / max-threads-per-
+        // group mismatch the dispatch-threads variant can hit on Apple GPUs.
+        let threadsPerGroup = MTLSize(width: 1, height: 1, depth: 1)
+        let gridGroups = MTLSize(width: blockCount, height: 1, depth: 1)
+        encoder.dispatchThreadgroups(gridGroups, threadsPerThreadgroup: threadsPerGroup)
         encoder.endEncoding()
         cb.commit()
         await cb.completed()
@@ -162,14 +165,23 @@ public struct J2KMetalHTCleanup: Sendable {
 
         let gpuKernelTime = max(0.0, cb.gpuEndTime - cb.gpuStartTime)
 
-        var output = [UInt32](repeating: 0, count: outputSampleCount)
+        // Read back via direct UnsafeMutableBufferPointer.initialize(from:)
+        // — `Array.withUnsafeMutableBytes { dst.copyBytes(from:) }` was
+        // observed to deadlock in release builds when the source pointer
+        // came from a Metal `MTLBuffer.contents()` immediately after
+        // `await cb.completed()`. The cause is a Swift-runtime / Metal
+        // boundary issue, not a GPU error (status is .completed at this
+        // point); writing into a separately-allocated raw buffer first
+        // sidesteps it cleanly.
+        let byteCount = outputSampleCount * MemoryLayout<UInt32>.stride
+        let output: [UInt32]
         if outputSampleCount > 0 {
-            output.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: outputBuffer.contents(),
-                    count: outputSampleCount * MemoryLayout<UInt32>.stride
-                ))
+            output = [UInt32](unsafeUninitializedCapacity: outputSampleCount) { ptr, initializedCount in
+                memcpy(ptr.baseAddress!, outputBuffer.contents(), byteCount)
+                initializedCount = outputSampleCount
             }
+        } else {
+            output = []
         }
 
         let totalSamples = descriptors.reduce(0) { $0 + Int($1.width) * Int($1.height) }

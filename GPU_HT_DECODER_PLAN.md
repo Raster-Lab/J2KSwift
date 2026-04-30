@@ -14,7 +14,7 @@ This is a multi-step build. Each phase is committable and independently testable
 |---|---|---|---|
 | **0** | **Dispatch-cost probe + microbenchmark** | 1 session | ✅ done — `J2KMetalHTDispatchProbe.swift` + test. Result: **40-44× wins at 777-1024 codeblocks**, break-even at ~16 codeblocks. Phase 1+ is greenlit. |
 | 1 | MagSgn-only Metal kernel: read N bits per sample given a precomputed widths array (no MEL, no VLC) | 1 session | ✅ done — `J2KMetalHTMagSgn.swift` + 4 bit-exact tests + 16× speedup measurement |
-| 2 | Cleanup-pass kernel for one codeblock (full MagSgn + MEL + VLC + UVLC), bit-exact vs CPU `HTBlockDecoderConformant.decode` | 2-3 sessions | ✅ done — `J2KMetalHTCleanup.swift` + 7 tests bit-exact in debug, **26-37× speedup** (777 × 64×64 codeblocks). Release-mode dispatch fails with `MTLCommandBufferStatusError` — see "Phase 2 follow-ups" below. |
+| 2 | Cleanup-pass kernel for one codeblock (full MagSgn + MEL + VLC + UVLC), bit-exact vs CPU `HTBlockDecoderConformant.decode` | 2-3 sessions | ✅ done — `J2KMetalHTCleanup.swift` + 7 tests bit-exact in **both debug and release**. Release-mode performance: **0.5× CPU** on 777 × 64×64 (CPU is heavily optimised at -O); **26-37× CPU** in debug builds. Performance optimisation is phase-3+ work. |
 | 3 | Batched dispatch — N codeblocks in one kernel launch via descriptor pool | 1 session | pending |
 | 4 | Pipeline integration — `applyEntropyDecoding` routes HT decode through GPU when `useGPU && useHT && conformant && blockCount ≥ threshold` | 1 session | pending |
 | 5 | Bit-exact tests across the 10-DICOM cross-matrix; perf bench updates | 1 session | pending |
@@ -277,19 +277,34 @@ The phase-0 probe (this commit) gives us the data to know whether to proceed pas
 - All 5 bit-exact tests pass (CPU == GPU byte-for-byte)
 - Speedup: **26-37× faster than CPU** (777 codeblocks × 4096 samples: ~375ms CPU parallel vs ~10-14ms GPU wall)
 
-### Phase 2 follow-up: release-mode dispatch error
+### Phase 2 follow-up: release-mode readback deadlock (FIXED)
 
-**Status:** open. The bit-exact tests pass in debug mode but the kernel returns `MTLCommandBufferStatus.error` (status=4) within ~58µs in release mode. The MSL is identical between modes — the shader compile path (`testShaderLoadOnly`) succeeds in release in 0.046s. Phase-1 MagSgn-only kernel runs cleanly in release (18.11× speedup measured). So the bug is specific to phase-2's cleanup kernel — likely an MSL UB pattern that's masked in debug-mode Swift dispatch.
+**Originally appeared as:** kernel returning `MTLCommandBufferStatus.error` and tests hanging in release builds. Status was actually `.completed` (=4); the misread came from confusing the `Completed=4` enum value with `Error=4` from a different SDK. The tests then deadlocked at the readback step:
 
-What's been ruled out:
-- Struct layout: descriptor stride confirmed 32 bytes on Swift side (matches MSL). All-UInt32 field types eliminate 16-bit alignment ambiguity. `@frozen` locks layout against optimiser reorder.
-- Shader compile failure: `testShaderLoadOnly` proves MSL builds cleanly in release.
-- Phase-1 dispatch pattern: identical, and works in release (J2KMetalHTMagSgn).
+```swift
+output.withUnsafeMutableBytes { dst in
+    dst.copyBytes(from: UnsafeRawBufferPointer(
+        start: outputBuffer.contents(),
+        count: byteCount))
+}
+```
 
-Likely candidates to investigate next session:
-- MSL register pressure on the inlined helpers; check `pipeline.maxTotalThreadsPerThreadgroup` against the threadsPerGroup we dispatch.
-- Out-of-bounds index into `vlcTbl0`/`vlcTbl1` — `(c_q << 7) | (bits & 0x7F)` → max 1023, fits 1024-entry table, but verify `c_q` range under all rho-flow paths.
-- Buffer-storage-mode quirk: try `.storageModePrivate` + blit instead of `.storageModeShared` for the descriptor / VLC table buffers.
-- Add Metal API validation flag (`-Xswiftc -DMETAL_VALIDATION`) to the test target and re-run release; the validator may surface the underlying GPU fault.
+**Root cause:** `Array.withUnsafeMutableBytes { dst.copyBytes(from:) }` deadlocks under release-mode Swift when the source pointer comes from `MTLBuffer.contents()` immediately after `await cb.completed()`. Debug builds don't hit it. Phase-1 MagSgn used the same pattern but didn't trigger it (different runtime path / shorter completion path).
 
-The debug-mode bit-exactness proof remains valid — the algorithm is correct. The release-mode failure is a Metal-execution-environment issue, not a correctness one. Phase 3+ work can build on the kernel as-is once this is unblocked.
+**Fix:** read back via `Array(unsafeUninitializedCapacity:initializingWith:)` + plain `memcpy`:
+
+```swift
+let output = [UInt32](unsafeUninitializedCapacity: outputSampleCount) { ptr, n in
+    memcpy(ptr.baseAddress!, outputBuffer.contents(), byteCount)
+    n = outputSampleCount
+}
+```
+
+This sidesteps the `withUnsafeMutableBytes`/`copyBytes` interaction entirely and is no slower in practice.
+
+**Performance reality check:** with the fix, release-mode bit-exact tests pass — but the GPU is **0.5× the parallel-CPU speed** on 777 × 64×64 codeblocks (~7 ms CPU vs ~14 ms GPU wall). Debug-mode showed 26-37× because debug-CPU is ~30× slower than release-CPU. Release-CPU's HT decoder is highly optimised. Realistic GPU optimisation goals for phase 3+:
+- Drop dispatch overhead (warm pipeline, persistent buffers)
+- Increase per-thread workload (multiple codeblocks per thread, or wave-cooperative decode)
+- Fold tile-level work onto GPU to amortise upload cost across the whole frame
+
+The phase-1 MagSgn kernel hit 18× in release because the CPU baseline there was `HTMagSgnDecoderConformant.decodeBits` without the rest of the cleanup pipeline — a much smaller compute envelope, where dispatch overhead is more easily amortised.
