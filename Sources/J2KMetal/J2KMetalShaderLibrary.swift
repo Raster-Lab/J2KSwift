@@ -116,6 +116,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case quantizeTrellisEvaluate = "j2k_quantize_trellis_evaluate"
     /// Compute distortion metrics for R-D optimisation.
     case quantizeDistortionMetric = "j2k_quantize_distortion_metric"
+
+    // MARK: - HTJ2K Decode Prototype Shaders
+    /// Dispatch-cost probe — copies per-codeblock input to output and
+    /// touches each byte once. Used to measure the fixed Metal launch
+    /// overhead vs CPU work for a 1-thread-per-codeblock layout.
+    /// Not a real decoder; first-light prototype only.
+    case htDispatchProbe = "j2k_ht_dispatch_probe"
 }
 
 // MARK: - Shader Library Configuration
@@ -1994,6 +2001,61 @@ enum J2KMetalShaderSource {
                 break;
             default:
                 distortions[gid] = diff * diff;
+        }
+    }
+
+    // MARK: - HTJ2K Decode Prototype: dispatch-cost probe
+    //
+    // Layout the eventual real decoder will use, exercised here with
+    // trivial work so we can measure the actual GPU launch + memory
+    // marshaling overhead at varying codeblock counts. Each thread
+    // handles one codeblock — the same architecture a full HT decoder
+    // would use (per-codeblock state is independent, the parallelism
+    // unit is the codeblock).
+    //
+    // Inputs:
+    //   blocks       — array of CodeBlockDescriptor, one per codeblock
+    //   codestream   — single concatenated byte pool covering all blocks
+    //   output       — single Int32 pool covering all decoded samples
+    //   blockCount   — number of codeblocks to process
+    //
+    // Per-block work: walk the codeblock's bytes once, sum into a
+    // checksum, and write `width × height` Int32 values to the output
+    // region. Substitutes for the eventual MQ-free HT decode workload.
+
+    struct GPUHTBlockDescriptor {
+        uint dataOffset;    // byte offset into codestream pool
+        uint dataLength;
+        uint outputOffset;  // sample offset into output pool
+        ushort width;
+        ushort height;
+    };
+
+    kernel void j2k_ht_dispatch_probe(
+        device const GPUHTBlockDescriptor* blocks  [[buffer(0)]],
+        device const uchar*                codestream [[buffer(1)]],
+        device int*                        output  [[buffer(2)]],
+        constant uint&                     blockCount [[buffer(3)]],
+        uint tid [[thread_position_in_grid]]
+    ) {
+        if (tid >= blockCount) return;
+        GPUHTBlockDescriptor desc = blocks[tid];
+
+        // Touch every input byte once — models the per-block bit-stream
+        // walk an HT decoder would do. The accumulator stays in a
+        // register so the optimizer cannot eliminate the loop.
+        uint checksum = 0;
+        for (uint i = 0; i < desc.dataLength; i++) {
+            checksum = checksum * 1103515245u + uint(codestream[desc.dataOffset + i]);
+        }
+
+        // Write width × height Int32 outputs — models the eventual
+        // coefficient write traffic.
+        uint sampleCount = uint(desc.width) * uint(desc.height);
+        device int* myOut = output + desc.outputOffset;
+        int v = int(checksum & 0x0FFFu);   // bounded magnitude
+        for (uint i = 0; i < sampleCount; i++) {
+            myOut[i] = ((i & 1u) == 0u) ? v : -v;
         }
     }
     """
