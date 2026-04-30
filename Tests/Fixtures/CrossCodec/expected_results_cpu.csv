@@ -1,0 +1,8 @@
+file,modality,width,height,jcpu_to_jcpu_p1,jcpu_to_opj_p1,opj_to_jcpu_p1,opj_to_opj_p1,jcpu_to_jcpu_ht,jcpu_to_ojph_ht,ojph_to_jcpu_ht,ojph_to_ojph_ht
+ct_study_001_instance_000001,ct,512,512,yes,swap,swap,yes,yes,swap,swap,yes
+ct_study_003_instance_000050,ct,512,512,yes,swap,swap,yes,yes,swap,swap,yes
+dx_study_002_instance_000001,dx,2800,2288,yes,swap,swap,yes,yes,swap,swap,yes
+mr_study_001_instance_000001,mr,886,886,yes,swap,swap,yes,yes,swap,swap,yes
+mr_study_002_instance_000100,mr,180,180,yes,swap,swap,yes,yes,swap,swap,yes
+px_study_001_instance_000001,px,2459,1316,yes,swap,swap,yes,yes,swap,swap,yes
+xa_study_001_instance_000001,xa,1024,1024,yes,swap,swap,yes,yes,swap,swap,yes

@@ -44,7 +44,8 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES="$REPO_ROOT/Tests/Fixtures/CrossCodec"
-BASELINE="$FIXTURES/expected_results.csv"
+BASELINE_FULL="$FIXTURES/expected_results.csv"
+BASELINE_CPU="$FIXTURES/expected_results_cpu.csv"
 WORKDIR="$REPO_ROOT/.build/cross_matrix"
 
 J2K="$REPO_ROOT/.build/release/j2k"
@@ -54,12 +55,16 @@ OJPH_ENC="$(command -v ojph_compress || true)"
 OJPH_DEC="$(command -v ojph_expand   || true)"
 
 MODE=run
-case "${1:-}" in
-  --check)            MODE=check ;;
-  --update-baseline)  MODE=update_baseline ;;
-  "" | run)           MODE=run ;;
-  *) echo "unknown mode: $1" >&2; exit 2 ;;
-esac
+CPU_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --check)            MODE=check ;;
+    --update-baseline)  MODE=update_baseline ;;
+    --cpu-only)         CPU_ONLY=1 ;;
+    run | "")           MODE=run ;;
+    *) echo "unknown arg: $arg" >&2; exit 2 ;;
+  esac
+done
 
 err() { echo "$@" >&2; }
 
@@ -73,13 +78,22 @@ err() { echo "$@" >&2; }
 
 mkdir -p "$WORKDIR/enc" "$WORKDIR/dec"
 CSV="$WORKDIR/results.csv"
+BASELINE=$BASELINE_FULL
+[[ $CPU_ONLY -eq 1 ]] && BASELINE=$BASELINE_CPU
 
-CELLS=(
-  jcpu_to_jcpu_p1 jcpu_to_jgpu_p1 jgpu_to_jcpu_p1 jgpu_to_jgpu_p1
-  jcpu_to_opj_p1  jgpu_to_opj_p1  opj_to_jcpu_p1  opj_to_jgpu_p1  opj_to_opj_p1
-  jcpu_to_jcpu_ht jcpu_to_jgpu_ht jgpu_to_jcpu_ht jgpu_to_jgpu_ht
-  jcpu_to_ojph_ht jgpu_to_ojph_ht ojph_to_jcpu_ht ojph_to_jgpu_ht ojph_to_ojph_ht
-)
+if [[ $CPU_ONLY -eq 1 ]]; then
+  CELLS=(
+    jcpu_to_jcpu_p1 jcpu_to_opj_p1 opj_to_jcpu_p1 opj_to_opj_p1
+    jcpu_to_jcpu_ht jcpu_to_ojph_ht ojph_to_jcpu_ht ojph_to_ojph_ht
+  )
+else
+  CELLS=(
+    jcpu_to_jcpu_p1 jcpu_to_jgpu_p1 jgpu_to_jcpu_p1 jgpu_to_jgpu_p1
+    jcpu_to_opj_p1  jgpu_to_opj_p1  opj_to_jcpu_p1  opj_to_jgpu_p1  opj_to_opj_p1
+    jcpu_to_jcpu_ht jcpu_to_jgpu_ht jgpu_to_jcpu_ht jgpu_to_jgpu_ht
+    jcpu_to_ojph_ht jgpu_to_ojph_ht ojph_to_jcpu_ht ojph_to_jgpu_ht ojph_to_ojph_ht
+  )
+fi
 
 # CSV header
 {
@@ -140,11 +154,13 @@ for pgm in "$FIXTURES"/*.pgm; do
 
   # ---- encode side ----
   "$J2K"     encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jcpu_p1.j2k" --lossless --no-gpu --quiet
-  "$J2K"     encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jgpu_p1.j2k" --lossless --gpu    --quiet
   "$OPJ_ENC" -i "$pgm" -o "$WORKDIR/enc/${stem}_opj_p1.j2k"  -r 1 >/dev/null 2>&1
   "$J2K"     encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jcpu_ht.j2k" --lossless --htj2k --no-gpu --quiet
-  "$J2K"     encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jgpu_ht.j2k" --lossless --htj2k --gpu    --quiet
   "$OJPH_ENC" -i "$pgm" -o "$WORKDIR/enc/${stem}_ojph_ht.j2c" -reversible true >/dev/null 2>&1
+  if [[ $CPU_ONLY -eq 0 ]]; then
+    "$J2K" encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jgpu_p1.j2k" --lossless --gpu    --quiet
+    "$J2K" encode -i "$pgm" -o "$WORKDIR/enc/${stem}_jgpu_ht.j2k" --lossless --htj2k --gpu    --quiet
+  fi
 
   # ---- decode helpers ----
   decode_j2k() {
@@ -158,47 +174,56 @@ for pgm in "$FIXTURES"/*.pgm; do
 
   P=$WORKDIR/dec/${stem}; rm -f "${P}"_*.pgm
 
-  # J2K Part 1 cells
-  decode_j2k     "$WORKDIR/enc/${stem}_jcpu_p1.j2k" cpu "${P}_jcpu_to_jcpu_p1.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jcpu_p1.j2k" gpu "${P}_jcpu_to_jgpu_p1.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jgpu_p1.j2k" cpu "${P}_jgpu_to_jcpu_p1.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jgpu_p1.j2k" gpu "${P}_jgpu_to_jgpu_p1.pgm"
-  "$OPJ_DEC"     -i "$WORKDIR/enc/${stem}_jcpu_p1.j2k" -o "${P}_jcpu_to_opj_p1.pgm" >/dev/null 2>&1
-  "$OPJ_DEC"     -i "$WORKDIR/enc/${stem}_jgpu_p1.j2k" -o "${P}_jgpu_to_opj_p1.pgm" >/dev/null 2>&1
-  decode_j2k     "$WORKDIR/enc/${stem}_opj_p1.j2k"  cpu "${P}_opj_to_jcpu_p1.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_opj_p1.j2k"  gpu "${P}_opj_to_jgpu_p1.pgm"
-  "$OPJ_DEC"     -i "$WORKDIR/enc/${stem}_opj_p1.j2k"  -o "${P}_opj_to_opj_p1.pgm"  >/dev/null 2>&1
+  # CPU-only cells (always run)
+  decode_j2k  "$WORKDIR/enc/${stem}_jcpu_p1.j2k" cpu "${P}_jcpu_to_jcpu_p1.pgm"
+  "$OPJ_DEC"  -i "$WORKDIR/enc/${stem}_jcpu_p1.j2k" -o "${P}_jcpu_to_opj_p1.pgm" >/dev/null 2>&1
+  decode_j2k  "$WORKDIR/enc/${stem}_opj_p1.j2k"  cpu "${P}_opj_to_jcpu_p1.pgm"
+  "$OPJ_DEC"  -i "$WORKDIR/enc/${stem}_opj_p1.j2k" -o "${P}_opj_to_opj_p1.pgm"  >/dev/null 2>&1
+  decode_j2k  "$WORKDIR/enc/${stem}_jcpu_ht.j2k" cpu "${P}_jcpu_to_jcpu_ht.pgm"
+  "$OJPH_DEC" -i "$WORKDIR/enc/${stem}_jcpu_ht.j2k" -o "${P}_jcpu_to_ojph_ht.pgm" >/dev/null 2>&1
+  decode_j2k  "$WORKDIR/enc/${stem}_ojph_ht.j2c" cpu "${P}_ojph_to_jcpu_ht.pgm"
+  "$OJPH_DEC" -i "$WORKDIR/enc/${stem}_ojph_ht.j2c" -o "${P}_ojph_to_ojph_ht.pgm" >/dev/null 2>&1
 
-  # HTJ2K cells
-  decode_j2k     "$WORKDIR/enc/${stem}_jcpu_ht.j2k" cpu "${P}_jcpu_to_jcpu_ht.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jcpu_ht.j2k" gpu "${P}_jcpu_to_jgpu_ht.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jgpu_ht.j2k" cpu "${P}_jgpu_to_jcpu_ht.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_jgpu_ht.j2k" gpu "${P}_jgpu_to_jgpu_ht.pgm"
-  "$OJPH_DEC"    -i "$WORKDIR/enc/${stem}_jcpu_ht.j2k" -o "${P}_jcpu_to_ojph_ht.pgm" >/dev/null 2>&1
-  "$OJPH_DEC"    -i "$WORKDIR/enc/${stem}_jgpu_ht.j2k" -o "${P}_jgpu_to_ojph_ht.pgm" >/dev/null 2>&1
-  decode_j2k     "$WORKDIR/enc/${stem}_ojph_ht.j2c" cpu "${P}_ojph_to_jcpu_ht.pgm"
-  decode_j2k     "$WORKDIR/enc/${stem}_ojph_ht.j2c" gpu "${P}_ojph_to_jgpu_ht.pgm"
-  "$OJPH_DEC"    -i "$WORKDIR/enc/${stem}_ojph_ht.j2c" -o "${P}_ojph_to_ojph_ht.pgm" >/dev/null 2>&1
-
-  # CSV row + summary (positional vars — macOS bash 3.2 has no assoc arrays).
   R_jcpu_to_jcpu_p1=$(cmp_or_no "$pgm" "${P}_jcpu_to_jcpu_p1.pgm")
+  R_jcpu_to_opj_p1=$(cmp_or_no  "$pgm" "${P}_jcpu_to_opj_p1.pgm")
+  R_opj_to_jcpu_p1=$(cmp_or_no  "$pgm" "${P}_opj_to_jcpu_p1.pgm")
+  R_opj_to_opj_p1=$(cmp_or_no   "$pgm" "${P}_opj_to_opj_p1.pgm")
+  R_jcpu_to_jcpu_ht=$(cmp_or_no "$pgm" "${P}_jcpu_to_jcpu_ht.pgm")
+  R_jcpu_to_ojph_ht=$(cmp_or_no "$pgm" "${P}_jcpu_to_ojph_ht.pgm")
+  R_ojph_to_jcpu_ht=$(cmp_or_no "$pgm" "${P}_ojph_to_jcpu_ht.pgm")
+  R_ojph_to_ojph_ht=$(cmp_or_no "$pgm" "${P}_ojph_to_ojph_ht.pgm")
+
+  if [[ $CPU_ONLY -eq 1 ]]; then
+    echo "$stem,$mod,$W,$H,$R_jcpu_to_jcpu_p1,$R_jcpu_to_opj_p1,$R_opj_to_jcpu_p1,$R_opj_to_opj_p1,$R_jcpu_to_jcpu_ht,$R_jcpu_to_ojph_ht,$R_ojph_to_jcpu_ht,$R_ojph_to_ojph_ht" >> "$CSV"
+    printf '  P1: jc/jc=%s | jc/o=%s o/jc=%s o/o=%s\n' \
+      "$R_jcpu_to_jcpu_p1" "$R_jcpu_to_opj_p1" "$R_opj_to_jcpu_p1" "$R_opj_to_opj_p1"
+    printf '  HT: jc/jc=%s | jc/o=%s o/jc=%s o/o=%s\n' \
+      "$R_jcpu_to_jcpu_ht" "$R_jcpu_to_ojph_ht" "$R_ojph_to_jcpu_ht" "$R_ojph_to_ojph_ht"
+    continue
+  fi
+
+  # Full matrix — also run GPU-side cells.
+  decode_j2k  "$WORKDIR/enc/${stem}_jcpu_p1.j2k" gpu "${P}_jcpu_to_jgpu_p1.pgm"
+  decode_j2k  "$WORKDIR/enc/${stem}_jgpu_p1.j2k" cpu "${P}_jgpu_to_jcpu_p1.pgm"
+  decode_j2k  "$WORKDIR/enc/${stem}_jgpu_p1.j2k" gpu "${P}_jgpu_to_jgpu_p1.pgm"
+  "$OPJ_DEC"  -i "$WORKDIR/enc/${stem}_jgpu_p1.j2k" -o "${P}_jgpu_to_opj_p1.pgm" >/dev/null 2>&1
+  decode_j2k  "$WORKDIR/enc/${stem}_opj_p1.j2k"  gpu "${P}_opj_to_jgpu_p1.pgm"
+  decode_j2k  "$WORKDIR/enc/${stem}_jcpu_ht.j2k" gpu "${P}_jcpu_to_jgpu_ht.pgm"
+  decode_j2k  "$WORKDIR/enc/${stem}_jgpu_ht.j2k" cpu "${P}_jgpu_to_jcpu_ht.pgm"
+  decode_j2k  "$WORKDIR/enc/${stem}_jgpu_ht.j2k" gpu "${P}_jgpu_to_jgpu_ht.pgm"
+  "$OJPH_DEC" -i "$WORKDIR/enc/${stem}_jgpu_ht.j2k" -o "${P}_jgpu_to_ojph_ht.pgm" >/dev/null 2>&1
+  decode_j2k  "$WORKDIR/enc/${stem}_ojph_ht.j2c" gpu "${P}_ojph_to_jgpu_ht.pgm"
+
   R_jcpu_to_jgpu_p1=$(cmp_or_no "$pgm" "${P}_jcpu_to_jgpu_p1.pgm")
   R_jgpu_to_jcpu_p1=$(cmp_or_no "$pgm" "${P}_jgpu_to_jcpu_p1.pgm")
   R_jgpu_to_jgpu_p1=$(cmp_or_no "$pgm" "${P}_jgpu_to_jgpu_p1.pgm")
-  R_jcpu_to_opj_p1=$(cmp_or_no  "$pgm" "${P}_jcpu_to_opj_p1.pgm")
   R_jgpu_to_opj_p1=$(cmp_or_no  "$pgm" "${P}_jgpu_to_opj_p1.pgm")
-  R_opj_to_jcpu_p1=$(cmp_or_no  "$pgm" "${P}_opj_to_jcpu_p1.pgm")
   R_opj_to_jgpu_p1=$(cmp_or_no  "$pgm" "${P}_opj_to_jgpu_p1.pgm")
-  R_opj_to_opj_p1=$(cmp_or_no   "$pgm" "${P}_opj_to_opj_p1.pgm")
-  R_jcpu_to_jcpu_ht=$(cmp_or_no "$pgm" "${P}_jcpu_to_jcpu_ht.pgm")
   R_jcpu_to_jgpu_ht=$(cmp_or_no "$pgm" "${P}_jcpu_to_jgpu_ht.pgm")
   R_jgpu_to_jcpu_ht=$(cmp_or_no "$pgm" "${P}_jgpu_to_jcpu_ht.pgm")
   R_jgpu_to_jgpu_ht=$(cmp_or_no "$pgm" "${P}_jgpu_to_jgpu_ht.pgm")
-  R_jcpu_to_ojph_ht=$(cmp_or_no "$pgm" "${P}_jcpu_to_ojph_ht.pgm")
   R_jgpu_to_ojph_ht=$(cmp_or_no "$pgm" "${P}_jgpu_to_ojph_ht.pgm")
-  R_ojph_to_jcpu_ht=$(cmp_or_no "$pgm" "${P}_ojph_to_jcpu_ht.pgm")
   R_ojph_to_jgpu_ht=$(cmp_or_no "$pgm" "${P}_ojph_to_jgpu_ht.pgm")
-  R_ojph_to_ojph_ht=$(cmp_or_no "$pgm" "${P}_ojph_to_ojph_ht.pgm")
 
   echo "$stem,$mod,$W,$H,$R_jcpu_to_jcpu_p1,$R_jcpu_to_jgpu_p1,$R_jgpu_to_jcpu_p1,$R_jgpu_to_jgpu_p1,$R_jcpu_to_opj_p1,$R_jgpu_to_opj_p1,$R_opj_to_jcpu_p1,$R_opj_to_jgpu_p1,$R_opj_to_opj_p1,$R_jcpu_to_jcpu_ht,$R_jcpu_to_jgpu_ht,$R_jgpu_to_jcpu_ht,$R_jgpu_to_jgpu_ht,$R_jcpu_to_ojph_ht,$R_jgpu_to_ojph_ht,$R_ojph_to_jcpu_ht,$R_ojph_to_jgpu_ht,$R_ojph_to_ojph_ht" >> "$CSV"
   printf '  P1: jc/jc=%s jc/jg=%s jg/jc=%s jg/jg=%s | jc/o=%s jg/o=%s | o/jc=%s o/jg=%s o/o=%s\n' \
