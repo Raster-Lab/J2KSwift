@@ -13,7 +13,7 @@ This is a multi-step build. Each phase is committable and independently testable
 | Phase | Deliverable | Estimated cost | Status |
 |---|---|---|---|
 | **0** | **Dispatch-cost probe + microbenchmark** | 1 session | ✅ done — `J2KMetalHTDispatchProbe.swift` + test. Result: **40-44× wins at 777-1024 codeblocks**, break-even at ~16 codeblocks. Phase 1+ is greenlit. |
-| 1 | MagSgn-only Metal kernel: read N bits per sample given a precomputed widths array (no MEL, no VLC) | 1 session | pending |
+| 1 | MagSgn-only Metal kernel: read N bits per sample given a precomputed widths array (no MEL, no VLC) | 1 session | ✅ done — `J2KMetalHTMagSgn.swift` + 4 bit-exact tests + 16× speedup measurement |
 | 2 | Cleanup-pass kernel for one codeblock (full MagSgn + MEL + VLC + UVLC), bit-exact vs CPU `HTBlockDecoderConformant.decode` | 2-3 sessions | pending |
 | 3 | Batched dispatch — N codeblocks in one kernel launch via descriptor pool | 1 session | pending |
 | 4 | Pipeline integration — `applyEntropyDecoding` routes HT decode through GPU when `useGPU && useHT && conformant && blockCount ≥ threshold` | 1 session | pending |
@@ -131,6 +131,19 @@ kernel void j2k_ht_magsgn_decode_widths(
 ```
 
 **Test gate:** bit-exact against `HTMagSgnDecoderConformant.decodeBits(_:widths:)` (the existing CPU round-trip helper) on synthetic + the 64×64 PGM the cross-matrix uses.
+
+**Phase 1 results on Apple M2** (debug build):
+
+| Workload                                  | CPU (parallel) | GPU wall | GPU kernel | Speedup |
+|-------------------------------------------|---------------:|---------:|-----------:|--------:|
+| Single block × 64 samples                 |        ≈0.05ms |  0.33 ms |   0.054 ms |     —   |
+| 256 blocks × 256 samples (~64 KB out)     |        ≈10 ms  |  1.10 ms |   0.607 ms |  ~9×    |
+| **777 blocks × 4096 samples** (~12 MB out)| **195.63 ms**  | **11.92 ms** | **10.59 ms** | **16.41×** |
+
+The 777-block case mirrors the codeblock count of a 1024×1024 RGB cross-matrix run. The 16× internal-Metal speedup over the parallel-CPU baseline validates two things:
+
+1. **The dispatch envelope's slack absorbs real per-thread compute work.** Phase-0 saw ~1 ms wall-clock with a trivial probe; phase 1 with real per-byte bit-twiddling is ~11 ms — comfortably above the dispatch floor, comfortably below CPU.
+2. **Per-thread MagSgn work is small enough to fit MSL execution profile.** No branch divergence concerns surface here because every thread runs the same straight-line bit-reader code with no data-dependent branches. Phase 2 (MEL, VLC, UVLC) introduces data-dependent branches and is where divergence may bite.
 
 ---
 

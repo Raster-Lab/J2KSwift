@@ -97,7 +97,7 @@ let package = Package(
             dependencies: ["J2KFileFormat"]),
         .testTarget(
             name: "J2KMetalTests",
-            dependencies: ["J2KMetal"]),
+            dependencies: ["J2KMetal", "J2KCodec"]),
         .testTarget(
             name: "J2KVulkanTests",
             dependencies: ["J2KVulkan"]),

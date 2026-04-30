@@ -54,26 +54,33 @@ final class J2KMetalHTDispatchProbeTests: XCTestCase {
     }
 
     /// Reference CPU implementation of the same per-block work the
-    /// Metal kernel does, so we can measure the cross-over point.
+    /// Metal kernel does. Uses an UnsafeMutablePointer to give every
+    /// concurrent worker a stable, owner-free pointer into the output
+    /// — without that, `output.withUnsafeMutableBufferPointer` inside
+    /// `concurrentPerform` triggers a CoW each call and the closure
+    /// captures end up racing on the resulting buffer.
     private func runCPU(
         descriptors: [J2KMetalHTBlockDescriptor],
         codestream: [UInt8],
         outputSampleCount: Int
     ) -> [Int32] {
         var output = [Int32](repeating: 0, count: outputSampleCount)
-        DispatchQueue.concurrentPerform(iterations: descriptors.count) { idx in
-            let desc = descriptors[idx]
-            var checksum: UInt32 = 0
-            let base = Int(desc.dataOffset)
-            for i in 0..<Int(desc.dataLength) {
-                checksum = checksum &* 1103515245 &+ UInt32(codestream[base + i])
-            }
-            let v = Int32(checksum & 0x0FFF)
-            let sampleCount = Int(desc.width) * Int(desc.height)
-            let outBase = Int(desc.outputOffset)
-            output.withUnsafeMutableBufferPointer { buf in
+        let descriptorsRef = descriptors
+        let codestreamRef = codestream
+        output.withUnsafeMutableBufferPointer { buf in
+            let base = buf.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: descriptorsRef.count) { idx in
+                let desc = descriptorsRef[idx]
+                var checksum: UInt32 = 0
+                let inBase = Int(desc.dataOffset)
+                for i in 0..<Int(desc.dataLength) {
+                    checksum = checksum &* 1103515245 &+ UInt32(codestreamRef[inBase + i])
+                }
+                let v = Int32(checksum & 0x0FFF)
+                let sampleCount = Int(desc.width) * Int(desc.height)
+                let outBase = Int(desc.outputOffset)
                 for i in 0..<sampleCount {
-                    buf[outBase + i] = (i & 1) == 0 ? v : -v
+                    base[outBase + i] = (i & 1) == 0 ? v : -v
                 }
             }
         }

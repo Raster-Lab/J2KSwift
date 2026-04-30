@@ -123,6 +123,10 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// overhead vs CPU work for a 1-thread-per-codeblock layout.
     /// Not a real decoder; first-light prototype only.
     case htDispatchProbe = "j2k_ht_dispatch_probe"
+    /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
+    /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
+    /// per-sample widths array. Bit-exact with the CPU reference.
+    case htMagsgnDecode = "j2k_ht_magsgn_decode"
 }
 
 // MARK: - Shader Library Configuration
@@ -2056,6 +2060,101 @@ enum J2KMetalShaderSource {
         int v = int(checksum & 0x0FFFu);   // bounded magnitude
         for (uint i = 0; i < sampleCount; i++) {
             myOut[i] = ((i & 1u) == 0u) ? v : -v;
+        }
+    }
+
+    // MARK: - HTJ2K MagSgn forward bit reader (Phase 1)
+    //
+    // Per-codeblock MagSgn descriptor: layout matches the Swift
+    // `J2KMetalHTMagSgnBlockDescriptor` struct field-for-field.
+    struct GPUHTMagSgnDescriptor {
+        uint dataOffset;     // byte offset into codestream pool
+        uint dataLength;     // bytes available in this block
+        uint widthsOffset;   // sample offset into widths pool (1 byte/sample)
+        uint outputOffset;   // sample offset into output pool (1 uint/sample)
+        uint sampleCount;    // number of samples to decode for this block
+    };
+
+    // MagSgn reader state — kept in registers for the duration of one
+    // codeblock decode. Mirrors `HTMagSgnDecoderConformant`'s fields:
+    //   - tmp:        bit buffer (LSB-first consumption)
+    //   - bits:       valid bits in tmp
+    //   - readIndex:  byte position relative to dataOffset
+    //   - unstuff:    next byte's high bit is reserved (because previous == 0xFF)
+    struct HTMagSgnState {
+        ulong tmp;
+        int   bits;
+        int   readIndex;
+        bool  unstuff;
+    };
+
+    // Refill the bit buffer so at least 32 bits are available, with
+    // FF-stuff handling. `byteCount` is dataLength; reads past the end
+    // synthesise 0xFF (matches CPU's post-EOF padding convention).
+    inline void htMagSgnRefill(thread HTMagSgnState* s,
+                               device const uchar* bytes,
+                               uint byteCount)
+    {
+        while (s->bits <= 32) {
+            uchar b;
+            if ((uint)s->readIndex < byteCount) {
+                b = bytes[s->readIndex];
+                s->readIndex += 1;
+            } else {
+                b = 0xFF;
+            }
+            int  dBits = s->unstuff ? 7 : 8;
+            uchar mask = s->unstuff ? (uchar)0x7F : (uchar)0xFF;
+            ulong value = (ulong)(b & mask);
+            s->tmp |= value << s->bits;
+            s->bits += dBits;
+            s->unstuff = (b == 0xFF);
+        }
+    }
+
+    // Read `count` bits LSB-first. Mirrors `HTMagSgnDecoderConformant.read`.
+    inline uint htMagSgnRead(thread HTMagSgnState* s,
+                             device const uchar* bytes,
+                             uint byteCount,
+                             int count)
+    {
+        if (s->bits < count) {
+            htMagSgnRefill(s, bytes, byteCount);
+        }
+        ulong mask = (count >= 64) ? (ulong)~(ulong)0 : (((ulong)1 << count) - 1);
+        uint v = (uint)(s->tmp & mask);
+        s->tmp >>= count;
+        s->bits -= count;
+        return v;
+    }
+
+    // Decode `desc.sampleCount` MagSgn samples for a single codeblock.
+    // The widths array stores one byte per sample — the bit width to
+    // consume from the MagSgn stream for that sample's reconstruction.
+    // Output is one uint per sample (matches CPU's `[UInt32]` output).
+    kernel void j2k_ht_magsgn_decode(
+        device const GPUHTMagSgnDescriptor* blocks  [[buffer(0)]],
+        device const uchar*                  codestream [[buffer(1)]],
+        device const uchar*                  widths     [[buffer(2)]],
+        device uint*                         output     [[buffer(3)]],
+        constant uint&                       blockCount [[buffer(4)]],
+        uint tid [[thread_position_in_grid]]
+    ) {
+        if (tid >= blockCount) return;
+        GPUHTMagSgnDescriptor desc = blocks[tid];
+        device const uchar* myBytes  = codestream + desc.dataOffset;
+        device const uchar* myWidths = widths + desc.widthsOffset;
+        device       uint*  myOut    = output + desc.outputOffset;
+
+        HTMagSgnState s;
+        s.tmp = 0;
+        s.bits = 0;
+        s.readIndex = 0;
+        s.unstuff = false;
+
+        for (uint i = 0; i < desc.sampleCount; i++) {
+            int w = int(myWidths[i]);
+            myOut[i] = htMagSgnRead(&s, myBytes, desc.dataLength, w);
         }
     }
     """
