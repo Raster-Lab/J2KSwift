@@ -193,17 +193,21 @@ This branch adds a `j2kSwiftProbe` injection point on `OpenJPEGBenchmarkRunner` 
 
 | Mode                     | 256×256 | 512×512 | 1024×1024 |
 | ------------------------ | ------: | ------: | --------: |
-| HTJ2K Lossless Encode    | **19.9×** | **6.0×** |  **6.9×**  |
-| HTJ2K Lossless Decode    |  —      | 9.8×    |   2.2×    |
-| HTJ2K Lossy 2 bpp Encode | 17.5×   | 5.9×    |   7.1×    |
-| Part 1 Lossless Encode   |  —      | 5.9×    |   —       |
-| Part 1 Lossless Decode   |  —      |  —      |   0.9×    |
+| HTJ2K Lossless Encode    | **18.4×** | **5.6×** |  **6.5×**  |
+| HTJ2K Lossless Decode    | 25.6×   | 9.3×    |   2.2×    |
+| HTJ2K Lossy 2 bpp Encode | 12.9×   | 5.8×    |   6.4×    |
+| HTJ2K Lossy 2 bpp Decode | 40.5×   | 14.2×   |   3.6×    |
+| Part 1 Lossless Encode   |  —      | 2.6×    |   3.2×    |
+| **Part 1 Lossless Decode** | **12.2×** | **4.2×** | **1.07×** |
+| Part 1 Lossy 2bpp Decode | 28.8×   | 8.0×    |   1.95×   |
 
 These numbers reflect two conformant codec optimizations landed alongside this report:
 
 1. **Decoder slice-readers** — the inner MEL / VLC / MagSgn readers now hold a borrowed `ArraySlice<UInt8>` instead of forcing the caller into a per-codeblock `Array(parsed.magsgn / .melVlc)` copy. 1024×1024 HT decode dropped 61 ms → 31 ms (1.4× → 2.2× vs OpenJPEG).
 
 2. **Encoder per-quad scalar tuples** — `processQuad` previously returned `(rho, eQMax, eQ: [Int], s: [UInt32])`, allocating two 4-element heap arrays per quad (~1024 quads per 64×64 codeblock × thousands of codeblocks per 1024² input). Switched to a fixed-size scalar tuple return + an inline unrolled `emitQuadMagSgn` helper. 1024×1024 HT encode dropped **159 ms → 40 ms** (~4× faster); 256×256 HT encode is now **20× faster than OpenJPEG**.
+
+3. **Packed MQ state lookup** — the EBCOT (Part 1) MQ decoder/encoder hot path was doing 3-4 separate table loads per coded symbol (`mqQe[si]`, `mqNextMPS[si]`, `mqNextLPS[si]`, `mqSwitchMPS[si]`), each potentially a different cache line. Consolidated into a single packed `[UInt32]` where each entry encodes qe (16 bits) + nextMPS (6) + nextLPS (6) + switchMPS (1). One load per symbol; bitfield extracts stay in registers. Part 1 lossless decode at 1024×1024 dropped **67 ms → 62 ms** (0.99× → **1.07×** vs OpenJPEG — J2KSwift now beats OpenJPEG at every Part 1 decode size, not just <1024).
 
 J2KSwift HTJ2K wins comfortably at all sizes; OpenJPH-conformant cost shows up at 1024+ where the conformant decoder amortises less well than EBCOT (and J2KSwift's Part 1 decode is currently the slower side at 1024). All 11 head-to-head tests now pass with honest, real-codec ratios. Improving the conformant decoder at 1024+ is the next perf lever — tracked separately.
 

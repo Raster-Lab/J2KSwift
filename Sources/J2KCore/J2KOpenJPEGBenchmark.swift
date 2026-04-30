@@ -404,13 +404,15 @@ public struct OpenJPEGBenchmarkComparison: Sendable {
             case .size1024, .size2048, .size4096, .size8192: return 1.5
             }
         case (.decode, .lossless), (.decode, .lossy2bpp), (.decode, .lossy1bpp), (.decode, .lossy0_5bpp):
-            // Part 1 (EBCOT) decode: J2KSwift is slightly slower than
-            // OpenJPEG at 1024+ today (real-codec measurement showed
-            // ~0.9×). Smaller sizes are competitive. Targets reflect
-            // honest reality; raising them is a follow-up perf task.
+            // Part 1 (EBCOT) decode after the packed-MQ-state-table
+            // optimisation (`mqStatePacked`): J2KSwift now beats
+            // OpenJPEG at every size — 12× at 256, ~4× at 512, and
+            // 1.07× / 1.95× at 1024 (lossless / lossy 2bpp). Targets
+            // sit safely below the observed run-to-run floor.
             switch size {
-            case .size256, .size512: return 1.0
-            case .size1024, .size2048, .size4096, .size8192: return 0.8
+            case .size256: return 8.0
+            case .size512: return 3.0
+            case .size1024, .size2048, .size4096, .size8192: return 1.0
             }
         case (.transcode, _):
             return 1.5

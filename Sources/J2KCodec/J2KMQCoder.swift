@@ -144,10 +144,45 @@ let mqStateTable: [MQState] = [
 /// Each array is indexed by state index (0-46). Using `UInt16` for Qe
 /// (upper 16 bits of the 32-bit value are zero) and `UInt8` for indices
 /// maximises L1 cache utilisation.
+///
+/// Kept for callers outside the per-symbol hot path (initialisation,
+/// debug trace). Inside `MQDecoder.decode` / `MQEncoder.encode` we use
+/// `mqStatePacked` below — one load per symbol instead of three or four.
 let mqQe: [UInt32] = mqStateTable.map { $0.qe }
 let mqNextMPS: [UInt8] = mqStateTable.map { UInt8($0.nextMPS) }
 let mqNextLPS: [UInt8] = mqStateTable.map { UInt8($0.nextLPS) }
 let mqSwitchMPS: [UInt8] = mqStateTable.map { $0.switchMPS ? 1 : 0 }
+
+/// Packed MQ state lookup. One `UInt32` per state index encodes:
+///
+/// - bits  0–15: `qe` (16-bit probability estimate)
+/// - bits 16–21: `nextMPS` (state to transition to after MPS coding)
+/// - bits 22–27: `nextLPS` (state to transition to after LPS coding)
+/// - bit  28   : `switchMPS` (toggle context.mps after LPS)
+/// - bits 29–31: unused / reserved (zero)
+///
+/// In the per-symbol hot path the previous design did up to 4 separate
+/// table loads (`mqQe[si]`, `mqNextMPS[si]`, `mqNextLPS[si]`,
+/// `mqSwitchMPS[si]`) — each potentially crossing a different cache
+/// line. With 47 states packed into 188 contiguous bytes (3 cache
+/// lines), one `mqStatePacked[si]` load gives us everything any branch
+/// of `decode` / `encode` needs and lets the Swift optimiser keep the
+/// extracted fields in registers.
+@usableFromInline let mqStatePacked: [UInt32] = mqStateTable.map { s in
+    let qe = s.qe & 0xFFFF
+    let nMPS = UInt32(s.nextMPS) & 0x3F
+    let nLPS = UInt32(s.nextLPS) & 0x3F
+    let sw   = s.switchMPS ? UInt32(1) : 0
+    return qe | (nMPS << 16) | (nLPS << 22) | (sw << 28)
+}
+
+/// Bit positions inside `mqStatePacked` entries (kept as constants so
+/// the decoder/encoder hot paths read clearly without literal noise).
+@usableFromInline let mqQeMask: UInt32      = 0xFFFF
+@usableFromInline let mqNextMPSShift: Int   = 16
+@usableFromInline let mqNextLPSShift: Int   = 22
+@usableFromInline let mqStateMask: UInt32   = 0x3F
+@usableFromInline let mqSwitchMPSBit: UInt32 = 1 << 28
 
 // MARK: - MQ Context
 
@@ -493,7 +528,10 @@ struct MQEncoder: Sendable {
             }
         }
         let si = Int(context.stateIndex)
-        let qe = mqQe[si]
+        // Same single-load packed lookup as MQDecoder.decode — see
+        // `mqStatePacked` for the bit layout.
+        let entry = mqStatePacked[si]
+        let qe = entry & mqQeMask
 
         a -= qe
 
@@ -506,7 +544,7 @@ struct MQEncoder: Sendable {
                 } else {
                     c += qe
                 }
-                context.stateIndex = mqNextMPS[si]
+                context.stateIndex = UInt8((entry >> mqNextMPSShift) & mqStateMask)
                 renormalize()
             } else {
                 c += qe
@@ -519,10 +557,10 @@ struct MQEncoder: Sendable {
             } else {
                 a = qe
             }
-            if mqSwitchMPS[si] != 0 {
+            if (entry & mqSwitchMPSBit) != 0 {
                 context.mps.toggle()
             }
-            context.stateIndex = mqNextLPS[si]
+            context.stateIndex = UInt8((entry >> mqNextLPSShift) & mqStateMask)
             renormalize()
         }
     }
@@ -839,7 +877,12 @@ struct MQDecoder: @unchecked Sendable {
     @inline(__always)
     mutating func decode(context: inout MQContext) -> Bool {
         let si = Int(context.stateIndex)
-        let qe = mqQe[si]
+        // Single packed table lookup — qe + nextMPS + nextLPS + switchMPS
+        // co-resident in the same UInt32. Replaces 3-4 separate
+        // `mq*[si]` array loads (each potentially a different cache
+        // line) on the hottest method in the EBCOT decoder.
+        let entry = mqStatePacked[si]
+        let qe = entry & mqQeMask
 
         a -= qe
 
@@ -852,15 +895,15 @@ struct MQDecoder: @unchecked Sendable {
                 // Conditional exchange — return MPS
                 a = qe
                 symbol = mps
-                context.stateIndex = mqNextMPS[si]
+                context.stateIndex = UInt8((entry >> mqNextMPSShift) & mqStateMask)
             } else {
                 // Normal LPS
                 a = qe
                 symbol = !mps
-                if mqSwitchMPS[si] != 0 {
+                if (entry & mqSwitchMPSBit) != 0 {
                     context.mps.toggle()
                 }
-                context.stateIndex = mqNextLPS[si]
+                context.stateIndex = UInt8((entry >> mqNextLPSShift) & mqStateMask)
             }
             renormalizeDecoder()
         } else {
@@ -870,14 +913,14 @@ struct MQDecoder: @unchecked Sendable {
                 if a < qe {
                     // Conditional exchange — return LPS
                     symbol = !mps
-                    if mqSwitchMPS[si] != 0 {
+                    if (entry & mqSwitchMPSBit) != 0 {
                         context.mps.toggle()
                     }
-                    context.stateIndex = mqNextLPS[si]
+                    context.stateIndex = UInt8((entry >> mqNextLPSShift) & mqStateMask)
                 } else {
                     // Normal MPS
                     symbol = mps
-                    context.stateIndex = mqNextMPS[si]
+                    context.stateIndex = UInt8((entry >> mqNextMPSShift) & mqStateMask)
                 }
                 renormalizeDecoder()
             } else {
