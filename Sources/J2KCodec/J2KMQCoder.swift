@@ -1108,6 +1108,19 @@ struct RawBypassDecoder: @unchecked Sendable {
         self.dataPtr   = owner.withUnsafeBufferPointer { $0.baseAddress! + offset }
     }
 
+    /// Creates a bypass decoder using a caller-owned raw byte buffer.
+    /// Skips the per-block `Array(...)` copy and the per-decoder
+    /// `withUnsafeBufferPointer` closure invocation that the
+    /// `[UInt8]` overload pays. The caller must guarantee
+    /// `unsafePtr[offset ..< offset+count]` stays valid for the
+    /// decoder's lifetime — typically by keeping the decoder inside
+    /// the same `Data.withUnsafeBytes { … }` scope as the source.
+    init(unsafePtr: UnsafePointer<UInt8>, offset: Int, count: Int) {
+        self.owner     = []   // unused — caller owns the buffer
+        self.dataCount = count
+        self.dataPtr   = unsafePtr + offset
+    }
+
     /// Decodes a single raw bit (MSB-first, 0xFF stuffing as per JPEG 2000).
     @inline(__always)
     mutating func decode() -> Bool {

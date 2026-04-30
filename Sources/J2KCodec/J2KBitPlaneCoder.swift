@@ -1795,19 +1795,26 @@ struct BitPlaneDecoder: Sendable {
         // Determine if we need per-pass segment decoding
         let usePerPassSegments = !passSegmentLengths.isEmpty
 
-        // Copy data once into a contiguous [UInt8] buffer.
-        // All MQDecoder instances share this buffer via raw pointer — no further copies.
-        let rawBytes = [UInt8](data)
+        // Borrow the codestream bytes via Data.withUnsafeBytes for the
+        // entire decode — no per-block `[UInt8](data)` copy, no
+        // per-MQDecoder `withUnsafeBufferPointer` closure invocation.
+        // Each MQDecoder / RawBypassDecoder instance constructed below
+        // receives a raw `UnsafePointer<UInt8>` valid for the lifetime
+        // of this scope.
+        return try data.withUnsafeBytes { (rawBuf: UnsafeRawBufferPointer) -> [Int32] in
+        let dataPtr = rawBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+        let dataCount = rawBuf.count
 
-        // Pre-compute per-pass segment slices (offset + count into rawBytes).
-        // Replaces the old [Data] approach which created a Data copy per segment.
+        // Pre-compute per-pass segment slices (offset + count into the
+        // borrowed buffer). Replaces the old [Data] approach which
+        // created a Data copy per segment.
         var passSlices: [(offset: Int, count: Int)] = []
         if usePerPassSegments {
             passSlices.reserveCapacity(passSegmentLengths.count)
             let totalSegmentLength = passSegmentLengths.reduce(0, +)
-            guard totalSegmentLength <= rawBytes.count else {
+            guard totalSegmentLength <= dataCount else {
                 throw J2KError.invalidParameter(
-                    "Pass segment lengths total (\(totalSegmentLength)) exceeds data size (\(rawBytes.count))"
+                    "Pass segment lengths total (\(totalSegmentLength)) exceeds data size (\(dataCount))"
                 )
             }
             var offset = 0
@@ -1818,12 +1825,12 @@ struct BitPlaneDecoder: Sendable {
         }
 
         // Initialise MQ decoder and contexts
-        var decoder = MQDecoder(bytes: rawBytes, offset: 0, count: 0)  // Will be replaced before first use
+        var decoder = MQDecoder(unsafePtr: dataPtr, offset: 0, count: 0)  // Will be replaced before first use
         var contextStates = ContextStateArray()
         var passSegmentIndex = 0
 
         if !usePerPassSegments {
-            decoder = MQDecoder(bytes: rawBytes, offset: 0, count: rawBytes.count)
+            decoder = MQDecoder(unsafePtr: dataPtr, offset: 0, count: dataCount)
         }
 
         let activeBitPlanes = bitDepth - zeroBitPlanes
@@ -1863,7 +1870,7 @@ struct BitPlaneDecoder: Sendable {
                         break
                     }
                     let sl = passSlices[passSegmentIndex]
-                    decoder = MQDecoder(bytes: rawBytes, offset: sl.offset, count: sl.count)
+                    decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                     contextStates.reset()
                     passSegmentIndex += 1
                 }
@@ -1907,7 +1914,7 @@ struct BitPlaneDecoder: Sendable {
                     }
                     // Use separate raw bypass decoder for bypass mode
                     let bsl = passSlices[passSegmentIndex]
-                    var bypassDecoder = RawBypassDecoder(bytes: rawBytes, offset: bsl.offset, count: bsl.count)
+                    var bypassDecoder = RawBypassDecoder(unsafePtr: dataPtr, offset: bsl.offset, count: bsl.count)
                     passSegmentIndex += 1
                     decodeMagnitudeRefinementPassBypass(
                         magnitudes: &magnitudes,
@@ -1925,7 +1932,7 @@ struct BitPlaneDecoder: Sendable {
                             break
                         }
                         let sl = passSlices[passSegmentIndex]
-                        decoder = MQDecoder(bytes: rawBytes, offset: sl.offset, count: sl.count)
+                        decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                         contextStates.reset()
                         passSegmentIndex += 1
                     }
@@ -1957,7 +1964,7 @@ struct BitPlaneDecoder: Sendable {
                         break
                     }
                     let sl = passSlices[passSegmentIndex]
-                    decoder = MQDecoder(bytes: rawBytes, offset: sl.offset, count: sl.count)
+                    decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                     contextStates.reset()
                     passSegmentIndex += 1
                 }
@@ -2053,6 +2060,7 @@ struct BitPlaneDecoder: Sendable {
         }
 
         return coefficients
+        }  // end data.withUnsafeBytes
     }
 
     // MARK: - Significance Propagation Pass (Decode)
