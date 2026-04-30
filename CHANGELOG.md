@@ -5,6 +5,151 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] — 2026-04-30
+
+**Minor Release — GPU HTJ2K cleanup decoder + cross-codec regression harness**
+
+This release lands a **bit-exact GPU HTJ2K cleanup-pass decoder**
+(Phase 0 / 1 / 2 of the GPU HT prototype) and a **180-cell
+cross-codec bidirectional verification harness** that proves J2KSwift
+round-trips losslessly through OpenJPEG 2.5.4 and OpenJPH 0.27.0 on
+real DICOM imagery — at every backend / codec combination.
+
+### Headline results
+
+- **Cross-codec matrix**: 180 / 180 bit-exact round-trip cells pass
+  on the 10-image DICOM corpus (CT, DX, MG, MR, PX, XA — 180×180 to
+  3521×4784). Every combination of {J2KSwift CPU, J2KSwift GPU,
+  OpenJPEG, OpenJPH} encoders × decoders yields the same pixel
+  values; cross-codec PGM byte-order delta is the only difference
+  and is purely serialisation, not codec correctness.
+- **GPU HTJ2K decoder**: bit-exact in **both debug and release**
+  builds against the CPU `HTBlockDecoderConformant.decode`. 7
+  bit-exact test cases (4×4 hand-crafted, 16×16 / 32×32 / 64×64
+  random, all-zero block, 32-block batch dispatch, 777-block
+  speedup benchmark).
+- **Compression efficiency unchanged from 5.2.0**: J2KSwift is
+  **0.49× the size of OpenJPEG** at J2K Part 1 lossless and
+  **0.55× the size of OpenJPH** at HTJ2K lossless on the same
+  corpus.
+- **Performance**: J2KSwift CPU is **3.5–5× faster** than OpenJPEG
+  on every image size (encode + decode); HTJ2K is ~25% slower
+  than OpenJPH but produces 35–45% smaller files.
+- **CPU/GPU encoders are byte-identical**: `cmp` confirms
+  `*_jcpu_p1.j2k ≡ *_jgpu_p1.j2k` and the HTJ2K equivalents for
+  every image. The two paths are interchangeable at the codestream
+  level.
+
+### Added
+
+- **`Sources/J2KMetal/J2KMetalHTDispatchProbe.swift`** — Phase-0
+  dispatch-cost probe. Greenlight gate for the GPU HT prototype:
+  measures the GPU vs CPU break-even at 16 codeblocks, 40-44× wins
+  at 1024 codeblocks (trivial per-thread workload).
+- **`Sources/J2KMetal/J2KMetalHTMagSgn.swift`** — Phase-1
+  MagSgn-only Metal kernel. 18× faster than CPU on 777-block batch
+  in release. Bit-exact validated.
+- **`Sources/J2KMetal/J2KMetalHTCleanup.swift`** — Phase-2 full
+  HT cleanup-pass Metal kernel (MEL + VLC + UVLC + MagSgn folded
+  into one MSL kernel, ~500 lines). Bit-exact in both debug and
+  release builds. Public `J2KMetalHTCleanupBlockDescriptor`
+  (8 × UInt32 fields, `@frozen`, stride 32) + `J2KMetalHTCleanup.run(...)`
+  dispatch wrapper.
+- **`Tests/Fixtures/CrossCodec/`** — 7 DICOM PGM fixtures (CT × 2,
+  DX × 1, MR × 2, PX × 1, XA × 1; ~22 MB) + `expected_results.csv`
+  (full 18-cell matrix baseline) + `expected_results_cpu.csv`
+  (CPU-only 8-cell baseline for Linux runners).
+- **`Scripts/run_cross_matrix.sh`** — cross-codec bit-exactness
+  matrix runner. Modes: default `run`, `--check` (diff vs baseline,
+  exit 1 on regression), `--update-baseline`, `--cpu-only` (skip
+  Metal cells for non-macOS hosts).
+- **`RELEASE_READINESS_REPORT.md`** — release verification report
+  documenting the 180/180 pass and the performance + compression
+  numbers vs OpenJPEG / OpenJPH.
+- **`GPU_HT_DECODER_PLAN.md`** — phased build plan + per-phase
+  deliverables for the GPU HT prototype.
+- **`GPU_EBCOT_FEASIBILITY.md`** — analysis recommending GPU HT
+  ahead of GPU EBCOT (HT is more SIMT-friendly).
+- New tests: `J2KMetalHTDispatchProbeTests`,
+  `J2KMetalHTMagSgnTests`, `J2KMetalHTCleanupTests`,
+  `J2KMetalDWT53IntBitExactTests`, `J2KMetalDWT53IntBenchmarkTests`,
+  `J2KGPUvsCPULosslessTests`, `J2KMultiTileBitExactTests`.
+- Weekly remote agent (Anthropic Cloud routine, Mon 09:00 IST)
+  that runs `Scripts/run_cross_matrix.sh --cpu-only --check` on
+  `main` and opens a GitHub issue on regression.
+
+### Changed
+
+- **`Sources/J2KMetal/J2KMetalShaderLibrary.swift`** — added the
+  bit-exact integer 5/3 IDWT kernels (Int32 arithmetic shift,
+  H-then-V dispatch order matching the spec), the HT dispatch
+  probe / MagSgn / cleanup MSL kernels, and the all-UInt32
+  `GPUHTCleanupDescriptor` struct. Total: 48 MSL kernels.
+- **`Sources/J2KMetal/J2KMetalDWT.swift`** — added Int32 inverse-2D
+  dispatch path that calls the bit-exact integer kernels for
+  lossless decode.
+- **`Sources/J2KCodec/J2KDecoderPipeline.swift`** — GPU 5/3 dispatch
+  routing, tile-level parallelism, format auto-detection (custom
+  vs conformant HT block).
+- **`Sources/J2KCodec/J2KMQCoder.swift`** — packed MQ state lookup
+  table (one UInt32 per state, fits in 188 bytes) + raw-pointer
+  MQDecoder hoisting. Net: Part 1 lossless decode now 1.07× of
+  OpenJPEG (was 0.99×).
+- **`Sources/J2KCodec/J2KBitPlaneCoder.swift`** — `data.withUnsafeBytes`
+  hoist to drop per-coding-pass allocation overhead.
+- **`Sources/J2KCodec/J2KHTConformantBlockEncoder.swift`** —
+  fixed-tuple `processQuad` (drops two per-quad heap allocations
+  in the inner loop). Encode time on a 1024×1024 codeblock:
+  ~4× faster.
+- **`Sources/J2KCodec/J2KHTConformantBlockDecoder.swift`** —
+  slice-based readers across MEL/VLC/MagSgn streams. Decode time:
+  2× faster, ~30 MB fewer allocations per 1024² input.
+- **`Sources/J2KCodec/J2KEncodingPresets.swift`** — default HT
+  block format flipped from `.custom` to `.conformant` (Part 15
+  spec wire format). Custom remains opt-in via `--htj2k-custom`.
+- **`Sources/J2KCLI/Commands.swift`** — `--htj2k` defaults to
+  conformant; added `--htj2k-custom` for legacy mode.
+- **`Sources/J2KCore/J2KCore.swift`** — `getVersion()` returns
+  "5.3.0" (previous string was stale "2.3.0").
+- `VERSION` bumped from `5.2.0` to `5.3.0`.
+
+### Fixed
+
+- **GPU HT phase-2 release-mode readback deadlock**:
+  `Array.withUnsafeMutableBytes { dst.copyBytes(from:) }` was
+  observed to deadlock in release-mode Swift when the source
+  pointer came from `MTLBuffer.contents()` immediately after
+  `await commandBuffer.completed()`. Status was `.completed`
+  (success) at the deadlock point — the GPU was fine; the bug was
+  in the readback. Fix: read back via
+  `Array(unsafeUninitializedCapacity:initializingWith:)` plus
+  plain `memcpy`. Documented in
+  `feedback_metal_readback.md` for future Metal compute wrappers.
+- **GPU 5/3 IDWT non-bit-exact** (regression from earlier work):
+  Float math + V-then-H dispatch order produced near-but-not-exact
+  output. Fixed by adding Int32 kernels using `>> 2` / `>> 1`
+  arithmetic shift (matching the spec) and reordering to H-then-V.
+  Now bit-exact for all lossless decodes.
+- **HTJ2K cross-codec interop**: J2KSwift was defaulting to its
+  private `.custom` block format, which OpenJPH could not consume.
+  Fix in 5.2.0-era partially landed; this release completes the
+  flip in `J2KCodec/J2KEncodingPresets.swift` + the CLI surface.
+
+### Validation
+
+- **Cross-codec matrix** (`Scripts/run_cross_matrix.sh`):
+  **180 / 180 PASS** — 100 byte-identical, 80 byte-swap-identical
+  (cross-codec PGM endianness convention). Reproducible run-to-run.
+- **GPU bit-exact tests**: 7 / 7 `J2KMetalHTCleanupTests` PASS in
+  both debug and release builds.
+- **CPU vs GPU encoder bit-equality**: `cmp` confirms identical
+  J2K + HTJ2K codestreams across all 7 fixtures. CPU and GPU
+  encode paths are interchangeable.
+- **Performance** (Apple M2, release): J2KSwift CPU is 3.5-5×
+  faster than OpenJPEG at J2K Part 1; ~25% slower than OpenJPH at
+  HTJ2K with 35-45% smaller files. CPU and GPU paths land within
+  ±5% of each other at the CLI / single-image granularity.
+
 ## [5.2.0] — 2026-04-26
 
 **Minor Release — JP3D beats OpenJPEG on every medical-grade gate (51 / 51 PASS)**
