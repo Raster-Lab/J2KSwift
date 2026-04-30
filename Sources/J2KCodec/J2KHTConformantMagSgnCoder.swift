@@ -94,14 +94,25 @@ public struct HTMagSgnEncoderConformant {
 /// bit is a reserved stuff bit). When the byte stream is exhausted,
 /// `0xFF` is fed — matching OpenJPH's `frwd_read<X=0xFF>` convention.
 public struct HTMagSgnDecoderConformant {
-    private let bytes: [UInt8]
-    private var readIndex: Int = 0
+    private let bytes: ArraySlice<UInt8>
+    private let bytesStart: Int
+    private let bytesEnd: Int
+    private var readIndex: Int   // position relative to bytesStart
     private var tmp: UInt64 = 0
     private var bits: Int = 0
     private var unstuff: Bool = false
 
     public init(bytes: [UInt8]) {
+        self.init(bytes: bytes[...])
+    }
+
+    /// Slice-based init avoids the per-block `Array(parsed.magsgn)` copy
+    /// that the legacy `[UInt8]` overload would force on the caller.
+    public init(bytes: ArraySlice<UInt8>) {
         self.bytes = bytes
+        self.bytesStart = bytes.startIndex
+        self.bytesEnd = bytes.endIndex
+        self.readIndex = 0
     }
 
     /// Read `count` bits (LSB-first) from the stream.
@@ -122,8 +133,9 @@ public struct HTMagSgnDecoderConformant {
     private mutating func refill() {
         while bits <= 32 {
             let byte: UInt8
-            if readIndex < bytes.count {
-                byte = bytes[readIndex]
+            let absIdx = bytesStart + readIndex
+            if absIdx < bytesEnd {
+                byte = bytes[absIdx]
                 readIndex += 1
             } else {
                 byte = 0xFF

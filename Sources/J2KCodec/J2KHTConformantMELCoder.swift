@@ -83,15 +83,25 @@ public struct HTMELEncoderConformant {
 /// count. Callers consume events by subtracting 2 per event and
 /// checking `run == -1` for the terminator — see `HTMELCoderConformant`.
 public struct HTMELDecoderConformant {
-    private let bytes: [UInt8]
-    private var readIndex: Int = 0
-    private var tmp: UInt64 = 0         // bit buffer, MSB-first consumption
-    private var bits: Int = 0           // valid bits in `tmp`, top-aligned
-    private var unstuff: Bool = false   // next byte's high bit is reserved
+    private let bytes: ArraySlice<UInt8>
+    private let bytesStart: Int
+    private let bytesEnd: Int
+    private var readIndex: Int = 0       // position relative to bytesStart
+    private var tmp: UInt64 = 0          // bit buffer, MSB-first consumption
+    private var bits: Int = 0            // valid bits in `tmp`, top-aligned
+    private var unstuff: Bool = false    // next byte's high bit is reserved
     private var state: Int = 0
 
     public init(bytes: [UInt8]) {
+        self.init(bytes: bytes[...])
+    }
+
+    /// Slice-based init avoids the per-block `Array(parsed.melVlc)` copy
+    /// that the legacy `[UInt8]` overload would force on the caller.
+    public init(bytes: ArraySlice<UInt8>) {
         self.bytes = bytes
+        self.bytesStart = bytes.startIndex
+        self.bytesEnd = bytes.endIndex
     }
 
     /// Returns the next packed run value. The format matches OpenJPH:
@@ -145,8 +155,9 @@ public struct HTMELDecoderConformant {
     private mutating func refill() {
         while bits <= 32 {
             let byte: UInt8
-            if readIndex < bytes.count {
-                byte = bytes[readIndex]
+            let absIdx = bytesStart + readIndex
+            if absIdx < bytesEnd {
+                byte = bytes[absIdx]
                 readIndex += 1
             } else {
                 byte = 0xFF // post-EOF pad (per OpenJPH convention)

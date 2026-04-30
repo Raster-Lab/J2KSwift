@@ -193,11 +193,13 @@ This branch adds a `j2kSwiftProbe` injection point on `OpenJPEGBenchmarkRunner` 
 
 | Mode                     | 256×256 | 512×512 | 1024×1024 |
 | ------------------------ | ------: | ------: | --------: |
-| HTJ2K Lossless Encode    |  4.6×  |  3.0×  |   2.0×   |
-| HTJ2K Lossless Decode    |  —     |  4.8×  |   1.4×   |
-| HTJ2K Lossy 2 bpp Encode |  4.9×  |  3.3×  |   2.1×   |
-| Part 1 Lossless Encode   |  —     |  3.5×  |   —      |
+| HTJ2K Lossless Encode    |  6.8×  |  3.5×  |   1.7×   |
+| HTJ2K Lossless Decode    |  —     |  9.0×  |   2.1×   |
+| HTJ2K Lossy 2 bpp Encode |  6.3×  |  1.7×  |   1.7×   |
+| Part 1 Lossless Encode   |  —     |  5.9×  |   —      |
 | Part 1 Lossless Decode   |  —     |  —     |   0.9×   |
+
+These numbers reflect the conformant-decoder optimization that landed alongside this report: the inner MEL / VLC / MagSgn readers now hold a borrowed `ArraySlice<UInt8>` instead of forcing the caller to copy parsed regions into fresh `[UInt8]` arrays per codeblock. On a 1024×1024 RGB input that cut decode time roughly in half (61 ms → 31 ms), bumping HT decode from 1.4× → 2.1× of OpenJPEG.
 
 J2KSwift HTJ2K wins comfortably at all sizes; OpenJPH-conformant cost shows up at 1024+ where the conformant decoder amortises less well than EBCOT (and J2KSwift's Part 1 decode is currently the slower side at 1024). All 11 head-to-head tests now pass with honest, real-codec ratios. Improving the conformant decoder at 1024+ is the next perf lever — tracked separately.
 

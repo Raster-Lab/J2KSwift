@@ -391,12 +391,14 @@ public struct OpenJPEGBenchmarkComparison: Sendable {
         case (.encode, _):
             return 2.0
         case (.decode, .htj2kLossless), (.decode, .htj2kLossy2bpp):
-            // HT decode wins ~5× at 256/512; at 1024+ J2KSwift HT decode
-            // is on par with OpenJPEG EBCOT and dips to ~0.9× under
-            // FullMatrix noise — target accounts for that floor.
+            // HT decode wins ~5-9× at 256/512 and ~2× at 1024+ since
+            // J2KHTConformantBlockDecoder dropped its per-codeblock
+            // ArraySlice copies (the inner readers now hold borrowed
+            // ArraySlice<UInt8> instead of forcing the caller into a
+            // per-block `Array(parsed.magsgn / .melVlc)` allocation).
             switch size {
             case .size256, .size512: return 3.0
-            case .size1024, .size2048, .size4096, .size8192: return 0.8
+            case .size1024, .size2048, .size4096, .size8192: return 1.5
             }
         case (.decode, .lossless), (.decode, .lossy2bpp), (.decode, .lossy1bpp), (.decode, .lossy0_5bpp):
             // Part 1 (EBCOT) decode: J2KSwift is slightly slower than
