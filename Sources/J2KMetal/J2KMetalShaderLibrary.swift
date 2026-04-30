@@ -127,6 +127,10 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
     case htMagsgnDecode = "j2k_ht_magsgn_decode"
+    /// Full HT cleanup-pass decoder — combines MEL run-length + VLC
+    /// table lookup + UVLC + MagSgn into one kernel. Bit-exact with
+    /// `HTBlockDecoderConformant.decode`. Phase-2 prototype.
+    case htCleanupDecode = "j2k_ht_cleanup_decode"
 }
 
 // MARK: - Shader Library Configuration
@@ -2155,6 +2159,549 @@ enum J2KMetalShaderSource {
         for (uint i = 0; i < desc.sampleCount; i++) {
             int w = int(myWidths[i]);
             myOut[i] = htMagSgnRead(&s, myBytes, desc.dataLength, w);
+        }
+    }
+
+    // MARK: - HTJ2K Cleanup-pass decoder (Phase 2)
+    //
+    // Per-codeblock descriptor for the full cleanup-pass kernel.
+    // Field layout matches `J2KMetalHTCleanupBlockDescriptor` in
+    // Swift exactly. All UInt32 fields → unambiguous 4-byte
+    // alignment, stride 32 bytes.
+    struct GPUHTCleanupDescriptor {
+        uint magsgnOffset;
+        uint magsgnLength;
+        uint melVlcOffset;
+        uint melVlcLength;       // == scup
+        uint outputOffset;       // sample offset (uint per sample)
+        uint width;
+        uint height;
+        uint missingMSBs;
+    };
+
+    // MEL state. Mirrors HTMELDecoderConformant — MSB-first bit buffer
+    // top-aligned, `bits` is the number of valid bits, `state` indexes
+    // the MEL exponent table.
+    struct HTMELState {
+        ulong tmp;
+        int   bits;
+        int   readIndex;
+        bool  unstuff;
+        int   state;
+    };
+
+    constant int melExp[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
+
+    inline void htMELRefill(thread HTMELState* s,
+                            device const uchar* bytes, uint byteCount)
+    {
+        while (s->bits <= 32) {
+            uchar b;
+            if ((uint)s->readIndex < byteCount) {
+                b = bytes[s->readIndex];
+                s->readIndex += 1;
+            } else {
+                b = 0xFF;
+            }
+            int  dBits = s->unstuff ? 7 : 8;
+            ulong value = (ulong)b & (((ulong)1 << dBits) - 1);
+            s->tmp |= value << (64 - s->bits - dBits);
+            s->bits += dBits;
+            s->unstuff = (b == 0xFF);
+        }
+    }
+
+    inline int htMELNextRun(thread HTMELState* s,
+                            device const uchar* bytes, uint byteCount)
+    {
+        if (s->bits < 6) htMELRefill(s, bytes, byteCount);
+        int eval = melExp[s->state];
+        int run;
+        if ((s->tmp & ((ulong)1 << 63)) != 0) {
+            run = (1 << eval) - 1;
+            s->state = min(12, s->state + 1);
+            s->tmp <<= 1;
+            s->bits -= 1;
+            run <<= 1;             // low bit 0 → no terminator
+        } else {
+            int r = 0;
+            if (eval > 0) {
+                r = (int)((s->tmp >> (63 - eval)) & (ulong)((1 << eval) - 1));
+            }
+            s->state = max(0, s->state - 1);
+            s->tmp <<= (eval + 1);
+            s->bits -= (eval + 1);
+            run = (r << 1) + 1;    // low bit 1 → terminator
+        }
+        return run;
+    }
+
+    inline bool htMELNextEvent(thread int* run,
+                               thread HTMELState* s,
+                               device const uchar* bytes, uint byteCount)
+    {
+        *run -= 2;
+        bool isOne = (*run == -1);
+        if (*run < 0) *run = htMELNextRun(s, bytes, byteCount);
+        return isOne;
+    }
+
+    // VLC reverse reader. Reads from the END of the mel/vlc segment
+    // backwards, LSB-first into `tmp`. Mirrors `VLCReverseReader`.
+    struct VLCReverseState {
+        ulong tmp;
+        int   bits;
+        int   byteIdx;        // counts down toward -1
+        bool  unstuff;
+    };
+
+    inline void vlcReverseInit(thread VLCReverseState* s,
+                               device const uchar* bytes, int scup)
+    {
+        s->tmp = 0;
+        s->bits = 0;
+        s->byteIdx = scup - 2;
+        s->unstuff = false;
+        if (s->byteIdx >= 0) {
+            uchar b = bytes[s->byteIdx];
+            ulong highNibble = (ulong)(b >> 4);
+            ulong t = ((highNibble & 0x7) == 0x7) ? (ulong)1 : (ulong)0;
+            ulong val = highNibble & ((ulong)0xF >> t);
+            s->tmp = val;
+            s->bits = (int)(4 - t);
+            s->unstuff = val > 0x8;
+            s->byteIdx -= 1;
+        }
+    }
+
+    inline void vlcReverseRefill(thread VLCReverseState* s,
+                                 device const uchar* bytes)
+    {
+        while (s->bits <= 32) {
+            uchar b;
+            if (s->byteIdx >= 0) {
+                b = bytes[s->byteIdx];
+                s->byteIdx -= 1;
+            } else {
+                b = 0;
+            }
+            int t = (s->unstuff && (((int)b) & 0x7F) == 0x7F) ? 1 : 0;
+            int dBits = 8 - t;
+            uchar mask = (t == 1) ? (uchar)0x7F : (uchar)0xFF;
+            ulong value = (ulong)(b & mask);
+            s->tmp |= value << s->bits;
+            s->bits += dBits;
+            s->unstuff = (b > 0x8F);
+        }
+    }
+
+    inline ulong vlcReversePeek(thread VLCReverseState* s,
+                                device const uchar* bytes,
+                                int maxBits)
+    {
+        if (s->bits < maxBits) vlcReverseRefill(s, bytes);
+        ulong m = (maxBits >= 64) ? (ulong)~(ulong)0 : (((ulong)1 << maxBits) - 1);
+        return s->tmp & m;
+    }
+
+    inline ulong vlcReverseRead(thread VLCReverseState* s,
+                                device const uchar* bytes,
+                                int count)
+    {
+        if (s->bits < count) vlcReverseRefill(s, bytes);
+        ulong m = (count >= 64) ? (ulong)~(ulong)0 : (((ulong)1 << count) - 1);
+        ulong v = s->tmp & m;
+        s->tmp >>= count;
+        s->bits -= count;
+        return v;
+    }
+
+    // VLC table lookup — same packed layout as the CPU side:
+    //   bits  0-2: cwd_len
+    //   bit   3:   u_off
+    //   bits  4-7: rho
+    //   bits  8-11: e_1
+    //   bits 12-15: e_k
+    inline void htLookupVLC(constant ushort* tbl, int c_q, int bits,
+                            thread int* rho, thread int* u_off,
+                            thread int* cwd_len, thread int* e_k,
+                            thread int* e_1)
+    {
+        int idx = (c_q << 7) | (bits & 0x7F);
+        int entry = (int)tbl[idx];
+        *cwd_len = entry & 0x7;
+        *u_off   = (entry >> 3) & 0x1;
+        *rho     = (entry >> 4) & 0xF;
+        *e_1     = (entry >> 8) & 0xF;
+        *e_k     = (entry >> 12) & 0xF;
+    }
+
+    // Unary prefix: 1→1, 01→2, 001→3, 000→4.
+    inline int htReadPrefix(thread VLCReverseState* s, device const uchar* bytes)
+    {
+        int b0 = (int)vlcReverseRead(s, bytes, 1);
+        if (b0 == 1) return 1;
+        int b1 = (int)vlcReverseRead(s, bytes, 1);
+        if (b1 == 1) return 2;
+        int b2 = (int)vlcReverseRead(s, bytes, 1);
+        if (b2 == 1) return 3;
+        return 4;
+    }
+
+    inline int htDecodeFromPrefix(int len,
+                                  thread VLCReverseState* s,
+                                  device const uchar* bytes)
+    {
+        if (len == 3) {
+            int suf = (int)vlcReverseRead(s, bytes, 1);
+            return 3 + suf;
+        }
+        if (len == 4) {
+            int suf = (int)vlcReverseRead(s, bytes, 5);
+            if (suf < 28) return 5 + suf;
+            int ext = (int)vlcReverseRead(s, bytes, 4);
+            return 33 + (suf - 28) + 4 * ext;
+        }
+        return len;
+    }
+
+    // Initial-row UVLC pair — mirrors decodeUVLCPairInitial.
+    inline void htDecodeUVLCPairInitial(int u_off0, int u_off1,
+                                        thread int* u0_out, thread int* u1_out,
+                                        thread VLCReverseState* vs,
+                                        device const uchar* mvBytes,
+                                        thread int* melRun,
+                                        thread HTMELState* ms,
+                                        device const uchar* mvBytesForMEL,
+                                        uint mvByteCount)
+    {
+        if (u_off0 == 0 && u_off1 == 0) { *u0_out = 0; *u1_out = 0; return; }
+        if (u_off0 == 1 && u_off1 == 1) {
+            bool melEvent = htMELNextEvent(melRun, ms, mvBytesForMEL, mvByteCount);
+            if (melEvent) {
+                int p0 = htReadPrefix(vs, mvBytes);
+                int p1 = htReadPrefix(vs, mvBytes);
+                int s0 = htDecodeFromPrefix(p0, vs, mvBytes);
+                int s1 = htDecodeFromPrefix(p1, vs, mvBytes);
+                *u0_out = s0 + 2; *u1_out = s1 + 2; return;
+            }
+            int p0 = htReadPrefix(vs, mvBytes);
+            if (p0 >= 3) {
+                int bit = (int)vlcReverseRead(vs, mvBytes, 1);
+                int u0v = htDecodeFromPrefix(p0, vs, mvBytes);
+                *u0_out = u0v; *u1_out = bit + 1; return;
+            }
+            int p1 = htReadPrefix(vs, mvBytes);
+            int u0v = htDecodeFromPrefix(p0, vs, mvBytes);
+            int u1v = htDecodeFromPrefix(p1, vs, mvBytes);
+            *u0_out = u0v; *u1_out = u1v; return;
+        }
+        *u0_out = (u_off0 != 0) ? htDecodeFromPrefix(htReadPrefix(vs, mvBytes), vs, mvBytes) : 0;
+        *u1_out = (u_off1 != 0) ? htDecodeFromPrefix(htReadPrefix(vs, mvBytes), vs, mvBytes) : 0;
+    }
+
+    // Subsequent-row UVLC: encoder writes pre0, pre1, suf0, suf1 in
+    // that order unconditionally — read both prefixes first.
+    inline void htDecodeUVLCPairSubsequent(int u_off0, int u_off1,
+                                           thread int* u0_out, thread int* u1_out,
+                                           thread VLCReverseState* vs,
+                                           device const uchar* mvBytes)
+    {
+        int len0 = (u_off0 != 0) ? htReadPrefix(vs, mvBytes) : 0;
+        int len1 = (u_off1 != 0) ? htReadPrefix(vs, mvBytes) : 0;
+        *u0_out = (u_off0 != 0) ? htDecodeFromPrefix(len0, vs, mvBytes) : 0;
+        *u1_out = (u_off1 != 0) ? htDecodeFromPrefix(len1, vs, mvBytes) : 0;
+    }
+
+    // Read MagSgn bits per significant sample of the quad and place
+    // reconstructed sign-magnitude UInt32 coefficients into `coefs`.
+    inline void htReadQuadSamples(int baseX, int baseY,
+                                  int rho, int Uq, int e_k, int e_1, uint p,
+                                  uint width, uint height,
+                                  thread HTMagSgnState* ms,
+                                  device const uchar* msBytes,
+                                  uint msByteCount,
+                                  device uint* coefs)
+    {
+        // (col, row) = [(0,0), (0,1), (1,0), (1,1)] indexed by i = 2*col+row.
+        for (int i = 0; i < 4; i++) {
+            int bit = (rho >> i) & 1;
+            if (bit == 0) continue;
+            int eBit = (e_k >> i) & 1;
+            int e1Bit = (e_1 >> i) & 1;
+            int m = Uq - eBit;
+            uint payload = htMagSgnRead(ms, msBytes, msByteCount, m);
+            uint sign = payload & 1;
+            uint mask = (m >= 32) ? (uint)~(uint)0 : (((uint)1 << m) - 1);
+            uint v_n = payload & mask;
+            v_n |= ((uint)e1Bit) << m;
+            v_n |= 1;
+            int dx = (i >> 1) & 1;     // (i / 2) % 2
+            int dy = i & 1;            // i % 2
+            int xi = baseX + dx;
+            int yi = baseY + dy;
+            if ((uint)xi >= width || (uint)yi >= height) continue;
+            uint coef = (v_n + 2) << (p - 1);
+            if (sign != 0) coef |= 0x80000000u;
+            coefs[yi * width + xi] = coef;
+        }
+    }
+
+    // Recover the per-quad e_q values from the reconstructed coefs.
+    // Returns 4 ints packed (eQ0, eQ1, eQ2, eQ3).
+    inline void htRecoverEQ(int rho, int baseX, int baseY,
+                            uint p, uint width, uint height,
+                            device const uint* coefs,
+                            thread int* outEQ0, thread int* outEQ1,
+                            thread int* outEQ2, thread int* outEQ3)
+    {
+        *outEQ0 = 0; *outEQ1 = 0; *outEQ2 = 0; *outEQ3 = 0;
+        for (int i = 0; i < 4; i++) {
+            if (((rho >> i) & 1) == 0) continue;
+            int dx = (i >> 1) & 1;
+            int dy = i & 1;
+            int xi = baseX + dx;
+            int yi = baseY + dy;
+            if ((uint)xi >= width || (uint)yi >= height) continue;
+            uint mag = coefs[yi * width + xi] & 0x7FFFFFFFu;
+            uint v_n = (mag >> (p - 1)) - 2u;
+            uint twoMuMinusOne = v_n | 1u;
+            int eQ = 32 - clz(twoMuMinusOne);
+            if (i == 0) *outEQ0 = eQ;
+            else if (i == 1) *outEQ1 = eQ;
+            else if (i == 2) *outEQ2 = eQ;
+            else *outEQ3 = eQ;
+        }
+    }
+
+    // Initial row decoder — uses VLC table 0 with implicit kappa=1.
+    inline void htDecodeInitialRow(uint width, uint height, uint p,
+                                   thread HTMagSgnState* ms,
+                                   device const uchar* msBytes, uint msByteCount,
+                                   thread VLCReverseState* vs,
+                                   device const uchar* mvBytes,
+                                   uint mvByteCount,
+                                   thread HTMELState* mel,
+                                   thread int* melRun,
+                                   thread uchar* eVal, thread uchar* cxVal,
+                                   constant ushort* vlcTbl0,
+                                   device uint* coefs)
+    {
+        int lep = 0;
+        int lcxp = 0;
+        int c_q0 = 0;
+        int x = 0;
+        while ((uint)x < width) {
+            int rho0 = 0;
+            int u_off0 = 0; int cwd_len0 = 0; int e_k0 = 0; int e_1_0 = 0;
+            if (c_q0 == 0) {
+                if (htMELNextEvent(melRun, mel, mvBytes, mvByteCount)) {
+                    int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                    htLookupVLC(vlcTbl0, c_q0, head, &rho0, &u_off0, &cwd_len0, &e_k0, &e_1_0);
+                    (void)vlcReverseRead(vs, mvBytes, cwd_len0);
+                }
+            } else {
+                int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                htLookupVLC(vlcTbl0, c_q0, head, &rho0, &u_off0, &cwd_len0, &e_k0, &e_1_0);
+                (void)vlcReverseRead(vs, mvBytes, cwd_len0);
+            }
+
+            int rho1 = 0;
+            int u_off1 = 0; int cwd_len1 = 0; int e_k1 = 0; int e_1_1 = 0;
+            if ((uint)(x + 2) < width) {
+                int c_q1 = (rho0 >> 1) | (rho0 & 1);
+                if (c_q1 == 0) {
+                    if (htMELNextEvent(melRun, mel, mvBytes, mvByteCount)) {
+                        int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                        htLookupVLC(vlcTbl0, c_q1, head, &rho1, &u_off1, &cwd_len1, &e_k1, &e_1_1);
+                        (void)vlcReverseRead(vs, mvBytes, cwd_len1);
+                    }
+                } else {
+                    int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                    htLookupVLC(vlcTbl0, c_q1, head, &rho1, &u_off1, &cwd_len1, &e_k1, &e_1_1);
+                    (void)vlcReverseRead(vs, mvBytes, cwd_len1);
+                }
+            }
+
+            int u0 = 0, u1 = 0;
+            htDecodeUVLCPairInitial(rho0 != 0 ? u_off0 : 0,
+                                    rho1 != 0 ? u_off1 : 0,
+                                    &u0, &u1,
+                                    vs, mvBytes,
+                                    melRun, mel, mvBytes, mvByteCount);
+            int Uq0 = u0 + 1, Uq1 = u1 + 1;
+
+            htReadQuadSamples(x, 0, rho0, Uq0, e_k0, e_1_0, p, width, height, ms, msBytes, msByteCount, coefs);
+            if ((uint)(x + 2) < width) {
+                htReadQuadSamples(x + 2, 0, rho1, Uq1, e_k1, e_1_1, p, width, height, ms, msBytes, msByteCount, coefs);
+            }
+
+            int eQ0_0, eQ0_1, eQ0_2, eQ0_3;
+            htRecoverEQ(rho0, x, 0, p, width, height, coefs, &eQ0_0, &eQ0_1, &eQ0_2, &eQ0_3);
+            eVal[lep] = max(eVal[lep], (uchar)eQ0_1); lep += 1;
+            eVal[lep] = (uchar)eQ0_3;
+            cxVal[lcxp] = (uchar)(cxVal[lcxp] | (uchar)((rho0 & 2) >> 1)); lcxp += 1;
+            cxVal[lcxp] = (uchar)((rho0 & 8) >> 3);
+            if ((uint)(x + 2) < width) {
+                int eQ1_0, eQ1_1, eQ1_2, eQ1_3;
+                htRecoverEQ(rho1, x + 2, 0, p, width, height, coefs, &eQ1_0, &eQ1_1, &eQ1_2, &eQ1_3);
+                eVal[lep] = max(eVal[lep], (uchar)eQ1_1); lep += 1;
+                eVal[lep] = (uchar)eQ1_3;
+                cxVal[lcxp] = (uchar)(cxVal[lcxp] | (uchar)((rho1 & 2) >> 1)); lcxp += 1;
+                cxVal[lcxp] = (uchar)((rho1 & 8) >> 3);
+            }
+
+            c_q0 = (rho1 >> 1) | (rho1 & 1);
+            x += 4;
+        }
+        // Sentinel — eVal capacity is at least lep + 2 by construction.
+        eVal[lep + 1] = 0;
+    }
+
+    // Subsequent row decoder — uses VLC table 1 with kappa from maxE.
+    inline void htDecodeSubsequentRow(int y, uint width, uint height, uint p,
+                                      thread HTMagSgnState* ms,
+                                      device const uchar* msBytes, uint msByteCount,
+                                      thread VLCReverseState* vs,
+                                      device const uchar* mvBytes,
+                                      uint mvByteCount,
+                                      thread HTMELState* mel,
+                                      thread int* melRun,
+                                      thread uchar* eVal, thread uchar* cxVal,
+                                      constant ushort* vlcTbl1,
+                                      device uint* coefs)
+    {
+        int lep = 0;
+        int lcxp = 0;
+        int maxE = max((int)eVal[0], (int)eVal[1]) - 1;
+        eVal[0] = 0;
+        int c_q0 = (int)cxVal[0] + ((int)cxVal[1] << 2);
+        cxVal[0] = 0;
+        int x = 0;
+        while ((uint)x < width) {
+            int rho0 = 0;
+            int u_off0 = 0; int cwd_len0 = 0; int e_k0 = 0; int e_1_0 = 0;
+            if (c_q0 == 0) {
+                if (htMELNextEvent(melRun, mel, mvBytes, mvByteCount)) {
+                    int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                    htLookupVLC(vlcTbl1, c_q0, head, &rho0, &u_off0, &cwd_len0, &e_k0, &e_1_0);
+                    (void)vlcReverseRead(vs, mvBytes, cwd_len0);
+                }
+            } else {
+                int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                htLookupVLC(vlcTbl1, c_q0, head, &rho0, &u_off0, &cwd_len0, &e_k0, &e_1_0);
+                (void)vlcReverseRead(vs, mvBytes, cwd_len0);
+            }
+            int kappaA = ((rho0 & (rho0 - 1)) != 0) ? max(1, maxE) : 1;
+
+            // Advance lcxp partially to discover c_q1's source slot.
+            cxVal[lcxp] = (uchar)(cxVal[lcxp] | (uchar)((rho0 & 2) >> 1)); lcxp += 1;
+            int c_q1 = (int)cxVal[lcxp] + ((int)cxVal[lcxp + 1] << 2);
+            cxVal[lcxp] = (uchar)((rho0 & 8) >> 3);
+
+            int rho1 = 0;
+            int u_off1 = 0; int cwd_len1 = 0; int e_k1 = 0; int e_1_1 = 0;
+            if ((uint)(x + 2) < width) {
+                c_q1 |= ((rho0 & 4) >> 1) | ((rho0 & 8) >> 2);
+                if (c_q1 == 0) {
+                    if (htMELNextEvent(melRun, mel, mvBytes, mvByteCount)) {
+                        int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                        htLookupVLC(vlcTbl1, c_q1, head, &rho1, &u_off1, &cwd_len1, &e_k1, &e_1_1);
+                        (void)vlcReverseRead(vs, mvBytes, cwd_len1);
+                    }
+                } else {
+                    int head = (int)vlcReversePeek(vs, mvBytes, 7);
+                    htLookupVLC(vlcTbl1, c_q1, head, &rho1, &u_off1, &cwd_len1, &e_k1, &e_1_1);
+                    (void)vlcReverseRead(vs, mvBytes, cwd_len1);
+                }
+                cxVal[lcxp] = (uchar)(cxVal[lcxp] | (uchar)((rho1 & 2) >> 1)); lcxp += 1;
+                c_q0 = (int)cxVal[lcxp] + ((int)cxVal[lcxp + 1] << 2);
+                cxVal[lcxp] = (uchar)((rho1 & 8) >> 3);
+            }
+
+            int u0 = 0, u1 = 0;
+            htDecodeUVLCPairSubsequent(rho0 != 0 ? u_off0 : 0,
+                                       rho1 != 0 ? u_off1 : 0,
+                                       &u0, &u1, vs, mvBytes);
+
+            int Uq0 = u0 + kappaA;
+            htReadQuadSamples(x, y, rho0, Uq0, e_k0, e_1_0, p, width, height, ms, msBytes, msByteCount, coefs);
+
+            int eQ0_0, eQ0_1, eQ0_2, eQ0_3;
+            htRecoverEQ(rho0, x, y, p, width, height, coefs, &eQ0_0, &eQ0_1, &eQ0_2, &eQ0_3);
+            eVal[lep] = max(eVal[lep], (uchar)eQ0_1); lep += 1;
+            int maxEAfterQ0 = max((int)eVal[lep], (int)eVal[lep + 1]) - 1;
+            eVal[lep] = (uchar)eQ0_3;
+
+            int kappaB = 1;
+            if ((uint)(x + 2) < width) {
+                kappaB = ((rho1 & (rho1 - 1)) != 0) ? max(1, maxEAfterQ0) : 1;
+                int Uq1 = u1 + kappaB;
+                htReadQuadSamples(x + 2, y, rho1, Uq1, e_k1, e_1_1, p, width, height, ms, msBytes, msByteCount, coefs);
+
+                int eQ1_0, eQ1_1, eQ1_2, eQ1_3;
+                htRecoverEQ(rho1, x + 2, y, p, width, height, coefs, &eQ1_0, &eQ1_1, &eQ1_2, &eQ1_3);
+                eVal[lep] = max(eVal[lep], (uchar)eQ1_1); lep += 1;
+                maxE = max((int)eVal[lep], (int)eVal[lep + 1]) - 1;
+                eVal[lep] = (uchar)eQ1_3;
+            } else {
+                maxE = maxEAfterQ0;
+            }
+
+            c_q0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2);
+            x += 4;
+        }
+    }
+
+    // Top-level cleanup-pass kernel. One thread per codeblock.
+    // VLC tables are passed in `[[buffer(N)]]`; on Apple GPUs they
+    // land in unified memory but get cached aggressively after the
+    // first lookup.
+    kernel void j2k_ht_cleanup_decode(
+        device const GPUHTCleanupDescriptor* blocks      [[buffer(0)]],
+        device const uchar*                  codestream  [[buffer(1)]],
+        constant ushort*                     vlcTbl0     [[buffer(2)]],
+        constant ushort*                     vlcTbl1     [[buffer(3)]],
+        device uint*                         output      [[buffer(4)]],
+        constant uint&                       blockCount  [[buffer(5)]],
+        uint tid [[thread_position_in_grid]]
+    ) {
+        if (tid >= blockCount) return;
+        GPUHTCleanupDescriptor desc = blocks[tid];
+
+        uint width  = desc.width;
+        uint height = desc.height;
+        uint p      = (uint)(30 - (int)desc.missingMSBs);
+
+        device const uchar* msBytes = codestream + desc.magsgnOffset;
+        device const uchar* mvBytes = codestream + desc.melVlcOffset;
+        device       uint*  myCoefs = output + desc.outputOffset;
+
+        // Zero the output region — readQuadSamples only writes
+        // significant samples; insignificant ones stay 0.
+        uint sampleCount = width * height;
+        for (uint i = 0; i < sampleCount; i++) myCoefs[i] = 0;
+
+        // State init.
+        HTMagSgnState ms; ms.tmp = 0; ms.bits = 0; ms.readIndex = 0; ms.unstuff = false;
+        HTMELState mel; mel.tmp = 0; mel.bits = 0; mel.readIndex = 0; mel.unstuff = false; mel.state = 0;
+        VLCReverseState vs; vlcReverseInit(&vs, mvBytes, (int)desc.melVlcLength);
+        int melRun = htMELNextRun(&mel, mvBytes, desc.melVlcLength);
+
+        // Per-row scratch — at most ((width + 3)/4)*2 + 2 entries.
+        // For width <= 64 (typical codeblock max), 34 fits.
+        uchar eVal[34];
+        uchar cxVal[34];
+        for (int i = 0; i < 34; i++) { eVal[i] = 0; cxVal[i] = 0; }
+
+        htDecodeInitialRow(width, height, p, &ms, msBytes, desc.magsgnLength,
+                           &vs, mvBytes, desc.melVlcLength,
+                           &mel, &melRun, eVal, cxVal, vlcTbl0, myCoefs);
+
+        for (int y = 2; (uint)y < height; y += 2) {
+            htDecodeSubsequentRow(y, width, height, p, &ms, msBytes, desc.magsgnLength,
+                                  &vs, mvBytes, desc.melVlcLength,
+                                  &mel, &melRun, eVal, cxVal, vlcTbl1, myCoefs);
         }
     }
     """
