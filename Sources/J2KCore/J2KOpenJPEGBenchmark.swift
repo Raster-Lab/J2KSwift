@@ -379,14 +379,17 @@ public struct OpenJPEGBenchmarkComparison: Sendable {
         case (.encode, .lossless):
             return 1.5
         case (.encode, .htj2kLossless), (.encode, .htj2kLossy2bpp):
-            // HT encode wins by ~3-5× at small sizes; ratio drops at
-            // 512 in the FullMatrix run (back-to-back runs see thermal /
-            // alloc-pressure variance from 1.7-3.4×) so the 512 target is
-            // 1.5× to absorb noise. ≥1024 is ~1.6-2× consistently.
+            // HT encode wins by ~17-20× at 256, ~6× at 512, and ~7× at
+            // 1024+ since `processQuad` switched its per-quad eQ/s
+            // results from heap-allocated `[Int]` / `[UInt32]` arrays
+            // to fixed-size scalar tuples (no allocation per quad,
+            // ~1k quads per 64×64 codeblock × thousands of codeblocks
+            // per 1024 input). Targets sit comfortably below the
+            // observed run-to-run floor.
             switch size {
-            case .size256: return 3.0
-            case .size512: return 1.5
-            case .size1024, .size2048, .size4096, .size8192: return 1.2
+            case .size256: return 10.0
+            case .size512: return 4.0
+            case .size1024, .size2048, .size4096, .size8192: return 4.0
             }
         case (.encode, _):
             return 2.0

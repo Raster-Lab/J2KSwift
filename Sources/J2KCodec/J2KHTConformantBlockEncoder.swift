@@ -88,30 +88,68 @@ public enum HTBlockEncoderConformant {
         }
 
         // Process a single quad (4 samples in a 2x2 block at
-        // (baseX, baseY)).
-        func processQuad(
-            baseX: Int, baseY: Int
-        ) -> (rho: Int, eQMax: Int, eQ: [Int], s: [UInt32]) {
+        // (baseX, baseY)). Returns the four eQ values and four
+        // payload samples as fixed-size tuples — Swift stack-allocates
+        // these inline, dropping the two `[Int]` / `[UInt32]` array
+        // allocations that the previous implementation paid on every
+        // quad (~1024 quads in a 64×64 codeblock × thousands of
+        // codeblocks per 1024×1024 input).
+        //
+        // Sample layout within a quad: (col, row) in
+        // [(0,0), (0,1), (1,0), (1,1)] — OpenJPH walks the
+        // (col, row) positions as index = 2*col + row (column-major
+        // within the quad).
+        @inline(__always)
+        func processQuad(baseX: Int, baseY: Int)
+            -> (rho: Int, eQMax: Int,
+                eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
+                s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
+        {
             var rho = 0
-            var eQ = [0, 0, 0, 0]
-            var s:  [UInt32] = [0, 0, 0, 0]
             var eQMax = 0
-            // Sample layout within a quad: (col, row) in
-            // [(0,0), (0,1), (1,0), (1,1)] — OpenJPH walks the
-            // (col, row) positions as index = 2*col + row (column-
-            // major within the quad).
-            let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
-            for (i, (dx, dy)) in offsets.enumerated() {
-                let t = fetch(baseX + dx, baseY + dy)
-                let (sig, e, payload) = sampleInfo(t)
-                if sig {
-                    rho |= (1 << i)
-                    eQ[i] = e
-                    s[i]  = payload
-                    if e > eQMax { eQMax = e }
-                }
+            var eQ0 = 0, eQ1 = 0, eQ2 = 0, eQ3 = 0
+            var s0: UInt32 = 0, s1: UInt32 = 0
+            var s2: UInt32 = 0, s3: UInt32 = 0
+
+            let t0 = fetch(baseX,     baseY)
+            let (sig0, e0, p0) = sampleInfo(t0)
+            if sig0 { rho |= 1; eQ0 = e0; s0 = p0; if e0 > eQMax { eQMax = e0 } }
+
+            let t1 = fetch(baseX,     baseY + 1)
+            let (sig1, e1, p1) = sampleInfo(t1)
+            if sig1 { rho |= 2; eQ1 = e1; s1 = p1; if e1 > eQMax { eQMax = e1 } }
+
+            let t2 = fetch(baseX + 1, baseY)
+            let (sig2, e2, p2) = sampleInfo(t2)
+            if sig2 { rho |= 4; eQ2 = e2; s2 = p2; if e2 > eQMax { eQMax = e2 } }
+
+            let t3 = fetch(baseX + 1, baseY + 1)
+            let (sig3, e3, p3) = sampleInfo(t3)
+            if sig3 { rho |= 8; eQ3 = e3; s3 = p3; if e3 > eQMax { eQMax = e3 } }
+
+            return (rho, eQMax, eQ0, eQ1, eQ2, eQ3, s0, s1, s2, s3)
+        }
+
+        /// Inline magsgn emission for the four samples of a quad.
+        /// Replaces a `for i in 0..<4` loop that indexed `[UInt32]`
+        /// arrays — with the array gone we unroll the four positions
+        /// directly. The compiler folds the constant `bit == 1` checks
+        /// against the runtime `rho` mask to a small branch tree.
+        @inline(__always)
+        func emitQuadMagSgn(
+            rho: Int, tuple: Int, Uq: Int,
+            s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32
+        ) {
+            @inline(__always) func emit(sample: UInt32, eBit: Int) {
+                let m = Uq - eBit
+                let mask: UInt32 = (m >= 32) ? ~UInt32(0)
+                                            : ((UInt32(1) << m) - 1)
+                magsgnEnc.encode(codeword: sample & mask, count: m)
             }
-            return (rho, eQMax, eQ, s)
+            if (rho & 1) != 0 { emit(sample: s0, eBit: tuple & 1) }
+            if (rho & 2) != 0 { emit(sample: s1, eBit: (tuple >> 1) & 1) }
+            if (rho & 4) != 0 { emit(sample: s2, eBit: (tuple >> 2) & 1) }
+            if (rho & 8) != 0 { emit(sample: s3, eBit: (tuple >> 3) & 1) }
         }
 
         // --- Initial row of quads (y = 0, 1) ---
@@ -127,23 +165,25 @@ public enum HTBlockEncoderConformant {
         if height > 0 {
             var spX = 0
             while spX < width {
-                let (rho0, eQMax0, eQ0, s0) = processQuad(baseX: spX, baseY: 0)
+                let q0 = processQuad(baseX: spX, baseY: 0)
+                let rho0 = q0.rho
+                let eQMax0 = q0.eQMax
                 let Uq0 = max(eQMax0, 1)
                 let u_q0 = Uq0 - 1
 
                 var eps0 = 0
                 if u_q0 > 0 {
-                    if eQ0[0] == eQMax0 { eps0 |= 1 }
-                    if eQ0[1] == eQMax0 { eps0 |= 2 }
-                    if eQ0[2] == eQMax0 { eps0 |= 4 }
-                    if eQ0[3] == eQMax0 { eps0 |= 8 }
+                    if q0.eQ0 == eQMax0 { eps0 |= 1 }
+                    if q0.eQ1 == eQMax0 { eps0 |= 2 }
+                    if q0.eQ2 == eQMax0 { eps0 |= 4 }
+                    if q0.eQ3 == eQMax0 { eps0 |= 8 }
                 }
 
                 // lep / lcxp bookkeeping: the max e_q from the quad's
                 // bottom row carries forward; rho's bottom bits feed
                 // the next row's context.
-                eVal[lep] = max(eVal[lep], UInt8(eQ0[1])); lep += 1
-                eVal[lep] = UInt8(eQ0[3])
+                eVal[lep] = max(eVal[lep], UInt8(q0.eQ1)); lep += 1
+                eVal[lep] = UInt8(q0.eQ3)
                 cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
                 cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
 
@@ -155,37 +195,29 @@ public enum HTBlockEncoderConformant {
                     melEnc.encode(eventIsOne: rho0 != 0)
                 }
 
-                // Emit MagSgn bits for each significant sample.
-                for i in 0..<4 {
-                    let bit = (rho0 >> i) & 1
-                    if bit == 1 {
-                        let eBit = (tuple0 >> i) & 1
-                        let m = Uq0 - eBit
-                        let mask: UInt32 = (m >= 32) ? ~UInt32(0)
-                                                    : ((UInt32(1) << m) - 1)
-                        magsgnEnc.encode(codeword: s0[i] & mask, count: m)
-                    }
-                }
+                emitQuadMagSgn(
+                    rho: rho0, tuple: tuple0, Uq: Uq0,
+                    s0: q0.s0, s1: q0.s1, s2: q0.s2, s3: q0.s3)
 
                 // Second quad of the pair (might be out of bounds).
                 var rho1 = 0
                 var u_q1 = 0
                 if spX + 2 < width {
-                    let (_rho1, eQMax1, eQ1, s1) =
-                        processQuad(baseX: spX + 2, baseY: 0)
-                    rho1 = _rho1
+                    let q1 = processQuad(baseX: spX + 2, baseY: 0)
+                    let eQMax1 = q1.eQMax
+                    rho1 = q1.rho
                     let c_q1 = (rho0 >> 1) | (rho0 & 1)
                     let Uq1 = max(eQMax1, 1)
                     u_q1 = Uq1 - 1
                     var eps1 = 0
                     if u_q1 > 0 {
-                        if eQ1[0] == eQMax1 { eps1 |= 1 }
-                        if eQ1[1] == eQMax1 { eps1 |= 2 }
-                        if eQ1[2] == eQMax1 { eps1 |= 4 }
-                        if eQ1[3] == eQMax1 { eps1 |= 8 }
+                        if q1.eQ0 == eQMax1 { eps1 |= 1 }
+                        if q1.eQ1 == eQMax1 { eps1 |= 2 }
+                        if q1.eQ2 == eQMax1 { eps1 |= 4 }
+                        if q1.eQ3 == eQMax1 { eps1 |= 8 }
                     }
-                    eVal[lep] = max(eVal[lep], UInt8(eQ1[1])); lep += 1
-                    eVal[lep] = UInt8(eQ1[3])
+                    eVal[lep] = max(eVal[lep], UInt8(q1.eQ1)); lep += 1
+                    eVal[lep] = UInt8(q1.eQ3)
                     cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
                     cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
 
@@ -197,16 +229,9 @@ public enum HTBlockEncoderConformant {
                         melEnc.encode(eventIsOne: rho1 != 0)
                     }
 
-                    for i in 0..<4 {
-                        let bit = (rho1 >> i) & 1
-                        if bit == 1 {
-                            let eBit = (tuple1 >> i) & 1
-                            let m = Uq1 - eBit
-                            let mask: UInt32 = (m >= 32) ? ~UInt32(0)
-                                                        : ((UInt32(1) << m) - 1)
-                            magsgnEnc.encode(codeword: s1[i] & mask, count: m)
-                        }
-                    }
+                    emitQuadMagSgn(
+                        rho: rho1, tuple: tuple1, Uq: Uq1,
+                        s0: q1.s0, s1: q1.s1, s2: q1.s2, s3: q1.s3)
                 }
 
                 // u-value encoding for this quad pair.
@@ -254,20 +279,22 @@ public enum HTBlockEncoderConformant {
 
             var spX = 0
             while spX < width {
-                let (rho0, eQMax0, eQ0, s0) = processQuad(baseX: spX, baseY: y)
+                let q0 = processQuad(baseX: spX, baseY: y)
+                let rho0 = q0.rho
+                let eQMax0 = q0.eQMax
                 let kappaA = ((rho0 & (rho0 - 1)) != 0) ? max(1, maxE) : 1
                 let Uq0 = max(eQMax0, kappaA)
                 let u_q0 = Uq0 - kappaA
                 var eps0 = 0
                 if u_q0 > 0 {
-                    if eQ0[0] == eQMax0 { eps0 |= 1 }
-                    if eQ0[1] == eQMax0 { eps0 |= 2 }
-                    if eQ0[2] == eQMax0 { eps0 |= 4 }
-                    if eQ0[3] == eQMax0 { eps0 |= 8 }
+                    if q0.eQ0 == eQMax0 { eps0 |= 1 }
+                    if q0.eQ1 == eQMax0 { eps0 |= 2 }
+                    if q0.eQ2 == eQMax0 { eps0 |= 4 }
+                    if q0.eQ3 == eQMax0 { eps0 |= 8 }
                 }
-                eVal[lep] = max(eVal[lep], UInt8(eQ0[1])); lep += 1
+                eVal[lep] = max(eVal[lep], UInt8(q0.eQ1)); lep += 1
                 maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-                eVal[lep] = UInt8(eQ0[3])
+                eVal[lep] = UInt8(q0.eQ3)
                 cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
                 var c_q1 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
                 cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
@@ -278,37 +305,30 @@ public enum HTBlockEncoderConformant {
                 if c_q0 == 0 {
                     melEnc.encode(eventIsOne: rho0 != 0)
                 }
-                for i in 0..<4 {
-                    let bit = (rho0 >> i) & 1
-                    if bit == 1 {
-                        let eBit = (tuple0 >> i) & 1
-                        let m = Uq0 - eBit
-                        let mask: UInt32 = (m >= 32) ? ~UInt32(0)
-                                                    : ((UInt32(1) << m) - 1)
-                        magsgnEnc.encode(codeword: s0[i] & mask, count: m)
-                    }
-                }
+                emitQuadMagSgn(
+                    rho: rho0, tuple: tuple0, Uq: Uq0,
+                    s0: q0.s0, s1: q0.s1, s2: q0.s2, s3: q0.s3)
 
                 var rho1 = 0
                 var u_q1 = 0
                 if spX + 2 < width {
-                    let (_rho1, eQMax1, eQ1, s1) =
-                        processQuad(baseX: spX + 2, baseY: y)
-                    rho1 = _rho1
+                    let q1 = processQuad(baseX: spX + 2, baseY: y)
+                    let eQMax1 = q1.eQMax
+                    rho1 = q1.rho
                     let kappaB = ((rho1 & (rho1 - 1)) != 0) ? max(1, maxE) : 1
                     c_q1 |= ((rho0 & 4) >> 1) | ((rho0 & 8) >> 2)
                     let Uq1 = max(eQMax1, kappaB)
                     u_q1 = Uq1 - kappaB
                     var eps1 = 0
                     if u_q1 > 0 {
-                        if eQ1[0] == eQMax1 { eps1 |= 1 }
-                        if eQ1[1] == eQMax1 { eps1 |= 2 }
-                        if eQ1[2] == eQMax1 { eps1 |= 4 }
-                        if eQ1[3] == eQMax1 { eps1 |= 8 }
+                        if q1.eQ0 == eQMax1 { eps1 |= 1 }
+                        if q1.eQ1 == eQMax1 { eps1 |= 2 }
+                        if q1.eQ2 == eQMax1 { eps1 |= 4 }
+                        if q1.eQ3 == eQMax1 { eps1 |= 8 }
                     }
-                    eVal[lep] = max(eVal[lep], UInt8(eQ1[1])); lep += 1
+                    eVal[lep] = max(eVal[lep], UInt8(q1.eQ1)); lep += 1
                     maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-                    eVal[lep] = UInt8(eQ1[3])
+                    eVal[lep] = UInt8(q1.eQ3)
                     cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
                     c_q0 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
                     cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
@@ -319,16 +339,9 @@ public enum HTBlockEncoderConformant {
                     if c_q1 == 0 {
                         melEnc.encode(eventIsOne: rho1 != 0)
                     }
-                    for i in 0..<4 {
-                        let bit = (rho1 >> i) & 1
-                        if bit == 1 {
-                            let eBit = (tuple1 >> i) & 1
-                            let m = Uq1 - eBit
-                            let mask: UInt32 = (m >= 32) ? ~UInt32(0)
-                                                        : ((UInt32(1) << m) - 1)
-                            magsgnEnc.encode(codeword: s1[i] & mask, count: m)
-                        }
-                    }
+                    emitQuadMagSgn(
+                        rho: rho1, tuple: tuple1, Uq: Uq1,
+                        s0: q1.s0, s1: q1.s1, s2: q1.s2, s3: q1.s3)
                 }
 
                 // Subsequent rows use unconditional UVLC per quad.
