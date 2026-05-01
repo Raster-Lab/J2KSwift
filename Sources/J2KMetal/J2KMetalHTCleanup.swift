@@ -59,11 +59,14 @@ public struct J2KMetalHTCleanup: Sendable {
 
     public let metalDevice: J2KMetalDevice
     public let shaderLibrary: J2KMetalShaderLibrary
+    public let bufferPool: J2KMetalBufferPool
 
     public init(metalDevice: J2KMetalDevice = J2KMetalDevice(),
-                shaderLibrary: J2KMetalShaderLibrary? = nil) {
+                shaderLibrary: J2KMetalShaderLibrary? = nil,
+                bufferPool: J2KMetalBufferPool? = nil) {
         self.metalDevice = metalDevice
         self.shaderLibrary = shaderLibrary ?? J2KMetalShaderLibrary()
+        self.bufferPool = bufferPool ?? J2KMetalBufferPool()
     }
 
     public static var isAvailable: Bool { J2KMetalDWT.isAvailable }
@@ -96,22 +99,20 @@ public struct J2KMetalHTCleanup: Sendable {
         let device = queue.device
         try await shaderLibrary.loadShaders(device: device)
 
-        func makeBuffer(size: Int) throws -> any MTLBuffer {
-            guard let buffer = device.makeBuffer(
-                length: max(size, 1), options: .storageModeShared
-            ) else {
-                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
-            }
-            return buffer
-        }
-
         let descriptorStride = MemoryLayout<J2KMetalHTCleanupBlockDescriptor>.stride
         let blockCount = descriptors.count
-        let descriptorBuffer = try makeBuffer(size: blockCount * descriptorStride)
-        let codestreamBuffer = try makeBuffer(size: max(codestreamPool.count, 1))
-        let vlc0Buffer = try makeBuffer(size: 1024 * MemoryLayout<UInt16>.stride)
-        let vlc1Buffer = try makeBuffer(size: 1024 * MemoryLayout<UInt16>.stride)
-        let outputBuffer = try makeBuffer(size: outputSampleCount * MemoryLayout<UInt32>.stride)
+
+        // Per-frame buffers come from the pool (bucket-rounded, returned
+        // after readback). VLC tables are static spec data — uploaded
+        // once into the shader library cache and reused across calls.
+        let descriptorBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(blockCount * descriptorStride, 1))
+        let codestreamBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(codestreamPool.count, 1))
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
+        let (vlc0Buffer, vlc1Buffer) = try await shaderLibrary.vlcTableBuffers(
+            device: device, vlc0: vlcTable0, vlc1: vlcTable1)
 
         descriptors.withUnsafeBufferPointer { src in
             descriptorBuffer.contents().copyMemory(
@@ -123,12 +124,6 @@ public struct J2KMetalHTCleanup: Sendable {
                 codestreamBuffer.contents().copyMemory(
                     from: src.baseAddress!, byteCount: src.count)
             }
-        }
-        vlcTable0.withUnsafeBytes { src in
-            vlc0Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
-        }
-        vlcTable1.withUnsafeBytes { src in
-            vlc1Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
         }
 
         let pipeline = try await shaderLibrary.computePipeline(for: .htCleanupDecode)
@@ -183,6 +178,16 @@ public struct J2KMetalHTCleanup: Sendable {
         } else {
             output = []
         }
+
+        // Per-frame buffers are returned to the pool for reuse on the
+        // next call. VLC table buffers stay cached in the shader library
+        // and are NOT returned. We schedule the returns in a detached
+        // Task because `bufferPool.returnBuffer` is actor-isolated and
+        // we don't need to await it before returning the decoded output
+        // (the buffers have already been memcpy'd out).
+        let pool = bufferPool
+        let toReturn = [descriptorBuffer, codestreamBuffer, outputBuffer]
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
 
         let totalSamples = descriptors.reduce(0) { $0 + Int($1.width) * Int($1.height) }
         let stats = Statistics(

@@ -210,6 +210,12 @@ public actor J2KMetalShaderLibrary {
 
     /// The device used for shader compilation.
     private var device: (any MTLDevice)?
+
+    /// Cached HT-cleanup VLC tables. Tables are deterministic spec data
+    /// (1024 UInt16 entries each), so we upload once and reuse the
+    /// MTLBuffers across every cleanup-decode call.
+    private var vlcTable0Buffer: (any MTLBuffer)?
+    private var vlcTable1Buffer: (any MTLBuffer)?
     #endif
 
     /// Whether shaders have been loaded.
@@ -331,6 +337,49 @@ public actor J2KMetalShaderLibrary {
     }
     #endif
 
+    #if canImport(Metal)
+    /// Returns lazily-uploaded VLC table buffers for the HT cleanup decoder.
+    ///
+    /// The two 1024-entry tables are deterministic spec data, identical
+    /// across every call. The first invocation uploads them into Metal
+    /// buffers; subsequent invocations return the cached buffers without
+    /// re-allocating or re-copying.
+    ///
+    /// - Parameters:
+    ///   - device: The Metal device to allocate buffers from on first call.
+    ///   - vlc0: The 1024-entry VLC decoder table 0.
+    ///   - vlc1: The 1024-entry VLC decoder table 1.
+    /// - Returns: A tuple of (vlc0, vlc1) `MTLBuffer`s.
+    /// - Throws: ``J2KError/internalError(_:)`` if buffer allocation fails.
+    public func vlcTableBuffers(
+        device: any MTLDevice,
+        vlc0: [UInt16],
+        vlc1: [UInt16]
+    ) throws -> (vlc0: any MTLBuffer, vlc1: any MTLBuffer) {
+        precondition(vlc0.count == 1024, "vlc0 must have 1024 entries")
+        precondition(vlc1.count == 1024, "vlc1 must have 1024 entries")
+
+        if let v0 = vlcTable0Buffer, let v1 = vlcTable1Buffer {
+            return (v0, v1)
+        }
+
+        let byteCount = 1024 * MemoryLayout<UInt16>.stride
+        guard let v0 = device.makeBuffer(length: byteCount, options: .storageModeShared),
+              let v1 = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
+            throw J2KError.internalError("Failed to allocate VLC table buffers")
+        }
+        vlc0.withUnsafeBytes { src in
+            v0.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+        vlc1.withUnsafeBytes { src in
+            v1.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+        self.vlcTable0Buffer = v0
+        self.vlcTable1Buffer = v1
+        return (v0, v1)
+    }
+    #endif
+
     /// Returns the list of available shader function names in the loaded library.
     ///
     /// - Returns: Array of function names, or empty if no library is loaded.
@@ -355,10 +404,12 @@ public actor J2KMetalShaderLibrary {
         #endif
     }
 
-    /// Clears the pipeline state cache.
+    /// Clears the pipeline state and VLC table caches.
     public func clearCache() {
         #if canImport(Metal)
         pipelineCache.removeAll()
+        vlcTable0Buffer = nil
+        vlcTable1Buffer = nil
         #endif
     }
 

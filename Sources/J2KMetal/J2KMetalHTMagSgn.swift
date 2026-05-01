@@ -53,11 +53,14 @@ public struct J2KMetalHTMagSgn: Sendable {
 
     public let metalDevice: J2KMetalDevice
     public let shaderLibrary: J2KMetalShaderLibrary
+    public let bufferPool: J2KMetalBufferPool
 
     public init(metalDevice: J2KMetalDevice = J2KMetalDevice(),
-                shaderLibrary: J2KMetalShaderLibrary? = nil) {
+                shaderLibrary: J2KMetalShaderLibrary? = nil,
+                bufferPool: J2KMetalBufferPool? = nil) {
         self.metalDevice = metalDevice
         self.shaderLibrary = shaderLibrary ?? J2KMetalShaderLibrary()
+        self.bufferPool = bufferPool ?? J2KMetalBufferPool()
     }
 
     public static var isAvailable: Bool { J2KMetalDWT.isAvailable }
@@ -83,21 +86,16 @@ public struct J2KMetalHTMagSgn: Sendable {
         let device = queue.device
         try await shaderLibrary.loadShaders(device: device)
 
-        func makeBuffer(size: Int) throws -> any MTLBuffer {
-            guard let buffer = device.makeBuffer(
-                length: max(size, 1), options: .storageModeShared
-            ) else {
-                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
-            }
-            return buffer
-        }
-
         let descriptorStride = MemoryLayout<J2KMetalHTMagSgnBlockDescriptor>.stride
         let blockCount = descriptors.count
-        let descriptorBuffer = try makeBuffer(size: blockCount * descriptorStride)
-        let codestreamBuffer = try makeBuffer(size: max(codestreamPool.count, 1))
-        let widthsBuffer = try makeBuffer(size: max(widthsPool.count, 1))
-        let outputBuffer = try makeBuffer(size: outputSampleCount * MemoryLayout<UInt32>.stride)
+        let descriptorBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(blockCount * descriptorStride, 1))
+        let codestreamBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(codestreamPool.count, 1))
+        let widthsBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(widthsPool.count, 1))
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
 
         descriptors.withUnsafeBufferPointer { src in
             descriptorBuffer.contents().copyMemory(
@@ -142,15 +140,24 @@ public struct J2KMetalHTMagSgn: Sendable {
 
         let gpuKernelTime = max(0.0, cb.gpuEndTime - cb.gpuStartTime)
 
-        var output = [UInt32](repeating: 0, count: outputSampleCount)
+        // Readback uses unsafeUninitializedCapacity + memcpy to avoid the
+        // release-mode Swift-runtime deadlock observed when copying from
+        // MTLBuffer.contents() into an Array via withUnsafeMutableBytes
+        // (see HTCleanup readback for the full diagnosis).
+        let byteCount = outputSampleCount * MemoryLayout<UInt32>.stride
+        let output: [UInt32]
         if outputSampleCount > 0 {
-            output.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: outputBuffer.contents(),
-                    count: outputSampleCount * MemoryLayout<UInt32>.stride
-                ))
+            output = [UInt32](unsafeUninitializedCapacity: outputSampleCount) { ptr, initializedCount in
+                memcpy(ptr.baseAddress!, outputBuffer.contents(), byteCount)
+                initializedCount = outputSampleCount
             }
+        } else {
+            output = []
         }
+
+        let pool = bufferPool
+        let toReturn = [descriptorBuffer, codestreamBuffer, widthsBuffer, outputBuffer]
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
 
         let totalSamples = descriptors.reduce(0) { $0 + Int($1.sampleCount) }
         let stats = Statistics(
