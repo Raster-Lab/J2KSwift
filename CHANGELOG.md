@@ -5,40 +5,49 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.3.0] — 2026-04-30
+## [5.3.0] — 2026-05-01
 
-**Minor Release — GPU HTJ2K cleanup decoder + cross-codec regression harness**
+**Minor Release — GPU HTJ2K cleanup decoder + cross-codec verification harness**
 
-This release lands a **bit-exact GPU HTJ2K cleanup-pass decoder**
-(Phase 0 / 1 / 2 of the GPU HT prototype) and a **180-cell
-cross-codec bidirectional verification harness** that proves J2KSwift
-round-trips losslessly through OpenJPEG 2.5.4 and OpenJPH 0.27.0 on
-real DICOM imagery — at every backend / codec combination.
+Two main pieces of work land in this release: an experimental GPU
+HTJ2K cleanup-pass decoder (Phases 0–2 of an ongoing GPU HT
+prototype) and a 180-cell bidirectional cross-codec verification
+harness that exercises J2KSwift's encoder and decoder alongside
+OpenJPEG 2.5.4 and OpenJPH 0.27.0 on real DICOM imagery.
 
 ### Headline results
 
-- **Cross-codec matrix**: 180 / 180 bit-exact round-trip cells pass
-  on the 10-image DICOM corpus (CT, DX, MG, MR, PX, XA — 180×180 to
-  3521×4784). Every combination of {J2KSwift CPU, J2KSwift GPU,
-  OpenJPEG, OpenJPH} encoders × decoders yields the same pixel
-  values; cross-codec PGM byte-order delta is the only difference
-  and is purely serialisation, not codec correctness.
-- **GPU HTJ2K decoder**: bit-exact in **both debug and release**
-  builds against the CPU `HTBlockDecoderConformant.decode`. 7
-  bit-exact test cases (4×4 hand-crafted, 16×16 / 32×32 / 64×64
-  random, all-zero block, 32-block batch dispatch, 777-block
-  speedup benchmark).
-- **Compression efficiency unchanged from 5.2.0**: J2KSwift is
-  **0.49× the size of OpenJPEG** at J2K Part 1 lossless and
-  **0.55× the size of OpenJPH** at HTJ2K lossless on the same
-  corpus.
-- **Performance**: J2KSwift CPU is **3.5–5× faster** than OpenJPEG
-  on every image size (encode + decode); HTJ2K is ~25% slower
-  than OpenJPH but produces 35–45% smaller files.
+- **Cross-codec interop matrix**: 180 / 180 round-trip cells decode
+  to the original pixel values on the 10-image DICOM corpus (CT, DX,
+  MG, MR, PX, XA — 180×180 to 3521×4784). Every combination of
+  {J2KSwift CPU, J2KSwift GPU, OpenJPEG, OpenJPH} encoders ×
+  decoders agrees. 100 cells are byte-identical; 80 cells differ
+  only in 16-bit PGM endianness convention (J2KSwift writes
+  little-endian, OpenJPEG / OpenJPH write big-endian per spec) —
+  the JPEG 2000 codestream itself is byte-identical in those cases.
+- **GPU HTJ2K decoder**: bit-exact in both debug and release builds
+  against the CPU `HTBlockDecoderConformant.decode`. 7 bit-exact
+  test cases (4×4 hand-crafted, 16×16 / 32×32 / 64×64 random,
+  all-zero block, 32-block batch dispatch, 777-block speedup
+  benchmark).
+- **Compression** (out-of-the-box `--lossless` defaults on this
+  corpus): J2KSwift's encoded streams are smaller than OpenJPEG's
+  for J2K Part 1 and smaller than OpenJPH's for HTJ2K. The size
+  delta is largely a function of default coding parameters
+  (decomposition levels, codeblock size, code-pass termination)
+  which J2KSwift tunes for medical imagery; OpenJPEG and OpenJPH
+  are tunable to similar shapes via flags.
+- **Wall-clock** (Apple M2, release build, single CLI invocation):
+  J2KSwift completes the J2K Part 1 workload faster than the
+  homebrew OpenJPEG build we tested (ratios in the 3-5× range
+  across image sizes); OpenJPH completes the HTJ2K workload faster
+  than J2KSwift (J2KSwift is ~25% slower at most sizes). Numbers
+  are configuration-specific — see RELEASE_NOTES_v5.3.0.md for
+  full tables and methodology.
 - **CPU/GPU encoders are byte-identical**: `cmp` confirms
-  `*_jcpu_p1.j2k ≡ *_jgpu_p1.j2k` and the HTJ2K equivalents for
-  every image. The two paths are interchangeable at the codestream
-  level.
+  `*_jcpu_p1.j2k ≡ *_jgpu_p1.j2k` and the HTJ2K equivalents on
+  every fixture. The two paths are interchangeable at the
+  codestream level.
 
 ### Added
 
@@ -138,17 +147,21 @@ real DICOM imagery — at every backend / codec combination.
 ### Validation
 
 - **Cross-codec matrix** (`Scripts/run_cross_matrix.sh`):
-  **180 / 180 PASS** — 100 byte-identical, 80 byte-swap-identical
-  (cross-codec PGM endianness convention). Reproducible run-to-run.
-- **GPU bit-exact tests**: 7 / 7 `J2KMetalHTCleanupTests` PASS in
+  180 / 180 cells decode to the original pixel values
+  (100 byte-identical, 80 byte-swap-identical from PGM endianness
+  convention). Reproducible run-to-run.
+- **GPU bit-exact tests**: 7 / 7 `J2KMetalHTCleanupTests` pass in
   both debug and release builds.
 - **CPU vs GPU encoder bit-equality**: `cmp` confirms identical
-  J2K + HTJ2K codestreams across all 7 fixtures. CPU and GPU
-  encode paths are interchangeable.
-- **Performance** (Apple M2, release): J2KSwift CPU is 3.5-5×
-  faster than OpenJPEG at J2K Part 1; ~25% slower than OpenJPH at
-  HTJ2K with 35-45% smaller files. CPU and GPU paths land within
-  ±5% of each other at the CLI / single-image granularity.
+  J2K + HTJ2K codestreams across all 7 fixtures.
+- **Wall-clock** (Apple M2, release): J2KSwift's J2K Part 1 path is
+  faster than the OpenJPEG 2.5.4 homebrew build we tested by a 3-5×
+  ratio across image sizes; OpenJPH 0.27.0 is faster than J2KSwift
+  on HTJ2K (J2KSwift is roughly 25% slower at most sizes). Both
+  comparisons are workload- and toolchain-specific — see
+  RELEASE_NOTES_v5.3.0.md for the full table and reproduction
+  instructions. CPU and GPU paths within J2KSwift land within ±5%
+  of each other at the CLI / single-image granularity.
 
 ## [5.2.0] — 2026-04-26
 
