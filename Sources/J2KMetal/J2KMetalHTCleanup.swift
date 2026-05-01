@@ -142,12 +142,20 @@ public struct J2KMetalHTCleanup: Sendable {
         var bc = UInt32(blockCount)
         encoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 5)
 
-        // dispatchThreadgroups: one thread per codeblock, one threadgroup
-        // per codeblock. Avoids the simd-width padding / max-threads-per-
-        // group mismatch the dispatch-threads variant can hit on Apple GPUs.
-        let threadsPerGroup = MTLSize(width: 1, height: 1, depth: 1)
-        let gridGroups = MTLSize(width: blockCount, height: 1, depth: 1)
-        encoder.dispatchThreadgroups(gridGroups, threadsPerThreadgroup: threadsPerGroup)
+        // dispatchThreads with threadsPerGroup=min(blockCount, 64) lets
+        // Apple's SIMD scheduler pack 64 codeblocks (= 2 warps × 32 lanes)
+        // into one threadgroup. The previous threadgroup-of-1 dispatch
+        // forced one CB per warp, leaving 31 SIMD lanes idle on every
+        // dispatch. The kernel uses only `thread`-private state and reads
+        // `device`/`constant` buffers via per-thread offsets, so threads
+        // within a warp are fully independent — no shared memory or
+        // barriers needed. The `if (tid >= blockCount) return;` guard at
+        // the top of the kernel handles the simd-width padding case.
+        // Matches the phase-1 MagSgn convention (J2KMetalHTMagSgn.swift:133).
+        let groupWidth = max(1, min(blockCount, 64))
+        let threadsPerGroup = MTLSize(width: groupWidth, height: 1, depth: 1)
+        let gridSize = MTLSize(width: blockCount, height: 1, depth: 1)
+        encoder.dispatchThreads(gridSize, threadsPerThreadgroup: threadsPerGroup)
         encoder.endEncoding()
         cb.commit()
         await cb.completed()
