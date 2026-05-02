@@ -116,6 +116,14 @@ struct GPUHTBatchGPUResidentResult: Sendable {
     /// (Int32 elements)]. Eligible blocks only.
     let decodedBlockOutputOffsets: [Int: Int]
     let cpuFallbackIndices: [Int]
+    /// v5.8 dedupe: per-block decoded coefficients (Int32 integer-
+    /// magnitude) sliced from the codeblock buffer's shared memory
+    /// at decode time. Saves the caller from running a second GPU
+    /// decode just to get array form when both forms are needed
+    /// (e.g. CPU regroup → [SubbandInfo] AND fused-DWT batch).
+    /// Apple Silicon GPU buffers use unified memory, so this slice
+    /// is just a memcpy from CPU-visible storage.
+    let decodedBlockCoefficients: [Int: [Int32]]
 }
 
 enum J2KGPUHTDispatch {
@@ -368,16 +376,36 @@ enum J2KGPUHTDispatch {
             vlcTable1: vlcDecoderTable1Conformant,
             outputSampleCount: totalSamples)
 
-        // Map original block index → output offset (in Int32 samples)
+        // v5.8 dedupe: slice per-block coefficient arrays from the
+        // codeblock buffer's shared memory once. Same content the
+        // v5.6.0 `decodeBatch` API reads back on its own; doing it
+        // here avoids a second GPU decode in callers that need
+        // both [Int32] arrays AND the GPU buffer (i.e. the
+        // fused-DWT pipeline path).
         var offsets: [Int: Int] = [:]
-        for (i, originalBlockIdx) in eligibleIndices.enumerated() {
-            offsets[originalBlockIdx] = sampleOffsets[i]
+        var perBlockCoefficients: [Int: [Int32]] = [:]
+        if totalSamples > 0 {
+            let bufferPtr = codeblockBuffer.contents()
+                .bindMemory(to: Int32.self, capacity: totalSamples)
+            for (i, originalBlockIdx) in eligibleIndices.enumerated() {
+                let block = blocks[originalBlockIdx]
+                let start = sampleOffsets[i]
+                let count = block.width * block.height
+                offsets[originalBlockIdx] = start
+                let coeffs = [Int32](unsafeUninitializedCapacity: count) { ptr, init_ in
+                    memcpy(ptr.baseAddress!, bufferPtr + start,
+                           count * MemoryLayout<Int32>.stride)
+                    init_ = count
+                }
+                perBlockCoefficients[originalBlockIdx] = coeffs
+            }
         }
 
         return GPUHTBatchGPUResidentResult(
             codeblockBuffer: codeblockBuffer,
             outputSampleCount: totalSamples,
             decodedBlockOutputOffsets: offsets,
-            cpuFallbackIndices: fallbackIndices)
+            cpuFallbackIndices: fallbackIndices,
+            decodedBlockCoefficients: perBlockCoefficients)
     }
 }

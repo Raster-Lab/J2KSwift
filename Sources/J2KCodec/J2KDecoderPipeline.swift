@@ -1365,22 +1365,33 @@ struct DecoderPipeline: Sendable {
         }
         let useConformant = useHT && resolvedFormat == .conformant
 
-        // M2-prime early GPU pass. When opted in via `useGPUHT` and
-        // the codestream is conformant HT cleanup-only, batch every
-        // eligible codeblock through J2KGPUHTDispatch (one Metal
-        // kernel dispatch for the whole tile) before the existing
-        // per-block CPU loops run. Ineligible blocks (empty data,
-        // passCount == 0, custom format, refinement passes, parse
-        // failure) are NOT passed to GPU; they fall through to the
-        // CPU paths below. Blocks decoded on GPU are stashed in
-        // `gpuPreDecoded`, keyed by their original index in `blocks`.
-        // Bound to `let` so the parallel task group can capture it
-        // without Swift 6 concurrency complaining about a captured
-        // `var`.
-        let gpuPreDecoded: [Int: [Int32]] = try await {
+        // M2-prime / v5.8 unified early GPU pass.
+        //
+        // - Sessionless or non-reversible-5/3: take the v5.6.0 path
+        //   that calls `J2KGPUHTDispatch.decodeBatch` and returns
+        //   per-block [Int32] coefficients; no batch.
+        // - Session + reversible-5/3 + all-blocks-eligible: take
+        //   the v5.8 fused path via `decodeBatchGPUResident` —
+        //   ONE GPU decode produces both per-block [Int32] (sliced
+        //   from the codeblock buffer's shared memory) AND the
+        //   GPU-resident batch consumed by
+        //   `inverse2DInt32FullFusedFromCodeblocks` downstream. No
+        //   duplicate decode work.
+        //
+        // `gpuPreDecoded` feeds the existing per-block CPU regroup
+        // loop below (so `[SubbandInfo]` is populated identically
+        // to v5.7.0). `gpuBatch` is non-nil only on the fused path.
+        let isIrreversibleFilter: Bool = {
+            if case .irreversible97 = metadata.configuration.waveletFilter {
+                return true
+            }
+            return false
+        }()
+        let gpuEarly: (preDecoded: [Int: [Int32]], batch: J2KGPUHTBatch?) = try await {
             guard useGPUHT, useHT, useConformant,
                   J2KGPUHTDispatch.isAvailable, !blocks.isEmpty
-            else { return [:] }
+            else { return ([:], nil) }
+
             var gpuInputs: [GPUHTBlock] = []
             var inputOriginalIndices: [Int] = []
             for (i, block) in blocks.enumerated() {
@@ -1392,15 +1403,57 @@ struct DecoderPipeline: Sendable {
                     missingMSBs: block.zeroBitPlanes))
                 inputOriginalIndices.append(i)
             }
-            if gpuInputs.isEmpty { return [:] }
+            if gpuInputs.isEmpty { return ([:], nil) }
+
+            // v5.8 fused path: requires session + reversible 5/3.
+            if let session = metalSession, !isIrreversibleFilter {
+                if let res = try await J2KGPUHTDispatch.decodeBatchGPUResident(
+                    blocks: gpuInputs, session: session)
+                {
+                    // res.decodedBlockCoefficients +
+                    // decodedBlockOutputOffsets are keyed by
+                    // dispatcher-input index (gpuInputs index, NOT
+                    // pipeline block index). Remap to pipeline
+                    // index via inputOriginalIndices.
+                    var remappedCoeffs: [Int: [Int32]] = [:]
+                    var remappedOffsets: [Int: Int] = [:]
+                    for (gpuIdx, coeffs) in res.decodedBlockCoefficients {
+                        remappedCoeffs[inputOriginalIndices[gpuIdx]] = coeffs
+                    }
+                    for (gpuIdx, offset) in res.decodedBlockOutputOffsets {
+                        remappedOffsets[inputOriginalIndices[gpuIdx]] = offset
+                    }
+                    // If any blocks were ineligible (parse failure
+                    // etc), return the buffer and fall through with
+                    // coeffs only. [SubbandInfo] regroup still
+                    // produces correct LH/HL/HH for the non-fused
+                    // DWT path; we just skip fusion.
+                    if res.cpuFallbackIndices.isEmpty {
+                        let batch = buildGPUHTBatchFromResult(
+                            codeblockBuffer: res.codeblockBuffer,
+                            outputSampleCount: res.outputSampleCount,
+                            decodedBlockOutputOffsets: remappedOffsets,
+                            blocks: blocks, metadata: metadata,
+                            bufferPool: session.bufferPool)
+                        return (remappedCoeffs, batch)
+                    }
+                    await session.bufferPool.returnBuffer(res.codeblockBuffer)
+                    return (remappedCoeffs, nil)
+                }
+            }
+
+            // v5.6.0 path (no session, or 9/7 lossy, or fused
+            // dispatcher returned nil).
             let result = try await J2KGPUHTDispatch.decodeBatch(
                 blocks: gpuInputs, session: metalSession)
             var dict: [Int: [Int32]] = [:]
             for (i, gpuInputIdx) in result.decodedBlockIndices.enumerated() {
                 dict[inputOriginalIndices[gpuInputIdx]] = result.results[i].coefficients
             }
-            return dict
+            return (dict, nil)
         }()
+        let gpuPreDecoded: [Int: [Int32]] = gpuEarly.preDecoded
+        let gpuBatch: J2KGPUHTBatch? = gpuEarly.batch
 
         // Struct key avoids per-block string interpolation allocations.
         struct SubbandKey: Hashable {
@@ -1706,78 +1759,29 @@ struct DecoderPipeline: Sendable {
             ))
         }
 
-        // v5.8: build the GPU-resident HT batch when the
-        // full-fusion conditions are met. This is run alongside
-        // the existing CPU regroup above so the [SubbandInfo]
-        // output is unchanged — the batch is an additional payload
-        // consumed by the inverse-DWT stage when present.
-        // (First-cut implementation runs HT decode twice: once for
-        // the array path above, once here for the buffer. v5.9
-        // will dedupe.)
-        let gpuBatch = try await buildGPUHTBatch(
-            blocks: blocks, metadata: metadata,
-            useHT: useHT, useConformant: useConformant)
-
         return (subbands, gpuBatch)
     }
 
-    /// v5.8: build the GPU-resident HT batch (codeblock buffer +
-    /// per-(component, level) scatter plans) when the full-fusion
-    /// conditions are met. Returns nil when conditions aren't met
-    /// or when no blocks are eligible for GPU decode.
-    private func buildGPUHTBatch(
+    /// v5.8 dedupe helper: build a `J2KGPUHTBatch` from an already-
+    /// computed `GPUHTBatchGPUResidentResult`. The unified early-
+    /// pass in `applyEntropyDecoding` calls
+    /// `decodeBatchGPUResident` once and threads the result here
+    /// so we don't re-decode on the GPU just to build the batch.
+    private func buildGPUHTBatchFromResult(
+        codeblockBuffer: any MTLBuffer,
+        outputSampleCount: Int,
+        decodedBlockOutputOffsets: [Int: Int],
         blocks: [CodeBlockInfo],
         metadata: CodestreamMetadata,
-        useHT: Bool, useConformant: Bool
-    ) async throws -> J2KGPUHTBatch? {
-        guard useGPUHT, let session = metalSession,
-              useHT, useConformant,
-              !blocks.isEmpty,
-              J2KGPUHTDispatch.isAvailable else { return nil }
-        // Only the reversible 5/3 path is fused in v5.8.
-        if case .irreversible97 = metadata.configuration.waveletFilter {
-            return nil
-        }
-
-        // Build dispatcher input + track which CodeBlockInfo each
-        // input block corresponds to so we can map output offsets
-        // back to placement metadata.
-        var gpuInputs: [GPUHTBlock] = []
-        var inputOriginalIndices: [Int] = []
-        for (i, block) in blocks.enumerated() {
-            guard !block.data.isEmpty, block.passCount > 0 else { continue }
-            gpuInputs.append(GPUHTBlock(
-                width: block.width, height: block.height,
-                data: [UInt8](block.data),
-                missingMSBs: block.zeroBitPlanes))
-            inputOriginalIndices.append(i)
-        }
-        if gpuInputs.isEmpty { return nil }
-
-        guard let result = try await J2KGPUHTDispatch.decodeBatchGPUResident(
-            blocks: gpuInputs, session: session) else { return nil }
-
-        // Any ineligible (parsing-failure) blocks force a fallback
-        // — we don't yet support partial fused dispatch.
-        if !result.cpuFallbackIndices.isEmpty {
-            // Return the buffer so it doesn't leak — but skip the
-            // fused path. A fresh decode will run via the v5.7.0
-            // [SubbandInfo] route.
-            await session.bufferPool.returnBuffer(result.codeblockBuffer)
-            return nil
-        }
-
-        // Compute per-(component, level) levelSizes and group block
-        // descriptors by (component, level).
+        bufferPool: J2KMetalBufferPool
+    ) -> J2KGPUHTBatch {
         let levels = metadata.configuration.decompositionLevels
         var plansByComponent: [Int: [J2KMetalDWT.LevelScatterPlan]] = [:]
-
         let maxComponent = max(
             metadata.componentCount - 1,
             blocks.map { $0.componentIndex }.max() ?? 0)
 
         for compIdx in 0...maxComponent {
-            // Per-component level sizes (matches DWT path computation).
             let compW = metadata.width / max(metadata.components[compIdx].subsamplingX, 1)
             let compH = metadata.height / max(metadata.components[compIdx].subsamplingY, 1)
             var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
@@ -1786,7 +1790,6 @@ struct DecoderPipeline: Sendable {
                 levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
             }
 
-            // Innermost first per LevelScatterPlan ordering contract.
             var levelPlans: [J2KMetalDWT.LevelScatterPlan] = []
             for level in (1...levels).reversed() {
                 let parentW = levelSizes[level - 1].width
@@ -1802,12 +1805,8 @@ struct DecoderPipeline: Sendable {
                 for (i, block) in blocks.enumerated() {
                     guard block.componentIndex == compIdx,
                           block.level == level,
-                          let outputOffset = result.decodedBlockOutputOffsets[i]
+                          let outputOffset = decodedBlockOutputOffsets[i]
                     else { continue }
-                    // Skip LL blocks at this level — LL is uploaded
-                    // from CPU on the first DWT iteration via the
-                    // [SubbandInfo] path; the scatter only handles
-                    // LH/HL/HH at all levels.
                     let target: UInt32
                     let stride: Int
                     switch block.subband {
@@ -1842,10 +1841,10 @@ struct DecoderPipeline: Sendable {
         }
 
         return J2KGPUHTBatch(
-            codeblockBuffer: result.codeblockBuffer,
-            outputSampleCount: result.outputSampleCount,
+            codeblockBuffer: codeblockBuffer,
+            outputSampleCount: outputSampleCount,
             plansByComponent: plansByComponent,
-            bufferPool: session.bufferPool)
+            bufferPool: bufferPool)
     }
 
     // MARK: - Stage 4: Dequantization
