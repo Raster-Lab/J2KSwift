@@ -5,6 +5,102 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.0] — 2026-05-02
+
+**Minor Release — End-to-end fused HT cleanup → scatter → DWT path (architectural)**
+
+Wires the M4P-1 GPU subband scatter kernel that landed dormant in
+v5.7.0 into the production decoder pipeline. When the v5.6.0
+session opt-in is active and the codestream is HTJ2K conformant
+cleanup-only reversible 5/3, the entire entropy decode → subband
+scatter → multi-level inverse DWT now runs in a single command
+buffer per (tile, component), with the codeblock buffer staying
+GPU-resident across stages. Single GPU HT decode, GPU scatter for
+LH/HL/HH, multi-level inverse 5/3 — no readback between stages.
+
+### What this release does (and doesn't) change
+
+**Architectural:** the full HT cleanup → DWT GPU path is now
+end-to-end fused. CPU regroup of LH/HL/HH (`getSubbandAsInt32`)
+is replaced by GPU scatter for the fused path. The pipeline
+stays bit-exact with the v5.7.0 path (all gates pass).
+
+**Perf:** approximately neutral vs v5.7.0 on this hardware. Median
+warm-process speedup is ~1.5× (vs ~1.6× in v5.7.0); within
+run-to-run variance. The architectural value is the foundation
+for future work (multi-tile in-flight, GPU colour transform
+fusion, etc.) — not a perf headline.
+
+| fixture | size | sessionless | v5.8 fused |
+| --- | ---:| ---:| ---:|
+| ct_001 | 512×512 | 14.01 ms | 10.06 ms (1.39×) |
+| ct_003 | 512×512 | 14.66 ms | 9.71 ms (1.51×) |
+| dx_002 | 2800×2288 | 106.98 ms | 62.00 ms (1.73×) |
+| mr_001 | 886×886 | 16.31 ms | 12.00 ms (1.36×) |
+| mr_002 | 180×180 | 6.43 ms | 5.28 ms (1.22×) |
+| px_001 | 2459×1316 | 56.14 ms | 33.23 ms (1.69×) |
+| xa_001 | 1024×1024 | 22.92 ms | 14.51 ms (1.58×) |
+
+### Added
+
+- **`J2KMetalDWT.LevelScatterPlan`** — Sendable per-level plan
+  carrying scatter descriptors + per-subband dimensions for the
+  fused dispatch.
+- **`J2KMetalDWT.inverse2DInt32FullFusedFromCodeblocks(...)`** —
+  end-to-end fused inverse 5/3: scatter + multi-level DWT in one
+  command buffer. Output buffer of level N is reused as the LL of
+  level N-1; single commit + await + final readback.
+- **`J2KMetalHTCleanup.runIntegerMagnitudeReturningBuffer(...)`**
+  — variant of the v5.6.0 `runIntegerMagnitude` that returns the
+  GPU output buffer instead of reading back to `[Int32]`. Caller
+  takes ownership; descriptor + intermediate buffers go back to
+  the pool.
+- **`J2KGPUHTBatch`** — Sendable wrapper for the GPU-resident HT
+  batch (codeblock buffer + per-component, per-level scatter
+  plans + buffer pool reference).
+- **`J2KGPUHTDispatch.decodeBatchGPUResident(...)`** — GPU
+  dispatcher entry that returns both the GPU buffer AND
+  per-block `[Int32]` arrays sliced from its shared memory in
+  one call. Eliminates duplicate GPU decode work for callers
+  that need both forms (the pipeline does, for `[SubbandInfo]`
+  CPU regroup + the fused-DWT batch).
+- **`GPU_HT_FULL_FUSION_PLAN.md`** — five-milestone plan; M5P-1
+  through M5P-4 complete in this release.
+
+### Changed
+
+- **`J2KDecoderPipeline.applyEntropyDecoding`** return type
+  expanded to `(subbands: [SubbandInfo], batch: J2KGPUHTBatch?)`.
+  When v5.8 conditions are met (session, reversible 5/3,
+  conformant HT cleanup-only, all blocks eligible), runs ONE
+  `decodeBatchGPUResident` call producing both the per-block
+  arrays for `[SubbandInfo]` regroup AND the GPU batch for the
+  fused-DWT path. Otherwise stays on the v5.6.0 `decodeBatch`
+  path with batch = nil. Four orchestrators updated to
+  destructure the new tuple.
+- **`J2KDecoderPipeline.applyInverseWaveletTransformGPU`** —
+  accepts an optional `gpuBatch` parameter. When provided and
+  per-component plans exist, routes to
+  `inverse2DInt32FullFusedFromCodeblocks` instead of v5.7.0's
+  `inverse2DInt32MultiLevelFused`. Codeblock buffer is returned
+  to the pool after all components complete.
+- **`Sources/J2KCore/J2KCore.swift`** — `getVersion()` returns
+  "5.8.0".
+- `VERSION` bumped 5.7.0 → 5.8.0.
+
+### What this release is not
+
+- **Not a performance leap over v5.7.0.** Within run-to-run
+  variance on the perf benchmark — the win is structural, not
+  numerical.
+- **Not a 9/7 lossy fusion.** Reversible 5/3 path only.
+- **Not a cold-CLI fix.** `j2k decode --gpu-ht` still pays
+  per-process Metal init cost; `.metallib` bundling remains
+  dormant.
+- **Not a multi-tile in-flight pipeline.** Each tile still gets
+  its own command buffer; cross-tile pool reuse is via the
+  v5.6.0 `J2KMetalSession`.
+
 ## [5.7.0] — 2026-05-02
 
 **Minor Release — Multi-level fused inverse 5/3 DWT (HT decode → DWT cb fusion)**
