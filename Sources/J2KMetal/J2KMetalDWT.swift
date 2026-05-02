@@ -2346,6 +2346,8 @@ public actor J2KMetalDWT {
         guard elementCount > 0 else { return [] }
         var result = [Int32](repeating: 0, count: elementCount)
         let ptr = buffer.contents()
+        J2KMetalUMACounters.incrementContents()
+        J2KMetalUMACounters.incrementMemcpy()
         result.withUnsafeMutableBytes { dst in
             dst.copyBytes(from: UnsafeRawBufferPointer(
                 start: ptr,
