@@ -802,6 +802,262 @@ public actor J2KMetalDWT {
     }
     #endif
 
+    /// Per-level scatter + DWT plan for the v5.8 full-fused entry
+    /// point. Carries the placement descriptors (codeblock → LH/HL/HH
+    /// in subband 2D buffers) and the dimensions needed to allocate
+    /// the level's working buffers.
+    public struct LevelScatterPlan: Sendable {
+        /// Scatter descriptors for this level only. The kernel
+        /// expects each descriptor's `targetSubband` to be 1 (LH),
+        /// 2 (HL), or 3 (HH); the LL slot (0) is sourced from the
+        /// previous level's output buffer (or the outermost-LL
+        /// upload on the first level).
+        public let scatterDescriptors: [J2KMetalSubbandScatterDescriptor]
+        /// Subband dimensions. LL/LH/HL/HH all share the row pitch
+        /// indicated by the descriptors' `subbandStride`; the per-
+        /// level dimensions tell the kernel how big the per-subband
+        /// 2D buffers must be.
+        public let llWidth: Int
+        public let llHeight: Int
+        public let lhWidth: Int
+        public let lhHeight: Int
+        public let hlWidth: Int
+        public let hlHeight: Int
+        public let hhWidth: Int
+        public let hhHeight: Int
+        /// Output dimensions (= parent level dimensions). Inverse
+        /// 5/3 produces an `originalWidth × originalHeight` output.
+        public let originalWidth: Int
+        public let originalHeight: Int
+        /// Largest codeblock width × height across all of this level's
+        /// scatter descriptors. Used to size the scatter dispatch grid.
+        public let maxBlockWidth: Int
+        public let maxBlockHeight: Int
+
+        public init(
+            scatterDescriptors: [J2KMetalSubbandScatterDescriptor],
+            llWidth: Int, llHeight: Int,
+            lhWidth: Int, lhHeight: Int,
+            hlWidth: Int, hlHeight: Int,
+            hhWidth: Int, hhHeight: Int,
+            originalWidth: Int, originalHeight: Int,
+            maxBlockWidth: Int, maxBlockHeight: Int
+        ) {
+            self.scatterDescriptors = scatterDescriptors
+            self.llWidth = llWidth; self.llHeight = llHeight
+            self.lhWidth = lhWidth; self.lhHeight = lhHeight
+            self.hlWidth = hlWidth; self.hlHeight = hlHeight
+            self.hhWidth = hhWidth; self.hhHeight = hhHeight
+            self.originalWidth = originalWidth
+            self.originalHeight = originalHeight
+            self.maxBlockWidth = maxBlockWidth
+            self.maxBlockHeight = maxBlockHeight
+        }
+    }
+
+    #if canImport(Metal)
+    /// v5.8: end-to-end fused inverse 5/3 from a codeblock-output
+    /// buffer (HT cleanup + dequant output). For each decomposition
+    /// level: the GPU scatter kernel writes LH/HL/HH from the
+    /// codeblock buffer into per-subband 2D buffers; the inverse
+    /// 5/3 kernel runs immediately after on the same cb. The output
+    /// buffer of level N is reused as the LL input of level N-1.
+    /// Single command buffer, single commit + await, single final
+    /// readback.
+    ///
+    /// - Parameters:
+    ///   - codeblockBuffer: GPU buffer containing dequantised Int32
+    ///     codeblock samples — must be the output of an upstream
+    ///     `J2KMetalHTCleanup.runIntegerMagnitude` call (or
+    ///     equivalent). Caller is responsible for keeping it alive.
+    ///   - levelsPlan: per-level scatter plans, ordered innermost
+    ///     (index 0) to outermost (index N-1).
+    ///   - initialLL: optional outermost-level LL (uploaded on
+    ///     first level only); `nil` defaults to all-zero.
+    /// - Returns: outermost-level Int32 output of size
+    ///   `levelsPlan.last!.originalWidth × originalHeight`.
+    public func inverse2DInt32FullFusedFromCodeblocks(
+        codeblockBuffer: any MTLBuffer,
+        levelsPlan: [LevelScatterPlan],
+        initialLL: [Int32]?
+    ) async throws -> [Int32] {
+        guard !levelsPlan.isEmpty else {
+            throw J2KError.invalidParameter("levelsPlan must be non-empty")
+        }
+        // Validate inter-level chain: each level's LL dims must
+        // match the previous level's output dims.
+        for i in 1..<levelsPlan.count {
+            let prev = levelsPlan[i - 1]
+            let cur = levelsPlan[i]
+            guard cur.llWidth == prev.originalWidth,
+                  cur.llHeight == prev.originalHeight else {
+                throw J2KError.invalidParameter(
+                    "levelsPlan chain mismatch at level \(i): " +
+                    "expected LL=\(prev.originalWidth)×\(prev.originalHeight), " +
+                    "got \(cur.llWidth)×\(cur.llHeight)")
+            }
+        }
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let stride32 = MemoryLayout<Int32>.stride
+
+        let scatterPipeline = try await shaderLibrary.computePipeline(for: .subbandScatter)
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create full-fused cb")
+        }
+
+        var inFlight: [any MTLBuffer] = []
+        var currentLLBuffer: (any MTLBuffer)? = nil
+        var finalOutputBuffer: (any MTLBuffer)? = nil
+        var finalWidth = 0
+        var finalHeight = 0
+
+        for plan in levelsPlan {
+            // LL: first level uploads from CPU (initialLL or zeros);
+            // subsequent levels reuse previous level's output buffer.
+            let llBuffer: any MTLBuffer
+            if let prev = currentLLBuffer {
+                llBuffer = prev
+            } else {
+                let llCount = plan.llWidth * plan.llHeight
+                let buf = try await bufferPool.acquireBuffer(
+                    device: device, size: max(llCount * stride32, 1))
+                inFlight.append(buf)
+                let bytes = max(llCount * stride32, 1)
+                if let initial = initialLL, initial.count == llCount {
+                    initial.withUnsafeBytes { src in
+                        buf.contents().copyMemory(
+                            from: src.baseAddress!, byteCount: src.count)
+                    }
+                } else {
+                    memset(buf.contents(), 0, bytes)
+                }
+                llBuffer = buf
+            }
+
+            // Acquire per-subband output buffers (LH/HL/HH). These
+            // must be zero-initialised because the scatter kernel
+            // only writes within the descriptors' bounds — padded
+            // regions stay zero.
+            let lhCount = plan.lhWidth * plan.lhHeight
+            let hlCount = plan.hlWidth * plan.hlHeight
+            let hhCount = plan.hhWidth * plan.hhHeight
+            let lhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(lhCount * stride32, 1))
+            inFlight.append(lhBuffer)
+            let hlBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(hlCount * stride32, 1))
+            inFlight.append(hlBuffer)
+            let hhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(hhCount * stride32, 1))
+            inFlight.append(hhBuffer)
+            memset(lhBuffer.contents(), 0, max(lhCount * stride32, 1))
+            memset(hlBuffer.contents(), 0, max(hlCount * stride32, 1))
+            memset(hhBuffer.contents(), 0, max(hhCount * stride32, 1))
+
+            // Upload this level's scatter descriptors.
+            let descStride = MemoryLayout<J2KMetalSubbandScatterDescriptor>.stride
+            let descCount = plan.scatterDescriptors.count
+            let descBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(descCount * descStride, 1))
+            inFlight.append(descBuffer)
+            if descCount > 0 {
+                plan.scatterDescriptors.withUnsafeBufferPointer { src in
+                    descBuffer.contents().copyMemory(
+                        from: UnsafeRawPointer(src.baseAddress!),
+                        byteCount: descCount * descStride)
+                }
+            }
+
+            // Encoder 1: scatter — writes LH/HL/HH from codeblockBuffer
+            // (LL slot is unused since LL is sourced separately).
+            // We pass a placeholder for the LL binding; the scatter
+            // kernel never writes to it because no descriptor on
+            // this level targets subband 0 (LL) — LL is upstream.
+            if descCount > 0 {
+                guard let scatterEnc = cb.makeComputeCommandEncoder() else {
+                    throw J2KError.internalError("Failed to create scatter encoder")
+                }
+                let scatter = J2KMetalSubbandScatter(
+                    metalDevice: metalDevice,
+                    shaderLibrary: shaderLibrary,
+                    bufferPool: bufferPool)
+                try scatter.encode(
+                    into: scatterEnc, pipeline: scatterPipeline,
+                    descriptorBuffer: descBuffer,
+                    descriptorCount: descCount,
+                    codeblocksBuffer: codeblockBuffer,
+                    llBuffer: llBuffer,  // unused by scatter; LL not in descriptors
+                    lhBuffer: lhBuffer,
+                    hlBuffer: hlBuffer,
+                    hhBuffer: hhBuffer,
+                    maxBlockWidth: plan.maxBlockWidth,
+                    maxBlockHeight: plan.maxBlockHeight)
+                scatterEnc.endEncoding()
+            }
+
+            // Encoder 2 & 3: inverse 5/3 (horizontal + vertical) via
+            // the M4P-2 chainable API. Adds two compute encoders
+            // into the same cb; implicit memory barrier between them
+            // (and from the preceding scatter encoder).
+            let colLowBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: plan.originalWidth * plan.llHeight * stride32)
+            inFlight.append(colLowBuffer)
+            let colHighBuffer = try await bufferPool.acquireBuffer(
+                device: device,
+                size: max(plan.originalWidth * (plan.originalHeight / 2), 1) * stride32)
+            inFlight.append(colHighBuffer)
+            let outputBuffer = try await bufferPool.acquireBuffer(
+                device: device,
+                size: plan.originalWidth * plan.originalHeight * stride32)
+            inFlight.append(outputBuffer)
+
+            try await encodeInverse2DInt32(
+                into: cb,
+                ll: llBuffer, lh: lhBuffer, hl: hlBuffer, hh: hhBuffer,
+                colLow: colLowBuffer, colHigh: colHighBuffer,
+                output: outputBuffer,
+                originalWidth: plan.originalWidth,
+                originalHeight: plan.originalHeight,
+                llHeight: plan.llHeight)
+
+            currentLLBuffer = outputBuffer
+            finalOutputBuffer = outputBuffer
+            finalWidth = plan.originalWidth
+            finalHeight = plan.originalHeight
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Full-fused inverse 5/3 GPU dispatch failed: " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let result = readInt32Array(
+            from: finalOutputBuffer!, elementCount: finalWidth * finalHeight)
+
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return result
+    }
+    #else
+    public func inverse2DInt32FullFusedFromCodeblocks(
+        codeblockBuffer: Any,
+        levelsPlan: [LevelScatterPlan],
+        initialLL: [Int32]?
+    ) async throws -> [Int32] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+    #endif
+
     public func inverse2DInt32(
         subbands: J2KMetalDWTSubbandsInt32,
         backend: J2KMetalDWTBackend = .auto
