@@ -2473,36 +2473,79 @@ struct DecoderPipeline: Sendable {
 
             if useReversible53Int {
                 // Bit-exact reversible 5/3 path on Int32 buffers.
-                var currentLL: [Int32]
+                let initialLL: [Int32]
                 if let ll = llSubband {
-                    currentLL = padFlatInt32(ll.coefficients, srcW: ll.width, srcH: ll.height,
+                    initialLL = padFlatInt32(ll.coefficients, srcW: ll.width, srcH: ll.height,
                                               dstW: expectedLLW, dstH: expectedLLH)
                 } else {
-                    currentLL = [Int32](repeating: 0, count: expectedLLW * expectedLLH)
+                    initialLL = [Int32](repeating: 0, count: expectedLLW * expectedLLH)
                 }
 
-                for level in (1...levels).reversed() {
-                    let parentW = levelSizes[level - 1].width
-                    let parentH = levelSizes[level - 1].height
-                    let llW = levelSizes[level].width
-                    let llH = levelSizes[level].height
-                    let hlW = parentW - llW
-                    let lhH = parentH - llH
+                // v5.7.0: when a Metal session is in scope, build all
+                // levels' subband arrays up-front and dispatch the
+                // entire multi-level inverse 5/3 in one fused command
+                // buffer (output buffer of level N reused as LL input
+                // of level N-1 — no readback between levels). Single
+                // commit + await + final readback. Falls back to the
+                // per-level path otherwise (no behavioural change for
+                // sessionless callers).
+                var currentLL: [Int32] = initialLL
+                if useGPUHT, metalSession != nil {
+                    var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
+                    for level in (1...levels).reversed() {
+                        let parentW = levelSizes[level - 1].width
+                        let parentH = levelSizes[level - 1].height
+                        let llW = levelSizes[level].width
+                        let llH = levelSizes[level].height
+                        let hlW = parentW - llW
+                        let lhH = parentH - llH
 
-                    let hlInt = getSubbandAsInt32(compSubbands, level: level, subband: .hl,
-                                                   dstW: hlW, dstH: llH)
-                    let lhInt = getSubbandAsInt32(compSubbands, level: level, subband: .lh,
-                                                   dstW: llW, dstH: lhH)
-                    let hhInt = getSubbandAsInt32(compSubbands, level: level, subband: .hh,
-                                                   dstW: hlW, dstH: lhH)
+                        let hlInt = getSubbandAsInt32(compSubbands, level: level, subband: .hl,
+                                                       dstW: hlW, dstH: llH)
+                        let lhInt = getSubbandAsInt32(compSubbands, level: level, subband: .lh,
+                                                       dstW: llW, dstH: lhH)
+                        let hhInt = getSubbandAsInt32(compSubbands, level: level, subband: .hh,
+                                                       dstW: hlW, dstH: lhH)
 
-                    let subbandData = J2KMetalDWTSubbandsInt32(
-                        ll: currentLL, lh: lhInt, hl: hlInt, hh: hhInt,
-                        llWidth: llW, llHeight: llH,
-                        originalWidth: parentW, originalHeight: parentH
-                    )
+                        // Only the innermost (first iteration) level
+                        // uses the CPU-side LL; subsequent levels'
+                        // LL is the previous level's output buffer
+                        // (GPU-resident, no CPU allocation needed).
+                        // The fused method ignores `subbands.ll` for
+                        // levels after the first.
+                        let llForThisLevel: [Int32] =
+                            subbandsPerLevel.isEmpty ? initialLL : []
+                        subbandsPerLevel.append(J2KMetalDWTSubbandsInt32(
+                            ll: llForThisLevel, lh: lhInt, hl: hlInt, hh: hhInt,
+                            llWidth: llW, llHeight: llH,
+                            originalWidth: parentW, originalHeight: parentH))
+                    }
+                    currentLL = try await metalDWT.inverse2DInt32MultiLevelFused(
+                        subbandsPerLevel: subbandsPerLevel)
+                } else {
+                    for level in (1...levels).reversed() {
+                        let parentW = levelSizes[level - 1].width
+                        let parentH = levelSizes[level - 1].height
+                        let llW = levelSizes[level].width
+                        let llH = levelSizes[level].height
+                        let hlW = parentW - llW
+                        let lhH = parentH - llH
 
-                    currentLL = try await metalDWT.inverse2DInt32(subbands: subbandData, backend: .auto)
+                        let hlInt = getSubbandAsInt32(compSubbands, level: level, subband: .hl,
+                                                       dstW: hlW, dstH: llH)
+                        let lhInt = getSubbandAsInt32(compSubbands, level: level, subband: .lh,
+                                                       dstW: llW, dstH: lhH)
+                        let hhInt = getSubbandAsInt32(compSubbands, level: level, subband: .hh,
+                                                       dstW: hlW, dstH: lhH)
+
+                        let subbandData = J2KMetalDWTSubbandsInt32(
+                            ll: currentLL, lh: lhInt, hl: hlInt, hh: hhInt,
+                            llWidth: llW, llHeight: llH,
+                            originalWidth: parentW, originalHeight: parentH
+                        )
+
+                        currentLL = try await metalDWT.inverse2DInt32(subbands: subbandData, backend: .auto)
+                    }
                 }
 
                 componentData.append(currentLL.map { Double($0) })
