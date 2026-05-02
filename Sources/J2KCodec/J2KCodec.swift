@@ -236,4 +236,37 @@ public struct J2KDecoder: Sendable {
         let pipeline = DecoderPipeline()
         return try await pipeline.decodeGPU(data, progress: progress)
     }
+
+    /// Decodes JPEG 2000 data into an image with **opt-in GPU HTJ2K
+    /// entropy decode** in addition to the existing GPU inverse DWT.
+    ///
+    /// When the codestream is HTJ2K conformant cleanup-only AND Metal
+    /// is available, eligible codeblocks are batched through the
+    /// Metal HT cleanup kernel instead of decoded one at a time on
+    /// CPU. Ineligible blocks (refinement passes, custom format,
+    /// empty data, parse failure) fall through to the existing CPU
+    /// HT path automatically. The decoded output is bit-exact with
+    /// `decodeGPU` byte-for-byte; this entry point exists for callers
+    /// who want to opt in to the M2-prime production-integration path
+    /// shipping in v5.5.0.
+    ///
+    /// - Parameter data: The JPEG 2000 codestream data to decode.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decodeWithGPUHT(_ data: Data) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.useGPUHT = true
+        return try await pipeline.decodeGPU(data)
+    }
+
+    /// Decodes JPEG 2000 data with opt-in GPU HTJ2K entropy decode
+    /// and a progress callback. See ``decodeWithGPUHT(_:)``.
+    public func decodeWithGPUHT(
+        _ data: Data,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.useGPUHT = true
+        return try await pipeline.decodeGPU(data, progress: progress)
+    }
 }

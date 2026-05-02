@@ -209,6 +209,17 @@ struct CodestreamMetadata: Sendable {
 /// 6. Inverse Colour Transform — YCbCr → RGB conversion
 /// 7. Image Reconstruction — assemble final image
 struct DecoderPipeline: Sendable {
+    /// Opt-in flag for GPU HT cleanup-pass entropy decode.
+    ///
+    /// When `true` AND the codestream is HTJ2K conformant cleanup-only
+    /// AND Metal is available on this platform, eligible codeblocks are
+    /// batched through `J2KGPUHTDispatch` instead of decoding one at a
+    /// time on CPU. Ineligible codeblocks (refinement passes, custom
+    /// format, empty data, passCount == 0, or parse failure) fall
+    /// through to the existing CPU path. Default is `false`: production
+    /// HT decode remains on CPU until callers opt in.
+    var useGPUHT: Bool = false
+
     /// Decodes a JPEG 2000 codestream through the full pipeline.
     ///
     /// - Parameters:
@@ -1345,6 +1356,43 @@ struct DecoderPipeline: Sendable {
         }
         let useConformant = useHT && resolvedFormat == .conformant
 
+        // M2-prime early GPU pass. When opted in via `useGPUHT` and
+        // the codestream is conformant HT cleanup-only, batch every
+        // eligible codeblock through J2KGPUHTDispatch (one Metal
+        // kernel dispatch for the whole tile) before the existing
+        // per-block CPU loops run. Ineligible blocks (empty data,
+        // passCount == 0, custom format, refinement passes, parse
+        // failure) are NOT passed to GPU; they fall through to the
+        // CPU paths below. Blocks decoded on GPU are stashed in
+        // `gpuPreDecoded`, keyed by their original index in `blocks`.
+        // Bound to `let` so the parallel task group can capture it
+        // without Swift 6 concurrency complaining about a captured
+        // `var`.
+        let gpuPreDecoded: [Int: [Int32]] = try await {
+            guard useGPUHT, useHT, useConformant,
+                  J2KGPUHTDispatch.isAvailable, !blocks.isEmpty
+            else { return [:] }
+            var gpuInputs: [GPUHTBlock] = []
+            var inputOriginalIndices: [Int] = []
+            for (i, block) in blocks.enumerated() {
+                guard !block.data.isEmpty, block.passCount > 0 else { continue }
+                gpuInputs.append(GPUHTBlock(
+                    width: block.width,
+                    height: block.height,
+                    data: [UInt8](block.data),
+                    missingMSBs: block.zeroBitPlanes))
+                inputOriginalIndices.append(i)
+            }
+            if gpuInputs.isEmpty { return [:] }
+            let result = try await J2KGPUHTDispatch.decodeBatch(
+                blocks: gpuInputs)
+            var dict: [Int: [Int32]] = [:]
+            for (i, gpuInputIdx) in result.decodedBlockIndices.enumerated() {
+                dict[inputOriginalIndices[gpuInputIdx]] = result.results[i].coefficients
+            }
+            return dict
+        }()
+
         // Struct key avoids per-block string interpolation allocations.
         struct SubbandKey: Hashable {
             let componentIndex: Int; let level: Int; let subband: J2KSubband
@@ -1394,6 +1442,15 @@ struct DecoderPipeline: Sendable {
                         // One scratch buffer per task — reused across all blocks in the chunk
                         let scratch = useHT ? nil : DecoderScratchBuffers()
                         for i in chunkStart..<chunkEnd {
+                            // Skip blocks already decoded on GPU. The
+                            // empty `htPartiallyRefined` mask matches the
+                            // `useConformant` cleanup-only branch below
+                            // (cleanup-only blocks never carry partial
+                            // refinement).
+                            if let gpuCoeffs = gpuPreDecoded[i] {
+                                chunkResults.append((i, gpuCoeffs, []))
+                                continue
+                            }
                             let block = blocks[i]
                             let bitDepth = block.bandKb > 0 ? block.bandKb : componentBitDepths[block.componentIndex]
 
@@ -1498,13 +1555,20 @@ struct DecoderPipeline: Sendable {
         } else {
             // Sequential path for small block counts
             let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
-            for block in blocks {
+            for (blockIdx, block) in blocks.enumerated() {
                 let compInfo = metadata.components[block.componentIndex]
                 let bitDepth = block.bandKb > 0 ? block.bandKb : compInfo.bitDepth
                 let coeffs: [Int32]
                 let htMask: [Bool]
 
-                if useHT {
+                if let gpuCoeffs = gpuPreDecoded[blockIdx] {
+                    // GPU early pass already decoded this block.
+                    // Empty htMask matches the useConformant cleanup-only
+                    // branch (cleanup-only blocks never carry partial
+                    // refinement).
+                    coeffs = gpuCoeffs
+                    htMask = []
+                } else if useHT {
                     // HTJ2K path: use FBCOT block decoding.
                     let htDecoder = HTBlockDecoder(
                         width: block.width,
