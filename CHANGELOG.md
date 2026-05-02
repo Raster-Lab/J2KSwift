@@ -5,6 +5,108 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] — 2026-05-02
+
+**Minor Release — GPU HTJ2K decoder phase-3: dispatch overhead amortisation**
+
+This is a perf-focused follow-up to v5.3.0's GPU HTJ2K cleanup
+prototype. The kernel itself is unchanged, bit-exact with the CPU
+reference. What changed is how it's dispatched and how its
+auxiliary buffers are managed.
+
+### Scope
+
+The GPU HT cleanup decoder remains a **self-contained prototype
+exercised only by `J2KMetalHTCleanupTests`** — the production
+decoder (`J2KDecoderPipeline`) still routes HT entropy decode to
+the CPU path. End users will see no functional change in this
+release. The wins below are kernel-level and are a prerequisite for
+production integration in a later release.
+
+### Headline results
+
+- **GPU HT cleanup kernel speedup, release builds, 777 × 64×64
+  codeblocks on Apple M-series**:
+  - v5.3.0 (phase-2): cpu=6.69ms, gpu_kernel=6.14ms, **0.5× CPU**
+  - v5.4.0 (phase-3): cpu=6.76ms, gpu_kernel=4.93ms, **1.14× CPU**
+  - Cumulative: GPU went from ~half CPU speed to slightly above
+    CPU speed, all bit-exact, all tests green.
+- **Branch divergence is the new ceiling**: the leftover gap
+  between observed (1.14×) and theoretical (deep-SIMD ≫1×) wins
+  comes from variable-sized codeblocks within a SIMD warp. Threads
+  in a warp execute the most divergent control-flow path, so
+  utilisation depends on the workload's CB-size uniformity.
+
+### Added
+
+- **`GPU_HT_PHASE3_PLAN.md`** — written plan for the four phase-3
+  optimisations (M1: buffer pool + table caching, M2: command-buffer
+  fusion, M3: intra-CB parallelism, M4: ship). M1 and M3 are
+  complete in this release; M2 has been reframed as "M2-prime"
+  (production integration) for a later release after analysis
+  showed the original chain didn't yet exist in code.
+- **`J2KMetalShaderLibrary.vlcTableBuffers(device:vlc0:vlc1:)`** —
+  lazy MTLBuffer cache for the 2 × 1024-entry HT cleanup VLC
+  tables. Tables upload once on first call and reuse thereafter,
+  eliminating a per-decode 4 KB upload that was happening on every
+  invocation.
+
+### Changed
+
+- **`J2KMetalHTCleanup` and `J2KMetalHTMagSgn`** now use
+  `J2KMetalBufferPool` for per-frame buffers (descriptors,
+  codestream, output, widths) and explicitly return them after
+  readback. This matches the convention from `J2KMetalDWT`,
+  `J2KMetalQuantizer`, `J2KMetalColorTransform`, and `J2KMetalROI`,
+  but adds the missing `returnBuffer` step those callers historically
+  skipped — the pool was effectively empty for everyone previously.
+- **`J2KMetalHTCleanup` dispatch** changed from
+  `dispatchThreadgroups((blockCount,1,1), (1,1,1))` (one threadgroup
+  per codeblock, leaving 31 of 32 SIMD lanes idle per warp) to
+  `dispatchThreads((blockCount,1,1), (min(blockCount,64),1,1))`,
+  matching the phase-1 MagSgn convention. Apple's SIMD scheduler
+  now packs 64 codeblocks (2 warps) into each threadgroup. Kernel
+  uses only thread-private state and per-thread offset reads, so no
+  shared memory or barriers are required.
+
+### Fixed
+
+- **`J2KMetalHTMagSgn` readback** switched from
+  `Array.withUnsafeMutableBytes { copyBytes(from: MTLBuffer.contents()) }`
+  to `Array(unsafeUninitializedCapacity:) + memcpy`. The first form
+  is known to deadlock in release builds (see HT Cleanup readback
+  comment in v5.3.0); the buffer pool's actor hop in this release
+  shifted timing enough to start triggering the same deadlock path
+  in MagSgn too. The new pattern matches HT Cleanup and sidesteps
+  the issue.
+
+### Validation
+
+- `J2KMetalHTCleanupTests`: 7/7 release-mode pass, bit-exact with
+  CPU reference on all fixture sizes (4×4, 16×16, 64×64, 32-block
+  batch, 777-block speedup, all-zero, shader-load-only).
+- `J2KMetalHTMagSgnTests`: 4/4 release-mode pass.
+- `Scripts/run_cross_matrix.sh --check`: 126/126 cells match the
+  v5.3.0 baseline byte-for-byte. Note that this matrix exercises
+  the production decoder (CPU HT) — it confirms no regression to
+  unrelated systems but does not exercise the M3 changes directly.
+  M3's bit-exactness gate is the HTCleanup test suite.
+
+### What this is not
+
+- **Not a production GPU HT decode release.** End-user `j2k decode`
+  on HTJ2K codestreams still runs entirely on CPU. Wiring
+  `J2KMetalHTCleanup` into `J2KDecoderPipeline` (alongside a
+  dequantisation + subband-regrouping kernel between HT output and
+  DWT input) is the natural next milestone — provisionally tagged
+  M2-prime in `GPU_HT_PHASE3_PLAN.md` — and would be the release
+  that actually delivers GPU HT decode to users.
+- **Not a comparison release.** Numbers above are J2KSwift-internal
+  CPU-vs-GPU benchmarks on the same algorithm. v5.3.0's positioning
+  against OpenJPEG and OpenJPH still applies; nothing in v5.4.0
+  changes the codestream output, the cross-codec matrix, or the
+  encoded-size or wall-clock comparisons in the v5.3.0 release notes.
+
 ## [5.3.0] — 2026-05-01
 
 **Minor Release — GPU HTJ2K cleanup decoder + cross-codec verification harness**
