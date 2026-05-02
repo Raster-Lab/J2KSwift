@@ -291,29 +291,64 @@ struct DecoderPipeline: Sendable {
         tileData: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
     ) async throws -> J2KImage {
+        // v5.12.1: profile probes mirroring `decodeSingleTile`'s
+        // CPU-path probes. Set `J2K_PROFILE_DECODE=1` to surface
+        // per-stage timings on stderr; useful for sizing future
+        // post-DWT optimisations (GPU MCT fusion, int-to-double
+        // fusion, etc.) by ground-truth measurement instead of
+        // estimated cost.
+        let profileDecode = ProcessInfo.processInfo.environment["J2K_PROFILE_DECODE"] != nil
+        var t0 = DispatchTime.now()
+
         // Stages 2-4: same as CPU path
         reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(tileData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: extractTileData        = \(String(format: "%.1f", dt)) ms (\(codeBlocks.count) blocks)")
+        }
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
 
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: entropyDecoding         = \(String(format: "%.1f", dt)) ms (\(decodedBlocks.count) subbands, gpuBatch=\(gpuBatch != nil))")
+        }
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 1.0)
 
         reportProgress(progress, stage: .dequantization, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: dequantization          = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .dequantization, stageProgress: 1.0)
 
         // Stage 5: GPU inverse wavelet transform
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: metadata, gpuBatch: gpuBatch)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: inverseWaveletTransform = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 1.0)
 
         // Stages 6-7: GPU inverse colour transform
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         var rgbData = try await applyInverseColorTransformGPU(spatialData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: inverseColorTransform   = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .inverseColorTransform, stageProgress: 1.0)
 
+        t0 = DispatchTime.now()
         for (compIdx, compInfo) in metadata.components.enumerated() {
             guard compIdx < rgbData.count else { break }
             if !compInfo.signed {
@@ -323,9 +358,18 @@ struct DecoderPipeline: Sendable {
                 }
             }
         }
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: dcLevelUnshift          = \(String(format: "%.1f", dt)) ms")
+        }
 
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        t0 = DispatchTime.now()
         let image = try reconstructImage(rgbData, metadata: metadata)
+        if profileDecode {
+            let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+            print("PROFILE-GPU: reconstructImage        = \(String(format: "%.1f", dt)) ms")
+        }
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
         return image
     }
