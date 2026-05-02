@@ -5,6 +5,78 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.10.0] — 2026-05-02
+
+**Minor Release — Storage-mode pass: `.storageModePrivate` for GPU-only intermediates**
+
+Second milestone of the UMA optimization detour. Every buffer that
+is written by GPU and read by GPU (no CPU touch in between) now
+allocates as `.storageModePrivate`. The Metal stack picks faster
+memory layouts and skips implicit coherency syncs for those
+allocations. Buffers at the API boundary — descriptor uploads,
+codestream pool, final IDWT output — stay `.storageModeShared`.
+
+The release also fixes a buffer-pool prerequisite bug: the pool
+previously bucketed by size only, which would silently swap
+shared/private buffers across acquires. Now keys on
+`(size, storageMode)`.
+
+### What this release does (and doesn't) change
+
+**Architectural:** `colLow`/`colHigh` (DWT scratch), per-level
+`lh`/`hl`/`hh`, innermost LL when `initialLL == nil`, intermediate
+output (non-final levels), and `sgnMagBuffer` in HT cleanup all
+now allocate `.private`. CPU `memset` zero-init replaced with
+`MTLBlitCommandEncoder.fill(buffer:range:value:)` running in the
+same cb before the scatter encoder reads.
+
+**Perf:** the largest fixture (dx_002 2800×2288) gains +10% warm-
+process speedup vs v5.9.0 (2.27× → 2.51×). Smaller fixtures are
+within run-to-run noise — `.private` storage's win compounds with
+allocation size, and dx_002's per-tile working set is the only
+one where the layout / coherency-sync cost crosses the threshold
+cleanly.
+
+| fixture | size | v5.9.0 | v5.10.0 |
+| --- | ---:| ---:| ---:|
+| ct_001 | 512×512 | 1.59× | 1.57× |
+| ct_003 | 512×512 | 1.49× | 1.46× |
+| dx_002 | 2800×2288 | 2.27× | 2.51× |
+| mr_001 | 886×886 | 1.49× | 1.45× |
+| mr_002 | 180×180 | 1.14× | 1.25× |
+| px_001 | 2459×1316 | 1.86× | 1.79× |
+| xa_001 | 1024×1024 | 1.49× | 1.52× |
+
+### Added
+
+- **`J2KMetalBufferPoolConfiguration.PoolKey`** — internal struct
+  keying pooled buffers on `(size, storageMode)` instead of size
+  alone. Prevents silent swaps between strategies at acquire time.
+
+### Changed
+
+- **`J2KMetalDWT.inverse2DInt32FullFusedFromCodeblocks`** — per-level
+  output / scratch / subband buffers now allocate `.private` for
+  GPU-only intermediates; final-level output stays `.shared` for
+  caller readback.
+- **`J2KMetalHTCleanup.runIntegerMagnitude(_)` /
+  `runIntegerMagnitudeReturningBuffer(_)`** — `sgnMagBuffer` (cleanup
+  → dequant kernel intermediate) now `.private`. The output buffer
+  stays `.shared` because slow-path callers slice per-block via
+  `.contents()`.
+
+### Bit-exactness
+
+- All v5.9.0 gates pass byte-for-byte ✓
+- Buffer-pool segregation regression test implicit in
+  `testCorpusSessionAndSessionlessAgreeBitExact` ✓
+
+### Sessionless path
+
+Byte-for-byte identical to v5.9.0. The buffer pool fix applies to
+all callers but is observable behaviour-wise only on the
+fast-lane path that v5.9.0 introduced.
+
 ## [5.9.0] — 2026-05-02
 
 **Minor Release — Zero-copy CPU↔GPU boundary on the GPU HT decode path**
