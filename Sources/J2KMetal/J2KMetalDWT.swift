@@ -1775,7 +1775,7 @@ public actor J2KMetalDWT {
         let height = subbands.originalHeight
         let llW = subbands.llWidth
         let llH = subbands.llHeight
-        let halfWH = width / 2
+        _ = (llW, width / 2)  // captured for clarity; halfWH unused at this layer
         let halfHH = height / 2
 
         func makeBuffer(size: Int) throws -> any MTLBuffer {
@@ -1793,19 +1793,9 @@ public actor J2KMetalDWT {
         let lhBuffer = try makeBuffer(size: max(subbands.lh.count, 1) * stride32)
         let hlBuffer = try makeBuffer(size: max(subbands.hl.count, 1) * stride32)
         let hhBuffer = try makeBuffer(size: max(subbands.hh.count, 1) * stride32)
-        // Intermediate buffers after horizontal pass:
-        //   colLow  (width × llH)    = horizontal inverse of (LL + HL) per row
-        //   colHigh (width × halfHH) = horizontal inverse of (LH + HH) per row
         let colLowBuffer = try makeBuffer(size: width * llH * stride32)
         let colHighBuffer = try makeBuffer(size: max(width * halfHH, 1) * stride32)
         let outputBuffer = try makeBuffer(size: width * height * stride32)
-
-        let hPipeline = try await shaderLibrary.computePipeline(
-            for: .dwtInverse53HorizontalInt
-        )
-        let vPipeline = try await shaderLibrary.computePipeline(
-            for: .dwtInverse53VerticalInt
-        )
 
         subbands.ll.withUnsafeBytes { src in
             llBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -1826,69 +1816,114 @@ public actor J2KMetalDWT {
             }
         }
 
-        // Step 1 (horizontal inverse): per row, merge (LL+HL) into colLow
-        // and (LH+HH) into colHigh. Order matches CPU
-        // J2KDWT2DOptimizer.inverseTransform2DOptimized and the JPEG 2000
-        // spec (Annex F): inverse applies horizontal first, then vertical.
-        guard let cb1 = queue.makeCommandBuffer(),
-              let enc1 = cb1.makeComputeCommandEncoder() else {
+        // v5.7.0: encode both passes (horizontal + vertical) into a
+        // single command buffer via the new
+        // `encodeInverse2DInt32(into:...)` chainable API. Two separate
+        // compute encoders within one cb give an implicit memory
+        // barrier between them — vertical reads colLow/colHigh that
+        // horizontal writes, so the dependency is honoured. One
+        // commit + one await per inverse2D call instead of v5.6.0's
+        // two of each.
+        guard let cb = queue.makeCommandBuffer() else {
             throw J2KError.internalError("Failed to create command buffer")
         }
+        try await encodeInverse2DInt32(
+            into: cb,
+            ll: llBuffer, lh: lhBuffer, hl: hlBuffer, hh: hhBuffer,
+            colLow: colLowBuffer, colHigh: colHighBuffer,
+            output: outputBuffer,
+            originalWidth: width, originalHeight: height,
+            llHeight: llH)
+        cb.commit()
+        await cb.completed()
 
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Inverse 5/3 GPU dispatch failed: \(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        return readInt32Array(from: outputBuffer, elementCount: width * height)
+    }
+
+    /// Encode the bit-exact reversible 5/3 inverse 2D transform
+    /// into an existing command buffer, using caller-supplied input
+    /// (LL/LH/HL/HH) and output buffers. Two compute encoders are
+    /// added (horizontal then vertical); the implicit memory barrier
+    /// between encoders ensures vertical sees horizontal's writes
+    /// without an explicit commit / wait.
+    ///
+    /// Caller is responsible for buffer allocation + uploads + the
+    /// final `cb.commit() + await cb.completed()` + readback. Used
+    /// by the v5.7.0 fused HT-cleanup → DWT path so the entire
+    /// per-tile inverse DWT (across multiple decomposition levels)
+    /// can stay in one command buffer with no intermediate readback.
+    public func encodeInverse2DInt32(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        colLow: any MTLBuffer,
+        colHigh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        llHeight: Int
+    ) async throws {
+        let halfHH = originalHeight / 2
+
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53HorizontalInt)
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53VerticalInt)
+
+        // Pass 1: horizontal inverse. Two dispatches (LL+HL → colLow,
+        // LH+HH → colHigh) into one encoder.
+        guard let enc1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create horizontal compute encoder")
+        }
         enc1.setComputePipelineState(hPipeline)
-        var widthVal = UInt32(width)
+        var widthVal = UInt32(originalWidth)
 
-        // (LL + HL) → colLow, llH rows of width `width`
-        enc1.setBuffer(llBuffer, offset: 0, index: 0)
-        enc1.setBuffer(hlBuffer, offset: 0, index: 1)
-        enc1.setBuffer(colLowBuffer, offset: 0, index: 2)
-        var llHVal = UInt32(llH)
+        enc1.setBuffer(ll, offset: 0, index: 0)
+        enc1.setBuffer(hl, offset: 0, index: 1)
+        enc1.setBuffer(colLow, offset: 0, index: 2)
+        var llHVal = UInt32(llHeight)
         enc1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
         enc1.setBytes(&llHVal, length: MemoryLayout<UInt32>.stride, index: 4)
-        let hThreads1 = MTLSize(width: 1, height: llH, depth: 1)
-        let hThreadgroup1 = MTLSize(width: 1, height: min(llH, 64), depth: 1)
-        enc1.dispatchThreads(hThreads1, threadsPerThreadgroup: hThreadgroup1)
+        enc1.dispatchThreads(
+            MTLSize(width: 1, height: llHeight, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 1, height: min(llHeight, 64), depth: 1))
 
-        // (LH + HH) → colHigh, halfHH rows of width `width`
         if halfHH > 0 {
-            enc1.setBuffer(lhBuffer, offset: 0, index: 0)
-            enc1.setBuffer(hhBuffer, offset: 0, index: 1)
-            enc1.setBuffer(colHighBuffer, offset: 0, index: 2)
+            enc1.setBuffer(lh, offset: 0, index: 0)
+            enc1.setBuffer(hh, offset: 0, index: 1)
+            enc1.setBuffer(colHigh, offset: 0, index: 2)
             var halfHHVal = UInt32(halfHH)
             enc1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
             enc1.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
-            let hThreads2 = MTLSize(width: 1, height: halfHH, depth: 1)
-            let hThreadgroup2 = MTLSize(width: 1, height: min(halfHH, 64), depth: 1)
-            enc1.dispatchThreads(hThreads2, threadsPerThreadgroup: hThreadgroup2)
+            enc1.dispatchThreads(
+                MTLSize(width: 1, height: halfHH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 1, height: min(halfHH, 64), depth: 1))
         }
-
         enc1.endEncoding()
-        cb1.commit()
-        await cb1.completed()
 
-        // Step 2 (vertical inverse): per column, merge (colLow + colHigh)
-        // into final output of full height.
-        guard let cb2 = queue.makeCommandBuffer(),
-              let enc2 = cb2.makeComputeCommandEncoder() else {
-            throw J2KError.internalError("Failed to create command buffer")
+        // Pass 2: vertical inverse. Reads colLow + colHigh, writes
+        // output. New encoder ⇒ implicit memory barrier from pass 1.
+        guard let enc2 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create vertical compute encoder")
         }
-
         enc2.setComputePipelineState(vPipeline)
-        enc2.setBuffer(colLowBuffer, offset: 0, index: 0)
-        enc2.setBuffer(colHighBuffer, offset: 0, index: 1)
-        enc2.setBuffer(outputBuffer, offset: 0, index: 2)
-        var hVal = UInt32(height)
+        enc2.setBuffer(colLow, offset: 0, index: 0)
+        enc2.setBuffer(colHigh, offset: 0, index: 1)
+        enc2.setBuffer(output, offset: 0, index: 2)
+        var hVal = UInt32(originalHeight)
         enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
         enc2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
-
-        let vThreads = MTLSize(width: width, height: 1, depth: 1)
-        let vThreadgroup = MTLSize(width: min(width, 64), height: 1, depth: 1)
-        enc2.dispatchThreads(vThreads, threadsPerThreadgroup: vThreadgroup)
+        enc2.dispatchThreads(
+            MTLSize(width: originalWidth, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: min(originalWidth, 64), height: 1, depth: 1))
         enc2.endEncoding()
-        cb2.commit()
-        await cb2.completed()
-
-        return readInt32Array(from: outputBuffer, elementCount: width * height)
     }
 
     private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {
