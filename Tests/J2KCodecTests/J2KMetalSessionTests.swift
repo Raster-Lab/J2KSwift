@@ -184,10 +184,13 @@ final class J2KMetalSessionTests: XCTestCase {
                 colorSpace: .grayscale)
         }
 
-        // Header for the ad-hoc perf table.
+        // Header for the ad-hoc perf table. v5.9 adds a per-decode
+        // UMA-counter snapshot column (memcpy / contents / makeBuffer
+        // counts during ONE timed session run) so milestone deltas
+        // are measurable, not just timing-based.
         Self.say("")
-        Self.say("[corpus-warm] | fixture | size | sessionless (ms) | session (ms) | speedup |")
-        Self.say("[corpus-warm] | --- | ---:| ---:| ---:| ---:|")
+        Self.say("[corpus-warm] | fixture | size | sessionless (ms) | session (ms) | speedup | uma counts (one decode) |")
+        Self.say("[corpus-warm] | --- | ---:| ---:| ---:| ---:| --- |")
 
         for pgmURL in pgms {
             let pgmData = try Data(contentsOf: pgmURL)
@@ -216,14 +219,22 @@ final class J2KMetalSessionTests: XCTestCase {
                 sess.append(Date().timeIntervalSince(t0) * 1000)
             }
 
+            // v5.9 instrumentation snapshot: reset → ONE decode →
+            // snapshot. Reflects per-decode counters for the warm
+            // session path (the one we're optimising).
+            J2KMetalUMACounters.reset()
+            _ = try await decoder.decodeWithGPUHT(encoded, session: session)
+            let counters = J2KMetalUMACounters.snapshot()
+
             let medN = noSess.sorted()[noSess.count / 2]
             let medS = sess.sorted()[sess.count / 2]
             let speedup = medN / medS
 
             Self.say(String(format:
-                "[corpus-warm] | %@ | %dx%d | %.2f | %.2f | %.2fx |",
+                "[corpus-warm] | %@ | %dx%d | %.2f | %.2f | %.2fx | %@ |",
                 pgmURL.deletingPathExtension().lastPathComponent,
-                image.width, image.height, medN, medS, speedup))
+                image.width, image.height, medN, medS, speedup,
+                counters.description))
         }
     }
 

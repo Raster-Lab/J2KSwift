@@ -385,6 +385,7 @@ enum J2KGPUHTDispatch {
         var offsets: [Int: Int] = [:]
         var perBlockCoefficients: [Int: [Int32]] = [:]
         if totalSamples > 0 {
+            J2KMetalUMACounters.incrementContents()
             let bufferPtr = codeblockBuffer.contents()
                 .bindMemory(to: Int32.self, capacity: totalSamples)
             for (i, originalBlockIdx) in eligibleIndices.enumerated() {
@@ -392,6 +393,7 @@ enum J2KGPUHTDispatch {
                 let start = sampleOffsets[i]
                 let count = block.width * block.height
                 offsets[originalBlockIdx] = start
+                J2KMetalUMACounters.incrementMemcpy()
                 let coeffs = [Int32](unsafeUninitializedCapacity: count) { ptr, init_ in
                     memcpy(ptr.baseAddress!, bufferPtr + start,
                            count * MemoryLayout<Int32>.stride)

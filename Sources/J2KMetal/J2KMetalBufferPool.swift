@@ -218,6 +218,7 @@ public actor J2KMetalBufferPool {
                 "Failed to allocate Metal buffer of \(bucketSize) bytes"
             )
         }
+        J2KMetalUMACounters.incrementMakeBuffer()
 
         return buffer
     }

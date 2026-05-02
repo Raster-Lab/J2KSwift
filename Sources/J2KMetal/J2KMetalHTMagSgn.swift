@@ -147,6 +147,8 @@ public struct J2KMetalHTMagSgn: Sendable {
         let byteCount = outputSampleCount * MemoryLayout<UInt32>.stride
         let output: [UInt32]
         if outputSampleCount > 0 {
+            J2KMetalUMACounters.incrementContents()
+            J2KMetalUMACounters.incrementMemcpy()
             output = [UInt32](unsafeUninitializedCapacity: outputSampleCount) { ptr, initializedCount in
                 memcpy(ptr.baseAddress!, outputBuffer.contents(), byteCount)
                 initializedCount = outputSampleCount
