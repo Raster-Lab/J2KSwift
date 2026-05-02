@@ -243,12 +243,20 @@ public struct J2KMetalHTCleanup: Sendable {
         // sgnMagBuffer holds the cleanup kernel's UInt32 output and
         // is reused as the dequant kernel's input — same byte
         // count, just reinterpreted by the kernel binding.
+        // v5.10: `sgnMagBuffer` is a pure GPU intermediate — written
+        // by the cleanup kernel, read by the dequant kernel, never
+        // touched by CPU. `.private` lets Apple's Metal stack pick
+        // a faster layout and skip implicit coherency syncs. The
+        // descriptor / codestream / output buffers stay `.shared`
+        // because they are written / read by CPU at the boundary.
         let descriptorBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(blockCount * descriptorStride, 1))
         let codestreamBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(codestreamPool.count, 1))
         let sgnMagBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
+            device: device,
+            size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1),
+            strategy: .private)
         let outputBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(outputSampleCount * MemoryLayout<Int32>.stride, 1))
         let (vlc0Buffer, vlc1Buffer) = try await shaderLibrary.vlcTableBuffers(
@@ -387,12 +395,22 @@ public struct J2KMetalHTCleanup: Sendable {
         let descriptorStride = MemoryLayout<J2KMetalHTCleanupBlockDescriptor>.stride
         let blockCount = descriptors.count
 
+        // v5.10: `sgnMagBuffer` is a pure GPU intermediate (cleanup
+        // writes, dequant reads). Allocate `.private`. The output
+        // buffer is returned to the caller, which may CPU-read it
+        // (the v5.6.0 / v5.9d slow paths slice per-block via
+        // `.contents()`); keep it `.shared` for correctness across
+        // all caller paths. v5.12+ could split the entry points if
+        // we want a private-only `outputBuffer` for fast-lane-only
+        // callers.
         let descriptorBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(blockCount * descriptorStride, 1))
         let codestreamBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(codestreamPool.count, 1))
         let sgnMagBuffer = try await bufferPool.acquireBuffer(
-            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
+            device: device,
+            size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1),
+            strategy: .private)
         let outputBuffer = try await bufferPool.acquireBuffer(
             device: device, size: max(outputSampleCount * MemoryLayout<Int32>.stride, 1))
         let (vlc0Buffer, vlc1Buffer) = try await shaderLibrary.vlcTableBuffers(
