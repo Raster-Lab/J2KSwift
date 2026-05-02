@@ -45,6 +45,39 @@ final class J2KMetalSessionTests: XCTestCase {
             components: [component], colorSpace: .grayscale)
     }
 
+    /// Generate a synthetic 8-bit RGB image with deterministic values
+    /// per channel. Used by the v5.13b RGB MCT-fusion gate.
+    private func makeRGBImage(width: Int, height: Int, seed: UInt64) -> J2KImage {
+        var stateR = (seed | 1)
+        var stateG = (seed | 1) &* 0xDEADBEEF
+        var stateB = (seed | 1) &* 0xCAFEBABE
+        var rBytes = [UInt8](repeating: 0, count: width * height)
+        var gBytes = [UInt8](repeating: 0, count: width * height)
+        var bBytes = [UInt8](repeating: 0, count: width * height)
+        for i in 0..<(width * height) {
+            stateR = stateR &* 2862933555777941757 &+ 3037000493
+            stateG = stateG &* 2862933555777941757 &+ 3037000493
+            stateB = stateB &* 2862933555777941757 &+ 3037000493
+            rBytes[i] = UInt8(truncatingIfNeeded: stateR >> 32)
+            gBytes[i] = UInt8(truncatingIfNeeded: stateG >> 32)
+            bBytes[i] = UInt8(truncatingIfNeeded: stateB >> 32)
+        }
+        return J2KImage(
+            width: width, height: height,
+            components: [
+                J2KComponent(index: 0, bitDepth: 8, signed: false,
+                             width: width, height: height,
+                             data: Data(rBytes), sampleByteOrder: .littleEndian),
+                J2KComponent(index: 1, bitDepth: 8, signed: false,
+                             width: width, height: height,
+                             data: Data(gBytes), sampleByteOrder: .littleEndian),
+                J2KComponent(index: 2, bitDepth: 8, signed: false,
+                             width: width, height: height,
+                             data: Data(bBytes), sampleByteOrder: .littleEndian)
+            ],
+            colorSpace: .sRGB)
+    }
+
     /// Bit-exactness gate: decodeWithGPUHT(data) and
     /// decodeWithGPUHT(data, session: ...) must produce identical
     /// output bytes for the same codestream.
@@ -127,6 +160,75 @@ final class J2KMetalSessionTests: XCTestCase {
         XCTAssertGreaterThan(
             speedup, 1.0,
             "session-shared decodes should be faster than sessionless on warm runs")
+    }
+
+    /// v5.13b gate (test-fixture-only for now; v5.13b implementation
+    /// pending): asserts session and sessionless GPU-HT decodes
+    /// produce byte-identical output on a synthetic 3-channel RGB
+    /// image. The DICOM corpus is grayscale (single component) so
+    /// MCT (multi-component transform) is a no-op there. This test
+    /// covers the MCT branch — when v5.13b lands a GPU MCT-fusion
+    /// kernel, this gate prevents bit-exactness regressions.
+    func testRGBSessionAndSessionlessAgreeBitExact() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+
+        let image = makeRGBImage(width: 320, height: 240, seed: 0xC0FFEE02)
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            progressionOrder: .rpcl,
+            useHTJ2K: true,
+            useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
+
+        let decoder = J2KDecoder()
+        let session = J2KMetalSession()
+
+        let imgA = try await decoder.decodeWithGPUHT(encoded)
+        let imgB = try await decoder.decodeWithGPUHT(encoded, session: session)
+
+        XCTAssertEqual(imgA.components.count, 3, "RGB decode should produce 3 components")
+        XCTAssertEqual(imgB.components.count, 3, "RGB decode should produce 3 components")
+        for c in 0..<3 {
+            XCTAssertEqual(
+                imgA.components[c].data, imgB.components[c].data,
+                "RGB session vs sessionless component \(c) bytes diverged")
+        }
+    }
+
+    /// v5.14 gate (test-fixture-only for now; v5.14 implementation
+    /// pending): asserts session and sessionless GPU-HT decodes
+    /// agree on a 9/7 irreversible (lossy) codestream. The fast
+    /// lane currently gates on `!isIrreversible` so 9/7 takes the
+    /// slow lane on both paths; this test verifies at minimum the
+    /// slow-lane 9/7 paths agree end-to-end. When v5.14 extends
+    /// the fast lane to 9/7, this gate prevents bit-divergence
+    /// between the new fast-lane path and the existing slow-lane.
+    ///
+    /// Note: 9/7 is lossy, so neither path matches the original
+    /// input byte-for-byte. The gate is session vs sessionless
+    /// agreement (both should produce the same lossy output).
+    func test97LossySessionAndSessionlessAgreeBitExact() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+
+        let image = makeImage(width: 320, height: 240, bitDepth: 8, seed: 0xC0FFEE03)
+        let config = J2KEncodingConfiguration(
+            quality: 0.8, lossless: false,
+            progressionOrder: .rpcl,
+            useHTJ2K: true,
+            useReversibleFilter: false,  // 9/7 irreversible
+            htj2kBlockFormat: .conformant)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
+
+        let decoder = J2KDecoder()
+        let session = J2KMetalSession()
+
+        let imgA = try await decoder.decodeWithGPUHT(encoded)
+        let imgB = try await decoder.decodeWithGPUHT(encoded, session: session)
+
+        XCTAssertEqual(
+            imgA.components.first?.data, imgB.components.first?.data,
+            "9/7 lossy session vs sessionless decode bytes diverged")
     }
 
     /// v5.12 gate: multi-tile codestreams round-trip bit-exact
