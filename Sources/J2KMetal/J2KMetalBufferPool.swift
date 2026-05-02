@@ -154,8 +154,18 @@ public actor J2KMetalBufferPool {
     private var _statistics = J2KMetalBufferPoolStatistics()
 
     #if canImport(Metal)
-    /// Pooled buffers organised by size bucket for efficient matching.
-    private var pool: [Int: [any MTLBuffer]] = [:]
+    /// Pooled buffers organised by (size bucket, storage mode) for
+    /// efficient matching. v5.10: keying on storage mode keeps
+    /// `.storageModeShared` and `.storageModePrivate` buffers from
+    /// being silently swapped at acquire time — a request for
+    /// private must come back private, regardless of whether a
+    /// same-sized shared buffer is sitting in the pool. The pool
+    /// otherwise stays bucket-by-power-of-two like before.
+    struct PoolKey: Hashable {
+        let size: Int
+        let storageMode: MTLStorageMode
+    }
+    private var pool: [PoolKey: [any MTLBuffer]] = [:]
     #endif
 
     /// Total memory currently used by pooled buffers.
@@ -201,16 +211,19 @@ public actor J2KMetalBufferPool {
         _statistics.totalAllocations += 1
 
         let bucketSize = sizeBucket(for: size)
+        let effectiveStrategy = strategy ?? configuration.defaultStrategy
+        let storageMode = storageMode(for: effectiveStrategy)
 
-        // Try to reuse a pooled buffer
-        if configuration.enablePooling, let buffer = dequeueBuffer(size: bucketSize) {
+        // Try to reuse a pooled buffer matching BOTH size and
+        // storage mode. v5.10: shared/private must not be confused.
+        let key = PoolKey(size: bucketSize, storageMode: storageMode)
+        if configuration.enablePooling, let buffer = dequeueBuffer(key: key) {
             _statistics.poolHits += 1
             return buffer
         }
 
         // Allocate a new buffer
         _statistics.poolMisses += 1
-        let effectiveStrategy = strategy ?? configuration.defaultStrategy
         let options = resourceOptions(for: effectiveStrategy)
 
         guard let buffer = device.makeBuffer(length: bucketSize, options: options) else {
@@ -244,10 +257,11 @@ public actor J2KMetalBufferPool {
         }
 
         let bucket = sizeBucket(for: bufferSize)
-        if pool[bucket] == nil {
-            pool[bucket] = []
+        let key = PoolKey(size: bucket, storageMode: buffer.storageMode)
+        if pool[key] == nil {
+            pool[key] = []
         }
-        pool[bucket]!.append(buffer)
+        pool[key]!.append(buffer)
         pooledCount += 1
         pooledMemory += UInt64(bufferSize)
     }
@@ -285,12 +299,13 @@ public actor J2KMetalBufferPool {
     }
 
     #if canImport(Metal)
-    /// Dequeues a buffer from the pool matching the given size.
-    private func dequeueBuffer(size: Int) -> (any MTLBuffer)? {
-        guard var buffers = pool[size], !buffers.isEmpty else { return nil }
+    /// Dequeues a buffer from the pool matching the given (size,
+    /// storage mode) key.
+    private func dequeueBuffer(key: PoolKey) -> (any MTLBuffer)? {
+        guard var buffers = pool[key], !buffers.isEmpty else { return nil }
 
         let buffer = buffers.removeLast()
-        pool[size] = buffers
+        pool[key] = buffers
         pooledCount -= 1
         pooledMemory -= UInt64(buffer.length)
         return buffer
@@ -311,6 +326,25 @@ public actor J2KMetalBufferPool {
             #endif
         case .private:
             return .storageModePrivate
+        }
+    }
+
+    /// Converts an allocation strategy to its `MTLStorageMode`. Used
+    /// to key the pool so private/shared buffers don't get crossed.
+    private func storageMode(
+        for strategy: J2KMetalBufferAllocationStrategy
+    ) -> MTLStorageMode {
+        switch strategy {
+        case .shared:
+            return .shared
+        case .managed:
+            #if os(macOS)
+            return .managed
+            #else
+            return .shared
+            #endif
+        case .private:
+            return .private
         }
     }
     #endif

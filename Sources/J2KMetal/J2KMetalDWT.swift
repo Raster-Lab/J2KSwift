@@ -915,48 +915,74 @@ public actor J2KMetalDWT {
         var finalWidth = 0
         var finalHeight = 0
 
-        for plan in levelsPlan {
+        for (planIdx, plan) in levelsPlan.enumerated() {
+            let isLastLevel = (planIdx == levelsPlan.count - 1)
             // LL: first level uploads from CPU (initialLL or zeros);
             // subsequent levels reuse previous level's output buffer.
+            // v5.10: when `initialLL == nil` (the v5.9e fast-lane and
+            // v5.8 batch path), the LL buffer is GPU-only — scatter
+            // populates it before the IDWT encoder runs. Allocate as
+            // `.storageModePrivate` and use a blit fillBuffer encoder
+            // for the zero-init instead of CPU memset.
+            //
+            // When `initialLL != nil` (multi-level-fused / per-level
+            // / 9-7 paths), CPU writes the initial bytes — must
+            // stay `.shared`.
             let llBuffer: any MTLBuffer
             if let prev = currentLLBuffer {
                 llBuffer = prev
             } else {
                 let llCount = plan.llWidth * plan.llHeight
-                let buf = try await bufferPool.acquireBuffer(
-                    device: device, size: max(llCount * stride32, 1))
-                inFlight.append(buf)
                 let bytes = max(llCount * stride32, 1)
                 if let initial = initialLL, initial.count == llCount {
+                    let buf = try await bufferPool.acquireBuffer(
+                        device: device, size: bytes, strategy: .shared)
+                    inFlight.append(buf)
                     initial.withUnsafeBytes { src in
                         buf.contents().copyMemory(
                             from: src.baseAddress!, byteCount: src.count)
                     }
+                    llBuffer = buf
                 } else {
-                    memset(buf.contents(), 0, bytes)
+                    let buf = try await bufferPool.acquireBuffer(
+                        device: device, size: bytes, strategy: .private)
+                    inFlight.append(buf)
+                    if let blit = cb.makeBlitCommandEncoder() {
+                        blit.fill(buffer: buf, range: 0..<bytes, value: 0)
+                        blit.endEncoding()
+                    }
+                    llBuffer = buf
                 }
-                llBuffer = buf
             }
 
             // Acquire per-subband output buffers (LH/HL/HH). These
             // must be zero-initialised because the scatter kernel
             // only writes within the descriptors' bounds — padded
-            // regions stay zero.
+            // regions stay zero. v5.10: GPU-only intermediates →
+            // `.private`; CPU memset replaced with a blit fillBuffer
+            // encoder that runs in the same cb before the scatter
+            // encoder reads from these buffers.
             let lhCount = plan.lhWidth * plan.lhHeight
             let hlCount = plan.hlWidth * plan.hlHeight
             let hhCount = plan.hhWidth * plan.hhHeight
+            let lhBytes = max(lhCount * stride32, 1)
+            let hlBytes = max(hlCount * stride32, 1)
+            let hhBytes = max(hhCount * stride32, 1)
             let lhBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: max(lhCount * stride32, 1))
+                device: device, size: lhBytes, strategy: .private)
             inFlight.append(lhBuffer)
             let hlBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: max(hlCount * stride32, 1))
+                device: device, size: hlBytes, strategy: .private)
             inFlight.append(hlBuffer)
             let hhBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: max(hhCount * stride32, 1))
+                device: device, size: hhBytes, strategy: .private)
             inFlight.append(hhBuffer)
-            memset(lhBuffer.contents(), 0, max(lhCount * stride32, 1))
-            memset(hlBuffer.contents(), 0, max(hlCount * stride32, 1))
-            memset(hhBuffer.contents(), 0, max(hhCount * stride32, 1))
+            if let blit = cb.makeBlitCommandEncoder() {
+                blit.fill(buffer: lhBuffer, range: 0..<lhBytes, value: 0)
+                blit.fill(buffer: hlBuffer, range: 0..<hlBytes, value: 0)
+                blit.fill(buffer: hhBuffer, range: 0..<hhBytes, value: 0)
+                blit.endEncoding()
+            }
 
             // Upload this level's scatter descriptors.
             let descStride = MemoryLayout<J2KMetalSubbandScatterDescriptor>.stride
@@ -1007,16 +1033,29 @@ public actor J2KMetalDWT {
             // the M4P-2 chainable API. Adds two compute encoders
             // into the same cb; implicit memory barrier between them
             // (and from the preceding scatter encoder).
+            //
+            // v5.10: colLow/colHigh are per-iteration scratch — GPU
+            // writes (horizontal pass), GPU reads (vertical pass),
+            // never CPU. Always `.private`. The output buffer stays
+            // GPU-resident across iterations (becomes next level's
+            // LL via `currentLLBuffer`), so intermediate iterations
+            // can be `.private`; only the final iteration's output
+            // is `.shared` because the caller readback path calls
+            // `.contents()` on `finalOutputBuffer`.
             let colLowBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: plan.originalWidth * plan.llHeight * stride32)
+                device: device,
+                size: plan.originalWidth * plan.llHeight * stride32,
+                strategy: .private)
             inFlight.append(colLowBuffer)
             let colHighBuffer = try await bufferPool.acquireBuffer(
                 device: device,
-                size: max(plan.originalWidth * (plan.originalHeight / 2), 1) * stride32)
+                size: max(plan.originalWidth * (plan.originalHeight / 2), 1) * stride32,
+                strategy: .private)
             inFlight.append(colHighBuffer)
             let outputBuffer = try await bufferPool.acquireBuffer(
                 device: device,
-                size: plan.originalWidth * plan.originalHeight * stride32)
+                size: plan.originalWidth * plan.originalHeight * stride32,
+                strategy: isLastLevel ? .shared : .private)
             inFlight.append(outputBuffer)
 
             try await encodeInverse2DInt32(
