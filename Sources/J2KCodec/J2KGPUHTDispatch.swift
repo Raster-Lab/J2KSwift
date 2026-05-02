@@ -302,9 +302,18 @@ enum J2KGPUHTDispatch {
     /// Requires a `J2KMetalSession`: the codeblock buffer is
     /// allocated from the session's pool, and the returned buffer
     /// must be returned to the same pool.
+    ///
+    /// v5.9 zero-copy: `includePerBlockCoefficients = false` skips
+    /// the per-block memcpy slicing loop and leaves
+    /// `decodedBlockCoefficients` empty in the result. Use when the
+    /// caller plans to read codeblock data directly from the GPU
+    /// buffer (`bufferPtr + decodedBlockOutputOffsets[i]`) — this
+    /// is the v5.9 fast-lane gate. Default `true` preserves the
+    /// v5.8 dedupe behaviour for callers that consume both forms.
     static func decodeBatchGPUResident(
         blocks: [GPUHTBlock],
-        session: J2KMetalSession
+        session: J2KMetalSession,
+        includePerBlockCoefficients: Bool = true
     ) async throws -> GPUHTBatchGPUResidentResult? {
         guard isAvailable else {
             throw J2KError.unsupportedFeature(
@@ -382,24 +391,31 @@ enum J2KGPUHTDispatch {
         // here avoids a second GPU decode in callers that need
         // both [Int32] arrays AND the GPU buffer (i.e. the
         // fused-DWT pipeline path).
+        // Map original block index → output offset (in Int32 samples).
+        // Always populated. Per-block coefficient slicing is opt-in
+        // via `includePerBlockCoefficients`.
         var offsets: [Int: Int] = [:]
         var perBlockCoefficients: [Int: [Int32]] = [:]
         if totalSamples > 0 {
-            J2KMetalUMACounters.incrementContents()
-            let bufferPtr = codeblockBuffer.contents()
-                .bindMemory(to: Int32.self, capacity: totalSamples)
             for (i, originalBlockIdx) in eligibleIndices.enumerated() {
-                let block = blocks[originalBlockIdx]
-                let start = sampleOffsets[i]
-                let count = block.width * block.height
-                offsets[originalBlockIdx] = start
-                J2KMetalUMACounters.incrementMemcpy()
-                let coeffs = [Int32](unsafeUninitializedCapacity: count) { ptr, init_ in
-                    memcpy(ptr.baseAddress!, bufferPtr + start,
-                           count * MemoryLayout<Int32>.stride)
-                    init_ = count
+                offsets[originalBlockIdx] = sampleOffsets[i]
+            }
+            if includePerBlockCoefficients {
+                J2KMetalUMACounters.incrementContents()
+                let bufferPtr = codeblockBuffer.contents()
+                    .bindMemory(to: Int32.self, capacity: totalSamples)
+                for (i, originalBlockIdx) in eligibleIndices.enumerated() {
+                    let block = blocks[originalBlockIdx]
+                    let start = sampleOffsets[i]
+                    let count = block.width * block.height
+                    J2KMetalUMACounters.incrementMemcpy()
+                    let coeffs = [Int32](unsafeUninitializedCapacity: count) { ptr, init_ in
+                        memcpy(ptr.baseAddress!, bufferPtr + start,
+                               count * MemoryLayout<Int32>.stride)
+                        init_ = count
+                    }
+                    perBlockCoefficients[originalBlockIdx] = coeffs
                 }
-                perBlockCoefficients[originalBlockIdx] = coeffs
             }
         }
 

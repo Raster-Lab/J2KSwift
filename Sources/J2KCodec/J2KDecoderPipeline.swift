@@ -1365,6 +1365,34 @@ struct DecoderPipeline: Sendable {
         }
         let useConformant = useHT && resolvedFormat == .conformant
 
+        // v5.9 zero-copy fast-lane.
+        //
+        // When the v5.8 fused-DWT path is going to be active
+        // downstream (session + reversible 5/3 + conformant HT +
+        // all-blocks-eligible), the LH/HL/HH `[SubbandInfo]` we'd
+        // build via the CPU regroup loop are dead code — the fused
+        // DWT consumes them straight off the GPU codeblock buffer
+        // via the v5.8 scatter kernel. v5.9's invariant ("Arrays
+        // only at API boundaries; never inside the pipeline") is
+        // realised here by skipping the regroup entirely on this
+        // path and only producing the LL `[SubbandInfo]` that the
+        // outermost-level DWT initialLL upload still needs.
+        //
+        // Memcpy budget on the fast-lane: O(LL codeblocks per
+        // component) — typically 1–4 per component on 5-decomp
+        // images. Down from O(all codeblocks) on the slow-lane.
+        if !isIrreversible, useHT, useConformant, useGPUHT,
+           let session = metalSession, !blocks.isEmpty,
+           J2KGPUHTDispatch.isAvailable,
+           blocks.allSatisfy({ !$0.data.isEmpty && $0.passCount > 0 }) {
+            if let fastLane = try await runZeroCopyFastLane(
+                blocks: blocks, metadata: metadata, session: session)
+            {
+                return fastLane
+            }
+            // fall through to slow-lane below
+        }
+
         // M2-prime / v5.8 unified early GPU pass.
         //
         // - Sessionless or non-reversible-5/3: take the v5.6.0 path
@@ -1760,6 +1788,147 @@ struct DecoderPipeline: Sendable {
         }
 
         return (subbands, gpuBatch)
+    }
+
+    /// v5.9 zero-copy fast-lane: when the v5.8 fused DWT path is
+    /// going to run downstream, the only `[SubbandInfo]` consumed
+    /// is the outermost LL (for `initialLL` upload). Everything
+    /// else is read straight off the GPU codeblock buffer by the
+    /// scatter kernel. This helper takes that fast path:
+    /// decodeBatchGPUResident with no per-block coefficient slicing,
+    /// build LL-only [SubbandInfo] directly from buffer + offsets,
+    /// build the batch, return.
+    ///
+    /// Returns `nil` when the dispatcher reports any
+    /// `cpuFallbackIndices` (mixed-eligibility tile) — caller
+    /// falls through to the slow-lane.
+    private func runZeroCopyFastLane(
+        blocks: [CodeBlockInfo],
+        metadata: CodestreamMetadata,
+        session: J2KMetalSession
+    ) async throws -> (subbands: [SubbandInfo], batch: J2KGPUHTBatch?)? {
+        // Build dispatcher input + remember pipeline-block-index
+        // mapping for downstream offset remapping.
+        var gpuInputs: [GPUHTBlock] = []
+        var inputOriginalIndices: [Int] = []
+        gpuInputs.reserveCapacity(blocks.count)
+        inputOriginalIndices.reserveCapacity(blocks.count)
+        for (i, block) in blocks.enumerated() {
+            gpuInputs.append(GPUHTBlock(
+                width: block.width, height: block.height,
+                data: [UInt8](block.data),
+                missingMSBs: block.zeroBitPlanes))
+            inputOriginalIndices.append(i)
+        }
+
+        // v5.9: includePerBlockCoefficients=false → dispatcher
+        // skips the per-block memcpy slicing loop. We read LL
+        // blocks directly from the buffer below.
+        guard let result = try await J2KGPUHTDispatch.decodeBatchGPUResident(
+            blocks: gpuInputs, session: session,
+            includePerBlockCoefficients: false)
+        else { return nil }
+        guard result.cpuFallbackIndices.isEmpty else {
+            await session.bufferPool.returnBuffer(result.codeblockBuffer)
+            return nil
+        }
+
+        // Remap dispatcher's gpuInput-indexed offsets → pipeline-
+        // block-index keyed offsets.
+        var remappedOffsets: [Int: Int] = [:]
+        remappedOffsets.reserveCapacity(result.decodedBlockOutputOffsets.count)
+        for (gpuIdx, offset) in result.decodedBlockOutputOffsets {
+            remappedOffsets[inputOriginalIndices[gpuIdx]] = offset
+        }
+
+        // Build LL-only [SubbandInfo] from buffer + offsets. LL
+        // codeblocks live at level=decompositionLevels (innermost),
+        // typically 1–4 per component.
+        let llSubbands = buildLLSubbandsFromBuffer(
+            blocks: blocks, metadata: metadata,
+            codeblockBuffer: result.codeblockBuffer,
+            sampleCount: result.outputSampleCount,
+            offsets: remappedOffsets)
+
+        // Build the GPU batch (per-component, per-level scatter
+        // plans pointing into codeblockBuffer).
+        let batch = buildGPUHTBatchFromResult(
+            codeblockBuffer: result.codeblockBuffer,
+            outputSampleCount: result.outputSampleCount,
+            decodedBlockOutputOffsets: remappedOffsets,
+            blocks: blocks, metadata: metadata,
+            bufferPool: session.bufferPool)
+
+        return (llSubbands, batch)
+    }
+
+    /// v5.9 helper: build the LL `[SubbandInfo]` (one per component)
+    /// directly from the GPU codeblock buffer. Reads each LL block
+    /// via `bufferPtr + offset` instead of materialising the whole
+    /// per-block coefficient array first.
+    private func buildLLSubbandsFromBuffer(
+        blocks: [CodeBlockInfo],
+        metadata: CodestreamMetadata,
+        codeblockBuffer: any MTLBuffer,
+        sampleCount: Int,
+        offsets: [Int: Int]
+    ) -> [SubbandInfo] {
+        let levels = metadata.configuration.decompositionLevels
+        guard sampleCount > 0 else { return [] }
+
+        // Group LL codeblocks by component; track 2D dims of each
+        // (component, LL) pair as the max(x+w, y+h) across blocks.
+        struct LLAccumulator {
+            var blocks: [(blockIdx: Int, info: CodeBlockInfo)] = []
+            var width: Int = 0
+            var height: Int = 0
+        }
+        var byComponent: [Int: LLAccumulator] = [:]
+        for (i, block) in blocks.enumerated() {
+            guard block.subband == .ll, offsets[i] != nil else { continue }
+            byComponent[block.componentIndex, default: LLAccumulator()].blocks.append((i, block))
+            byComponent[block.componentIndex]!.width = max(
+                byComponent[block.componentIndex]!.width, block.x + block.width)
+            byComponent[block.componentIndex]!.height = max(
+                byComponent[block.componentIndex]!.height, block.y + block.height)
+        }
+
+        // One contents() per fast-lane decode for the buffer-pointer
+        // bind; per-LL-block memcpy below for the actual scatter.
+        // Counters stay measurable so v5.10 can tighten further.
+        J2KMetalUMACounters.incrementContents()
+        let bufferPtr = codeblockBuffer.contents()
+            .bindMemory(to: Int32.self, capacity: sampleCount)
+
+        var result: [SubbandInfo] = []
+        for (compIdx, acc) in byComponent {
+            guard acc.width > 0, acc.height > 0 else { continue }
+            var llCoeffs = [Int32](repeating: 0, count: acc.width * acc.height)
+            llCoeffs.withUnsafeMutableBufferPointer { dst in
+                for (blockIdx, info) in acc.blocks {
+                    guard let srcOffset = offsets[blockIdx] else { continue }
+                    let src = bufferPtr + srcOffset
+                    for r in 0..<info.height {
+                        let dstRow = (info.y + r) * acc.width + info.x
+                        let srcRow = r * info.width
+                        J2KMetalUMACounters.incrementMemcpy()
+                        memcpy(dst.baseAddress! + dstRow,
+                               src + srcRow,
+                               info.width * MemoryLayout<Int32>.stride)
+                    }
+                }
+            }
+            result.append(SubbandInfo(
+                componentIndex: compIdx,
+                level: levels,
+                subband: .ll,
+                coefficients: llCoeffs,
+                doubleCoefficients: nil,
+                width: acc.width,
+                height: acc.height,
+                htPartiallyRefined: []))
+        }
+        return result
     }
 
     /// v5.8 dedupe helper: build a `J2KGPUHTBatch` from an already-
