@@ -138,10 +138,18 @@ final class J2KMetalSessionTests: XCTestCase {
     /// AgreeBitExact` can't: fixtures where the GPU IDWT bails out
     /// to the CPU path (small images, custom wavelet kernels, …)
     /// and the fast lane therefore needs to skip itself rather than
-    /// feed LL-only `[SubbandInfo]` to a CPU IDWT that expects
-    /// every subband. mr_002 (180×180) is the canonical small-image
-    /// case — v5.9d's fast-lane gate is what keeps it from
-    /// regressing.
+    /// feed an empty `[SubbandInfo]` set to a CPU IDWT. mr_002
+    /// (180×180) is the canonical small-image case — v5.9d's fast-
+    /// lane gate keeps it on the slow lane.
+    ///
+    /// Also catches v5.9b's regression: the
+    /// `compSubbands.isEmpty` short-circuit in
+    /// `applyInverseWaveletTransformGPU` used to skip every
+    /// component when the fast lane returned `([], batch)` — the
+    /// IDWT path that consumed `gpuBatch` was unreachable on the
+    /// fast lane and session decode collapsed to DC-offset only.
+    /// v5.9e fixes that by checking `gpuBatch?.plansByComponent`
+    /// before falling back to all-zero output.
     func testCorpusSessionAndSessionlessAgreeBitExact() async throws {
         try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
 

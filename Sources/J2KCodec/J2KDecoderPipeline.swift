@@ -1862,23 +1862,13 @@ struct DecoderPipeline: Sendable {
             remappedOffsets[inputOriginalIndices[gpuIdx]] = offset
         }
 
-        // v5.9c: build LL-only `[SubbandInfo]` directly off the GPU
-        // codeblock buffer (one `contents()` bind + one memcpy per
-        // LL row). LH/HL/HH stay GPU-resident — they ride
-        // `buildGPUHTBatchFromResult` into the fused IDWT scatter.
-        // v5.9b had LL on the GPU scatter path too, but that
-        // produced a session/sessionless divergence on the synthetic
-        // 384×384 fixture (session output collapsed to DC offset
-        // only — see testSessionAndSessionlessAgreeBitExact). The LL
-        // bytes are a tiny fraction of total decoded data anyway, so
-        // routing LL through the CPU isn't a meaningful regression
-        // against the v5.9b numbers and restores bit-exactness.
-        let llSubbands = buildLLSubbandsFromBuffer(
-            blocks: blocks, metadata: metadata,
-            codeblockBuffer: result.codeblockBuffer,
-            sampleCount: result.outputSampleCount,
-            offsets: remappedOffsets)
-
+        // v5.9e: LL is scattered into its 2D buffer by the GPU at
+        // the innermost level (`buildGPUHTBatchFromResult` includes
+        // target=0 LL descriptors there). The fused IDWT consumes
+        // it directly — no CPU-side LL allocation, no per-row
+        // memcpy, no `[Int32]` array crossing the pipeline
+        // boundary. `buildLLSubbandsFromBuffer` stays in the file
+        // as a recoverable helper but is no longer called.
         let batch = buildGPUHTBatchFromResult(
             codeblockBuffer: result.codeblockBuffer,
             outputSampleCount: result.outputSampleCount,
@@ -1886,7 +1876,7 @@ struct DecoderPipeline: Sendable {
             blocks: blocks, metadata: metadata,
             bufferPool: session.bufferPool)
 
-        return (llSubbands, batch)
+        return ([], batch)
     }
 
     /// v5.9c helper: rebuild the LL `[SubbandInfo]` (one per
@@ -1998,30 +1988,24 @@ struct DecoderPipeline: Sendable {
                 var maxBlockH = 0
                 for (i, block) in blocks.enumerated() {
                     guard block.componentIndex == compIdx,
-                          block.level == level,
-                          block.subband != .ll,
                           let outputOffset = decodedBlockOutputOffsets[i]
                     else { continue }
-                    // v5.9c: LH/HL/HH only on the GPU scatter path.
-                    // v5.9b tried to ride LL through the same scatter
-                    // descriptor list (targetSubband=0), but the
-                    // resulting fused IDWT collapsed to DC-offset
-                    // output on the synthetic 384×384 fixture used by
-                    // testSessionAndSessionlessAgreeBitExact —
-                    // session decode produced constant 2048 for every
-                    // pixel, indicating LL cells weren't populated
-                    // even with the descriptor reaching the kernel.
-                    // The cause is in the LL+scatter+fused-IDWT
-                    // memory-model interaction (still under
-                    // investigation); rather than chase it deeper,
-                    // v5.9c reverts LL to the CPU-upload path the
-                    // caller already had in v5.7/v5.9a. LL is a few
-                    // hundred bytes per fixture — small share of the
-                    // win we keep from LH/HL/HH GPU scatter.
+                    // Codeblock-level enumeration in this codebase
+                    // numbers the deepest residual LL as decomLevel 0
+                    // (parser converts resLevel=0 → decomLevel=0) and
+                    // LH/HL/HH at decomposition level k as decomLevel k.
+                    // So LL belongs to the innermost iteration here
+                    // (level == levels), and LH/HL/HH belong to
+                    // whichever iteration's level matches their own.
+                    let isLLForInnermost =
+                        block.subband == .ll && block.level == 0 && level == levels
+                    let isDetailForThisLevel =
+                        block.subband != .ll && block.level == level
+                    guard isLLForInnermost || isDetailForThisLevel else { continue }
                     let target: UInt32
                     let stride: Int
                     switch block.subband {
-                    case .ll: continue
+                    case .ll: target = 0; stride = llW
                     case .lh: target = 1; stride = llW
                     case .hl: target = 2; stride = hlW
                     case .hh: target = 3; stride = hlW
@@ -2803,7 +2787,18 @@ struct DecoderPipeline: Sendable {
         for compIdx in 0...maxComponent {
             let compSubbands = subbands.filter { $0.componentIndex == compIdx }
 
-            if compSubbands.isEmpty {
+            // v5.9e: when the fast lane returns `([], batch)` —
+            // every subband is GPU-resident in the batch — the
+            // `compSubbands.isEmpty` early-out used to short-circuit
+            // straight to all-zero output and never reach the fused
+            // IDWT below. Skip the fast-out when the batch has plans
+            // for this component; the IDWT will source LL/LH/HL/HH
+            // straight off the GPU codeblock buffer via the scatter
+            // descriptors. Without this, the gpuBatch path is dead
+            // code on the v5.9 fast lane and session decode collapses
+            // to DC-offset-only output (the v5.9b bug).
+            let hasGPUBatchPlan = gpuBatch?.plansByComponent[compIdx] != nil
+            if compSubbands.isEmpty && !hasGPUBatchPlan {
                 componentData.append([Double](repeating: 0.0, count: metadata.width * metadata.height))
                 continue
             }
@@ -2824,14 +2819,15 @@ struct DecoderPipeline: Sendable {
             if useReversible53Int {
                 // Bit-exact reversible 5/3 path on Int32 buffers.
                 //
-                // v5.9c: LL always uploads from CPU. v5.9b tried
-                // routing LL through the GPU scatter kernel to keep
-                // the entire LL chain GPU-resident, but that
-                // produced a session-vs-sessionless divergence on
-                // the synthetic 384×384 fixture (session output
-                // collapsed to DC-offset only). LH/HL/HH continue
-                // to ride the GPU scatter — those are the bulk of
-                // the data, and LL is a few hundred bytes.
+                // v5.9e: when a `gpuBatch` is present (fast-lane or
+                // v5.8 path), LL rides the GPU scatter alongside
+                // LH/HL/HH and `inverse2DInt32FullFusedFromCodeblocks`
+                // is called with `initialLL: nil`. The CPU `initialLL`
+                // build below is a no-op on that path — the scatter
+                // kernel zero-fills the LL buffer and writes the
+                // codeblocks straight into it. The multi-level-fused
+                // and per-level paths (no batch) still consume
+                // `initialLL` from the LL `[SubbandInfo]`.
                 let initialLL: [Int32]
                 if let ll = llSubband {
                     initialLL = padFlatInt32(ll.coefficients, srcW: ll.width, srcH: ll.height,
@@ -2857,10 +2853,15 @@ struct DecoderPipeline: Sendable {
                 // command buffer as the multi-level inverse 5/3.
                 if let batch = gpuBatch,
                    let plansForComp = batch.plansByComponent[compIdx] {
+                    // v5.9e: LL is now scattered into its 2D buffer
+                    // by the GPU at the innermost level (the batch
+                    // includes target=0 LL descriptors there). The
+                    // fused IDWT zero-fills the LL buffer and lets
+                    // scatter populate it — no `initialLL` upload.
                     currentLL = try await metalDWT.inverse2DInt32FullFusedFromCodeblocks(
                         codeblockBuffer: batch.codeblockBuffer,
                         levelsPlan: plansForComp,
-                        initialLL: initialLL)
+                        initialLL: nil)
                 } else if useGPUHT, metalSession != nil {
                     var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
                     for level in (1...levels).reversed() {

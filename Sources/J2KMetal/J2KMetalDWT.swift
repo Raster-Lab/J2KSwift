@@ -972,11 +972,15 @@ public actor J2KMetalDWT {
                 }
             }
 
-            // Encoder 1: scatter — writes LH/HL/HH from codeblockBuffer
-            // (LL slot is unused since LL is sourced separately).
-            // We pass a placeholder for the LL binding; the scatter
-            // kernel never writes to it because no descriptor on
-            // this level targets subband 0 (LL) — LL is upstream.
+            // Encoder 1: scatter — writes LL/LH/HL/HH from
+            // codeblockBuffer. LL descriptors only fire at the
+            // innermost level (the deepest residual LL); other
+            // levels' LL is the previous level's output buffer
+            // (currentLLBuffer = outputBuffer at the bottom of this
+            // loop) and the scatter doesn't target it. The IDWT
+            // encoder runs after scatter ends — Metal's automatic
+            // ordering between successive compute encoders means
+            // the IDWT sees the populated LL/LH/HL/HH cells.
             if descCount > 0 {
                 guard let scatterEnc = cb.makeComputeCommandEncoder() else {
                     throw J2KError.internalError("Failed to create scatter encoder")
@@ -990,7 +994,7 @@ public actor J2KMetalDWT {
                     descriptorBuffer: descBuffer,
                     descriptorCount: descCount,
                     codeblocksBuffer: codeblockBuffer,
-                    llBuffer: llBuffer,  // unused by scatter; LL not in descriptors
+                    llBuffer: llBuffer,
                     lhBuffer: lhBuffer,
                     hlBuffer: hlBuffer,
                     hhBuffer: hhBuffer,
