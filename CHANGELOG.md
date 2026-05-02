@@ -5,6 +5,107 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.0] — 2026-05-02
+
+**Minor Release — Multi-level fused inverse 5/3 DWT (HT decode → DWT cb fusion)**
+
+Builds on v5.6.0's persistent session + GPU dequant. Eliminates the
+per-level commit/wait/readback overhead in the inverse 5/3 DWT
+path: when a `J2KMetalSession` is in scope, all decomposition
+levels of the inverse 2D transform now chain into a single command
+buffer, with the output buffer of level N reused as the LL input
+of level N-1 — no readback between levels.
+
+### Measured impact
+
+Apple M2, release builds, single Swift process decoding the
+DICOM corpus via SDK with `decodeWithGPUHT(_:session:)`:
+
+| fixture | size | v5.6.0 | v5.7.0 | delta |
+| --- | ---:| ---:| ---:| ---:|
+| ct_001 | 512×512 | 1.35× | **1.69×** | +25% |
+| ct_003 | 512×512 | 1.21× | 1.05× | -13% |
+| dx_002 | 2800×2288 | 1.35× | **1.81×** | +34% |
+| mr_001 | 886×886 | 1.16× | 1.32× | +14% |
+| mr_002 | 180×180 | 1.16× | 1.16× | 0% |
+| px_001 | 2459×1316 | 1.26× | **1.93×** | +53% |
+| xa_001 | 1024×1024 | 1.27× | 1.63× | +28% |
+
+Largest images (where the per-level readback was most painful)
+see nearly **2× speedup** over v5.6.0. Median ~1.63×.
+
+For a 5-level DWT on a 2800×2288 image, this release eliminates
+~14 MB of cumulative CPU↔GPU readback per component (5 levels of
+geometric-series-shaped intermediate transfers) plus 5 round-trip
+commit/await pairs, replaced by 1 of each.
+
+### Added
+
+- **`J2KMetalDWT.inverse2DInt32MultiLevelFused(subbandsPerLevel:)`** —
+  chains all decomposition levels of the bit-exact reversible 5/3
+  inverse 2D transform into a single command buffer. Each level's
+  output buffer is reused as the next level's LL input (GPU-
+  resident); validates the chain at the boundary (level N+1's LL
+  dimensions must match level N's output).
+- **`J2KMetalDWT.encodeInverse2DInt32(into:cb:...)`** — chainable
+  entry point that takes pre-allocated GPU input/output buffers
+  and an existing command buffer; encodes both horizontal +
+  vertical passes into two compute encoders (implicit memory
+  barrier between them) without committing.
+- **`J2KMetalSubbandScatter`** — GPU scatter kernel +
+  Swift wrapper that turns a per-codeblock Int32 buffer into
+  per-subband 2D buffers. Not yet used in the production
+  pipeline; landed as scaffolding for v5.8's full HT-cleanup →
+  DWT fusion via GPU scatter.
+- **`Sources/J2KMetal/J2KMetalSubbandScatter.swift`**,
+  **`Tests/J2KMetalTests/J2KMetalSubbandScatterTests.swift`** — 3
+  bit-exactness tests vs an inline CPU reference scatter.
+- **`j2k_subband_scatter` MSL kernel** added to both
+  `J2KMetalShaderSource.kernelSource` and
+  `Sources/J2KMetal/J2KShaders.metal`.
+- **`GPU_HT_DWT_FUSION_PLAN.md`** — five-milestone plan; M4P-1, 2,
+  3 complete in this release. M4P-4 (perf measurement) and M4P-5
+  (release notes) folded into the M4P-3 commit.
+
+### Changed
+
+- **`Sources/J2KMetal/J2KMetalDWT.swift`** — `inverse2DGPUInt32`
+  is now a thin wrapper around `encodeInverse2DInt32`. Uses one
+  command buffer instead of v5.6.0's two; same observable
+  behaviour byte-for-byte.
+- **`Sources/J2KCodec/J2KDecoderPipeline.swift`** —
+  `applyInverseWaveletTransformGPUInt32`'s reversible 5/3 path
+  now branches on `useGPUHT && metalSession != nil`: when set,
+  builds all levels' subband data up-front and dispatches one
+  fused multi-level call; otherwise stays on the v5.6.0
+  per-level path.
+- **`Sources/J2KMetal/J2KMetalShaderLibrary.swift`** — new
+  `subbandScatter` shader function enum case.
+- **`Sources/J2KCore/J2KCore.swift`** — `getVersion()` returns
+  "5.7.0".
+- `VERSION` bumped 5.6.0 → 5.7.0.
+
+### What this release does not change
+
+- **Sessionless path is byte-for-byte identical to v5.6.0.**
+  Callers using `decodeWithGPUHT(_:)` (no session) get exactly
+  the same behaviour.
+- **9/7 irreversible (lossy) DWT** still uses the v5.6.0 per-level
+  path. The fusion is reversible-5/3-only.
+- **Cold CLI** numbers from v5.5.0 are unchanged. Fixing them
+  still requires `.metallib` bundling (wired but dormant since
+  v5.6.0).
+- **Cross-codec matrix** unaffected — exercises the default CPU
+  decode path, which doesn't touch the fused path.
+
+### Out-of-scope-but-tracked follow-ups
+
+- **Full HT-cleanup → DWT fusion** using the M4P-1 scatter
+  kernel: keep the codeblock buffer GPU-resident from HT cleanup
+  through subband scatter to DWT, all in one cb. v5.8 candidate.
+- **9/7 irreversible fusion** for lossy decodes.
+- **`.metallib` bundling** for cold-CLI wins.
+
 ## [5.6.0] — 2026-05-02
 
 **Minor Release — Persistent Metal session + GPU dequantisation kernel**
