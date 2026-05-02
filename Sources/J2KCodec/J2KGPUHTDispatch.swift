@@ -36,6 +36,10 @@ import Foundation
 import J2KCore
 import J2KMetal
 
+#if canImport(Metal)
+@preconcurrency import Metal
+#endif
+
 /// One codeblock for GPU HT batch dispatch. Decoupled from the
 /// pipeline's private `CodeBlockInfo` so this dispatcher is unit-
 /// testable in isolation.
@@ -70,6 +74,47 @@ struct GPUHTBatchResult: Sendable {
     let results: [GPUHTBlockResult]
     /// Indices that were not decoded (parse failure, empty data,
     /// etc.). Caller should run these through the CPU HT path.
+    let cpuFallbackIndices: [Int]
+}
+
+/// v5.8.0: GPU-resident HT batch — the codeblock buffer plus
+/// per-(component, level) scatter plans, ready to feed straight
+/// into `J2KMetalDWT.inverse2DInt32FullFusedFromCodeblocks`.
+///
+/// The pipeline's `applyEntropyDecoding` builds this when the
+/// fused path is active (`useGPUHT && session && reversible53 &&
+/// conformantHT && all-blocks-eligible`); the inverse-DWT stage
+/// consumes it. After the fused dispatch completes, the caller is
+/// responsible for returning `codeblockBuffer` to `bufferPool`.
+struct J2KGPUHTBatch: Sendable {
+    let codeblockBuffer: any MTLBuffer
+    let outputSampleCount: Int
+    /// Per component → per level (innermost first) → scatter plan.
+    let plansByComponent: [Int: [J2KMetalDWT.LevelScatterPlan]]
+    /// The pool that owns `codeblockBuffer`. After the fused
+    /// dispatch, return the buffer to this pool.
+    let bufferPool: J2KMetalBufferPool
+}
+
+/// v5.8.0: GPU-resident dispatch result. Holds the codeblock
+/// output buffer (Int32 integer-magnitude) without reading it
+/// back to host. Caller (typically the pipeline's
+/// `applyEntropyDecoding`) is responsible for returning the
+/// buffer to the pool when done — typically by passing it to
+/// `J2KMetalDWT.inverse2DInt32FullFusedFromCodeblocks` and
+/// returning after the fused dispatch completes.
+///
+/// `decodedBlockOutputOffsets` maps each decoded block's INPUT
+/// index in the original `blocks` array to its OUTPUT offset (in
+/// Int32 elements) inside the codeblock buffer. Pipeline uses
+/// this to build per-level scatter descriptors that map
+/// codeblocks to their (subband, x, y) destinations.
+struct GPUHTBatchGPUResidentResult: Sendable {
+    let codeblockBuffer: any MTLBuffer
+    let outputSampleCount: Int
+    /// [original block index → output offset in codeblockBuffer
+    /// (Int32 elements)]. Eligible blocks only.
+    let decodedBlockOutputOffsets: [Int: Int]
     let cpuFallbackIndices: [Int]
 }
 
@@ -235,6 +280,104 @@ enum J2KGPUHTDispatch {
         return GPUHTBatchResult(
             decodedBlockIndices: eligibleIndices,
             results: results,
+            cpuFallbackIndices: fallbackIndices)
+    }
+
+    /// v5.8: GPU-resident decode. Same eligibility filter and batch
+    /// dispatch as `decodeBatch`, but returns the codeblock output
+    /// buffer (Int32 integer-magnitude) without reading back to
+    /// host. Caller takes ownership of the returned buffer —
+    /// typically passes it to
+    /// `J2KMetalDWT.inverse2DInt32FullFusedFromCodeblocks` and
+    /// returns it to the pool after the fused dispatch completes.
+    ///
+    /// Requires a `J2KMetalSession`: the codeblock buffer is
+    /// allocated from the session's pool, and the returned buffer
+    /// must be returned to the same pool.
+    static func decodeBatchGPUResident(
+        blocks: [GPUHTBlock],
+        session: J2KMetalSession
+    ) async throws -> GPUHTBatchGPUResidentResult? {
+        guard isAvailable else {
+            throw J2KError.unsupportedFeature(
+                "GPU HT dispatch requires Metal (not available on this platform)")
+        }
+        if blocks.isEmpty { return nil }
+
+        // Pass 1: filter eligible blocks, build descriptors and pool
+        // (same shape as decodeBatch).
+        var eligibleIndices: [Int] = []
+        var fallbackIndices: [Int] = []
+        var descriptors: [J2KMetalHTCleanupBlockDescriptor] = []
+        var pool: [UInt8] = []
+        var sampleOffsets: [Int] = []
+
+        for (i, block) in blocks.enumerated() {
+            if block.data.isEmpty {
+                fallbackIndices.append(i)
+                continue
+            }
+            guard let parsed = HTBlockLayoutConformant.parse(block: block.data)
+            else {
+                fallbackIndices.append(i)
+                continue
+            }
+
+            let magsgnOffset = UInt32(pool.count)
+            pool.append(contentsOf: parsed.magsgn)
+            let melVlcOffset = UInt32(pool.count)
+            pool.append(contentsOf: parsed.melVlc)
+
+            let outputOffset = sampleOffsets.last
+                .map { $0 + blocks[eligibleIndices.last!].width *
+                       blocks[eligibleIndices.last!].height } ?? 0
+            sampleOffsets.append(outputOffset)
+
+            descriptors.append(J2KMetalHTCleanupBlockDescriptor(
+                magsgnOffset: magsgnOffset,
+                magsgnLength: UInt32(parsed.magsgn.count),
+                melVlcOffset: melVlcOffset,
+                melVlcLength: UInt32(parsed.scup),
+                outputOffset: UInt32(outputOffset),
+                width: UInt32(block.width),
+                height: UInt32(block.height),
+                missingMSBs: UInt32(block.missingMSBs)))
+            eligibleIndices.append(i)
+        }
+
+        // No eligible blocks ⇒ no GPU work to do; signal caller to
+        // fall back to the v5.7.0 path entirely (return nil).
+        if eligibleIndices.isEmpty {
+            return nil
+        }
+
+        let lastEligibleIdx = eligibleIndices.last!
+        let totalSamples = sampleOffsets.last! +
+            blocks[lastEligibleIdx].width * blocks[lastEligibleIdx].height
+
+        // Reuse the session's HT cleanup instance (so device + library
+        // + buffer pool match the one the DWT path will use).
+        let cleanupKernel = J2KMetalHTCleanup(
+            metalDevice: session.device,
+            shaderLibrary: session.shaderLibrary,
+            bufferPool: session.bufferPool)
+        let (codeblockBuffer, _, _) = try await cleanupKernel.runIntegerMagnitudeReturningBuffer(
+            descriptors: descriptors,
+            codestreamPool: pool,
+            vlcTable0: vlcDecoderTable0Conformant,
+            vlcTable1: vlcDecoderTable1Conformant,
+            outputSampleCount: totalSamples)
+
+        // Map original block index → output offset (in Int32 samples)
+        var offsets: [Int: Int] = [:]
+        for (i, originalBlockIdx) in eligibleIndices.enumerated() {
+            offsets[originalBlockIdx] = sampleOffsets[i]
+        }
+
+        return GPUHTBatchGPUResidentResult(
+            codeblockBuffer: codeblockBuffer,
+            outputSampleCount: totalSamples,
+            decodedBlockOutputOffsets: offsets,
             cpuFallbackIndices: fallbackIndices)
     }
 }

@@ -297,7 +297,7 @@ struct DecoderPipeline: Sendable {
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
 
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
-        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 1.0)
 
         reportProgress(progress, stage: .dequantization, stageProgress: 0.0)
@@ -306,7 +306,7 @@ struct DecoderPipeline: Sendable {
 
         // Stage 5: GPU inverse wavelet transform
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 0.0)
-        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: metadata)
+        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: metadata, gpuBatch: gpuBatch)
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 1.0)
 
         // Stages 6-7: GPU inverse colour transform
@@ -401,7 +401,7 @@ struct DecoderPipeline: Sendable {
         // Stage 3: Entropy decoding
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
         t0 = DispatchTime.now()
-        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
+        let (decodedBlocks, _) = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
         if profileDecode {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             print("PROFILE: entropyDecoding         = \(String(format: "%.1f", dt)) ms (\(decodedBlocks.count) subbands)")
@@ -501,7 +501,7 @@ struct DecoderPipeline: Sendable {
         tileMeta.tileSize = (width: tileW, height: tileH)
 
         let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
-        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        let (decodedBlocks, _) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         var spatialDataTile = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
         try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
@@ -532,9 +532,9 @@ struct DecoderPipeline: Sendable {
         tileMeta.tileSize = (width: tileW, height: tileH)
 
         let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
-        let decodedBlocks = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
-        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta)
+        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta, gpuBatch: gpuBatch)
         var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
 
         for (compIdx, compInfo) in metadata.components.enumerated() {
@@ -1340,7 +1340,7 @@ struct DecoderPipeline: Sendable {
     private func applyEntropyDecoding(
         _ blocks: [CodeBlockInfo],
         metadata: CodestreamMetadata
-    ) async throws -> [SubbandInfo] {
+    ) async throws -> (subbands: [SubbandInfo], batch: J2KGPUHTBatch?) {
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
             isIrreversible = true
@@ -1706,7 +1706,146 @@ struct DecoderPipeline: Sendable {
             ))
         }
 
-        return subbands
+        // v5.8: build the GPU-resident HT batch when the
+        // full-fusion conditions are met. This is run alongside
+        // the existing CPU regroup above so the [SubbandInfo]
+        // output is unchanged — the batch is an additional payload
+        // consumed by the inverse-DWT stage when present.
+        // (First-cut implementation runs HT decode twice: once for
+        // the array path above, once here for the buffer. v5.9
+        // will dedupe.)
+        let gpuBatch = try await buildGPUHTBatch(
+            blocks: blocks, metadata: metadata,
+            useHT: useHT, useConformant: useConformant)
+
+        return (subbands, gpuBatch)
+    }
+
+    /// v5.8: build the GPU-resident HT batch (codeblock buffer +
+    /// per-(component, level) scatter plans) when the full-fusion
+    /// conditions are met. Returns nil when conditions aren't met
+    /// or when no blocks are eligible for GPU decode.
+    private func buildGPUHTBatch(
+        blocks: [CodeBlockInfo],
+        metadata: CodestreamMetadata,
+        useHT: Bool, useConformant: Bool
+    ) async throws -> J2KGPUHTBatch? {
+        guard useGPUHT, let session = metalSession,
+              useHT, useConformant,
+              !blocks.isEmpty,
+              J2KGPUHTDispatch.isAvailable else { return nil }
+        // Only the reversible 5/3 path is fused in v5.8.
+        if case .irreversible97 = metadata.configuration.waveletFilter {
+            return nil
+        }
+
+        // Build dispatcher input + track which CodeBlockInfo each
+        // input block corresponds to so we can map output offsets
+        // back to placement metadata.
+        var gpuInputs: [GPUHTBlock] = []
+        var inputOriginalIndices: [Int] = []
+        for (i, block) in blocks.enumerated() {
+            guard !block.data.isEmpty, block.passCount > 0 else { continue }
+            gpuInputs.append(GPUHTBlock(
+                width: block.width, height: block.height,
+                data: [UInt8](block.data),
+                missingMSBs: block.zeroBitPlanes))
+            inputOriginalIndices.append(i)
+        }
+        if gpuInputs.isEmpty { return nil }
+
+        guard let result = try await J2KGPUHTDispatch.decodeBatchGPUResident(
+            blocks: gpuInputs, session: session) else { return nil }
+
+        // Any ineligible (parsing-failure) blocks force a fallback
+        // — we don't yet support partial fused dispatch.
+        if !result.cpuFallbackIndices.isEmpty {
+            // Return the buffer so it doesn't leak — but skip the
+            // fused path. A fresh decode will run via the v5.7.0
+            // [SubbandInfo] route.
+            await session.bufferPool.returnBuffer(result.codeblockBuffer)
+            return nil
+        }
+
+        // Compute per-(component, level) levelSizes and group block
+        // descriptors by (component, level).
+        let levels = metadata.configuration.decompositionLevels
+        var plansByComponent: [Int: [J2KMetalDWT.LevelScatterPlan]] = [:]
+
+        let maxComponent = max(
+            metadata.componentCount - 1,
+            blocks.map { $0.componentIndex }.max() ?? 0)
+
+        for compIdx in 0...maxComponent {
+            // Per-component level sizes (matches DWT path computation).
+            let compW = metadata.width / max(metadata.components[compIdx].subsamplingX, 1)
+            let compH = metadata.height / max(metadata.components[compIdx].subsamplingY, 1)
+            var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
+            for _ in 0..<levels {
+                let (pw, ph) = levelSizes.last!
+                levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
+            }
+
+            // Innermost first per LevelScatterPlan ordering contract.
+            var levelPlans: [J2KMetalDWT.LevelScatterPlan] = []
+            for level in (1...levels).reversed() {
+                let parentW = levelSizes[level - 1].width
+                let parentH = levelSizes[level - 1].height
+                let llW = levelSizes[level].width
+                let llH = levelSizes[level].height
+                let hlW = parentW - llW
+                let lhH = parentH - llH
+
+                var descs: [J2KMetalSubbandScatterDescriptor] = []
+                var maxBlockW = 0
+                var maxBlockH = 0
+                for (i, block) in blocks.enumerated() {
+                    guard block.componentIndex == compIdx,
+                          block.level == level,
+                          let outputOffset = result.decodedBlockOutputOffsets[i]
+                    else { continue }
+                    // Skip LL blocks at this level — LL is uploaded
+                    // from CPU on the first DWT iteration via the
+                    // [SubbandInfo] path; the scatter only handles
+                    // LH/HL/HH at all levels.
+                    let target: UInt32
+                    let stride: Int
+                    switch block.subband {
+                    case .ll: continue
+                    case .lh: target = 1; stride = llW
+                    case .hl: target = 2; stride = hlW
+                    case .hh: target = 3; stride = hlW
+                    }
+                    descs.append(J2KMetalSubbandScatterDescriptor(
+                        codeblockOffset: UInt32(outputOffset),
+                        blockWidth: UInt32(block.width),
+                        blockHeight: UInt32(block.height),
+                        subbandX: UInt32(block.x),
+                        subbandY: UInt32(block.y),
+                        subbandStride: UInt32(stride),
+                        targetSubband: target))
+                    maxBlockW = max(maxBlockW, block.width)
+                    maxBlockH = max(maxBlockH, block.height)
+                }
+
+                levelPlans.append(J2KMetalDWT.LevelScatterPlan(
+                    scatterDescriptors: descs,
+                    llWidth: llW, llHeight: llH,
+                    lhWidth: llW, lhHeight: lhH,
+                    hlWidth: hlW, hlHeight: llH,
+                    hhWidth: hlW, hhHeight: lhH,
+                    originalWidth: parentW, originalHeight: parentH,
+                    maxBlockWidth: max(maxBlockW, 1),
+                    maxBlockHeight: max(maxBlockH, 1)))
+            }
+            plansByComponent[compIdx] = levelPlans
+        }
+
+        return J2KGPUHTBatch(
+            codeblockBuffer: result.codeblockBuffer,
+            outputSampleCount: result.outputSampleCount,
+            plansByComponent: plansByComponent,
+            bufferPool: session.bufferPool)
     }
 
     // MARK: - Stage 4: Dequantization
@@ -2393,7 +2532,8 @@ struct DecoderPipeline: Sendable {
     /// Falls back to CPU when Metal is unavailable or for custom filters.
     private func applyInverseWaveletTransformGPU(
         _ subbands: [SubbandInfo],
-        metadata: CodestreamMetadata
+        metadata: CodestreamMetadata,
+        gpuBatch: J2KGPUHTBatch? = nil
     ) async throws -> [[Double]] {
         // Fall back to CPU for custom wavelet kernels only
         if metadata.configuration.waveletKernelConfiguration != nil {
@@ -2490,7 +2630,19 @@ struct DecoderPipeline: Sendable {
                 // per-level path otherwise (no behavioural change for
                 // sessionless callers).
                 var currentLL: [Int32] = initialLL
-                if useGPUHT, metalSession != nil {
+                // v5.8 full-fused path: if the entropy stage built
+                // a GPU batch and we have plans for this component,
+                // route to inverse2DInt32FullFusedFromCodeblocks —
+                // skips the CPU-side LH/HL/HH upload per level by
+                // running the GPU scatter kernel inside the same
+                // command buffer as the multi-level inverse 5/3.
+                if let batch = gpuBatch,
+                   let plansForComp = batch.plansByComponent[compIdx] {
+                    currentLL = try await metalDWT.inverse2DInt32FullFusedFromCodeblocks(
+                        codeblockBuffer: batch.codeblockBuffer,
+                        levelsPlan: plansForComp,
+                        initialLL: initialLL)
+                } else if useGPUHT, metalSession != nil {
                     var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
                     for level in (1...levels).reversed() {
                         let parentW = levelSizes[level - 1].width
@@ -2591,6 +2743,12 @@ struct DecoderPipeline: Sendable {
 
                 componentData.append(vDSPConvert.floatsToDoubles(currentLL))
             }
+        }
+
+        // v5.8: return the codeblock buffer to the pool now that
+        // all components have completed their fused dispatches.
+        if let batch = gpuBatch {
+            await batch.bufferPool.returnBuffer(batch.codeblockBuffer)
         }
 
         return componentData
