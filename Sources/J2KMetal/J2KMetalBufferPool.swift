@@ -48,6 +48,26 @@ public struct J2KMetalBufferPoolConfiguration: Sendable {
     /// Whether to enable buffer reuse pooling.
     public var enablePooling: Bool
 
+    /// v5.11: whether to back pool misses with `MTLHeap` sub-
+    /// allocations. When `true`, a same-storage-mode `MTLHeap` is
+    /// lazily created on first miss for each storage mode (shared,
+    /// private). Sub-allocations from a heap consolidate Metal's
+    /// per-buffer driver bookkeeping into one resource. Falls
+    /// through to `device.makeBuffer` for requests that exceed the
+    /// heap's free space. Apple Silicon only — Intel/AMD-Mac
+    /// hardware skips heaps and falls through to per-buffer
+    /// allocation. Defaults to `true`.
+    public var enableHeapBacking: Bool
+
+    /// v5.11: target size for each `MTLHeap`. The plan picks
+    /// `max(96 MB, peak-observed-resident)` — 96 MB covers the
+    /// largest fixture in the DICOM corpus (2800×2288 single-comp,
+    /// ~32 MB single-component peak; ~96 MB for 3-component). One
+    /// heap per storage mode means total resident ≈ 2× this on a
+    /// session that exercises both `.shared` and `.private`.
+    /// Defaults to 96 MB.
+    public var heapSize: Int
+
     /// Creates a new buffer pool configuration.
     ///
     /// - Parameters:
@@ -55,16 +75,22 @@ public struct J2KMetalBufferPoolConfiguration: Sendable {
     ///   - maxPoolMemory: Maximum pool memory in bytes. Defaults to `256 MB`.
     ///   - defaultStrategy: Default allocation strategy. Defaults to `.shared`.
     ///   - enablePooling: Whether to enable pooling. Defaults to `true`.
+    ///   - enableHeapBacking: Whether to back misses with `MTLHeap`. Defaults to `true`.
+    ///   - heapSize: Target heap size per storage mode in bytes. Defaults to `96 MB`.
     public init(
         maxPoolSize: Int = 64,
         maxPoolMemory: UInt64 = 256 * 1024 * 1024,
         defaultStrategy: J2KMetalBufferAllocationStrategy = .shared,
-        enablePooling: Bool = true
+        enablePooling: Bool = true,
+        enableHeapBacking: Bool = true,
+        heapSize: Int = 96 * 1024 * 1024
     ) {
         self.maxPoolSize = maxPoolSize
         self.maxPoolMemory = maxPoolMemory
         self.defaultStrategy = defaultStrategy
         self.enablePooling = enablePooling
+        self.enableHeapBacking = enableHeapBacking
+        self.heapSize = heapSize
     }
 
     /// Default buffer pool configuration.
@@ -166,6 +192,15 @@ public actor J2KMetalBufferPool {
         let storageMode: MTLStorageMode
     }
     private var pool: [PoolKey: [any MTLBuffer]] = [:]
+
+    /// v5.11: per-storage-mode `MTLHeap` cache. Created lazily on
+    /// first miss for a given storage mode; reused across decodes.
+    /// Sub-allocations from a heap collapse Metal's per-buffer
+    /// driver bookkeeping into one resident resource. When a heap
+    /// can't satisfy a request (free space < bucket size, or
+    /// `MTLHeap.makeBuffer` returns `nil`), the pool falls through
+    /// to `device.makeBuffer` for that allocation.
+    private var heaps: [MTLStorageMode: any MTLHeap] = [:]
     #endif
 
     /// Total memory currently used by pooled buffers.
@@ -222,9 +257,23 @@ public actor J2KMetalBufferPool {
             return buffer
         }
 
-        // Allocate a new buffer
+        // Allocate a new buffer.
         _statistics.poolMisses += 1
         let options = resourceOptions(for: effectiveStrategy)
+
+        // v5.11: try heap-backed sub-allocation first. The heap is
+        // lazily created per storage mode and reused across decodes.
+        // Heap allocation does NOT increment `makeBufferCount` —
+        // sub-buffers are bookkept as one heap allocation in the
+        // driver, not as N independent buffers. Falls through to
+        // `device.makeBuffer` only when the heap is full or
+        // unavailable (e.g. discrete-GPU Macs).
+        if configuration.enableHeapBacking,
+           let heap = ensureHeap(device: device, storageMode: storageMode),
+           bucketSize <= heap.maxAvailableSize(alignment: 16 * 1024),
+           let heapBuf = heap.makeBuffer(length: bucketSize, options: options) {
+            return heapBuf
+        }
 
         guard let buffer = device.makeBuffer(length: bucketSize, options: options) else {
             throw J2KError.internalError(
@@ -234,6 +283,36 @@ public actor J2KMetalBufferPool {
         J2KMetalUMACounters.incrementMakeBuffer()
 
         return buffer
+    }
+
+    /// v5.11: returns the heap for the given storage mode, creating
+    /// it on first call. Returns `nil` if heap creation isn't
+    /// supported on the device (Intel/AMD Macs without
+    /// `MTLDeviceSupportsFamily(.apple4)`) — the caller falls
+    /// through to `device.makeBuffer` in that case.
+    private func ensureHeap(
+        device: any MTLDevice,
+        storageMode: MTLStorageMode
+    ) -> (any MTLHeap)? {
+        if let existing = heaps[storageMode] { return existing }
+
+        // Heap support gate. Apple Silicon (M-series) supports
+        // private + shared heaps; older Intel Macs only support
+        // private. Skip heap entirely if the family check fails.
+        guard device.supportsFamily(.apple4) else { return nil }
+
+        let descriptor = MTLHeapDescriptor()
+        descriptor.size = configuration.heapSize
+        descriptor.storageMode = storageMode
+        descriptor.type = .automatic  // Metal manages residency / aliasing
+        descriptor.hazardTrackingMode = .tracked
+
+        guard let heap = device.makeHeap(descriptor: descriptor) else {
+            return nil
+        }
+        heap.label = "J2KMetalBufferPool.heap[\(storageMode.rawValue)]"
+        heaps[storageMode] = heap
+        return heap
     }
 
     /// Returns a buffer to the pool for potential reuse.
