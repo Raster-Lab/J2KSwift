@@ -348,7 +348,149 @@ public struct J2KMetalHTCleanup: Sendable {
             totalSamples: totalSamples)
         return (output, stats)
     }
+    #endif
+
+    /// v5.8.0: same as `runIntegerMagnitude` but returns the GPU
+    /// output buffer (Int32 integer-magnitude) instead of reading it
+    /// back as `[Int32]`. The caller takes ownership of the buffer
+    /// and is responsible for returning it to the buffer pool when
+    /// done — typically by passing it through to the next stage of
+    /// a fused HT → scatter → DWT pipeline.
+    ///
+    /// Use this entry point when the codeblock output stays
+    /// GPU-resident across pipeline stages. Use `runIntegerMagnitude`
+    /// when the caller needs `[Int32]` arrays.
+    #if canImport(Metal)
+    public func runIntegerMagnitudeReturningBuffer(
+        descriptors: [J2KMetalHTCleanupBlockDescriptor],
+        codestreamPool: [UInt8],
+        vlcTable0: [UInt16],
+        vlcTable1: [UInt16],
+        outputSampleCount: Int
+    ) async throws -> (
+        outputBuffer: any MTLBuffer,
+        outputSampleCount: Int,
+        stats: Statistics
+    ) {
+        precondition(vlcTable0.count == 1024, "vlcTable0 must have 1024 entries")
+        precondition(vlcTable1.count == 1024, "vlcTable1 must have 1024 entries")
+
+        try await metalDevice.initialize()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        try await shaderLibrary.loadShaders(device: device)
+
+        let descriptorStride = MemoryLayout<J2KMetalHTCleanupBlockDescriptor>.stride
+        let blockCount = descriptors.count
+
+        let descriptorBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(blockCount * descriptorStride, 1))
+        let codestreamBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(codestreamPool.count, 1))
+        let sgnMagBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<Int32>.stride, 1))
+        let (vlc0Buffer, vlc1Buffer) = try await shaderLibrary.vlcTableBuffers(
+            device: device, vlc0: vlcTable0, vlc1: vlcTable1)
+
+        descriptors.withUnsafeBufferPointer { src in
+            descriptorBuffer.contents().copyMemory(
+                from: UnsafeRawPointer(src.baseAddress!),
+                byteCount: blockCount * descriptorStride)
+        }
+        if !codestreamPool.isEmpty {
+            codestreamPool.withUnsafeBytes { src in
+                codestreamBuffer.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+
+        let cleanupPipeline = try await shaderLibrary.computePipeline(for: .htCleanupDecode)
+        let dequantPipeline = try await shaderLibrary.computePipeline(for: .htDequant)
+
+        let wallStart = currentTime()
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create Metal command buffer")
+        }
+
+        guard let cleanupEncoder = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create cleanup encoder")
+        }
+        cleanupEncoder.setComputePipelineState(cleanupPipeline)
+        cleanupEncoder.setBuffer(descriptorBuffer, offset: 0, index: 0)
+        cleanupEncoder.setBuffer(codestreamBuffer, offset: 0, index: 1)
+        cleanupEncoder.setBuffer(vlc0Buffer, offset: 0, index: 2)
+        cleanupEncoder.setBuffer(vlc1Buffer, offset: 0, index: 3)
+        cleanupEncoder.setBuffer(sgnMagBuffer, offset: 0, index: 4)
+        var bc = UInt32(blockCount)
+        cleanupEncoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 5)
+        let cleanupGroupWidth = max(1, min(blockCount, 64))
+        cleanupEncoder.dispatchThreads(
+            MTLSize(width: blockCount, height: 1, depth: 1),
+            threadsPerThreadgroup:
+                MTLSize(width: cleanupGroupWidth, height: 1, depth: 1))
+        cleanupEncoder.endEncoding()
+
+        guard let dequantEncoder = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create dequant encoder")
+        }
+        dequantEncoder.setComputePipelineState(dequantPipeline)
+        dequantEncoder.setBuffer(descriptorBuffer, offset: 0, index: 0)
+        dequantEncoder.setBuffer(sgnMagBuffer, offset: 0, index: 1)
+        dequantEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
+        dequantEncoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 3)
+        let maxSamples = descriptors.reduce(0) {
+            max($0, Int($1.width) * Int($1.height))
+        }
+        dequantEncoder.dispatchThreads(
+            MTLSize(width: max(maxSamples, 1), height: max(blockCount, 1), depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+        dequantEncoder.endEncoding()
+
+        cb.commit()
+        await cb.completed()
+        let wallEnd = currentTime()
+
+        if cb.status == .error {
+            let errDesc = cb.error?.localizedDescription ?? "(no description)"
+            throw J2KError.internalError("HT cleanup+dequant GPU chain failed: \(errDesc)")
+        }
+
+        let gpuKernelTime = max(0.0, cb.gpuEndTime - cb.gpuStartTime)
+
+        // Return the descriptor + codestream + sgnMag buffers to
+        // the pool (no longer needed). The OUTPUT buffer is NOT
+        // returned — caller owns it and will pass it to the next
+        // pipeline stage.
+        let pool = bufferPool
+        let toReturn = [descriptorBuffer, codestreamBuffer, sgnMagBuffer]
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        let totalSamples = descriptors.reduce(0) { $0 + Int($1.width) * Int($1.height) }
+        let stats = Statistics(
+            wallClockSeconds: wallEnd - wallStart,
+            gpuKernelSeconds: gpuKernelTime,
+            blockCount: blockCount,
+            totalSamples: totalSamples)
+
+        return (outputBuffer, outputSampleCount, stats)
+    }
     #else
+    public func runIntegerMagnitudeReturningBuffer(
+        descriptors: [J2KMetalHTCleanupBlockDescriptor],
+        codestreamPool: [UInt8],
+        vlcTable0: [UInt16],
+        vlcTable1: [UInt16],
+        outputSampleCount: Int
+    ) async throws -> (
+        outputBuffer: Any,
+        outputSampleCount: Int,
+        stats: Statistics
+    ) {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+
     public func run(
         descriptors: [J2KMetalHTCleanupBlockDescriptor],
         codestreamPool: [UInt8],
