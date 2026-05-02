@@ -5,6 +5,83 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.9.0] — 2026-05-02
+
+**Minor Release — Zero-copy CPU↔GPU boundary on the GPU HT decode path**
+
+First milestone of the UMA (Unified Memory Architecture) optimization
+detour. Removes intermediate `[Int32]` / `[Double]` allocations
+inside the GPU HT decode pipeline by passing `MTLBuffer` references
+through pipeline stages and routing LL coefficients through the GPU
+scatter kernel. The hot-path UMA counter `memcpyCount` drops from
+~70–1620 (varies by fixture) to **1** — the single final-output
+readback at the API boundary.
+
+The release shipped through five iterations on a feature branch
+(v5.9a → v5.9e). v5.9b and v5.9c incidentally introduced
+regressions that were caught by tests and rolled back — v5.9.0
+ships the working v5.9e state with all bit-exactness gates green.
+
+### What this release does (and doesn't) change
+
+**Architectural:** the v5.6.0 session opt-in path now skips the CPU
+regroup loop entirely when the v5.8 fused-DWT downstream is
+available. LL/LH/HL/HH all flow through the GPU scatter kernel into
+the fused IDWT; only the final IDWT output crosses back to CPU.
+
+**Perf:** modest wall-clock improvement (1.5×–2.5× warm vs
+sessionless, vs 1.5× median in v5.8). The structural value is the
+zero-copy hot path — prerequisite for v5.10's storage-mode pass.
+
+| fixture | size | v5.8 fused | v5.9.0 |
+| --- | ---:| ---:| ---:|
+| ct_001 | 512×512 | 1.39× | 1.59× |
+| ct_003 | 512×512 | 1.51× | 1.49× |
+| dx_002 | 2800×2288 | 1.73× | 2.27× |
+| mr_001 | 886×886 | 1.36× | 1.49× |
+| mr_002 | 180×180 | 1.22× | 1.14× |
+| px_001 | 2459×1316 | 1.69× | 1.86× |
+| xa_001 | 1024×1024 | 1.58× | 1.49× |
+
+### Added
+
+- **`J2KMetalUMACounters`** — lightweight `nonisolated(unsafe)`
+  process-global counter set tracking `memcpyCount`,
+  `bufferContentsAccessCount`, and `makeBufferCount`. Zero-overhead
+  in release; surfaced via the `testCorpusWarmProcessPerf` benchmark.
+- **`runZeroCopyFastLane`** in `DecoderPipeline` — bypasses the CPU
+  regroup loop when (session present, reversible 5/3, conformant
+  HT, all blocks eligible, GPU IDWT will run downstream).
+- **`testCorpusSessionAndSessionlessAgreeBitExact`** — corpus-wide
+  bit-exactness gate that catches regressions the synthetic
+  384×384 test misses (small images, non-power-of-2 LL chains).
+- **`vDSPConvert.int32sToDoubles`** — Accelerate-backed bit-exact
+  Int32→Double conversion for the post-DWT step.
+
+### Bug fixes (caught during this release cycle)
+
+- **`compSubbands.isEmpty` short-circuit in
+  `applyInverseWaveletTransformGPU`** — predates the fast lane;
+  was producing all-zero output when the fast lane returned
+  `([], batch)`. Now also checks `gpuBatch?.plansByComponent[compIdx]`
+  before the early-out.
+- **Fast-lane gate must mirror GPU-IDWT preconditions** — when the
+  IDWT falls back to CPU (`pixelCount < 256*256`, custom wavelet
+  kernels, etc) the fast lane needs to skip itself rather than
+  feed an empty `[SubbandInfo]` set.
+
+### Bit-exactness
+
+- `testFullDICOMCorpus_GPUHTMatchesCPUHT` (7/7) ✓
+- `testCorpusSessionAndSessionlessAgreeBitExact` ✓
+- `testSessionAndSessionlessAgreeBitExact` ✓
+- All scatter / dispatcher / DWT / multi-level fused unit tests ✓
+
+### Sessionless path
+
+Byte-for-byte identical to v5.8.0. v5.9 changes are scoped to the
+session/fast-lane code path.
+
 ## [5.8.0] — 2026-05-02
 
 **Minor Release — End-to-end fused HT cleanup → scatter → DWT path (architectural)**
