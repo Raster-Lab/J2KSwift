@@ -5,6 +5,89 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.5.0] — 2026-05-02
+
+**Minor Release — GPU HTJ2K decode in production (opt-in)**
+
+Wires the GPU HT cleanup decoder shipped in v5.4.0 into the
+production decoder pipeline behind a `--gpu-ht` opt-in flag.
+Default behaviour is unchanged: production HT entropy decode
+remains on CPU until callers opt in. Bit-exact with the CPU
+path on the full DICOM corpus.
+
+### What this release ships
+
+- **`J2KDecoder.decodeWithGPUHT(_:)`** — opt-in SDK entry point.
+  Eligible HTJ2K conformant cleanup-only codeblocks are batched
+  through the Metal HT cleanup kernel; ineligible blocks fall
+  through to CPU automatically. Inert on Part 1 codestreams.
+- **`j2k decode --gpu-ht`** — CLI surface for the same.
+- Bit-exact gates: `J2KGPUHTDispatchTests` (3), `J2KGPUHTPipelineTests`
+  (4 — including a corpus-wide test that encodes every fixture
+  under `Tests/Fixtures/CrossCodec/` to HTJ2K and asserts
+  GPU-HT vs CPU-HT byte-equality), and 21 new GPU-HT cells in the
+  cross-codec matrix (147/147 pass).
+
+### What this release does not ship
+
+**No end-user perf win for `j2k decode` CLI usage.** Per
+[GPU_HT_M2_PRIME_PERF_REPORT.md](GPU_HT_M2_PRIME_PERF_REPORT.md),
+`j2k decode --gpu-ht` is currently slower than the default CPU HT
+path on every fixture, ranging from 0.03× (180×180) to 0.49×
+(2800×2288). Two reasons:
+
+1. Per-process Metal init cost (~50–60 ms) dominates on small
+   images. CLI is worst-case; long-running SDK processes (the
+   M2P-3 corpus test decodes all 7 fixtures in 0.79 s in one
+   Swift process) amortise this cost away.
+2. Other pipeline stages (dequant, subband regroup, colour
+   transform, DC offset) still run CPU-side, so the CPU HT path
+   benefits from full-pipeline CPU co-location.
+
+This release ships the integration shape — the foundation that
+unblocks future work on cb fusion, persistent Metal pipeline
+state, and GPU dequantisation. The plan and the perf report both
+call this out without overpromising.
+
+### Added
+
+- **`Sources/J2KCodec/J2KGPUHTDispatch.swift`** — integration shim
+  that batches eligible codeblocks into a single
+  `J2KMetalHTCleanup.run` call and converts the kernel's UInt32
+  OpenJPH sign-magnitude output to the pipeline's Int32
+  integer-magnitude convention. Caller-side eligibility filter
+  reports `cpuFallbackIndices` separately so callers can
+  round-trip ineligible blocks through CPU.
+- **`Sources/J2KCodec/J2KCodec.swift`** —
+  `J2KDecoder.decodeWithGPUHT(_:)` and progress-callback overload.
+- **`Sources/J2KCLI/Commands.swift`** — `j2k decode --gpu-ht` flag.
+- **`Tests/J2KCodecTests/J2KGPUHTDispatchTests.swift`** — three
+  dispatcher-level tests.
+- **`Tests/J2KCodecTests/J2KGPUHTPipelineTests.swift`** — four
+  pipeline tests (bit-exact at 384×384 and 512×512, Part 1
+  flag-inert check, full DICOM corpus byte-equality).
+- **`Scripts/measure_gpu_ht_perf.sh`** — perf harness.
+- **`GPU_HT_M2_PRIME_PERF_REPORT.md`** — committed perf report.
+- **`GPU_HT_M2_PRIME_PLAN.md`** — five-milestone plan.
+
+### Changed
+
+- **`Sources/J2KCodec/J2KDecoderPipeline.swift`** — adds
+  `useGPUHT: Bool = false` field on `DecoderPipeline` and an early
+  GPU pass at the top of `applyEntropyDecoding` that builds a
+  `[Int: [Int32]]` of pre-decoded blocks before the existing
+  parallel + sequential CPU loops run.
+- **`Scripts/run_cross_matrix.sh`** — three new GPU-HT decode
+  cells per fixture in the full-matrix mode (`jcpu_to_jght_ht`,
+  `jgpu_to_jght_ht`, `ojph_to_jght_ht`). Per-fixture cell count:
+  18 → 21. Total cells per run: 126 → 147.
+- **`Tests/Fixtures/CrossCodec/expected_results.csv`** — baseline
+  updated for the new cells. The original 126 cells still match
+  byte-for-byte.
+- **`Sources/J2KCore/J2KCore.swift`** — `getVersion()` returns
+  "5.5.0".
+- `VERSION` bumped from `5.4.0` to `5.5.0`.
+
 ## [5.4.0] — 2026-05-02
 
 **Minor Release — GPU HTJ2K decoder phase-3: dispatch overhead amortisation**

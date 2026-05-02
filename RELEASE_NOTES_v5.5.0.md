@@ -1,6 +1,6 @@
 # J2KSwift v5.5.0 — GPU HTJ2K decode in production (opt-in)
 
-**Release date:** TBD (pending merge of `gpu-ht-prod-integration` to `main`)
+**Release date:** 2026-05-02
 **Branch:** `gpu-ht-prod-integration` → `main`
 **Companion:** continuation of v5.4.0; cross-codec verification + codestream output unchanged.
 
