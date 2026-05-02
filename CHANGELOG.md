@@ -5,6 +5,90 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.11.0] — 2026-05-02
+
+**Minor Release — `MTLHeap`-backed buffer pool**
+
+Third and final milestone of the UMA optimization detour. Pool
+misses now allocate from a per-storage-mode `MTLHeap` instead of
+`device.makeBuffer`. Heap sub-allocations consolidate Metal's
+per-buffer driver bookkeeping into one resident resource, which
+reduces overhead even on buffers that come back through the pool —
+the heap-resident sub-buffers stay heap-resident on reuse.
+
+### What this release does (and doesn't) change
+
+**Architectural:** one `MTLHeap` per storage mode, lazily created
+on first miss for that mode and reused across decodes for the
+lifetime of the pool. Default size 96 MB per heap (configurable
+on `J2KMetalBufferPoolConfiguration.heapSize`). Heap creation
+gated on `device.supportsFamily(.apple4)` — M-series Macs hit the
+heap path; Intel-Mac hardware skips it and falls through to
+`device.makeBuffer`.
+
+**Perf:** small fixtures (where allocator overhead was the
+dominant cost) gain disproportionately. Median warm-process
+speedup vs sessionless: v5.10's 1.5× → v5.11's 1.92×, peak from
+2.51× to 2.53×.
+
+| fixture | size | v5.10.0 | v5.11.0 |
+| --- | ---:| ---:| ---:|
+| ct_001 | 512×512 | 1.57× | 1.89× (+20%) |
+| ct_003 | 512×512 | 1.46× | 1.78× (+22%) |
+| dx_002 | 2800×2288 | 2.51× | 2.53× (saturated) |
+| mr_001 | 886×886 | 1.45× | 1.91× (+32%) |
+| mr_002 | 180×180 | 1.25× | 1.93× (+54%) |
+| px_001 | 2459×1316 | 1.79× | 2.03× (+13%) |
+| xa_001 | 1024×1024 | 1.52× | 1.92× (+26%) |
+
+### Added
+
+- **`J2KMetalBufferPoolConfiguration.enableHeapBacking: Bool`**
+  (default `true`) — turn heap-backed allocation on/off.
+- **`J2KMetalBufferPoolConfiguration.heapSize: Int`**
+  (default 96 MB) — target size per storage-mode heap.
+- **Per-storage-mode `MTLHeap`s** in `J2KMetalBufferPool`,
+  lazily created via `ensureHeap(device:storageMode:)`.
+
+### Changed
+
+- **`J2KMetalBufferPool.acquireBuffer`** now: (1) check pool,
+  (2) try heap, (3) fall through to `device.makeBuffer`. Same
+  observable API; no caller change required.
+
+### Notes
+
+- Heap allocations do not increment `J2KMetalUMACounters.makeBuffer`
+  — that counter tracks `device.makeBuffer` calls specifically.
+  Heap sub-allocations go through a different driver path. (If
+  future work wants to track heap allocations separately, add a
+  dedicated counter.)
+- Some fixtures (px_001, xa_001) still show `makeBuffer=2` per
+  warm decode because their working-set persists in the pool and
+  the heap is full before the new decode requests its last 2
+  buffers. Bumping `heapSize` or implementing sub-buffer aliasing
+  on pool return would close this; deferred to v5.12+ since the
+  perf is already in-target.
+
+### Bit-exactness
+
+- All v5.10.0 gates pass byte-for-byte ✓
+
+### Sessionless path
+
+Byte-for-byte identical to v5.10.0.
+
+### UMA detour summary (v5.7.0 → v5.11.0)
+
+- v5.7.0 baseline: 1.63× median warm-process speedup, 1.93× peak.
+- v5.11.0 final: ~1.92× median, **2.53× peak** on dx_002.
+- Hot-path counters: memcpy=1, contents=1, makeBuffer=0 on most
+  fixtures (the remaining `1` is the final-output API readback).
+
+The plan's queued v5.12+ items resume from here: multi-tile in-
+flight cbs, GPU colour transform fusion, 9/7 lossy DWT fusion,
+`.metallib` bundling.
+
 ## [5.10.0] — 2026-05-02
 
 **Minor Release — Storage-mode pass: `.storageModePrivate` for GPU-only intermediates**
