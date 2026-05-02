@@ -1841,17 +1841,13 @@ struct DecoderPipeline: Sendable {
             remappedOffsets[inputOriginalIndices[gpuIdx]] = offset
         }
 
-        // Build LL-only [SubbandInfo] from buffer + offsets. LL
-        // codeblocks live at level=decompositionLevels (innermost),
-        // typically 1–4 per component.
-        let llSubbands = buildLLSubbandsFromBuffer(
-            blocks: blocks, metadata: metadata,
-            codeblockBuffer: result.codeblockBuffer,
-            sampleCount: result.outputSampleCount,
-            offsets: remappedOffsets)
-
-        // Build the GPU batch (per-component, per-level scatter
-        // plans pointing into codeblockBuffer).
+        // v5.9b: LL is now scattered into its 2D buffer by the GPU
+        // at the innermost level (buildGPUHTBatchFromResult includes
+        // LL descriptors). The fused DWT method receives initialLL
+        // = nil and zero-fills its LL buffer; the scatter kernel
+        // overwrites the populated cells. No CPU-side LL allocation,
+        // no per-row LL memcpy, no [Int32] array passed across the
+        // pipeline boundary.
         let batch = buildGPUHTBatchFromResult(
             codeblockBuffer: result.codeblockBuffer,
             outputSampleCount: result.outputSampleCount,
@@ -1859,76 +1855,7 @@ struct DecoderPipeline: Sendable {
             blocks: blocks, metadata: metadata,
             bufferPool: session.bufferPool)
 
-        return (llSubbands, batch)
-    }
-
-    /// v5.9 helper: build the LL `[SubbandInfo]` (one per component)
-    /// directly from the GPU codeblock buffer. Reads each LL block
-    /// via `bufferPtr + offset` instead of materialising the whole
-    /// per-block coefficient array first.
-    private func buildLLSubbandsFromBuffer(
-        blocks: [CodeBlockInfo],
-        metadata: CodestreamMetadata,
-        codeblockBuffer: any MTLBuffer,
-        sampleCount: Int,
-        offsets: [Int: Int]
-    ) -> [SubbandInfo] {
-        let levels = metadata.configuration.decompositionLevels
-        guard sampleCount > 0 else { return [] }
-
-        // Group LL codeblocks by component; track 2D dims of each
-        // (component, LL) pair as the max(x+w, y+h) across blocks.
-        struct LLAccumulator {
-            var blocks: [(blockIdx: Int, info: CodeBlockInfo)] = []
-            var width: Int = 0
-            var height: Int = 0
-        }
-        var byComponent: [Int: LLAccumulator] = [:]
-        for (i, block) in blocks.enumerated() {
-            guard block.subband == .ll, offsets[i] != nil else { continue }
-            byComponent[block.componentIndex, default: LLAccumulator()].blocks.append((i, block))
-            byComponent[block.componentIndex]!.width = max(
-                byComponent[block.componentIndex]!.width, block.x + block.width)
-            byComponent[block.componentIndex]!.height = max(
-                byComponent[block.componentIndex]!.height, block.y + block.height)
-        }
-
-        // One contents() per fast-lane decode for the buffer-pointer
-        // bind; per-LL-block memcpy below for the actual scatter.
-        // Counters stay measurable so v5.10 can tighten further.
-        J2KMetalUMACounters.incrementContents()
-        let bufferPtr = codeblockBuffer.contents()
-            .bindMemory(to: Int32.self, capacity: sampleCount)
-
-        var result: [SubbandInfo] = []
-        for (compIdx, acc) in byComponent {
-            guard acc.width > 0, acc.height > 0 else { continue }
-            var llCoeffs = [Int32](repeating: 0, count: acc.width * acc.height)
-            llCoeffs.withUnsafeMutableBufferPointer { dst in
-                for (blockIdx, info) in acc.blocks {
-                    guard let srcOffset = offsets[blockIdx] else { continue }
-                    let src = bufferPtr + srcOffset
-                    for r in 0..<info.height {
-                        let dstRow = (info.y + r) * acc.width + info.x
-                        let srcRow = r * info.width
-                        J2KMetalUMACounters.incrementMemcpy()
-                        memcpy(dst.baseAddress! + dstRow,
-                               src + srcRow,
-                               info.width * MemoryLayout<Int32>.stride)
-                    }
-                }
-            }
-            result.append(SubbandInfo(
-                componentIndex: compIdx,
-                level: levels,
-                subband: .ll,
-                coefficients: llCoeffs,
-                doubleCoefficients: nil,
-                width: acc.width,
-                height: acc.height,
-                htPartiallyRefined: []))
-        }
-        return result
+        return ([], batch)
     }
 
     /// v5.8 dedupe helper: build a `J2KGPUHTBatch` from an already-
@@ -1976,10 +1903,17 @@ struct DecoderPipeline: Sendable {
                           block.level == level,
                           let outputOffset = decodedBlockOutputOffsets[i]
                     else { continue }
+                    // v5.9b: LL is now scattered into its 2D buffer
+                    // by the GPU at the innermost level (level ==
+                    // levels), instead of being uploaded from CPU
+                    // via initialLL. Other levels never have LL
+                    // codeblocks in JPEG 2000 — only the deepest
+                    // decomposition produces a residual LL — so this
+                    // branch only fires at the innermost level.
                     let target: UInt32
                     let stride: Int
                     switch block.subband {
-                    case .ll: continue
+                    case .ll: target = 0; stride = llW
                     case .lh: target = 1; stride = llW
                     case .hl: target = 2; stride = hlW
                     case .hh: target = 3; stride = hlW
@@ -2781,8 +2715,18 @@ struct DecoderPipeline: Sendable {
 
             if useReversible53Int {
                 // Bit-exact reversible 5/3 path on Int32 buffers.
-                let initialLL: [Int32]
-                if let ll = llSubband {
+                //
+                // v5.9b: when the v5.8 batch is present, the LL is
+                // populated GPU-side by the scatter kernel (LL
+                // descriptors at the innermost level). Skip the CPU
+                // padFlatInt32 build entirely — it would be wasted
+                // work since the scatter overwrites those cells.
+                // Otherwise (v5.6.0/v5.7.0 paths), build initialLL
+                // from the LL [SubbandInfo] as before.
+                let initialLL: [Int32]?
+                if gpuBatch != nil {
+                    initialLL = nil
+                } else if let ll = llSubband {
                     initialLL = padFlatInt32(ll.coefficients, srcW: ll.width, srcH: ll.height,
                                               dstW: expectedLLW, dstH: expectedLLH)
                 } else {
@@ -2797,7 +2741,7 @@ struct DecoderPipeline: Sendable {
                 // commit + await + final readback. Falls back to the
                 // per-level path otherwise (no behavioural change for
                 // sessionless callers).
-                var currentLL: [Int32] = initialLL
+                var currentLL: [Int32] = initialLL ?? []
                 // v5.8 full-fused path: if the entropy stage built
                 // a GPU batch and we have plans for this component,
                 // route to inverse2DInt32FullFusedFromCodeblocks —
@@ -2809,7 +2753,7 @@ struct DecoderPipeline: Sendable {
                     currentLL = try await metalDWT.inverse2DInt32FullFusedFromCodeblocks(
                         codeblockBuffer: batch.codeblockBuffer,
                         levelsPlan: plansForComp,
-                        initialLL: initialLL)
+                        initialLL: nil)
                 } else if useGPUHT, metalSession != nil {
                     var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
                     for level in (1...levels).reversed() {
@@ -2834,7 +2778,7 @@ struct DecoderPipeline: Sendable {
                         // The fused method ignores `subbands.ll` for
                         // levels after the first.
                         let llForThisLevel: [Int32] =
-                            subbandsPerLevel.isEmpty ? initialLL : []
+                            subbandsPerLevel.isEmpty ? (initialLL ?? []) : []
                         subbandsPerLevel.append(J2KMetalDWTSubbandsInt32(
                             ll: llForThisLevel, lh: lhInt, hl: hlInt, hh: hhInt,
                             llWidth: llW, llHeight: llH,
