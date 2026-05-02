@@ -5,6 +5,105 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.0] — 2026-05-02
+
+**Minor Release — Persistent Metal session + GPU dequantisation kernel**
+
+Builds on v5.5.0's M2-prime production integration. Adds two
+performance levers for warm-process callers (long-running SDK
+processes that decode many images), both opt-in via the existing
+`decodeWithGPUHT` surface:
+
+1. **`J2KMetalSession`** — a long-lived bundle of a shared Metal
+   device, shader library, and buffer pool. Construct once at the
+   SDK boundary; pass to every decode call. First call pays the
+   ~50 ms shader compile; subsequent calls reuse the cached
+   library + compute pipelines + buffer pool.
+
+2. **GPU dequantisation kernel** — new MSL kernel `j2k_ht_dequant`
+   that converts the HT cleanup kernel's UInt32 OpenJPH sign-
+   magnitude output to Int32 integer-magnitude on the GPU side.
+   When a session is in scope, the dispatcher chains both kernels
+   in a single command buffer and skips the CPU-side per-sample
+   shift+sign loop.
+
+### Measured impact
+
+Warm-process corpus (M2 Apple Silicon, release builds, single
+Swift process decoding the 7 DICOM fixtures via SDK):
+
+| fixture | size | sessionless (ms) | session (ms) | speedup |
+| --- | ---:| ---:| ---:| ---:|
+| ct_001 | 512×512 | 16.68 | 12.37 | **1.35×** |
+| ct_003 | 512×512 | 14.45 | 11.91 | 1.21× |
+| dx_002 | 2800×2288 | 111.49 | 82.40 | **1.35×** |
+| mr_001 | 886×886 | 18.65 | 16.02 | 1.16× |
+| mr_002 | 180×180 | 6.35 | 5.49 | 1.16× |
+| px_001 | 2459×1316 | 60.63 | 48.19 | 1.26× |
+| xa_001 | 1024×1024 | 24.64 | 19.33 | 1.27× |
+
+Median speedup: **1.26×**. Pre-dequant session-only number was
+1.07× median — the GPU dequant is responsible for roughly half of
+the v5.6.0 win.
+
+### Cold CLI is unchanged
+
+The v5.5.0 `j2k decode --gpu-ht` per-process numbers (0.03×–0.49×
+on the same fixtures) are the same in this release. Fixing the
+cold-CLI case requires bundling a pre-compiled `default.metallib`
+to skip MSL source compilation; the wiring for that lands here
+but the artefact does not (the local environment lacks
+`xcodebuild -downloadComponent MetalToolchain`). Once a metallib
+ships in `Bundle.module`, `loadShaders` will pick it up
+automatically — no code change needed.
+
+### Added
+
+- **`Sources/J2KCodec/J2KMetalSession.swift`** — public
+  `J2KMetalSession` Sendable struct bundling
+  `J2KMetalDevice`, `J2KMetalShaderLibrary`, and
+  `J2KMetalBufferPool`.
+- **`J2KDecoder.decodeWithGPUHT(_:session:)`** plus the
+  progress-callback overload.
+- **`Sources/J2KMetal/J2KMetalHTCleanup.swift`** —
+  `runIntegerMagnitude(...)` chains cleanup + dequant in one
+  command buffer and returns `[Int32]`.
+- **`j2k_ht_dequant` MSL kernel** added to both
+  `J2KMetalShaderSource.kernelSource` (runtime fallback) and
+  `Sources/J2KMetal/J2KShaders.metal` (resource).
+- **`Sources/J2KMetal/J2KShaders.metal`** — extracted MSL source
+  registered as a SwiftPM resource. Dormant on pure-SwiftPM
+  builds (no metal toolchain integration); ready to be picked up
+  if a `default.metallib` lands in `Bundle.module`.
+- **`Tests/J2KCodecTests/J2KMetalSessionTests.swift`** — four
+  tests: bit-exactness gate (session vs sessionless), warm-
+  process speedup gate, corpus-wide perf measurement, session
+  construction smoke.
+- **`GPU_HT_PERSISTENT_SESSION_PLAN.md`** — five-milestone plan
+  (M3P-1..5).
+
+### Changed
+
+- **`Sources/J2KMetal/J2KMetalShaderLibrary.swift`** —
+  `loadShaders(device:)` now prefers
+  `device.makeDefaultLibrary(bundle: .module)` and falls back to
+  source-compiling the inlined kernel string. New shader function
+  enum case `htDequant`.
+- **`Sources/J2KCodec/J2KGPUHTDispatch.swift`** —
+  `decodeBatch(blocks:cleanup:session:)` accepts an optional
+  session. When session or cleanup is supplied, dispatches via
+  the new `runIntegerMagnitude` chained kernel; otherwise stays
+  on the v5.5.0 UInt32 + CPU dequant path byte-for-byte.
+- **`Sources/J2KCodec/J2KDecoderPipeline.swift`** — new
+  `metalSession: J2KMetalSession?` field. When set, threads
+  through to both `applyEntropyDecoding`'s GPU HT batch and
+  `applyInverseWaveletTransformGPU`'s `J2KMetalDWT` construction.
+- **`Package.swift`** — `J2KMetal` target gains
+  `resources: [.process("J2KShaders.metal")]`.
+- **`Sources/J2KCore/J2KCore.swift`** — `getVersion()` returns
+  "5.6.0".
+- `VERSION` bumped from `5.5.0` to `5.6.0`.
+
 ## [5.5.0] — 2026-05-02
 
 **Minor Release — GPU HTJ2K decode in production (opt-in)**
