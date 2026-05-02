@@ -348,24 +348,46 @@ struct DecoderPipeline: Sendable {
 
         // See decodeMultiTile for the rationale; this variant routes the
         // inverse wavelet + colour transform stages through the GPU pipeline.
-        let decodedTiles = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
-            for tile in tiles {
-                let captured = tile
-                let metadataCopy = metadata
-                group.addTask {
-                    try await self.decodeTilePayloadGPU(
-                        metadata: metadataCopy,
-                        tileIndex: captured.tileIndex,
-                        tileData: captured.tileData
-                    )
+        //
+        // v5.12: bounded concurrency. The previous unbounded TaskGroup
+        // would spawn N tasks for N tiles up front, causing the heap-
+        // backed buffer pool to allocate N peak working sets in
+        // parallel. For 100-tile tiled JPEG 2000 codestreams that
+        // exhausts even a 256 MB heap and forces fallthrough to
+        // `device.makeBuffer`. The chunked-TaskGroup pattern below
+        // caps in-flight tiles to `Self.maxInFlightTilesGPU` —
+        // tile chunks are processed sequentially but tiles within
+        // a chunk run concurrently. Single-tile decodes (the entire
+        // DICOM corpus) take exactly one slot and observe identical
+        // behaviour to v5.11.
+        var decodedTiles: [DecodedTile] = []
+        decodedTiles.reserveCapacity(tiles.count)
+        let chunkSize = max(1, Self.maxInFlightTilesGPU)
+        var tileIdx = 0
+        while tileIdx < tiles.count {
+            let end = min(tileIdx + chunkSize, tiles.count)
+            let chunk = Array(tiles[tileIdx..<end])
+            let chunkResults = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
+                for tile in chunk {
+                    let captured = tile
+                    let metadataCopy = metadata
+                    group.addTask {
+                        try await self.decodeTilePayloadGPU(
+                            metadata: metadataCopy,
+                            tileIndex: captured.tileIndex,
+                            tileData: captured.tileData
+                        )
+                    }
                 }
+                var results: [DecodedTile] = []
+                results.reserveCapacity(chunk.count)
+                for try await decoded in group {
+                    results.append(decoded)
+                }
+                return results
             }
-            var results: [DecodedTile] = []
-            results.reserveCapacity(tiles.count)
-            for try await decoded in group {
-                results.append(decoded)
-            }
-            return results
+            decodedTiles.append(contentsOf: chunkResults)
+            tileIdx = end
         }
 
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
@@ -379,6 +401,18 @@ struct DecoderPipeline: Sendable {
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
         return image
     }
+
+    /// v5.12: maximum number of tiles that can have GPU command
+    /// buffers in flight at the same time. Higher values amortize
+    /// dispatch overhead but increase peak heap residency. 8 covers
+    /// most codestreams without exhausting the default 256 MB heap.
+    private static let maxInFlightTilesGPU = 8
+
+    /// v5.12: maximum number of tiles that can be CPU-decoded in
+    /// parallel. CPU concurrency scales with available cores; the
+    /// bound primarily prevents unbounded memory growth on
+    /// codestreams with many large tiles.
+    private static let maxInFlightTilesCPU = 8
 
     /// Decodes a single-tile codestream (original path).
     private func decodeSingleTile(
@@ -608,24 +642,41 @@ struct DecoderPipeline: Sendable {
         // concurrent withUnsafeMutableBufferPointer — sequential composite
         // sidesteps that without measurable cost since composite is just
         // memcpy).
-        let decodedTiles = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
-            for tile in tiles {
-                let captured = tile
-                let metadataCopy = metadata
-                group.addTask {
-                    try await self.decodeTilePayload(
-                        metadata: metadataCopy,
-                        tileIndex: captured.tileIndex,
-                        tileData: captured.tileData
-                    )
+        //
+        // v5.12: bounded concurrency. Same chunked-TaskGroup pattern
+        // as the GPU multi-tile path; see decodeMultiTileGPU for
+        // rationale. CPU concurrency cap at `maxInFlightTilesCPU`
+        // primarily prevents unbounded memory growth on codestreams
+        // with many large tiles — Swift's structured concurrency
+        // already throttles compute via cooperative scheduling.
+        var decodedTiles: [DecodedTile] = []
+        decodedTiles.reserveCapacity(tiles.count)
+        let chunkSize = max(1, Self.maxInFlightTilesCPU)
+        var tileIdx = 0
+        while tileIdx < tiles.count {
+            let end = min(tileIdx + chunkSize, tiles.count)
+            let chunk = Array(tiles[tileIdx..<end])
+            let chunkResults = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
+                for tile in chunk {
+                    let captured = tile
+                    let metadataCopy = metadata
+                    group.addTask {
+                        try await self.decodeTilePayload(
+                            metadata: metadataCopy,
+                            tileIndex: captured.tileIndex,
+                            tileData: captured.tileData
+                        )
+                    }
                 }
+                var results: [DecodedTile] = []
+                results.reserveCapacity(chunk.count)
+                for try await decoded in group {
+                    results.append(decoded)
+                }
+                return results
             }
-            var results: [DecodedTile] = []
-            results.reserveCapacity(tiles.count)
-            for try await decoded in group {
-                results.append(decoded)
-            }
-            return results
+            decodedTiles.append(contentsOf: chunkResults)
+            tileIdx = end
         }
 
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)

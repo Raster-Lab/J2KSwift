@@ -5,6 +5,59 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.12.0] — 2026-05-03
+
+**Minor Release — Bounded multi-tile concurrency**
+
+Replaces the unbounded `withThrowingTaskGroup` in both
+`decodeMultiTile` (CPU) and `decodeMultiTileGPU` paths with a
+chunked-TaskGroup pattern that caps in-flight tiles at 8. The
+previous code spawned all tile tasks at once: for a 100-tile
+codestream that would over-saturate the heap-backed buffer pool
+and force fallthrough to `device.makeBuffer` for tiles that
+couldn't fit in the 256 MB heap.
+
+### What this release does (and doesn't) change
+
+**Architectural:** chunked-TaskGroup pattern. Tile chunks process
+sequentially; tiles within a chunk run concurrently. `chunkSize =
+maxInFlightTilesGPU = 8` for the GPU path; `maxInFlightTilesCPU =
+8` for the CPU path.
+
+**Perf:** no measurable change on the existing DICOM corpus (all
+fixtures are single-tile — only 1 task per decode regardless of
+the bound). Multi-tile codestreams gain bounded heap residency
+and avoid the v5.11.1 `device.makeBuffer` fallthrough on the
+14th-and-later tile. A new
+`testMultiTileBoundedConcurrencyRoundTrip` test covers the
+multi-tile branch (16 tiles, 64×64 each) since the corpus
+doesn't.
+
+### Added
+
+- **`Self.maxInFlightTilesGPU = 8`** on `DecoderPipeline` —
+  configurable upper bound on concurrent GPU tile decodes.
+- **`Self.maxInFlightTilesCPU = 8`** — same for the CPU path.
+- **`testMultiTileBoundedConcurrencyRoundTrip`** in
+  `J2KMetalSessionTests` — encodes a synthetic 256×256 image with
+  64×64 tiles and asserts session/sessionless GPU-HT decodes
+  produce identical output.
+
+### Bit-exactness
+
+- All v5.11.1 gates pass byte-for-byte ✓
+- New multi-tile gate ✓
+
+### Notes on the wider v5.12+ plan
+
+The original plan called for "multi-tile in-flight cbs (overlap
+CPU prep of tile N+1 with GPU decode of tile N)". The existing
+TaskGroup already provides task-level concurrency; the missing
+piece was upper-bounding the in-flight count. True pipelined
+overlap of CPU prep and GPU decode within a single tile would
+require restructuring stages as async producer-consumer chains —
+a larger refactor deferred to v5.13+ on this branch.
+
 ## [5.11.1] — 2026-05-02
 
 **Patch — `MTLHeap` default size bump (96 MB → 256 MB)**
