@@ -368,6 +368,13 @@ extension J2KCLI {
         let regionStr       = options["region"]
         let outputFormat    = options["output-format"]
         let bitDepthConvert = options["bit-depth"].flatMap { Int($0) }
+        // Opt-in GPU HTJ2K entropy decode (M2-prime, v5.5.0+). When the
+        // codestream is HTJ2K conformant cleanup-only AND Metal is
+        // available, eligible codeblocks are batched through the GPU
+        // HT cleanup kernel. Ineligible blocks fall back to CPU
+        // automatically. Inert on Part 1 codestreams. Implies GPU
+        // inverse DWT (uses J2KDecoder.decodeWithGPUHT internally).
+        let useGPUHT        = options["gpu-ht"] != nil
         _ = (stripAlpha, scale, regionStr, outputFormat, bitDepthConvert)
 
         if verbose {
@@ -389,7 +396,12 @@ extension J2KCLI {
         // Decode
         let decoder = J2KDecoder()
         let startDecode = Date()
-        let decodedImage = try await decoder.decode(encodedData)
+        let decodedImage: J2KImage
+        if useGPUHT {
+            decodedImage = try await decoder.decodeWithGPUHT(encodedData)
+        } else {
+            decodedImage = try await decoder.decode(encodedData)
+        }
         let decodeTime = Date().timeIntervalSince(startDecode)
 
         // Header-only mode: print info and exit
@@ -480,6 +492,7 @@ extension J2KCLI {
             --components N,M,...        Component indices
             --colour-space              Convert colour space
             --gpu / --no-gpu            GPU acceleration
+            --gpu-ht                    GPU HTJ2K entropy decode (Metal; HT cleanup-only)
             --verbose                   Verbose output
             --quiet                     Suppress output
             --timing                    Timing breakdown
@@ -495,6 +508,7 @@ extension J2KCLI {
             j2k decode -i input.jp2 -o output.tiff
             j2k decode -i input.j2k
             j2k decode -i input.j2k -o - | other-tool -i -
+            j2k decode -i input.jph --gpu-ht -o output.pgm
         """)
     }
 
