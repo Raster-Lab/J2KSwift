@@ -90,6 +90,123 @@ final class J2KGPUHTPipelineTests: XCTestCase {
             "GPU HT path must match CPU HT path byte-for-byte (512×512)")
     }
 
+    // MARK: - Corpus-wide gate (M2P-3)
+    //
+    // The cross-codec DICOM PGM corpus committed under
+    // Tests/Fixtures/CrossCodec/ is the same fixture set the cross-
+    // codec matrix exercises. Loading them as J2KImage, encoding to
+    // HTJ2K conformant, decoding both ways, and asserting byte-equal
+    // output is the M2P-3 bit-exactness gate.
+
+    /// Minimal 16-bit PGM (P5) parser. Accepts standard `P5\n<W>
+    /// <H>\n<maxval>\n<binary>` layout — the format the fixtures use.
+    private func parsePGM16Bit(_ data: Data) throws -> J2KImage {
+        var headerEnd = 0
+        var newlineCount = 0
+        var idx = 0
+        while idx < data.count {
+            if data[idx] == 0x0A {  // '\n'
+                newlineCount += 1
+                if newlineCount == 3 { headerEnd = idx + 1; break }
+            }
+            idx += 1
+        }
+        guard headerEnd > 0 else {
+            throw NSError(domain: "PGM", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "header not terminated"])
+        }
+        let headerStr = String(
+            data: data.prefix(headerEnd - 1), encoding: .ascii) ?? ""
+        let lines = headerStr.split(separator: "\n")
+        guard lines.count >= 3, lines[0] == "P5" else {
+            throw NSError(domain: "PGM", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "not a P5 PGM"])
+        }
+        let dims = lines[1].split(separator: " ")
+        guard dims.count >= 2,
+              let width = Int(dims[0]), let height = Int(dims[1]),
+              let maxval = Int(lines[2]) else {
+            throw NSError(domain: "PGM", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "bad dims/maxval"])
+        }
+        let bitDepth = maxval > 255 ? 16 : 8
+        let pixelData = data.subdata(in: headerEnd..<data.count)
+        let expectedBytes = width * height * (bitDepth == 16 ? 2 : 1)
+        guard pixelData.count == expectedBytes else {
+            throw NSError(domain: "PGM", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey:
+                              "pixel data \(pixelData.count) bytes, expected \(expectedBytes)"])
+        }
+        // Byte-order doesn't affect the test invariant (cpuOut == gpuOut)
+        // since both decode paths use the same encoder convention.
+        let component = J2KComponent(
+            index: 0, bitDepth: bitDepth, signed: false,
+            width: width, height: height,
+            data: pixelData, sampleByteOrder: .littleEndian)
+        return J2KImage(
+            width: width, height: height,
+            components: [component], colorSpace: .grayscale)
+    }
+
+    /// Bit-exactness gate over the full DICOM corpus committed under
+    /// `Tests/Fixtures/CrossCodec/`. For every fixture, encodes to
+    /// HTJ2K conformant and asserts `decodeWithGPUHT` matches
+    /// `decodeGPU` byte-for-byte. This covers a much wider range of
+    /// codeblock shapes and content patterns than the synthetic
+    /// 384/512 tests above.
+    func testFullDICOMCorpus_GPUHTMatchesCPUHT() async throws {
+        try XCTSkipUnless(J2KGPUHTDispatch.isAvailable, "Metal not available")
+
+        let fixturesDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()              // Tests/J2KCodecTests/
+            .deletingLastPathComponent()              // Tests/
+            .appendingPathComponent("Fixtures")
+            .appendingPathComponent("CrossCodec")
+
+        let pgms = try FileManager.default.contentsOfDirectory(
+            at: fixturesDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+            .filter { $0.pathExtension == "pgm" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        XCTAssertFalse(
+            pgms.isEmpty,
+            "no PGM fixtures found at \(fixturesDir.path)")
+
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            progressionOrder: .rpcl,
+            useHTJ2K: true,
+            useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let decoder = J2KDecoder()
+
+        var checked = 0
+        for pgmURL in pgms {
+            let pgmData = try Data(contentsOf: pgmURL)
+            let image = try parsePGM16Bit(pgmData)
+            let encoded = try await encoder.encode(image)
+
+            let cpuHT = try await decoder.decodeGPU(encoded)
+            let gpuHT = try await decoder.decodeWithGPUHT(encoded)
+
+            XCTAssertEqual(cpuHT.width, gpuHT.width,
+                           "width mismatch on \(pgmURL.lastPathComponent)")
+            XCTAssertEqual(cpuHT.height, gpuHT.height,
+                           "height mismatch on \(pgmURL.lastPathComponent)")
+            XCTAssertEqual(
+                cpuHT.components.first?.data,
+                gpuHT.components.first?.data,
+                "GPU HT path must match CPU HT path byte-for-byte on \(pgmURL.lastPathComponent)")
+            checked += 1
+        }
+        XCTAssertGreaterThanOrEqual(
+            checked, 7,
+            "expected ≥7 fixtures in the corpus; got \(checked)")
+    }
+
     /// J2K Part 1 (no HTJ2K). The flag must be inert: with no HT
     /// blocks in the codestream, `decodeWithGPUHT` falls through to
     /// the existing CPU EBCOT path and produces identical output to
