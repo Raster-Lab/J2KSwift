@@ -132,10 +132,16 @@ final class J2KMetalSessionTests: XCTestCase {
     /// Corpus-wide bit-exactness gate: for every PGM in the
     /// CrossCodec fixture set, encodes to HTJ2K conformant and
     /// asserts `decodeWithGPUHT(data)` and `decodeWithGPUHT(data,
-    /// session: ...)` produce byte-identical output. v5.9b shipped
-    /// a regression that only fired on certain block geometries
-    /// (the synthetic 384×384 fixture caught it; corpus did not).
-    /// This test makes the corpus-vs-fast-lane comparison explicit.
+    /// session: ...)` produce byte-identical output.
+    ///
+    /// Catches what the synthetic 384×384 `testSessionAndSessionless
+    /// AgreeBitExact` can't: fixtures where the GPU IDWT bails out
+    /// to the CPU path (small images, custom wavelet kernels, …)
+    /// and the fast lane therefore needs to skip itself rather than
+    /// feed LL-only `[SubbandInfo]` to a CPU IDWT that expects
+    /// every subband. mr_002 (180×180) is the canonical small-image
+    /// case — v5.9d's fast-lane gate is what keeps it from
+    /// regressing.
     func testCorpusSessionAndSessionlessAgreeBitExact() async throws {
         try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
 

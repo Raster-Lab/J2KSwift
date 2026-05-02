@@ -1369,35 +1369,39 @@ struct DecoderPipeline: Sendable {
         //
         // When the v5.8 fused-DWT path is going to be active
         // downstream (session + reversible 5/3 + conformant HT +
-        // all-blocks-eligible), the LH/HL/HH `[SubbandInfo]` we'd
-        // build via the CPU regroup loop are dead code — the fused
-        // DWT consumes them straight off the GPU codeblock buffer
-        // via the v5.8 scatter kernel. v5.9's invariant ("Arrays
-        // only at API boundaries; never inside the pipeline") is
-        // realised here by skipping the regroup entirely on this
-        // path and only producing the LL `[SubbandInfo]` that the
-        // outermost-level DWT initialLL upload still needs.
+        // all-blocks-eligible) AND the IDWT itself will run on GPU,
+        // the LH/HL/HH `[SubbandInfo]` we'd build via the CPU
+        // regroup loop are dead code — the fused DWT consumes them
+        // straight off the GPU codeblock buffer via the scatter
+        // kernel. The fast lane skips the regroup entirely and only
+        // produces the LL `[SubbandInfo]` that the outermost-level
+        // DWT initialLL upload still needs.
         //
         // Memcpy budget on the fast-lane: O(LL codeblocks per
         // component) — typically 1–4 per component on 5-decomp
         // images. Down from O(all codeblocks) on the slow-lane.
-        // v5.9c: fast lane is gated off pending an open correctness
-        // bug — `runZeroCopyFastLane` produces a session-vs-
-        // sessionless byte divergence on the mr_002 fixture
-        // (180×180, 16-bit) that the new
-        // `testCorpusSessionAndSessionlessAgreeBitExact` gate
-        // catches. The fast lane builds the LL `[SubbandInfo]` from
-        // the GPU buffer via `buildLLSubbandsFromBuffer`, while the
-        // slow lane builds it via the CPU regroup loop. For this
-        // specific fixture (small, 16-bit, non-power-of-2 LL chain)
-        // the two produce different LL bytes — the buffer reads
-        // differ from the per-block dispatcher slice in some way
-        // we haven't isolated yet. The fast lane and helpers stay
-        // in place (still correct on every other corpus fixture +
-        // the synthetic gate) so v5.10 can resume the chase from a
-        // working baseline rather than reinventing the data path.
-        let fastLaneEnabled = false
-        if fastLaneEnabled,
+        //
+        // The downstream-IDWT-path precondition (`idwtWillBeGPU`)
+        // mirrors `applyInverseWaveletTransformGPU`'s own gate.
+        // When that gate fails, the IDWT falls back to CPU
+        // `applyInverseWaveletTransform`, which expects
+        // `[SubbandInfo]` for *all* subbands — and the fast lane
+        // only provides LL. The mr_002 fixture (180×180 = 32400 px)
+        // is the canonical case: GPU IDWT requires
+        // `pixelCount >= 256*256`, so the small-image path goes to
+        // CPU. Without this gate the fast lane fires anyway, the
+        // CPU IDWT sees empty LH/HL/HH, and 30541/64800 output
+        // bytes diverge from the sessionless reference.
+        // `testCorpusSessionAndSessionlessAgreeBitExact` is the
+        // regression gate.
+        let pixelCount = metadata.width * metadata.height
+        let dwtLevels = metadata.configuration.decompositionLevels
+        let idwtWillBeGPU =
+            pixelCount >= 256 * 256 &&
+            dwtLevels >= 1 &&
+            metadata.configuration.waveletKernelConfiguration == nil &&
+            J2KMetalDWT.isAvailable
+        if idwtWillBeGPU,
            !isIrreversible, useHT, useConformant, useGPUHT,
            let session = metalSession, !blocks.isEmpty,
            J2KGPUHTDispatch.isAvailable,
