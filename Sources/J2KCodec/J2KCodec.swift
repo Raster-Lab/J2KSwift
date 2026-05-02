@@ -269,4 +269,43 @@ public struct J2KDecoder: Sendable {
         pipeline.useGPUHT = true
         return try await pipeline.decodeGPU(data, progress: progress)
     }
+
+    /// Decodes JPEG 2000 data with opt-in GPU HTJ2K entropy decode,
+    /// **reusing a long-lived `J2KMetalSession`** across calls.
+    ///
+    /// The first decode that uses a fresh session pays the ~50 ms
+    /// Metal device init + shader compile cost; subsequent decodes
+    /// using the same session reuse the cached MSL library, compute
+    /// pipelines, and buffer pool. This is the warm-process pattern
+    /// v5.6.0 introduces — the right choice for any caller that
+    /// decodes more than one image in a single process.
+    ///
+    /// - Parameters:
+    ///   - data: The JPEG 2000 codestream data to decode.
+    ///   - session: A reusable Metal session. Construct once, pass
+    ///     to every decode call.
+    /// - Returns: The decoded image.
+    /// - Throws: ``J2KError`` if decoding fails.
+    public func decodeWithGPUHT(
+        _ data: Data,
+        session: J2KMetalSession
+    ) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.useGPUHT = true
+        pipeline.metalSession = session
+        return try await pipeline.decodeGPU(data)
+    }
+
+    /// Decodes JPEG 2000 data with a session and a progress callback.
+    /// See ``decodeWithGPUHT(_:session:)``.
+    public func decodeWithGPUHT(
+        _ data: Data,
+        session: J2KMetalSession,
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.useGPUHT = true
+        pipeline.metalSession = session
+        return try await pipeline.decodeGPU(data, progress: progress)
+    }
 }

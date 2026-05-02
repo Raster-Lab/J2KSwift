@@ -206,6 +206,148 @@ public struct J2KMetalHTCleanup: Sendable {
         )
         return (output, stats)
     }
+
+    /// Run the cleanup-pass decoder followed by per-sample
+    /// dequantisation, both encoded in a single command buffer.
+    /// Returns Int32 integer-magnitude coefficients (sign in bit 31
+    /// via 2's complement, magnitude in the low bits) — the
+    /// pipeline's native convention. The CPU-side dequant loop in
+    /// `J2KGPUHTDispatch` was the per-sample shift+sign step that
+    /// this kernel chain replaces.
+    ///
+    /// Bit-exact with `run(...)`'s UInt32 output put through the
+    /// same dequant on CPU. v5.6.0; introduced for warm-process
+    /// pipelines where the CPU dequant loop was the second-largest
+    /// cost (after Metal init) per the v5.5.0 perf report.
+    public func runIntegerMagnitude(
+        descriptors: [J2KMetalHTCleanupBlockDescriptor],
+        codestreamPool: [UInt8],
+        vlcTable0: [UInt16],
+        vlcTable1: [UInt16],
+        outputSampleCount: Int
+    ) async throws -> (output: [Int32], stats: Statistics) {
+        precondition(vlcTable0.count == 1024, "vlcTable0 must have 1024 entries")
+        precondition(vlcTable1.count == 1024, "vlcTable1 must have 1024 entries")
+
+        try await metalDevice.initialize()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        try await shaderLibrary.loadShaders(device: device)
+
+        let descriptorStride = MemoryLayout<J2KMetalHTCleanupBlockDescriptor>.stride
+        let blockCount = descriptors.count
+
+        // Acquire all per-frame buffers up front. The intermediate
+        // sgnMagBuffer holds the cleanup kernel's UInt32 output and
+        // is reused as the dequant kernel's input — same byte
+        // count, just reinterpreted by the kernel binding.
+        let descriptorBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(blockCount * descriptorStride, 1))
+        let codestreamBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(codestreamPool.count, 1))
+        let sgnMagBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<UInt32>.stride, 1))
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(outputSampleCount * MemoryLayout<Int32>.stride, 1))
+        let (vlc0Buffer, vlc1Buffer) = try await shaderLibrary.vlcTableBuffers(
+            device: device, vlc0: vlcTable0, vlc1: vlcTable1)
+
+        descriptors.withUnsafeBufferPointer { src in
+            descriptorBuffer.contents().copyMemory(
+                from: UnsafeRawPointer(src.baseAddress!),
+                byteCount: blockCount * descriptorStride)
+        }
+        if !codestreamPool.isEmpty {
+            codestreamPool.withUnsafeBytes { src in
+                codestreamBuffer.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: src.count)
+            }
+        }
+
+        let cleanupPipeline = try await shaderLibrary.computePipeline(for: .htCleanupDecode)
+        let dequantPipeline = try await shaderLibrary.computePipeline(for: .htDequant)
+
+        let wallStart = currentTime()
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create Metal command buffer")
+        }
+
+        // Dispatch 1: HT cleanup — writes UInt32 sign-magnitude
+        // into sgnMagBuffer.
+        guard let cleanupEncoder = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create cleanup encoder")
+        }
+        cleanupEncoder.setComputePipelineState(cleanupPipeline)
+        cleanupEncoder.setBuffer(descriptorBuffer, offset: 0, index: 0)
+        cleanupEncoder.setBuffer(codestreamBuffer, offset: 0, index: 1)
+        cleanupEncoder.setBuffer(vlc0Buffer, offset: 0, index: 2)
+        cleanupEncoder.setBuffer(vlc1Buffer, offset: 0, index: 3)
+        cleanupEncoder.setBuffer(sgnMagBuffer, offset: 0, index: 4)
+        var bc = UInt32(blockCount)
+        cleanupEncoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 5)
+        let cleanupGroupWidth = max(1, min(blockCount, 64))
+        cleanupEncoder.dispatchThreads(
+            MTLSize(width: blockCount, height: 1, depth: 1),
+            threadsPerThreadgroup:
+                MTLSize(width: cleanupGroupWidth, height: 1, depth: 1))
+        cleanupEncoder.endEncoding()
+
+        // Dispatch 2: dequant — reads sgnMagBuffer, writes Int32
+        // outputBuffer. Each thread handles one sample of one
+        // block; the kernel bounds-checks per-block dimensions.
+        guard let dequantEncoder = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create dequant encoder")
+        }
+        dequantEncoder.setComputePipelineState(dequantPipeline)
+        dequantEncoder.setBuffer(descriptorBuffer, offset: 0, index: 0)
+        dequantEncoder.setBuffer(sgnMagBuffer, offset: 0, index: 1)
+        dequantEncoder.setBuffer(outputBuffer, offset: 0, index: 2)
+        dequantEncoder.setBytes(&bc, length: MemoryLayout<UInt32>.stride, index: 3)
+        let maxSamples = descriptors.reduce(0) {
+            max($0, Int($1.width) * Int($1.height))
+        }
+        dequantEncoder.dispatchThreads(
+            MTLSize(width: max(maxSamples, 1), height: max(blockCount, 1), depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+        dequantEncoder.endEncoding()
+
+        cb.commit()
+        await cb.completed()
+        let wallEnd = currentTime()
+
+        if cb.status == .error {
+            let errDesc = cb.error?.localizedDescription ?? "(no description)"
+            throw J2KError.internalError("HT cleanup+dequant GPU chain failed: \(errDesc)")
+        }
+
+        let gpuKernelTime = max(0.0, cb.gpuEndTime - cb.gpuStartTime)
+
+        // Read back Int32 directly. Same memcpy pattern as the
+        // sign-magnitude path (avoids the release-mode Swift /
+        // Metal boundary deadlock documented in feedback memory).
+        let byteCount = outputSampleCount * MemoryLayout<Int32>.stride
+        let output: [Int32]
+        if outputSampleCount > 0 {
+            output = [Int32](unsafeUninitializedCapacity: outputSampleCount) { ptr, initializedCount in
+                memcpy(ptr.baseAddress!, outputBuffer.contents(), byteCount)
+                initializedCount = outputSampleCount
+            }
+        } else {
+            output = []
+        }
+
+        let pool = bufferPool
+        let toReturn = [descriptorBuffer, codestreamBuffer, sgnMagBuffer, outputBuffer]
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        let totalSamples = descriptors.reduce(0) { $0 + Int($1.width) * Int($1.height) }
+        let stats = Statistics(
+            wallClockSeconds: wallEnd - wallStart,
+            gpuKernelSeconds: gpuKernelTime,
+            blockCount: blockCount,
+            totalSamples: totalSamples)
+        return (output, stats)
+    }
     #else
     public func run(
         descriptors: [J2KMetalHTCleanupBlockDescriptor],
@@ -214,6 +356,16 @@ public struct J2KMetalHTCleanup: Sendable {
         vlcTable1: [UInt16],
         outputSampleCount: Int
     ) async throws -> (output: [UInt32], stats: Statistics) {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+
+    public func runIntegerMagnitude(
+        descriptors: [J2KMetalHTCleanupBlockDescriptor],
+        codestreamPool: [UInt8],
+        vlcTable0: [UInt16],
+        vlcTable1: [UInt16],
+        outputSampleCount: Int
+    ) async throws -> (output: [Int32], stats: Statistics) {
         throw J2KError.unsupportedFeature("Metal is not available on this platform")
     }
     #endif

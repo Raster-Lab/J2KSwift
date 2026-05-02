@@ -101,7 +101,8 @@ enum J2KGPUHTDispatch {
     ///   `J2KMetalHTCleanup.run`.
     static func decodeBatch(
         blocks: [GPUHTBlock],
-        cleanup: J2KMetalHTCleanup? = nil
+        cleanup: J2KMetalHTCleanup? = nil,
+        session: J2KMetalSession? = nil
     ) async throws -> GPUHTBatchResult {
         guard isAvailable else {
             throw J2KError.unsupportedFeature(
@@ -166,31 +167,69 @@ enum J2KGPUHTDispatch {
         let totalSamples = sampleOffsets.last! +
             blocks[lastEligibleIdx].width * blocks[lastEligibleIdx].height
 
-        // Single batch dispatch.
-        let cleanupKernel = cleanup ?? J2KMetalHTCleanup()
-        let (gpuOutput, _) = try await cleanupKernel.run(
-            descriptors: descriptors,
-            codestreamPool: pool,
-            vlcTable0: vlcDecoderTable0Conformant,
-            vlcTable1: vlcDecoderTable1Conformant,
-            outputSampleCount: totalSamples)
+        // Single batch dispatch. Resolution order:
+        //   1. Caller-supplied `cleanup` instance — most explicit.
+        //   2. Caller-supplied `session` — share device/library/pool
+        //      across decodes for warm-process amortisation.
+        //   3. Fresh per-call instance — v5.5.0 default behaviour.
+        let cleanupKernel: J2KMetalHTCleanup
+        if let cleanup {
+            cleanupKernel = cleanup
+        } else if let session {
+            cleanupKernel = J2KMetalHTCleanup(
+                metalDevice: session.device,
+                shaderLibrary: session.shaderLibrary,
+                bufferPool: session.bufferPool)
+        } else {
+            cleanupKernel = J2KMetalHTCleanup()
+        }
 
-        // Pass 2: per-block dequant from UInt32 OpenJPH sign-magnitude
-        // to Int32 integer-magnitude. This is the same conversion the
-        // CPU path does in J2KHTConformantDispatch.swift:100-106.
+        // v5.6.0: when a session is in scope, run the GPU dequant
+        // kernel chained in the same command buffer as the cleanup
+        // dispatch. The CPU-side per-sample shift+sign loop below
+        // disappears for this path. The sessionless path stays on
+        // the v5.5.0 UInt32-output kernel + CPU dequant — same
+        // observable behaviour, but the integration shape is the
+        // foundation for cb fusion in v5.7.
         var results: [GPUHTBlockResult] = []
         results.reserveCapacity(eligibleIndices.count)
-        for (i, blockIdx) in eligibleIndices.enumerated() {
-            let block = blocks[blockIdx]
-            let shift = 30 - block.missingMSBs
-            let start = sampleOffsets[i]
-            let end = start + block.width * block.height
-            let coeffs: [Int32] = gpuOutput[start..<end].map { uint in
-                let sign = (uint & 0x8000_0000) != 0
-                let mag = Int32((uint & 0x7FFF_FFFF) >> shift)
-                return sign ? -mag : mag
+        if session != nil || cleanup != nil {
+            let (gpuInts, _) = try await cleanupKernel.runIntegerMagnitude(
+                descriptors: descriptors,
+                codestreamPool: pool,
+                vlcTable0: vlcDecoderTable0Conformant,
+                vlcTable1: vlcDecoderTable1Conformant,
+                outputSampleCount: totalSamples)
+            for (i, blockIdx) in eligibleIndices.enumerated() {
+                let block = blocks[blockIdx]
+                let start = sampleOffsets[i]
+                let end = start + block.width * block.height
+                results.append(GPUHTBlockResult(
+                    coefficients: Array(gpuInts[start..<end])))
             }
-            results.append(GPUHTBlockResult(coefficients: coeffs))
+        } else {
+            let (gpuOutput, _) = try await cleanupKernel.run(
+                descriptors: descriptors,
+                codestreamPool: pool,
+                vlcTable0: vlcDecoderTable0Conformant,
+                vlcTable1: vlcDecoderTable1Conformant,
+                outputSampleCount: totalSamples)
+            // CPU-side per-block dequant from UInt32 OpenJPH sign-
+            // magnitude to Int32 integer-magnitude. Same conversion
+            // J2KHTConformantDispatch.swift:100-106 does on the
+            // existing CPU HT path.
+            for (i, blockIdx) in eligibleIndices.enumerated() {
+                let block = blocks[blockIdx]
+                let shift = 30 - block.missingMSBs
+                let start = sampleOffsets[i]
+                let end = start + block.width * block.height
+                let coeffs: [Int32] = gpuOutput[start..<end].map { uint in
+                    let sign = (uint & 0x8000_0000) != 0
+                    let mag = Int32((uint & 0x7FFF_FFFF) >> shift)
+                    return sign ? -mag : mag
+                }
+                results.append(GPUHTBlockResult(coefficients: coeffs))
+            }
         }
 
         return GPUHTBatchResult(

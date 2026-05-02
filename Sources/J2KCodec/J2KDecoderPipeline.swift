@@ -220,6 +220,15 @@ struct DecoderPipeline: Sendable {
     /// HT decode remains on CPU until callers opt in.
     var useGPUHT: Bool = false
 
+    /// Optional shared Metal session. When set, every GPU dispatch
+    /// path on this pipeline (HT cleanup + inverse DWT) reuses the
+    /// session's Metal device, shader library, and buffer pool
+    /// instead of constructing fresh ones per decode. Long-running
+    /// callers that decode many images get the warm-process
+    /// amortisation v5.6.0 introduced. Default `nil` keeps v5.5.0
+    /// behaviour (per-decode Metal init).
+    var metalSession: J2KMetalSession? = nil
+
     /// Decodes a JPEG 2000 codestream through the full pipeline.
     ///
     /// - Parameters:
@@ -1385,7 +1394,7 @@ struct DecoderPipeline: Sendable {
             }
             if gpuInputs.isEmpty { return [:] }
             let result = try await J2KGPUHTDispatch.decodeBatch(
-                blocks: gpuInputs)
+                blocks: gpuInputs, session: metalSession)
             var dict: [Int: [Int32]] = [:]
             for (i, gpuInputIdx) in result.decodedBlockIndices.enumerated() {
                 dict[inputOriginalIndices[gpuInputIdx]] = result.results[i].coefficients
@@ -2422,9 +2431,17 @@ struct DecoderPipeline: Sendable {
             useReversible53Int = true
         }
 
-        let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
-            filter: metalFilter, decompositionLevels: levels
-        ))
+        // When a J2KMetalSession is set, share its device, library,
+        // and buffer pool — every decode call after the first reuses
+        // the cached MSL library + compute pipelines, eliminating the
+        // ~50 ms per-decode shader compile cost. Without a session,
+        // J2KMetalDWT constructs fresh instances (v5.5.0 behaviour).
+        let metalDWT = J2KMetalDWT(
+            configuration: J2KMetalDWTConfiguration(
+                filter: metalFilter, decompositionLevels: levels),
+            device: metalSession?.device,
+            bufferPool: metalSession?.bufferPool,
+            shaderLibrary: metalSession?.shaderLibrary)
         try await metalDWT.initialize()
 
         var componentData: [[Double]] = []

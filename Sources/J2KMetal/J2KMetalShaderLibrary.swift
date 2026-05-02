@@ -131,6 +131,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// table lookup + UVLC + MagSgn into one kernel. Bit-exact with
     /// `HTBlockDecoderConformant.decode`. Phase-2 prototype.
     case htCleanupDecode = "j2k_ht_cleanup_decode"
+    /// Per-sample dequantisation: converts the HT cleanup kernel's
+    /// UInt32 OpenJPH sign-magnitude output to the pipeline's Int32
+    /// integer-magnitude convention. v5.6.0; intended to be chained
+    /// in the same command buffer as `htCleanupDecode` so the
+    /// CPU-side per-sample shift+sign loop in `J2KGPUHTDispatch`
+    /// goes away.
+    case htDequant = "j2k_ht_dequant"
 }
 
 // MARK: - Shader Library Configuration
@@ -240,6 +247,19 @@ public actor J2KMetalShaderLibrary {
     /// - Throws: ``J2KError/internalError(_:)`` if shader compilation fails.
     public func loadShaders(device: any MTLDevice) throws {
         guard !isLoaded else { return }
+
+        // v5.6.0: prefer the SwiftPM-bundled `default.metallib`
+        // (compiled from J2KShaders.metal at build time) — loading
+        // it skips the ~50 ms MSL source-compile cost on every
+        // process startup. Fall back to source-compiling the inline
+        // string if the bundled library can't be loaded (e.g.
+        // contexts where Bundle.module isn't available).
+        if let compiledLibrary = try? device.makeDefaultLibrary(bundle: .module) {
+            self.library = compiledLibrary
+            self.device = device
+            self.isLoaded = true
+            return
+        }
 
         let source = J2KMetalShaderSource.kernelSource
         let options = MTLCompileOptions()
@@ -2754,6 +2774,43 @@ enum J2KMetalShaderSource {
                                   &vs, mvBytes, desc.melVlcLength,
                                   &mel, &melRun, eVal, cxVal, vlcTbl1, myCoefs);
         }
+    }
+
+    // MARK: - HT dequantisation
+    //
+    // Per-sample conversion of the HT cleanup kernel's UInt32
+    // OpenJPH sign-magnitude output to Int32 integer-magnitude.
+    // Mirrors the CPU dequant in J2KHTConformantDispatch.swift:
+    //
+    //   shift = 30 - missingMSBs
+    //   sign  = (uint & 0x80000000) != 0
+    //   mag   = (uint & 0x7FFFFFFF) >> shift
+    //   out   = sign ? -mag : mag
+    //
+    // Dispatch grid: (maxSamplesPerBlock, blockCount). Each thread
+    // handles one sample of one block. Bounds-checked against the
+    // block's own width × height since blocks have varying sizes.
+
+    kernel void j2k_ht_dequant(
+        device const GPUHTCleanupDescriptor* blocks      [[buffer(0)]],
+        device const uint*                   sgnMag      [[buffer(1)]],
+        device int*                          output      [[buffer(2)]],
+        constant uint&                       blockCount  [[buffer(3)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        uint blockIdx = gid.y;
+        if (blockIdx >= blockCount) return;
+        GPUHTCleanupDescriptor desc = blocks[blockIdx];
+        uint sampleCount = desc.width * desc.height;
+        uint sampleIdx = gid.x;
+        if (sampleIdx >= sampleCount) return;
+
+        uint outOffset = desc.outputOffset + sampleIdx;
+        uint val = sgnMag[outOffset];
+        uint shift = (uint)(30 - (int)desc.missingMSBs);
+        bool isNeg = (val & 0x80000000u) != 0;
+        int mag = (int)((val & 0x7FFFFFFFu) >> shift);
+        output[outOffset] = isNeg ? -mag : mag;
     }
     """
 }
