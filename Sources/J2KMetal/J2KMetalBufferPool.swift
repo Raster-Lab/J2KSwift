@@ -59,13 +59,16 @@ public struct J2KMetalBufferPoolConfiguration: Sendable {
     /// allocation. Defaults to `true`.
     public var enableHeapBacking: Bool
 
-    /// v5.11: target size for each `MTLHeap`. The plan picks
-    /// `max(96 MB, peak-observed-resident)` — 96 MB covers the
-    /// largest fixture in the DICOM corpus (2800×2288 single-comp,
-    /// ~32 MB single-component peak; ~96 MB for 3-component). One
-    /// heap per storage mode means total resident ≈ 2× this on a
-    /// session that exercises both `.shared` and `.private`.
-    /// Defaults to 96 MB.
+    /// v5.11: target size for each `MTLHeap`. v5.11.1 bumps the
+    /// default to `maxPoolMemory` (256 MB) so the pool's retained
+    /// working set always fits in heap; on the v5.11 default of
+    /// 96 MB, fixtures whose pool retained > 96 MB of heap-allocated
+    /// buffers would force later allocations through the
+    /// `device.makeBuffer` fallback even though heap-backed
+    /// allocation was the goal. One heap per storage mode means
+    /// total resident ≈ 2× this on a session that exercises both
+    /// `.shared` and `.private`. Configurable for callers that
+    /// want a smaller residency footprint.
     public var heapSize: Int
 
     /// Creates a new buffer pool configuration.
@@ -76,14 +79,14 @@ public struct J2KMetalBufferPoolConfiguration: Sendable {
     ///   - defaultStrategy: Default allocation strategy. Defaults to `.shared`.
     ///   - enablePooling: Whether to enable pooling. Defaults to `true`.
     ///   - enableHeapBacking: Whether to back misses with `MTLHeap`. Defaults to `true`.
-    ///   - heapSize: Target heap size per storage mode in bytes. Defaults to `96 MB`.
+    ///   - heapSize: Target heap size per storage mode in bytes. Defaults to `256 MB` (matches `maxPoolMemory`).
     public init(
         maxPoolSize: Int = 64,
         maxPoolMemory: UInt64 = 256 * 1024 * 1024,
         defaultStrategy: J2KMetalBufferAllocationStrategy = .shared,
         enablePooling: Bool = true,
         enableHeapBacking: Bool = true,
-        heapSize: Int = 96 * 1024 * 1024
+        heapSize: Int = 256 * 1024 * 1024
     ) {
         self.maxPoolSize = maxPoolSize
         self.maxPoolMemory = maxPoolMemory

@@ -5,6 +5,48 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.11.1] — 2026-05-02
+
+**Patch — `MTLHeap` default size bump (96 MB → 256 MB)**
+
+Closes the px_001 / xa_001 `makeBuffer=2` fallthrough that v5.11.0
+documented as a known issue. The heap default was 96 MB but the
+buffer pool's `maxPoolMemory` is 256 MB — fixtures whose pool
+retained working set exceeded 96 MB of heap-allocated buffers were
+forced through the `device.makeBuffer` fallback for the last few
+allocations. Bumping `heapSize` default to match `maxPoolMemory`
+keeps everything heap-resident.
+
+### Counter snapshot (one warm decode, full corpus)
+
+  fixture        size       v5.11.0   v5.11.1
+  ct_001         512×512    mb=0      mb=0
+  ct_003         512×512    mb=0      mb=0
+  dx_002         2800×2288  mb=0      mb=0
+  mr_001         886×886    mb=1      mb=0
+  mr_002         180×180    mb=1      mb=0
+  px_001         2459×1316  mb=2      **mb=0**
+  xa_001         1024×1024  mb=2      **mb=0**
+
+Hot-path `makeBufferCount` is now 0 on every corpus fixture.
+
+### Wall-clock effect
+
+Speedups firm up across the corpus — ct_001 reaches 2.65–3.12×
+(was 1.89× at v5.11.0), xa_001 2.55–2.77× (was 1.92×), mr_002
+2.76–3.23× (was 1.93×). Run-to-run noise is meaningful at this
+scale; the counter delta is the cleaner signal.
+
+### Notes
+
+- Resident memory increases by ~160 MB worst-case per session
+  (256 MB heap × 2 storage modes − 96 MB × 2 = 320 MB delta).
+  Acceptable on M-series Macs; callers wanting smaller residency
+  can pass a custom `J2KMetalBufferPoolConfiguration` with
+  `heapSize: 96 * 1024 * 1024`.
+- No API change. No new tests; existing
+  `testCorpusWarmProcessPerf` reports the new counter values.
+
 ## [5.11.0] — 2026-05-02
 
 **Minor Release — `MTLHeap`-backed buffer pool**

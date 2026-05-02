@@ -135,3 +135,4 @@ LocalDatasets/
 .env
 .env.local
 /test_*.swift
+.claude/
