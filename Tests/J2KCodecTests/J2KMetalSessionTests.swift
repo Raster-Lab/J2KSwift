@@ -129,6 +129,72 @@ final class J2KMetalSessionTests: XCTestCase {
             "session-shared decodes should be faster than sessionless on warm runs")
     }
 
+    /// Corpus-wide bit-exactness gate: for every PGM in the
+    /// CrossCodec fixture set, encodes to HTJ2K conformant and
+    /// asserts `decodeWithGPUHT(data)` and `decodeWithGPUHT(data,
+    /// session: ...)` produce byte-identical output. v5.9b shipped
+    /// a regression that only fired on certain block geometries
+    /// (the synthetic 384×384 fixture caught it; corpus did not).
+    /// This test makes the corpus-vs-fast-lane comparison explicit.
+    func testCorpusSessionAndSessionlessAgreeBitExact() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+
+        let fixturesDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures")
+            .appendingPathComponent("CrossCodec")
+        let pgms = try FileManager.default.contentsOfDirectory(
+            at: fixturesDir, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+            .filter { $0.pathExtension == "pgm" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            progressionOrder: .rpcl,
+            useHTJ2K: true,
+            useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        let encoder = J2KEncoder(encodingConfiguration: config)
+        let decoder = J2KDecoder()
+        let session = J2KMetalSession()
+
+        func parsePGM(_ data: Data) throws -> J2KImage {
+            var headerEnd = 0; var nl = 0; var i = 0
+            while i < data.count {
+                if data[i] == 0x0A { nl += 1; if nl == 3 { headerEnd = i + 1; break } }
+                i += 1
+            }
+            let h = String(data: data.prefix(headerEnd - 1), encoding: .ascii) ?? ""
+            let lines = h.split(separator: "\n")
+            let dims = lines[1].split(separator: " ")
+            let w = Int(dims[0])!, height = Int(dims[1])!
+            let bd = Int(lines[2])! > 255 ? 16 : 8
+            let pixels = data.subdata(in: headerEnd..<data.count)
+            return J2KImage(
+                width: w, height: height,
+                components: [J2KComponent(
+                    index: 0, bitDepth: bd, signed: false,
+                    width: w, height: height,
+                    data: pixels, sampleByteOrder: .littleEndian)],
+                colorSpace: .grayscale)
+        }
+
+        for pgmURL in pgms {
+            let pgmData = try Data(contentsOf: pgmURL)
+            let image = try parsePGM(pgmData)
+            let encoded = try await encoder.encode(image)
+
+            let imgA = try await decoder.decodeWithGPUHT(encoded)
+            let imgB = try await decoder.decodeWithGPUHT(encoded, session: session)
+
+            XCTAssertEqual(
+                imgA.components.first?.data, imgB.components.first?.data,
+                "session and sessionless decode bytes diverged on \(pgmURL.lastPathComponent)")
+        }
+    }
+
     /// Corpus-wide warm-process measurement. For every PGM in the
     /// CrossCodec fixture set, encodes to HTJ2K conformant and
     /// measures GPU-HT decode time with and without a shared
