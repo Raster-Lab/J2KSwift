@@ -2342,3 +2342,45 @@ kernel void j2k_ht_dequant(
     int mag = (int)((val & 0x7FFFFFFFu) >> shift);
     output[outOffset] = isNeg ? -mag : mag;
 }
+
+// MARK: - Subband scatter (v5.7.0)
+
+struct GPUScatterDescriptor {
+    uint codeblockOffset;
+    uint blockWidth;
+    uint blockHeight;
+    uint subbandX;
+    uint subbandY;
+    uint subbandStride;
+    uint targetSubband;
+    uint _pad;
+};
+
+kernel void j2k_subband_scatter(
+    device const GPUScatterDescriptor* descs        [[buffer(0)]],
+    device const int*                  codeblocks   [[buffer(1)]],
+    device int*                        llOut        [[buffer(2)]],
+    device int*                        lhOut        [[buffer(3)]],
+    device int*                        hlOut        [[buffer(4)]],
+    device int*                        hhOut        [[buffer(5)]],
+    constant uint&                     descCount    [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    uint blockIdx = gid.z;
+    if (blockIdx >= descCount) return;
+    GPUScatterDescriptor d = descs[blockIdx];
+    uint col = gid.x;
+    uint row = gid.y;
+    if (col >= d.blockWidth || row >= d.blockHeight) return;
+
+    uint srcIdx = d.codeblockOffset + row * d.blockWidth + col;
+    uint dstX = d.subbandX + col;
+    uint dstY = d.subbandY + row;
+    uint dstIdx = dstY * d.subbandStride + dstX;
+    int value = codeblocks[srcIdx];
+
+    if (d.targetSubband == 0) llOut[dstIdx] = value;
+    else if (d.targetSubband == 1) lhOut[dstIdx] = value;
+    else if (d.targetSubband == 2) hlOut[dstIdx] = value;
+    else hhOut[dstIdx] = value;
+}

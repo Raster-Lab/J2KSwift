@@ -138,6 +138,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// CPU-side per-sample shift+sign loop in `J2KGPUHTDispatch`
     /// goes away.
     case htDequant = "j2k_ht_dequant"
+    /// Subband scatter: takes the dequantised codeblock-output
+    /// buffer and a per-block placement descriptor, writes each
+    /// codeblock's Int32 samples into the right (x, y) position
+    /// within a per-subband 2D output buffer. Replaces the CPU-side
+    /// `getSubbandAsInt32` loop in J2KDecoderPipeline. v5.7.0
+    /// foundation for HT cleanup → DWT command-buffer fusion.
+    case subbandScatter = "j2k_subband_scatter"
 }
 
 // MARK: - Shader Library Configuration
@@ -2811,6 +2818,66 @@ enum J2KMetalShaderSource {
         bool isNeg = (val & 0x80000000u) != 0;
         int mag = (int)((val & 0x7FFFFFFFu) >> shift);
         output[outOffset] = isNeg ? -mag : mag;
+    }
+
+    // MARK: - Subband scatter (v5.7.0)
+    //
+    // Per-codeblock placement metadata. One descriptor per
+    // codeblock per scatter dispatch. The kernel reads
+    // `blockWidth × blockHeight` Int32 samples starting at
+    // `codeblockOffset` and writes them into the destination
+    // subband buffer at (subbandX + col, subbandY + row), respecting
+    // `subbandStride` as the row pitch. `targetSubband` selects
+    // which of the 4 bound buffers (LL/LH/HL/HH) to write to.
+    //
+    // Layout matches the J2KMetalSubbandScatterDescriptor Swift
+    // struct field-for-field; @frozen on the Swift side locks the
+    // order so release-mode optimisation can't reorder.
+
+    struct GPUScatterDescriptor {
+        uint codeblockOffset;     // Int32 offset into the source codeblock buffer
+        uint blockWidth;          // codeblock width in samples
+        uint blockHeight;         // codeblock height in samples
+        uint subbandX;            // x position of this block within its target subband
+        uint subbandY;            // y position
+        uint subbandStride;       // row pitch of the target subband buffer (= subband width)
+        uint targetSubband;       // 0=LL, 1=LH, 2=HL, 3=HH
+        uint _pad;                // align to 32 bytes for stride consistency
+    };
+
+    kernel void j2k_subband_scatter(
+        device const GPUScatterDescriptor* descs        [[buffer(0)]],
+        device const int*                  codeblocks   [[buffer(1)]],
+        device int*                        llOut        [[buffer(2)]],
+        device int*                        lhOut        [[buffer(3)]],
+        device int*                        hlOut        [[buffer(4)]],
+        device int*                        hhOut        [[buffer(5)]],
+        constant uint&                     descCount    [[buffer(6)]],
+        uint3 gid [[thread_position_in_grid]]
+    ) {
+        uint blockIdx = gid.z;
+        if (blockIdx >= descCount) return;
+        GPUScatterDescriptor d = descs[blockIdx];
+        uint col = gid.x;
+        uint row = gid.y;
+        if (col >= d.blockWidth || row >= d.blockHeight) return;
+
+        uint srcIdx = d.codeblockOffset + row * d.blockWidth + col;
+        uint dstX = d.subbandX + col;
+        uint dstY = d.subbandY + row;
+        uint dstIdx = dstY * d.subbandStride + dstX;
+        int value = codeblocks[srcIdx];
+
+        // Branchless dispatch on target subband. Each thread writes
+        // to exactly one buffer; the others are untouched. The
+        // unbound branches are dead code paths chosen at compile
+        // time per dispatched grid cell — no warp divergence, since
+        // all threads of the same block share the same
+        // d.targetSubband.
+        if (d.targetSubband == 0) llOut[dstIdx] = value;
+        else if (d.targetSubband == 1) lhOut[dstIdx] = value;
+        else if (d.targetSubband == 2) hlOut[dstIdx] = value;
+        else hhOut[dstIdx] = value;
     }
     """
 }
