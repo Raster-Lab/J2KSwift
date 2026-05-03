@@ -1,14 +1,17 @@
-# J2KSwift v5.14.1 — Benchmark + Regression Report
+# J2KSwift v5.14.2 — Benchmark + Regression Report
 
-**Build:** `main` @ `97ee393` (release `v5.14.1`)
+**Build:** `main` @ `eb8c745` (release `v5.14.2`)
 **Date:** 2026-05-03
 **Machine:** Apple Silicon (M-series), macOS 26
 **Tooling:** Swift 6.2, Metal Toolchain `metalfe-32023.864`, OpenJPEG / OpenJPH / Grok via Homebrew
 
-> **Critical fix vs the v5.14.0 report:** the lossless 16-bit PGM
-> round-trip failure flagged in §2 of the v5.14.0 report is now
-> fixed. Lossless rows are truly lossless (PSNR ∞, SSIM 1.0,
-> MAE 0). See §2 below for the before/after data.
+> **What changed since the v5.14.0 report:**
+> - **v5.14.1** — lossless 16-bit PGM round-trip fixed. Medical
+>   benchmark lossless rows are now truly lossless (PSNR ∞).
+> - **v5.14.2** — systemic byte-order fix across PGM/PPM/PNG/TIFF/
+>   DICOM. Every reader tags `J2KComponent.sampleByteOrder`;
+>   every writer respects the tag with per-format legacy
+>   defaults. Bonus: pre-existing PNG Sub-filter bug fixed.
 
 ---
 
@@ -16,10 +19,10 @@
 
 Full `swift test -c release`. Per-module pass/fail counts:
 
-| metric | v5.14.0 | v5.14.1 |
-|---|---:|---:|
-| **Total tests passed** | 1304 | **1305** |
-| **Total tests failed** | 6 | **5** |
+| metric | v5.14.0 | v5.14.1 | v5.14.2 |
+|---|---:|---:|---:|
+| **Total tests passed** | 1304 | 1305 | **1309** |
+| **Total tests failed** | 6 | 5 | **5** |
 
 **Failures (all pre-existing, none from v5.9–v5.14 work):**
 
@@ -122,19 +125,41 @@ OpenJPH (HTJ2K reference) consistently fastest on encode — the high-throughput
 
 OpenJPH again leads — its HTJ2K-only design has tighter inner loops than OpenJPEG's general-purpose codec.
 
-### Lossy compression efficiency (PSNR at 1 bpp)
+### Lossy compression efficiency at *nominal* 1 bpp
 
-| Image | OpenJPEG | OpenJPH | Grok |
+> ### ⚠ Important caveat: nominal vs achieved bitrate
+>
+> The "1 bpp" target below is what the encoder is *asked* for. The actual *achieved* bitrate (file_size × 8 / pixels) is usually different — sometimes by 5×. Higher PSNR at the same nominal target therefore does **not** mean better compression efficiency; it usually means the codec didn't actually truncate to the target.
+>
+> **For strict apples-to-apples comparison, plot rate-distortion curves** — measure PSNR at multiple *achieved* bitrates and compare the curves at fixed achieved-bpp values. The single-point comparison below is informative for "what does each codec do when asked for 1 bpp?" but not for "which codec is most efficient at 1 bpp?".
+
+**Achieved bitrates at nominal 1 bpp target:**
+
+| Image | Pixels | Nominal 1bpp = | OpenJPEG | OpenJPH | Grok |
+|---|---:|---:|---:|---:|---:|
+| Grad-256-8b | 65536 | 8192 B | 7858 B (**0.96 bpp**) | 43595 B (**5.32 bpp**) | 7969 B (**0.97 bpp**) |
+| Grad-512-8b | 262144 | 32768 B | 32655 B (**1.00 bpp**) | 172646 B (**5.27 bpp**) | 32764 B (**1.00 bpp**) |
+| Grad-1024-8b | 1048576 | 131072 B | 130829 B (**1.00 bpp**) | 687626 B (**5.25 bpp**) | 129803 B (**0.99 bpp**) |
+| Med-512-12b | 262144 | 32768 B | 32458 B (**0.99 bpp**) | 46071 B (**1.41 bpp**) | 32771 B (**1.00 bpp**) |
+| Med-512-16b | 262144 | 32768 B | 32712 B (**1.00 bpp**) | 46470 B (**1.42 bpp**) | 32770 B (**1.00 bpp**) |
+
+OpenJPH consistently *misses* the rate target — by 5× on the natural-image gradients and by ~40% on the medical fixtures. Its `-rate 1` flag uses a different convention (probably target compression ratio, not bpp). OpenJPEG and Grok land within ±1% of the nominal target.
+
+**PSNR at nominal 1 bpp (read alongside achieved-bpp above):**
+
+| Image | OpenJPEG (~1 bpp) | OpenJPH (5× over) | Grok (~1 bpp) |
 |---|---:|---:|---:|
-| Grad-256-8b | 25.63 | **49.24** | 25.14 |
-| Grad-512-8b | 25.99 | **49.20** | 25.72 |
-| Grad-1024-8b | 26.09 | **49.20** | 25.89 |
-| Med-512-12b | 45.77 | 46.84 | 32.48 |
-| Med-512-16b | 45.74 | 46.82 | 32.43 |
+| Grad-256-8b | 25.63 | (49.24 at 5.32 bpp) | 25.14 |
+| Grad-512-8b | 25.99 | (49.20 at 5.27 bpp) | 25.72 |
+| Grad-1024-8b | 26.09 | (49.20 at 5.25 bpp) | 25.89 |
+| Med-512-12b | 45.77 | (46.84 at 1.41 bpp) | 32.48 |
+| Med-512-16b | 45.74 | (46.82 at 1.42 bpp) | 32.43 |
 
-OpenJPH targets a different bit-rate truncation than OpenJPEG / Grok, hence the much higher PSNR at the same nominal "1 bpp" — OpenJPH's bpp here is closer to lossless. (Bit-rate-control parity between codecs is a separate calibration question outside this benchmark's scope.)
+OpenJPEG vs Grok at matched ~1 bpp: OpenJPEG wins by ~0.3 dB on natural-image gradients and by ~13 dB on medical 12/16-bit (where Grok seems to lose precision). OpenJPH's ~49 dB number is at 5× the bitrate of the others — not an apples-to-apples win.
 
-> **Note:** J2KSwift is not represented in this cross-codec table because `Scripts/cross_codec_benchmark.sh` measures `opj_compress`/`opj_decompress`, `ojph_compress`/`ojph_expand`, and `grk_compress`/`grk_decompress` directly — it doesn't invoke the J2KSwift `j2k` CLI. The J2KSwift decoder numbers are in §4 (corpus warm-process bench) and §5 (per-stage profile).
+For a fair comparison, the right experiment is a 4–5 point R-D curve (e.g. 0.25 / 0.5 / 1.0 / 2.0 / 4.0 bpp targets), then read off PSNR at the *achieved* bpp matched across codecs.
+
+> **Note:** J2KSwift is not represented in this cross-codec table because `Scripts/cross_codec_benchmark.sh` measures `opj_compress`/`opj_decompress`, `ojph_compress`/`ojph_expand`, and `grk_compress`/`grk_decompress` directly — it doesn't invoke the J2KSwift `j2k` CLI. The J2KSwift decoder numbers are in §4 (corpus warm-process bench) and §5 (per-stage profile). For J2KSwift vs OpenJPEG at matched achieved-bpp on medical inputs, see §2 — the medical benchmark uses a Python pipeline that constrains both encoders to the same target and measures actual achieved bpp; J2KSwift comes within ±0.4 dB of OpenJPEG on CT and beats it by 0.81–4.22 dB on MRI / Ultrasound at lossy rates.
 
 ---
 
@@ -214,9 +239,9 @@ Cold-vs-cold comparison on a single machine is unreliable (OS page cache caches 
 
 ---
 
-## 7. Cumulative trajectory (v5.7.0 → v5.14.1)
+## 7. Cumulative trajectory (v5.7.0 → v5.14.2)
 
-| Metric | v5.7.0 (UMA detour start) | v5.14.1 |
+| Metric | v5.7.0 (UMA detour start) | v5.14.2 |
 |---|---:|---:|
 | Median warm speedup (corpus) | 1.63× | **~2.7×** |
 | Peak warm speedup | 1.93× | **3.95×** (ct_001) |
@@ -226,25 +251,31 @@ Cold-vs-cold comparison on a single machine is unreliable (OS page cache caches 
 | Cold-CLI start savings | 0 (source-compile each launch) | ~30 ms (bundled metallib) |
 | 1024×1024 RGB lossless | (no measurement) | ~30 ms warm session |
 | 16-bit lossless PGM round-trip | broken (bytes LE, spec BE) | **byte-for-byte exact** |
+| 16-bit PNG round-trip | broken past `bpp` bytes per scanline (Sub filter bug) | **byte-for-byte exact** |
+| 16-bit TIFF round-trip | broken on tagged-LE inputs | **byte-for-byte exact** |
 | Medical CT 16-bit lossless PSNR | 7.68 | **∞** |
 | Medical MRI 12-bit 0.5bpp PSNR | -18.00 (encoder broken) | 42.48 (+2.74 dB vs OPJ) |
+| Cross-format byte-order regression matrix | none | **10 tests** ({8,12,16}-bit × {Part 1, HTJ2K} + PNG/TIFF round-trip + tag verification) |
 
 ### Tags pushed (v5.x.x series)
 
-`v5.1.0`, `v5.1.1`, `v5.1.2`, `v5.2.0`, `v5.3.0`, `v5.4.0`, `v5.5.0`, `v5.6.0`, `v5.7.0`, `v5.8.0`, `v5.9.0`, `v5.10.0`, `v5.11.0`, `v5.11.1`, `v5.12.0`, `v5.13.0`, `v5.14.0`, **`v5.14.1`**
+`v5.1.0`, `v5.1.1`, `v5.1.2`, `v5.2.0`, `v5.3.0`, `v5.4.0`, `v5.5.0`, `v5.6.0`, `v5.7.0`, `v5.8.0`, `v5.9.0`, `v5.10.0`, `v5.11.0`, `v5.11.1`, `v5.12.0`, `v5.13.0`, `v5.14.0`, `v5.14.1`, **`v5.14.2`**
 
 ---
 
-## 8. Open items (post-v5.14.1)
+## 8. Open items (post-v5.14.2)
 
 | item | status | reason |
 |---|---|---|
+| Rate-distortion curve cross-codec benchmark | followup | Current §3 single-point comparison is misleading on rate-control parity (OpenJPH lands 5× over its nominal 1 bpp target). A 4–5 point R-D curve is the strict comparison. |
+| PNG Sub/Up/Average/Paeth filter implementations | followup | v5.14.2 falls back to filter type 0 (None) for correctness; modest compression-ratio cost. Re-implement with proper original-byte semantics if PNG output size matters for a use case. |
 | 9/7 lossy fast-lane fusion | deferred | needs bit-exact-vs-PSNR gating decision + Float pipeline + GPU dequant |
 | `HTJ2KBeatsOpenJPEGTests` perf threshold (3× target) | tightening | hits 2.81× / 0.71× on smaller sizes — may need recalibration |
 | Multi-tile in-flight cb pipelining within a single tile | deferred | substantial async producer-consumer refactor; current chunked-TaskGroup gives bounded heap residency |
 | Faster GPU HT cleanup / IDWT shader work | deferred | research-grade; no clear win path without profiler-on-silicon access |
+| DICOM writer | not implemented | When/if added: respect `J2KComponent.sampleByteOrder` from day one. Helper supports `legacyDefault: .bigEndian` if matching reader convention. |
 
-> The "Encoder PSNR regression on high-bit-depth medical inputs" item from the v5.14.0 report is **resolved** in v5.14.1.
+> The "Encoder PSNR regression on high-bit-depth medical inputs" item from the v5.14.0 report was **resolved** in v5.14.1 (PGM/PPM byte-order fix). The systemic audit + class-of-bug fix shipped in v5.14.2.
 
 ---
 
