@@ -21,6 +21,55 @@ final class J2KGPUProfileTests: XCTestCase {
         stderr.write(Data((s + "\n").utf8))
     }
 
+    func testProfileRGB() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["J2K_PROFILE_DECODE"] != nil,
+            "Run with J2K_PROFILE_DECODE=1 to capture timings")
+
+        // Synthetic 3-channel RGB image, 1024×1024 — large enough to
+        // saturate the fast lane and surface MCT cost on the profile
+        // breakdown.
+        var stateR: UInt64 = 0xC0FFEE01 | 1
+        var stateG: UInt64 = 0xC0FFEE01 &* 0xDEADBEEF
+        var stateB: UInt64 = 0xC0FFEE01 &* 0xCAFEBABE
+        let w = 1024, h = 1024
+        var rB = [UInt8](repeating: 0, count: w * h)
+        var gB = [UInt8](repeating: 0, count: w * h)
+        var bB = [UInt8](repeating: 0, count: w * h)
+        for i in 0..<(w * h) {
+            stateR = stateR &* 2862933555777941757 &+ 3037000493
+            stateG = stateG &* 2862933555777941757 &+ 3037000493
+            stateB = stateB &* 2862933555777941757 &+ 3037000493
+            rB[i] = UInt8(truncatingIfNeeded: stateR >> 32)
+            gB[i] = UInt8(truncatingIfNeeded: stateG >> 32)
+            bB[i] = UInt8(truncatingIfNeeded: stateB >> 32)
+        }
+        let image = J2KImage(width: w, height: h, components: [
+            J2KComponent(index: 0, bitDepth: 8, signed: false, width: w, height: h, data: Data(rB), sampleByteOrder: .littleEndian),
+            J2KComponent(index: 1, bitDepth: 8, signed: false, width: w, height: h, data: Data(gB), sampleByteOrder: .littleEndian),
+            J2KComponent(index: 2, bitDepth: 8, signed: false, width: w, height: h, data: Data(bB), sampleByteOrder: .littleEndian)
+        ], colorSpace: .sRGB)
+
+        let config = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            progressionOrder: .rpcl,
+            useHTJ2K: true, useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        let encoded = try await J2KEncoder(encodingConfiguration: config).encode(image)
+
+        let decoder = J2KDecoder()
+        let session = J2KMetalSession()
+
+        Self.say("[profile-rgb] === 1024×1024 3-channel RGB lossless ===")
+        _ = try await decoder.decodeWithGPUHT(encoded, session: session)
+        Self.say("[profile-rgb] --- warmup done ---")
+        let t0 = DispatchTime.now()
+        _ = try await decoder.decodeWithGPUHT(encoded, session: session)
+        let total = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
+        Self.say(String(format: "[profile-rgb] TOTAL session decode = %.1f ms", total))
+    }
+
     func testProfileDX002() async throws {
         try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
         try XCTSkipUnless(

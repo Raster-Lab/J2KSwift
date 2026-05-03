@@ -5,6 +5,60 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.14.0] — 2026-05-03
+
+**Minor Release — Skip GPU MCT round-trip on Apple Silicon UMA**
+
+The `applyInverseColorTransformGPU` path used to convert the
+post-DWT `[Double]` components to `[Float]`, run inverse RCT/ICT on
+GPU, then convert results back to `[Double]`. Profile data on a
+1024×1024 lossless RGB decode showed this branch took **9.1 ms**
+of a ~42 ms total session decode — **15% of total time** burned
+on Double↔Float round-trips around a tiny per-pixel kernel.
+
+v5.14.0 routes MCT through the existing in-place CPU vDSP path
+(`applyInverseColorTransformInPlace`) instead. Stays in Double
+throughout (matching the IDWT output type), uses
+`vDSP_vsmaD`/`vDSP_vaddD`/`vDSP_vsubD` for the per-pixel
+arithmetic, steals input arrays' inner buffers to avoid
+allocation. The GPU MCT path remains in
+`J2KMetalColorTransform` for future re-introduction if a fused-
+into-IDWT-cb landing (avoiding the round-trip) becomes
+practical.
+
+### What this release does (and doesn't) change
+
+**Architectural:** `applyInverseColorTransformGPU` is now a thin
+wrapper around `applyInverseColorTransform`. The Metal MCT
+infrastructure stays in place (still useful for callers that
+work directly on Float buffers, e.g. encoder paths) but the
+decoder no longer touches it.
+
+**Perf on RGB workloads** (1024×1024 lossless 3-channel,
+warm session):
+
+| stage | v5.13.0 | v5.14.0 |
+| --- | ---:| ---:|
+| inverseColorTransform | 9.1 ms | **4.0 ms (-56%)** |
+| TOTAL session decode | ~42 ms | **~30 ms (-29%)** |
+
+**Perf on grayscale workloads (the DICOM corpus):** unchanged.
+The corpus is single-component PGM; MCT is a no-op. v5.14
+touches only the 3+ component path.
+
+### Bit-exactness
+
+- All v5.13.0 gates pass byte-for-byte ✓
+- `testRGBSessionAndSessionlessAgreeBitExact` ✓ (the
+  CPU-MCT path produces the same Double output as the previous
+  GPU-MCT path; the verification gate caught silent regressions)
+
+### Sessionless / session paths
+
+Identical behaviour relative to each other on RGB inputs (both
+paths now run the CPU MCT). Both paths are bit-exact with v5.13.0
+on grayscale.
+
 ## [5.13.0] — 2026-05-03
 
 **Minor Release — `default.metallib` bundled (was the v5.15 plan item)**
