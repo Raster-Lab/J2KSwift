@@ -141,7 +141,12 @@ final class HTConformantOpenJPHCrossDecodeTests: XCTestCase {
         try csv.write(toFile: outPath, atomically: true, encoding: .utf8)
         print("\nCSV dump → \(outPath)")
 
+        // Phase 3 hardening: strict regression gate. OpenJPH-decode
+        // failure on conformant output is the highest-severity bug
+        // class for J2KSwift's interop story.
         XCTAssertGreaterThan(cells.count, 0, "sweep produced no cells")
+        XCTAssertEqual(failed.count, 0,
+                       "regression: \(failed.count) cells failed OpenJPH cross-decode — see test log + /tmp CSV")
     }
 
     // MARK: helpers

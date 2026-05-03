@@ -226,9 +226,13 @@ final class HTConformantNonPowerOf2ProbeTests: XCTestCase {
         try csv.write(toFile: outPath, atomically: true, encoding: .utf8)
         print("\nCSV dump → \(outPath)")
 
-        // Phase 1 deliverable is the matrix, not pass/fail. Just
-        // assert the sweep ran so a crash surfaces as a test failure.
+        // Phase 3 hardening: lift the matrix into a strict regression
+        // gate. After Phase 1+2 confirmed all cells round-trip bit-exact,
+        // any future failure on this matrix is a regression we want to
+        // surface immediately.
         XCTAssertGreaterThan(cells.count, 0, "sweep produced no cells")
+        XCTAssertEqual(failed.count, 0,
+                       "regression: \(failed.count) cells corrupted in HT block round-trip — see test log + /tmp CSV")
     }
 
     // MARK: helpers

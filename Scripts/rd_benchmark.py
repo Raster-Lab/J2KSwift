@@ -234,10 +234,28 @@ def build_image_set(quick=False):
 # ---------------------------------------------------------------------------
 
 def encode_decode_j2kswift(in_pgm, out_dir, bpp, bitdepth):
+    """J2KSwift in legacy EBCOT (Part 1) mode."""
     j2k = out_dir / "j2kswift.j2k"
     dec = out_dir / "j2kswift_dec.pgm"
     enc_cmd = [str(J2K_CLI), "encode", "-i", str(in_pgm), "-o", str(j2k),
                "--bitrate", str(bpp), "--quiet"]
+    r1 = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=120)
+    if r1.returncode != 0:
+        return None, None, f"encode failed: {r1.stderr.strip()}"
+    dec_cmd = [str(J2K_CLI), "decode", "-i", str(j2k), "-o", str(dec), "--quiet"]
+    r2 = subprocess.run(dec_cmd, capture_output=True, text=True, timeout=120)
+    if r2.returncode != 0:
+        return None, None, f"decode failed: {r2.stderr.strip()}"
+    return j2k, dec, None
+
+
+def encode_decode_j2kswift_ht(in_pgm, out_dir, bpp, bitdepth):
+    """J2KSwift HT conformant (Part 15) mode — direct comparison vs
+    OpenJPH which is HT-only."""
+    j2k = out_dir / "j2kswift_ht.j2k"
+    dec = out_dir / "j2kswift_ht_dec.pgm"
+    enc_cmd = [str(J2K_CLI), "encode", "-i", str(in_pgm), "-o", str(j2k),
+               "--bitrate", str(bpp), "--htj2k", "--quiet"]
     r1 = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=120)
     if r1.returncode != 0:
         return None, None, f"encode failed: {r1.stderr.strip()}"
@@ -341,6 +359,7 @@ def encode_decode_grok(in_pgm, out_dir, bpp, bitdepth):
 
 CODECS = [
     ("J2KSwift", encode_decode_j2kswift),
+    ("J2KSwift-HT", encode_decode_j2kswift_ht),
     ("OpenJPEG", encode_decode_openjpeg),
     ("OpenJPH", encode_decode_openjph),
     ("Grok", encode_decode_grok),
@@ -671,8 +690,8 @@ def main():
     codecs = []
     for name, fn in CODECS:
         # Sniff the binary if applicable
-        if name == "J2KSwift" and not J2K_CLI.exists():
-            print(f"warning: skipping J2KSwift — {J2K_CLI} not found")
+        if name in ("J2KSwift", "J2KSwift-HT") and not J2K_CLI.exists():
+            print(f"warning: skipping {name} — {J2K_CLI} not found")
             continue
         elif name == "OpenJPEG" and not Path(OPJ_ENC).exists():
             print(f"warning: skipping OpenJPEG — {OPJ_ENC} not found")

@@ -133,7 +133,10 @@ final class HTConformantPipelineNonPowerOf2Tests: XCTestCase {
         try csv.write(toFile: outPath, atomically: true, encoding: .utf8)
         print("\nCSV dump → \(outPath)")
 
+        // Phase 3 hardening: strict regression gate.
         XCTAssertGreaterThan(cells.count, 0, "sweep produced no cells")
+        XCTAssertEqual(failed.count, 0,
+                       "regression: \(failed.count) cells corrupted in lossless full-pipeline round-trip — see test log + /tmp CSV")
     }
 
     // MARK: helpers
