@@ -1,9 +1,14 @@
-# J2KSwift v5.14.0 — Benchmark + Regression Report
+# J2KSwift v5.14.1 — Benchmark + Regression Report
 
-**Build:** `main` @ `ded310e` (release `v5.14.0`)
+**Build:** `main` @ `97ee393` (release `v5.14.1`)
 **Date:** 2026-05-03
 **Machine:** Apple Silicon (M-series), macOS 26
 **Tooling:** Swift 6.2, Metal Toolchain `metalfe-32023.864`, OpenJPEG / OpenJPH / Grok via Homebrew
+
+> **Critical fix vs the v5.14.0 report:** the lossless 16-bit PGM
+> round-trip failure flagged in §2 of the v5.14.0 report is now
+> fixed. Lossless rows are truly lossless (PSNR ∞, SSIM 1.0,
+> MAE 0). See §2 below for the before/after data.
 
 ---
 
@@ -11,10 +16,10 @@
 
 Full `swift test -c release`. Per-module pass/fail counts:
 
-| metric | count |
-|---|---:|
-| **Total tests passed** | **1304** |
-| **Total tests failed** | **6** |
+| metric | v5.14.0 | v5.14.1 |
+|---|---:|---:|
+| **Total tests passed** | 1304 | **1305** |
+| **Total tests failed** | 6 | **5** |
 
 **Failures (all pre-existing, none from v5.9–v5.14 work):**
 
@@ -38,32 +43,54 @@ J2KMetalSessionTests:            8 / 8
 J2KMetalSubbandScatterTests:     3 / 3
 ```
 
-Every bit-exactness gate touching the GPU HT decoder pipeline is green. The 6 unrelated failures above sit outside this graph and are pre-existing.
+Every bit-exactness gate touching the GPU HT decoder pipeline is green. The 5 unrelated failures above sit outside this graph and are pre-existing perf-threshold / thermal-noise / unrelated config tests. **Net change vs v5.14.0:** +1 fixed (`testHTJ2KBeatsOpenJPEGFullMatrixPrintsSummary` now hits its perf thresholds with the corrected output bytes).
+
+In addition, **6 new** `J2KPGMRoundTripTests` ship with v5.14.1 — `{8, 12, 16}-bit × {Part 1, HTJ2K}` lossless round-trip via the release-built CLI, byte-for-byte equality with the synthetic input. All 6 pass; this is the regression gate that locks the byte-order fix.
 
 ---
 
-## 2. Medical imaging benchmark (J2KSwift vs OpenJPEG)
+## 2. Medical imaging benchmark (J2KSwift vs OpenJPEG) — v5.14.1 ✓
 
 `python3 Scripts/medical_benchmark.py` — synthetic CT (16-bit), MRI (12-bit), Ultrasound (12-bit) at 0.25 / 0.5 / 0.75 bpp + lossless.
 
-| Modality | Bits | Rate | J2K PSNR | J2K SSIM | OPJ PSNR | OPJ SSIM | ΔPSNR |
-|---|---:|---|---:|---:|---:|---:|---:|
-| CT | 16 | 0.25bpp | 6.50 | 0.0137 | 52.11 | 0.9939 | -45.61 |
-| CT | 16 | 0.50bpp | 6.92 | 0.0081 | 55.46 | 0.9970 | -48.54 |
-| CT | 16 | 0.75bpp | 7.29 | 0.0084 | 57.75 | 0.9983 | -50.47 |
-| CT | 16 | lossless | 7.68 | 0.0094 | ∞ | 1.0000 | -∞ |
-| MRI | 12 | 0.25bpp | -17.97 | 0.0009 | 33.75 | 0.9232 | -51.72 |
-| MRI | 12 | 0.50bpp | -18.00 | 0.0015 | 39.75 | 0.9649 | -57.74 |
-| MRI | 12 | 0.75bpp | -18.09 | 0.0017 | 43.13 | 0.9756 | -61.22 |
-| MRI | 12 | lossless | -18.07 | 0.0019 | ∞ | 1.0000 | -∞ |
-| Ultrasound | 12 | 0.25bpp | -15.11 | 0.3823 | 27.97 | 0.7871 | -43.09 |
-| Ultrasound | 12 | 0.50bpp | -14.82 | 0.3787 | 29.80 | 0.8768 | -44.62 |
-| Ultrasound | 12 | 0.75bpp | -14.63 | 0.3826 | 31.93 | 0.9280 | -46.57 |
-| Ultrasound | 12 | lossless | -14.64 | 0.6115 | ∞ | 1.0000 | -∞ |
+| Modality | Bits | Rate | J2K PSNR | J2K SSIM | J2K MAE | OPJ PSNR | OPJ SSIM | OPJ MAE | ΔPSNR |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| CT | 16 | 0.25bpp | **51.74** | 0.9934 | 128.35 | 52.11 | 0.9939 | 124.31 | -0.37 |
+| CT | 16 | 0.50bpp | **55.15** | 0.9966 | 90.25 | 55.46 | 0.9970 | 87.01 | -0.31 |
+| CT | 16 | 0.75bpp | **57.88** | 0.9983 | 65.24 | 57.75 | 0.9983 | 66.06 | **+0.13** |
+| CT | 16 | lossless | **∞** | 1.0000 | 0.00 | ∞ | 1.0000 | 0.00 | 0.00 |
+| MRI | 12 | 0.25bpp | **37.97** | 0.9529 | 36.62 | 33.75 | 0.9232 | 53.00 | **+4.22** |
+| MRI | 12 | 0.50bpp | **42.48** | 0.9748 | 23.42 | 39.75 | 0.9649 | 29.88 | **+2.74** |
+| MRI | 12 | 0.75bpp | **45.37** | 0.9837 | 17.33 | 43.13 | 0.9756 | 21.70 | **+2.25** |
+| MRI | 12 | lossless | **∞** | 1.0000 | 0.00 | ∞ | 1.0000 | 0.00 | 0.00 |
+| Ultrasound | 12 | 0.25bpp | **28.79** | 0.8165 | 73.39 | 27.97 | 0.7871 | 80.25 | **+0.81** |
+| Ultrasound | 12 | 0.50bpp | **31.63** | 0.8950 | 53.69 | 29.80 | 0.8768 | 64.99 | **+1.84** |
+| Ultrasound | 12 | 0.75bpp | **35.11** | 0.9616 | 35.94 | 31.93 | 0.9280 | 50.68 | **+3.18** |
+| Ultrasound | 12 | lossless | **∞** | 1.0000 | 0.00 | ∞ | 1.0000 | 0.00 | 0.00 |
 
-> **⚠ Pre-existing encoder issue.** J2KSwift's encoder produces unexpectedly low PSNR on high-bit-depth medical inputs across all modalities and bit rates. The lossless rows show `PSNR ≈ 7` instead of `∞` — the lossless round-trip is not actually lossless on these inputs. This is **independent of the v5.9–v5.14 GPU HT decoder work** (all of which is decode-side; the medical benchmark exercises the encoder via the CLI, then OpenJPEG decodes for PSNR comparison).
->
-> Tracked as encoder-side daytime work. Suggested first step: run `j2k encode -i Med-512-12b.pgm -o /tmp/x.j2k --lossless` then `j2k decode -i /tmp/x.j2k -o /tmp/x.pgm` and `cmp` the inputs. If they don't match, the regression is in the encoder's high-bit-depth path.
+**Lossless rows are now truly lossless** (PSNR ∞, SSIM 1.0, MAE 0). Lossy rates **match OpenJPEG on CT** (within ±0.4 dB) and **beat OpenJPEG on MRI by 2.25–4.22 dB** and **on Ultrasound by 0.81–3.18 dB**.
+
+### Before / after (v5.14.0 → v5.14.1)
+
+| Row | v5.14.0 PSNR | v5.14.1 PSNR | Δ |
+|---|---:|---:|---:|
+| CT 16-bit lossless | 7.68 | **∞** | LOSSLESS WORKS |
+| MRI 12-bit lossless | -18.07 | **∞** | LOSSLESS WORKS |
+| Ultrasound lossless | -14.64 | **∞** | LOSSLESS WORKS |
+| CT 0.25bpp | 6.50 | **51.74** | +45.24 dB |
+| MRI 0.25bpp | -17.97 | **37.97** | +55.94 dB |
+| Ultrasound 0.25bpp | -15.11 | **28.79** | +43.90 dB |
+
+### Root cause + fix
+
+Pre-v5.14.1 the CLI's PGM/PPM writers always byte-swapped 16-bit pixels assuming the source was host-LE. The decoder pipeline has been writing big-endian since v5.6.0. The two layers cancelled out for in-process round-trips (J2KSwift's PGM loader had a matching assumption) but produced spec-violating files for any external consumer — including `medical_benchmark.py`'s Python pipeline that read PGM as the spec demands.
+
+v5.14.1 fixes it via:
+- `J2KComponent.sampleByteOrder = .bigEndian` tag on 16-bit decoder output.
+- PGM/PPM writers now respect the tag — write as-is when source is BE, byte-swap only when source is host-LE.
+- `J2KPGMRoundTripTests` (6 tests) regression gate.
+
+The codec internals are byte-for-byte identical to v5.14.0; the fix is entirely in `Sources/J2KCLI/ImageIO.swift` + a one-line decoder convention tag.
 
 ---
 
@@ -187,9 +214,9 @@ Cold-vs-cold comparison on a single machine is unreliable (OS page cache caches 
 
 ---
 
-## 7. Cumulative trajectory (v5.7.0 → v5.14.0)
+## 7. Cumulative trajectory (v5.7.0 → v5.14.1)
 
-| Metric | v5.7.0 (UMA detour start) | v5.14.0 |
+| Metric | v5.7.0 (UMA detour start) | v5.14.1 |
 |---|---:|---:|
 | Median warm speedup (corpus) | 1.63× | **~2.7×** |
 | Peak warm speedup | 1.93× | **3.95×** (ct_001) |
@@ -198,22 +225,26 @@ Cold-vs-cold comparison on a single machine is unreliable (OS page cache caches 
 | Hot-path makeBuffer / decode | varies | **0** on every full-fast-lane fixture |
 | Cold-CLI start savings | 0 (source-compile each launch) | ~30 ms (bundled metallib) |
 | 1024×1024 RGB lossless | (no measurement) | ~30 ms warm session |
+| 16-bit lossless PGM round-trip | broken (bytes LE, spec BE) | **byte-for-byte exact** |
+| Medical CT 16-bit lossless PSNR | 7.68 | **∞** |
+| Medical MRI 12-bit 0.5bpp PSNR | -18.00 (encoder broken) | 42.48 (+2.74 dB vs OPJ) |
 
 ### Tags pushed (v5.x.x series)
 
-`v5.1.0`, `v5.1.1`, `v5.1.2`, `v5.2.0`, `v5.3.0`, `v5.4.0`, `v5.5.0`, `v5.6.0`, `v5.7.0`, `v5.8.0`, `v5.9.0`, `v5.10.0`, `v5.11.0`, `v5.11.1`, `v5.12.0`, `v5.13.0`, `v5.14.0`
+`v5.1.0`, `v5.1.1`, `v5.1.2`, `v5.2.0`, `v5.3.0`, `v5.4.0`, `v5.5.0`, `v5.6.0`, `v5.7.0`, `v5.8.0`, `v5.9.0`, `v5.10.0`, `v5.11.0`, `v5.11.1`, `v5.12.0`, `v5.13.0`, `v5.14.0`, **`v5.14.1`**
 
 ---
 
-## 8. Open items (post-v5.14)
+## 8. Open items (post-v5.14.1)
 
 | item | status | reason |
 |---|---|---|
-| Encoder PSNR regression on high-bit-depth medical inputs | **needs investigation** | medical_benchmark.py shows `PSNR ≈ 7` on lossless 16-bit CT; pre-existing, encoder-side, blocking medical use cases |
 | 9/7 lossy fast-lane fusion | deferred | needs bit-exact-vs-PSNR gating decision + Float pipeline + GPU dequant |
-| `HTJ2KBeatsOpenJPEGTests` perf threshold (3× target) | tightening | currently hits 2.81× / 0.71× on smaller sizes — threshold may need recalibration after v5.14 changes |
+| `HTJ2KBeatsOpenJPEGTests` perf threshold (3× target) | tightening | hits 2.81× / 0.71× on smaller sizes — may need recalibration |
 | Multi-tile in-flight cb pipelining within a single tile | deferred | substantial async producer-consumer refactor; current chunked-TaskGroup gives bounded heap residency |
 | Faster GPU HT cleanup / IDWT shader work | deferred | research-grade; no clear win path without profiler-on-silicon access |
+
+> The "Encoder PSNR regression on high-bit-depth medical inputs" item from the v5.14.0 report is **resolved** in v5.14.1.
 
 ---
 
