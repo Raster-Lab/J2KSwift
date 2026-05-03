@@ -2802,25 +2802,44 @@ struct EncoderPipeline: Sendable {
                      "Part-15 dispatch: coefficient count mismatch")
 
         // K_max must match what a Part-15 decoder recovers from our
-        // QCD segment. `writeQCDMarker`'s conformant-reversible branch
-        // emits ε_b = B + G_b + 1 - guardBits (see v5.1.1 fix). A
-        // Part-15 decoder reconstructs K_max = (ε - 1) + guardBits,
-        // which lands on `B + G_b`. That equals
-        // `pending.bitDepth - guardBits + 1`, since pending.bitDepth
-        // is `B + G + guardBits - 1`.
+        // QCD segment. The decoder formula is K_max = (ε - 1) + guardBits.
         //
-        // The `+1` over the v5.0/v5.1.0 K_max fixes the pixel-0 edge
-        // case: for an unsigned B-bit input, DC-shifting maps 0 to
-        // -2^(B-1), whose |magnitude| equals 2^(B-1). The old
-        // K_max = B + G - 1 could only represent magnitudes up to
-        // 2^(B+G-1) - 1, so the extreme point rolled over to zero and
-        // 16-bit medical DICOM samples lost every pixel-0 voxel.
-        // OpenJPH 0.26 exhibits the same rollover with its native
-        // ε = B + G - guardBits, so the new ε is also upstream of any
-        // interop work with third-party Part-15 decoders.
+        // **Lossless / reversible** branch: `writeQCDMarker` emits
+        //   ε_b = B + G_b + 1 - guardBits  (see v5.1.1 fix).
+        // Decoder reconstructs K_max = (B + G_b + 1 - guardBits) - 1
+        //                              + guardBits = B + G_b.
+        // Since `pending.bitDepth = B + G + guardBits - 1`, that equals
+        // `pending.bitDepth - guardBits + 1`. The `+1` over the v5.0/
+        // v5.1.0 K_max fixes the pixel-0 edge case: for an unsigned
+        // B-bit input, DC-shifting maps 0 to -2^(B-1), whose |magnitude|
+        // equals 2^(B-1). The old K_max = B + G - 1 could only
+        // represent magnitudes up to 2^(B+G-1) - 1, so the extreme
+        // point rolled over to zero and 16-bit medical DICOM samples
+        // lost every pixel-0 voxel.
+        //
+        // **Lossy / irreversible** branch: `writeQCDMarker` emits the
+        // step-derived ε with NO conformant adjustment (`epsilonBias`
+        // is gated on the reversible branch — line 3596). Decoder
+        // reconstructs K_max = (ε - 1) + guardBits = ε + guardBits - 1.
+        // Encoder bandKb = ε + guardBits - 1 ↔ pending.bitDepth, so
+        // K_max should equal `pending.bitDepth` here, NOT
+        // `pending.bitDepth - guardBits + 1`. The pre-v5.16 formula
+        // wrote magnitudes shifted by `(31 - K_max)` with K_max one
+        // less than the decoder's reconstructed value, putting every
+        // coefficient one bit too low in the magnitude window. Result:
+        // bitstream-level mismatch with ojph_expand at lossy
+        // (cross-decode produced ~18 dB on real medical content while
+        // J2KSwift's own self-round-trip mirrored the wrong shift and
+        // measured ~65 dB at 8 bpp). Fixing the K_max formula here
+        // closes both halves of that gap (V5_16_0_PHASE1_RD_DIAGNOSTIC.md).
         let quantExt = J2KPart2QuantizationExtensions(configuration: config)
         let guardBits = Int(quantExt.extendedGuardBits)
-        let kMax = pending.bitDepth - guardBits + 1
+        let kMax: Int
+        if config.useReversibleFilter {
+            kMax = pending.bitDepth - guardBits + 1
+        } else {
+            kMax = pending.bitDepth
+        }
         let shift = 31 - kMax
         let missingMSBs = kMax - 1
 
@@ -2868,6 +2887,21 @@ struct EncoderPipeline: Sendable {
         // missing_msbs. OpenJPH requires `missing_msbs < K_max`.
         // OpenJPH itself writes `missing_msbs = K_max - 1`, so we
         // match that.
+        //
+        // cumulativePassDistortion: the conformant single cleanup
+        // pass losslessly transmits every quantized coefficient
+        // integer that reached this block. After this one pass, no
+        // codeable distortion remains — `coefficientSquaredSum` is
+        // the full distortion this pass eliminates. Without this
+        // signal, rate-control's `estimateDistortion` fallback
+        // models the cleanup pass as coding a single bit-plane
+        // (passNumber=0 → codedPlanes=1 in J2KRateControl.swift)
+        // and therefore assigns it a slope that's `4^(K_max-1)` too
+        // small relative to its actual quality contribution. PCRD-opt
+        // then deprioritises every conformant block at low bpp,
+        // producing the catastrophic R-D collapse measured pre-v5.16
+        // (e.g. 18.88 dB at 1.0 bpp on CT, vs 32.62 dB EBCOT). See
+        // V5_16_0_PHASE1_RD_DIAGNOSTIC.md for the full audit trail.
         return J2KCodeBlock(
             index: pending.index, x: pending.x, y: pending.y,
             width: pending.width, height: pending.height,
@@ -2880,7 +2914,8 @@ struct EncoderPipeline: Sendable {
             passSegmentLengths: [blockBytes.count],
             cumulativePassBytes: [blockBytes.count],
             coefficientSquaredSum: pending.coefficientSquaredSum,
-            bitPlanePopulation: pending.bitPlanePopulation)
+            bitPlanePopulation: pending.bitPlanePopulation,
+            cumulativePassDistortion: [pending.coefficientSquaredSum])
     }
 
     /// writer allocations by reusing caller-provided buffers.

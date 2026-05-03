@@ -266,6 +266,24 @@ def encode_decode_j2kswift_ht(in_pgm, out_dir, bpp, bitdepth):
     return j2k, dec, None
 
 
+def encode_decode_j2kswift_ht_custom(in_pgm, out_dir, bpp, bitdepth):
+    """J2KSwift HT custom (J2KSwift-private layout, multi-pass) mode —
+    used as a diagnostic to isolate whether the lossy R-D gap is
+    specific to the single-cleanup-pass conformant path."""
+    j2k = out_dir / "j2kswift_htc.j2k"
+    dec = out_dir / "j2kswift_htc_dec.pgm"
+    enc_cmd = [str(J2K_CLI), "encode", "-i", str(in_pgm), "-o", str(j2k),
+               "--bitrate", str(bpp), "--htj2k-custom", "--quiet"]
+    r1 = subprocess.run(enc_cmd, capture_output=True, text=True, timeout=120)
+    if r1.returncode != 0:
+        return None, None, f"encode failed: {r1.stderr.strip()}"
+    dec_cmd = [str(J2K_CLI), "decode", "-i", str(j2k), "-o", str(dec), "--quiet"]
+    r2 = subprocess.run(dec_cmd, capture_output=True, text=True, timeout=120)
+    if r2.returncode != 0:
+        return None, None, f"decode failed: {r2.stderr.strip()}"
+    return j2k, dec, None
+
+
 def encode_decode_openjpeg(in_pgm, out_dir, bpp, bitdepth):
     j2k = out_dir / "opj.j2k"
     dec = out_dir / "opj_dec.pgm"
@@ -360,6 +378,7 @@ def encode_decode_grok(in_pgm, out_dir, bpp, bitdepth):
 CODECS = [
     ("J2KSwift", encode_decode_j2kswift),
     ("J2KSwift-HT", encode_decode_j2kswift_ht),
+    ("J2KSwift-HTcustom", encode_decode_j2kswift_ht_custom),
     ("OpenJPEG", encode_decode_openjpeg),
     ("OpenJPH", encode_decode_openjph),
     ("Grok", encode_decode_grok),
@@ -690,7 +709,7 @@ def main():
     codecs = []
     for name, fn in CODECS:
         # Sniff the binary if applicable
-        if name in ("J2KSwift", "J2KSwift-HT") and not J2K_CLI.exists():
+        if name in ("J2KSwift", "J2KSwift-HT", "J2KSwift-HTcustom") and not J2K_CLI.exists():
             print(f"warning: skipping {name} — {J2K_CLI} not found")
             continue
         elif name == "OpenJPEG" and not Path(OPJ_ENC).exists():
