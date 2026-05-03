@@ -3466,6 +3466,15 @@ struct DecoderPipeline: Sendable {
 #endif
             }
 
+            // v5.14.1: tag the component byte order explicitly so
+            // downstream consumers (CLI PGM/PPM writers, file-format
+            // serialisers) can write spec-compliant bytes without
+            // re-swapping. The decoder's `reconstructImage` step
+            // produces 16-bit samples in big-endian byte order
+            // (the `if hostIsLittleEndian { byteSwapped }` branch a
+            // few lines up); 8-bit samples are byte-order-agnostic.
+            // Without this tag, callers that don't know the
+            // convention silently corrupt 16-bit output.
             let component = J2KComponent(
                 index: idx,
                 bitDepth: compInfo.bitDepth,
@@ -3474,7 +3483,8 @@ struct DecoderPipeline: Sendable {
                 height: height,
                 subsamplingX: compInfo.subsamplingX,
                 subsamplingY: compInfo.subsamplingY,
-                data: data
+                data: data,
+                sampleByteOrder: compInfo.bitDepth > 8 ? .bigEndian : nil
             )
 
             imageComponents.append(component)

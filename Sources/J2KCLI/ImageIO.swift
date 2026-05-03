@@ -8,6 +8,37 @@ import Foundation
 import J2KCore
 import J2KCodec
 
+/// Whether the host platform stores multi-byte values low-byte-first.
+/// All Apple-platform targets (macOS / iOS / tvOS / watchOS / visionOS)
+/// are little-endian, so this is effectively constant — but the
+/// runtime check keeps it correct on any platform Swift ports to.
+private let hostIsLittleEndian: Bool = {
+    var v: UInt16 = 1
+    return withUnsafeBytes(of: &v) { $0.first == 1 }
+}()
+
+/// v5.14.1: returns whether `component.data` already holds 16-bit
+/// samples in big-endian order (no swap needed before writing to a
+/// PGM/PPM file, both of which require big-endian per the spec).
+///
+/// Resolution order:
+///  1. `component.sampleByteOrder` if explicit (e.g. the decoder
+///     pipeline tags its output `.bigEndian` since v5.14.1).
+///  2. Legacy default — assume host byte order. On Apple Silicon
+///     (LE host) the legacy default is "data is in LE" so we'd
+///     need to swap; before v5.14.1 the writers always swapped
+///     unconditionally and got it right for inputs the user built
+///     themselves but wrong for decoder output (which has been
+///     pre-swapped to BE). Tagging the decoder's output makes
+///     this resolution path correct for the round-trip case
+///     without changing behaviour for legacy callers.
+private func componentDataIsBigEndian(_ component: J2KComponent) -> Bool {
+    if let order = component.sampleByteOrder {
+        return order == .bigEndian
+    }
+    return !hostIsLittleEndian
+}
+
 extension J2KCLI {
     /// Load an image from a file (PGM, PPM, TIFF, PNG, DICOM, or RAW format)
     static func loadImage(from path: String) throws -> J2KImage {
@@ -150,12 +181,21 @@ extension J2KCLI {
         let header = "P5\n\(image.width) \(image.height)\n\(maxValue)\n"
         data.append(header.data(using: .ascii)!)
         let bytesPerPixel = component.bitDepth <= 8 ? 1 : 2
+        let sourceIsBE = componentDataIsBigEndian(component)
         component.data.withUnsafeBytes { buffer in
             if bytesPerPixel == 1 {
                 data.append(contentsOf: buffer)
+            } else if sourceIsBE {
+                // v5.14.1: source is already in big-endian (decoder
+                // path tags its output that way; or user-supplied
+                // J2KComponent declared `.bigEndian`). PGM spec
+                // requires big-endian, so write as-is.
+                data.append(contentsOf: buffer)
             } else {
-                // 16-bit: PGM spec requires big-endian byte order
-                // Bulk byte-swap into a pre-allocated buffer (avoids 500K+ append calls)
+                // 16-bit: PGM spec requires big-endian byte order.
+                // Source is host-order (LE on Apple Silicon); bulk
+                // byte-swap into a pre-allocated buffer (avoids
+                // 500K+ append calls).
                 let pixelCount = image.width * image.height
                 var swapped = [UInt8](repeating: 0, count: pixelCount * 2)
                 let src = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
@@ -208,17 +248,30 @@ extension J2KCLI {
                 }
             }
         } else {
+            // v5.14.1: per-component byte order. Decoder tags its
+            // output `.bigEndian`; user-supplied components might
+            // be either. Read each sample using the right byte
+            // order, then re-emit big-endian (PPM spec).
+            let rIsBE = componentDataIsBigEndian(r)
+            let gIsBE = componentDataIsBigEndian(g)
+            let bIsBE = componentDataIsBigEndian(b)
             r.data.withUnsafeBytes { rBuf in
                 g.data.withUnsafeBytes { gBuf in
                     b.data.withUnsafeBytes { bBuf in
                         let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
                         let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
                         let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        @inline(__always)
+                        func read16(_ p: UnsafePointer<UInt8>, _ idx: Int, _ isBE: Bool) -> Int {
+                            let lo = isBE ? Int(p[idx + 1]) : Int(p[idx])
+                            let hi = isBE ? Int(p[idx])     : Int(p[idx + 1])
+                            return min((hi << 8) | lo, maxValue)
+                        }
                         for i in 0..<pixelCount {
                             let idx = i * 2
-                            let rVal = idx + 1 < r.data.count ? min(Int(rp[idx]) | (Int(rp[idx + 1]) << 8), maxValue) : 0
-                            let gVal = idx + 1 < g.data.count ? min(Int(gp[idx]) | (Int(gp[idx + 1]) << 8), maxValue) : 0
-                            let bVal = idx + 1 < b.data.count ? min(Int(bp[idx]) | (Int(bp[idx + 1]) << 8), maxValue) : 0
+                            let rVal = idx + 1 < r.data.count ? read16(rp, idx, rIsBE) : 0
+                            let gVal = idx + 1 < g.data.count ? read16(gp, idx, gIsBE) : 0
+                            let bVal = idx + 1 < b.data.count ? read16(bp, idx, bIsBE) : 0
                             let off = i * 6
                             pixelBytes[off]     = UInt8(rVal >> 8)
                             pixelBytes[off + 1] = UInt8(rVal & 0xFF)
@@ -397,13 +450,19 @@ extension J2KCLI {
 
         // Write pixel data efficiently
         let bytesPerPixel = component.bitDepth <= 8 ? 1 : 2
+        let sourceIsBE = componentDataIsBigEndian(component)
         component.data.withUnsafeBytes { buffer in
             if bytesPerPixel == 1 {
                 // 8-bit: copy directly
                 data.append(contentsOf: buffer)
+            } else if sourceIsBE {
+                // v5.14.1: source is already big-endian; PGM spec
+                // requires big-endian, so write as-is.
+                data.append(contentsOf: buffer)
             } else {
-                // 16-bit: PGM spec requires big-endian byte order
-                // Bulk byte-swap into a pre-allocated buffer (avoids 500K+ append calls)
+                // 16-bit: PGM spec requires big-endian byte order.
+                // Source is host-order; bulk byte-swap into a
+                // pre-allocated buffer.
                 let pixelCount = image.width * image.height
                 var swapped = [UInt8](repeating: 0, count: pixelCount * 2)
                 let src = buffer.baseAddress!.assumingMemoryBound(to: UInt8.self)
@@ -470,7 +529,12 @@ extension J2KCLI {
             }
             data.append(contentsOf: pixelBytes)
         } else {
-            // 16-bit: big-endian interleave
+            // 16-bit: big-endian interleave. v5.14.1: per-component
+            // byte order so decoder output (tagged BE) reads
+            // correctly, matching the buildPPMData fix.
+            let rIsBE = componentDataIsBigEndian(r)
+            let gIsBE = componentDataIsBigEndian(g)
+            let bIsBE = componentDataIsBigEndian(b)
             var pixelBytes = [UInt8](repeating: 0, count: pixelDataSize)
             r.data.withUnsafeBytes { rBuf in
                 g.data.withUnsafeBytes { gBuf in
@@ -478,11 +542,17 @@ extension J2KCLI {
                         let rp = rBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
                         let gp = gBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
                         let bp = bBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        @inline(__always)
+                        func read16(_ p: UnsafePointer<UInt8>, _ idx: Int, _ isBE: Bool) -> Int {
+                            let lo = isBE ? Int(p[idx + 1]) : Int(p[idx])
+                            let hi = isBE ? Int(p[idx])     : Int(p[idx + 1])
+                            return min((hi << 8) | lo, maxValue)
+                        }
                         for i in 0..<pixelCount {
                             let idx = i * 2
-                            let rVal = min(Int(rp[idx]) | (Int(rp[idx + 1]) << 8), maxValue)
-                            let gVal = min(Int(gp[idx]) | (Int(gp[idx + 1]) << 8), maxValue)
-                            let bVal = min(Int(bp[idx]) | (Int(bp[idx + 1]) << 8), maxValue)
+                            let rVal = read16(rp, idx, rIsBE)
+                            let gVal = read16(gp, idx, gIsBE)
+                            let bVal = read16(bp, idx, bIsBE)
                             let off = i * 6
                             pixelBytes[off]     = UInt8(rVal >> 8)
                             pixelBytes[off + 1] = UInt8(rVal & 0xFF)

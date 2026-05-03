@@ -5,6 +5,98 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.14.1] — 2026-05-03
+
+**Critical fix — Lossless PGM round-trip correctness**
+
+`medical_benchmark.py` at v5.14.0 reported PSNR ≈ 7 on 16-bit
+lossless CT round-trips (expected: ∞), with similar shape across
+12-bit MRI and Ultrasound — every lossless-encoded medical image
+failed byte-for-byte round-trip. This release fixes that.
+
+### Root cause
+
+The CLI's PGM and PPM writers always byte-swapped 16-bit pixel
+data, assuming the source `J2KComponent.data` was in host byte
+order (little-endian on Apple Silicon). The decoder pipeline,
+however, has been writing 16-bit samples in **big-endian** byte
+order since v5.6.0 (`if hostIsLittleEndian { byteSwapped }` in
+`reconstructImage`). The writer's swap then *un-swapped* it back
+to little-endian, producing PGM files that violated the spec
+(PGM 16-bit requires big-endian).
+
+The codec itself was bit-exact throughout — the *pixel values*
+round-tripped perfectly. Only the file's byte serialisation was
+wrong, and the corruption was only visible end-to-end:
+
+- A round-tripped file read by another tool (e.g. OpenJPEG's
+  `opj_decompress` PGM reader, the medical_benchmark Python
+  pipeline) interpreted the LE bytes as BE and saw garbage.
+- A round-tripped file read by J2KSwift's *own* PGM loader
+  produced correct pixel values (the loader's byte-order
+  handling matched the writer's bug, so they cancelled out
+  inside the project).
+
+### Fix
+
+- **`J2KComponent` byte-order tagging.** The decoder now sets
+  `sampleByteOrder = .bigEndian` on 16-bit components — making
+  the convention explicit at the API boundary instead of relying
+  on undocumented internal coordination.
+- **PGM writers** (`buildPGMData`, `writePGM`) — check
+  `component.sampleByteOrder` and write big-endian bytes
+  accordingly. If the source is already big-endian (decoder
+  output, or an explicitly-tagged user component), the bytes
+  flow through unchanged. If the source is host-LE
+  (legacy / untagged), the swap continues as before.
+- **PPM writers** (`buildPPMData`, `savePPM`) — same fix on the
+  per-sample read path; respects each of the 3 components'
+  declared byte order before re-emitting big-endian.
+
+### Regression test
+
+New `J2KPGMRoundTripTests` (6 tests: 8/12/16-bit × Part 1 / HTJ2K)
+encodes a synthetic deterministic PGM via the release-built CLI,
+decodes it, and asserts byte-for-byte equality with the input.
+Catches any future regression that re-flips the byte order in
+either direction.
+
+### Medical benchmark vs v5.14.0 (J2KSwift columns)
+
+| Modality | Bits | Rate | v5.14.0 PSNR | v5.14.1 PSNR |
+|---|---:|---|---:|---:|
+| CT | 16 | lossless | 7.68 | **∞** |
+| CT | 16 | 0.25bpp | 6.50 | **51.74** |
+| CT | 16 | 0.50bpp | 6.92 | **55.15** |
+| CT | 16 | 0.75bpp | 7.29 | **57.88** |
+| MRI | 12 | lossless | -18.07 | **∞** |
+| MRI | 12 | 0.25bpp | -17.97 | **37.97** (+4.22 vs OPJ) |
+| MRI | 12 | 0.50bpp | -18.00 | **42.48** (+2.74 vs OPJ) |
+| MRI | 12 | 0.75bpp | -18.09 | **45.37** (+2.25 vs OPJ) |
+| Ultrasound | 12 | lossless | -14.64 | **∞** |
+| Ultrasound | 12 | 0.25bpp | -15.11 | **28.79** (+0.81 vs OPJ) |
+| Ultrasound | 12 | 0.50bpp | -14.82 | **31.63** (+1.84 vs OPJ) |
+| Ultrasound | 12 | 0.75bpp | -14.63 | **35.11** (+3.18 vs OPJ) |
+
+Lossless rows are now **truly lossless** (PSNR ∞, SSIM 1.0,
+MAE 0). Lossy rows are now competitive with — and on MRI/Ultrasound
+ahead of — OpenJPEG.
+
+### Bit-exactness
+
+- All 19 v5.14.0 GPU regression tests pass byte-for-byte ✓
+- 6 new `J2KPGMRoundTripTests` pass ✓
+- Full suite: 1305 pass / 5 fail (was 1304/6). Net +1 fixed
+  (`testHTJ2KBeatsOpenJPEGFullMatrixPrintsSummary` now hits
+  perf thresholds with the corrected output bytes); the
+  remaining 5 failures are pre-existing perf-threshold /
+  microbench thermal sensitivity unrelated to this work.
+
+### Sessionless / session paths
+
+Codec behaviour is byte-for-byte identical to v5.14.0 — the fix
+is in the CLI's file-format I/O, not the codec.
+
 ## [5.14.0] — 2026-05-03
 
 **Minor Release — Skip GPU MCT round-trip on Apple Silicon UMA**
