@@ -5,6 +5,58 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.16.0] — 2026-05-03
+
+**HT conformant lossy: bitstream interop fix (medical-grade critical)**
+
+Pre-v5.16.0 lossy HT conformant codestreams were Part-15 spec-violating —
+J2KSwift's encoder placed magnitudes one bit lower in the K_max window
+than the spec requires. J2KSwift's own decoder mirrored the bug via
+packet-header `missing_msbs`, so self-round-trip looked OK. Any
+third-party Part-15 decoder (`ojph_expand`, Kakadu) decoded the same
+bytes as ~18 dB of garbage on real 16-bit medical CT @ 8 bpp.
+
+### Fixed
+
+- **Lossy K_max formula in `encodeCodeBlockConformant`**: split by
+  `useReversibleFilter`. Lossless retains v5.1.1's `bandKb-guardBits+1`
+  (correct because `writeQCDMarker`'s reversible branch applies the
+  conformant ε bias). Lossy now uses `bandKb`, matching the Part-15
+  decoder formula `K_max = (ε - 1) + guardBits` since lossy QCD doesn't
+  apply the bias.
+- **Rate controller distortion semantics for single-pass blocks**:
+  conformant `J2KCodeBlock` returns now set `cumulativePassDistortion =
+  [coefficientSquaredSum]`. The `estimateDistortion` fallback was
+  modeling the cleanup pass as 1 bit-plane coded; conformant cleanup
+  actually codes all K_max bits. Fix gives PCRD-opt the correct slope.
+
+### Added
+
+- `Tests/J2KCodecTests/J2KHTConformantLossyOpenJPHInteropTests.swift`
+  (`testLossyHTConformant_OJPHDecodeMatchesJ2KSwiftDecode`) — strict
+  regression gate asserting |Δ| < 0.5 dB between J2KSwift decode and
+  `ojph_expand` decode at 1/4/8 bpp on synth 16-bit input.
+- `V5_16_0_PHASE1_RD_DIAGNOSTIC.md` — full audit trail.
+
+### Verified
+
+- Lossy interop on real CT @ 8 bpp: 18.41 dB → 65.60 dB on `ojph_expand`
+  decode (now matches J2KSwift decode |Δ| = 0.000 dB).
+- v5.15.0 lossless gates unchanged (4 test suites, 11,889 cells, all
+  still bit-exact).
+
+### Known issues
+
+- **Residual R-D gap (~7 dB at 1 bpp)** vs OpenJPH/EBCOT due to lack of
+  intra-block byte-level truncation in PCRD-opt. Conformant single
+  cleanup pass has only one truncation point per block; allocation is
+  all-or-nothing at low bpp. Captured as v5.17.0 motivation. Lossy HT
+  conformant is now bitstream-safe but compression efficiency at low
+  bpp is below peer codecs.
+- **Pre-v5.16.0 lossy HT conformant codestreams** are not Part-15
+  conformant. Re-encode with v5.16.0 for spec-compliant output. Lossless
+  HT conformant was correct pre-v5.16.0 (always took the v5.1.1 path).
+
 ## [5.15.0] — 2026-05-03
 
 **HT conformant lossless: silent-default audit + permanent regression floor**
