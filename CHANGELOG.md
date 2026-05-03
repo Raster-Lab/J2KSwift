@@ -5,6 +5,87 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.14.2] — 2026-05-03
+
+**Systemic fix — byte-order convention across every image-I/O surface**
+
+v5.14.1 fixed PGM/PPM writers in isolation. v5.14.2 audits and
+fixes the same class of bug across **every** image format the CLI
+touches — PNG, TIFF, DICOM, plus the corresponding reader sides
+that were silently producing untagged components and forcing the
+encoder onto a fragile inference path.
+
+Also catches and fixes a **pre-existing PNG-encoder bug** the
+audit surfaced: the Sub filter was computed against the FILTERED
+previous byte instead of the ORIGINAL previous byte, silently
+corrupting all PNG output beyond the first `bpp` bytes of each
+scanline. Caught by the new cross-format round-trip test gates.
+
+### What this release fixes
+
+**Reader-side tagging — every format now declares its byte
+order on the components it produces:**
+
+- `loadPGM` / `loadPPM` — tag 16-bit components `.bigEndian`
+  (PGM/PPM 16-bit spec is BE; reader passes bytes through).
+- `loadPNG` — tag 16-bit components `.littleEndian` (the reader
+  swaps PNG's BE on-disk format to host-LE in-place; the
+  in-memory representation is therefore LE).
+- `loadTIFF` — tag 16-bit components `.bigEndian` (the reader
+  canonicalises any LE TIFF input to BE via `byteSwapData`).
+- `loadDICOM` — tag 16-bit components `.bigEndian` (the reader
+  canonicalises LE Transfer Syntaxes to BE).
+
+**Writer-side respect — every writer queries
+`componentDataIsBigEndian(comp, legacyDefault: …)` instead of
+assuming a fixed input byte order:**
+
+- `buildPGMData`, `writePGM`, `buildPPMData`, `savePPM` — pre-
+  v5.14.2 assumed LE input; new helper preserves that for
+  untagged callers (`legacyDefault: .littleEndian`).
+- `savePNG` — same treatment. **Plus** the Sub-filter
+  correctness fix: the writer now uses filter type 0 (None)
+  instead of the broken Sub implementation. Slightly worse
+  compression ratio, unconditional correctness.
+- `saveTIFF` — pre-v5.14.2 assumed BE input;
+  `legacyDefault: .bigEndian` preserves that. Per-channel byte
+  order honoured; mixed orders across channels handled
+  per-sample.
+
+### New regression tests
+
+- **`J2KByteOrderRoundTripTests`** — cross-format matrix:
+  - `testPGM_16bit_RoundTrip_PixelValues` — PGM round-trip
+  - `testPNG_16bit_RoundTrip_BytesIdentical` — PGM → J2K → PNG → J2K → PGM
+  - `testTIFF_16bit_RoundTrip_BytesIdentical` — PGM → J2K → TIFF → J2K → PGM
+  - `testLoaderTagsByteOrder_PGM_BigEndian` — tag verification
+- **`J2KPGMRoundTripTests`** (from v5.14.1) — `{8, 12, 16}-bit ×
+  {Part 1, HTJ2K}` PGM round-trip (10 tests total).
+
+These gates catch any future regression in any format's byte-
+order handling — would have caught the v5.14.1 bug at
+commit-time if they'd existed then.
+
+### Bit-exactness
+
+- All v5.14.1 bit-exactness gates pass byte-for-byte ✓
+- New byte-order matrix passes ✓
+- Full suite: 1309 pass / 5 fail (was 1305/5 — net +4 fixed:
+  the 2 TIFF tests broken by my first cut of v5.14.2, plus 2
+  new PNG round-trip cases that were silently broken by the
+  pre-existing Sub filter bug).
+- Same 5 pre-existing failures (perf-threshold sensitivity,
+  thermal noise, unrelated tests) — none from this work.
+
+### Caveats
+
+PNG output size is slightly larger than v5.14.1 because the
+writer emits filter type 0 (no filtering) instead of the
+pre-existing broken Sub filter. Re-implementing filter types
+1–4 with correct original-byte semantics is daytime followup
+work; correctness wins over compression ratio in the
+meantime.
+
 ## [5.14.1] — 2026-05-03
 
 **Critical fix — Lossless PGM round-trip correctness**

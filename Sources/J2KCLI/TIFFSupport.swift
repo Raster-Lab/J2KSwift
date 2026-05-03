@@ -210,6 +210,14 @@ extension J2KCLI {
             throw J2KError.invalidParameter("TIFF: insufficient pixel data (\(pixelData.count) < \(expectedBytes))")
         }
 
+        // v5.14.2: tag TIFF-loaded components. The reader at lines
+        // ~194-200 above canonicalizes any LE TIFF data to big-
+        // endian (`if !bigEndian && bytesPerSample > 1 {
+        // byteSwapData(...) }`), so the resulting component data
+        // is always BE. Without the tag the encoder must infer
+        // and the writer can't tell whether to swap.
+        let bo: J2KComponent.ByteOrder? = bytesPerSample > 1 ? .bigEndian : nil
+
         // De-interleave into separate J2KComponent planes
         let components: [J2KComponent]
         if planarConfig == 2 {
@@ -227,7 +235,8 @@ extension J2KCLI {
                     height: height,
                     subsamplingX: 1,
                     subsamplingY: 1,
-                    data: pixelData.subdata(in: start..<end)
+                    data: pixelData.subdata(in: start..<end),
+                    sampleByteOrder: bo
                 ))
             }
             components = comps
@@ -240,7 +249,8 @@ extension J2KCLI {
                 height: height,
                 subsamplingX: 1,
                 subsamplingY: 1,
-                data: pixelData.prefix(expectedBytes)
+                data: pixelData.prefix(expectedBytes),
+                sampleByteOrder: bo
             )]
         } else {
             // Interleaved — de-interleave
@@ -251,7 +261,8 @@ extension J2KCLI {
                 samplesPerPixel: samplesPerPixel,
                 bytesPerSample: bytesPerSample,
                 bitsPerSample: bitsPerSample,
-                signed: signed
+                signed: signed,
+                sampleByteOrder: bo
             )
         }
 
@@ -288,6 +299,18 @@ extension J2KCLI {
         var pixelData = Data(count: stripSize)
         let pixelCount = width * height
 
+        // v5.14.2: per-component byte order. The TIFF writer below
+        // emits an LE TIFF file (`II` header). For 16-bit pixel
+        // bytes to be in the correct LE on-disk order:
+        //   - if source component is BE, swap to LE
+        //   - if source component is LE, write as-is
+        //   - if source is untagged, fall back to legacy behaviour
+        //     (assume BE — that's what the loader's BE
+        //     canonicalisation produced before tagging)
+        // Pre-v5.14.2 the writer always swapped, which assumed BE
+        // input. After tagging, that's still the right default for
+        // decoder output and TIFF/PGM/PPM/DICOM-loaded inputs;
+        // PNG-loaded inputs (now tagged LE) skip the swap.
         if samplesPerPixel == 1 {
             let comp = image.components[0]
             pixelData = comp.data.prefix(stripSize)
@@ -295,7 +318,20 @@ extension J2KCLI {
             if pixelData.count < stripSize {
                 pixelData.append(Data(count: stripSize - pixelData.count))
             }
+            if actualBytesPerSample > 1 && componentDataIsBigEndian(comp, legacyDefault: .bigEndian) {
+                pixelData = byteSwapData(pixelData, bytesPerSample: actualBytesPerSample)
+            }
         } else {
+            // Per-channel byte-order is captured here; if all
+            // channels share the same order, we batch-swap once.
+            // Mixed orders are extremely unusual (and probably a
+            // caller bug), but handle them by swapping per-sample.
+            let perChannelIsBE: [Bool] = (0..<samplesPerPixel).map {
+                componentDataIsBigEndian(image.components[$0], legacyDefault: .bigEndian)
+            }
+            let allBE = perChannelIsBE.allSatisfy { $0 }
+            let allLE = perChannelIsBE.allSatisfy { !$0 }
+
             for i in 0..<pixelCount {
                 for s in 0..<samplesPerPixel {
                     let comp = image.components[s]
@@ -306,12 +342,20 @@ extension J2KCLI {
                             pixelData[dstOffset + b] = comp.data[srcOffset + b]
                         }
                     }
+                    // For mixed byte orders, swap per-sample so the
+                    // batch swap below is skipped without leaving
+                    // some samples in the wrong order.
+                    if actualBytesPerSample > 1 && !allBE && !allLE && perChannelIsBE[s] {
+                        let lo = pixelData[dstOffset]
+                        pixelData[dstOffset] = pixelData[dstOffset + 1]
+                        pixelData[dstOffset + 1] = lo
+                    }
                 }
             }
-        }
-
-        if actualBytesPerSample > 1 {
-            pixelData = byteSwapData(pixelData, bytesPerSample: actualBytesPerSample)
+            if actualBytesPerSample > 1 && allBE {
+                pixelData = byteSwapData(pixelData, bytesPerSample: actualBytesPerSample)
+            }
+            // allLE: no swap needed (already matches LE TIFF body)
         }
 
         // Build the TIFF file
@@ -499,7 +543,8 @@ extension J2KCLI {
         samplesPerPixel: Int,
         bytesPerSample: Int,
         bitsPerSample: Int,
-        signed: Bool
+        signed: Bool,
+        sampleByteOrder: J2KComponent.ByteOrder? = nil
     ) -> [J2KComponent] {
         let pixelCount = width * height
         var planes = Array(repeating: Data(count: pixelCount * bytesPerSample), count: samplesPerPixel)
@@ -525,7 +570,8 @@ extension J2KCLI {
                 height: height,
                 subsamplingX: 1,
                 subsamplingY: 1,
-                data: planeData
+                data: planeData,
+                sampleByteOrder: sampleByteOrder
             )
         }
     }

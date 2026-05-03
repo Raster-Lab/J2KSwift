@@ -12,31 +12,36 @@ import J2KCodec
 /// All Apple-platform targets (macOS / iOS / tvOS / watchOS / visionOS)
 /// are little-endian, so this is effectively constant — but the
 /// runtime check keeps it correct on any platform Swift ports to.
-private let hostIsLittleEndian: Bool = {
+internal let hostIsLittleEndian: Bool = {
     var v: UInt16 = 1
     return withUnsafeBytes(of: &v) { $0.first == 1 }
 }()
 
-/// v5.14.1: returns whether `component.data` already holds 16-bit
-/// samples in big-endian order (no swap needed before writing to a
-/// PGM/PPM file, both of which require big-endian per the spec).
+/// v5.14.1 / v5.14.2: returns whether `component.data` holds 16-bit
+/// samples in big-endian order. Used by every CLI image-format
+/// writer to decide whether the source bytes need swapping for
+/// the output format's spec-required byte order.
 ///
 /// Resolution order:
-///  1. `component.sampleByteOrder` if explicit (e.g. the decoder
-///     pipeline tags its output `.bigEndian` since v5.14.1).
-///  2. Legacy default — assume host byte order. On Apple Silicon
-///     (LE host) the legacy default is "data is in LE" so we'd
-///     need to swap; before v5.14.1 the writers always swapped
-///     unconditionally and got it right for inputs the user built
-///     themselves but wrong for decoder output (which has been
-///     pre-swapped to BE). Tagging the decoder's output makes
-///     this resolution path correct for the round-trip case
-///     without changing behaviour for legacy callers.
-private func componentDataIsBigEndian(_ component: J2KComponent) -> Bool {
+///  1. `component.sampleByteOrder` if explicit (every loader
+///     tags this since v5.14.2; the decoder pipeline tags its
+///     output `.bigEndian` since v5.14.1).
+///  2. `legacyDefault` — what the pre-v5.14.2 writer assumed for
+///     untagged input. PGM / PPM / PNG writers assumed LE; the
+///     TIFF writer assumed BE. Passing the right default here
+///     keeps backwards compat for any caller that constructs a
+///     `J2KComponent` without a tag.
+///
+/// `internal` so the PNG / TIFF / DICOM writers in sibling files
+/// can use the same single-source-of-truth helper.
+internal func componentDataIsBigEndian(
+    _ component: J2KComponent,
+    legacyDefault: J2KComponent.ByteOrder = .littleEndian
+) -> Bool {
     if let order = component.sampleByteOrder {
         return order == .bigEndian
     }
-    return !hostIsLittleEndian
+    return legacyDefault == .bigEndian
 }
 
 extension J2KCLI {
@@ -327,6 +332,12 @@ extension J2KCLI {
 
         let pixelData = Data(data[offset..<(offset + expectedBytes)])
 
+        // v5.14.2: tag the component byte order. PGM 16-bit is
+        // big-endian per the spec; the reader passes pixel bytes
+        // through unchanged, so the component data is BE. Tagging
+        // explicitly stops the encoder from having to infer
+        // (`j2kInfer16BitByteOrder`) and stops the writer from
+        // making assumptions about the source layout.
         let component = J2KComponent(
             index: 0,
             bitDepth: bitDepth,
@@ -335,7 +346,8 @@ extension J2KCLI {
             height: height,
             subsamplingX: 1,
             subsamplingY: 1,
-            data: pixelData
+            data: pixelData,
+            sampleByteOrder: bitDepth > 8 ? .bigEndian : nil
         )
 
         // Create image
@@ -408,20 +420,28 @@ extension J2KCLI {
             }
         }
 
-        // Create components
+        // v5.14.2: tag PPM-loaded components with `.bigEndian` —
+        // PPM 16-bit spec mandates big-endian, and the reader
+        // passes interleaved bytes through verbatim. Same rationale
+        // as `loadPGM`: explicit tag stops the encoder inference
+        // path and gives writers a definitive source-of-truth.
+        let bo: J2KComponent.ByteOrder? = bitDepth > 8 ? .bigEndian : nil
         let components = [
             J2KComponent(
                 index: 0, bitDepth: bitDepth, signed: false,
                 width: width, height: height,
-                subsamplingX: 1, subsamplingY: 1, data: rData),
+                subsamplingX: 1, subsamplingY: 1, data: rData,
+                sampleByteOrder: bo),
             J2KComponent(
                 index: 1, bitDepth: bitDepth, signed: false,
                 width: width, height: height,
-                subsamplingX: 1, subsamplingY: 1, data: gData),
+                subsamplingX: 1, subsamplingY: 1, data: gData,
+                sampleByteOrder: bo),
             J2KComponent(
                 index: 2, bitDepth: bitDepth, signed: false,
                 width: width, height: height,
-                subsamplingX: 1, subsamplingY: 1, data: bData)
+                subsamplingX: 1, subsamplingY: 1, data: bData,
+                sampleByteOrder: bo)
         ]
 
         // Create image

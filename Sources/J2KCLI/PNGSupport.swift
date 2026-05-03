@@ -144,6 +144,14 @@ extension J2KCLI {
         let pixelCount = width * height
         var components: [J2KComponent] = []
 
+        // v5.14.2: tag PNG-loaded 16-bit components with
+        // `.littleEndian`. The reader explicitly swaps PNG's
+        // big-endian on-disk layout to host-LE above, so the
+        // resulting `J2KComponent.data` is in LE byte order.
+        // Without this tag the encoder must infer (fragile) and
+        // writers can't tell whether the data is in spec format.
+        let bo: J2KComponent.ByteOrder? = bitDepth > 8 ? .littleEndian : nil
+
         for ch in 0..<channels {
             var planeData = Data(count: pixelCount * bytesPerSample)
             for i in 0..<pixelCount {
@@ -161,7 +169,8 @@ extension J2KCLI {
                 height: height,
                 subsamplingX: 1,
                 subsamplingY: 1,
-                data: planeData
+                data: planeData,
+                sampleByteOrder: bo
             ))
         }
 
@@ -207,12 +216,43 @@ extension J2KCLI {
         let bytesPerSample = bitDepth / 8
         let scanlineBytes = width * channels * bytesPerSample
 
-        // Build filtered scanlines (using Sub filter)
+        // v5.14.2: per-component byte order. PNG spec requires BE
+        // for 16-bit; check `sampleByteOrder` for each channel —
+        // the decoder produces BE, the PNG loader produces LE,
+        // user-built components could be either.
+        let componentIsBE: [Bool] = (0..<channels).map { ch in
+            componentDataIsBigEndian(image.components[ch])
+        }
+
+        // Build filtered scanlines.
+        //
+        // v5.14.2 fix: previously the writer claimed Sub filter
+        // (filter type 1) but computed `filtered[x] = sample[x] -
+        // filtered[x-bpp]` — using the FILTERED byte for the
+        // subtraction reference. The PNG spec defines Sub as
+        // `Filt(x) = Orig(x) - Orig(x-bpp)` against the ORIGINAL
+        // (unfiltered) bytes. The pre-existing code only worked
+        // for the first `bpp` bytes of each scanline (where
+        // x-bpp < bpp ⇒ filtered[x-bpp] == orig[x-bpp]) and
+        // silently corrupted everything after. Caught by the
+        // v5.14.2 PNG round-trip test.
+        //
+        // Switching to filter type 0 (None) makes correctness
+        // trivial: emit the raw sample bytes per scanline, no
+        // filtering applied. PNG accepts this — only zlib
+        // compression handles redundancy. Compression ratio is
+        // slightly worse than Sub for natural images, but the
+        // correctness guarantee is unconditional. Filter
+        // selection is an optimisation we can layer on later
+        // (with proper original-byte tracking) if PNG output
+        // size matters.
         var filtered = Data(capacity: height * (1 + scanlineBytes))
-        let bpp = channels * bytesPerSample
+        // Track original sample bytes per row for any future Sub /
+        // Up / Average / Paeth implementation that respects the
+        // original-byte semantics.
 
         for row in 0..<height {
-            filtered.append(1)  // Sub filter
+            filtered.append(0)  // None filter — raw bytes follow
 
             for x in 0..<scanlineBytes {
                 // Interleave: compute which channel and sample byte
@@ -232,22 +272,29 @@ extension J2KCLI {
                     sampleByte = 0
                 }
 
-                // For 16-bit, PNG expects big-endian
+                // For 16-bit, PNG expects big-endian.
                 if bitDepth == 16 {
-                    // We stored LE; PNG needs BE, so swap the two bytes of each sample
                     let leIdx = pixelIndex * 2
-                    if byteInSample == 0 {
-                        // PNG byte 0 = high byte = LE byte 1
-                        sampleByte = leIdx + 1 < comp.data.count ? comp.data[leIdx + 1] : 0
+                    if componentIsBE[ch] {
+                        // Source already big-endian: no swap needed.
+                        // PNG byte 0 = high byte = source byte 0;
+                        // PNG byte 1 = low byte = source byte 1.
+                        sampleByte = leIdx + byteInSample < comp.data.count
+                            ? comp.data[leIdx + byteInSample] : 0
                     } else {
-                        // PNG byte 1 = low byte = LE byte 0
-                        sampleByte = leIdx < comp.data.count ? comp.data[leIdx] : 0
+                        // Source is little-endian: swap to BE for PNG.
+                        if byteInSample == 0 {
+                            // PNG byte 0 = high byte = LE byte 1
+                            sampleByte = leIdx + 1 < comp.data.count ? comp.data[leIdx + 1] : 0
+                        } else {
+                            // PNG byte 1 = low byte = LE byte 0
+                            sampleByte = leIdx < comp.data.count ? comp.data[leIdx] : 0
+                        }
                     }
                 }
 
-                // Sub filter: subtract left neighbour
-                let a: UInt8 = x >= bpp ? filtered[filtered.count - bpp] : 0
-                filtered.append(sampleByte &- a)
+                // Filter type 0 (None): emit the raw sample byte.
+                filtered.append(sampleByte)
             }
         }
 

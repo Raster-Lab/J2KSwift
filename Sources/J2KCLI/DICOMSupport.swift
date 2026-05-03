@@ -479,6 +479,14 @@ Path(metadata_path).write_text(json.dumps(metadata), encoding=\"utf-8\")
             }
         }
 
+        // v5.14.2: tag DICOM-loaded components with their canonical
+        // byte order. The DICOM reader normalises any LE Transfer
+        // Syntax (Implicit VR Little Endian / Explicit VR Little
+        // Endian) to big-endian via `swapAt` above, so the resulting
+        // pixel data is always BE here. Without the tag the encoder
+        // had to infer; with it, downstream writers know the layout
+        // unambiguously.
+        let dicomBO: J2KComponent.ByteOrder? = bitsStored > 8 ? .bigEndian : nil
         let components = mosaicPlanes.enumerated().map { index, planeData in
             J2KComponent(
                 index: index,
@@ -488,7 +496,8 @@ Path(metadata_path).write_text(json.dumps(metadata), encoding=\"utf-8\")
                 height: mosaicHeight,
                 subsamplingX: 1,
                 subsamplingY: 1,
-                data: planeData
+                data: planeData,
+                sampleByteOrder: dicomBO
             )
         }
 
