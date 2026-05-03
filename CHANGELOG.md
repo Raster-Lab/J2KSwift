@@ -5,6 +5,74 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.13.0] — 2026-05-03
+
+**Minor Release — `default.metallib` bundled (was the v5.15 plan item)**
+
+Closes the cold-CLI shader-source-compile cost the v5.6.0 perf
+report flagged. `Sources/J2KMetal/default.metallib` is now
+checked in as a `.copy()` resource on the J2KMetal target, and
+`device.makeDefaultLibrary(bundle: .module)` returns it at
+runtime instead of falling through to the
+`J2KMetalShaderSource.kernelSource` source-compile path.
+
+This was originally the v5.15 plan item; ships as v5.13.0 because
+project versioning is sequential. v5.13/v5.14 (GPU MCT fusion,
+9/7 lossy fast-lane) remain unimplemented per the
+`V5_12_PLUS_OVERNIGHT_STATUS.md` deferral notes — the metallib
+infrastructure is independent of those.
+
+### What this release does (and doesn't) change
+
+**Architectural:** SPM resource layout. The .metal source file
+stays in the bundle (for inspection / debugging); the
+pre-compiled metallib is added alongside. `Scripts/build_metallib.sh`
+regenerates the metallib when the .metal source changes — must
+be run explicitly (SwiftPM doesn't auto-compile .metal under
+`swift build`, only Xcode does).
+
+**Perf:** ~30 ms cold-CLI start savings (0.32 s → 0.29 s on
+`j2k decode --gpu-ht` over a 512×512 HTJ2K input). Warm runs are
+unchanged (Metal driver caches the compiled library either way).
+
+### Added
+
+- **`Sources/J2KMetal/default.metallib`** — pre-compiled Metal
+  library bundled as a `.copy()` resource. 250 KB.
+- **`Scripts/build_metallib.sh`** — regenerate the metallib from
+  `J2KShaders.metal` (requires Metal Toolchain installed).
+- **`J2KMetalShaderLibrary.loadPath`** — `.metallib` or
+  `.sourceCompile`. Lets callers / tests verify which path was
+  actually taken.
+- **`J2KMetalLibraryLoadPathTests`** — regression gate that
+  asserts the bundled metallib is loaded (not the fallback).
+- **`J2KMetalLibraryLoadBenchTests`** — opt-in bench harness
+  (run with `J2K_BENCH_LIBRARY_LOAD=1`).
+
+### Notes
+
+- The Metal Toolchain is required to regenerate the metallib.
+  Install with `xcodebuild -downloadComponent MetalToolchain`.
+  The .metal source itself stays in source control as the
+  ground truth; the metallib is a build artifact.
+- If `J2KShaders.metal` is updated without regenerating the
+  metallib, the `J2KMetalLibraryLoadPathTests` gate still passes
+  (the metallib loads successfully), but the runtime kernels
+  may not match the source. Project workflow needs to regenerate
+  via `Scripts/build_metallib.sh` and commit alongside .metal
+  changes — same constraint Xcode-built apps don't have.
+
+### Bit-exactness
+
+- All v5.12.0 gates pass byte-for-byte ✓
+- New `J2KMetalLibraryLoadPathTests` gate ✓
+
+### Sessionless / session paths
+
+Identical behaviour to v5.12.0. The metallib path produces the
+same compiled kernels as the source-compile path; both routes
+return the same MTLLibrary object to the rest of the pipeline.
+
 ## [5.12.0] — 2026-05-03
 
 **Minor Release — Bounded multi-tile concurrency**

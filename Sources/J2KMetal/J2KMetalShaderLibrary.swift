@@ -235,6 +235,17 @@ public actor J2KMetalShaderLibrary {
     /// Whether shaders have been loaded.
     private var isLoaded = false
 
+    /// v5.15: which path produced the loaded MTLLibrary. Used by
+    /// `J2KMetalLibraryLoadPathTests` to assert the bundled
+    /// `default.metallib` is being picked up (and that we're not
+    /// silently falling back to the source-compile path on
+    /// production builds). `nil` until `loadShaders` returns.
+    public enum LoadPath: String, Sendable {
+        case metallib  // loaded the bundled default.metallib
+        case sourceCompile  // fell back to compiling J2KMetalShaderSource.kernelSource
+    }
+    public private(set) var loadPath: LoadPath?
+
     /// Creates a new shader library with the given configuration.
     ///
     /// - Parameter configuration: The library configuration. Defaults to `.default`.
@@ -265,6 +276,7 @@ public actor J2KMetalShaderLibrary {
             self.library = compiledLibrary
             self.device = device
             self.isLoaded = true
+            self.loadPath = .metallib
             return
         }
 
@@ -277,6 +289,7 @@ public actor J2KMetalShaderLibrary {
             self.library = compiledLibrary
             self.device = device
             self.isLoaded = true
+            self.loadPath = .sourceCompile
         } catch {
             throw J2KError.internalError("Metal shader compilation failed: \(error.localizedDescription)")
         }

@@ -72,15 +72,18 @@ let package = Package(
             name: "J2KMetal",
             dependencies: ["J2KCore"],
             resources: [
-                // J2KShaders.metal is compiled to default.metallib at
-                // build time and bundled in Bundle.module. Loading
-                // the bundled archive at runtime skips the ~50 ms MSL
-                // source-compile cost the v5.5.0 perf report flagged
-                // (see GPU_HT_M2_PRIME_PERF_REPORT.md). The runtime
-                // path falls back to source-compiling the inlined
-                // J2KMetalShaderSource.kernelSource if Bundle.module
-                // is unavailable (e.g. some test contexts) or the
-                // metallib is otherwise missing.
+                // v5.15: ship a pre-compiled `default.metallib`
+                // alongside the .metal source. SwiftPM's
+                // `.process()` does NOT compile .metal files under
+                // `swift build` (only Xcode handles that); checking
+                // in a pre-built metallib is the only way to make
+                // the runtime metallib path live for SPM consumers.
+                // Regenerate via `Scripts/build_metallib.sh` when
+                // J2KShaders.metal changes (script verifies parity
+                // with the source). The runtime path falls back to
+                // source-compiling J2KMetalShaderSource.kernelSource
+                // if the metallib is missing or corrupt.
+                .copy("default.metallib"),
                 .process("J2KShaders.metal")
             ]),
         .target(
