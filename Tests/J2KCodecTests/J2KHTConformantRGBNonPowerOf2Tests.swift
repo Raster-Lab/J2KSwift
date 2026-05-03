@@ -30,7 +30,7 @@ final class HTConformantRGBNonPowerOf2Tests: XCTestCase {
     ]
 
     private static let decompLevels: [Int] = [0, 3, 5]
-    private static let bitDepths:    [Int] = [8, 16]
+    private static let bitDepths:    [Int] = [8, 12, 16]
 
     private struct RGBCell {
         let width: Int
