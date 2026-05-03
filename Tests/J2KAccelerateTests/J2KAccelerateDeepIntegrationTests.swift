@@ -456,11 +456,16 @@ final class J2KAccelerateDeepIntegrationTests: XCTestCase {
     }
 
     /// Tests batch matrix multiply with invalid dimensions.
+    /// The matrix has 2 elements but m=3, k=1 expects 3 (m*k) — should throw.
+    /// Pre-v5.17.0 this test passed inputs that were actually VALID
+    /// (m=2 k=1 with a 2-element matrix); the test was a stale gate
+    /// that always failed silently in the full suite. Updated to use
+    /// genuinely-mismatched dimensions.
     func testBatchMatrixMultiplyInvalid() throws {
         let blas = J2KBLASDeepIntegration()
 
         XCTAssertThrowsError(try blas.batchMatrixMultiply(
-            matrices: [[1.0, 2.0]], transform: [1.0], m: 2, n: 1, k: 1
+            matrices: [[1.0, 2.0]], transform: [1.0], m: 3, n: 1, k: 1
         ))
     }
 
