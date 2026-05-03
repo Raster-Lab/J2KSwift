@@ -224,38 +224,35 @@ extension J2KCLI {
             componentDataIsBigEndian(image.components[ch])
         }
 
+        // bpp is the per-pixel byte count, used as the
+        // left-pixel-reference offset for Sub / Average / Paeth.
+        let bpp = channels * bytesPerSample
+
         // Build filtered scanlines.
         //
-        // v5.14.2 fix: previously the writer claimed Sub filter
-        // (filter type 1) but computed `filtered[x] = sample[x] -
-        // filtered[x-bpp]` — using the FILTERED byte for the
-        // subtraction reference. The PNG spec defines Sub as
-        // `Filt(x) = Orig(x) - Orig(x-bpp)` against the ORIGINAL
-        // (unfiltered) bytes. The pre-existing code only worked
-        // for the first `bpp` bytes of each scanline (where
-        // x-bpp < bpp ⇒ filtered[x-bpp] == orig[x-bpp]) and
-        // silently corrupted everything after. Caught by the
-        // v5.14.2 PNG round-trip test.
-        //
-        // Switching to filter type 0 (None) makes correctness
-        // trivial: emit the raw sample bytes per scanline, no
-        // filtering applied. PNG accepts this — only zlib
-        // compression handles redundancy. Compression ratio is
-        // slightly worse than Sub for natural images, but the
-        // correctness guarantee is unconditional. Filter
-        // selection is an optimisation we can layer on later
-        // (with proper original-byte tracking) if PNG output
-        // size matters.
+        // v5.17.0 re-implementation: Sub / Up / Average / Paeth filters
+        // with proper ORIGINAL-byte semantics. v5.14.2 had switched to
+        // filter type 0 (None) after catching the pre-v5.14.2 bug
+        // where Sub used the FILTERED byte for the subtraction
+        // reference (PNG spec requires the ORIGINAL byte). The fix
+        // here keeps the v5.14.2 correctness guarantee while
+        // recovering compression efficiency:
+        //   1. Build the full row of raw (unfiltered) sample bytes
+        //      first, in PNG byte-order (BE for 16-bit).
+        //   2. Compute SAD (sum of absolute differences) for each
+        //      filter type — the standard PNG MAE heuristic.
+        //   3. Pick the filter with smallest SAD; emit it.
+        // Pixel byte references for Sub / Up / Avg / Paeth are read
+        // from the ORIGINAL row arrays, never from the filtered
+        // output. The Phase 1 / v5.14.2 PNG round-trip regression
+        // test catches any reintroduction of the original bug.
         var filtered = Data(capacity: height * (1 + scanlineBytes))
-        // Track original sample bytes per row for any future Sub /
-        // Up / Average / Paeth implementation that respects the
-        // original-byte semantics.
+        var prevRowRaw = [UInt8](repeating: 0, count: scanlineBytes)
+        var currentRowRaw = [UInt8](repeating: 0, count: scanlineBytes)
 
         for row in 0..<height {
-            filtered.append(0)  // None filter — raw bytes follow
-
+            // 1. Materialise the unfiltered scanline.
             for x in 0..<scanlineBytes {
-                // Interleave: compute which channel and sample byte
                 let pixelInRow = x / (channels * bytesPerSample)
                 let remainder = x % (channels * bytesPerSample)
                 let ch = remainder / bytesPerSample
@@ -264,38 +261,63 @@ extension J2KCLI {
                 let comp = image.components[ch]
                 let pixelIndex = row * width + pixelInRow
 
-                var sampleByte: UInt8
-                let srcIdx = pixelIndex * bytesPerSample + byteInSample
-                if srcIdx < comp.data.count {
-                    sampleByte = comp.data[srcIdx]
-                } else {
-                    sampleByte = 0
-                }
-
-                // For 16-bit, PNG expects big-endian.
+                var sampleByte: UInt8 = 0
                 if bitDepth == 16 {
                     let leIdx = pixelIndex * 2
                     if componentIsBE[ch] {
-                        // Source already big-endian: no swap needed.
-                        // PNG byte 0 = high byte = source byte 0;
-                        // PNG byte 1 = low byte = source byte 1.
                         sampleByte = leIdx + byteInSample < comp.data.count
                             ? comp.data[leIdx + byteInSample] : 0
                     } else {
-                        // Source is little-endian: swap to BE for PNG.
+                        // Source is LE: swap to PNG BE.
                         if byteInSample == 0 {
-                            // PNG byte 0 = high byte = LE byte 1
                             sampleByte = leIdx + 1 < comp.data.count ? comp.data[leIdx + 1] : 0
                         } else {
-                            // PNG byte 1 = low byte = LE byte 0
                             sampleByte = leIdx < comp.data.count ? comp.data[leIdx] : 0
                         }
                     }
+                } else {
+                    let srcIdx = pixelIndex * bytesPerSample + byteInSample
+                    sampleByte = srcIdx < comp.data.count ? comp.data[srcIdx] : 0
                 }
-
-                // Filter type 0 (None): emit the raw sample byte.
-                filtered.append(sampleByte)
+                currentRowRaw[x] = sampleByte
             }
+
+            // 2. Choose the best filter via the MAE heuristic. For
+            //    each candidate compute sum of absolute (signed-byte)
+            //    deltas — the conventional PNG selection metric.
+            //    Lower SAD on natural images correlates with better
+            //    zlib compression of the filtered scanline.
+            var bestFilter: UInt8 = 0
+            var bestSAD = Int.max
+            var bestFiltered = [UInt8](repeating: 0, count: scanlineBytes)
+            var scratch = [UInt8](repeating: 0, count: scanlineBytes)
+
+            for filterType: UInt8 in 0...4 {
+                applyFilter(
+                    type: filterType,
+                    row: currentRowRaw,
+                    prevRow: prevRowRaw,
+                    bpp: bpp,
+                    out: &scratch)
+                // SAD over signed-byte interpretation (per PNG spec
+                // §12.8 minimum-sum-of-absolute-differences heuristic).
+                var sad = 0
+                for b in scratch {
+                    sad += abs(Int(Int8(bitPattern: b)))
+                }
+                if sad < bestSAD {
+                    bestSAD = sad
+                    bestFilter = filterType
+                    swap(&bestFiltered, &scratch)
+                }
+            }
+
+            // 3. Emit filter type byte then the filtered scanline.
+            filtered.append(bestFilter)
+            filtered.append(contentsOf: bestFiltered)
+
+            // Slide the row buffer for the next iteration.
+            swap(&prevRowRaw, &currentRowRaw)
         }
 
         // Compress with zlib
@@ -371,6 +393,58 @@ extension J2KCLI {
         if pa <= pb && pa <= pc { return a }
         if pb <= pc { return b }
         return c
+    }
+
+    /// Apply one of the five PNG filter types to a row of ORIGINAL
+    /// (unfiltered) bytes, writing the filtered bytes into `out`.
+    /// All references to neighboring bytes use the original sample
+    /// values per PNG spec §9.2 — never the filtered output.
+    ///
+    /// - Parameters:
+    ///   - type: Filter type (0=None, 1=Sub, 2=Up, 3=Average, 4=Paeth).
+    ///   - row: This row's raw, unfiltered sample bytes.
+    ///   - prevRow: Previous row's raw bytes (zeros for the first row).
+    ///   - bpp: Bytes per pixel, used as the filter's left-pixel offset.
+    ///   - out: Output buffer; must have count == row.count.
+    private static func applyFilter(
+        type: UInt8,
+        row: [UInt8],
+        prevRow: [UInt8],
+        bpp: Int,
+        out: inout [UInt8]
+    ) {
+        let n = row.count
+        switch type {
+        case 0:  // None — Filt(x) = Orig(x)
+            for x in 0..<n { out[x] = row[x] }
+        case 1:  // Sub — Filt(x) = Orig(x) - Orig(x - bpp)
+            for x in 0..<n {
+                let a: UInt8 = x >= bpp ? row[x - bpp] : 0
+                out[x] = row[x] &- a
+            }
+        case 2:  // Up — Filt(x) = Orig(x) - Prior(x)
+            for x in 0..<n {
+                let b: UInt8 = prevRow[x]
+                out[x] = row[x] &- b
+            }
+        case 3:  // Average — Filt(x) = Orig(x) - floor((Orig(x-bpp) + Prior(x)) / 2)
+            for x in 0..<n {
+                let a: Int = x >= bpp ? Int(row[x - bpp]) : 0
+                let b: Int = Int(prevRow[x])
+                let avg = UInt8((a + b) >> 1)
+                out[x] = row[x] &- avg
+            }
+        case 4:  // Paeth — Filt(x) = Orig(x) - Paeth(Orig(x-bpp), Prior(x), Prior(x-bpp))
+            for x in 0..<n {
+                let a: UInt8 = x >= bpp ? row[x - bpp] : 0
+                let b: UInt8 = prevRow[x]
+                let c: UInt8 = x >= bpp ? prevRow[x - bpp] : 0
+                out[x] = row[x] &- paethPredictor(a, b, c)
+            }
+        default:
+            // Unknown filter type — fall through to None.
+            for x in 0..<n { out[x] = row[x] }
+        }
     }
 
     /// CRC-32 used by PNG (same polynomial as zlib crc32).

@@ -5,6 +5,61 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.17.0] — 2026-05-03
+
+**Medical-grade hardening — RGB non-pow2 + DICOMKit CI + PNG filter recovery**
+
+Three orthogonal gaps closed: RGB lossless conformant non-pow2 wasn't
+gated by v5.15.0; DICOMKit (the production downstream consumer) build
+status wasn't part of CI; v5.14.2 disabled all PNG filters to guard
+against the Sub-filter bug, leaving 10–30% file-size on the table.
+
+### Added
+
+- `.github/workflows/dicomkit-downstream.yml` — new CI gate that
+  patches DICOMKit's `Package.swift` to point at the J2KSwift PR
+  commit and verifies the consumer builds. Catches API breaks at PR
+  time instead of at consumer-side upgrade time.
+- `Tests/J2KCodecTests/J2KHTConformantRGBNonPowerOf2Tests.swift` —
+  72-cell strict regression gate (12 dim configs × 3 decomp levels ×
+  2 bit-depths) for 3-component RGB lossless HT conformant
+  round-trip. Per-channel deterministic content with different LCG
+  seeds + gradient slopes per channel so RCT has realistic chroma
+  content to decorrelate.
+- `RELEASE_NOTES_v5.17.0.md` — full audit trail.
+
+### Fixed
+
+- **PNG filter selection in `Sources/J2KCLI/PNGSupport.swift`**:
+  re-implemented Sub/Up/Average/Paeth using ORIGINAL-byte semantics
+  (the v5.14.2 bug used FILTERED bytes for the predictor reference).
+  Per-row filter selection via the standard PNG MAE (sum-of-absolute-
+  differences) heuristic. v5.14.2's filter-type-0 (None) writer
+  applied a hard correctness fallback at the cost of compression
+  efficiency; v5.17.0 recovers efficiency while keeping the v5.14.2
+  PNG round-trip regression tests as the correctness floor.
+
+### Verified
+
+- All v5.15.0 + v5.16.0 regression gates remain green:
+  - `HTConformantNonPowerOf2ProbeTests` (11,520 block cells)
+  - `HTConformantPipelineNonPowerOf2Tests` (228 grayscale cells)
+  - `HTConformantOpenJPHCrossDecodeTests` (120 cells)
+  - `HTConformantPhase2RealCorpusTests` (21 medical cells)
+  - `HTConformantLossyOpenJPHInteropTests` (lossy interop)
+- v5.14.x byte-order matrix (10 tests) green via existing PNG
+  round-trip tests catching the new filter implementation.
+
+### Known issues (deferred)
+
+- **HT conformant lossy R-D gap** (~7 dB at 1 bpp) carried from
+  v5.16.0 — needs intra-block byte-level truncation. v5.18.0 candidate.
+- **DICOMKit CI test execution**: the gate currently only checks
+  build, not test execution. DICOMKit has 9 pre-existing unrelated
+  failures; curated test set is a v5.17.x patch candidate.
+- **Phase 3 — medical corpus expansion** to NM/US/MG/OP modalities:
+  postponed pending license-cleared fixture sources.
+
 ## [5.16.0] — 2026-05-03
 
 **HT conformant lossy: bitstream interop fix (medical-grade critical)**

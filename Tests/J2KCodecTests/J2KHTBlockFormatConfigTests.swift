@@ -10,15 +10,16 @@ import XCTest
 
 final class HTBlockFormatConfigTests: XCTestCase {
 
-    /// Default stays `.custom` in v5.1.0. The v5.1 work brought the
-    /// decoder-side dispatch online (so `.conformant` now fully
-    /// round-trips through J2KSwift's own decode API at power-of-2
-    /// code block sizes), but a remaining non-power-of-2 subband
-    /// issue in the shared block-coder keeps us from flipping the
-    /// default until the encoder geometry is fixed.
-    func testDefaultIsCustomFormat() {
+    /// Default is `.conformant` (Part-15 / ISO 15444-15). The flip
+    /// from `.custom` happened after v5.1.0 once the decoder-side
+    /// COM-marker dispatch and K_max widening (v5.1.1) shipped.
+    /// v5.15.0 ratified non-power-of-2 lossless via three independent
+    /// probes; v5.16.0 ratified lossy via the K_max conformance fix.
+    /// `.conformant` is now the recommended default — it produces
+    /// codestreams interoperable with any Part-15 decoder.
+    func testDefaultIsConformantFormat() {
         let config = J2KEncodingConfiguration()
-        XCTAssertEqual(config.htj2kBlockFormat, .custom)
+        XCTAssertEqual(config.htj2kBlockFormat, .conformant)
     }
 
     /// Opt-in to the Part-15 format via the init parameter.
