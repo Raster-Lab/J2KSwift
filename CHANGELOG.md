@@ -5,6 +5,51 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.15.0] — 2026-05-03
+
+**HT conformant lossless: silent-default audit + permanent regression floor**
+
+The default `htj2kBlockFormat` was silently flipped to `.conformant`
+sometime after v5.1.0, but a docstring at `J2KEncodingPresets.swift:341-347`
+still warned users that "non-power-of-2 subband dimensions are known to be
+lossy." v5.15.0 settles whether that warning is real.
+
+### Added
+
+- `Tests/J2KCodecTests/J2KHTConformantNonPowerOf2ProbeTests.swift` —
+  block-level corruption probe (11,520 cells: dims 1×1 to 64×64,
+  missingMSBs ∈ {0, 5, 10, 20, 25}, 9 bin-aligned coefficient patterns).
+  Strict regression gate.
+- `Tests/J2KCodecTests/J2KHTConformantPipelineNonPowerOf2Tests.swift` —
+  full-pipeline lossless conformant probe (228 cells: image dims 31×31
+  to 511×511, decomp ∈ {0, 1, 3, 5}, bit-depth ∈ {8, 12, 16}). Strict
+  regression gate.
+- `Tests/J2KCodecTests/J2KHTConformantOpenJPHCrossDecodeTests.swift` —
+  OpenJPH `ojph_expand` cross-decode probe (120 cells). Decisive
+  third-leg validation of interop. Strict regression gate.
+- `Tests/J2KCodecTests/J2KHTConformantPhase2RealCorpusTests.swift` —
+  real medical PGM corpus (CT/DX/MR/PX/XA, 7 fixtures × 3 decomp = 21
+  cells). 5/7 fixtures non-power-of-2.
+- `Scripts/rd_benchmark.py` — added `J2KSwift-HT` codec variant for
+  direct R-D comparison vs OpenJPH.
+
+### Fixed
+
+- Removed stale "non-power-of-2 lossy" caveat from
+  `Sources/J2KCodec/J2KEncodingPresets.swift` docstring. Phase 1 (11,868
+  cells across three independent probes) and Phase 2 (21 cells real-
+  corpus) confirm zero corruption. The original bug was almost certainly
+  the K_max off-by-one closed in v5.1.1; the docstring outlived the fix.
+
+### Known issues
+
+- **Lossy HT conformant rate-distortion gap**: J2KSwift-HT in lossy mode
+  is 2.5–6.9 dB worse than both J2KSwift's own legacy EBCOT path AND
+  OpenJPH at matched achieved bpp. The encoder produces valid HT
+  codestreams that decode correctly — the gap is in rate-control
+  quality. Captured as v5.16.0 motivation; lossless HT conformant is
+  fully ratified.
+
 ## [5.14.2] — 2026-05-03
 
 **Systemic fix — byte-order convention across every image-I/O surface**
