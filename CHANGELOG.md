@@ -5,6 +5,28 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.17.1] — 2026-05-03
+
+**Patch — stale test cleanup**
+
+Single-test fix uncovered by the v5.17.0 verification suite run.
+`testBatchMatrixMultiplyInvalid` was passing inputs that satisfy
+both validation guards in `batchMatrixMultiply` (m=2 k=1 with a
+2-element matrix; m*k=2 matches matrix.count=2). The test had been
+silently failing in CI for an unknown number of releases.
+
+### Fixed
+
+- `Tests/J2KAccelerateTests/J2KAccelerateDeepIntegrationTests.swift:`
+  `testBatchMatrixMultiplyInvalid` — change m=2 to m=3 so matrix.count
+  (2) no longer satisfies the m*k = 3*1 = 3 guard. Now reliably
+  throws the documented invalidParameter error.
+
+Same shape of stale-test fix as the testDefaultIsCustomFormat fix
+bundled into v5.17.0. v5.17.1 confirms the v5.17.0 verification cycle
+caught all silently-failing tests in the non-benchmark portion of
+the suite.
+
 ## [5.17.0] — 2026-05-03
 
 **Medical-grade hardening — RGB non-pow2 + DICOMKit CI + PNG filter recovery**
