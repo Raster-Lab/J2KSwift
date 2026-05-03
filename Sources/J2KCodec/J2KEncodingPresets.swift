@@ -330,21 +330,19 @@ public struct J2KEncodingConfiguration: Sendable {
 
     /// Selects the HTJ2K block-coder wire format.
     ///
-    /// - `.custom` (default): J2KSwift's in-house v4.x format. Fast
-    ///   self round-trip with J2KSwift's own decoder at every
-    ///   supported dimension; NOT decodable by OpenJPH or other
-    ///   Part-15 codecs.
-    /// - `.conformant`: ISO/IEC 15444-15 conformant block format,
-    ///   bidirectionally interoperable with OpenJPH 0.26+ and other
-    ///   Part-15 decoders. v5.1 adds the COM-marker-driven decoder
-    ///   dispatch so J2KSwift can round-trip its own `.conformant`
-    ///   codestreams at power-of-2 code block sizes. Non-power-of-2
-    ///   subband dimensions (typical in multi-resolution decodes of
-    ///   arbitrary image sizes) are known to be lossy in the
-    ///   conformant encoder path — the same behavior is observed
-    ///   when the encoder output is handed to OpenJPH, so the bug
-    ///   lives in the shared block-coder geometry — tracked for
-    ///   follow-up.
+    /// - `.conformant` (default): ISO/IEC 15444-15 conformant block
+    ///   format, bidirectionally interoperable with OpenJPH 0.26+ and
+    ///   other Part-15 decoders. Lossless round-trip is bit-exact at
+    ///   arbitrary image dimensions including non-power-of-2 subband
+    ///   geometries (regression-gated by `J2KHTConformantNonPowerOf2*`
+    ///   tests in v5.15.0+). The COM-marker-driven decoder dispatch
+    ///   (added in v5.1) lets J2KSwift round-trip its own conformant
+    ///   codestreams transparently.
+    /// - `.custom`: J2KSwift's in-house v4.x layout. Slightly smaller
+    ///   on some inputs but NOT decodable by OpenJPH or other Part-15
+    ///   codecs. Useful for archives produced by older J2KSwift
+    ///   versions or research workflows where private codestreams are
+    ///   acceptable.
     ///
     /// Only applies when `useHTJ2K` is true.
     public var htj2kBlockFormat: HTBlockFormat
