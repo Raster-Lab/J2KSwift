@@ -743,17 +743,54 @@ struct AcceleratedDWT2D: Sendable {
         for i in 0..<lowCount  { evenPtr[i] = input[i &* 2] }
         for i in 0..<highCount { oddPtr[i]  = input[i &* 2 &+ 1] }
 
-        // Predict: d[n] = odd[n] - floor((even[n] + even[n+1]) / 2)
-        for i in 0..<highCount {
-            let right = (i + 1 < lowCount) ? evenPtr[i + 1] : evenPtr[lowCount - 1]
-            oddPtr[i] = oddPtr[i] &- ((evenPtr[i] &+ right) >> 1)
+        // v5.38 M5: split the lifting loops into a branchless bulk
+        // body + a tiny scalar tail. The bulk body has no per-iter
+        // conditional (predictable stride access on contiguous Int32
+        // pointers), which lets LLVM's loop vectoriser emit NEON
+        // vaddq_s32/vshrq_n_s32 sequences. Boundary cases fall into
+        // the post-bulk scalar handlers.
+        //
+        // For predict (`d[n] = odd[n] - (even[n] + even[n+1]) >> 1`)
+        // the conditional `i + 1 < lowCount` is true for every
+        // `i in 0..<highCount` except the last index when
+        // `highCount == lowCount` (i.e., when `n` is even).
+
+        // Predict bulk: rightmost safe i is the largest where
+        // i+1 < lowCount, i.e., i < lowCount - 1. So predictBulk =
+        // min(highCount, lowCount - 1) = highCount when n is odd,
+        // highCount - 1 when n is even.
+        let predictBulk = min(highCount, lowCount - 1)
+        for i in 0..<predictBulk {
+            oddPtr[i] = oddPtr[i] &- ((evenPtr[i] &+ evenPtr[i &+ 1]) >> 1)
+        }
+        if predictBulk < highCount {
+            let i = predictBulk
+            oddPtr[i] = oddPtr[i] &- ((evenPtr[i] &+ evenPtr[lowCount - 1]) >> 1)
         }
 
-        // Update: s[n] = even[n] + floor((d[n-1] + d[n] + 2) / 4)
-        for i in 0..<lowCount {
-            let left  = (i > 0) ? oddPtr[i - 1] : oddPtr[0]
-            let right = (i < highCount) ? oddPtr[i] : oddPtr[highCount - 1]
-            evenPtr[i] = evenPtr[i] &+ ((left &+ right &+ 2) >> 2)
+        // Update: `s[n] = even[n] + (d[n-1] + d[n] + 2) >> 2`.
+        // Both ends have boundary conditions:
+        //   i == 0: left = oddPtr[0] (mirror)
+        //   i == lowCount-1: right = oddPtr[highCount-1] when
+        //                    i >= highCount; otherwise oddPtr[i].
+        // The interior is i in 1..<min(highCount, lowCount). With
+        // `n` even (highCount == lowCount), interior is 1..<highCount;
+        // i == lowCount-1 == highCount-1 is the right boundary.
+        // With `n` odd (lowCount == highCount + 1), interior is
+        // 1..<highCount; i == lowCount-1 is the right boundary.
+        if lowCount > 0 {
+            evenPtr[0] = evenPtr[0] &+ ((oddPtr[0] &+ oddPtr[0] &+ 2) >> 2)
+        }
+        let updateBulkEnd = min(lowCount, highCount)
+        for i in 1..<updateBulkEnd {
+            evenPtr[i] = evenPtr[i] &+ ((oddPtr[i &- 1] &+ oddPtr[i] &+ 2) >> 2)
+        }
+        // Tail when lowCount > highCount (n odd) — i == lowCount-1
+        // uses oddPtr[highCount-1] for the right value.
+        if updateBulkEnd < lowCount {
+            let i = lowCount - 1
+            let left = (i > 0) ? oddPtr[i &- 1] : oddPtr[0]
+            evenPtr[i] = evenPtr[i] &+ ((left &+ oddPtr[highCount - 1] &+ 2) >> 2)
         }
 
         memcpy(output, evenPtr, lowCount * MemoryLayout<Int32>.size)

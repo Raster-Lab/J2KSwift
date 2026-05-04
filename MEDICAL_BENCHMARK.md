@@ -240,14 +240,63 @@ encode is the fastest of the 5 codecs measured on 6 of 7 fixtures
 - **M2 ✓** — external-codec columns + cross-decode matrix.
 - **M3 Step-A ✓** — stage profile + `J2KBitWriter.writeBytes` fast path.
 - **M4 ✓** — HT vs EBCOT comparison + trade-off documentation.
-- **M5** — targeted optimisation pass. With Step-A done and J2KSwift
-  already fastest on 6/7 fixtures (HT path), further wins now have
-  diminishing returns. Candidates:
-   - 5/3 forward DWT lifting via NEON intrinsics (DWT is 39% of total
-     post-Step-A). Already heavily optimised (parallel strips, ptr
-     workspaces) — would require true SIMD lifting.
-   - HT cleanup-only entropy coder per-block allocation reduction.
-- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M5 CPU
+### v5.38 M5 — branchless 5/3 forward lifting → DWT 9-15% faster
+
+`AcceleratedEncoder.forward53_1D(_:_:count:workspace:)` had two inner
+loops with per-iteration `i + 1 < lowCount` / `i > 0` boundary
+conditionals. These prevented LLVM from emitting NEON
+`vaddq_s32`/`vshrq_n_s32` sequences over the bulk of the lifting work.
+
+The M5 fix splits each loop into a branchless bulk body + a tiny
+scalar tail (one or two iterations). The bulk body has predictable
+stride access on contiguous Int32 pointers, so the loop vectoriser
+emits the expected NEON sequence; the tail handles the lone boundary
+case in scalar code. Bit-exact equivalence verified across all 7
+medical fixtures.
+
+#### Encode stage profile, post-Step-A vs post-M5 (median of 5 runs, ms)
+
+| Fixture | Stage | Post-Step-A | Post-M5 | Δ |
+|---|---|---:|---:|---:|
+| **MR 886×886**     | Total | 6.47 |  6.08 | **−6.0%** |
+|                    | DWT   | 3.88 |  3.37 | **−13.1%** |
+| **DX 2800×2288**   | Total | 87.01 | 83.83 | **−3.7%** |
+|                    | DWT   | 35.20 | 31.85 | **−9.5%** |
+| PX 2459×1316       | Total | 44.36 | 42.72 | −3.7% |
+|                    | DWT   | 16.21 | 14.54 | −10.3% |
+| XA 1024×1024       | Total | 13.60 | 12.98 | −4.6% |
+|                    | DWT   |  5.66 |  4.79 | **−15.4%** |
+
+Sparse fixtures (MR with 9.36× compression — most pixels zero) gain
+the most because the DWT has to process every pixel regardless of
+sparsity, so DWT savings translate directly to total savings.
+Dense fixtures (PX/DX with ~1.01× compression) are entropy-bound;
+DWT savings show through proportionally.
+
+#### Cumulative v5.38 speedup vs pre-M3 baseline
+
+| Fixture | v5.37 baseline | post-Step-A | post-M5 | Cumulative |
+|---|---:|---:|---:|---:|
+| DX 2800×2288       | 156.9 ms | 88.2 ms | **83.8 ms** | **1.87×** |
+| PX 2459×1316       |  78.3 ms | 44.6 ms |   42.7 ms | 1.83× |
+| XA 1024×1024       |  22.4 ms | 13.5 ms |   13.0 ms | 1.72× |
+| MR 886×886         |   7.6 ms |  6.5 ms |    6.1 ms | 1.25× |
+
+DX 12 MP encode is now **1.87× faster** than the v5.37 baseline.
+
+### v5.38 plan — milestones (revised after M5)
+
+- **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
+- **M2 ✓** — external-codec columns + cross-decode matrix.
+- **M3 + Step-A ✓** — stage profile + `J2KBitWriter.writeBytes` fast
+  path (DX 1.78× speedup).
+- **M4 ✓** — HT vs EBCOT comparison + trade-off documentation.
+- **M5 ✓** — branchless 5/3 forward lifting (DWT 9-15% faster).
+- **M6 (next)** — entropy stage is the new persistent dominant stage
+  (44-54% across the corpus). The HT cleanup-only block encoder's
+  per-quad scanning is the next target. Higher correctness risk;
+  needs careful staging.
+- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M6 CPU
   baseline complete or until decode becomes the dominant pipeline
   cost — currently encode dominates).
 
