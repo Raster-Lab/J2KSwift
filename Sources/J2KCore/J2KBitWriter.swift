@@ -135,7 +135,20 @@ public struct J2KBitWriter: Sendable {
     /// Writes a sequence of bytes to the stream.
     ///
     /// - Parameter data: The data to write.
+    ///
+    /// v5.38 M3 fast path: when the writer is byte-aligned and byte
+    /// stuffing is disabled, this performs a bulk `append(contentsOf:)`
+    /// instead of N `writeUInt8` calls. On medical-corpus lossless
+    /// encode the dominant cost was the byte-by-byte append of tile
+    /// data into the codestream writer (~12M calls for a 12 MP DX);
+    /// the fast path collapses that to a single buffer-grow + memcpy.
     public mutating func writeBytes(_ data: Data) {
+        if bitPosition == 0 && !byteStuffingEnabled {
+            data.withUnsafeBytes { src in
+                buffer.append(contentsOf: src.bindMemory(to: UInt8.self))
+            }
+            return
+        }
         for byte in data {
             writeUInt8(byte)
         }
@@ -145,6 +158,10 @@ public struct J2KBitWriter: Sendable {
     ///
     /// - Parameter bytes: The bytes to write.
     public mutating func writeBytes(_ bytes: [UInt8]) {
+        if bitPosition == 0 && !byteStuffingEnabled {
+            buffer.append(contentsOf: bytes)
+            return
+        }
         for byte in bytes {
             writeUInt8(byte)
         }

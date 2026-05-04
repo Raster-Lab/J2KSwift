@@ -130,22 +130,84 @@ decode warm-up before the measurement pass — pending refinement in M3.
 codestream is consumed losslessly by every mainstream Part-15-aware
 decoder — OpenJPEG 2.5.4, OpenJPH, Grok, and Kakadu 8.4.1 demo.
 
-### v5.38 plan — milestones (revised after M2)
+### v5.38 M3 — stage profile + first targeted optimisation
 
-- **M1 ✓ (committed)** — gate scaffolding + bit-exact roundtrip table.
-- **M2 ✓ (this section)** — external-codec columns + cross-decode matrix.
-- **M3** — `J2KLosslessEncodeStageProfile`: per-fixture stage breakdown
-  using existing `J2KEncodeTimings` + `J2K_PROFILE`. Identify dominant
-  stage on real medical fixtures (DWT? entropy? codestream assembly?)
-  then ship one targeted optimization. **Also** investigate the PX/DX
-  HT lossless ratio (1.01× vs raw on 16-bit content) — this matches
-  OpenJPH exactly so it's a format limit, not a J2KSwift bug, but is
-  worth understanding via comparison against EBCOT lossless mode and
-  examination of the bit-depth distribution in those fixtures.
-- **M4** — add an EBCOT-lossless comparison column to the gate so we
-  can directly compare J2KSwift's two lossless paths against external
-  codecs running their default formats. This will let us position
-  J2KSwift's HT vs EBCOT trade-off transparently.
+`testLosslessEncodeStageProfileAcrossMedicalCorpus` snapshots
+`J2KEncodeTimings` per encode pass (5 measurement passes per fixture
+after a warm-up). Median per-stage results identified
+**codestream-generation** as the dominant stage on every fixture ≥
+512² — surprisingly so (47% on DX 12 MP), more than entropy (25%) or
+the 5/3 forward DWT (23%).
+
+Root cause: `J2KBitWriter.writeBytes(_:Data)` was byte-by-byte
+(`for byte in data { writeUInt8(byte) }`) and the codestream-generation
+flow writes the entire tile-data buffer (12 MB on DX) into the outer
+codestream writer this way — ~12 million method calls + per-byte
+bit-position checks.
+
+**Step-A fix** (6-line change in `J2KBitWriter`): when the writer is
+byte-aligned and byte-stuffing is disabled (always true for the
+post-SOD tile-data write), use `buffer.append(contentsOf: bytes)` for
+a single buffer-grow + memcpy.
+
+#### Encode stage profile, before vs after Step-A (median of 5 runs, ms)
+
+| Fixture | Stage | Before | After | Δ |
+|---|---|---:|---:|---:|
+| **DX 2800×2288**     | Total      | 156.90 |  88.21 | **−43.7% / 1.78×** |
+|                      | Codestream |  73.24 |   6.11 | −91.7% |
+|                      | Entropy    |  38.96 |  39.90 | +2% (no change expected) |
+|                      | DWT        |  35.50 |  34.38 | −3% |
+| **PX 2459×1316**     | Total      |  78.34 |  44.63 | **−43.0% / 1.76×** |
+|                      | Codestream |  36.86 |   3.18 | −91.4% |
+| **XA 1024×1024**     | Total      |  22.39 |  13.52 | **−39.6% / 1.66×** |
+|                      | Codestream |   9.31 |   0.80 | −91.4% |
+| **CT 512×512**       | Total      |   6.17 |   3.65 | **−40.8% / 1.69×** |
+|                      | Codestream |   2.59 |   0.24 | −90.7% |
+| **MR-small 180×180** | Total      |   1.05 |   0.72 | **−31.4% / 1.46×** |
+
+After Step-A, codestream-generation drops from 47% → 7% of total on DX,
+and the dominant stage flips to entropy (45%) on most fixtures. MR
+886×886 (compression ratio 9.36×, low entropy load) is now DWT-dominant
+at 60%.
+
+#### Cross-codec encode time, before vs after Step-A (ms)
+
+| Fixture | J2KSwift before | J2KSwift after | OpenJPEG | OpenJPH | Grok | Kakadu | Now-fastest |
+|---|---:|---:|---:|---:|---:|---:|:---|
+| MR-small 180×180   |   1.1 |   **0.8** |    12.3 |   7.0 |   9.3 |   9.3 | **J2KSwift** |
+| CT 512×512         |   6.2 |   **3.9** |    59.4 |  10.2 |  15.4 |   8.3 | **J2KSwift** |
+| CT 512×512         |   6.3 |   **3.7** |    52.8 |   9.9 |  15.7 |   8.5 | **J2KSwift** |
+| MR 886×886         |   7.5 |     7.3   |    59.3 |  10.5 |  14.4 | **6.1** | Kakadu (by 1.2 ms) |
+| XA 1024×1024       |  21.9 |  **13.2** |   203.0 |  21.5 |  36.6 |  23.1 | **J2KSwift** |
+| PX 2459×1316       |  79.6 |  **45.7** |   718.2 |  59.5 | 118.9 |  81.9 | **J2KSwift** |
+| DX 2800×2288       | 156.7 |  **88.8** |  1364.3 | 119.8 | 228.0 | 154.0 | **J2KSwift** |
+
+**J2KSwift is now the fastest lossless encoder on 6 of 7 medical
+fixtures.** The lone exception is MR-886 where Kakadu's heavy parallelism
+(8 threads on a low-entropy fixture) pulls ahead by 1.2 ms; J2KSwift is
+within 17% there.
+
+Decode timings unchanged (Step-A is encode-side only). The CT 512×512
+first-instance Metal lazy-init outlier persists (49.5 ms vs 3.2 ms warm)
+— flagged for future warm-up refinement, not a code bug.
+
+### v5.38 plan — milestones (revised after M3 Step-A)
+
+- **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
+- **M2 ✓** — external-codec columns + cross-decode matrix.
+- **M3 Step-A ✓** — stage profile + `J2KBitWriter.writeBytes` fast path.
+- **M3 Step-B (next)** — chase the new dominant stage. Entropy is now
+  45% on DX after Step-A; the HT cleanup-only block encoder
+  (`applyEntropyCodingHTJ2KFused`) is the next target. DWT is 39% and
+  also an opportunity (Accelerate / SIMD lifting).
+- **M3 ratio investigation** — PX/DX HT lossless 1.01× vs raw matches
+  OpenJPH exactly, so it's a format limit, not a J2KSwift bug. EBCOT
+  lossless on the same fixtures hits 1.15-1.18× (per the M2 table) —
+  ~14% denser. Worth understanding via M4.
+- **M4** — add an EBCOT-lossless comparison column to the gate. Expose
+  the HT vs EBCOT trade-off transparently for users who can pick
+  format based on their decoder support.
 - **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M3 CPU
   baseline locked).
 
