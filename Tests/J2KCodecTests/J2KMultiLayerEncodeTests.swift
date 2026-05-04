@@ -200,6 +200,12 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
     /// decoders), but multiple precincts per band give finer
     /// truncation granularity. Must round-trip in J2KSwift, OpenJPEG,
     /// OpenJPH, and Grok — all Part 1 functionality.
+    ///
+    /// **Pixel-correctness verified** (v5.35.0d-decode update): the
+    /// CPU decode round-trip MUST produce a high-PSNR reconstruction.
+    /// Previously this test only checked dimensions, which silently
+    /// passed even when extractTileData ignored multi-precinct
+    /// packets and dropped data.
     func testMultiPrecinctRoundTripJ2KSwift() async throws {
         let img = makeSyntheticImage(width: 512, height: 512)
         let cfg = htConformantConfig(qstep: 1.0)
@@ -216,7 +222,31 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         XCTAssertEqual(decoded.height, img.height)
         XCTAssertEqual(decoded.components[0].data.count, img.components[0].data.count)
 
-        print("Multi-precinct 512×512: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+        // Pixel-correctness: the qstep=1.0 encode is near-lossless,
+        // so PSNR should be very high (>50 dB).
+        let psnr = computePSNR16(img.components[0].data, decoded.components[0].data)
+        print("Multi-precinct 512×512: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets; PSNR=\(String(format: "%.2f", psnr)) dB")
+        XCTAssertGreaterThan(psnr, 50.0,
+            "Multi-precinct round-trip at qstep=1.0 must be near-lossless (PSNR > 50). If extractTileData isn't multi-precinct-aware, blocks get dropped and PSNR collapses.")
+    }
+
+    /// PSNR helper for 16-bit big-endian comparison.
+    private func computePSNR16(_ a: Data, _ b: Data) -> Double {
+        let n = min(a.count, b.count) / 2
+        guard n > 0 else { return 0 }
+        var sumSq: Double = 0
+        let aBytes = [UInt8](a)
+        let bBytes = [UInt8](b)
+        for i in 0..<n {
+            let av = Int(aBytes[i*2]) * 256 + Int(aBytes[i*2 + 1])
+            let bv = Int(bBytes[i*2]) * 256 + Int(bBytes[i*2 + 1])
+            let d = Double(av - bv)
+            sumSq += d * d
+        }
+        let mse = sumSq / Double(n)
+        if mse == 0 { return .infinity }
+        let maxVal = Double((1 << 16) - 1)
+        return 10.0 * log10(maxVal * maxVal / mse)
     }
 
     /// v5.35.0d: cross-codec validation of multi-precinct HT
@@ -253,6 +283,93 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         XCTAssertEqual(opjExit, 0, "OpenJPEG must decode multi-precinct HT codestream")
         XCTAssertEqual(ojphExit, 0, "OpenJPH must decode multi-precinct HT codestream (single-layer is supported)")
         XCTAssertEqual(grkExit, 0, "Grok must decode multi-precinct HT codestream")
+    }
+
+    /// Diagnostic: does the GPU HT crash depend on image size or
+    /// content (real medical vs synthetic)?
+    func testDecodeWithGPUHT_MultiPrecinct_Synthetic2048() async throws {
+        let img = makeSyntheticImage(width: 2048, height: 2048)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 30.0, precinctExponents: pps)
+        print("synth 2048×2048 multi-precinct: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+
+        let cpu = try await J2KDecoder().decode(indexed.data)
+        XCTAssertEqual(cpu.width, img.width)
+
+        guard J2KMetalSession.isAvailable else { throw XCTSkip("Metal not available") }
+        let session = J2KMetalSession()
+        let decoder = J2KDecoder()
+
+        let gpuHT = try await decoder.decodeWithGPUHT(indexed.data, session: session)
+        XCTAssertEqual(gpuHT.width, img.width)
+        print("decodeWithGPUHT 2048×2048 synthetic: OK")
+    }
+
+    /// v5.36 prerequisite: `decodeWithGPUHT` must handle multi-precinct
+    /// codestreams on REAL medical fixtures (px_001), not just synthetic.
+    func testDecodeWithGPUHT_MultiPrecinct_Px001() async throws {
+        guard let img = try loadPGM("px_study_001_instance_000001.pgm") else {
+            throw XCTSkip("px_001 fixture not found")
+        }
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 30.0, precinctExponents: pps)
+        print("px_001 multi-precinct: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+
+        let cpu = try await J2KDecoder().decode(indexed.data)
+        XCTAssertEqual(cpu.width, img.width)
+        print("CPU decode OK")
+
+        guard J2KMetalSession.isAvailable else { throw XCTSkip("Metal not available") }
+        let session = J2KMetalSession()
+        let decoder = J2KDecoder()
+
+        let gpu = try await decoder.decodeGPU(indexed.data, session: session)
+        XCTAssertEqual(gpu.width, img.width)
+        print("decodeGPU OK")
+
+        let gpuHT = try await decoder.decodeWithGPUHT(indexed.data, session: session)
+        XCTAssertEqual(gpuHT.width, img.width)
+        print("decodeWithGPUHT OK")
+    }
+
+    /// v5.36 prerequisite: `decodeWithGPUHT` must handle multi-precinct
+    /// codestreams. Reproducer for the crash that blocks wiring multi-
+    /// precinct into the strict-mode auto-promote.
+    func testDecodeWithGPUHT_MultiPrecinct() async throws {
+        let img = makeSyntheticImage(width: 512, height: 512)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 1.0, precinctExponents: pps)
+
+        // CPU decode (works — already verified)
+        let cpu = try await J2KDecoder().decode(indexed.data)
+        XCTAssertEqual(cpu.width, img.width)
+
+        // decodeGPU and decodeWithGPUHT — these are what the medical
+        // corpus performance test uses on auto-promote-eligible content
+        guard J2KMetalSession.isAvailable else {
+            throw XCTSkip("Metal not available")
+        }
+        let session = J2KMetalSession()
+        let decoder = J2KDecoder()
+
+        // decodeGPU (CPU HT entropy + GPU IDWT)
+        let gpu = try await decoder.decodeGPU(indexed.data, session: session)
+        XCTAssertEqual(gpu.width, img.width)
+        print("decodeGPU OK")
+
+        // decodeWithGPUHT (GPU HT entropy + GPU IDWT) — the suspected breaker
+        let gpuHT = try await decoder.decodeWithGPUHT(indexed.data, session: session)
+        XCTAssertEqual(gpuHT.width, img.width)
+        print("decodeWithGPUHT OK")
     }
 
     /// v5.35.0d: budget-fill measurement on real px_001 fixture using

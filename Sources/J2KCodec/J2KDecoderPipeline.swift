@@ -81,6 +81,14 @@ struct DecoderConfiguration: Sendable {
     /// Whether HTJ2K block coding is used (from COD marker bit 6).
     var useHTJ2K: Bool = false
 
+    /// Per-resolution precinct size exponents (from COD when Scod bit 0
+    /// is set; nil for default precinct sizes — one precinct per band).
+    /// Each entry is `(widthExp, heightExp)`. ISO 15444-1 A.6.1: at
+    /// resolution 0 (LL) the precinct covers a 2^widthExp × 2^heightExp
+    /// region of LL; at r > 0 each sub-band precinct is 2^(widthExp-1)
+    /// × 2^(heightExp-1). v5.35.0d-decode addition.
+    var precinctExponents: [(widthExp: Int, heightExp: Int)]? = nil
+
     /// HTJ2K code-block wire format. `.custom` is the v4.x layout that
     /// only round-trips with J2KSwift itself; `.conformant` is the
     /// ISO/IEC 15444-15 layout — the same byte stream emitted by
@@ -991,6 +999,20 @@ struct DecoderPipeline: Sendable {
             // We read and ignore for now - parameters are advisory
         }
 
+        // Per-resolution precinct sizes (Scod bit 0). v5.35.0d-decode:
+        // ISO 15444-1 A.6.1 — one byte per resolution level (decompositionLevels + 1
+        // entries); low nibble = width exponent, high nibble = height exponent.
+        if (scod & 0x01) != 0 {
+            var pps: [(widthExp: Int, heightExp: Int)] = []
+            for _ in 0...config.decompositionLevels {
+                let byte = try reader.readUInt8()
+                let wExp = Int(byte & 0x0F)
+                let hExp = Int((byte >> 4) & 0x0F)
+                pps.append((widthExp: wExp, heightExp: hExp))
+            }
+            config.precinctExponents = pps
+        }
+
         // Verify we read the expected amount
         let bytesRead = reader.position - startPos
         if bytesRead < length - 2 {
@@ -1226,6 +1248,13 @@ struct DecoderPipeline: Sendable {
     ///
     /// Parses packet headers using tag trees for code-block inclusion and
     /// zero bit-planes, Table B.4 for coding passes, and Lblock for data lengths.
+    ///
+    /// Multi-precinct support (v5.35.0d-decode): when the codestream's COD
+    /// marker specifies precinct sizes (Scod bit 0 = 1), each (resolution,
+    /// component) emits one packet per precinct. Iterates the precinct
+    /// grid in raster order; for each precinct, reads ONE packet whose
+    /// tag trees cover only the blocks within that precinct's region.
+    /// Default codestreams (one precinct per band) work as before.
     private func extractTileData(
         _ tileData: Data,
         metadata: CodestreamMetadata
@@ -1242,125 +1271,156 @@ struct DecoderPipeline: Sendable {
         // Enable JPEG 2000 byte stuffing for packet headers (ISO 15444-1 B.10.1)
         reader.setByteStuffing(true)
 
-        // LRCP progression: Layer → Resolution → Component → Position
-        // Single layer for now
+        // Precinct size in BAND-LOCAL coords for a given resolution.
+        // r=0 (LL): 2^PPx × 2^PPy. r > 0: 2^(PPx-1) × 2^(PPy-1).
+        // Default (no precinct sizes in COD): 2^15 (effectively one
+        // precinct covers the whole band).
+        let precinctExps = metadata.configuration.precinctExponents
+        func bandPrecinctSize(forRes res: Int) -> (w: Int, h: Int) {
+            guard let exps = precinctExps, res < exps.count else {
+                return (1 << 15, 1 << 15)
+            }
+            let pp = exps[res]
+            let wExp = res == 0 ? pp.widthExp : max(0, pp.widthExp - 1)
+            let hExp = res == 0 ? pp.heightExp : max(0, pp.heightExp - 1)
+            return (1 << wExp, 1 << hExp)
+        }
+
+        struct PendingBlock {
+            let componentIndex: Int
+            let decomLevel: Int
+            let subband: J2KSubband
+            let x, y, width, height: Int
+            let passCount: Int
+            let zeroBitPlanes: Int
+            let bandKb: Int
+            let dataLength: Int
+        }
+
+        // LRCP progression: layer × resolution × component × precinct.
+        // Single layer for now; precincts iterated in raster order per
+        // (res, comp).
         for resLevel in 0...levels {
             for compIdx in 0..<numComponents {
-                // Read non-empty packet flag
-                guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
-                let notEmpty = try reader.readBit()
-                guard notEmpty else {
-                    // Empty packet: align to byte boundary per ISO 15444-1 B.10.
-                    // Each packet starts on a byte boundary. The encoder writes the
-                    // empty flag bit and then pads to the next byte boundary.
-                    try reader.alignToByte()
-                    continue
-                }
-
                 let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
 
-                // Track included blocks for data extraction after header
-                struct PendingBlock {
-                    let componentIndex: Int
-                    let decomLevel: Int
-                    let subband: J2KSubband
-                    let x, y, width, height: Int
-                    let passCount: Int
-                    let zeroBitPlanes: Int
-                    let bandKb: Int
-                    let dataLength: Int
-                }
-                var pendingBlocks: [PendingBlock] = []
+                // Determine the precinct grid extent at this resolution.
+                // For r > 0, all sub-bands HL/LH/HH share the same grid;
+                // use one of them as a reference. For r = 0, the LL band's
+                // dimensions define the grid.
+                let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
+                let (sbWRef, sbHRef) = Self.subbandDimensions(
+                    tileWidth: tileWidth, tileHeight: tileHeight,
+                    levels: levels, resLevel: resLevel, subband: referenceSubband)
+                guard sbWRef > 0 && sbHRef > 0 else { continue }
 
-                for subband in subbands {
-                    // Compute subband dimensions
-                    let (sbWidth, sbHeight) = Self.subbandDimensions(
-                        tileWidth: tileWidth, tileHeight: tileHeight,
-                        levels: levels, resLevel: resLevel, subband: subband
-                    )
-                    guard sbWidth > 0 && sbHeight > 0 else { continue }
+                let (pw, ph) = bandPrecinctSize(forRes: resLevel)
+                let numPrecinctsX = max(1, (sbWRef + pw - 1) / pw)
+                let numPrecinctsY = max(1, (sbHRef + ph - 1) / ph)
 
-                    let blocksX = (sbWidth + cbWidth - 1) / cbWidth
-                    let blocksY = (sbHeight + cbHeight - 1) / cbHeight
-                    let blockCount = blocksX * blocksY
-
-                    // Look up band Kb from QCD metadata
-                    let bandKey: String
-                    if subband == .ll {
-                        bandKey = "LL_0"
-                    } else {
-                        bandKey = "\(subband.rawValue)_\(resLevel)"
-                    }
-                    let kb = metadata.bandKbValues[bandKey] ?? (metadata.components[compIdx].bitDepth + metadata.quantizationGuardBits)
-
-                    // Convert resolution level to decomposition level
-                    let decomLevel = resLevel == 0 ? 0 : (levels - resLevel + 1)
-
-                    // Create tag trees for this band
-                    var inclusionTree = J2KTagTree(width: blocksX, height: blocksY)
-                    var zbpTree = J2KTagTree(width: blocksX, height: blocksY)
-
-                    for leafIdx in 0..<blockCount {
-                        // Decode inclusion via tag tree (threshold=1 for layer 0)
-                        let included = try inclusionTree.decode(
-                            reader: &reader, leafIndex: leafIdx, threshold: 1
-                        )
-                        guard included else { continue }
-
-                        // Decode zero bit-planes via tag tree
-                        var zbp: Int32 = 0
-                        while !(try zbpTree.decode(reader: &reader, leafIndex: leafIdx, threshold: zbp + 1)) {
-                            zbp += 1
-                            if zbp > 100 { break }
+                for py in 0..<numPrecinctsY {
+                    for px in 0..<numPrecinctsX {
+                        guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                        let notEmpty = try reader.readBit()
+                        guard notEmpty else {
+                            try reader.alignToByte()
+                            continue
                         }
 
-                        // Decode coding passes (ISO Table B.4)
-                        let passes = try Self.decodeCodingPasses(&reader)
+                        var pendingBlocks: [PendingBlock] = []
 
-                        // Decode data length (Lblock + floor(log2(numpasses)))
-                        let length = try Self.decodeDataLength(&reader, numPasses: passes)
+                        for subband in subbands {
+                            let (sbWidth, sbHeight) = Self.subbandDimensions(
+                                tileWidth: tileWidth, tileHeight: tileHeight,
+                                levels: levels, resLevel: resLevel, subband: subband)
+                            guard sbWidth > 0 && sbHeight > 0 else { continue }
 
-                        let blockX = (leafIdx % blocksX) * cbWidth
-                        let blockY = (leafIdx / blocksX) * cbHeight
-                        let actualW = min(cbWidth, sbWidth - blockX)
-                        let actualH = min(cbHeight, sbHeight - blockY)
+                            // Precinct's region in band-local coordinates,
+                            // clipped to the band's bounds.
+                            let pStartX = px * pw
+                            let pStartY = py * ph
+                            let pEndX = min(pStartX + pw, sbWidth)
+                            let pEndY = min(pStartY + ph, sbHeight)
+                            guard pEndX > pStartX, pEndY > pStartY else { continue }
 
-                        pendingBlocks.append(PendingBlock(
-                            componentIndex: compIdx,
-                            decomLevel: decomLevel,
-                            subband: subband,
-                            x: blockX, y: blockY,
-                            width: actualW, height: actualH,
-                            passCount: passes,
-                            zeroBitPlanes: Int(zbp),
-                            bandKb: kb,
-                            dataLength: length
-                        ))
+                            // Block grid within this precinct.
+                            let firstBlockX = pStartX / cbWidth
+                            let firstBlockY = pStartY / cbHeight
+                            let lastBlockX = (pEndX - 1) / cbWidth
+                            let lastBlockY = (pEndY - 1) / cbHeight
+                            let pBlocksX = lastBlockX - firstBlockX + 1
+                            let pBlocksY = lastBlockY - firstBlockY + 1
+                            let pBlockCount = pBlocksX * pBlocksY
+
+                            let bandKey: String
+                            if subband == .ll {
+                                bandKey = "LL_0"
+                            } else {
+                                bandKey = "\(subband.rawValue)_\(resLevel)"
+                            }
+                            let kb = metadata.bandKbValues[bandKey] ?? (metadata.components[compIdx].bitDepth + metadata.quantizationGuardBits)
+                            let decomLevel = resLevel == 0 ? 0 : (levels - resLevel + 1)
+
+                            // Per-precinct tag trees (fresh for each
+                            // packet — the standard's "tag tree per
+                            // precinct" model).
+                            var inclusionTree = J2KTagTree(width: pBlocksX, height: pBlocksY)
+                            var zbpTree = J2KTagTree(width: pBlocksX, height: pBlocksY)
+
+                            for localLeafIdx in 0..<pBlockCount {
+                                let included = try inclusionTree.decode(
+                                    reader: &reader, leafIndex: localLeafIdx, threshold: 1)
+                                guard included else { continue }
+
+                                var zbp: Int32 = 0
+                                while !(try zbpTree.decode(
+                                    reader: &reader, leafIndex: localLeafIdx, threshold: zbp + 1)) {
+                                    zbp += 1
+                                    if zbp > 100 { break }
+                                }
+
+                                let passes = try Self.decodeCodingPasses(&reader)
+                                let length = try Self.decodeDataLength(&reader, numPasses: passes)
+
+                                let localY = localLeafIdx / pBlocksX
+                                let localX = localLeafIdx % pBlocksX
+                                let blockX = (firstBlockX + localX) * cbWidth
+                                let blockY = (firstBlockY + localY) * cbHeight
+                                let actualW = min(cbWidth, sbWidth - blockX)
+                                let actualH = min(cbHeight, sbHeight - blockY)
+
+                                pendingBlocks.append(PendingBlock(
+                                    componentIndex: compIdx,
+                                    decomLevel: decomLevel,
+                                    subband: subband,
+                                    x: blockX, y: blockY,
+                                    width: actualW, height: actualH,
+                                    passCount: passes,
+                                    zeroBitPlanes: Int(zbp),
+                                    bandKb: kb,
+                                    dataLength: length))
+                            }
+                        }
+
+                        try reader.alignToByte()
+                        reader.setByteStuffing(false)
+
+                        for pb in pendingBlocks {
+                            let blockData = try reader.readBytes(pb.dataLength)
+                            blocks.append(CodeBlockInfo(
+                                componentIndex: pb.componentIndex,
+                                level: pb.decomLevel,
+                                subband: pb.subband,
+                                x: pb.x, y: pb.y,
+                                width: pb.width, height: pb.height,
+                                data: blockData,
+                                passCount: pb.passCount,
+                                zeroBitPlanes: pb.zeroBitPlanes,
+                                bandKb: pb.bandKb))
+                        }
+                        reader.setByteStuffing(true)
                     }
                 }
-
-                // Byte-align after packet header
-                try reader.alignToByte()
-                // Disable byte stuffing for raw code-block data
-                reader.setByteStuffing(false)
-
-                // Read code-block data in band order
-                for pb in pendingBlocks {
-                    let blockData = try reader.readBytes(pb.dataLength)
-                    blocks.append(CodeBlockInfo(
-                        componentIndex: pb.componentIndex,
-                        level: pb.decomLevel,
-                        subband: pb.subband,
-                        x: pb.x, y: pb.y,
-                        width: pb.width, height: pb.height,
-                        data: blockData,
-                        passCount: pb.passCount,
-                        zeroBitPlanes: pb.zeroBitPlanes,
-                        bandKb: pb.bandKb
-                    ))
-                }
-                // Re-enable byte stuffing for next packet header
-                reader.setByteStuffing(true)
             }
         }
 

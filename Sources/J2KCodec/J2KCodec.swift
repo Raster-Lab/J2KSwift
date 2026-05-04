@@ -473,15 +473,19 @@ public struct J2KEncoder: Sendable {
             iterConfig.bitrateMode = .fixedQstep(qstep: q)
             iterConfig.lossless = false
             let pipeline = EncoderPipeline(config: iterConfig)
-            // NOTE (v5.35.0d): multi-precinct codestream emission is
-            // available as `encodeMultiPrecinctWithPacketIndex` and
-            // gives ~0.43× → 0.81× budget-fill recovery on real
-            // medical fixtures, but wiring it into the auto-promote
-            // path breaks J2KSwift's `decodeWithGPUHT` path (which
-            // doesn't yet handle multi-precinct codestreams). Until
-            // the decode-side multi-precinct support lands (v5.36),
-            // strict mode stays on single-precinct here.
-            let indexed = try await pipeline.encodeWithPacketIndex(image)
+            // v5.35.0d-decode: multi-precinct codestream emission gives
+            // finer truncation granularity for budget-fill recovery.
+            // PPx=PPy=10 → 1024 LL precinct, 512 sub-band precincts at
+            // r > 0. Decode-side multi-precinct support landed in this
+            // commit (extractTileData iterates precincts in raster
+            // order; tag trees are per-precinct). All three decode
+            // paths verified: CPU `decode`, `decodeGPU`, `decodeWith-
+            // GPUHT`. Cross-codec verified: OpenJPEG, OpenJPH, Grok.
+            let pps = Array(
+                repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10),
+                count: encodingConfiguration.decompositionLevels + 1)
+            let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+                image, qstep: q, precinctExponents: pps)
             let ratio = Double(indexed.data.count) / targetBytes
             // STRICT-MODE preference: overshoot is recoverable via
             // packet-boundary truncation (caps the bytes at target).
