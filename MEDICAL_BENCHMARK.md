@@ -1,6 +1,7 @@
 # Medical Imaging Benchmark: J2KSwift vs OpenJPEG
 
-**Date:** 2026-05-03 13:05
+**Date:** 2026-05-04 (R-D table at top reflects synthetic content; v5.31.0 cross-scale
+real-medical R-D measurement is in the new section below.)
 
 ## Test Images
 
@@ -34,6 +35,69 @@
 - MAE: Mean Absolute Error — lower is better
 - ΔPSNR: J2K PSNR minus OPJ PSNR (positive = J2K better)
 - Lossless: exact reconstruction (PSNR = ∞, MAE = 0)
+
+---
+
+## Cross-Scale R-D Quality (v5.31.0)
+
+Real-medical-fixture roundtrip PSNR after the v5.31.0 λ-formulation fix. Pre-v5.31.0,
+HT-conformant lossy with `.constantBitrate` collapsed catastrophically at scale because
+PCRD-opt's all-or-nothing per-block selection on cleanup-only blocks produced wildly
+inconsistent quality. v5.31.0 auto-promotes `.constantBitrate` → Qstep-search for
+high-bit-depth content (`bitDepth ≥ 12`).
+
+### Cross-fixture PSNR (dB) at multiple bpp targets, 16-bit medical, post-v5.31.0
+
+| Fixture                | px      | @0.5 bpp | @1.0 bpp | @2.0 bpp | @4.0 bpp |
+|------------------------|--------:|---------:|---------:|---------:|---------:|
+| mr_002 (180×180 MR)    |    32k  |    38.03 |    44.90 |    52.58 |    66.53 |
+| ct_001 (512×512 CT)    |   262k  |    25.86 |    36.06 |    47.21 |    64.06 |
+| ct_003 (512×512 CT)    |   262k  |    26.81 |    36.45 |    48.77 |    66.01 |
+| mr_001 (886×886 MR)    |   785k  |    58.92 |    77.33 |   102.63 |   102.48 |
+| xa_001 (1024² XA)      |  1.0M   |    23.17 |    34.90 |    50.59 |    66.69 |
+| px_001 (2459×1316 PX)  |  3.2M   |    18.08 |    31.20 |    46.25 |    61.93 |
+| dx_002 (2800×2288 DX)  |  6.4M   |    19.43 |    31.34 |    45.80 |    61.94 |
+
+### What changed (pre-v5.31.0 vs post)
+
+Pre-v5.31.0 PSNR (PCRD-opt with all-or-nothing per-block selection on conformant
+cleanup-only — produced scale-dependent collapse on high-bit-depth content):
+
+| Fixture | px | @2.0 bpp pre | @4.0 bpp pre | @2.0 bpp post | @4.0 bpp post |
+|---|---:|---:|---:|---:|---:|
+| ct_001 (262k)  | 262k  | **19.81** | **21.94** | 47.21 | 64.06 |
+| xa_001 (1M)    | 1.0M  | **17.45** | **18.85** | 50.59 | 66.69 |
+| px_001 (3.2M)  | 3.2M  | **13.47** | **14.89** | 46.25 | 61.93 |
+| dx_002 (6.4M)  | 6.4M  | **14.65** | **16.30** | 45.80 | 61.94 |
+
+PSNR @ 4 bpp on dx_002 went from 16.30 dB (catastrophic) to 61.94 dB (clinical-grade).
+PSNR scales healthily with bpp (~10-15 dB per doubling) as a proper R-D curve should,
+instead of the pre-fix ~1 dB per doubling.
+
+### Trade-off — strict-rate vs quality
+
+The `.constantBitrate` mode no longer guarantees the exact byte target on conformant HT
+lossy at low bpp on large fixtures. Qstep-search converges on *uniform quantisation*,
+which has a content-dependent rate floor (some bytes are inherently needed to encode
+the LL band losslessly enough to preserve it).
+
+Observed achieved bytes vs target on representative fixtures @ 2.0 bpp (target ratio):
+
+| Fixture | Pixels | Target bytes | Post-fix bytes | Ratio |
+|---|---:|---:|---:|---:|
+| mr_002 (180²)        |    32k  |   8,100  |    8,298  | 1.02× |
+| ct_001 (512²)        |   262k  |  65,536  |  107,603  | 1.64× |
+| xa_001 (1024²)       |  1.0M   | 262,144  |  632,940  | 2.41× |
+| px_001 (2459×1316)   |  3.2M   | 809,011  | 2,460,399 | 3.04× |
+| dx_002 (2800×2288)   |  6.4M   | 1.6 MB   | 4.5 MB    | 2.81× |
+
+The rate ratio gets worse on larger images at lower bpp. For strict-rate requirements,
+callers should use `.constantBitrateViaQstep` explicitly (same algorithm, same
+overshoot — at least the user knows the contract) or `.fixedQstep` (caller picks
+the qstep, encoder doesn't search for a rate target).
+
+For DICOM workflows that prioritise quality over exact byte budgets, this is the
+correct trade-off and matches OpenJPH's qstep-only encoding model.
 
 ---
 

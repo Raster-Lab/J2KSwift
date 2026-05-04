@@ -105,6 +105,45 @@ public struct J2KEncoder: Sendable {
                 maxIterations: maxIter)
             return data
         }
+
+        // v5.31.0 — auto-promote `.constantBitrate` → Qstep-search
+        // for HT-conformant lossy when the image bit-depth is ≥ 12
+        // (medical workloads). PCRD-opt selects entire blocks at
+        // once on conformant cleanup-only (single-pass, no mid-block
+        // truncation), so block-level include/exclude decisions
+        // become discrete and produce wildly scale-dependent quality
+        // on high-bit-depth content (13–43 dB across the medical
+        // corpus at 2 bpp). Qstep-search uses uniform quantisation
+        // tuned to the byte target and produces consistent quality
+        // across scale (~45–65 dB on the same corpus). This is the
+        // correct λ formulation for this block format on
+        // high-bit-depth content.
+        //
+        // The `≥ 12` gate avoids changing 8-bit (typically RGB
+        // photographic) content where:
+        //   1. PCRD-opt's block selection works fine — coefficient
+        //      magnitudes are smaller, so cross-block R-D ranking
+        //      doesn't collapse.
+        //   2. The Qstep-search 8-iteration loop noticeably slows
+        //      encoding, which matters for interactive workflows.
+        //
+        // Callers can opt out at any bit-depth by configuring
+        // `.constantBitrateViaQstep` explicitly (no behaviour change
+        // for them), `.fixedQstep` for strict-rate guarantees, or by
+        // using a non-conformant HT block format / EBCOT / lossless
+        // mode.
+        let maxBitDepth = image.components.map { $0.bitDepth }.max() ?? 8
+        if case .constantBitrate(let bpp) = encodingConfiguration.bitrateMode,
+           encodingConfiguration.useHTJ2K,
+           encodingConfiguration.htj2kBlockFormat == .conformant,
+           !encodingConfiguration.lossless,
+           !encodingConfiguration.useReversibleFilter,
+           maxBitDepth >= 12 {
+            let (data, _) = try await encodeViaQstepSearch(
+                image, targetBpp: bpp, tolerance: 0.05, maxIterations: 8)
+            return data
+        }
+
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encode(image)
     }
@@ -236,19 +275,35 @@ public struct J2KEncoder: Sendable {
                 let priorGuess = Self.initialQstepGuess(
                     targetBpp: targetBpp, bitDepth: bitDepth)
                 qstep = max(priorGuess / 32, min(priorGuess * 32, refined))
-                // Reset bracket around the refined guess. Tighter than
-                // the calibration-only bracket since we have a fresh
-                // observation.
-                lower = qstep / 8.0
-                upper = qstep * 8.0
+                // v5.31.0 — widen the bracket when iter-1 ratio is
+                // far from 1.0. The previous fixed `±8×` bracket was
+                // too narrow for HT-conformant high-bitdepth content
+                // (16-bit medical) where the bytes-vs-qstep curve is
+                // very flat; iter-2..8 converge to upper-cap without
+                // hitting target. Scale the upper bracket by the
+                // observed ratio so we always have headroom to grow.
+                let bracketFactor = max(8.0, abs(log2(scaleHint)) * 8.0)
+                lower = qstep / bracketFactor
+                upper = qstep * bracketFactor
                 continue
             }
 
             // 4. Standard log-binary-search narrowing for iter ≥ 2.
+            //    v5.31.0 — extend the upper bound dynamically when
+            //    the search keeps hitting the ceiling (bytes still
+            //    over target at qstep ≈ upper). Without this, very-
+            //    flat curves produce a terminated-but-not-converged
+            //    result with bytes far above target.
             if achievedBytes > targetBytes {
+                if qstep >= upper * 0.95 {
+                    upper = upper * 4.0  // widen ceiling
+                }
                 lower = qstep
                 qstep = (qstep * upper).squareRoot()
             } else {
+                if qstep <= lower * 1.05 {
+                    lower = lower / 4.0  // widen floor
+                }
                 upper = qstep
                 qstep = (qstep * lower).squareRoot()
             }

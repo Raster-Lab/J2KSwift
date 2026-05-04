@@ -5,6 +5,107 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.31.0] — 2026-05-04
+
+**Cross-scale λ formulation fix — HT conformant lossy R-D**
+
+User report: "the λ / bit-allocation model is mathematically
+inconsistent across scale, which is why MRI looks great and
+mammography falls apart." Confirmed via cross-scale R-D probe —
+roundtrip PSNR on real medical fixtures was scale-dependent and
+catastrophic at mammography sizes (16.30 dB at 4 bpp on dx_002,
+where 60+ dB is expected).
+
+### Headline (PSNR @ 2 bpp, 16-bit medical, real fixtures)
+
+| Fixture                | px    | Pre-v5.31.0 | v5.31.0   |
+|------------------------|------:|------------:|----------:|
+| mr_002 (180²)          |  32k  |       35.39 |  **52.58** |
+| ct_001 (512²)          | 262k  |       19.81 |  **47.21** |
+| xa_001 (1024²)         |  1.0M |       17.45 |  **50.59** |
+| px_001 (2459×1316)     |  3.2M |       13.47 |  **46.25** |
+| dx_002 (2800×2288)     |  6.4M |       14.65 |  **45.80** |
+
+PSNR scales healthily with bpp now (~10-15 dB per doubling) vs
+~1 dB pre-fix.
+
+### Diagnosis
+
+HT-conformant cleanup-only blocks are single-pass; PCRD-opt's
+slope-based selection across blocks reduces to all-or-nothing
+per-block include/exclude. On high-bit-depth content with dense
+slope ranking, the discretisation produces wildly different
+quality at different codeblock counts (which scale with image
+size). Lossless was confirmed exact (∞ dB), so the wavelet +
+entropy pipeline is sound; the issue is in R-D allocation.
+
+The v5.18 (`.fixedQstep`) and v5.19 (`.constantBitrateViaQstep`)
+modes were workarounds. v5.31.0 wires the workaround into the
+default path so callers get a working codec without needing to
+opt in.
+
+### Fix
+
+`Sources/J2KCodec/J2KCodec.swift` — `J2KEncoder.encode(_:)` auto-
+promotes `.constantBitrate` → Qstep-search when **all** of:
+
+- `useHTJ2K`, `htj2kBlockFormat = .conformant`
+- not `lossless`, not `useReversibleFilter`
+- `bitDepth ≥ 12` (medical / scientific content)
+
+8-bit RGB photographic content passes through to PCRD-opt
+unchanged (preserves encode-speed advantage where R-D collapse
+isn't observed).
+
+Plus widened Qstep-search bracket — adaptive with `|log2(ratio)|`
+at iter-1; dynamic ×4 ceiling extension at iter-2..N when search
+hits the cap. Helps on flat-curve high-bit-depth content.
+
+### Added
+
+- `Tests/J2KCodecTests/J2KCrossScaleRDQualityProbe.swift` —
+  three diagnostic tests:
+  - `testDX002LosslessRoundtripExact` — sanity (∞ dB).
+  - `testCrossScaleRDPSNRSweep` — 7 fixtures × 4 bpp targets.
+  - `testCrossScaleQstepVsPCRD` — comparison mode (the
+    diagnostic that pinpointed the problem).
+- `MEDICAL_BENCHMARK.md` "Cross-Scale R-D Quality (v5.31.0)"
+  section with pre/post comparison + rate trade-off data.
+
+### Trade-off
+
+`.constantBitrate` no longer guarantees exact byte target for
+high-bit-depth HT-conformant lossy. Qstep-search converges on
+uniform quantisation, which has a content-dependent rate floor.
+Observed overshoot at 2 bpp ranges from 1.02× (small) to 3.04×
+(large mammography) — quality is dramatically better but bytes
+exceed the target. For strict-rate workflows: use
+`.constantBitrateViaQstep` explicitly (same overshoot, but the
+caller knows), `.fixedQstep` (caller picks qstep, no search),
+or non-conformant HT / EBCOT (within-block passes available).
+
+For PACS / archive workloads that prioritise quality over exact
+byte budgets, this is the right default.
+
+### Verified
+
+- 9/7 correctness gates green (lossless = ∞ dB).
+- Cross-scale PSNR now 45-65 dB across the medical corpus.
+- 4 previously-failing tests asserted the OLD pre-fix behaviour
+  on 8-bit content; the `bitDepth ≥ 12` gate excludes them so
+  they pass unchanged.
+- 2 pre-existing perf-aspirational failures unaffected.
+
+### Lesson
+
+`.fixedQstep` / `.constantBitrateViaQstep` were documented as
+"alternative encoding modes" but were actually fixes for a real
+correctness problem with the default `.constantBitrate` path.
+Documenting workarounds the caller has to opt into doesn't fix
+the bug — it transfers responsibility to the caller, who often
+doesn't know they need to opt in. v5.31.0: when the architecture
+has a path that gives the right answer, use it by default.
+
 ## [5.30.0] — 2026-05-04
 
 **`rateControl` super-linear fix — mammography encode 4.2× speedup**
