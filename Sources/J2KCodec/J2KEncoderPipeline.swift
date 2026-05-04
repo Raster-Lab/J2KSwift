@@ -217,7 +217,7 @@ struct EncoderPipeline: Sendable {
             return nil
         case .constantQuality, .lossless:
             break
-        case .fixedQstep, .constantBitrateViaQstep:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
             // Fixed-qstep modes include every block; PCRD pass cap
             // doesn't apply. Returning nil disables the cap (same as
             // explicit bitrate modes).
@@ -1446,12 +1446,12 @@ struct EncoderPipeline: Sendable {
             perComponentTargetBpp = bitsPerPixel / Double(max(1, componentCount))
         case .variableBitrate(_, let maxBitsPerPixel):
             perComponentTargetBpp = maxBitsPerPixel / Double(max(1, componentCount))
-        case .constantBitrateViaQstep:
+        case .constantBitrateViaQstep, .constantBitrateBounded:
             // Each search iteration substitutes .fixedQstep, so this
             // branch should not be reached during normal flow. If a
             // caller invokes the pipeline directly with this mode,
             // fall through to the .fixedQstep behavior.
-            preconditionFailure(".constantBitrateViaQstep should be intercepted by J2KEncoder.encode and converted to .fixedQstep per iteration")
+            preconditionFailure(".constantBitrateViaQstep / .constantBitrateBounded should be intercepted by J2KEncoder.encode and converted to .fixedQstep per iteration")
         case .constantQuality, .lossless:
             perComponentTargetBpp = nil
         case .fixedQstep(let qstep):
@@ -2654,7 +2654,7 @@ struct EncoderPipeline: Sendable {
             return 0.18
         case .lossless:
             return Double.greatestFiniteMagnitude
-        case .fixedQstep, .constantBitrateViaQstep:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
             // Fixed-qstep modes include every block; HT refinement cap
             // is irrelevant since rate control is bypassed.
             return Double.greatestFiniteMagnitude
@@ -3331,7 +3331,7 @@ struct EncoderPipeline: Sendable {
         // iteration, so the same fast-path applies as a defensive
         // fallback when the pipeline is invoked directly.
         switch config.bitrateMode {
-        case .fixedQstep, .constantBitrateViaQstep:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
             var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
             for cb in codeBlocks where cb.passeCount > 0 {
                 contributions[cb.index] = cb.passeCount
@@ -3376,10 +3376,10 @@ struct EncoderPipeline: Sendable {
             )
         case .lossless:
             rateConfig = .lossless
-        case .fixedQstep, .constantBitrateViaQstep:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
             // Already short-circuited above. This branch only exists
             // for switch exhaustiveness — should be unreachable.
-            preconditionFailure(".fixedQstep / .constantBitrateViaQstep should have been handled by the fast-path above")
+            preconditionFailure(".fixedQstep / .constantBitrateViaQstep / .constantBitrateBounded should have been handled by the fast-path above")
         }
 
         let rateControl = J2KRateControl(configuration: rateConfig)

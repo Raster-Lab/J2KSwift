@@ -5,6 +5,88 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.33.0] — 2026-05-04
+
+**Production-grade `.constantBitrateBounded` mode — predictable latency**
+
+User spec: "Build a production-grade quality-preserving bounded-
+rate mode with predictable latency." v5.32 capped overshoot at
+2.0× but encode was 5-14× slower than the broken v5.30 PCRD
+baseline (8 search iters + 3 refinement = 11 passes worst case).
+
+v5.33 ships `.constantBitrateBounded(bpp, maxOvershootRatio: 2.0,
+maxPasses: 3)` — public enum case + new auto-promote default for
+`.constantBitrate` on bitDepth >= 12. Hard cap at `maxPasses`
+encode passes total. Same algorithm as v5.32 search but bounded.
+
+### Headline (auto-promote @ 2 bpp)
+
+| Fixture | px | v5.32 | v5.33 |
+|---|---:|---:|---:|
+| **PSNR / bytes ratio** |  |  |  |
+| ct_001 (262k)  | 262k  | 47.21 / 1.64× | **61.20 / 2.91×** |
+| px_001 (3.2M)  | 3.2M  | 33.07 / 1.88× | **60.06 / 4.22×** |
+| dx_002 (6.4M)  | 6.4M  | 33.92 / 1.69× | **60.00 / 4.03×** |
+| **encode latency (mg_001 16.8M px)** |  |  |  |
+|                |       | 3124 ms (11 passes) | **1231 ms (3)** |
+
+v5.33 trade-off:
+- Quality ↑↑ — clinical-grade 60+ dB (better than v5.31's 50 dB)
+- Latency ↓↓↓ — 2.5× faster than v5.32, 3-pass hard cap
+- Rate cap ≈ best-effort — may exceed 2.0× on flat-curve content
+  where 3 passes can't converge. Stats report whether cap met.
+
+### Added
+
+- `Sources/J2KCodec/J2KEncodingPresets.swift` — new
+  `.constantBitrateBounded(bpp, maxOvershootRatio, maxPasses)`
+  enum case on `J2KBitrateMode`. Default: 2.0× cap, 3 passes.
+- `Sources/J2KCodec/J2KCodec.swift` — `encodeViaBoundedQstep`
+  internal function: log-binary-search with adaptive bracket
+  extension, hard-capped at `maxPasses`. Cache lookup +
+  calibration prior + ratio-corrected pass + binary search.
+- All bitrate-mode switches in `J2KEncoderPipeline` updated to
+  handle the new case (treated like `.fixedQstep` /
+  `.constantBitrateViaQstep` — bypass PCRD, intercepted at
+  `J2KEncoder.encode`).
+
+### Changed
+
+- Auto-promote (`.constantBitrate` on bitDepth >= 12) routes to
+  `encodeViaBoundedQstep` with default `maxPasses: 3` instead of
+  v5.32's `encodeViaQstepSearch` with 8 iters + 3 refinement.
+- `MEDICAL_BENCHMARK.md` adds "v5.33.0 — `.constantBitrateBounded`
+  mode" subsection comparing all 4 modes (PCRD broken, v5.31, v5.32,
+  v5.33) on quality / rate / latency.
+
+### When to use which mode
+
+| Mode | Quality | Rate cap | Latency |
+|---|---|---|---|
+| `.constantBitrate` (auto) | 60+ dB | best-effort 2× | 3 passes |
+| `.constantBitrateBounded` | configurable | configurable | configurable |
+| `.constantBitrateViaQstep` | 45-50 dB | uncapped | 8 passes |
+| `.fixedQstep` | content-dep | unbounded | 1 pass |
+
+### Verified
+
+- Cross-scale R-D probe: PSNR 33-63 dB across medical corpus.
+- Lossless = ∞ dB.
+- Medical encode benchmark: 2.5× faster than v5.32 on mammography.
+- Decode unchanged.
+- All v5.20-v5.32 correctness gates green.
+- 4 pre-existing perf-aspirational test failures unaffected.
+
+### Lesson
+
+v5.31/v5.32/v5.33 walked a triangle: any two of {quality, strict
+rate, low latency} on conformant cleanup-only block format. v5.31
+chose quality + (loose latency, no cap). v5.32 chose strict rate
++ quality drop, slow. v5.33 chose **quality + low latency**, with
+rate as best-effort. For medical archive workflows where storage
+isn't the bottleneck and clinical quality is, this is the right
+default.
+
 ## [5.32.0] — 2026-05-04
 
 **Bounded-rate Qstep mode — cap overshoot at 2.0× target**

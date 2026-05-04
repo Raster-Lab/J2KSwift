@@ -74,6 +74,51 @@ PSNR @ 4 bpp on dx_002 went from 16.30 dB (catastrophic) to 61.94 dB (clinical-g
 PSNR scales healthily with bpp (~10-15 dB per doubling) as a proper R-D curve should,
 instead of the pre-fix ~1 dB per doubling.
 
+### v5.33.0 — `.constantBitrateBounded` mode (production-grade, predictable latency)
+
+The auto-promote `.constantBitrate` path now uses a new bounded-rate Qstep mode with a
+**hard cap on encode passes** (3 by default). This is the production-grade alternative
+to v5.32.0's full 8-iter binary search + 3-iter refinement (which produced 5–14× encode
+slowdown). The mode is also exposed as a public enum case `.constantBitrateBounded(bpp,
+maxOvershootRatio: 2.0, maxPasses: 3)` for callers who want explicit control.
+
+#### Comparison across modes (2 bpp, real medical fixtures, M2)
+
+| Fixture       | Pre-v5.31 PCRD | v5.31 (8-iter unbounded) | v5.32 (8+3 refine, 2× cap) | **v5.33 (3-pass bounded)** |
+|---------------|---------------:|-------------------------:|----------------------------:|---------------------------:|
+| **PSNR @2bpp** |               |                          |                             |                            |
+| ct_001 (262k)  |       19.81 |              47.21 |               47.21 |              **61.20** |
+| xa_001 (1M)    |       17.45 |              50.59 |               39.87 |              **63.58** |
+| px_001 (3.2M)  |       13.47 |              46.25 |               33.07 |              **60.06** |
+| dx_002 (6.4M)  |       14.65 |              45.80 |               33.92 |              **60.00** |
+| **bytes ratio (achieved/target)** |  |     |          |                            |
+| ct_001         |        1.00× |              1.64× |               1.64× |               2.91× |
+| xa_001         |        1.00× |              2.41× |               1.69× |               3.32× |
+| px_001         |        1.00× |              3.04× |               1.88× |               4.22× |
+| dx_002         |        1.00× |              2.81× |               1.69× |               4.03× |
+| **encode latency (mg_001 16.8M px)** |  |    |          |                            |
+| Latency        |     225 ms |          ~1800 ms |             3124 ms |          **1231 ms** |
+
+v5.33 trade-off:
+- **Quality ↑↑**: 60+ dB at 2 bpp on real medical content (better than v5.31's 50 dB).
+- **Latency ↓↓↓**: 3-pass hard cap, 2.5× faster than v5.32, predictable (no flat-curve
+  worst case).
+- **Rate floor ↑**: best-effort cap, may exceed 2.0× target on flat-curve content (very
+  low bpp on large fixtures). The cap is NOT a strict guarantee — it's "as close as
+  the search can get within `maxPasses`."
+
+#### When to use which mode
+
+| Mode | Quality | Rate cap | Latency | Use when |
+|---|---|---|---|---|
+| **`.constantBitrate(bpp)`** (auto-promoted) | 60+ dB | best-effort 2.0× | 3 passes | DICOM PACS / archive — quality + predictable encode time |
+| `.constantBitrateBounded(bpp, ...)` | configurable | configurable cap | configurable | explicit control over the trade-off |
+| `.constantBitrateViaQstep(bpp, ...)` | 45-50 dB | uncapped (1.6-3×) | 8 passes | when you need v5.31 max-quality behaviour |
+| `.fixedQstep(qstep)` | content-dependent | unbounded | 1 pass | latency-critical single-shot, caller picks qstep |
+
+For batch workflows, pass a `J2KQstepCache` via `encodingConfiguration.qstepCache` —
+subsequent encodes hit cache and converge in 1-2 passes regardless of mode.
+
 ### Trade-off — strict-rate vs quality vs encode latency
 
 The `.constantBitrate` mode auto-promote has three trade-offs to document:

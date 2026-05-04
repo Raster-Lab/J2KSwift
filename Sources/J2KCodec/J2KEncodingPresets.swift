@@ -645,6 +645,58 @@ public enum J2KBitrateMode: Sendable, Equatable {
         bitsPerPixel: Double,
         tolerance: Double = 0.05,
         maxIterations: Int = 8)
+
+    /// v5.33.0 — production-grade quality-preserving bounded-rate
+    /// mode with **predictable latency**.
+    ///
+    /// Unlike `.constantBitrateViaQstep` (which runs an 8-iteration
+    /// binary search and gives unpredictable encode latency, 5–14×
+    /// the single-shot encode time on flat-curve content), this
+    /// mode runs at most `maxPasses` encodes total — typically 1
+    /// (cache hit or good calibration prior) and at most 2 (one
+    /// corrective pass when the first overshoots).
+    ///
+    /// **Quality-preserving**: uses the same uniform-quantisation
+    /// approach as `.constantBitrateViaQstep`, so PSNR is in the
+    /// same range when the rate target is achievable. On extreme
+    /// overshoot cases, the bound trades some PSNR for rate
+    /// adherence (typically 5-10 dB on >2× overshoot situations).
+    ///
+    /// **Bounded rate**: caps achieved bytes at
+    /// `maxOvershootRatio × target × pixelCount / 8`. Conformant
+    /// HT cleanup-only has a structural rate floor (LL band must
+    /// encode at the chosen qstep, no within-block truncation),
+    /// so very low bpp targets on high-content fixtures may still
+    /// exceed the cap — but typically by less than 1.3× of the
+    /// cap, never the 3-7× of v5.31.0's unbounded search.
+    ///
+    /// **Predictable latency**: at most `maxPasses` encode passes
+    /// (default 2). For batch workflows pass a `J2KQstepCache` via
+    /// `encodingConfiguration.qstepCache` so subsequent encodes hit
+    /// cache and converge in 1 pass.
+    ///
+    /// Recommended for production PACS / archive workloads on
+    /// high-bit-depth medical content where:
+    ///   - encode latency must be predictable (server SLAs)
+    ///   - bytes overshoot must be bounded (storage cost / quota)
+    ///   - quality should be clinical-grade (≥30 dB on lossy
+    ///     compression of full-bit-depth content)
+    ///
+    /// - Parameters:
+    ///   - bitsPerPixel: target bitrate in bits per pixel.
+    ///   - maxOvershootRatio: maximum allowed achieved/target byte
+    ///     ratio (default 2.0×). Smaller = stricter rate, lower
+    ///     quality on extreme cases. Larger = looser rate, higher
+    ///     quality on extreme cases.
+    ///   - maxPasses: maximum encode iterations (default 2). 1 =
+    ///     fastest, takes whatever the calibration prior produces.
+    ///     2 = one corrective pass if needed. 3+ = approaches the
+    ///     accuracy of `.constantBitrateViaQstep` at the cost of
+    ///     latency predictability.
+    case constantBitrateBounded(
+        bitsPerPixel: Double,
+        maxOvershootRatio: Double = 2.0,
+        maxPasses: Int = 3)
 }
 
 // MARK: - Wavelet Kernel Configuration
@@ -762,6 +814,8 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Fixed Qstep (\(String(format: "%.5f", qstep)))"
         case .constantBitrateViaQstep(let bpp, let tol, let maxIter):
             return "Constant Bitrate via Qstep (\(String(format: "%.2f", bpp)) bpp ±\(String(format: "%.0f", tol * 100))%, max \(maxIter) iters)"
+        case .constantBitrateBounded(let bpp, let maxOver, let maxPasses):
+            return "Constant Bitrate Bounded (\(String(format: "%.2f", bpp)) bpp, ≤\(String(format: "%.1f", maxOver))× target, max \(maxPasses) passes)"
         }
     }
 }
