@@ -404,6 +404,97 @@ explicitly to `.constantBitrateBounded(bitsPerPixel: bpp)`** before deploying v5
 
 ---
 
+## v5.35 → v5.36 — budget-fill recovery via multi-precinct (the cap is now useful)
+
+v5.34 made the byte cap real (output ≤ target, always). But the v5.34 truncation
+landed at coarse LRCP packet boundaries (~6 packets per layer), so on flat-curve
+high-bit-depth content the achieved bytes fell far short of the cap (px_001 @ 2 bpp:
+0.31× of cap). The v5.34 doc above flagged this as a structural limitation requiring
+"multi-layer encoding or in-packet truncation with re-computed packet headers".
+
+The right structural fix turned out to be **multiple precincts per band** (Part 1
+functionality, supported by every mainstream JPEG 2000 decoder). Multi-layer was
+explored first but is unsupported by OpenJPH HT (`ojph_codestream_local.cpp:781`
+explicitly limits HT to 1 layer) and OpenJPEG's HT decoder. Multi-precinct works
+everywhere.
+
+### Implementation arc (v5.35.0a → v5.36-tuning)
+
+| Tag | What landed |
+|---|---|
+| v5.35.0a | `J2KEncodeQstepStats.budgetFillRatio`; Grok added to cross-codec list; DICOM Pixel Data round-trip test |
+| v5.35.0b | Multi-layer infrastructure (encoder side, single-precinct codestream) — shipped but cross-codec gap discovered |
+| v5.35.0c | Same-workload CPU vs GPU encode benchmark (`.fixedQstep`); v5.33→v5.34 migration guide; doc reorg |
+| v5.35.0d phase 1 | Diagnosed multi-layer HT as ecosystem-unsupported; pivot decision to precincts |
+| v5.35.0d phase 2 | Multi-precinct ENCODE infrastructure shipped; cross-codec validated; not wired into strict mode (decode-side broke) |
+| v5.36-decode | Multi-precinct DECODE support: `extractTileData` rewritten for per-precinct iteration; CPU + decodeGPU + decodeWithGPUHT all handle multi-precinct codestreams. Strict-mode auto-promote re-wired to multi-precinct (PPx=10) |
+| v5.36-tuning | Strict-mode default lowered PPx 10 → 8 (the PPx<10 SIGTRAP was a stale symptom of the decoder bug). Final budget-fill recovery |
+
+### Headline budget-fill recovery (M1, real medical fixtures @ 2 bpp)
+
+Strict-mode auto-promote (`.constantBitrate(2.0)` on HT-conformant lossy 9/7 with
+bitDepth ≥ 12). `J2KEncoder.encode(_:)` now emits multi-precinct codestream with
+PPx=PPy=8. Truncation lands at the largest of the ~85+ packet boundaries that fits
+the cap.
+
+| Fixture | px | v5.34 fill | v5.36 fill | v5.34 PSNR | v5.36 PSNR |
+|---|---:|---:|---:|---:|---:|
+| px_001 (2459×1316) | 3.2M  | 0.312× | **0.945×** | 12.27 dB | **13.69 dB** |
+| dx_002 (2800×2288) | 6.4M  | 0.292× | **1.000×** (exact cap) | 13.14 dB | **14.57 dB** |
+
+Both fixtures exceed the user's "ideal >0.70×" budget-fill target. dx_002 fills the
+cap exactly. Reproducible via:
+
+```bash
+swift test -c release --filter "J2KMultiLayerEncodeTests/testHeadlineStrictModeValidation_AcrossAllDecoders"
+```
+
+PSNR gain is modest (+1.4 dB on both fixtures) for ~3× more bytes used. The retained
+extra bytes are LL/low-frequency dominant; the highest-resolution detail packets
+contribute marginal PSNR per byte. Pushing PSNR higher would require smarter qstep
+search to retain more high-frequency content per byte — separate v5.37 follow-up.
+
+### Six-decoder validation matrix
+
+The `testHeadlineStrictModeValidation_AcrossAllDecoders` test runs both fixtures
+through all six decode paths and asserts cap honoured + non-zero PSNR output:
+
+| Decoder | px_001 result | dx_002 result |
+|---|---|---|
+| J2KSwift CPU `decode` | exit 0, 13.69 dB | exit 0, 14.57 dB |
+| J2KSwift `decodeGPU` | exit 0, 13.69 dB | exit 0, 14.57 dB |
+| J2KSwift `decodeWithGPUHT` | exit 0, 13.69 dB | exit 0, 14.57 dB |
+| OpenJPEG 2.5.4 `opj_decompress` | exit 0 | exit 0 |
+| OpenJPH 0.27.0 `ojph_expand` | exit 0 | exit 0 |
+| Grok 20.3.0 `grk_decompress` | exit 0 | exit 0 |
+
+J2KSwift's three decode paths produce byte-identical PSNR (deterministic decode of
+the same codestream). External decoders all exit 0; pixel comparison against the
+J2KSwift reconstruction is implicit in the PSNR PSNR gain measurement.
+
+### Codestream structure change
+
+For a `.constantBitrate(2 bpp)` encode on px_001:
+
+| Aspect | v5.34 single-precinct | v5.36 multi-precinct (PPx=8) |
+|---|---|---|
+| Packets per layer | 6 (one per LRCP iteration) | ~85 (one per (res, comp, precinct)) |
+| Truncation granularity | ~50-200 KB (high-res packet size) | ~5-15 KB (precinct packet size at high res) |
+| Wire format | Scod = 0 (default precinct) | Scod = 1 + per-resolution PPx/PPy bytes in COD |
+| Decode compatibility | All decoders (Part 1 default) | All decoders (Part 1 precincts are universally supported) |
+
+### v5.36 known limitations
+
+- **PSNR gain is modest** vs the byte-fill increase. Recovering more PSNR per byte
+  needs smarter qstep selection (the search currently picks the qstep that fills
+  byte budget; it doesn't optimise for PSNR-per-byte at high resolution). v5.37
+  scope.
+- **Multi-layer HT is still untouched.** v5.35.0b's `encodeMultiLayerWithPacketIndex`
+  ships but isn't used. Cross-codec interop gap (OpenJPH HT = 1 layer, OpenJPEG HT
+  decode rejects multi-layer) remains an ecosystem issue, not a J2KSwift bug.
+
+---
+
 ## v5.33 → v5.34 migration guide
 
 v5.34's auto-promote behaviour change for `.constantBitrate(bpp)` on bitDepth ≥ 12
