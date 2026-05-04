@@ -5,6 +5,75 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.24.0] — 2026-05-04
+
+**Stage-level decode timings + 9/7 lossy strategy correction**
+
+v5.23.0's release notes described the 9/7 lossy speedup ceiling as
+"modest because HT entropy is still on CPU." That was wrong — the
+GPU HT entropy decoder is wired into `decodeWithGPUHT` via
+`J2KGPUHTDispatch.decodeBatch`. v5.24.0 adds stage-level timing
+instrumentation and a three-path comparison; the data shows the
+opposite: GPU HT dispatch overhead exceeds CPU HT cost on small/
+medium 9/7 lossy workloads.
+
+### Headline finding (M2, release, 1024×1024 16-bit, 2 bpp, n=5)
+
+| Path | Median | Speedup |
+|---|---:|---:|
+| `decode` (CPU) | 25.6 ms | 1.00× |
+| `decodeGPU(_:session:)` (CPU HT + GPU IDWT) | 17.8 ms | **1.43×** |
+| `decodeWithGPUHT(_:session:)` (GPU HT + IDWT) | 24.0 ms | 1.07× |
+
+Per-stage means show why: GPU HT dispatch costs ~11.6 ms even
+warm, while parallelised CPU HT runs in ~1.3 ms. GPU IDWT saves
+~7.5 ms (CPU 22.7 → gpuIDWT 15.2) — that's the dominant win.
+
+### Added
+
+- `Sources/J2KCodec/J2KDecodeTimings.swift` — process-global,
+  always-on, NSLock-protected stage timings accumulator. Mirrors
+  the `J2KMetalUMACounters` pattern. Tracks 8 stages (incl. the
+  `gpuHTDispatch` sub-stage of `entropyDecoding`). `reset()` before
+  a decode; `snapshot()` after. ~tens of ns per stage; negligible.
+- `Sources/J2KCodec/J2KCodec.swift` — new public API
+  `decodeGPU(_:session:)` mirroring `decodeWithGPUHT(_:session:)`
+  but keeping HT entropy on CPU. Recommended for 9/7 lossy on warm
+  session today (1.43× vs `decodeWithGPUHT`'s 1.07×).
+- Stage-timing record calls inside the 14 existing
+  `J2K_PROFILE_DECODE` profile sites in `J2KDecoderPipeline`
+  (7 GPU + 7 CPU). Env-var prints unchanged; accumulator runs in
+  addition.
+- Sub-stage timing for `J2KGPUHTDispatch.decodeBatch` and
+  `decodeBatchGPUResident` calls (3 sites in `J2KDecoderPipeline`).
+
+### Changed
+
+- `Tests/J2KMetalTests/J2KGPULossy97PerformanceTests.swift` —
+  three-path comparison (CPU vs `decodeGPU` vs `decodeWithGPUHT`)
+  with full per-stage breakdown including `gpuHTDispatch` sub-
+  stage. Replaces v5.23.0's two-path end-to-end-only benchmark.
+
+### Errata for v5.23.0
+
+The v5.23.0 release notes said "decodeWithGPUHT only owns IDWT +
+colour transform + quantisation; HT entropy is still on CPU." HT
+entropy is in fact on the GPU in that path. v5.23.0's measurement
+remains valid; only the explanatory model was wrong.
+
+### Verified
+
+- New benchmark passes in release mode; stage breakdown reproduces
+  within typical timing variance.
+- All v5.14-v5.23 regression gates remain green.
+
+### Lesson
+
+Headline numbers without stage breakdown lie by omission. The way
+to ship perf claims that don't decay is: measure the end-to-end,
+attribute to stages, name the dominant cost. v5.23.0 had the
+end-to-end. v5.24.0 has the attribution.
+
 ## [5.23.0] — 2026-05-04
 
 **GPU 9/7 lossy decode performance characterisation**

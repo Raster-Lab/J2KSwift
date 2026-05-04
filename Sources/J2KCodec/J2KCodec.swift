@@ -440,6 +440,25 @@ public struct J2KDecoder: Sendable {
         return try await pipeline.decodeGPU(data, progress: progress)
     }
 
+    /// Decodes JPEG 2000 data with GPU acceleration **reusing a long-
+    /// lived `J2KMetalSession`** across calls. CPU runs HT entropy +
+    /// regroup; GPU runs IDWT + colour transform + quantisation.
+    ///
+    /// This is the GPU-IDWT-only counterpart to
+    /// `decodeWithGPUHT(_:session:)`. On 9/7 lossy workloads where the
+    /// per-tile GPU HT dispatch overhead exceeds the parallelised CPU
+    /// HT cost (small/medium images, low block counts) this entry
+    /// point is faster than `decodeWithGPUHT`. On large workloads
+    /// `decodeWithGPUHT` wins because the GPU HT dispatch amortises.
+    public func decodeGPU(
+        _ data: Data,
+        session: J2KMetalSession
+    ) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = session
+        return try await pipeline.decodeGPU(data)
+    }
+
     /// Decodes JPEG 2000 data into an image with **opt-in GPU HTJ2K
     /// entropy decode** in addition to the existing GPU inverse DWT.
     ///
