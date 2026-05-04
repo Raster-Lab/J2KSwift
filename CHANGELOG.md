@@ -5,6 +5,52 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.18.0] — 2026-05-04
+
+**Fixed-qstep mode for HT conformant lossy R-D**
+
+Bypasses PCRD-opt rate control entirely for HT conformant lossy
+workflows. PCRD-opt's all-or-nothing block selection produces ~7 dB
+worse R-D than EBCOT or OpenJPH at matched bitrates because the
+HT cleanup pass has only one truncation point per block. Fixed-qstep
+mode mirrors OpenJPH's encoder model — pick a qstep, every block
+included unchanged. Achieved bpp varies per image; quality is
+deterministic per qstep.
+
+### Added
+
+- `J2KBitrateMode.fixedQstep(qstep: Double)` — new bitrate mode case.
+  Bypasses PCRD-opt; uses user-supplied step directly via
+  `J2KStepSizeCalculator`'s standard LL/HL/LH/HH gain weighting.
+  Only applies when `useReversibleFilter == false` (lossy 9/7).
+- `--qstep STEP` CLI flag for the same.
+- `Tests/J2KCodecTests/J2KHTConformantFixedQstepRDTests.swift`:
+  - `testFixedQstep_BeatsPCRD_AtMatchedBpp` — strict gate that
+    fixed-qstep beats PCRD-opt by ≥3 dB at matched bpp on synth 8-bit.
+    Currently measures +18.69 dB on the synth content.
+  - `testFixedQstepConfigurationPersists` — round-trip smoke test.
+- `RELEASE_NOTES_v5.18.0.md` — full audit trail + calibration table.
+
+### Investigation
+
+v5.16.0's design doc recommended Option A (multi-pass conformant
+emission). Investigation during v5.18.0 implementation revealed the
+conformant cleanup pass already codes every magnitude bit per
+coefficient (FBCOT 1-pass), making refinement passes redundant.
+Pivoted to Option C (fixed-qstep). The original v5.18.0 design doc
+records the investigation trail.
+
+### Known issues (carried to v5.19.0+)
+
+- Manual qstep calibration burden (no automatic target-bpp →
+  qstep search yet). v5.19.0 candidate.
+- J2KSwift qstep ≠ OpenJPH qstep numerically (~1000× scale
+  difference due to gain weighting differences). Users
+  transitioning from OpenJPH workflows need re-calibration.
+- Default `.constantBitrate` callers still see the v5.16.0 R-D gap.
+  Option B (intra-block byte-level truncation in PCRD-opt) is the
+  only path that closes it for them; multi-day work, deferred.
+
 ## [5.17.1] — 2026-05-03
 
 **Patch — stale test cleanup**

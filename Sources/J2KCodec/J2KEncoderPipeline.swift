@@ -217,6 +217,11 @@ struct EncoderPipeline: Sendable {
             return nil
         case .constantQuality, .lossless:
             break
+        case .fixedQstep:
+            // Fixed-qstep mode includes every block; PCRD pass cap
+            // doesn't apply. Returning nil disables the cap (same as
+            // explicit bitrate modes).
+            return nil
         }
 
         // Preserve a shallow fast path only for truly low-quality grayscale
@@ -1396,6 +1401,21 @@ struct EncoderPipeline: Sendable {
             perComponentTargetBpp = maxBitsPerPixel / Double(max(1, componentCount))
         case .constantQuality, .lossless:
             perComponentTargetBpp = nil
+        case .fixedQstep(let qstep):
+            // Fixed-qstep mode (v5.18.0): bypass the bpp-aware
+            // scaleFactor heuristics entirely. Return the user-
+            // supplied qstep directly via baseStepSize, leaving
+            // the LL/HL/LH/HH gain weighting (in J2KStepSizeCalculator)
+            // as the only multiplier applied downstream. Matches
+            // OpenJPH's qstep-only model.
+            return J2KQuantizationParameters(
+                mode: baseParameters.mode,
+                baseStepSize: qstep,
+                deadzoneWidth: baseParameters.deadzoneWidth,
+                guardBits: baseParameters.guardBits,
+                implicitStepSizes: baseParameters.implicitStepSizes,
+                explicitStepSizes: baseParameters.explicitStepSizes,
+                tcqConfiguration: baseParameters.tcqConfiguration)
         }
 
         let scaleFactor: Double
@@ -2581,6 +2601,10 @@ struct EncoderPipeline: Sendable {
             return 0.18
         case .lossless:
             return Double.greatestFiniteMagnitude
+        case .fixedQstep:
+            // Fixed-qstep mode includes every block; HT refinement cap
+            // is irrelevant since rate control is bypassed.
+            return Double.greatestFiniteMagnitude
         }
     }
 
@@ -3246,6 +3270,18 @@ struct EncoderPipeline: Sendable {
                                  codeBlockContributions: contributions)]
         }
 
+        // v5.18.0: fixed-qstep mode also includes every block unchanged.
+        // The user picked the qstep; PCRD-opt would just decide which
+        // blocks to drop, defeating the deterministic-quality contract.
+        if case .fixedQstep = config.bitrateMode {
+            var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
+            for cb in codeBlocks where cb.passeCount > 0 {
+                contributions[cb.index] = cb.passeCount
+            }
+            return [QualityLayer(index: 0, targetRate: nil,
+                                 codeBlockContributions: contributions)]
+        }
+
         let rateConfig: RateControlConfiguration
         let ppbp = config.useHTJ2K ? 2 : 3
         // The current packet writer emits one final truncated layer rather than
@@ -3280,6 +3316,10 @@ struct EncoderPipeline: Sendable {
             )
         case .lossless:
             rateConfig = .lossless
+        case .fixedQstep:
+            // Already short-circuited above. This branch only exists
+            // for switch exhaustiveness — should be unreachable.
+            preconditionFailure(".fixedQstep should have been handled by the fast-path above")
         }
 
         let rateControl = J2KRateControl(configuration: rateConfig)

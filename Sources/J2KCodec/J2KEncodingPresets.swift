@@ -581,6 +581,27 @@ public enum J2KBitrateMode: Sendable, Equatable {
     /// Perfect reconstruction, no quality loss.
     /// File size varies significantly based on image content.
     case lossless
+
+    /// Fixed quantization-step mode (OpenJPH-style).
+    ///
+    /// Bypasses PCRD-opt rate control entirely. Coefficients are
+    /// quantized using the user-supplied step size, and every
+    /// codeblock is included in the output unchanged. Achieved bpp
+    /// varies per image — there is no target bitrate.
+    ///
+    /// Useful for HT conformant lossy workflows where PCRD-opt's
+    /// all-or-nothing block selection (HT cleanup pass has only one
+    /// truncation point per block) produces ~7 dB worse R-D than
+    /// either J2KSwift's legacy EBCOT path or OpenJPH's encoder.
+    /// Picking a calibrated qstep directly matches OpenJPH's R-D
+    /// operating point without the intra-block truncation work
+    /// captured in V5_18_0_DESIGN.md.
+    ///
+    /// - Parameter qstep: Quantization step size (e.g., 0.024 for
+    ///   ~2 bpp on 8-bit natural images). For irreversible 9/7 only.
+    ///   Reversible 5/3 always uses step = 1; this mode is rejected
+    ///   when `useReversibleFilter` is true.
+    case fixedQstep(qstep: Double)
 }
 
 // MARK: - Wavelet Kernel Configuration
@@ -694,6 +715,8 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Variable Bitrate (min quality: \(String(format: "%.2f", minQuality)), max: \(String(format: "%.2f", maxBpp)) bpp)"
         case .lossless:
             return "Lossless"
+        case .fixedQstep(let qstep):
+            return "Fixed Qstep (\(String(format: "%.5f", qstep)))"
         }
     }
 }

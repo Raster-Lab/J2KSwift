@@ -129,6 +129,13 @@ extension J2KCLI {
         // Default to lossless when no lossy options are specified (matches OpenJPEG)
         if options["lossless"] != nil {
             config.lossless = true
+        } else if let qstepStr = options["qstep"], let qstep = Double(qstepStr) {
+            // v5.18.0: fixed-qstep mode (OpenJPH-style). Bypasses
+            // PCRD-opt; every block included unchanged. Calibrated
+            // qstep table for medical workflows lives in
+            // Scripts/rd_benchmark.py:_ojph_qstep_for_target_bpp.
+            config.bitrateMode = .fixedQstep(qstep: qstep)
+            config.lossless = false
         } else if let bpStr = options["bitrate"], let bpp = Double(bpStr) {
             config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
         } else if let qualStr = options["q"] ?? options["quality"],
@@ -302,6 +309,7 @@ extension J2KCLI {
             -q, --quality FLOAT         Quality 0.0-1.0 (default 1.0)
             --lossless                  Lossless compression
             --bitrate BPP               Target bit-rate (bits per pixel)
+            --qstep STEP                Fixed quantization step (OpenJPH-style; lossy 9/7 only)
             --psnr VALUE                Target PSNR (dB)
             --visually-lossless         Near-lossless preset
             --reversible                Use 5/3 reversible DWT (default, best for medical)
