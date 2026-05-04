@@ -97,12 +97,21 @@ public struct J2KEncoder: Sendable {
         // v5.19.0 — `.constantBitrateViaQstep` runs an outer loop that
         // binary-searches qstep until achieved bpp matches target.
         // Bypasses PCRD-opt entirely; each iteration uses `.fixedQstep`.
+        //
+        // v5.32.0 note: explicit `.constantBitrateViaQstep` users
+        // opted in for quality, so the bounded-rate refinement is
+        // disabled here (`maxOvershootRatio: .infinity`). They get
+        // v5.31.0 behaviour (no overshoot cap, max-quality). The
+        // auto-promote `.constantBitrate` path below uses a 2.0×
+        // bound to keep rate predictable for callers who didn't ask
+        // for the qstep route.
         if case .constantBitrateViaQstep(let bpp, let tol, let maxIter) = encodingConfiguration.bitrateMode {
             let (data, _) = try await encodeViaQstepSearch(
                 image,
                 targetBpp: bpp,
                 tolerance: tol,
-                maxIterations: maxIter)
+                maxIterations: maxIter,
+                maxOvershootRatio: .infinity)
             return data
         }
 
@@ -167,7 +176,8 @@ public struct J2KEncoder: Sendable {
             image,
             targetBpp: bpp,
             tolerance: tol,
-            maxIterations: maxIter)
+            maxIterations: maxIter,
+            maxOvershootRatio: .infinity)
     }
 
     /// Binary search on qstep until achieved bpp matches `targetBpp`
@@ -195,7 +205,8 @@ public struct J2KEncoder: Sendable {
         _ image: J2KImage,
         targetBpp: Double,
         tolerance: Double,
-        maxIterations: Int
+        maxIterations: Int,
+        maxOvershootRatio: Double = 2.0
     ) async throws -> (Data, J2KEncodeQstepStats) {
         let totalSamples = image.width * image.height * image.componentCount
         guard totalSamples > 0 else {
@@ -318,18 +329,82 @@ public struct J2KEncoder: Sendable {
             }
         }
 
+        // v5.32.0 — bounded-rate refinement.
+        //
+        // The main search may terminate without hitting tolerance on
+        // flat-curve content (16-bit medical at low bpp can have
+        // bytes-vs-qstep slope as low as α=0.13, so even at upper
+        // bracket the bytes stay over target). When that happens
+        // the closest-achieved encoding can overshoot the target
+        // significantly — the v5.31.0 cross-scale probe showed
+        // 1.6–3× overshoot at 2 bpp on large fixtures.
+        //
+        // Bounded-rate refinement: after the main search, if
+        // achieved bytes still exceed `maxOvershootRatio × target`,
+        // run up to 3 additional iterations that aggressively scale
+        // qstep up to push bytes down. Each iteration multiplies
+        // qstep by `ratio^0.7` (sub-linear so we don't overshoot
+        // the other direction; works for α≈0.13–1.0 curves). Stop
+        // when within bound, when no further byte reduction is
+        // achieved, or when the iteration cap is hit.
+        //
+        // Trade-off: caps the rate overshoot at the cost of some
+        // PSNR (typically 5–10 dB) on the worst-overshoot cases.
+        // The user spec is "bounded rate, keep most of the quality" —
+        // this delivers both within the realistic bounds of the
+        // conformant cleanup-only block format.
+        var refinementIters = 0
+        let maxRefinementIters = 3
+        while bestEncoded.count > Int(targetBytes * maxOvershootRatio),
+              refinementIters < maxRefinementIters {
+            refinementIters += 1
+            let currentRatio = Double(bestEncoded.count) / targetBytes
+            // Aggressive but stable: ratio^0.7 advances faster than
+            // a pure log step but doesn't overshoot the other direction.
+            let scaleFactor = pow(currentRatio, 0.7)
+            let newQstep = bestQstep * scaleFactor
+
+            var iterConfig = encodingConfiguration
+            iterConfig.bitrateMode = .fixedQstep(qstep: newQstep)
+            iterConfig.lossless = false
+            let pipeline = EncoderPipeline(config: iterConfig)
+            let refined = try await pipeline.encode(image)
+
+            // Accept only if it makes progress AND doesn't push under
+            // target (don't trade overshoot for undershoot — the
+            // user wants bounded above-target, not strict-below).
+            if refined.count >= bestEncoded.count {
+                // No progress (qstep increase didn't reduce bytes —
+                // we may be hitting a structural floor like LL
+                // overhead). Stop.
+                break
+            }
+            if Double(refined.count) < targetBytes * 0.9 {
+                // Undershoot — qstep was too aggressive. Don't
+                // accept; keep the previous over-target encoding
+                // since over-target is better than undershoot for
+                // bounded mode.
+                break
+            }
+            bestEncoded = refined
+            bestQstep = newQstep
+            iterationCount += 1
+        }
+
         // Convergence either succeeded above or fell back to closest-
         // achieved. Cache the best qstep regardless — even if we
         // didn't hit tolerance, this is the encoder's best estimate.
         await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+        let achievedBpp = Double(bestEncoded.count * 8) / Double(totalSamples)
         let stats = J2KEncodeQstepStats(
             iterations: iterationCount,
             initialQstep: initialQstep,
             convergedQstep: bestQstep,
-            achievedBpp: Double(bestEncoded.count * 8) / Double(totalSamples),
+            achievedBpp: achievedBpp,
             targetBpp: targetBpp,
             cacheHit: cacheHit,
-            convergedWithinTolerance: false)
+            convergedWithinTolerance:
+                abs(achievedBpp / targetBpp - 1.0) < tolerance)
         return (bestEncoded, stats)
     }
 

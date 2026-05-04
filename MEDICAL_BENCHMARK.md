@@ -74,30 +74,60 @@ PSNR @ 4 bpp on dx_002 went from 16.30 dB (catastrophic) to 61.94 dB (clinical-g
 PSNR scales healthily with bpp (~10-15 dB per doubling) as a proper R-D curve should,
 instead of the pre-fix ~1 dB per doubling.
 
-### Trade-off — strict-rate vs quality
+### Trade-off — strict-rate vs quality vs encode latency
 
-The `.constantBitrate` mode no longer guarantees the exact byte target on conformant HT
-lossy at low bpp on large fixtures. Qstep-search converges on *uniform quantisation*,
-which has a content-dependent rate floor (some bytes are inherently needed to encode
-the LL band losslessly enough to preserve it).
+The `.constantBitrate` mode auto-promote has three trade-offs to document:
 
-Observed achieved bytes vs target on representative fixtures @ 2.0 bpp (target ratio):
+**1. Bytes vs target.** Qstep-search converges on uniform quantisation, which has a
+content-dependent rate floor. v5.31.0 shipped with no overshoot cap (max quality).
+v5.32.0 adds a 2.0× overshoot cap on the auto-promote path; the explicit
+`.constantBitrateViaQstep` path keeps v5.31.0's no-cap behaviour.
 
-| Fixture | Pixels | Target bytes | Post-fix bytes | Ratio |
+Observed achieved bytes vs target @ 2.0 bpp on representative fixtures (post-v5.32.0):
+
+| Fixture | Pixels | Target bytes | v5.31 bytes (3.0× cap) | **v5.32 bytes (2.0× cap)** |
 |---|---:|---:|---:|---:|
-| mr_002 (180²)        |    32k  |   8,100  |    8,298  | 1.02× |
-| ct_001 (512²)        |   262k  |  65,536  |  107,603  | 1.64× |
-| xa_001 (1024²)       |  1.0M   | 262,144  |  632,940  | 2.41× |
-| px_001 (2459×1316)   |  3.2M   | 809,011  | 2,460,399 | 3.04× |
-| dx_002 (2800×2288)   |  6.4M   | 1.6 MB   | 4.5 MB    | 2.81× |
+| mr_002 (180²)        |    32k  |   8,100  |    8,298 (1.02×)  |    **8,298 (1.02×)** |
+| ct_001 (512²)        |   262k  |  65,536  |  107,603 (1.64×)  |  **107,603 (1.64×)** |
+| xa_001 (1024²)       |  1.0M   | 262,144  |  632,940 (2.41×)  |  **443,322 (1.69×)** |
+| px_001 (2459×1316)   |  3.2M   | 809,011  | 2,460,399 (3.04×) |  **1,521,451 (1.88×)** |
+| dx_002 (2800×2288)   |  6.4M   |   1.6 MB |    4.5 MB (2.81×) |     **2.7 MB (1.69×)** |
 
-The rate ratio gets worse on larger images at lower bpp. For strict-rate requirements,
-callers should use `.constantBitrateViaQstep` explicitly (same algorithm, same
-overshoot — at least the user knows the contract) or `.fixedQstep` (caller picks
-the qstep, encoder doesn't search for a rate target).
+**2. Quality cost of the bound.** Reducing overshoot reduces available bits, which
+reduces PSNR. Comparison @ 2 bpp:
 
-For DICOM workflows that prioritise quality over exact byte budgets, this is the
-correct trade-off and matches OpenJPH's qstep-only encoding model.
+| Fixture | v5.31 (no cap) | **v5.32 (2.0×)** | Pre-v5.31 (PCRD strict) |
+|---|---:|---:|---:|
+| ct_001 | 47.21 dB | 47.21 dB (unchanged) | 19.81 dB |
+| xa_001 | 50.59 dB | 39.87 dB | 17.45 dB |
+| px_001 | 46.25 dB | 33.07 dB | 13.47 dB |
+| dx_002 | 45.80 dB | 33.92 dB | 14.65 dB |
+
+v5.32 sits between pre-v5.31 (clinically unusable) and v5.31 (clinical-grade but ~3×
+target rate). On fixtures that already fit under 2.0× cap (small/medium), v5.31's
+quality is fully preserved.
+
+**3. Encode latency.** Auto-promote runs 8 iterations of Qstep search per encode. CPU
+encode latency on the medical corpus is ~5–14× higher than the v5.30.0 PCRD baseline:
+
+| Fixture | v5.30 CPU encode | **v5.32 CPU encode** | Slowdown |
+|---|---:|---:|---:|
+| mr_002 (32k)         |   2.4 ms |   5.8 ms |  2.4× |
+| ct_001 (262k)        |   4.0 ms |  35.2 ms |  8.8× |
+| xa_001 (1M)          |  16.0 ms | 161.5 ms | 10.1× |
+| px_001 (3.2M)        |  51.6 ms | 558.2 ms | 10.8× |
+| mg_001 (16.8M)*      | 224.9 ms |   3.1 s  | 13.9× |
+
+For batch workflows (PACS, archive ingestion), pass a `J2KQstepCache` instance via
+`encodingConfiguration.qstepCache` — the cache stores `(bitDepth, componentCount,
+targetBpp) → converged qstep`, so subsequent encodes hit the cache and skip 5–6 of
+the 8 search iterations.
+
+For latency-critical single-shot encodes, use `.fixedQstep(qstep:)` directly (one
+encode, no search) — caller picks the qstep, no rate-target guarantees.
+
+For DICOM archive workloads that prioritise quality over exact byte budgets and tolerate
+the ingestion-time encode latency, this is the correct trade-off.
 
 ---
 

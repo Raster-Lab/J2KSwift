@@ -5,6 +5,77 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.32.0] — 2026-05-04
+
+**Bounded-rate Qstep mode — cap overshoot at 2.0× target**
+
+v5.31.0 fixed cross-scale R-D quality but the Qstep-search overshot
+the rate target by 1.6–3× on large fixtures (rate contract violated
+to fix the quality contract). Per user spec: "Build a bounded-rate
+Qstep mode. Keep v5.31 quality. Reduce overshoot dramatically."
+
+v5.32.0 adds a post-search refinement loop in
+`encodeViaQstepSearch`: if achieved bytes still exceed
+`maxOvershootRatio × target` after the main 8-iteration search,
+run up to 3 additional iterations that scale qstep by
+`pow(ratio, 0.7)` to push bytes down. Stops when within bound,
+when no further reduction is possible (LL-band structural floor),
+or at the iteration cap. Auto-promote uses `2.0×`; explicit
+`.constantBitrateViaQstep` keeps `.infinity` (v5.31.0 behaviour).
+
+### Headline (auto-promote `.constantBitrate` @ 2 bpp)
+
+| Fixture | px | v5.31 PSNR / bytes | v5.32 PSNR / bytes |
+|---|---:|---:|---:|
+| xa_001 | 1.0M | 50.59 / 2.41× | 39.87 / 1.69× |
+| px_001 | 3.2M | 46.25 / 3.04× | 33.07 / 1.88× |
+| dx_002 | 6.4M | 45.80 / 2.81× | 33.92 / 1.69× |
+
+Bytes overshoot capped at 2.0×. Quality drops 7-13 dB on worst-
+overshoot cases but remains clinically relevant (>30 dB) and
+dramatically better than pre-v5.31 PCRD (13-17 dB). Fixtures
+already under 2× pass through unchanged at v5.31 quality.
+
+### Trade-off — encode latency
+
+The 8-iteration Qstep search makes auto-promoted encode 5–14×
+slower than v5.30 PCRD baseline (e.g. mg_001: 225 ms → 3.1 s).
+This is the cost of correctness — v5.30 was producing 14 dB
+output at clinical bitrates. Mitigations:
+
+- Pass `J2KQstepCache` via `encodingConfiguration.qstepCache` —
+  subsequent encodes hit cache, skip 5-6 of the 8 search iters.
+- Use `.fixedQstep(qstep:)` for latency-critical single-shot
+  encodes — caller picks qstep, no rate-target search.
+
+### Changed
+
+- `Sources/J2KCodec/J2KCodec.swift` — `encodeViaQstepSearch`
+  gains `maxOvershootRatio: Double = 2.0` parameter + post-
+  search refinement loop. Auto-promote site uses default `2.0`;
+  explicit `.constantBitrateViaQstep` site uses `.infinity`.
+- `MEDICAL_BENCHMARK.md` "Cross-Scale R-D Quality" section
+  expanded with v5.31 vs v5.32 trade-off tables (bytes, quality,
+  latency).
+
+### Verified
+
+- Cross-scale R-D probe: PSNR consistent at 33-66 dB across the
+  medical corpus (vs pre-v5.31 13-35 dB; vs v5.31 47-50 dB).
+- Lossless roundtrip = ∞ dB (unchanged).
+- All v5.20-v5.31 correctness gates green.
+- 3 pre-existing perf-aspirational test failures unaffected.
+
+### Lesson
+
+v5.31's quality fix violated the rate contract; v5.32 is the
+rate-quality balance. The post-search refinement loop is the
+right shape: cheap when not needed (early-exit when bytes
+already within bound), bounded when needed (3 iterations max),
+respects the structural floor (don't keep refining when qstep
+increase doesn't reduce bytes — the LL-band overhead is the
+irreducible minimum).
+
 ## [5.31.0] — 2026-05-04
 
 **Cross-scale λ formulation fix — HT conformant lossy R-D**
