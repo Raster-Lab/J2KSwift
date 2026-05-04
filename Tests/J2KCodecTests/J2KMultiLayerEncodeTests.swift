@@ -432,6 +432,112 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         }
     }
 
+    /// v5.37 PSNR-per-byte recovery — head-to-head comparison between
+    /// the LRCP-prefix truncator (current strict-mode default) and the
+    /// constrained coefficient-sum-based R-D selector
+    /// (`truncateByConstrainedRD`). The constrained selector keeps the
+    /// LRCP dependency floor (LL + every intermediate-resolution
+    /// packet) intact and runs greedy R-D selection only on
+    /// highest-resolution precincts.
+    ///
+    /// Success gates (per user direction): both fixtures must improve
+    /// PSNR at BOTH 2 bpp AND 4 bpp without violating the byte cap.
+    /// Print all four points so a regression at any one rules out the
+    /// switchover.
+    func testConstrainedRDSelectorVsLRCPPrefix() async throws {
+        struct Fixture { let name: String; let path: String }
+        let fixtures = [
+            Fixture(name: "px_001", path: "px_study_001_instance_000001.pgm"),
+            Fixture(name: "dx_002", path: "dx_study_002_instance_000001.pgm"),
+        ]
+        let bpps: [Double] = [2.0, 4.0]
+
+        var ranAtLeastOne = false
+        print("\n=== v5.37 constrained R-D vs LRCP-prefix on real medical fixtures ===")
+        print("| Fixture | bpp | bytes target | LRCP bytes | LRCP PSNR | RD bytes | RD PSNR | ΔPSNR |")
+        print("|---|---:|---:|---:|---:|---:|---:|---:|")
+
+        for fixture in fixtures {
+            guard let img = try loadPGM(fixture.path) else {
+                print("  SKIP \(fixture.name): fixture not found")
+                continue
+            }
+            ranAtLeastOne = true
+            let totalSamples = img.width * img.height * img.componentCount
+
+            for bpp in bpps {
+                let target = Int(Double(totalSamples) * bpp / 8.0)
+                var cfg = J2KEncodingConfiguration(
+                    quality: 1.0, lossless: false,
+                    decompositionLevels: 5, qualityLayers: 1,
+                    progressionOrder: .lrcp, useHTJ2K: true,
+                    useReversibleFilter: false,
+                    htj2kBlockFormat: .conformant)
+                cfg.bitrateMode = .fixedQstep(qstep: 1.0)
+                let pipeline = EncoderPipeline(config: cfg)
+
+                // Single qstep search emulating strict mode: pick a
+                // qstep that produces a slight overshoot, then truncate
+                // to cap with each strategy.
+                let pps = Array(
+                    repeating: EncoderPipeline.PrecinctExponents(widthExp: 8, heightExp: 8),
+                    count: cfg.decompositionLevels + 1)
+
+                // Mimic strict-mode qstep search: find a qstep where
+                // total codestream is in [1.0, 2.0]× target. At the
+                // tiny-qstep end (e.g. 1.0), the LL+intermediate-res
+                // prefix on 16-bit medical content already exceeds the
+                // budget, leaving the R-D selector with no headroom.
+                // Strict mode in production uses ratio≈1.0-1.1×, where
+                // the prefix consumes a fraction of the budget and the
+                // R-D selector has many top-res packets to choose
+                // among.
+                let probeQsteps: [Double] = [
+                    32.0, 16.0, 8.0, 4.0, 2.0, 1.0,
+                    0.5, 0.25, 0.125, 0.0625]
+                var bestQstep: Double = -1
+                var indexed: EncodedCodestreamWithIndex? = nil
+                for trial in probeQsteps {
+                    let probe = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+                        img, qstep: trial, precinctExponents: pps)
+                    let r = Double(probe.data.count) / Double(target)
+                    if r >= 1.0 && r <= 4.0 {
+                        bestQstep = trial
+                        indexed = probe
+                        break
+                    }
+                }
+                guard let idx = indexed else {
+                    print("  SKIP \(fixture.name) @ \(bpp): no in-range qstep")
+                    continue
+                }
+                _ = bestQstep
+
+                let lrcp = EncoderPipeline.truncateAtPacketBoundary(idx, targetBytes: target)
+                let rd = EncoderPipeline.truncateByConstrainedRD(idx, targetBytes: target)
+
+                let lrcpDecoded = try await J2KDecoder().decode(lrcp)
+                let rdDecoded = try await J2KDecoder().decode(rd)
+                let lrcpPsnr = computePSNR16(img.components[0].data, lrcpDecoded.components[0].data)
+                let rdPsnr = computePSNR16(img.components[0].data, rdDecoded.components[0].data)
+
+                XCTAssertLessThanOrEqual(lrcp.count, target,
+                    "\(fixture.name) @ \(bpp): LRCP must honour cap")
+                XCTAssertLessThanOrEqual(rd.count, target,
+                    "\(fixture.name) @ \(bpp): RD must honour cap")
+                print(String(format: "| %@ | %.1f | %d | %d | %.2f | %d | %.2f | %+.2f |",
+                    fixture.name, bpp, target,
+                    lrcp.count, lrcpPsnr,
+                    rd.count, rdPsnr,
+                    rdPsnr - lrcpPsnr))
+            }
+        }
+
+        if !ranAtLeastOne {
+            throw XCTSkip("no medical fixtures available")
+        }
+    }
+
     /// Diagnostic: pinpoint the PPx<10 crash on px_001-class fixtures.
     /// Sweep PPx from 10 down to 5 on px_001 (2459×1316), reporting at
     /// which PPx value the encode/decode trips a precondition or

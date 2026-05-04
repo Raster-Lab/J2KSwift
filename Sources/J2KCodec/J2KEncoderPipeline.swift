@@ -196,6 +196,15 @@ struct PacketRDMetadata: Sendable {
     /// raw block data. This is `packetEnd[i] - packetEnd[i-1]` (or
     /// `packetEnd[0] - tileDataOffset` for the first packet).
     let bytes: Int
+    /// v5.37 constrained R-D selector:
+    /// Sum over all code blocks in this packet of
+    /// `block.coefficientSquaredSum × L2norm²[orient][dwtLevel]`.
+    /// Approximates the MSE contribution this packet would make if
+    /// dropped (missing detail leaves these synthesis-band coefficients
+    /// at zero in the reconstruction). Used by
+    /// `truncateByConstrainedRD` to rank highest-resolution precincts
+    /// by expected PSNR-per-byte gain. 0.0 if not populated.
+    let distortionContribution: Double
 }
 
 /// Encoded JPEG 2000 codestream paired with structural offsets that
@@ -560,6 +569,33 @@ struct EncoderPipeline: Sendable {
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
 
+        // L2-norm² of 9/7 synthesis basis (ISO/IEC 15444-1 Annex E),
+        // indexed [orient][dwtLevel] where orient: 0=LL, 1=HL, 2=LH,
+        // 3=HH. Used to weight `coefficientSquaredSum` per code block
+        // into a per-packet distortion estimate consumed by
+        // `truncateByConstrainedRD`. Mirrors the table in
+        // J2KRateControl.dwtNorms97 (private there); duplicated here
+        // to keep the distortion accounting local to packet emission.
+        let dwtNorms97Sq: [[Double]] = [
+            [1.000000, 3.861225, 17.447329, 70.610409,
+             282.609721, 1130.439284, 4521.755536, 18087.379121,
+             72349.166884, 289397.609649],
+            [4.088484, 15.912121, 69.806025, 289.136016,
+             1157.836729, 4631.347316, 18525.387664, 74101.550656,
+             296406.122624, 1185625.110000],
+            [4.088484, 15.912121, 69.806025, 289.136016,
+             1157.836729, 4631.347316, 18525.387664, 74101.550656,
+             296406.122624, 1185625.110000],
+            [4.326400, 14.938225, 69.006249, 295.392969,
+             1205.895076, 4823.717409, 19294.598025, 77178.396100,
+             308714.295641, 1234858.165564],
+        ]
+        func subbandWeight(orient: Int, dwtLevel: Int) -> Double {
+            let lvl = max(0, min(dwtLevel, dwtNorms97Sq[0].count - 1))
+            return dwtNorms97Sq[orient][lvl]
+        }
+        let maxResolutionLevel = decompositionLevels
+
         // Group blocks by (res, comp, subband, precinct).
         struct PrecinctKey: Hashable {
             let res: Int; let comp: Int; let subband: J2KSubband
@@ -639,11 +675,37 @@ struct EncoderPipeline: Sendable {
                             let precinctOriginX = px * pw
                             let precinctOriginY = py * ph
                             var bandBlocksList: [[J2KCodeBlock]] = []
+                            // v5.37 constrained R-D: accumulate
+                            // distortion across all blocks emitted
+                            // into this packet, before remapping
+                            // (coefficientSquaredSum is invariant
+                            // under the precinct-local coordinate
+                            // remap — only x/y change).
+                            var packetDistortion: Double = 0.0
                             for sb in subbands {
                                 let key = PrecinctKey(
                                     res: resLevel, comp: compIdx,
                                     subband: sb, py: py, px: px)
                                 let blocks = blocksByPrecinct[key] ?? []
+                                let dwtLevel: Int
+                                let orient: Int
+                                if resLevel == 0 {
+                                    dwtLevel = max(0, maxResolutionLevel - 1)
+                                    orient = 0
+                                } else {
+                                    dwtLevel = maxResolutionLevel - resLevel
+                                    switch sb {
+                                    case .ll: orient = 0
+                                    case .hl: orient = 1
+                                    case .lh: orient = 2
+                                    case .hh: orient = 3
+                                    }
+                                }
+                                let weight = subbandWeight(
+                                    orient: orient, dwtLevel: dwtLevel)
+                                for b in blocks {
+                                    packetDistortion += b.coefficientSquaredSum * weight
+                                }
                                 let remapped = blocks.map { b -> J2KCodeBlock in
                                     J2KCodeBlock(
                                         index: b.index,
@@ -672,7 +734,8 @@ struct EncoderPipeline: Sendable {
                             packetMetadata.append(PacketRDMetadata(
                                 resolution: resLevel,
                                 component: compIdx,
-                                bytes: packetEnd - packetStart))
+                                bytes: packetEnd - packetStart,
+                                distortionContribution: packetDistortion))
                         }
                     }
                 }
@@ -1049,6 +1112,160 @@ struct EncoderPipeline: Sendable {
         bytes.append(contentsOf: newTile)
 
         // Patch Psot at sotMarkerOffset + 6 (see truncateAtPacketBoundary).
+        let psotOffset = encoded.sotMarkerOffset + 6
+        bytes[psotOffset]     = UInt8((newPsot >> 24) & 0xFF)
+        bytes[psotOffset + 1] = UInt8((newPsot >> 16) & 0xFF)
+        bytes[psotOffset + 2] = UInt8((newPsot >> 8) & 0xFF)
+        bytes[psotOffset + 3] = UInt8(newPsot & 0xFF)
+
+        bytes.append(0xFF)
+        bytes.append(0xD9)
+        return Data(bytes)
+    }
+
+    /// v5.37 PSNR-per-byte recovery — constrained coefficient-sum-based
+    /// R-D selection that respects the JPEG 2000 wavelet reconstruction
+    /// dependency chain.
+    ///
+    /// The naive R-D selector (`truncateByRDOptimized`) ranks all
+    /// non-LL packets by per-byte L2-norm² weight and greedily
+    /// includes them. On real medical fixtures it regressed PSNR by
+    /// 1-2 dB because dropping intermediate-resolution packets
+    /// (e.g. retaining only res-5 detail to maximize per-byte slope)
+    /// breaks the hierarchical inverse-DWT — each level's synthesis
+    /// consumes the previous LL plus that level's detail bands.
+    ///
+    /// This method enforces the dependency floor explicitly:
+    ///   1. **Always** include all packets at resolution
+    ///      `< maxResolution` (LL + every intermediate detail level).
+    ///      These form the LRCP-prefix dependency floor; dropping any
+    ///      breaks downstream synthesis.
+    ///   2. **Greedily** select highest-resolution packets ranked by
+    ///      `distortionContribution / bytes` (the actual coefficient-
+    ///      sum × subband L2-norm² weight populated by
+    ///      `generateMultiPrecinctTileData`). Tie-break by smaller
+    ///      bytes (cheaper to include).
+    ///   3. Unselected highest-resolution packets are emitted as
+    ///      1-byte empty packets, preserving LRCP order so the
+    ///      decoder reads through them without parsing failure.
+    ///
+    /// Falls back to `truncateAtPacketBoundary` when:
+    ///   - No metadata is present (legacy codestreams).
+    ///   - Distortion contributions are all zero (suggests an
+    ///     unpopulated path; LRCP-prefix is safer than zero-ranked
+    ///     greedy selection).
+    ///   - The mandatory floor (LL + intermediate-res packets +
+    ///     1-byte stubs for highest-res) already exceeds the cap;
+    ///     the LRCP-prefix truncator is the only viable strategy
+    ///     when the floor doesn't fit.
+    ///
+    /// Output is byte-bounded ≤ `targetBytes`. Same Psot rewrite +
+    /// EOC append as `truncateAtPacketBoundary`.
+    static func truncateByConstrainedRD(
+        _ encoded: EncodedCodestreamWithIndex,
+        targetBytes: Int
+    ) -> Data {
+        guard let metadata = encoded.packetMetadata,
+              metadata.count == encoded.packetEndOffsets.count
+        else {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+        if encoded.data.count <= targetBytes {
+            return encoded.data
+        }
+        guard let maxRes = metadata.map(\.resolution).max(), maxRes > 0 else {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+
+        let headerBytes = encoded.tileDataOffset
+        let eocBytes = 2
+        let availableForPackets = targetBytes - headerBytes - eocBytes
+        if availableForPackets < metadata.count {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+
+        // Floor: always include every packet at resolution < maxRes.
+        // Highest-resolution packets start as 1-byte empty stubs, then
+        // upgrade to full bytes via greedy R-D selection if budget
+        // permits.
+        var includedSet = Set<Int>()
+        var floorBytes = 0
+        var topResIdx: [Int] = []
+        topResIdx.reserveCapacity(metadata.count)
+        for (i, pm) in metadata.enumerated() {
+            if pm.resolution < maxRes {
+                includedSet.insert(i)
+                floorBytes += pm.bytes
+            } else {
+                topResIdx.append(i)
+            }
+        }
+        // Each top-res packet costs at least 1 byte (the empty stub).
+        var totalBytes = floorBytes + topResIdx.count
+        if totalBytes > availableForPackets {
+            // Even the dependency floor + 1-byte stubs overflows. Fall
+            // back to LRCP-prefix truncation, which will at least
+            // honour the cap by dropping later packets entirely.
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+
+        // Verify the distortion field has been populated. If every
+        // top-res packet has 0 distortion, R-D ranking is meaningless
+        // and we should defer to LRCP-prefix.
+        let totalTopDistortion = topResIdx.reduce(0.0) {
+            $0 + metadata[$1].distortionContribution
+        }
+        if totalTopDistortion <= 0 {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+
+        struct TopRank { let idx: Int; let slope: Double; let bytes: Int }
+        var ranked: [TopRank] = []
+        ranked.reserveCapacity(topResIdx.count)
+        for i in topResIdx {
+            let pm = metadata[i]
+            // Per-byte distortion saved by including this packet vs
+            // emitting a 1-byte stub. Use (bytes - 1) as the marginal
+            // cost of upgrading from stub to full packet.
+            let netCost = max(1, pm.bytes - 1)
+            let slope = pm.distortionContribution / Double(netCost)
+            ranked.append(TopRank(idx: i, slope: slope, bytes: pm.bytes))
+        }
+        ranked.sort { lhs, rhs in
+            if lhs.slope != rhs.slope { return lhs.slope > rhs.slope }
+            return lhs.bytes < rhs.bytes
+        }
+
+        for entry in ranked {
+            // Upgrading a stub (1 byte) to full = (bytes - 1) extra.
+            let netCost = entry.bytes - 1
+            if totalBytes + netCost <= availableForPackets {
+                includedSet.insert(entry.idx)
+                totalBytes += netCost
+            }
+        }
+
+        // Build new tile data. For each packet (in original LRCP
+        // order): emit full bytes if included, else a 1-byte 0x00
+        // empty packet.
+        var newTile = [UInt8]()
+        newTile.reserveCapacity(totalBytes)
+        var prev = encoded.tileDataOffset
+        for (i, end) in encoded.packetEndOffsets.enumerated() {
+            if includedSet.contains(i) {
+                newTile.append(contentsOf: encoded.data[prev..<end])
+            } else {
+                newTile.append(0x00)
+            }
+            prev = end
+        }
+
+        let newPsot = UInt32(2 + 2 + 8 + 2 + newTile.count)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(headerBytes + newTile.count + eocBytes)
+        bytes.append(contentsOf: encoded.data.prefix(headerBytes))
+        bytes.append(contentsOf: newTile)
+
         let psotOffset = encoded.sotMarkerOffset + 6
         bytes[psotOffset]     = UInt8((newPsot >> 24) & 0xFF)
         bytes[psotOffset + 1] = UInt8((newPsot >> 16) & 0xFF)

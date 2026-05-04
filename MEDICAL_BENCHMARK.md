@@ -567,24 +567,100 @@ default has been reverted to LRCP-prefix truncation; the R-D method is
 preserved for v5.37+ work that uses **actual block coefficient sums** and
 respects the hierarchical synthesis dependency.
 
+### v5.37 constrained-R-D selector — what worked, what didn't, why it stays parked
+
+Following the negative resolution-weight result, the next attempt
+implemented exactly what the takeaway prescribed:
+`EncoderPipeline.truncateByConstrainedRD`. The selector keeps the
+**LRCP-prefix dependency floor** (LL + every intermediate-resolution
+packet) intact unconditionally, then runs greedy R-D selection on
+highest-resolution precincts only, ranked by **actual coefficient sums**:
+
+```
+slope = (Σ_blocks coefficientSquaredSum × L2norm²[orient][dwtLevel]) / (bytes - 1)
+```
+
+Per-packet `distortionContribution` is populated at packet emission time
+in `generateMultiPrecinctTileData` and threaded through
+`PacketRDMetadata`. Unselected highest-resolution packets are emitted as
+1-byte empty-flag stubs, preserving LRCP order.
+
+**Standalone benchmark** (multi-precinct codestream at qstep large enough
+to overshoot ~3-5×, where the truncator has real selection power):
+
+| Fixture | bpp | LRCP-prefix | Constrained-RD | Δ |
+|---|---:|---:|---:|---:|
+| px_001 | 4.0 | 14.58 | 14.68 | **+0.11 dB** |
+| dx_002 | 4.0 | 15.22 | 15.61 | **+0.39 dB** |
+| px_001 | 2.0 | (skipped) | (skipped) | LRCP prefix > cap → both fall back |
+| dx_002 | 2.0 | (skipped) | (skipped) | LRCP prefix > cap → both fall back |
+
+The selector ranks packets correctly: at 4 bpp it preserves
+high-distortion top-resolution precincts and drops low-distortion ones,
+adding measurable PSNR for the same byte budget. At 2 bpp on 16-bit
+medical fixtures the LRCP prefix alone (LL + res 1-4) exceeds the byte
+cap at any qstep, so the dependency floor doesn't fit and the truncator
+falls back identically to `truncateAtPacketBoundary`.
+
+**Wired into strict mode** (full `J2KEncoder.encode(.constantBitrate)`
+flow), the picture is different. Strict mode runs a qstep search that
+deliberately lands at or marginally above the cap to minimise truncation
+loss, so the truncator sees little or no overshoot at any operating
+point — leaving R-D nothing to choose:
+
+| Fixture | bpp | LRCP bytes / PSNR | Constrained-RD bytes / PSNR | Δ PSNR |
+|---|---:|---:|---:|---:|
+| px_001 | 0.25 | 94327 / 12.25 | 94327 / 12.25 | **+0.00** (undershoot) |
+| px_001 | 0.50 | 201121 / 12.55 | 201121 / 12.55 | +0.00 (undershoot) |
+| px_001 | 1.00 | 375007 / 12.87 | 375007 / 12.87 | +0.00 (undershoot) |
+| px_001 | 2.00 | 764561 / 13.69 | 764561 / 13.69 | **+0.00** (undershoot) |
+| px_001 | 4.00 | 1540231 / 14.28 | 1617736 / 14.36 | **+0.08** |
+| dx_002 | 2.00 | 1601181 / 14.57 | 1601181 / 14.57 | **+0.00** (margin too thin) |
+| dx_002 | 4.00 | 3189551 / 14.86 | 3160921 / 15.05 | **+0.19** |
+
+(Mode-flow numbers via `swift test --filter testStrictModeRDBenchmark_PostMultiPrecinct`
+with the wire-in temporarily enabled, then reverted.)
+
+**Outcome**: constrained R-D is strictly **neutral or improving** at
+every measured operating point — no regression — but the user gate
+(*"improve PSNR at 2 bpp AND 4 bpp"*) is not met because at low bpp
+strict-mode's qstep search produces undershoots and the truncator
+returns the codestream unchanged. R-D adds value only where truncation
+work is happening, and for that to occur at low bpp the encoder needs
+to deliberately overshoot more than it currently does.
+
+**Decision**: keep `truncateByConstrainedRD` as preserved infrastructure
+in `EncoderPipeline`. Strict-mode default stays on
+`truncateAtPacketBoundary`. The standalone test
+`testConstrainedRDSelectorVsLRCPPrefix` documents the standalone gain
+on real medical fixtures so the result is reproducible. Future v5.38+
+work pairing the R-D selector with a deliberately-overshooting qstep
+choice (so the truncator has selection power even at 2 bpp) is the
+natural follow-up — promote the wire-in once that pairing is in place
+and clears both gate points.
+
 ### v5.37 priority list (post-budget-fill)
 
 In order of expected PSNR-per-byte impact:
 
-1. **Smarter packet selection under hard cap** — replace LRCP-stream truncation
-   with R-D-aware truncation: rank packets by distortion-saved-per-byte (using
-   `block.coefficientSquaredSum × subband_weight`), greedy-include in slope order
-   until the cap is hit, emit unselected packets as empty bits. Same byte budget,
-   different content retained — high-frequency detail packets stay in.
+1. ~~**Smarter packet selection under hard cap**~~ **Constrained R-D shipped as
+   infrastructure (v5.37). Wire-in deferred** — the selector beats LRCP-prefix
+   on the standalone benchmark (+0.11–0.39 dB at 4 bpp on px_001 / dx_002) but
+   is neutral under the full strict-mode flow because strict mode's qstep
+   search lands at or under the cap, leaving the truncator no overshoot to
+   work with. Promotion gated on priority 3 below pairing it with deliberate
+   small-overshoot qstep selection.
 
-2. **High-frequency preservation under strict truncation** — at small caps the
-   selector should still keep the LL band (otherwise reconstruction collapses to
-   noise); a guaranteed-LL floor + R-D selection over the rest.
+2. **High-frequency preservation under strict truncation** — handled by
+   `truncateByConstrainedRD`'s LRCP-prefix dependency floor: LL + every
+   intermediate resolution is mandatory; only highest-resolution precincts
+   are dropped under cap pressure.
 
-3. **Smarter qstep under hard cap** — currently the search picks the qstep that
-   maximises overshoot then truncates. Better: pick a qstep that tracks
-   `cap × ~1.05` (slight overshoot) so truncation drops only 5% of bytes. Less
-   waste of high-quality bytes.
+3. **Smarter qstep under hard cap** — current search prefers tiny overshoot
+   then truncates. Better: deliberately pick a qstep producing
+   `cap × 1.10–1.30` (~10-30% overshoot) so the constrained-R-D selector has
+   real choice between which highest-resolution precincts to retain. With
+   this pairing the v5.37 constrained-R-D wire-in becomes the obvious win.
 
 4. **Quality-floor / warning policy** — when strict mode produces output with
    PSNR or fill-ratio below a threshold, populate a warning in

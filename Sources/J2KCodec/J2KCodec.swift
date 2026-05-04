@@ -571,25 +571,36 @@ public struct J2KEncoder: Sendable {
 
         // Apply the strict cap via packet-boundary truncation.
         let capBytes = Int(cap.rounded(.down))
-        // v5.37 NOTE: tried R-D-aware packet selection
-        // (truncateByRDOptimized) here based on the hypothesis that
-        // ranking packets by L2-norm² / bytes — i.e., favouring
-        // high-resolution detail packets — would yield higher PSNR
-        // for the same byte budget. It DID NOT: PSNR regressed 1-2
-        // dB across all bpp targets on real medical fixtures
-        // because JPEG 2000 wavelet reconstruction is hierarchical.
-        // Each level's inverse DWT consumes the previous level's LL
-        // synthesised from LL + lower-frequency detail. Skipping
-        // intermediate-resolution packets (e.g., dropping res 2-3 to
-        // make room for more res 5) leaves a reconstruction with
-        // missing mid-frequency content; the visible result is
-        // worse than the LRCP-prefix that the trivial truncator
-        // produces. The R-D method is preserved as
-        // `truncateByRDOptimized` for future work that uses
-        // **actual coefficient sums** rather than the per-resolution
-        // weight heuristic, but the strict-mode default stays on
-        // LRCP-prefix truncation. See MEDICAL_BENCHMARK.md "v5.37
-        // R-D selection — what didn't work".
+        // v5.37 R-D evolution — current state: TWO infrastructures
+        // exist, neither yet wired into the default.
+        //
+        //   1. `truncateByRDOptimized` (NEGATIVE) — ranks non-LL
+        //      packets by per-byte L2-norm² weight (resolution-only
+        //      heuristic, no coefficient data). Regressed PSNR 1-2
+        //      dB across the corpus by greedily favouring highest-
+        //      resolution detail and dropping intermediate resolutions,
+        //      breaking the wavelet synthesis chain.
+        //
+        //   2. `truncateByConstrainedRD` (NEW) — keeps the LRCP
+        //      dependency floor (LL + every intermediate resolution)
+        //      intact, runs greedy R-D selection on highest-resolution
+        //      precincts only using the ACTUAL `coefficientSquaredSum
+        //      × L2norm²` populated per packet at emission time.
+        //      Standalone benchmark on raw multi-precinct codestreams:
+        //      px_001 @ 4 bpp +0.11 dB, dx_002 @ 4 bpp +0.39 dB. But:
+        //      under the FULL strict-mode flow (which uses qstep
+        //      search to land within or marginally over the cap), the
+        //      truncator sees no overshoot at low bpp on 16-bit
+        //      medical fixtures, so R-D falls back identically to
+        //      LRCP-prefix. Net under strict-mode flow: +0 dB at 2
+        //      bpp, +0.08 dB at px_001 4 bpp, +0.19 dB at dx_002 4
+        //      bpp. Doesn't satisfy the "improve at 2 bpp AND 4 bpp"
+        //      gate — keep LRCP-prefix as the strict-mode default.
+        //
+        // Both infrastructures stay in-source for future work pairing
+        // R-D selection with deliberately-overshooting qstep choice
+        // (so the truncator has real selection power even at low bpp).
+        // See MEDICAL_BENCHMARK.md "v5.37 constrained-R-D".
         let finalData = EncoderPipeline.truncateAtPacketBoundary(
             indexed, targetBytes: capBytes
         )
