@@ -82,9 +82,12 @@ final class J2KStrictCrossCodecValidationTests: XCTestCase {
     }
 
     /// Reality check: strict-mode truncated codestreams must decode in
-    /// reference codecs (OpenJPEG, OpenJPH). v5.34 claims premature-EOC
-    /// is universally legal per ISO 15444-1 Annex B; this is the
-    /// cross-codec sanity check that backs the claim.
+    /// reference codecs (OpenJPEG, OpenJPH, Grok). v5.34 claims
+    /// premature-EOC is universally legal per ISO 15444-1 Annex B;
+    /// this is the cross-codec sanity check that backs the claim.
+    /// v5.35.0 expanded the validation set to include Grok
+    /// (libgrokj2k v20.3.0) — a third independent JPEG 2000
+    /// implementation with its own HT (Part 15) support.
     func testStrictTruncatedDecodesInOpenJPEGAndOpenJPH() async throws {
         guard let img = try loadPGM("px_study_001_instance_000001.pgm") else {
             throw XCTSkip("px_001 fixture not found")
@@ -121,9 +124,91 @@ final class J2KStrictCrossCodecValidationTests: XCTestCase {
         XCTAssertEqual(ojphResult.exit, 0,
             "OpenJPH ojph_expand failed on strict-truncated codestream: \(ojphResult.stderr)")
 
+        // Grok decode (third independent codec, libgrokj2k v20.3.0)
+        let grkOut = tmpDir.appendingPathComponent("strict_px_001_grk.pgm")
+        let grkResult = runDecoder("grk_decompress", args: [
+            "-i", inputURL.path, "-o", grkOut.path
+        ])
+        defer { try? FileManager.default.removeItem(at: grkOut) }
+        XCTAssertEqual(grkResult.exit, 0,
+            "Grok grk_decompress failed on strict-truncated codestream: \(grkResult.stderr)")
+
         print("=== Cross-codec strict-truncated decode ===")
         print("Input: px_001 @ 0.5 bpp strict, \(encoded.count) bytes")
         print("opj_decompress exit \(opjResult.exit)")
         print("ojph_expand exit \(ojphResult.exit)")
+        print("grk_decompress exit \(grkResult.exit)")
+    }
+
+    /// DICOM Pixel Data round-trip: a JPEG 2000-compressed DICOM image
+    /// stores the codestream inside a Pixel Data sequence — each frame
+    /// is an item with the byte format `[FFFE E000][LL LL LL LL][raw J2K
+    /// codestream]`. The codestream travels verbatim; the decapsulator
+    /// reads `length` bytes after the item tag and feeds them to a
+    /// JPEG 2000 decoder.
+    ///
+    /// This test simulates that round-trip without a full DICOM stack:
+    /// (1) encode → (2) wrap in synthetic DICOM Pixel Data item bytes →
+    /// (3) parse the item back out → (4) decode the unwrapped codestream
+    /// in J2KSwift and OpenJPEG. Validates that the strict codestream
+    /// is byte-clean for DICOM Transfer Syntax UID 1.2.840.10008.1.2.4.90
+    /// (JPEG 2000 Image Compression).
+    func testStrictCodestreamSurvivesDICOMPixelDataRoundTrip() async throws {
+        guard let img = try loadPGM("ct_study_001_instance_000001.pgm") else {
+            throw XCTSkip("ct_001 fixture not found")
+        }
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: true,
+            useReversibleFilter: false,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .constantBitrateStrict(
+            bitsPerPixel: 1.0, maxOvershootRatio: 1.0, maxPasses: 3)
+        let codestream = try await J2KEncoder(encodingConfiguration: cfg).encode(img)
+
+        // Wrap: DICOM Pixel Data item = tag (FFFE E000) + length (4 BE) + bytes.
+        // DICOM uses little-endian for the item tag/length per the standard
+        // explicit-VR transfer syntaxes; pad to even length per DICOM.
+        var wrapped = Data()
+        wrapped.append(contentsOf: [0xFE, 0xFF, 0x00, 0xE0]) // Item tag (little-endian)
+        let paddedLen = (codestream.count + 1) & ~1  // round up to even
+        let len = UInt32(paddedLen)
+        wrapped.append(UInt8(len & 0xFF))
+        wrapped.append(UInt8((len >> 8) & 0xFF))
+        wrapped.append(UInt8((len >> 16) & 0xFF))
+        wrapped.append(UInt8((len >> 24) & 0xFF))
+        wrapped.append(codestream)
+        if codestream.count != paddedLen {
+            wrapped.append(0x00)  // pad byte
+        }
+        print("DICOM wrap: codestream=\(codestream.count) bytes; item=\(wrapped.count) bytes (tag+len+data+pad)")
+
+        // Unwrap: skip 8-byte header, read `len` bytes, strip trailing pad.
+        let itemTag = (UInt32(wrapped[0]) | (UInt32(wrapped[1]) << 8) | (UInt32(wrapped[2]) << 16) | (UInt32(wrapped[3]) << 24))
+        XCTAssertEqual(itemTag, 0xE000FFFE, "DICOM item tag must be FFFE E000")
+        let unwrappedLen = (UInt32(wrapped[4]) | (UInt32(wrapped[5]) << 8) | (UInt32(wrapped[6]) << 16) | (UInt32(wrapped[7]) << 24))
+        XCTAssertEqual(Int(unwrappedLen), paddedLen)
+        let unwrapped = wrapped.subdata(in: 8..<(8 + codestream.count))
+        XCTAssertEqual(unwrapped, codestream,
+            "DICOM unwrap must return byte-identical codestream")
+
+        // Decode the unwrapped codestream — J2KSwift
+        let decoded = try await J2KDecoder().decode(unwrapped)
+        XCTAssertEqual(decoded.width, img.width)
+        XCTAssertEqual(decoded.height, img.height)
+
+        // Also validate via OpenJPEG (independent codec on the unwrapped bytes)
+        let tmpDir = FileManager.default.temporaryDirectory
+        let unwrappedURL = tmpDir.appendingPathComponent("dicom_unwrapped.j2k")
+        try unwrapped.write(to: unwrappedURL)
+        defer { try? FileManager.default.removeItem(at: unwrappedURL) }
+        let opjOut = tmpDir.appendingPathComponent("dicom_unwrapped.pgm")
+        defer { try? FileManager.default.removeItem(at: opjOut) }
+        let opjResult = runDecoder("opj_decompress", args: [
+            "-i", unwrappedURL.path, "-o", opjOut.path
+        ])
+        XCTAssertEqual(opjResult.exit, 0,
+            "OpenJPEG must decode DICOM-unwrapped strict codestream: \(opjResult.stderr)")
     }
 }

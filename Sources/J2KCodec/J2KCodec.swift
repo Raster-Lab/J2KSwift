@@ -562,6 +562,10 @@ public struct J2KEncoder: Sendable {
 
         let achievedBpp = Double(finalData.count * 8) / Double(totalSamples)
         let achievedRatio = Double(finalData.count) / targetBytes
+        // budgetFillRatio = achievedBytes / cap. 1.0 = at cap; 0.5 =
+        // half the budget left unused. v5.34 lands at 0.3-0.6 on flat-
+        // curve; v5.35's multi-layer strict mode targets 0.85+.
+        let fillRatio = cap > 0 ? Double(finalData.count) / cap : nil
         let stats = J2KEncodeQstepStats(
             iterations: passes,
             initialQstep: initialQstep,
@@ -570,7 +574,8 @@ public struct J2KEncoder: Sendable {
             targetBpp: targetBpp,
             cacheHit: cacheHit,
             convergedWithinTolerance:
-                achievedRatio <= maxOvershootRatio && achievedRatio >= 0.5)
+                achievedRatio <= maxOvershootRatio && achievedRatio >= 0.5,
+            budgetFillRatio: fillRatio)
         return (finalData, stats)
     }
 

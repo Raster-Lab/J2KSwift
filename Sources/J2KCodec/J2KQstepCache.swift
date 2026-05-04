@@ -113,4 +113,41 @@ public struct J2KEncodeQstepStats: Sendable {
     /// because `maxIterations` was exhausted or the bracket narrowed
     /// below the tolerance limit (16-bit content with low α).
     public let convergedWithinTolerance: Bool
+
+    /// v5.35.0 — fraction of the byte cap that the final output uses,
+    /// for strict bounded-rate mode. Defined as `achievedBytes /
+    /// (maxOvershootRatio × targetBytes)`. 1.0 means "exactly at cap";
+    /// 0.5 means "used half the cap, the rest could in principle have
+    /// been spent on quality".
+    ///
+    /// `nil` for non-strict modes (the metric is only meaningful when
+    /// there's a hard cap to fill against).
+    ///
+    /// On flat-curve high-bit-depth content (large fixtures at low
+    /// bpp) v5.34's strict mode lands at 0.3-0.6 because LRCP packet
+    /// truncation is coarse — large highest-resolution packets either
+    /// fit whole or get dropped. v5.35's multi-layer truncation
+    /// targets 0.85+ on the same workloads. Track this metric to
+    /// monitor the recovery.
+    public let budgetFillRatio: Double?
+
+    public init(
+        iterations: Int,
+        initialQstep: Double,
+        convergedQstep: Double,
+        achievedBpp: Double,
+        targetBpp: Double,
+        cacheHit: Bool,
+        convergedWithinTolerance: Bool,
+        budgetFillRatio: Double? = nil
+    ) {
+        self.iterations = iterations
+        self.initialQstep = initialQstep
+        self.convergedQstep = convergedQstep
+        self.achievedBpp = achievedBpp
+        self.targetBpp = targetBpp
+        self.cacheHit = cacheHit
+        self.convergedWithinTolerance = convergedWithinTolerance
+        self.budgetFillRatio = budgetFillRatio
+    }
 }
