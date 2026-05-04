@@ -5,6 +5,62 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.23.0] — 2026-05-04
+
+**GPU 9/7 lossy decode performance characterisation**
+
+v5.20.0–v5.22.0 fixed the GPU 9/7 IDWT correctness bug and locked
+in cross-module wavelet-convention agreement. v5.23.0 measures
+what the corrected GPU IDWT path actually delivers in release
+mode with session reuse, and ratifies the result honestly.
+
+### Headline measurement
+
+Release mode, M2, 1024×1024 16-bit lossy 9/7 @ 2 bpp, n=5 medians,
+4 sampled runs:
+
+- CPU `J2KDecoder.decode`: ~26 ms (consistent across runs)
+- GPU `decodeWithGPUHT(_:session:)`: ~17–24 ms (variance is real)
+- Speedup range: 0.99×–1.54×, median ~1.4–1.5×
+
+The ceiling is modest because `decodeWithGPUHT` only puts IDWT +
+colour transform + quantisation on the GPU; HT entropy decoding
+still runs on the CPU and dominates the wall clock at typical
+block sizes. The bigger architectural lever — GPU HT entropy
+decoding — is in flight on the `gpu-ht-phase3` branch and not part
+of this release.
+
+### Added
+
+- `Tests/J2KMetalTests/J2KGPULossy97PerformanceTests.swift` —
+  `testWarmSessionGPUSpeedupVsCPU` measurement gate. Encodes a
+  1024×1024 16-bit synthetic image once at 2 bpp HT-conformant
+  lossy 9/7, then times CPU and GPU-HT decode paths with a shared
+  `J2KMetalSession` (5 calls each, after warm-up). Prints medians,
+  per-call vector, and speedup ratio.
+
+### Design choice — measurement gate, not perf assertion
+
+The benchmark deliberately does NOT assert a specific speedup
+threshold. Sampled 4× on the same hardware, a `gpuMedian < cpuMedian`
+assertion flaked ~1-in-4 because the two paths land within noise
+on tight runs. Asserting any ratio would amplify that flake rate.
+The test prints the numbers; correctness is already covered by
+the v5.20–v5.22 audit suite. Future trend tracking and CI review
+read the printed line.
+
+### Verified
+
+- New benchmark passes in release mode.
+- All v5.14–v5.22 regression gates remain green.
+
+### Lesson
+
+Every speedup claim should be accompanied by the measured range
+and the next architectural lever, not a marketing number from a
+single favourable run. The bigger 9/7 lossy win is real and coming
+on `gpu-ht-phase3`; this release tells the truth about today.
+
 ## [5.22.0] — 2026-05-04
 
 **Conformance Audit — wavelet convention agreement across all modules**
