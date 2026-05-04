@@ -5,6 +5,59 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.21.0] — 2026-05-04
+
+**GPU 9/7 lossy IDWT scaling fix — root-cause + permanent removal of v5.20.0 gate**
+
+v5.20.0 caught the GPU 9/7 lossy decode defect (max ~45000 LSB
+error in 16-bit) and gated it off. v5.21.0 root-causes the bug as
+a scaling-direction inversion in J2KMetal vs the ISO/IEC 15444-1
+spec convention used by J2KCodec.
+
+Per spec: forward `lowpass /= K, highpass *= K`. Inverse undoes
+with `lowpass *= K, highpass /= K`. J2KMetal had it inverted in
+both forward and inverse, both CPU reference and GPU kernels —
+self-consistent (round-tripping within J2KMetal worked) but
+producing K⁴ ≈ 2.29× scaling error when the J2KCodec encoder fed
+codestreams to the J2KMetal IDWT.
+
+### Fixed
+
+- `Sources/J2KMetal/J2KShaders.metal` — swap scaling direction in
+  forward and inverse 9/7 horizontal + vertical kernels.
+- `Sources/J2KMetal/J2KMetalShaderLibrary.swift` — same swap in
+  the embedded source-compile fallback.
+- `Sources/J2KMetal/J2KMetalDWT.swift:forward1DCPU97` and
+  `inverse1DCPU97` — same swap in the CPU reference.
+- `Sources/J2KMetal/default.metallib` — recompiled.
+- `Sources/J2KCodec/J2KDecoderPipeline.swift:applyInverseWaveletTransformGPU` —
+  removed the v5.20.0 force-CPU gate; GPU IDWT for 9/7 is active again.
+
+### Verified
+
+- `J2KGPULossy97DivergenceTests` — max diff 0 → 1 LSB at 16-bit
+  (Float-precision residual; PSNR ≈ 96 dB GPU vs CPU). Test
+  threshold relaxed from `== 0` to `≤ 4 LSB`.
+- New `J2KMetalSingleLevel97Tests.testSingleLevelRoundTrip` — direct
+  CPU vs GPU 9/7 IDWT on a synthetic input; max diff < 1.0 (observed
+  ~4e-6, pure Float precision).
+- All v5.14-v5.20 regression gates remain green.
+- 0.87% of pixels differ on real 2800×2288 16-bit DX content; max
+  diff 1 LSB, avg 0.0087 LSB.
+
+### Performance
+
+- CLI per-call speedup: 1.26× (Metal startup dominates).
+- Estimated 3-5× per-image speedup in warm-session batch workflows.
+
+### Lesson
+
+Same shape as v5.20.0's bisection finding: in-house modules that are
+self-consistent but spec-divergent are invisible to internal
+round-trip tests. Only cross-boundary tests (J2KCodec encode →
+J2KMetal decode) caught the bug. v5.20.0 added the gate, v5.21.0
+landed the actual fix.
+
 ## [5.20.0] — 2026-05-04
 
 **GPU 9/7 lossy decode correctness fix (medical-grade critical)**

@@ -534,9 +534,10 @@ enum J2KMetalShaderSource {
             lowpass[lBase + i] += delta * (dLeft + dRight);
         }
 
-        // Step 6: Scale
-        for (uint i = 0; i < halfWidth; i++) { lowpass[lBase + i] *= K; }
-        for (uint i = 0; i < halfWidthH; i++) { highpass[hBase + i] /= K; }
+        // Step 6: Scale (ISO/IEC 15444-1 Annex F.4.1.1)
+        // v5.21.0 fix: lowpass /= K, highpass *= K (was inverted pre-v5.21).
+        for (uint i = 0; i < halfWidth; i++) { lowpass[lBase + i] /= K; }
+        for (uint i = 0; i < halfWidthH; i++) { highpass[hBase + i] *= K; }
     }
 
     // MARK: - Forward 9/7 Irreversible DWT (Vertical)
@@ -590,9 +591,10 @@ enum J2KMetalShaderSource {
             lowpass[i * width + col] += delta * (dTop + dBot);
         }
 
-        // Step 6: Scale
-        for (uint i = 0; i < halfHeight; i++) { lowpass[i * width + col] *= K; }
-        for (uint i = 0; i < halfHeightH; i++) { highpass[i * width + col] /= K; }
+        // Step 6: Scale (ISO/IEC 15444-1 Annex F.4.1.1)
+        // v5.21.0 fix: lowpass /= K, highpass *= K (was inverted pre-v5.21).
+        for (uint i = 0; i < halfHeight; i++) { lowpass[i * width + col] /= K; }
+        for (uint i = 0; i < halfHeightH; i++) { highpass[i * width + col] *= K; }
     }
 
     // MARK: - Inverse 9/7 Irreversible DWT (Horizontal)
@@ -620,13 +622,17 @@ enum J2KMetalShaderSource {
         uint lBase = row * halfWidth;
         uint hBase = row * halfWidthH;
 
-        // Use output buffer as scratch for even/odd reconstruction
-        // First copy and undo scaling
+        // Use output buffer as scratch for even/odd reconstruction.
+        // Undo scaling — inverse of forward step 6 (which divides
+        // lowpass by K and multiplies highpass by K per ISO/IEC
+        // 15444-1 Annex F.4.1.1). v5.21.0 fix: pre-v5.21 the GPU
+        // had both forward and inverse scaling inverted vs spec —
+        // self-consistent but incompatible with CPU-encoded output.
         for (uint i = 0; i < halfWidth; i++) {
-            output[row * width + 2 * i] = lowpassIn[lBase + i] / K;
+            output[row * width + 2 * i] = lowpassIn[lBase + i] * K;
         }
         for (uint i = 0; i < halfWidthH; i++) {
-            output[row * width + 2 * i + 1] = highpassIn[hBase + i] * K;
+            output[row * width + 2 * i + 1] = highpassIn[hBase + i] / K;
         }
 
         // We need even/odd arrays for lifting; re-extract them from output
@@ -684,12 +690,14 @@ enum J2KMetalShaderSource {
         const float delta =  0.443506852f;
         const float K     =  1.230174105f;
 
-        // Undo scaling and interleave into output
+        // Undo scaling and interleave into output. v5.21.0 fix:
+        // see horizontal-inverse comment above; pre-v5.21 had both
+        // forward and inverse scaling inverted vs ISO/IEC 15444-1.
         for (uint i = 0; i < halfHeight; i++) {
-            output[(2 * i) * width + col] = lowpassIn[i * width + col] / K;
+            output[(2 * i) * width + col] = lowpassIn[i * width + col] * K;
         }
         for (uint i = 0; i < halfHeightH; i++) {
-            output[(2 * i + 1) * width + col] = highpassIn[i * width + col] * K;
+            output[(2 * i + 1) * width + col] = highpassIn[i * width + col] / K;
         }
 
         // Undo update 2

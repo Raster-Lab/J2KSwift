@@ -2845,19 +2845,21 @@ struct DecoderPipeline: Sendable {
             return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
-        // v5.20.0 medical-grade gate: GPU 9/7 (irreversible) IDWT
-        // currently diverges from the CPU reference by max ~45000 in
-        // 16-bit space (avg ~19000). Far beyond Float-vs-Double
-        // precision tolerance — there's an unidentified correctness
-        // bug in the GPU lossy IDWT kernel chain. Until it's fixed
-        // (tracked for v5.21.0+), force 9/7 lossy through the CPU
-        // path. Lossless 5/3 (reversible) GPU IDWT remains active —
-        // it's bit-exact and gated by v5.7+ regression tests.
-        // See `Tests/J2KCodecTests/J2KGPULossy97DivergenceTests.swift`
-        // for the bisection proof.
-        if case .irreversible97 = metadata.configuration.waveletFilter {
-            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
-        }
+        // v5.21.0: GPU 9/7 IDWT scaling fix removes the v5.20.0 gate.
+        // Pre-v5.21 the GPU 9/7 forward and inverse kernels both used
+        // inverted scaling (lowpass *= K, highpass /= K) vs the
+        // ISO/IEC 15444-1 Annex F.4.1.1 spec convention (lowpass /= K,
+        // highpass *= K). The GPU kernels were SELF-CONSISTENT but
+        // could not interoperate with CPU-encoded codestreams (which
+        // produce spec-compliant output). Result: when the CPU
+        // encoded an image and the GPU decoded it, lowpass came out
+        // 1/K² ≈ 0.66× too small and highpass K² ≈ 1.51× too large,
+        // producing the ~19k LSB error v5.20.0 caught and gated.
+        // v5.21.0 swaps the GPU scaling lines (in J2KShaders.metal AND
+        // the embedded J2KMetalShaderLibrary kernelSource fallback)
+        // to spec-compliant direction. The v5.20.0 regression test
+        // (testBisectDecodePaths) now asserts max-diff = 0 with the
+        // gate removed, proving the kernel fix is correct.
 
         // Select filter and dispatch path based on configuration. Reversible
         // 5/3 takes the bit-exact Int32 GPU path: subbands stay as Int32

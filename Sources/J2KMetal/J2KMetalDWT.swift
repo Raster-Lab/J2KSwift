@@ -1420,9 +1420,12 @@ public actor J2KMetalDWT {
             even[i] += delta * (left + right)
         }
 
-        // Scaling
-        for i in 0..<halfN { even[i] *= K }
-        for i in 0..<halfH { odd[i] /= K }
+        // Scaling (ISO/IEC 15444-1 Annex F.4.1.1)
+        // v5.21.0 fix: lowpass /= K, highpass *= K. Pre-v5.21 had
+        // this inverted, matching the equally-inverted GPU forward
+        // and inverse — self-consistent but spec-violating.
+        for i in 0..<halfN { even[i] /= K }
+        for i in 0..<halfH { odd[i] *= K }
 
         return (lowpass: even, highpass: odd)
     }
@@ -1545,8 +1548,16 @@ public actor J2KMetalDWT {
         let gamma: Float = 0.882911075
         let delta: Float = 0.443506852
 
-        var even = lowpass.map { $0 / K }
-        var odd  = highpass.map { $0 * K }
+        // v5.21.0 fix: undo the J2KCodec encoder's spec-compliant
+        // forward scaling (lowpass /= K, highpass *= K per ISO/IEC
+        // 15444-1 Annex F.4.1.1). Pre-v5.21 J2KMetalDWT used the
+        // OPPOSITE direction here AND in the GPU kernels, so the
+        // module was self-consistent but produced K⁴-scaled
+        // garbage when paired with J2KCodec-encoded codestreams.
+        // Test: J2KGPULossy97DivergenceTests measured ~19k LSB
+        // average error in 16-bit space pre-fix.
+        var even = lowpass.map { $0 * K }
+        var odd  = highpass.map { $0 / K }
 
         // Undo update step 2
         for i in 0..<halfN {

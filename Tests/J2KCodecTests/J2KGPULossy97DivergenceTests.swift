@@ -1,23 +1,29 @@
 // J2KGPULossy97DivergenceTests.swift
-// v5.20.0 medical-grade gate — verify GPU and CPU 9/7 lossy decode
-// produce identical output.
+// v5.21.0 medical-grade gate — verify GPU and CPU 9/7 lossy decode
+// agree within Float-precision tolerance.
 //
 // Original observation (v5.20.0 investigation): GPU 9/7 lossy decode
 // diverged from CPU by max ~45000 / avg ~19000 in 16-bit space — far
 // beyond Float-vs-Double precision tolerance. Bisection confirmed the
-// bug is in GPU IDWT (decodeGPU == decodeWithGPUHT divergence;
-// decodeWithGPUHT internally calls decodeGPU's IDWT path).
+// bug was in GPU IDWT (decodeGPU == decodeWithGPUHT divergence).
 //
-// v5.20.0 fix: gate `applyInverseWaveletTransformGPU` to fall back to
-// the CPU IDWT path for `.irreversible97`. After the gate, all three
-// decode paths (decode, decodeGPU, decodeWithGPUHT) produce identical
-// output for 9/7 lossy.
+// Root cause (v5.21.0): J2KMetalDWT module's 9/7 forward and inverse
+// CPU+GPU paths used the OPPOSITE scaling direction from J2KCodec's
+// J2KDWT1D reference. ISO/IEC 15444-1 Annex F.4.1.1 specifies
+// `lowpass /= K, highpass *= K` in forward; J2KMetalDWT had it
+// inverted. The module was self-consistent — round-tripping within
+// J2KMetalDWT worked — but produced K⁴-scaled garbage when paired
+// with J2KCodec-encoded codestreams. The encoder is the canonical
+// reference; J2KMetalDWT was the outlier.
 //
-// This test asserts that the gate is in place. If a future change
-// removes the gate without fixing the underlying GPU IDWT kernel, the
-// test will fail loudly. Once the GPU IDWT bug is properly fixed,
-// the assertion threshold can be tightened to a Float-precision-
-// reasonable bound (e.g. max diff < 32 LSB at 16-bit).
+// v5.21.0 fix: swap the scaling lines in J2KMetalDWT's
+// inverse1DCPU97, forward1DCPU97, and the corresponding GPU kernels
+// in J2KShaders.metal + J2KMetalShaderLibrary's embedded source.
+//
+// Post-fix CPU vs GPU 9/7 lossy decode max abs diff ≈ 1 LSB at
+// 16-bit (Float-precision residual), avg = 0. This test asserts
+// the divergence stays within medical-grade tolerance. Pre-fix it
+// was max=45000+; post-fix it's max=1.
 
 import XCTest
 import Foundation
@@ -106,14 +112,18 @@ final class J2KGPULossy97DivergenceTests: XCTestCase {
         print("GPU-HT    vs CPU:       max=\(gpuHTVsCpu.maxDiff) avg=\(gpuHTVsCpu.sumDiff / Int64(max(1, gpuHTVsCpu.count)))")
         print("GPU-HT    vs original:  max=\(gpuHTVsOrig.maxDiff) avg=\(gpuHTVsOrig.sumDiff / Int64(max(1, gpuHTVsOrig.count)))")
 
-        // After v5.20.0's gate, GPU/GPU-HT for 9/7 lossy should fall
-        // back to CPU IDWT, producing IDENTICAL output. Strict gate:
-        // max abs diff must be 0. If a future change removes the gate
-        // without fixing the underlying GPU IDWT kernel, this test
-        // fires.
-        XCTAssertEqual(gpuVsCpu.maxDiff, 0,
-            "decodeGPU must match decode for 9/7 lossy; v5.20.0 gate forces CPU IDWT for irreversible97. Got max=\(gpuVsCpu.maxDiff).")
-        XCTAssertEqual(gpuHTVsCpu.maxDiff, 0,
-            "decodeWithGPUHT must match decode for 9/7 lossy; v5.20.0 gate forces CPU IDWT for irreversible97. Got max=\(gpuHTVsCpu.maxDiff).")
+        // After v5.21.0's scaling fix, GPU 9/7 IDWT matches the CPU
+        // reference within Float-precision tolerance. Tolerance is
+        // 4 LSB at 16-bit — observed residual is typically 1 LSB,
+        // 4 leaves headroom for Float-vs-Double precision drift on
+        // higher-decomp-level inputs. Average diff should be ≪ 1.
+        XCTAssertLessThanOrEqual(gpuVsCpu.maxDiff, 4,
+            "decodeGPU must match decode for 9/7 lossy within 4 LSB (Float-precision); got max=\(gpuVsCpu.maxDiff).")
+        XCTAssertLessThanOrEqual(gpuHTVsCpu.maxDiff, 4,
+            "decodeWithGPUHT must match decode for 9/7 lossy within 4 LSB (Float-precision); got max=\(gpuHTVsCpu.maxDiff).")
+        // Average should be essentially zero (sub-LSB).
+        let avgGpuVsCpu = Double(gpuVsCpu.sumDiff) / Double(gpuVsCpu.count)
+        XCTAssertLessThan(avgGpuVsCpu, 0.5,
+            "average GPU vs CPU diff exceeds Float-precision tolerance: \(avgGpuVsCpu)")
     }
 }
