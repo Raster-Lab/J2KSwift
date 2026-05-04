@@ -646,53 +646,60 @@ public enum J2KBitrateMode: Sendable, Equatable {
         tolerance: Double = 0.05,
         maxIterations: Int = 8)
 
-    /// v5.33.0 — production-grade quality-preserving bounded-rate
-    /// mode with **predictable latency**.
+    /// **Quality-first** bounded-rate mode (v5.33.0). Best-effort
+    /// byte cap, predictable latency, prioritises quality.
     ///
-    /// Unlike `.constantBitrateViaQstep` (which runs an 8-iteration
-    /// binary search and gives unpredictable encode latency, 5–14×
-    /// the single-shot encode time on flat-curve content), this
-    /// mode runs at most `maxPasses` encodes total — typically 1
-    /// (cache hit or good calibration prior) and at most 2 (one
-    /// corrective pass when the first overshoots).
+    /// Pick this mode for **diagnostic-grade lossy archive workflows**
+    /// (DICOM PACS, clinical reads on full-bit-depth medical) where:
+    ///   - quality must be clinical-grade (60+ dB on real medical
+    ///     fixtures at typical bpp targets);
+    ///   - the byte target is a budgeting hint, not a hard contract
+    ///     (the achieved size may exceed `bitsPerPixel × pixels / 8`
+    ///     by up to `maxOvershootRatio` on flat-curve high-bit-depth
+    ///     content, and may exceed even `maxOvershootRatio` on
+    ///     extreme cases);
+    ///   - encode latency must be predictable (3-pass hard cap by
+    ///     default — no flat-curve worst case).
     ///
-    /// **Quality-preserving**: uses the same uniform-quantisation
-    /// approach as `.constantBitrateViaQstep`, so PSNR is in the
-    /// same range when the rate target is achievable. On extreme
-    /// overshoot cases, the bound trades some PSNR for rate
-    /// adherence (typically 5-10 dB on >2× overshoot situations).
+    /// Pick `.constantBitrateStrict(bpp)` instead when the byte cap
+    /// must be a hard guarantee, even if quality drops to
+    /// preview/thumbnail tier on flat-curve content. Pick `.fixedQstep`
+    /// when latency is the dominant constraint (1 pass, no rate
+    /// guarantees). Pick `.constantBitrateViaQstep` for v5.31's
+    /// 8-pass unbounded-rate behaviour.
     ///
-    /// **Bounded rate**: caps achieved bytes at
-    /// `maxOvershootRatio × target × pixelCount / 8`. Conformant
-    /// HT cleanup-only has a structural rate floor (LL band must
-    /// encode at the chosen qstep, no within-block truncation),
-    /// so very low bpp targets on high-content fixtures may still
-    /// exceed the cap — but typically by less than 1.3× of the
-    /// cap, never the 3-7× of v5.31.0's unbounded search.
+    /// **Algorithm**: log-binary-search over qstep with adaptive
+    /// bracket extension, capped at `maxPasses` total encodes. Pass 1
+    /// uses a calibration prior (or cached qstep). Pass 2 scales by
+    /// observed ratio. Pass 3+ does log-binary-search; if achievement
+    /// is still over cap and the upper bound is hit, the bracket
+    /// extends ×4. The closest-to-target result wins, with overshoot
+    /// preferred over undershoot when both are valid.
     ///
-    /// **Predictable latency**: at most `maxPasses` encode passes
-    /// (default 2). For batch workflows pass a `J2KQstepCache` via
+    /// **Cap is best-effort** — `maxOvershootRatio` is the search's
+    /// stopping criterion, not a hard ceiling. On flat-curve content
+    /// (large fixtures at very low bpp), the search budget may run
+    /// out before the cap is reached; the closest-achieved encoding
+    /// is returned. The `J2KEncodeQstepStats.convergedWithinTolerance`
+    /// flag reports whether the cap was met. For HARD byte cap, use
+    /// `.constantBitrateStrict(bpp)` instead.
+    ///
+    /// **Latency**: at most `maxPasses × single-encode-time`. For
+    /// batch workflows pass a `J2KQstepCache` via
     /// `encodingConfiguration.qstepCache` so subsequent encodes hit
     /// cache and converge in 1 pass.
     ///
-    /// Recommended for production PACS / archive workloads on
-    /// high-bit-depth medical content where:
-    ///   - encode latency must be predictable (server SLAs)
-    ///   - bytes overshoot must be bounded (storage cost / quota)
-    ///   - quality should be clinical-grade (≥30 dB on lossy
-    ///     compression of full-bit-depth content)
-    ///
     /// - Parameters:
     ///   - bitsPerPixel: target bitrate in bits per pixel.
-    ///   - maxOvershootRatio: maximum allowed achieved/target byte
-    ///     ratio (default 2.0×). Smaller = stricter rate, lower
-    ///     quality on extreme cases. Larger = looser rate, higher
-    ///     quality on extreme cases.
-    ///   - maxPasses: maximum encode iterations (default 2). 1 =
+    ///   - maxOvershootRatio: best-effort upper bound on achieved /
+    ///     target byte ratio (default 2.0×). Smaller = stricter rate
+    ///     target (but may still be exceeded on flat-curve content).
+    ///     Larger = looser rate target (more headroom, higher quality
+    ///     when the bound matters).
+    ///   - maxPasses: maximum encode iterations (default 3). 1 =
     ///     fastest, takes whatever the calibration prior produces.
-    ///     2 = one corrective pass if needed. 3+ = approaches the
-    ///     accuracy of `.constantBitrateViaQstep` at the cost of
-    ///     latency predictability.
+    ///     3+ = approaches the accuracy of `.constantBitrateViaQstep`
+    ///     at the cost of latency predictability.
     case constantBitrateBounded(
         bitsPerPixel: Double,
         maxOvershootRatio: Double = 2.0,

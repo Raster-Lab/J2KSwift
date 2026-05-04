@@ -265,30 +265,62 @@ approximation rather than a corrupted image.
 | `.constantBitrateViaQstep(bpp, ...)` | unbounded (1.6-3× target observed) | 45-50 dB | 8 passes | v5.31 max-quality behaviour |
 | `.fixedQstep(qstep)` | unbounded | content-dependent | 1 pass | latency-critical single-shot |
 
-### v5.34 encode performance — important caveat first
+### v5.35.0c — same-workload CPU vs GPU encode benchmark
 
-The encode benchmark numbers below were captured pre-v5.34.0 consistency fix. They
-compared **CPU encode through 3-pass strict-mode auto-promote** against
-**GPU encode through 1-pass PCRD** (encodeGPU bypassed the auto-promote in v5.34.0
-initial). Apples-to-oranges: different algorithms, different number of pipeline
-passes, different output codestreams. The "CPU/GPU× 2-4× speedup" headline did NOT
-mean GPU is faster than CPU at the same workload — it meant strict-CPU is slower
-than PCRD-GPU because strict runs 3 passes.
+After the v5.34 consistency fix, `.constantBitrate(bpp)` routes both `encode()` and
+`encodeGPU()` through the same intercepted CPU path on auto-promote-eligible content
+(bitDepth ≥ 12 HT-conformant lossy). To compare the actual CPU and GPU pipelines, this
+benchmark uses **`.fixedQstep(qstep: 15)`** — a non-intercepted mode that runs each
+path's natural single-pass pipeline (CPU SIMD vs Metal-accelerated GPU forward DWT).
 
-The consistency fix (v5.34.0 follow-up) routes `encodeGPU` through `encode` when the
-active mode would be intercepted (Qstep search, bounded, strict, or auto-promote).
-Both APIs now produce **byte-identical codestreams** for the same `.constantBitrate`
-config — verified by `J2KStrictCrossCodecValidationTests.testEncodeAndEncodeGPUProduceSameBytesForAutoPromotedConstantBitrate`.
+Calibrated for ~2 bpp output on 16-bit medical content. Measured on M1, n=5 medians,
+release build, HT-conformant lossy 9/7. Reproducible via:
 
-**Implication for the v5.29 encodeGPU regression text below**: that section measured
-GPU running its native pipeline (PCRD on `.constantBitrate`, no auto-promote). Those
-numbers stand. The v5.34 strict-mode CPU cost is on top of v5.29's encode cost (3 passes
-vs 1) — see the v5.33.0 release notes' encode latency comparison for the full progression.
+```bash
+swift test -c release --filter "testCorpusEncodeAcrossAPIs_SameWorkload_FixedQstep"
+```
 
-To benchmark CPU vs GPU at the SAME workload post-v5.34, configure
-`.constantBitrateBounded(bpp, maxOvershootRatio: 2.0, maxPasses: 3)` explicitly on
-both encoders (the bounded mode is also intercepted, so the two paths run identically;
-the comparison is meaningful) — pending capture.
+| Fixture                | px     | CPU bytes | GPU bytes | CPU ms | GPU ms | CPU/GPU× |
+|------------------------|-------:|----------:|----------:|-------:|-------:|---------:|
+| mr_002 (180×180)       |   32k  |    36,127 |    36,127 |    1.1 |    1.0 |  **1.12×** |
+| ct_001 (512×512)       |  262k  |   353,324 |   353,324 |    5.2 |    5.3 |    0.98× |
+| ct_003 (512×512)       |  262k  |   331,896 |   331,896 |    5.1 |    5.2 |    0.97× |
+| mr_001 (886×886)       |  785k  |   144,843 |   144,843 |    6.0 |    6.1 |    0.98× |
+| xa_001 (1024×1024)     | 1.0M   | 1,360,481 | 1,360,481 |   19.8 |   28.6 |  **0.69×** |
+| px_001 (2459×1316)     | 3.2M   | 5,419,286 | 5,419,289 |   67.7 |   89.8 |  **0.75×** |
+| dx_002 (2800×2288)     | 6.4M   |10,542,788 |10,542,793 |  136.3 |  159.6 |    0.85× |
+| dx_001 (2544×3056)*    | 7.8M   |13,992,955 |13,992,956 |  169.2 |  199.7 |    0.85× |
+| mg_001 (3520×4784)*    | 16.8M  |30,310,299 |30,310,298 |  367.2 |  413.5 |    0.89× |
+| mg_002 (3521×4784)*    | 16.8M  |30,319,802 |30,319,805 |  361.9 |  421.0 |    0.86× |
+
+**Headline finding (post-v5.34): GPU encode is still a regression at most fixture
+sizes.** Best CPU/GPU× = 1.12× at the smallest synthetic; rest range 0.69-0.98×.
+Metal forward DWT remains the bottleneck — this matches the v5.29 diagnosis.
+Stage-level breakdown shows the gap concentrates in the wavelet stage:
+
+| Fixture (1.0M+ px)  | CPU DWT (ms) | GPU DWT (ms) | GPU regression |
+|---------------------|-------------:|-------------:|---------------:|
+| xa_001 (1024×1024)  |          3.2 |         13.3 |          4.2× slower |
+| px_001 (2459×1316)  |          9.9 |         30.5 |          3.1× slower |
+| dx_002 (2800×2288)  |         21.5 |         46.2 |          2.1× slower |
+| mg_001 (3520×4784)* |         55.3 |        103.3 |          1.9× slower |
+
+GPU's other stages (preproc, entropy, codestream) match CPU within run-to-run noise.
+Only DWT is significantly slower. The CPU SIMD forward DWT path was tuned in v5.30.0
+(rateControl O(B²) gate); the Metal forward DWT has not received equivalent attention.
+
+**Byte counts match within 1-3 bytes** between CPU and GPU paths, reflecting a tiny
+LSB precision difference in the Float forward DWT. Both produce valid codestreams
+that decode to the same image within Float-precision rounding.
+
+**Routing recommendation for encode** (post-v5.35.0c, unchanged from v5.30):
+- For all `.constantBitrate(bpp)` use cases on bitDepth ≥ 12 HT-conformant lossy:
+  use `.encode()` — `encodeGPU()` routes here anyway via the consistency fix.
+- For `.fixedQstep` / `.constantQuality` / lossless: use `.encode()` (CPU). GPU
+  encode is a regression at the wavelet stage.
+- The full GPU encode pipeline becomes worth using only if/when the Metal forward
+  DWT is rewritten — likely a v5.36+ effort tracking the v5.26.0 GPU HT *decoder*
+  infrastructure approach.
 
 ### v5.34 decode performance (M1, warm session, n=5)
 
@@ -369,6 +401,76 @@ explicitly to `.constantBitrateBounded(bitsPerPixel: bpp)`** before deploying v5
 - **`encode()` and `encodeGPU()` produce byte-identical output** for the same
   `.constantBitrate(bpp)` post-v5.34 consistency fix. Pre-fix, they diverged on the
   auto-promote-eligible path. Verified by parity test.
+
+---
+
+## v5.33 → v5.34 migration guide
+
+v5.34's auto-promote behaviour change for `.constantBitrate(bpp)` on bitDepth ≥ 12
+HT-conformant lossy is the largest user-visible behavioural change in the v5.31-v5.34
+sequence. Callers upgrading from v5.33 should pick a path before deploying.
+
+### Quick decision tree
+
+```
+Did v5.33 .constantBitrate(bpp) work for your workload?
+│
+├─ Yes — quality was right, byte count "close enough"
+│   └─ v5.34 has a NEW default: hard byte cap (12-20 dB on flat-curve content).
+│       To preserve v5.33 quality: switch to `.constantBitrateBounded(bpp)` explicitly.
+│       (Recommended for diagnostic-grade lossy archive workflows.)
+│
+├─ Yes — but byte budget was important and v5.33 sometimes overshot
+│   └─ v5.34's new default DOES make the byte cap real. No code change needed —
+│       upgrade gives you the byte guarantee. Quality drops on flat-curve content;
+│       see "Known v5.34 limitations".
+│
+└─ No — v5.33 quality was acceptable but byte budget was not enforceable
+    └─ v5.34's strict default solves the byte side (always ≤ target). Quality drops
+        on flat-curve high-bit-depth medical. Evaluate per-modality.
+```
+
+### Code changes by intent
+
+| You want… | v5.33 (current) | v5.34 (do this) |
+|---|---|---|
+| Quality-first 60+ dB on real medical, byte cap is best-effort 2.0× | `.constantBitrate(bpp)` | `.constantBitrateBounded(bitsPerPixel: bpp)` *explicit* |
+| Hard byte cap, accept quality cost on flat-curve content | (not directly available; .constantBitrate overshot) | `.constantBitrate(bpp)` (auto-promotes; **new default**) |
+| v5.31 max-quality 8-pass search | `.constantBitrateViaQstep(bpp, ...)` | unchanged |
+| Latency-critical, single-pass | `.fixedQstep(qstep: ...)` | unchanged |
+| GPU encode for `.constantBitrate(bpp)` | `J2KEncoder.encodeGPU(_:)` (silently mismatched bytes) | `J2KEncoder.encodeGPU(_:)` (now byte-identical to encode()) |
+
+### Stats / observability changes
+
+`J2KEncodeQstepStats` (v5.35.0a):
+
+| Field | v5.33 | v5.34+ |
+|---|---|---|
+| `iterations` | search iterations (bounded mode) | unchanged |
+| `convergedQstep` | the qstep used | unchanged |
+| `achievedBpp` | encoded bytes × 8 / pixels | unchanged |
+| `convergedWithinTolerance` | hit user tolerance? | bool: hit cap AND not severely under-target |
+| `budgetFillRatio` | (didn't exist) | `Optional<Double>`: achieved / cap. `nil` for non-strict modes |
+
+### Test thresholds that may need updating
+
+If you have downstream tests that assert PSNR on lossy-encoded medical content via
+`.constantBitrate(bpp)`, expect the v5.34 strict-mode auto-promote to drop PSNR
+significantly on flat-curve high-bit-depth fixtures (px_001/dx_002 dropped from 60 dB
+to 12-13 dB at 2 bpp). Either:
+
+1. Switch the test config to `.constantBitrateBounded(bitsPerPixel: bpp)` to preserve
+   v5.33 quality expectations (this is the right fix for diagnostic-grade tests).
+2. Or update the threshold to absorb the v5.34 strict-cap PSNR drop, with an explicit
+   comment about why (the v5.30 gate test in this repo was updated this way at
+   `J2KEncodeRateControlGateQualityTests.swift`).
+
+### Cross-codec compatibility
+
+v5.34 strict-truncated codestreams decode in OpenJPEG 2.5.4, OpenJPH 0.27.0, and Grok
+v20.3.0 — see "Cross-codec / encapsulation validation". DICOM Pixel Data Transfer
+Syntax 1.2.840.10008.1.2.4.90 wraps the codestream verbatim, validated by an
+end-to-end round-trip test.
 
 ---
 
@@ -593,7 +695,21 @@ swift test -c release --filter testColdStartVsPreWarm
 
 ---
 
-## Encode Performance (v5.29.0)
+## Appendix — historical encode-pipeline benchmarks
+
+The sections below preserve the v5.29.0 and v5.30.0 release-by-release encode pipeline
+characterisation. They were the headline performance work at those releases; v5.31.0
+auto-promote, v5.32.0 cap, v5.33.0 bounded mode, v5.34.0 strict mode, and v5.35.0
+multi-layer infrastructure all build on top.
+
+The v5.29 numbers measure CPU vs GPU encode at `.constantBitrate(2.0)` PRE-v5.31
+auto-promote — both paths ran the regular PCRD pipeline (1 pass), so the comparison
+was directly meaningful at that release. **For the post-v5.34 same-workload CPU vs
+GPU comparison, see "v5.35.0c — same-workload CPU vs GPU encode benchmark"
+above** (which uses `.fixedQstep` to bypass the auto-promote and capture the same
+single-pass workload on both paths).
+
+### Encode Performance (v5.29.0)
 
 After v5.28.0 brought decode 9/7 lossy on mammography to 4.6× CPU, encode is the next
 lever. v5.29.0 adds `J2KEncodeTimings` (always-on per-stage accumulator, mirrors the
@@ -634,33 +750,35 @@ swift test -c release --filter J2KMedicalCorpusEncode
 | mg_001 (3520×4784)*    |    19.7 |    0.0 | 56.9 |   0.2 |   115.3 |  **678.8** |     28.0 |
 | mg_002 (3521×4784)*    |    19.8 |    0.0 | 57.1 |   0.2 |   115.3 |  **701.1** |     28.6 |
 
-### Three honest findings
+### Three honest findings (v5.29.0; some superseded — see notes)
 
 1. **`encodeGPU` is currently a regression** — slower than `encode` on every fixture by
    2-39%. `waveletTransform` GPU dispatch costs more than the CPU forward DWT it's
    supposed to replace (xa_001 at 1024²: CPU DWT 3.3 ms vs GPU DWT 14.9 ms). The
    v5.22.0 audit noted GPU forward DWT was bit-equivalent to spec; this benchmark
    shows it's also a perf regression at every measured size. The `encodeGPU` path
-   should be marked deprecated until this is fixed.
+   should be marked deprecated until this is fixed. **(v5.35.0c update: confirmed
+   on M1 with the same-workload `.fixedQstep` benchmark. Metal forward DWT remains
+   2-4× slower than CPU SIMD.)**
 
 2. **`rateControl` is the dominant stage at huge workloads** — at 17M pixels (mammography),
    PCRD-opt layer truncation takes **679–701 ms** out of 900–920 ms total = **75% of
    encode time**. Scales super-linearly: 1M px = 2.6 ms; 17M px = 700 ms (~270× for 17×
-   pixel count).
+   pixel count). **(SUPERSEDED in v5.30.0 — see "Encode Performance update (v5.30.0)"
+   below. The O(B²) inner loop was gated; mg_001 dropped from 678ms to 2.1ms.)**
 
 3. **`entropyCoding` dominates at typical medical sizes** — at 1M to 6M pixels, HT
    block coding is 42–49% of total encode time. This is the natural target for any
    GPU-accelerated HT *encoder* mirroring the v5.26.0 GPU HT *decoder* infrastructure.
 
-### Routing recommendation today
+### Routing recommendation (v5.29.0; still valid post-v5.34)
 
 For encode, **always use `encode(_:)`** (CPU). `encodeGPU(_:)` is currently a regression
 at every measured fixture size. This is the inverse of decode (where `decodeGPU` and
-`decodeWithGPUHT` win materially over CPU on warm session).
+`decodeWithGPUHT` win materially over CPU on warm session). **(v5.35.0c re-validated
+on M1 with `.fixedQstep` to bypass the v5.34 auto-promote. Conclusion stands.)**
 
----
-
-## Encode Performance update (v5.30.0)
+### Encode Performance update (v5.30.0)
 
 v5.29.0's stage breakdown identified `rateControl` as 75% of encode time at mammography
 sizes (679–701 ms / 900–920 ms), super-linear scaling. v5.30.0 root-causes it as an

@@ -271,4 +271,137 @@ final class J2KMedicalCorpusEncodePerformanceTests: XCTestCase {
         XCTAssertFalse(rows.isEmpty,
             "No fixtures benchmarked — corpus directory layout changed?")
     }
+
+    /// v5.35.0c — same-workload CPU vs GPU encode benchmark.
+    ///
+    /// `testCorpusEncodeAcrossAPIs` uses `.constantBitrate(2.0)`, which
+    /// post-v5.34 auto-promotes to strict mode (CPU-only multi-pass
+    /// search) and post-v5.34 consistency-fix routes encodeGPU through
+    /// the same CPU path — making the GPU column meaningless for
+    /// CPU-vs-GPU pipeline comparison.
+    ///
+    /// This test uses `.fixedQstep(qstep:)` (a non-intercepted mode)
+    /// so CPU encode runs the legacy CPU pipeline and GPU encode runs
+    /// the actual Metal-accelerated GPU pipeline (forward DWT on GPU,
+    /// CPU HT entropy + PCRD-bypass). qstep=15 calibrated for ~2 bpp
+    /// on 16-bit medical content.
+    ///
+    /// Both paths produce a single-pass codestream (no PCRD search,
+    /// no truncation). Output is byte-different across the two paths
+    /// (CPU vs GPU DWT precision differs at the LSB) so we don't
+    /// assert byte-identity — but both decode to the same image
+    /// within Float-precision rounding.
+    func testCorpusEncodeAcrossAPIs_SameWorkload_FixedQstep() async throws {
+        let n = 5
+        let qstep = 15.0
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: true,
+            useReversibleFilter: false,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .fixedQstep(qstep: qstep)
+        let cpuEncoder = J2KEncoder(encodingConfiguration: cfg)
+        let gpuEncoder = J2KEncoder(encodingConfiguration: cfg)
+
+        struct Row {
+            let name: String
+            let pixels: Int
+            let cpuMs: Double
+            let gpuMs: Double
+            let cpuBytes: Int
+            let gpuBytes: Int
+            let cpuStages: J2KEncodeTimings.Snapshot
+            let gpuStages: J2KEncodeTimings.Snapshot
+        }
+        var rows: [Row] = []
+        var skipped: [String] = []
+
+        for fixture in Self.fixtures {
+            guard let img = try resolveFixture(fixture) else {
+                skipped.append(fixture.name)
+                continue
+            }
+            // Capture byte counts on a single warm encode (n already
+            // does its own warmup but doesn't expose the encoded bytes)
+            let cpuBytes = (try await cpuEncoder.encode(img)).count
+            let gpuBytes: Int
+            if J2KMetalSession.isAvailable {
+                gpuBytes = (try await gpuEncoder.encodeGPU(img)).count
+            } else {
+                gpuBytes = cpuBytes
+            }
+
+            let cpuRes = try await benchmark(image: img, n: n) { image in
+                try await cpuEncoder.encode(image)
+            }
+            let gpuRes: (median: Double, samples: [Double], stages: J2KEncodeTimings.Snapshot)
+            if J2KMetalSession.isAvailable {
+                gpuRes = try await benchmark(image: img, n: n) { image in
+                    try await gpuEncoder.encodeGPU(image)
+                }
+            } else {
+                gpuRes = (cpuRes.median, cpuRes.samples, cpuRes.stages)
+            }
+
+            rows.append(Row(
+                name: fixture.name,
+                pixels: img.width * img.height,
+                cpuMs: cpuRes.median,
+                gpuMs: gpuRes.median,
+                cpuBytes: cpuBytes,
+                gpuBytes: gpuBytes,
+                cpuStages: cpuRes.stages,
+                gpuStages: gpuRes.stages))
+        }
+
+        print("=== v5.35.0c same-workload CPU vs GPU encode benchmark ===")
+        print("Processor: \(encProcessorBrandString())")
+        print("Image: HT-conformant lossy 9/7, fixedQstep(\(qstep)), n=\(n)")
+        print("Synthetic fixtures marked with *")
+        if !skipped.isEmpty {
+            print("Skipped: \(skipped.joined(separator: ", "))")
+        }
+        print("")
+        print("| Fixture | px | CPU bytes | GPU bytes | CPU ms | GPU ms | CPU/GPU× |")
+        print("|---|---:|---:|---:|---:|---:|---:|")
+        for r in rows {
+            let ratio = r.cpuMs / max(r.gpuMs, 0.001)
+            print(String(format: "| %@ | %d | %d | %d | %.1f | %.1f | %.2f× |",
+                         r.name, r.pixels, r.cpuBytes, r.gpuBytes,
+                         r.cpuMs, r.gpuMs, ratio))
+        }
+        print("")
+        print("Per-fixture CPU encode stage breakdown (means, ms):")
+        print("| Fixture | preproc | colour | DWT | quant | entropy | rateCtrl | codestream |")
+        print("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for r in rows {
+            print(String(format: "| %@ | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |",
+                         r.name,
+                         r.cpuStages.preprocessing,
+                         r.cpuStages.colorTransform,
+                         r.cpuStages.waveletTransform,
+                         r.cpuStages.quantization,
+                         r.cpuStages.entropyCoding,
+                         r.cpuStages.rateControl,
+                         r.cpuStages.codestreamGeneration))
+        }
+        print("")
+        print("Per-fixture GPU encode stage breakdown (means, ms):")
+        print("| Fixture | preproc | colour | DWT | quant | entropy | rateCtrl | codestream |")
+        print("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for r in rows {
+            print(String(format: "| %@ | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |",
+                         r.name,
+                         r.gpuStages.preprocessing,
+                         r.gpuStages.colorTransform,
+                         r.gpuStages.waveletTransform,
+                         r.gpuStages.quantization,
+                         r.gpuStages.entropyCoding,
+                         r.gpuStages.rateControl,
+                         r.gpuStages.codestreamGeneration))
+        }
+
+        XCTAssertFalse(rows.isEmpty)
+    }
 }
