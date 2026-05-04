@@ -3099,41 +3099,79 @@ struct DecoderPipeline: Sendable {
             } else {
                 // 9/7 irreversible — Float path (non-lossless, byte-equality
                 // not enforced downstream, so existing FP tolerance is fine).
-                var currentLL: [Float]
+                let initialLL: [Float]
                 if let ll = llSubband {
                     if let dc = ll.doubleCoefficients {
-                        currentLL = padFlatFloat(vDSPConvert.doublesToFloats(dc), srcW: ll.width, srcH: ll.height,
+                        initialLL = padFlatFloat(vDSPConvert.doublesToFloats(dc), srcW: ll.width, srcH: ll.height,
                                                   dstW: expectedLLW, dstH: expectedLLH)
                     } else {
-                        currentLL = padFlatFloat(vDSPConvert.int32sToFloats(ll.coefficients), srcW: ll.width, srcH: ll.height,
+                        initialLL = padFlatFloat(vDSPConvert.int32sToFloats(ll.coefficients), srcW: ll.width, srcH: ll.height,
                                                   dstW: expectedLLW, dstH: expectedLLH)
                     }
                 } else {
-                    currentLL = [Float](repeating: 0, count: expectedLLW * expectedLLH)
+                    initialLL = [Float](repeating: 0, count: expectedLLW * expectedLLH)
                 }
 
-                for level in (1...levels).reversed() {
-                    let parentW = levelSizes[level - 1].width
-                    let parentH = levelSizes[level - 1].height
-                    let llW = levelSizes[level].width
-                    let llH = levelSizes[level].height
-                    let hlW = parentW - llW
-                    let lhH = parentH - llH
+                let currentLL: [Float]
+                if metalSession != nil {
+                    // v5.25.0 multi-level Float fused: chains all levels
+                    // into one cb, single readback at the outermost
+                    // level. Closes the per-level upload/readback that
+                    // the per-level `inverse2D(...)` path pays. CPU
+                    // still uploads LH/HL/HH per level (Float scatter
+                    // from a GPU-resident codeblock buffer is the next
+                    // increment after this).
+                    var subbandsPerLevel: [J2KMetalDWTSubbands] = []
+                    for level in (1...levels).reversed() {
+                        let parentW = levelSizes[level - 1].width
+                        let parentH = levelSizes[level - 1].height
+                        let llW = levelSizes[level].width
+                        let llH = levelSizes[level].height
+                        let hlW = parentW - llW
+                        let lhH = parentH - llH
 
-                    let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
-                                                     dstW: hlW, dstH: llH)
-                    let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
-                                                     dstW: llW, dstH: lhH)
-                    let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
-                                                     dstW: hlW, dstH: lhH)
+                        let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
+                                                         dstW: hlW, dstH: llH)
+                        let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
+                                                         dstW: llW, dstH: lhH)
+                        let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
+                                                         dstW: hlW, dstH: lhH)
 
-                    let subbandData = J2KMetalDWTSubbands(
-                        ll: currentLL, lh: lhFloat, hl: hlFloat, hh: hhFloat,
-                        llWidth: llW, llHeight: llH,
-                        originalWidth: parentW, originalHeight: parentH
-                    )
+                        let llForThisLevel: [Float] =
+                            subbandsPerLevel.isEmpty ? initialLL : []
+                        subbandsPerLevel.append(J2KMetalDWTSubbands(
+                            ll: llForThisLevel, lh: lhFloat, hl: hlFloat, hh: hhFloat,
+                            llWidth: llW, llHeight: llH,
+                            originalWidth: parentW, originalHeight: parentH))
+                    }
+                    currentLL = try await metalDWT.inverse2DMultiLevelFused(
+                        subbandsPerLevel: subbandsPerLevel)
+                } else {
+                    var rolling: [Float] = initialLL
+                    for level in (1...levels).reversed() {
+                        let parentW = levelSizes[level - 1].width
+                        let parentH = levelSizes[level - 1].height
+                        let llW = levelSizes[level].width
+                        let llH = levelSizes[level].height
+                        let hlW = parentW - llW
+                        let lhH = parentH - llH
 
-                    currentLL = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
+                        let hlFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hl,
+                                                         dstW: hlW, dstH: llH)
+                        let lhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .lh,
+                                                         dstW: llW, dstH: lhH)
+                        let hhFloat = getSubbandAsFloat(compSubbands, level: level, subband: .hh,
+                                                         dstW: hlW, dstH: lhH)
+
+                        let subbandData = J2KMetalDWTSubbands(
+                            ll: rolling, lh: lhFloat, hl: hlFloat, hh: hhFloat,
+                            llWidth: llW, llHeight: llH,
+                            originalWidth: parentW, originalHeight: parentH
+                        )
+
+                        rolling = try await metalDWT.inverse2D(subbands: subbandData, backend: .auto)
+                    }
+                    currentLL = rolling
                 }
 
                 componentData.append(vDSPConvert.floatsToDoubles(currentLL))

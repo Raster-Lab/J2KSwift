@@ -5,6 +5,67 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.25.0] — 2026-05-04
+
+**Float multi-level fused IDWT — 9/7 lossy speedup jumps to 2.6–3.1×**
+
+v5.24.0's stage breakdown identified per-level upload/readback in
+the 9/7 lossy IDWT as the next architectural lever. v5.25.0 closes
+it: adds `J2KMetalDWT.inverse2DMultiLevelFused` (Float variant)
+mirroring the existing Int32 5/3 fused path. Single command buffer
+across all decomposition levels; output buffer of level N reused
+as LL input of level N-1; single commit + await + final readback.
+
+### Headline (M2, release, 1024×1024 16-bit lossy 9/7 @ 2 bpp, n=5)
+
+| Path | v5.24.0 speedup | v5.25.0 speedup |
+|---|---:|---:|
+| `decodeGPU(_:session:)` | 1.43× | **2.64–3.13×** |
+| `decodeWithGPUHT(_:session:)` | 1.07× | 1.00–1.36× |
+
+`inverseWaveletTransform` stage on the `decodeGPU` path: 15.2 →
+7.4 ms (50% drop). `decodeWithGPUHT` IDWT also benefits but the
+~15 ms `gpuHTDispatch` overhead caps end-to-end gains for that
+path — addressed in a future release.
+
+### Added
+
+- `Sources/J2KMetal/J2KMetalDWT.swift` —
+  `inverse2DMultiLevelFused(subbandsPerLevel:)` Float method;
+  `encodeInverse2D(into:...)` Float chainable encode (mirror of
+  `encodeInverse2DInt32`). Both `#if canImport(Metal)`-gated with
+  no-Metal stubs.
+
+### Changed
+
+- `Sources/J2KCodec/J2KDecoderPipeline.swift` —
+  `applyInverseWaveletTransformGPU`'s 9/7 lossy branch now routes
+  through `inverse2DMultiLevelFused` when `metalSession != nil`.
+  Sessionless callers keep the v5.7-era per-level `inverse2D`
+  loop; no behavioural change for them.
+
+### Verified
+
+- `J2KGPULossy97DivergenceTests`, `J2KMetalSingleLevel97Tests`,
+  `J2KWaveletConventionAuditTests` all green — fused path is
+  bit-equivalent to the per-level path.
+- New benchmark numbers reproduce across 4 sample runs.
+
+### What's still open
+
+- `gpuHTDispatch` overhead (~15 ms) is unchanged — separate lever.
+- Float scatter kernel (GPU-resident codeblock buffer → LH/HL/HH
+  in 2D layout) would close the remaining per-level upload but
+  only helps `decodeWithGPUHT`. Tracked as next increment after
+  the dispatch-overhead fix.
+
+### Lesson
+
+v5.24.0's stage breakdown predicted ~2-3 ms IDWT improvement from
+closing per-level upload/readback. Reality: 7.8 ms. Per-level
+commit + await cycle was costing more than just the data transfer.
+Instrument first, optimise the dominant stage, measure after, ship.
+
 ## [5.24.0] — 2026-05-04
 
 **Stage-level decode timings + 9/7 lossy strategy correction**

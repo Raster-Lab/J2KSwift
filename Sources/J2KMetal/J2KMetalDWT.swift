@@ -802,6 +802,229 @@ public actor J2KMetalDWT {
     }
     #endif
 
+    /// v5.24.0 multi-level fused inverse 9/7 lossy IDWT on `Float`
+    /// subbands. Mirrors `inverse2DInt32MultiLevelFused` for the
+    /// irreversible97 path: chains all decomposition levels into a
+    /// single command buffer with the output buffer of level N
+    /// reused as the LL input of level N-1 — no readback between
+    /// levels. Single commit + await + final readback.
+    ///
+    /// On 9/7 lossy this closes the per-level upload/readback
+    /// boundary that the per-level `inverse2D` path pays. CPU still
+    /// uploads LH/HL/HH per level (the GPU-resident scatter path
+    /// remains 5/3-only); LL is uploaded once at the innermost level
+    /// and rides the GPU output buffer chain after that.
+    ///
+    /// - Parameter subbandsPerLevel: array of subband data, indexed
+    ///   from innermost (index 0) to outermost (index N-1). Same
+    ///   shape contract as the Int32 variant.
+    /// - Returns: outermost-level Float output, read back to host
+    ///   once at the end.
+    /// - Throws: ``J2KError`` on Metal failures or dimension
+    ///   mismatch.
+    #if canImport(Metal)
+    public func inverse2DMultiLevelFused(
+        subbandsPerLevel: [J2KMetalDWTSubbands]
+    ) async throws -> [Float] {
+        guard !subbandsPerLevel.isEmpty else {
+            throw J2KError.invalidParameter("subbandsPerLevel must be non-empty")
+        }
+        for i in 1..<subbandsPerLevel.count {
+            let prev = subbandsPerLevel[i - 1]
+            let cur = subbandsPerLevel[i]
+            guard cur.llWidth == prev.originalWidth,
+                  cur.llHeight == prev.originalHeight else {
+                throw J2KError.invalidParameter(
+                    "subband chain mismatch at level \(i): " +
+                    "expected LL=\(prev.originalWidth)×\(prev.originalHeight), " +
+                    "got \(cur.llWidth)×\(cur.llHeight)")
+            }
+        }
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let strideF = MemoryLayout<Float>.stride
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create multi-level fused float cb")
+        }
+
+        var inFlight: [any MTLBuffer] = []
+        var currentLLBuffer: (any MTLBuffer)? = nil
+        var finalOutputBuffer: (any MTLBuffer)? = nil
+        var finalWidth = 0
+        var finalHeight = 0
+
+        for subbands in subbandsPerLevel {
+            let width = subbands.originalWidth
+            let height = subbands.originalHeight
+            let halfW = subbands.llWidth
+            let halfWH = width / 2
+
+            let llBuffer: any MTLBuffer
+            if let prev = currentLLBuffer {
+                llBuffer = prev
+            } else {
+                let buf = try await bufferPool.acquireBuffer(
+                    device: device, size: max(subbands.ll.count * strideF, 1))
+                inFlight.append(buf)
+                subbands.ll.withUnsafeBytes { src in
+                    buf.contents().copyMemory(
+                        from: src.baseAddress!, byteCount: src.count)
+                }
+                llBuffer = buf
+            }
+
+            let lhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(subbands.lh.count, 1) * strideF)
+            inFlight.append(lhBuffer)
+            let hlBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(subbands.hl.count, 1) * strideF)
+            inFlight.append(hlBuffer)
+            let hhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(subbands.hh.count, 1) * strideF)
+            inFlight.append(hhBuffer)
+            if !subbands.lh.isEmpty {
+                subbands.lh.withUnsafeBytes { src in
+                    lhBuffer.contents().copyMemory(
+                        from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+            if !subbands.hl.isEmpty {
+                subbands.hl.withUnsafeBytes { src in
+                    hlBuffer.contents().copyMemory(
+                        from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+            if !subbands.hh.isEmpty {
+                subbands.hh.withUnsafeBytes { src in
+                    hhBuffer.contents().copyMemory(
+                        from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+
+            let hLowBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: halfW * height * strideF)
+            inFlight.append(hLowBuffer)
+            let hHighBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * height, 1) * strideF)
+            inFlight.append(hHighBuffer)
+            let outputBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: width * height * strideF)
+            inFlight.append(outputBuffer)
+
+            try await encodeInverse2D(
+                into: cb,
+                ll: llBuffer, lh: lhBuffer, hl: hlBuffer, hh: hhBuffer,
+                hLow: hLowBuffer, hHigh: hHighBuffer,
+                output: outputBuffer,
+                originalWidth: width, originalHeight: height,
+                halfW: halfW)
+
+            currentLLBuffer = outputBuffer
+            finalOutputBuffer = outputBuffer
+            finalWidth = width
+            finalHeight = height
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Multi-level fused inverse 9/7 GPU dispatch failed: " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let result = readFloatArray(
+            from: finalOutputBuffer!, elementCount: finalWidth * finalHeight)
+
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return result
+    }
+
+    /// Chainable encode for single-level Float inverse 9/7 IDWT into
+    /// an existing command buffer. Mirrors `encodeInverse2DInt32`'s
+    /// shape but uses the existing Float vertical+horizontal kernels.
+    /// Caller owns buffer lifetime and command buffer commit/await.
+    public func encodeInverse2D(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        hLow: any MTLBuffer,
+        hHigh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        halfW: Int
+    ) async throws {
+        let halfWH = originalWidth / 2
+
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: verticalInverseShaderFunction())
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: horizontalInverseShaderFunction())
+
+        // Pass 1: vertical inverse — LL+LH → hLow, HL+HH → hHigh.
+        guard let enc1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create vertical compute encoder")
+        }
+        enc1.setComputePipelineState(vPipeline)
+        var hVal = UInt32(originalHeight)
+
+        enc1.setBuffer(ll, offset: 0, index: 0)
+        enc1.setBuffer(lh, offset: 0, index: 1)
+        enc1.setBuffer(hLow, offset: 0, index: 2)
+        var halfWVal = UInt32(halfW)
+        enc1.setBytes(&halfWVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc1.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        enc1.dispatchThreads(
+            MTLSize(width: halfW, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: min(halfW, 64), height: 1, depth: 1))
+
+        if halfWH > 0 {
+            enc1.setBuffer(hl, offset: 0, index: 0)
+            enc1.setBuffer(hh, offset: 0, index: 1)
+            enc1.setBuffer(hHigh, offset: 0, index: 2)
+            var halfWHVal = UInt32(halfWH)
+            enc1.setBytes(&halfWHVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            enc1.dispatchThreads(
+                MTLSize(width: halfWH, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: min(halfWH, 64), height: 1, depth: 1))
+        }
+        enc1.endEncoding()
+
+        // Pass 2: horizontal inverse — hLow+hHigh → output.
+        guard let enc2 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create horizontal compute encoder")
+        }
+        enc2.setComputePipelineState(hPipeline)
+        enc2.setBuffer(hLow, offset: 0, index: 0)
+        enc2.setBuffer(hHigh, offset: 0, index: 1)
+        enc2.setBuffer(output, offset: 0, index: 2)
+        var wVal = UInt32(originalWidth)
+        enc2.setBytes(&wVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        enc2.dispatchThreads(
+            MTLSize(width: 1, height: originalHeight, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 1, height: min(originalHeight, 64), depth: 1))
+        enc2.endEncoding()
+    }
+    #else
+    public func inverse2DMultiLevelFused(
+        subbandsPerLevel: [J2KMetalDWTSubbands]
+    ) async throws -> [Float] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+    #endif
+
     /// Per-level scatter + DWT plan for the v5.8 full-fused entry
     /// point. Carries the placement descriptors (codeblock → LH/HL/HH
     /// in subband 2D buffers) and the dimensions needed to allocate

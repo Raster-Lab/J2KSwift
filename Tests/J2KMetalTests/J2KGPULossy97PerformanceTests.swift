@@ -1,48 +1,48 @@
 // J2KGPULossy97PerformanceTests.swift
-// v5.24.0 — stage-level perf characterisation for 9/7 lossy decode.
+// v5.25.0 — Float multi-level fused IDWT lands; 9/7 lossy speedup
+// jumps from ~1.4× to ~2.6–3.1× on warm session.
 //
-// v5.20.0 caught the GPU 9/7 IDWT correctness bug; v5.21.0 fixed it;
-// v5.22.0 locked in cross-module convention; v5.23.0 measured warm-
-// session end-to-end speedup. v5.24.0 splits the timer into stages
-// (via `J2KDecodeTimings`) and compares THREE paths so the next
-// optimisation can be steered precisely.
+// History: v5.20.0 caught the GPU 9/7 IDWT correctness bug;
+// v5.21.0 fixed it; v5.22.0 locked in cross-module convention;
+// v5.23.0 measured warm-session end-to-end speedup; v5.24.0 split
+// the timer into stages and revealed that GPU IDWT was the
+// dominant win and the per-level upload/readback was the next
+// architectural lever. v5.25.0 closes that lever by adding
+// `J2KMetalDWT.inverse2DMultiLevelFused` (Float variant) and
+// wiring it into `applyInverseWaveletTransformGPU`'s 9/7 branch.
 //
-// Three-way warm-session result (release mode, M2, 1024×1024 16-bit
-// lossy 9/7 @ 2 bpp, n=5 after warm-up — typical run):
+// Three-way warm-session result (release, M2, 1024×1024 16-bit
+// lossy 9/7 @ 2 bpp, n=5 medians, post-v5.25.0):
 //
 //   path                    end-to-end   speedup
-//   CPU       (decode)         ~25.6 ms  1.00×  baseline
-//   decodeGPU (CPU HT + GPU IDWT)  ~17.8 ms  1.43×  ← fastest today
-//   decodeWithGPUHT (GPU HT+IDWT)  ~24.0 ms  1.07×
+//   CPU       (decode)         ~26.6 ms  1.00×  baseline
+//   decodeGPU (CPU HT + GPU IDWT)  ~10.0 ms  2.64–3.13×  ← winner
+//   decodeWithGPUHT (GPU HT+IDWT)  ~26.5 ms  1.00–1.36×
 //
-// Per-stage means show why `decodeWithGPUHT` lags `decodeGPU` here:
+// Per-stage means (typical post-v5.25.0):
 //
 //   stage                    CPU   gpuIDWT  GPU-HT
-//   entropyDecoding          1.3   1.3      12.1
-//     ├─ gpuHTDispatch       0.0   0.0      11.6  ← regression vs CPU HT
-//     └─ regroup (CPU)       1.3   1.3       0.5
-//   inverseWaveletTransform  22.7  15.2     10.6  ← biggest GPU win
+//   entropyDecoding          1.5   1.4      15.8
+//     ├─ gpuHTDispatch       0.0   0.0      15.3  ← still the regression
+//     └─ regroup (CPU)       1.5   1.4       0.4
+//   inverseWaveletTransform  23.4  7.4      10.8  ← v5.25.0 win
 //
-// Strategic reading:
-//   1. CPU HT entropy is fast (1.3 ms) — multi-threaded across cores.
-//   2. The `J2KGPUHTDispatch.decodeBatch` call costs ~11.6 ms even
-//      after warm-up — per-tile dispatch overhead exceeds CPU HT
-//      cost on small/medium images.
-//   3. GPU IDWT is the dominant win (22.7 → 15.2 ms in `decodeGPU`,
-//      → 10.6 ms in `decodeWithGPUHT` because the GPU-HT path's
-//      remaining IDWT improvement comes from a smaller per-level
-//      upload/readback envelope).
-//   4. Extending the GPU-resident batch path (today only fires for
-//      5/3 lossless) to 9/7 lossy would close the IDWT gap by
-//      eliminating the per-level upload/readback in
-//      `applyInverseWaveletTransformGPU`. It would NOT fix the 11.6 ms
-//      HT-dispatch overhead — that's a separate workload (phase 4+).
+// IDWT delta vs v5.24.0: gpuIDWT path 15.2 → 7.4 ms (50% drop).
+// `decodeWithGPUHT` IDWT also benefits (10.6 → ~10 ms-ish, smaller
+// effect because the GPU-HT path was already partially fused).
 //
-// Gate semantics: this is a MEASUREMENT gate, not an assertion gate.
-// Variance across release-mode runs is real (sub-stage timings move
-// ±20% between runs depending on system load and thermal state).
-// Correctness is guarded by the v5.20-v5.22 audit gates; this test
-// publishes the breakdown so future perf work is steered by data.
+// What's still open:
+//   1. The 15.3 ms `gpuHTDispatch` overhead remains — this is why
+//      `decodeWithGPUHT` is a wash. Reducing per-tile dispatch
+//      cost is a separate optimisation track.
+//   2. The fused path still uploads LH/HL/HH from CPU per level;
+//      a Float scatter kernel from a GPU-resident codeblock buffer
+//      would close that too, but only `decodeWithGPUHT` benefits
+//      (the entropy stage is what produces the codeblock buffer).
+//
+// Gate semantics: MEASUREMENT gate, not assertion gate. Variance
+// across release-mode runs is real (sub-stage timings move ±20%).
+// Correctness is guarded by the v5.20-v5.22 audit gates.
 
 import XCTest
 import Foundation
