@@ -780,9 +780,14 @@ kernel void jp3d_dwt_forward_97_x(
         float hCurr = (i < hiLen) ? H[i] : H[hiLen - 1];
         L[i] += kDelta * (hPrev + hCurr);
     }
-    // Scale
-    for (int i = 0; i < lowLen; ++i) L[i] *= kK;
-    for (int i = 0; i < hiLen;  ++i) H[i] *= kKInv;
+    // Scale (ISO/IEC 15444-1 Annex F.4.1.1)
+    // v5.22.0 fix: lowpass /= K, highpass *= K. Pre-v5.22 had this
+    // inverted — same shape of bug v5.21.0 caught in J2KMetalDWT.
+    // JP3DMetalDWT was self-consistent but spec-divergent from
+    // J2K3D.JP3DWaveletTransform; would have produced K⁴ ≈ 2.29×
+    // scaling error when paired with a spec-compliant JP3D encoder.
+    for (int i = 0; i < lowLen; ++i) L[i] *= kKInv;
+    for (int i = 0; i < hiLen;  ++i) H[i] *= kK;
 }
 
 // ---------------------------------------------------------------------------
@@ -838,8 +843,9 @@ kernel void jp3d_dwt_forward_97_y(
         float hC = (i < hiH) ? Hi[i * W + (int)x] : Hi[(hiH - 1) * W + (int)x];
         L[i * W + (int)x] += kDelta * (hP + hC);
     }
-    for (int i = 0; i < lowH; ++i) L[i * W + (int)x] *= kK;
-    for (int i = 0; i < hiH;  ++i) Hi[i * W + (int)x] *= kKInv;
+    // v5.22.0 fix: spec-compliant scaling (lowpass /= K, highpass *= K).
+    for (int i = 0; i < lowH; ++i) L[i * W + (int)x] *= kKInv;
+    for (int i = 0; i < hiH;  ++i) Hi[i * W + (int)x] *= kK;
 }
 
 // ---------------------------------------------------------------------------
@@ -890,8 +896,9 @@ kernel void jp3d_dwt_forward_97_z(
         float hC = (i < hiD) ? Hi[i * WH + (int)gid] : Hi[(hiD - 1) * WH + (int)gid];
         L[i * WH + (int)gid] += kDelta * (hP + hC);
     }
-    for (int i = 0; i < lowD; ++i) L[i * WH + (int)gid] *= kK;
-    for (int i = 0; i < hiD;  ++i) Hi[i * WH + (int)gid] *= kKInv;
+    // v5.22.0 fix: spec-compliant scaling (lowpass /= K, highpass *= K).
+    for (int i = 0; i < lowD; ++i) L[i * WH + (int)gid] *= kKInv;
+    for (int i = 0; i < hiD;  ++i) Hi[i * WH + (int)gid] *= kK;
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,9 +1370,11 @@ extension JP3DMetalDWT {
             let hC: Float = (i < highLen) ? h[i] : h[max(highLen - 1, 0)]
             l[i] += delta * (hP + hC)
         }
-        // Scale
-        for i in 0..<lowLen { l[i] *= k }
-        for i in 0..<highLen { h[i] /= k }
+        // Scale (ISO/IEC 15444-1 Annex F.4.1.1)
+        // v5.22.0 fix: lowpass /= K, highpass *= K. Pre-v5.22 had this
+        // inverted — same shape of bug as v5.21.0 caught in J2KMetalDWT.
+        for i in 0..<lowLen { l[i] /= k }
+        for i in 0..<highLen { h[i] *= k }
         return (low: l, high: h)
     }
 
@@ -1383,9 +1392,10 @@ extension JP3DMetalDWT {
         var l = low
         var h = high
 
-        // Undo scale
-        for i in 0..<lowLen { l[i] /= k }
-        for i in 0..<highLen { h[i] *= k }
+        // Undo scale (inverse of forward step 5: lowpass *= K, highpass /= K).
+        // v5.22.0 fix: undoing the spec-compliant forward.
+        for i in 0..<lowLen { l[i] *= k }
+        for i in 0..<highLen { h[i] /= k }
 
         // Undo step 4 (delta)
         for i in 0..<lowLen {

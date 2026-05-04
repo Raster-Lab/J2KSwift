@@ -5,6 +5,63 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.22.0] — 2026-05-04
+
+**Conformance Audit — wavelet convention agreement across all modules**
+
+v5.20.0/v5.21.0 fixed the GPU 9/7 IDWT scaling inversion in
+J2KMetalDWT. v5.22.0 audits ALL wavelet implementations for
+cross-module convention agreement and locks the audit results in
+as permanent regression gates, preventing the same bug class from
+re-appearing.
+
+### Audit findings
+
+- **JP3DMetalDWT 9/7 had the same scaling-direction bug** as
+  J2KMetalDWT pre-v5.21.0. Self-consistent within itself but
+  spec-divergent from J2K3D.JP3DWaveletTransform (which uses the
+  ISO/IEC 15444-1 convention). No current callers, so no
+  user-visible defect; fixed preemptively in 5 sites:
+  - GPU forward 9/7 X / Y / Z kernels (3 sites)
+  - CPU `forward97Lifting` + `inverse97Lifting` (2 sites)
+- **J2KMetalDWT 5/3** convention checked vs J2KCodec.J2KDWT1D.
+  Convention agrees; minor sub-LSB Float-precision drift (Float
+  arithmetic vs exact Int32) is normal and well below convention-
+  drift levels.
+- **Encoder forward DWT** uses J2KCodec.J2KDWT1D (spec-compliant);
+  GPU forward DWT is not on any encoder code path. No exposure.
+- **Boundary extension** between CPU and GPU implementations agrees
+  at the indices that matter for valid block dimensions.
+
+### Fixed
+
+- `Sources/J2KMetal/JP3DMetalDWT.swift` — swap scaling direction in
+  3 GPU forward 9/7 kernels (X/Y/Z axes) and 2 CPU lifting functions.
+
+### Added
+
+- `Tests/J2KMetalTests/J2KWaveletConventionAuditTests.swift` —
+  4-test cross-module agreement gate:
+  - 9/7 inverse: J2KMetalDWT vs J2KCodec.J2KDWT1D (locks v5.21.0 fix)
+  - 9/7 forward: J2KMetalDWT vs J2KCodec.J2KDWT1D (locks v5.21.0 fix)
+  - 5/3 inverse: J2KMetalDWT vs J2KCodec.J2KDWT1D (convention)
+  - JP3DMetalDWT 9/7 forward vs hand-built ISO/IEC 15444-1
+    reference (locks v5.22.0 fix)
+
+### Verified
+
+- 4 new audit tests pass with max diff ≤ 1 LSB (Float precision).
+- All v5.14-v5.21 regression gates remain green.
+
+### Lesson
+
+v5.21.0 fixed the GPU 9/7 instance of scaling-direction drift.
+v5.22.0 makes the bug CLASS unrepresentable: any future PR that
+introduces a new wavelet path with the wrong convention (or
+modifies an existing path's convention) fails the audit suite at
+PR time. Same shape as v5.14.2 (byte-order class) and v5.15.0
+(lossless conformant ratification).
+
 ## [5.21.0] — 2026-05-04
 
 **GPU 9/7 lossy IDWT scaling fix — root-cause + permanent removal of v5.20.0 gate**
