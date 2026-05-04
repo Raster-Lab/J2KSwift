@@ -602,6 +602,33 @@ public enum J2KBitrateMode: Sendable, Equatable {
     ///   Reversible 5/3 always uses step = 1; this mode is rejected
     ///   when `useReversibleFilter` is true.
     case fixedQstep(qstep: Double)
+
+    /// Target-bitrate mode that hits the budget via a qstep search
+    /// (v5.19.0). Combines `.constantBitrate`'s convenience (user
+    /// specifies bpp, encoder hits the target) with `.fixedQstep`'s
+    /// R-D quality (no PCRD-opt all-or-nothing block selection).
+    ///
+    /// Encoder behavior: outer loop binary-searches `qstep` over
+    /// log space until the encoded size lands within `tolerance` of
+    /// the target. Each iteration is a full encode at a candidate
+    /// qstep — typically converges in 4–7 iterations.
+    ///
+    /// Use this when:
+    /// - You need a target bpp (compliance / archival).
+    /// - You're doing HT conformant lossy where the v5.16.0 R-D gap
+    ///   in `.constantBitrate` matters.
+    /// - You can spend ~5× the single-encode time on each input.
+    ///
+    /// - Parameters:
+    ///   - bitsPerPixel: Target bpp (encoded bytes × 8 / pixel count).
+    ///   - tolerance: Acceptable relative error vs target (default
+    ///     0.05 = within 5%). Tighter values may need more iterations.
+    ///   - maxIterations: Hard cap on encode iterations. Default 8;
+    ///     real-world content typically converges in 4–6.
+    case constantBitrateViaQstep(
+        bitsPerPixel: Double,
+        tolerance: Double = 0.05,
+        maxIterations: Int = 8)
 }
 
 // MARK: - Wavelet Kernel Configuration
@@ -717,6 +744,8 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Lossless"
         case .fixedQstep(let qstep):
             return "Fixed Qstep (\(String(format: "%.5f", qstep)))"
+        case .constantBitrateViaQstep(let bpp, let tol, let maxIter):
+            return "Constant Bitrate via Qstep (\(String(format: "%.2f", bpp)) bpp ±\(String(format: "%.0f", tol * 100))%, max \(maxIter) iters)"
         }
     }
 }

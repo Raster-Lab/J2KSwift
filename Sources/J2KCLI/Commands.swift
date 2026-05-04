@@ -136,6 +136,14 @@ extension J2KCLI {
             // Scripts/rd_benchmark.py:_ojph_qstep_for_target_bpp.
             config.bitrateMode = .fixedQstep(qstep: qstep)
             config.lossless = false
+        } else if let viaQstepBpp = options["bitrate-via-qstep"], let bpp = Double(viaQstepBpp) {
+            // v5.19.0: target-bpp via qstep search. Outer loop
+            // iterates qstep until achieved bpp matches target within
+            // tolerance. Combines .constantBitrate's convenience with
+            // .fixedQstep's R-D quality. Slower (4–6 encode iters)
+            // but closes the v5.16.0 R-D gap.
+            config.bitrateMode = .constantBitrateViaQstep(bitsPerPixel: bpp)
+            config.lossless = false
         } else if let bpStr = options["bitrate"], let bpp = Double(bpStr) {
             config.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
         } else if let qualStr = options["q"] ?? options["quality"],
@@ -309,6 +317,7 @@ extension J2KCLI {
             -q, --quality FLOAT         Quality 0.0-1.0 (default 1.0)
             --lossless                  Lossless compression
             --bitrate BPP               Target bit-rate (bits per pixel)
+            --bitrate-via-qstep BPP     Target bpp via qstep search (better R-D, ~5× slower)
             --qstep STEP                Fixed quantization step (OpenJPH-style; lossy 9/7 only)
             --psnr VALUE                Target PSNR (dB)
             --visually-lossless         Near-lossless preset

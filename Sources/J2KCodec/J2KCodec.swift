@@ -94,8 +94,106 @@ public struct J2KEncoder: Sendable {
     /// - Throws: ``J2KError/invalidParameter(_:)`` if the image is invalid.
     /// - Throws: ``J2KError/encodingError(_:)`` if encoding fails.
     public func encode(_ image: J2KImage) async throws -> Data {
+        // v5.19.0 — `.constantBitrateViaQstep` runs an outer loop that
+        // binary-searches qstep until achieved bpp matches target.
+        // Bypasses PCRD-opt entirely; each iteration uses `.fixedQstep`.
+        if case .constantBitrateViaQstep(let bpp, let tol, let maxIter) = encodingConfiguration.bitrateMode {
+            return try await encodeViaQstepSearch(
+                image,
+                targetBpp: bpp,
+                tolerance: tol,
+                maxIterations: maxIter)
+        }
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encode(image)
+    }
+
+    /// Binary search on qstep until achieved bpp matches `targetBpp`
+    /// within `tolerance`. Each iteration is a full encode at a
+    /// candidate qstep, so the total cost is roughly N× the single-
+    /// encode cost where N is the iteration count (typically 4–6).
+    ///
+    /// Convergence model (log-binary-search):
+    ///   - bytes(qstep) is a monotonically decreasing function of qstep.
+    ///   - Initial guess: calibrated qstep for targetBpp + bitDepth.
+    ///   - Each iteration narrows [lower, upper] bounds. Next guess is
+    ///     `sqrt(lower * upper)` (geometric mean) — works well in log
+    ///     space where bytes ≈ k / qstep^α.
+    ///   - Returns the encoded bytes at the converged qstep, or the
+    ///     last iteration's output if maxIterations is exhausted.
+    private func encodeViaQstepSearch(
+        _ image: J2KImage,
+        targetBpp: Double,
+        tolerance: Double,
+        maxIterations: Int
+    ) async throws -> Data {
+        let totalSamples = image.width * image.height * image.componentCount
+        guard totalSamples > 0 else {
+            throw J2KError.invalidParameter("image has zero pixel area")
+        }
+        let targetBytes = Double(totalSamples) * targetBpp / 8.0
+        let bitDepth = image.components.first?.bitDepth ?? 8
+        var qstep = Self.initialQstepGuess(targetBpp: targetBpp, bitDepth: bitDepth)
+        // Wide initial bracket — log-search narrows it quickly.
+        var lower = qstep / 64.0
+        var upper = qstep * 64.0
+
+        var bestEncoded: Data = Data()
+        var bestRatioErr = Double.infinity
+
+        for _ in 0..<max(1, maxIterations) {
+            // Clone configuration with .fixedQstep substituted.
+            var iterConfig = encodingConfiguration
+            iterConfig.bitrateMode = .fixedQstep(qstep: qstep)
+            iterConfig.lossless = false
+            let pipeline = EncoderPipeline(config: iterConfig)
+            let encoded = try await pipeline.encode(image)
+            let achievedBytes = Double(encoded.count)
+            let ratio = achievedBytes / targetBytes
+            let ratioErr = abs(ratio - 1.0)
+            if ratioErr < bestRatioErr {
+                bestRatioErr = ratioErr
+                bestEncoded = encoded
+            }
+            if ratioErr < tolerance {
+                return encoded
+            }
+            // Adjust bounds for next iteration.
+            if achievedBytes > targetBytes {
+                lower = qstep
+                qstep = (qstep * upper).squareRoot()
+            } else {
+                upper = qstep
+                qstep = (qstep * lower).squareRoot()
+            }
+        }
+        // Convergence failure — return the closest-achieved iteration
+        // rather than throwing. Common at extreme target bpps where
+        // the qstep response is non-monotonic at the boundary.
+        return bestEncoded
+    }
+
+    /// Calibrated initial qstep for a (targetBpp, bitDepth) pair.
+    /// Empirically derived from J2KSwift's HT conformant lossy path
+    /// on natural-image content. The binary search refines from here.
+    /// Values targeted at within ~50% of the converged qstep on a
+    /// typical natural image; the search burns 2–3 iterations beyond
+    /// that to converge to within 5% tolerance.
+    private static func initialQstepGuess(targetBpp: Double, bitDepth: Int) -> Double {
+        // J2KSwift's qstep semantics differ from OpenJPH's — see
+        // V5_18_0_DESIGN.md and v5.18.0 release notes. These
+        // calibrations match J2KSwift's `J2KStepSizeCalculator`.
+        // Empirically: bytes ≈ k / qstep on natural images, so for
+        // a target bpp B we estimate qstep ≈ k / B where k depends
+        // on bit-depth.
+        let bd = max(8, bitDepth)
+        let k: Double
+        switch bd {
+        case 8:    k = 80.0
+        case 9...12:  k = 50.0
+        default:   k = 30.0   // 16-bit and beyond
+        }
+        return k / max(0.05, targetBpp)
     }
 
     /// Encodes an image to JPEG 2000 format with progress reporting.

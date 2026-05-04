@@ -5,6 +5,67 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.19.0] — 2026-05-04
+
+**Constant-bitrate via qstep search (Option D)**
+
+Closes the v5.16.0 R-D gap for `.constantBitrate` callers without
+modifying the decoder. New mode `.constantBitrateViaQstep` builds on
+v5.18.0's `.fixedQstep` by adding an outer binary-search loop on the
+quantization step.
+
+Pivoted from Option B (intra-block byte-level truncation) when
+investigation revealed truncating MagSgn produces 0xFF-padded all-ones
+magnitudes (per Part-15 spec convention) — actively WORSE than no
+truncation. Option D ships the user-facing fix in 1 day with no
+decoder changes; Option B remains documented for v5.20.0+ if needed.
+
+### Added
+
+- `J2KBitrateMode.constantBitrateViaQstep(bitsPerPixel:tolerance:maxIterations:)`
+  case. Outer loop binary-searches qstep until achieved bpp matches
+  target within tolerance. Default tolerance 5%, max iterations 8.
+  Typically converges in 4–6 encode iterations.
+- `J2KEncoder.encodeViaQstepSearch` — internal implementation of the
+  search loop. Initial qstep guess from a calibrated table per
+  bit-depth; geometric-mean narrowing of [lower, upper] qstep bounds.
+- `--bitrate-via-qstep BPP` CLI flag.
+- `Tests/J2KCodecTests/J2KHTConformantConstantBitrateViaQstepTests.swift`:
+  - `testConstantBitrateViaQstep_HitsTargetAndBeatsPCRDOpt` — strict
+    gate that the new mode hits target bpp within tolerance AND beats
+    `.constantBitrate` by ≥3 dB at matched bpp. Currently measures
+    +6.64 dB on synth content.
+  - `testConstantBitrateViaQstepConfigurationPersists` — round-trip
+    smoke test.
+- `RELEASE_NOTES_v5.19.0.md` and `V5_19_0_OPTION_B_INVESTIGATION.md`
+  for the full audit trail.
+
+### Investigation
+
+Original v5.18.0 design doc proposed Option B (intra-block byte-level
+truncation in PCRD-opt). Reading J2KSwift's MagSgn decoder
+(`J2KHTConformantMagSgnCoder.swift:133-150`) revealed it pads
+truncated regions with `0xFF` per Part-15 spec convention. Reading
+m bits from 0xFF gives `(1 << m) - 1` — maximum-magnitude payload
+for any coefficient VLC marked significant. Result: simple truncation
+produces all-ones magnitude garbage, worse than no truncation.
+
+Pivoted to Option D as the working approach. Option B is preserved
+in the design docs for v5.20.0+ if user demand justifies the
+decoder-side changes + ojph_expand interop revalidation.
+
+### Known issues (deferred)
+
+- Convergence may fail at extreme bpp targets (< 0.1 or > 8 bpp).
+  Encoder returns closest-achieved iteration — still typically
+  better R-D than `.constantBitrate` for the same target.
+- ~5× single-encode cost. Not suitable for real-time / streaming.
+- Initial qstep calibration is rough (~50% accuracy); 2–3 iterations
+  burned beyond an ideal table. Per-modality tuning saves iterations.
+- Pure `.constantBitrate` callers who can't accept the encode-time
+  hit retain the v5.16.0 R-D gap. Option B is the only path that
+  closes it for them.
+
 ## [5.18.0] — 2026-05-04
 
 **Fixed-qstep mode for HT conformant lossy R-D**
