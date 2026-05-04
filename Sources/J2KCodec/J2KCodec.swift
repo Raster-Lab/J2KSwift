@@ -571,6 +571,25 @@ public struct J2KEncoder: Sendable {
 
         // Apply the strict cap via packet-boundary truncation.
         let capBytes = Int(cap.rounded(.down))
+        // v5.37 NOTE: tried R-D-aware packet selection
+        // (truncateByRDOptimized) here based on the hypothesis that
+        // ranking packets by L2-norm² / bytes — i.e., favouring
+        // high-resolution detail packets — would yield higher PSNR
+        // for the same byte budget. It DID NOT: PSNR regressed 1-2
+        // dB across all bpp targets on real medical fixtures
+        // because JPEG 2000 wavelet reconstruction is hierarchical.
+        // Each level's inverse DWT consumes the previous level's LL
+        // synthesised from LL + lower-frequency detail. Skipping
+        // intermediate-resolution packets (e.g., dropping res 2-3 to
+        // make room for more res 5) leaves a reconstruction with
+        // missing mid-frequency content; the visible result is
+        // worse than the LRCP-prefix that the trivial truncator
+        // produces. The R-D method is preserved as
+        // `truncateByRDOptimized` for future work that uses
+        // **actual coefficient sums** rather than the per-resolution
+        // weight heuristic, but the strict-mode default stays on
+        // LRCP-prefix truncation. See MEDICAL_BENCHMARK.md "v5.37
+        // R-D selection — what didn't work".
         let finalData = EncoderPipeline.truncateAtPacketBoundary(
             indexed, targetBytes: capBytes
         )

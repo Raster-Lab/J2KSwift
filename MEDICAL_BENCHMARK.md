@@ -529,6 +529,44 @@ swift test -c release --filter "J2KMultiLayerEncodeTests/testStrictModeRDBenchma
    while high-frequency detail packets are truncated away because LRCP-order
    stream truncation drops the highest-resolution packets first.
 
+### v5.37 R-D selection — what didn't work
+
+A first attempt at v5.37 priority 1 implemented **resolution-weight-based
+packet ranking**: rank packets by `(9/7 synthesis L2-norm)² / packet_bytes`,
+include LL by default, then greedy-include the highest-slope packets until
+the cap is hit. The hypothesis was that high-resolution detail packets
+contribute disproportionately more PSNR per byte (their L2 norms are
+~1000× larger than LL's), so reordering retention to favour them should
+improve PSNR.
+
+The implementation works (`EncoderPipeline.truncateByRDOptimized`) and is
+preserved as available infrastructure. But wired into strict mode it
+**regressed PSNR by 1-2 dB** across all bpp targets on the medical corpus:
+
+| Fixture | bpp | LRCP-prefix (v5.36) | Resolution-rank R-D (v5.37 attempt) | Δ |
+|---|---:|---:|---:|---:|
+| px_001 | 2.0 | 13.69 | 11.73 | **−1.96 dB** |
+| px_001 | 4.0 | 14.28 | 11.85 | −2.43 dB |
+| dx_002 | 2.0 | 14.57 | 12.51 | −2.06 dB |
+| dx_002 | 4.0 | 14.86 | 12.60 | −2.26 dB |
+
+**Why it failed**: JPEG 2000 wavelet reconstruction is hierarchical — each
+inverse DWT level consumes the previous level's LL plus its detail bands.
+Skipping intermediate-resolution packets (dropping res 2-3 to fit more
+res 5) leaves a reconstruction with missing mid-frequency content; the
+res 5 detail "floats" without the lower-frequency synthesis path
+underneath it. Even though high-res packets carry more PSNR-per-byte at
+the coefficient level, dropping low-res packets to make room for them
+breaks the synthesis chain.
+
+The takeaway: any R-D selector under hard cap must keep the LRCP prefix
+intact (LL + every intermediate resolution) and only choose which
+high-resolution PRECINCTS to include. The per-resolution-weight heuristic
+ignored that constraint and was promptly punished by 2 dB. The strict-mode
+default has been reverted to LRCP-prefix truncation; the R-D method is
+preserved for v5.37+ work that uses **actual block coefficient sums** and
+respects the hierarchical synthesis dependency.
+
 ### v5.37 priority list (post-budget-fill)
 
 In order of expected PSNR-per-byte impact:

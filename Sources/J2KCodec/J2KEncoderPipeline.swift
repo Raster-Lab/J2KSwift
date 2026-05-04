@@ -185,6 +185,19 @@ final class ParallelResultCollector<T: Sendable>: Sendable {
 /// 5. Entropy Coding — EBCOT bit-plane coding per code block
 /// 6. Rate Control — quality layer formation
 /// 7. Codestream Generation — write JPEG 2000 markers and data
+/// Per-packet R-D metadata for v5.37 PSNR-per-byte recovery.
+struct PacketRDMetadata: Sendable {
+    /// Resolution level of this packet (0 = LL after all decompositions,
+    /// > 0 = detail bands at the corresponding level).
+    let resolution: Int
+    /// Component index.
+    let component: Int
+    /// Total packet bytes including the empty-flag/header bits and any
+    /// raw block data. This is `packetEnd[i] - packetEnd[i-1]` (or
+    /// `packetEnd[0] - tileDataOffset` for the first packet).
+    let bytes: Int
+}
+
 /// Encoded JPEG 2000 codestream paired with structural offsets that
 /// describe where the codestream may be safely truncated at LRCP
 /// packet boundaries (v5.34.0 strict bounded-rate mode).
@@ -208,6 +221,23 @@ struct EncodedCodestreamWithIndex: Sendable {
     /// EOC marker, yields a valid (premature-EOC) codestream
     /// containing the first `i+1` packets.
     let packetEndOffsets: [Int]
+    /// v5.37: per-packet R-D metadata for `truncateByRDOptimized`.
+    /// `nil` when the producer didn't populate it (legacy paths).
+    let packetMetadata: [PacketRDMetadata]?
+
+    init(
+        data: Data,
+        sotMarkerOffset: Int,
+        tileDataOffset: Int,
+        packetEndOffsets: [Int],
+        packetMetadata: [PacketRDMetadata]? = nil
+    ) {
+        self.data = data
+        self.sotMarkerOffset = sotMarkerOffset
+        self.tileDataOffset = tileDataOffset
+        self.packetEndOffsets = packetEndOffsets
+        self.packetMetadata = packetMetadata
+    }
 }
 
 struct EncoderPipeline: Sendable {
@@ -523,7 +553,7 @@ struct EncoderPipeline: Sendable {
         decompositionLevels: Int,
         componentCount: Int,
         precinctExponents: [PrecinctExponents]
-    ) throws -> (data: Data, packetEnds: [Int]) {
+    ) throws -> (data: Data, packetEnds: [Int], packetMetadata: [PacketRDMetadata]) {
         precondition(precinctExponents.count == decompositionLevels + 1)
         let effectiveBlocks = applyLayerTruncation(codeBlocks: codeBlocks, layers: layers)
 
@@ -589,6 +619,7 @@ struct EncoderPipeline: Sendable {
         var tileWriter = J2KBitWriter(
             capacity: totalBlockBytes + totalBlockBytes / 8 + 1024)
         var packetEnds: [Int] = []
+        var packetMetadata: [PacketRDMetadata] = []
 
         // LRCP: layer × resolution × component × precinct (raster order)
         for _ in 0..<max(1, layers.count) {
@@ -599,6 +630,7 @@ struct EncoderPipeline: Sendable {
                     let (pw, ph) = subbandPrecinctSize(forRes: resLevel)
                     for py in 0..<ny {
                         for px in 0..<nx {
+                            let packetStart = tileWriter.count
                             // Gather blocks for this precinct, per sub-band.
                             // Remap each block to precinct-local coordinates
                             // so writePacket's tag-tree dimension calculation
@@ -635,14 +667,19 @@ struct EncoderPipeline: Sendable {
                                 bandBlocks: bandBlocksList,
                                 codeBlockWidth: cbWidth,
                                 codeBlockHeight: cbHeight)
-                            packetEnds.append(tileWriter.count)
+                            let packetEnd = tileWriter.count
+                            packetEnds.append(packetEnd)
+                            packetMetadata.append(PacketRDMetadata(
+                                resolution: resLevel,
+                                component: compIdx,
+                                bytes: packetEnd - packetStart))
                         }
                     }
                 }
             }
         }
 
-        return (tileWriter.data, packetEnds)
+        return (tileWriter.data, packetEnds, packetMetadata)
     }
 
     /// v5.35.0d single-layer multi-precinct encode entry point.
@@ -735,7 +772,7 @@ struct EncoderPipeline: Sendable {
             try writeHTBlockFormatCOM(&writer)
         }
 
-        let (tileData, packetEndsInTile) = try generateMultiPrecinctTileData(
+        let (tileData, packetEndsInTile, packetMetadata) = try generateMultiPrecinctTileData(
             codeBlocks: codeBlocks, layers: layers,
             decompositionLevels: actualDecompositionLevels,
             componentCount: image.components.count,
@@ -754,7 +791,8 @@ struct EncoderPipeline: Sendable {
             data: writer.data,
             sotMarkerOffset: sotMarkerOffset,
             tileDataOffset: tileDataOffset,
-            packetEndOffsets: packetEndsInCodestream)
+            packetEndOffsets: packetEndsInCodestream,
+            packetMetadata: packetMetadata)
     }
 
     // MARK: - v5.35.0b Multi-Layer Encode Entry Point
@@ -872,6 +910,154 @@ struct EncoderPipeline: Sendable {
             sotMarkerOffset: sotMarkerOffset,
             tileDataOffset: tileDataOffset,
             packetEndOffsets: packetEndsInCodestream)
+    }
+
+    /// v5.37 — R-D-aware packet selection under hard cap.
+    ///
+    /// Replaces LRCP-stream truncation (which drops the highest-
+    /// resolution packets first because they appear last in the LRCP
+    /// stream) with greedy R-D selection: rank packets by
+    /// distortion-saved-per-byte using the L2 norm of each
+    /// resolution's wavelet synthesis basis function (ISO 15444-1
+    /// Annex E). High-resolution detail bands have synthesis L2 norms
+    /// ~1000× larger than LL at deep decomposition, so a coefficient
+    /// at res 5 contributes vastly more PSNR than one at res 0 — but
+    /// LRCP-truncation drops them first.
+    ///
+    /// Algorithm:
+    ///   1. Always include LL (resolution 0) packets — they're tiny
+    ///      and the wavelet inverse needs the LL DC term to produce
+    ///      meaningful output.
+    ///   2. Rank remaining packets by L2-norm² / packet_bytes
+    ///      (descending = best R-D first).
+    ///   3. Greedy include in rank order until the byte cap is hit.
+    ///   4. Re-emit codestream: for each packet position, emit the
+    ///      original packet bytes (if selected) or a 1-byte empty
+    ///      packet (if not selected). The decoder reads packets in
+    ///      LRCP order; empty packets contribute nothing.
+    ///
+    /// Returns the rewritten codestream with `Psot` updated, the
+    /// truncated tile data, and EOC appended. Output is byte-bounded
+    /// ≤ `targetBytes`.
+    ///
+    /// Falls back to `truncateAtPacketBoundary` if the codestream
+    /// has no `packetMetadata` (e.g., produced by the legacy
+    /// single-precinct path).
+    static func truncateByRDOptimized(
+        _ encoded: EncodedCodestreamWithIndex,
+        targetBytes: Int
+    ) -> Data {
+        guard let metadata = encoded.packetMetadata,
+              metadata.count == encoded.packetEndOffsets.count
+        else {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+        if encoded.data.count <= targetBytes {
+            return encoded.data
+        }
+
+        // L2-norm² weights from the 9/7 synthesis-basis L2 norms at
+        // deep decomposition (level 1 = highest detail, level 5 = LL).
+        // Resolution 0 is LL after all decompositions (smallest); the
+        // detail bands at increasing resolution use successively
+        // higher levels, so 9/7 norms scale as ~4× per resolution
+        // step. These weights are the AVERAGE of HL/LH/HH norms² at
+        // each resolution's level, capped to a small table.
+        // Intent: rank packets by per-byte PSNR contribution, not
+        // exact PCRD-opt accuracy.
+        let resolutionWeights: [Double] = [
+            1.0,         // res 0 LL (essential — handled separately)
+            15.5,        // res 1 detail (level 5 norms ~ 3.99)
+            69.4,        // res 2 (level 4 ~ 8.36)
+            290.6,       // res 3 (level 3 ~ 17.0)
+            1175.0,      // res 4 (level 2 ~ 34.0)
+            4715.0,      // res 5 (level 1 ~ 68.7)
+            18800.0,     // (level 0 ~ 137 — clamp)
+        ]
+
+        let headerBytes = encoded.tileDataOffset
+        let eocBytes = 2
+        let availableForPackets = targetBytes - headerBytes - eocBytes
+        // If the cap doesn't even fit the header + EOC + 1 byte per
+        // empty packet, fall back to original truncation.
+        let minViable = metadata.count
+        if availableForPackets < minViable {
+            return truncateAtPacketBoundary(encoded, targetBytes: targetBytes)
+        }
+
+        // Always include LL (res 0); compute baseline cost as if
+        // every other packet is empty (1 byte each).
+        var includedSet = Set<Int>()
+        var usedBytes = 0
+        for (i, pm) in metadata.enumerated() where pm.resolution == 0 {
+            includedSet.insert(i)
+            usedBytes += pm.bytes
+        }
+        let nonLLCount = metadata.count - includedSet.count
+        var totalBytes = usedBytes + nonLLCount  // 1 byte per empty packet
+
+        // Rank non-LL packets by R-D slope descending. Tie-break by
+        // resolution descending (prefer higher detail), then by
+        // smaller bytes (cheaper to include).
+        struct RankEntry { let idx: Int; let slope: Double; let resolution: Int; let bytes: Int }
+        var ranked: [RankEntry] = []
+        ranked.reserveCapacity(nonLLCount)
+        for (i, pm) in metadata.enumerated() where pm.resolution > 0 {
+            let weightIdx = min(pm.resolution, resolutionWeights.count - 1)
+            let weight = resolutionWeights[weightIdx]
+            let slope = pm.bytes > 0 ? weight / Double(pm.bytes) : weight
+            ranked.append(RankEntry(idx: i, slope: slope, resolution: pm.resolution, bytes: pm.bytes))
+        }
+        ranked.sort { lhs, rhs in
+            if lhs.slope != rhs.slope { return lhs.slope > rhs.slope }
+            if lhs.resolution != rhs.resolution { return lhs.resolution > rhs.resolution }
+            return lhs.bytes < rhs.bytes
+        }
+
+        // Greedy include each packet if its (bytes - 1) net cost fits.
+        for entry in ranked {
+            let netCost = entry.bytes - 1  // include cost minus the 1-byte empty replacement
+            if totalBytes + netCost <= availableForPackets {
+                includedSet.insert(entry.idx)
+                totalBytes += netCost
+            }
+        }
+
+        // Build the new tile-data byte stream: for each packet, emit
+        // its original bytes (if included) or a single 0x00 (empty
+        // packet — the "0" empty flag + byte alignment).
+        var newTile = [UInt8]()
+        newTile.reserveCapacity(totalBytes)
+        var prev = encoded.tileDataOffset
+        for (i, end) in encoded.packetEndOffsets.enumerated() {
+            if includedSet.contains(i) {
+                newTile.append(contentsOf: encoded.data[prev..<end])
+            } else {
+                newTile.append(0x00)
+            }
+            prev = end
+        }
+
+        // Reassemble: header (up to but not including original tile data)
+        //          + new tile data
+        //          + EOC (FFD9)
+        // Then rewrite Psot in the SOT marker.
+        let newPsot = UInt32(2 + 2 + 8 + 2 + newTile.count)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(headerBytes + newTile.count + eocBytes)
+        bytes.append(contentsOf: encoded.data.prefix(headerBytes))
+        bytes.append(contentsOf: newTile)
+
+        // Patch Psot at sotMarkerOffset + 6 (see truncateAtPacketBoundary).
+        let psotOffset = encoded.sotMarkerOffset + 6
+        bytes[psotOffset]     = UInt8((newPsot >> 24) & 0xFF)
+        bytes[psotOffset + 1] = UInt8((newPsot >> 16) & 0xFF)
+        bytes[psotOffset + 2] = UInt8((newPsot >> 8) & 0xFF)
+        bytes[psotOffset + 3] = UInt8(newPsot & 0xFF)
+
+        bytes.append(0xFF)
+        bytes.append(0xD9)
+        return Data(bytes)
     }
 
     /// Truncates a packet-indexed codestream at the largest LRCP
