@@ -5,6 +5,79 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.29.0] — 2026-05-04
+
+**Encode stage timings + `encodeGPU` regression discovery**
+
+Mirrors v5.24.0's pattern on the encode side: ship per-stage
+timings + corpus characterisation, let the data inform v5.30.
+Two unexpected findings:
+
+1. `encodeGPU` is currently a regression at every measured fixture
+   size — slower than CPU `encode` by 2-39%. GPU forward DWT
+   dispatch overhead exceeds the compute it saves.
+2. At 17M-pixel mammography, `rateControl` is **75% of encode
+   time** (679–701 ms / 900–920 ms). Super-linear scaling: 1M px
+   = 2.6 ms; 17M px = 700 ms (~270× for 17× pixel count).
+
+### Headline (M2, release, n=5)
+
+| Fixture                | CPU `encode` | `encodeGPU` | CPU/GPU× |
+|------------------------|-------------:|------------:|---------:|
+| xa_001 (1024×1024)     |       17 ms  |       28 ms |    0.61× |
+| px_001 (2459×1316)     |       50 ms  |       69 ms |    0.73× |
+| dx_002 (2800×2288)     |      110 ms  |      133 ms |    0.83× |
+| mg_001 (3520×4784)*    |      900 ms  |      979 ms |    0.92× |
+
+CPU `encode` wins on every fixture. **Use `encode(_:)` for now;
+`encodeGPU` is currently a regression.**
+
+### Stage breakdown shows two regimes
+
+- **≤6.4M pixels**: `entropyCoding` is dominant (42-49% of total)
+- **≥7.8M pixels**: `rateControl` dominates (50-75% of total)
+
+### Added
+
+- `Sources/J2KCodec/J2KEncodeTimings.swift` — process-global
+  always-on stage timings accumulator (mirrors v5.24.0
+  `J2KDecodeTimings`). 7 stages tracked.
+- `Tests/J2KMetalTests/J2KMedicalCorpusEncodePerformanceTests.swift` —
+  corpus encode benchmark sweeping 10 fixtures × CPU+GPU encode ×
+  per-stage breakdown.
+- `MEDICAL_BENCHMARK.md` "Encode Performance (v5.29.0)" section
+  with per-fixture times, stage breakdown, three honest findings,
+  routing recommendation.
+
+### Changed
+
+- `J2KEncoderPipeline.encode` and `encodeGPU` — wired
+  `J2KEncodeTimings.recordX` calls at all 7 stage boundaries. The
+  existing `J2K_PROFILE` env-var prints remain unchanged.
+
+### What v5.29.0 does NOT do
+
+Characterisation release, not optimisation. No encode behaviour
+change. No new public APIs.
+
+### Strategy for v5.30 (data-driven)
+
+1. Investigate `rateControl` super-linear scaling at large
+   workloads — most likely fixable hot loop in PCRD-opt; could
+   yield 5-10× on mammography encode (recommended first).
+2. GPU HT entropy encoder — mirror v5.26.0 decoder pattern in the
+   forward direction. Larger scope.
+3. Fix or remove `encodeGPU` — currently a regression.
+
+### Lesson
+
+Same as v5.24.0: stage timings reveal what end-to-end numbers
+hide. The "GPU-accelerated" encode path was treated as faster;
+the data shows it's slower. The dominant stage at mammography
+turned out to be rate control, not entropy coding. Don't
+optimise until you've measured; don't trust a name like
+`encodeGPU` until the breakdown confirms it.
+
 ## [5.28.0] — 2026-05-04
 
 **Mammography corpus extension + `preWarm()` cold-start helper**

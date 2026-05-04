@@ -166,3 +166,79 @@ Reproducible via:
 ```bash
 swift test -c release --filter testColdStartVsPreWarm
 ```
+
+---
+
+## Encode Performance (v5.29.0)
+
+After v5.28.0 brought decode 9/7 lossy on mammography to 4.6× CPU, encode is the next
+lever. v5.29.0 adds `J2KEncodeTimings` (always-on per-stage accumulator, mirrors the
+v5.24.0 decode-side timings) and a corpus encode benchmark
+(`J2KMedicalCorpusEncodePerformanceTests`). All numbers are release-mode medians (n=5
+after warm-up) on M2, HT-conformant lossy 9/7 @ 2 bpp:
+
+```bash
+swift test -c release --filter J2KMedicalCorpusEncode
+```
+
+### Per-fixture encode time (ms, lower = faster)
+
+| Fixture                | Pixels    | CPU `encode` | `encodeGPU` | CPU/GPU× |
+|------------------------|----------:|-------------:|------------:|---------:|
+| mr_002 (180×180)       |    32,400 |          2.4 |         2.3 |    1.02× |
+| ct_001 (512×512)       |   262,144 |          4.1 |         4.2 |    0.97× |
+| ct_003 (512×512)       |   262,144 |          3.8 |         3.9 |    0.98× |
+| mr_001 (886×886)       |   784,996 |          6.0 |         6.0 |    1.01× |
+| xa_001 (1024×1024)     | 1,048,576 |         17.0 |        27.7 | **0.61×** |
+| px_001 (2459×1316)     | 3,236,044 |         50.1 |        68.7 | **0.73×** |
+| dx_002 (2800×2288)     | 6,406,400 |        110.1 |       132.5 | **0.83×** |
+| dx_001 (2544×3056)*    | 7,774,464 |        239.6 |       262.6 |    0.91× |
+| mg_001 (3520×4784)*    | 16,839,680 |       899.7 |       979.0 |    0.92× |
+| mg_002 (3521×4784)*    | 16,844,464 |       920.5 |       972.9 |    0.95× |
+
+`*` synthetic LCG-noise fixtures at the indicated dimensions.
+
+### Per-fixture CPU encode stage breakdown (ms)
+
+| Fixture                | preproc | colour | DWT  | quant | entropy | rateCtrl | codestream |
+|------------------------|--------:|-------:|-----:|------:|--------:|---------:|-----------:|
+| ct_001 (512×512)       |     0.3 |    0.0 |  0.8 |   0.1 |     2.0 |      0.4 |        0.6 |
+| xa_001 (1024×1024)     |     1.2 |    0.0 |  3.3 |   0.1 |     7.6 |      2.6 |        1.9 |
+| px_001 (2459×1316)     |     3.8 |    0.0 | 10.4 |   0.1 |    24.6 |      7.4 |        5.7 |
+| dx_002 (2800×2288)     |     7.4 |    0.0 | 21.5 |   0.1 |    46.3 |     24.2 |       10.9 |
+| dx_001 (2544×3056)*    |     9.4 |    0.0 | 26.9 |   0.2 |    56.8 |    132.3 |       13.0 |
+| mg_001 (3520×4784)*    |    19.7 |    0.0 | 56.9 |   0.2 |   115.3 |  **678.8** |     28.0 |
+| mg_002 (3521×4784)*    |    19.8 |    0.0 | 57.1 |   0.2 |   115.3 |  **701.1** |     28.6 |
+
+### Three honest findings
+
+1. **`encodeGPU` is currently a regression** — slower than `encode` on every fixture by
+   2-39%. `waveletTransform` GPU dispatch costs more than the CPU forward DWT it's
+   supposed to replace (xa_001 at 1024²: CPU DWT 3.3 ms vs GPU DWT 14.9 ms). The
+   v5.22.0 audit noted GPU forward DWT was bit-equivalent to spec; this benchmark
+   shows it's also a perf regression at every measured size. The `encodeGPU` path
+   should be marked deprecated until this is fixed.
+
+2. **`rateControl` is the dominant stage at huge workloads** — at 17M pixels (mammography),
+   PCRD-opt layer truncation takes **679–701 ms** out of 900–920 ms total = **75% of
+   encode time**. Scales super-linearly: 1M px = 2.6 ms; 17M px = 700 ms (~270× for 17×
+   pixel count).
+
+3. **`entropyCoding` dominates at typical medical sizes** — at 1M to 6M pixels, HT
+   block coding is 42–49% of total encode time. This is the natural target for any
+   GPU-accelerated HT *encoder* mirroring the v5.26.0 GPU HT *decoder* infrastructure.
+
+### Routing recommendation today (v5.29.0)
+
+For encode, **always use `encode(_:)`** (CPU). The `encodeGPU(_:)` path is currently
+a regression at every fixture size we measured. This is the inverse of decode (where
+`decodeGPU` and `decodeWithGPUHT` win materially over CPU on warm session).
+
+The next architectural levers — in order of expected impact:
+
+1. **PCRD super-linear scaling** at large workloads — investigate why rateControl on
+   17M-pixel mammography is 700 ms when 1M-pixel xa_001 is 2.6 ms.
+2. **GPU HT entropy encoder** — the same architectural pattern that worked for decode
+   (GPU-resident codeblock buffer, fused-from-codeblocks IDWT) should apply to encode.
+3. **Fix or remove `encodeGPU`** — either make GPU forward DWT competitive with CPU,
+   or stop calling it `encodeGPU` and route to CPU when GPU is slower.

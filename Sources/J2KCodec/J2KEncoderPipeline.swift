@@ -279,9 +279,10 @@ struct EncoderPipeline: Sendable {
             }
         }
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE preprocess: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordPreprocessing(t - stageStart)
+            if profiling { print("  PROFILE preprocess: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -290,9 +291,10 @@ struct EncoderPipeline: Sendable {
         let (transformedData, transformedFloatData) = try applyColorTransform(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE colorXform: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordColorTransform(t - stageStart)
+            if profiling { print("  PROFILE colorXform: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -304,9 +306,10 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE dwt: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordWaveletTransform(t - stageStart)
+            if profiling { print("  PROFILE dwt: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -326,9 +329,10 @@ struct EncoderPipeline: Sendable {
         let subandsForEntropy: [[SubbandInfo]] = decompositions
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE quantize: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordQuantization(t - stageStart)
+            if profiling { print("  PROFILE quantize: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -342,9 +346,10 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE entropy: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordEntropyCoding(t - stageStart)
+            if profiling { print("  PROFILE entropy: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -360,9 +365,10 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE rateCtrl: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordRateControl(t - stageStart)
+            if profiling { print("  PROFILE rateCtrl: \(String(format: "%.4f", t - stageStart))s") }
             stageStart = t
         }
 
@@ -377,9 +383,10 @@ struct EncoderPipeline: Sendable {
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
 
-        if profiling {
+        do {
             let t = CFAbsoluteTimeGetCurrent()
-            print("  PROFILE codestream: \(String(format: "%.4f", t - stageStart))s")
+            J2KEncodeTimings.recordCodestreamGeneration(t - stageStart)
+            if profiling { print("  PROFILE codestream: \(String(format: "%.4f", t - stageStart))s") }
         }
 
         return codestream
@@ -406,6 +413,7 @@ struct EncoderPipeline: Sendable {
         progress: ((EncoderProgressUpdate) -> Void)? = nil
     ) async throws -> Data {
         try image.validate()
+        var stageStart = CFAbsoluteTimeGetCurrent()
 
         // Stage 1: Preprocessing
         reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
@@ -422,11 +430,21 @@ struct EncoderPipeline: Sendable {
                 }
             }
         }
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordPreprocessing(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 2: GPU Colour Transform
         reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
         let (transformedData, transformedFloatData) = try await applyColorTransformGPU(componentData, image: image)
         reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordColorTransform(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 3: GPU Wavelet Transform
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
@@ -435,6 +453,11 @@ struct EncoderPipeline: Sendable {
             width: image.width, height: image.height
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordWaveletTransform(t - stageStart)
+            stageStart = t
+        }
 
         let adaptiveLossyStepSizes = buildAdaptiveLossyStepSizes(
             decompositions,
@@ -457,6 +480,11 @@ struct EncoderPipeline: Sendable {
             )
         }
         reportProgress(progress, stage: .quantization, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordQuantization(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 5: Entropy Coding
         reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
@@ -467,6 +495,11 @@ struct EncoderPipeline: Sendable {
             totalLevels: actualDecompositionLevels
         )
         reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordEntropyCoding(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
@@ -474,6 +507,11 @@ struct EncoderPipeline: Sendable {
             codeBlocks: codeBlocks, totalPixels: image.width * image.height
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordRateControl(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 7: Codestream Generation
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
@@ -485,6 +523,10 @@ struct EncoderPipeline: Sendable {
             adaptiveStepSizes: adaptiveLossyStepSizes
         )
         reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordCodestreamGeneration(t - stageStart)
+        }
 
         return codestream
     }
