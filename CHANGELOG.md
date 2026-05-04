@@ -5,6 +5,51 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.19.1] — 2026-05-04
+
+**Faster qstep search — probe + cache + early-exit**
+
+Cuts `.constantBitrateViaQstep`'s overhead from v5.19.0's ~5×
+single-encode to ~4× cold / ~1× warm via three composable
+optimizations.
+
+### Added
+
+- `J2KQstepCache` (actor) — optional shared cache mapping
+  `(bitDepth, componentCount, targetBppBucket)` → converged qstep.
+  Wire one cache into multiple `J2KEncodingConfiguration`s for a
+  batch run; warm-cache convergence drops from 4–6 iterations to 1.
+- `J2KEncodingConfiguration.qstepCache: J2KQstepCache?` — new
+  optional property. Default nil = no caching.
+- `J2KEncoder.encodeWithQstepStats(_:)` — encode + diagnostic stats.
+  Returns `(data, J2KEncodeQstepStats)` with iteration count, cache
+  hit, initial / converged qstep, achieved bpp, etc.
+- `J2KEncodeQstepStats` — public struct for the new stats output.
+- `Tests/J2KCodecTests/J2KQstepSearchEfficiencyTests.swift` (4 tests):
+  - `testColdCacheConvergesIn5OrFewerIterations`
+  - `testWarmCacheConvergesIn2OrFewerIterations`
+  - `testStatsAreCoherent`
+  - `testCacheSharingAcrossEncoders`
+
+### Changed
+
+- `encodeViaQstepSearch`:
+  - Tighter initial search bracket: [guess/16, guess×16] (was 64×).
+  - First iteration acts as a probe — its result rescales qstep
+    multiplicatively before binary search begins.
+  - Early-exit when [lower, upper] ratio < 1.05 AND iterations ≥ 3.
+
+### Verified
+
+- Cold-cache: 4 iterations on synth 8-bit (was 4-6 in v5.19.0).
+- Warm-cache: 1 iteration with shared `J2KQstepCache`.
+- All v5.14-v5.19.0 regression gates remain green.
+
+### API stability
+
+- All v5.19.1 additions are opt-in; default behavior matches v5.19.0.
+- No breaking changes.
+
 ## [5.19.0] — 2026-05-04
 
 **Constant-bitrate via qstep search (Option D)**

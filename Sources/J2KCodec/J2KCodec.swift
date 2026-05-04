@@ -98,51 +98,98 @@ public struct J2KEncoder: Sendable {
         // binary-searches qstep until achieved bpp matches target.
         // Bypasses PCRD-opt entirely; each iteration uses `.fixedQstep`.
         if case .constantBitrateViaQstep(let bpp, let tol, let maxIter) = encodingConfiguration.bitrateMode {
-            return try await encodeViaQstepSearch(
+            let (data, _) = try await encodeViaQstepSearch(
                 image,
                 targetBpp: bpp,
                 tolerance: tol,
                 maxIterations: maxIter)
+            return data
         }
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encode(image)
     }
 
-    /// Binary search on qstep until achieved bpp matches `targetBpp`
-    /// within `tolerance`. Each iteration is a full encode at a
-    /// candidate qstep, so the total cost is roughly N× the single-
-    /// encode cost where N is the iteration count (typically 4–6).
+    /// Encode with `.constantBitrateViaQstep` and return both the
+    /// encoded data and diagnostic stats about the search loop.
+    /// Useful for batch workflows to measure cache-hit rate, average
+    /// iterations per encode, etc.
     ///
-    /// Convergence model (log-binary-search):
-    ///   - bytes(qstep) is a monotonically decreasing function of qstep.
-    ///   - Initial guess: calibrated qstep for targetBpp + bitDepth.
-    ///   - Each iteration narrows [lower, upper] bounds. Next guess is
-    ///     `sqrt(lower * upper)` (geometric mean) — works well in log
-    ///     space where bytes ≈ k / qstep^α.
-    ///   - Returns the encoded bytes at the converged qstep, or the
-    ///     last iteration's output if maxIterations is exhausted.
+    /// The encoder configuration MUST have
+    /// `bitrateMode == .constantBitrateViaQstep(...)` for this to be
+    /// meaningful — other modes throw `J2KError.invalidParameter`.
+    public func encodeWithQstepStats(_ image: J2KImage)
+        async throws -> (data: Data, stats: J2KEncodeQstepStats)
+    {
+        guard case .constantBitrateViaQstep(let bpp, let tol, let maxIter) = encodingConfiguration.bitrateMode else {
+            throw J2KError.invalidParameter(
+                "encodeWithQstepStats requires .constantBitrateViaQstep mode")
+        }
+        return try await encodeViaQstepSearch(
+            image,
+            targetBpp: bpp,
+            tolerance: tol,
+            maxIterations: maxIter)
+    }
+
+    /// Binary search on qstep until achieved bpp matches `targetBpp`
+    /// within `tolerance`.
+    ///
+    /// v5.19.1 improvements over v5.19.0:
+    /// 1. **Probe-based refinement**: the first iteration acts as a
+    ///    probe — its result is used to scale the initial guess
+    ///    (multiplicatively in log space) before binary search begins.
+    ///    Empirical bpp/qstep relationship is content-dependent
+    ///    (see V5_19_1_CALIBRATION.md), so a single probe outperforms
+    ///    any static calibration table for non-typical content.
+    /// 2. **Tighter initial bracket**: starts at [guess/16, guess*16]
+    ///    instead of v5.19.0's [guess/64, guess*64]. Saves ~1
+    ///    iteration on average.
+    /// 3. **Cache lookup**: if a `J2KQstepCache` was set on the encoder
+    ///    config, query it first using (bitDepth, components, target).
+    ///    On cache hit, the cached qstep replaces the calibration
+    ///    guess. After convergence, the result is stored back.
+    /// 4. **Early-exit on bracket narrowing**: if [lower, upper] ratio
+    ///    falls below 1.05 AND we've done ≥3 iterations, return the
+    ///    closest achieved (within reach of tolerance, no point in
+    ///    further narrowing).
     private func encodeViaQstepSearch(
         _ image: J2KImage,
         targetBpp: Double,
         tolerance: Double,
         maxIterations: Int
-    ) async throws -> Data {
+    ) async throws -> (Data, J2KEncodeQstepStats) {
         let totalSamples = image.width * image.height * image.componentCount
         guard totalSamples > 0 else {
             throw J2KError.invalidParameter("image has zero pixel area")
         }
         let targetBytes = Double(totalSamples) * targetBpp / 8.0
         let bitDepth = image.components.first?.bitDepth ?? 8
-        var qstep = Self.initialQstepGuess(targetBpp: targetBpp, bitDepth: bitDepth)
-        // Wide initial bracket — log-search narrows it quickly.
-        var lower = qstep / 64.0
-        var upper = qstep * 64.0
+        let componentCount = image.components.count
+
+        // 1. Initial guess: cache > calibration table.
+        let cacheKey = J2KQstepCache.Key(
+            bitDepth: bitDepth,
+            componentCount: componentCount,
+            targetBpp: targetBpp)
+        let cachedGuess = await encodingConfiguration.qstepCache?.lookup(cacheKey)
+        let cacheHit = cachedGuess != nil
+        let initialQstep = cachedGuess ?? Self.initialQstepGuess(
+            targetBpp: targetBpp, bitDepth: bitDepth)
+        var qstep = initialQstep
+
+        // 2. Tighter initial bracket. v5.19.0 used 64×; halve the log
+        //    span. Probe-refinement below adapts further.
+        var lower = qstep / 16.0
+        var upper = qstep * 16.0
 
         var bestEncoded: Data = Data()
         var bestRatioErr = Double.infinity
+        var bestQstep = qstep
+        var iterationCount = 0
 
-        for _ in 0..<max(1, maxIterations) {
-            // Clone configuration with .fixedQstep substituted.
+        while iterationCount < max(1, maxIterations) {
+            iterationCount += 1
+            // Encode with current qstep candidate.
             var iterConfig = encodingConfiguration
             iterConfig.bitrateMode = .fixedQstep(qstep: qstep)
             iterConfig.lossless = false
@@ -154,11 +201,50 @@ public struct J2KEncoder: Sendable {
             if ratioErr < bestRatioErr {
                 bestRatioErr = ratioErr
                 bestEncoded = encoded
+                bestQstep = qstep
             }
             if ratioErr < tolerance {
-                return encoded
+                // Cache the successful qstep for future similar images.
+                await encodingConfiguration.qstepCache?.store(cacheKey, qstep: qstep)
+                let stats = J2KEncodeQstepStats(
+                    iterations: iterationCount,
+                    initialQstep: initialQstep,
+                    convergedQstep: qstep,
+                    achievedBpp: Double(encoded.count * 8) / Double(totalSamples),
+                    targetBpp: targetBpp,
+                    cacheHit: cacheHit,
+                    convergedWithinTolerance: true)
+                return (encoded, stats)
             }
-            // Adjust bounds for next iteration.
+
+            // 3. After the first iteration acts as a probe, scale the
+            //    qstep based on observed bytes-vs-target ratio. This is
+            //    the v5.19.1 probe-based refinement: works in log space
+            //    so multiplicative errors compose. Past empirical data:
+            //    bpp ≈ k * qstep^-α with α∈[0.13, 1.03] depending on
+            //    bit-depth and content. Using α=1.0 as a first-order
+            //    correction; the residual error is what subsequent
+            //    binary-search steps clean up.
+            if iterationCount == 1 {
+                // Refine: multiply qstep by the achieved/target ratio.
+                // Higher achieved bytes → need higher qstep (coarser
+                // quantization → smaller output).
+                let scaleHint = ratio
+                let refined = qstep * scaleHint
+                // Clamp to within an order of magnitude of the
+                // calibration prior (avoids runaway on outliers).
+                let priorGuess = Self.initialQstepGuess(
+                    targetBpp: targetBpp, bitDepth: bitDepth)
+                qstep = max(priorGuess / 32, min(priorGuess * 32, refined))
+                // Reset bracket around the refined guess. Tighter than
+                // the calibration-only bracket since we have a fresh
+                // observation.
+                lower = qstep / 8.0
+                upper = qstep * 8.0
+                continue
+            }
+
+            // 4. Standard log-binary-search narrowing for iter ≥ 2.
             if achievedBytes > targetBytes {
                 lower = qstep
                 qstep = (qstep * upper).squareRoot()
@@ -166,11 +252,30 @@ public struct J2KEncoder: Sendable {
                 upper = qstep
                 qstep = (qstep * lower).squareRoot()
             }
+
+            // 5. Early-exit when bracket has narrowed but tolerance not
+            //    reached — further iterations won't help meaningfully.
+            //    This kicks in when the bytes/qstep curve is nearly
+            //    flat at the target (16-bit medical content can have
+            //    α as low as 0.13 — qstep changes hardly move bpp).
+            if iterationCount >= 3 && (upper / lower) < 1.05 {
+                break
+            }
         }
-        // Convergence failure — return the closest-achieved iteration
-        // rather than throwing. Common at extreme target bpps where
-        // the qstep response is non-monotonic at the boundary.
-        return bestEncoded
+
+        // Convergence either succeeded above or fell back to closest-
+        // achieved. Cache the best qstep regardless — even if we
+        // didn't hit tolerance, this is the encoder's best estimate.
+        await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+        let stats = J2KEncodeQstepStats(
+            iterations: iterationCount,
+            initialQstep: initialQstep,
+            convergedQstep: bestQstep,
+            achievedBpp: Double(bestEncoded.count * 8) / Double(totalSamples),
+            targetBpp: targetBpp,
+            cacheHit: cacheHit,
+            convergedWithinTolerance: false)
+        return (bestEncoded, stats)
     }
 
     /// Calibrated initial qstep for a (targetBpp, bitDepth) pair.

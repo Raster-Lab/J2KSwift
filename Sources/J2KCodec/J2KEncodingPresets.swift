@@ -382,6 +382,20 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - Default: `.disabled` (Part 1 compatible RCT/ICT transforms)
     public var mctConfiguration: J2KMCTEncodingConfiguration
 
+    /// Optional qstep cache for batch workflows using
+    /// `.constantBitrateViaQstep` (v5.19.0+). When non-nil, the
+    /// encoder consults the cache for an initial qstep guess based on
+    /// (bitDepth, componentCount, targetBpp), and stores the converged
+    /// qstep back after each successful search. Subsequent encodes of
+    /// similar images converge in 1–2 iterations instead of 4–6.
+    ///
+    /// Useful for DICOMKit-style workflows that encode many similar
+    /// medical images (same modality + bit-depth + target rate). Has
+    /// no effect on `.constantBitrate` / `.fixedQstep` / lossless modes.
+    ///
+    /// - Default: `nil` (cache disabled).
+    public var qstepCache: J2KQstepCache?
+
     /// Creates a new encoding configuration.
     ///
     /// - Parameters:
@@ -430,7 +444,8 @@ public struct J2KEncodingConfiguration: Sendable {
         extendedPrecisionConfiguration: J2KExtendedPrecisionConfiguration = .default,
         waveletKernelConfiguration: J2KWaveletKernelConfiguration = .standard,
         mctConfiguration: J2KMCTEncodingConfiguration = .disabled,
-        htj2kBlockFormat: HTBlockFormat = .conformant
+        htj2kBlockFormat: HTBlockFormat = .conformant,
+        qstepCache: J2KQstepCache? = nil
     ) {
         self.quality = max(0.0, min(1.0, quality))
         self.lossless = lossless
@@ -461,6 +476,7 @@ public struct J2KEncodingConfiguration: Sendable {
         self.waveletKernelConfiguration = waveletKernelConfiguration
         self.mctConfiguration = mctConfiguration
         self.htj2kBlockFormat = htj2kBlockFormat
+        self.qstepCache = qstepCache
     }
 
     /// Validates the configuration parameters.
