@@ -83,6 +83,83 @@ enum CrossCodecTooling {
         return proc.terminationStatus
     }
 
+    /// Runs `tool` with the given args and returns
+    /// (terminationStatus, wallTimeMs). Same redirection as `runTool`.
+    /// Wall time includes process start-up — that's fair, since this
+    /// is what production users would observe when shelling out to
+    /// the external codec.
+    static func timeTool(_ tool: URL, args: [String]) throws -> (status: Int32, ms: Double) {
+        let proc = Process()
+        proc.executableURL = tool
+        proc.arguments = args
+        proc.standardError = Pipe()
+        proc.standardOutput = Pipe()
+        let start = CFAbsoluteTimeGetCurrent()
+        try proc.run()
+        proc.waitUntilExit()
+        let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
+        return (proc.terminationStatus, ms)
+    }
+
+    // MARK: - Codec-specific lossless invocations
+    //
+    // Each codec has its own preferred lossless flag. Below we centralise
+    // the canonical lossless invocation for compressors and decompressors,
+    // verified against the installed binaries on 2026-05-05:
+    //   - opj_compress  v2.5.4  : default is lossless when no rate given.
+    //   - ojph_compress         : `-reversible true` for 5/3 lossless.
+    //   - grk_compress          : default is lossless when no rate given.
+    //   - kdu_compress  v8.4.1  : `Creversible=yes` for 5/3 lossless.
+
+    /// Runs the lossless compressor for `codec` on `input` (a PGM
+    /// path) and writes a J2K codestream to `output`. Returns
+    /// (status, ms). 0 status indicates success.
+    static func compressLossless(_ codec: Codec, input: String, output: String) throws -> (status: Int32, ms: Double) {
+        guard let tool = findTool(codec.compressTool) else {
+            return (-1, 0.0)
+        }
+        let args: [String]
+        switch codec {
+        case .openjpeg:
+            args = ["-i", input, "-o", output]
+        case .openjph:
+            args = ["-i", input, "-o", output, "-reversible", "true"]
+        case .grok:
+            args = ["-i", input, "-o", output]
+        case .kakadu:
+            args = ["-i", input, "-o", output, "Creversible=yes", "-quiet"]
+        }
+        return try timeTool(tool, args: args)
+    }
+
+    /// Runs the decompressor for `codec` on `input` (J2K codestream)
+    /// and writes a PGM to `output`. Returns (status, ms).
+    static func decompressLossless(_ codec: Codec, input: String, output: String) throws -> (status: Int32, ms: Double) {
+        guard let tool = findTool(codec.decompressTool) else {
+            return (-1, 0.0)
+        }
+        let args: [String]
+        switch codec {
+        case .openjpeg:
+            args = ["-i", input, "-o", output]
+        case .openjph:
+            args = ["-i", input, "-o", output]
+        case .grok:
+            args = ["-i", input, "-o", output]
+        case .kakadu:
+            args = ["-i", input, "-o", output, "-quiet"]
+        }
+        return try timeTool(tool, args: args)
+    }
+
+    /// Returns the file size of `path`, or 0 if missing. Convenience
+    /// for tests reporting the codestream byte size.
+    static func fileSize(_ path: String) -> Int {
+        guard let attr = try? FileManager.default.attributesOfItem(atPath: path),
+              let n = attr[.size] as? Int else { return 0 }
+        return n
+    }
+
     // MARK: - Medical corpus fixture index
 
     /// One row of the medical-corpus fixture index.
