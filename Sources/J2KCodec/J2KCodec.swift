@@ -828,6 +828,19 @@ public struct J2KEncoder: Sendable {
     /// - Returns: The encoded JPEG 2000 codestream data.
     /// - Throws: ``J2KError`` if encoding fails.
     public func encodeGPU(_ image: J2KImage) async throws -> Data {
+        // v5.34.0 — same auto-promote / mode-interception as the CPU
+        // `encode(_:)` so that callers get the SAME codestream from
+        // `.constantBitrate(bpp)` regardless of API entry point.
+        // The strict / bounded / Qstep-search modes run the multi-pass
+        // search on the CPU pipeline (the search itself is per-encode
+        // overhead that doesn't map onto a single GPU dispatch); when
+        // the active mode is one of those, this method falls back to
+        // the CPU `encode(_:)` path. Plain `.constantBitrate` on
+        // configs that DON'T trigger auto-promote (8-bit, EBCOT,
+        // lossless, non-conformant) goes straight to GPU as before.
+        if shouldRouteThroughInterceptedEncode(image: image) {
+            return try await encode(image)
+        }
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encodeGPU(image)
     }
@@ -843,8 +856,36 @@ public struct J2KEncoder: Sendable {
         _ image: J2KImage,
         progress: ((EncoderProgressUpdate) -> Void)?
     ) async throws -> Data {
+        if shouldRouteThroughInterceptedEncode(image: image) {
+            return try await encode(image)
+        }
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encodeGPU(image, progress: progress)
+    }
+
+    /// True when the active bitrate mode triggers J2KEncoder.encode's
+    /// CPU-side interception (Qstep search, bounded, strict, or
+    /// `.constantBitrate` auto-promote on bitDepth ≥ 12 HT-conformant
+    /// lossy). Used to keep the GPU entry points consistent with the
+    /// CPU entry point's codestream output.
+    private func shouldRouteThroughInterceptedEncode(image: J2KImage) -> Bool {
+        switch encodingConfiguration.bitrateMode {
+        case .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
+            return true
+        case .constantBitrate:
+            // Auto-promote condition mirrors `encode(_:)`. Includes
+            // the bitDepth ≥ 12 gate so 8-bit content (which goes
+            // straight to PCRD on `encode()`) also stays on the GPU
+            // PCRD path here.
+            let maxBitDepth = image.components.map { $0.bitDepth }.max() ?? 8
+            return encodingConfiguration.useHTJ2K
+                && encodingConfiguration.htj2kBlockFormat == .conformant
+                && !encodingConfiguration.lossless
+                && !encodingConfiguration.useReversibleFilter
+                && maxBitDepth >= 12
+        default:
+            return false
+        }
     }
 }
 

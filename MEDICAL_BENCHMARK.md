@@ -252,43 +252,43 @@ approximation rather than a corrupted image.
 
 ### Mode selection guide (post-v5.34)
 
-| Mode | Cap | Quality | Latency | Use when |
+> ⚠️ **Strict mode is NOT a drop-in for v5.33's quality on real medical content.**
+> At a 1.0× cap, strict mode drops PSNR to 12-20 dB on real flat-curve high-bit-depth
+> fixtures (px_001, dx_002). That is **below diagnostic thresholds** for clinical
+> review. For diagnostic-grade lossy archive use `.constantBitrateBounded` explicitly
+> (60+ dB but 2-4× target bytes), or stay lossless. Pick this table carefully.
+
+| Mode | Cap | Quality on real flat-curve medical | Latency | Use when |
 |---|---|---|---|---|
-| **`.constantBitrate(bpp)`** (auto-promoted) | hard, ≤ target bytes | bounded by truncation | 3 passes + truncation | DICOM PACS / archive — strict storage budget, byte cap is a contract |
-| `.constantBitrateBounded(bpp, ...)` | best-effort 2.0× | quality-first 60+ dB | 3 passes | when overshoot is acceptable, quality is paramount |
-| `.constantBitrateViaQstep(bpp, ...)` | unbounded 1.6-3× | max | 8 passes | v5.31 max-quality behaviour |
+| **`.constantBitrate(bpp)`** (auto-promoted) | hard, ≤ target bytes | **12-20 dB** on px/dx; 18-35 dB on smaller fixtures | 3 passes + truncation | non-diagnostic preview / thumbnail tier, hard storage budget, accept quality collapse |
+| `.constantBitrateBounded(bpp, ...)` | best-effort 2.0× (may overshoot) | 60+ dB clinical-grade | 3 passes | **diagnostic-grade lossy archive** when overshoot is acceptable |
+| `.constantBitrateViaQstep(bpp, ...)` | unbounded (1.6-3× target observed) | 45-50 dB | 8 passes | v5.31 max-quality behaviour |
 | `.fixedQstep(qstep)` | unbounded | content-dependent | 1 pass | latency-critical single-shot |
 
-### v5.34 encode performance (M1, n=5 per fixture)
+### v5.34 encode performance — important caveat first
 
-Encode latency on the medical corpus is **unchanged from v5.33** — the strict-mode
-truncation adds only an O(packets) post-step (~µs cost). The 3-pass Qstep search
-budget is the same.
+The encode benchmark numbers below were captured pre-v5.34.0 consistency fix. They
+compared **CPU encode through 3-pass strict-mode auto-promote** against
+**GPU encode through 1-pass PCRD** (encodeGPU bypassed the auto-promote in v5.34.0
+initial). Apples-to-oranges: different algorithms, different number of pipeline
+passes, different output codestreams. The "CPU/GPU× 2-4× speedup" headline did NOT
+mean GPU is faster than CPU at the same workload — it meant strict-CPU is slower
+than PCRD-GPU because strict runs 3 passes.
 
-| Fixture                 |     px | CPU encode (ms) | GPU encode (ms) | CPU/GPU× |
-|-------------------------|-------:|----------------:|----------------:|---------:|
-| mr_002 (180×180)        |    32k |             2.0 |             2.5 |    0.80× |
-| ct_001 (512×512)        |   262k |            14.4 |             4.3 |    3.38× |
-| ct_003 (512×512)        |   262k |            11.7 |             3.9 |    3.01× |
-| mr_001 (886×886)        |   785k |            18.1 |             6.2 |    2.92× |
-| xa_001 (1024×1024)      |   1.0M |            53.5 |            24.6 |    2.17× |
-| px_001 (2459×1316)      |   3.2M |           192.6 |            69.3 |    2.78× |
-| dx_002 (2800×2288)      |   6.4M |           373.7 |           108.1 |    3.46× |
-| dx_001 (2544×3056)*     |   7.8M |           475.4 |           134.8 |    3.53× |
-| mg_001 (3520×4784)*     |  16.8M |          1005.7 |           267.3 |    3.76× |
-| mg_002 (3521×4784)*     |  16.8M |           993.9 |           275.2 |    3.61× |
+The consistency fix (v5.34.0 follow-up) routes `encodeGPU` through `encode` when the
+active mode would be intercepted (Qstep search, bounded, strict, or auto-promote).
+Both APIs now produce **byte-identical codestreams** for the same `.constantBitrate`
+config — verified by `J2KStrictCrossCodecValidationTests.testEncodeAndEncodeGPUProduceSameBytesForAutoPromotedConstantBitrate`.
 
-GPU encode wins by 2-4× on all sizes ≥ 512×512. Stage breakdown (GPU encode, ms):
+**Implication for the v5.29 encodeGPU regression text below**: that section measured
+GPU running its native pipeline (PCRD on `.constantBitrate`, no auto-promote). Those
+numbers stand. The v5.34 strict-mode CPU cost is on top of v5.29's encode cost (3 passes
+vs 1) — see the v5.33.0 release notes' encode latency comparison for the full progression.
 
-| Fixture                 | preproc | DWT  | entropy | rateCtrl | codestream |
-|-------------------------|--------:|-----:|--------:|---------:|-----------:|
-| ct_001 (512×512)        |     0.3 |  1.0 |     2.0 |      0.4 |        0.6 |
-| xa_001 (1024×1024)      |     1.2 | 11.4 |     7.5 |      2.6 |        2.0 |
-| px_001 (2459×1316)      |     3.9 | 28.4 |    23.1 |      7.5 |        5.9 |
-| dx_002 (2800×2288)      |     7.6 | 45.5 |    45.4 |      1.0 |       11.2 |
-| mg_001 (3520×4784)*     |    20.2 |100.4 |   115.6 |      2.1 |       28.1 |
-
-DWT and entropy continue to dominate at scale (40-50% each on mg-class).
+To benchmark CPU vs GPU at the SAME workload post-v5.34, configure
+`.constantBitrateBounded(bpp, maxOvershootRatio: 2.0, maxPasses: 3)` explicitly on
+both encoders (the bounded mode is also intercepted, so the two paths run identically;
+the comparison is meaningful) — pending capture.
 
 ### v5.34 decode performance (M1, warm session, n=5)
 
@@ -312,32 +312,63 @@ trailing packets as zero-fill. No path-specific decode regression.
 Routing recommendation unchanged: `< 256² → CPU`, `< 3M px → decodeGPU`,
 `≥ 3M px → decodeWithGPUHT`.
 
-### Recommendations by workload
+### Recommendations by workload — read carefully
 
-- **DICOM PACS ingestion / archive (strict storage budget)** → use the default
-  `.constantBitrate(bpp)`. v5.34 makes the byte cap real; the codestream is byte-exact
-  ≤ target. Quality drops on flat-curve high-bit-depth content but is recoverable on
-  lower-resolution / typical content (small / synthetic CTs land at 18-20 dB at 2 bpp,
-  acceptable for thumbnail / preview tier).
-- **Diagnostic-grade lossy archive (quality is paramount, storage isn't tight)** →
-  switch to `.constantBitrateBounded(bitsPerPixel: bpp)` explicitly. Get v5.33's 60+ dB
-  quality at the cost of 2-4× target bytes on flat-curve content.
-- **Latency-critical single-shot** → `.fixedQstep(qstep:)`. One pass, no search.
-- **v5.31 max-quality (8 passes, unbounded rate)** → `.constantBitrateViaQstep(bitsPerPixel: bpp)`.
+| Workload | Recommended mode | Why |
+|---|---|---|
+| **Diagnostic-grade lossy archive** (clinical reads, full bit-depth medical) | `.constantBitrateBounded(bitsPerPixel: bpp)` explicit | 60+ dB on real medical fixtures; storage cost 2-4× target on flat-curve. Quality is the contract. |
+| **Lossless archive** | `.lossless` | The only mode where dx_002 / px_001 reconstruct exactly. |
+| **Non-diagnostic preview / thumbnail tier** (study browser, archive index) | default `.constantBitrate(bpp)` (auto-promotes to strict) | Hard byte cap; output may be 12-20 dB on flat-curve content (visibly degraded but layout-preserving for navigation). |
+| **Hard storage budget under regulatory constraint** (e.g., per-image quota in cents/MB) | default `.constantBitrate(bpp)` (strict) | Cap is a contract. Re-evaluate per-modality whether the resulting quality is acceptable. |
+| **Latency-critical single-shot** | `.fixedQstep(qstep:)` | One encode pass, caller picks qstep. No rate guarantees. |
+| **v5.31 max-quality (8 passes, unbounded rate)** | `.constantBitrateViaQstep(bitsPerPixel: bpp)` | 45-50 dB at 1.6-3× target. |
 
-### Known v5.34 characteristics
+**Strict mode is NOT the right default for diagnostic clinical workflows.** It was
+chosen as the auto-promote default to honour the literal `.constantBitrate(bpp)`
+contract (byte cap is a hard guarantee). For PACS / clinical-archive callers who
+upgraded from v5.33 expecting 60+ dB output, the right path is to **switch
+explicitly to `.constantBitrateBounded(bitsPerPixel: bpp)`** before deploying v5.34.
 
-- **PSNR can drop sharply on flat-curve high-bit-depth medical at low bpp**. Expect
-  12-20 dB on px_001 / dx_002 at 0.5-2 bpp under strict mode, vs 60+ dB under bounded
-  mode. Quality is recoverable by switching to `.constantBitrateBounded` explicitly.
-- **Output bytes can land far below cap** when the next packet boundary above cap is
-  far past it. The search now biases toward overshoot to maximise budget usage, but on
-  flat-curve content the encoder's byte floor at low qstep can still leave significant
-  budget unfilled (px_001 @ 2 bpp lands at 0.31× of the cap). This is a v5.35 follow-
-  up target; for v5.34 the cap (not the budget fill) is the headline.
+### Cross-codec / encapsulation validation
+
+- **`opj_decompress` (OpenJPEG 2.5.4)** decodes strict-truncated codestream — exit 0,
+  produces correct dimensions. ✓
+- **`ojph_expand` (OpenJPH 0.27.0, HTJ2K reference)** decodes strict-truncated
+  codestream — exit 0. ✓
+- Verified by `J2KStrictCrossCodecValidationTests.testStrictTruncatedDecodesInOpenJPEGAndOpenJPH`.
+- The truncated codestream is a valid JPEG 2000 codestream per ISO/IEC 15444-1: it
+  starts with SOC (0xFF4F), contains a complete header (SIZ, COD, QCD, COM, SOT with
+  rewritten Psot, SOD), the retained packet bytes, and ends with EOC (0xFFD9). Suitable
+  for embedding in DICOM Pixel Data with Transfer Syntax UID 1.2.840.10008.1.2.4.90
+  (JPEG 2000 Image Compression) — the encapsulation wraps the raw codestream verbatim.
+
+### Known v5.34 limitations (structural, not bugs)
+
+- **PSNR collapses on flat-curve high-bit-depth medical at low bpp** under the
+  default 1.0× cap. Expect 12-20 dB on px_001 / dx_002 at 0.5-2 bpp under strict mode,
+  vs 60+ dB under bounded mode at the cost of overshoot. This is the documented
+  trade-off; quality is recoverable by switching to `.constantBitrateBounded` explicitly.
+
+- **Budget-fill ratio can drop to 0.3× of cap** because LRCP packet truncation is coarse.
+  On HT conformant cleanup-only with 1 layer, the highest-resolution packets are large
+  (60-80% of total bytes per packet). At a 1.0× cap the next packet boundary above cap
+  is often far past it; the search settles for the boundary far below cap. So the
+  output is well within budget but doesn't fill it — quality could in principle be
+  higher on the same byte budget if truncation were finer-grained.
+
+- **The granularity floor is structural to LRCP single-layer**. To get finer truncation
+  granularity (and recover quality at a strict cap) the codec would need either:
+  multi-layer encoding (PCRD picks layer truncation points within packets — costs
+  encode time and complicates the decoder side); or in-packet truncation with re-
+  computed packet headers (rewrites Lblock fields, more invasive). v5.35+ scope.
+
 - All v5.31-v5.33 quality features remain available as opt-in (`.constantBitrateBounded`,
   `.constantBitrateViaQstep`, `.fixedQstep`) — the v5.34 change is the auto-promote
   default only.
+
+- **`encode()` and `encodeGPU()` produce byte-identical output** for the same
+  `.constantBitrate(bpp)` post-v5.34 consistency fix. Pre-fix, they diverged on the
+  auto-promote-eligible path. Verified by parity test.
 
 ---
 
