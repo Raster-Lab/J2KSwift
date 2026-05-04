@@ -48,17 +48,31 @@ let package = Package(
             name: "J2KTestApp",
             targets: ["J2KTestApp"]),
     ],
+    dependencies: [
+        // Shared protocol surface for the Swift compression-library
+        // family. J2KSwift conforms its public types to these protocols
+        // so callers can write generic-over-codec code that also works
+        // with JXLSwift (which adopts the same protocols).
+        .package(path: "../CompressionFamily"),
+    ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "J2KCore",
+            dependencies: [
+                .product(name: "CompressionFamily", package: "CompressionFamily"),
+            ],
             swiftSettings: [
                 .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
             ]),
         .target(
             name: "J2KCodec",
-            dependencies: ["J2KCore", "J2KMetal"],
+            dependencies: [
+                "J2KCore",
+                "J2KMetal",
+                .product(name: "CompressionFamily", package: "CompressionFamily"),
+            ],
             swiftSettings: [
                 .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
             ]),
@@ -103,7 +117,10 @@ let package = Package(
             dependencies: ["J2KCore", "J2KFileFormat"]),
         .testTarget(
             name: "J2KCodecTests",
-            dependencies: ["J2KCodec", "J2KFileFormat", "J2KAccelerate"]),
+            dependencies: [
+                "J2KCodec", "J2KFileFormat", "J2KAccelerate",
+                .product(name: "CompressionFamily", package: "CompressionFamily"),
+            ]),
         .testTarget(
             name: "J2KAccelerateTests",
             dependencies: ["J2KAccelerate"]),
