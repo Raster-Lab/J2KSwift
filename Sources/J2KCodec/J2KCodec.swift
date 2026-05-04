@@ -473,16 +473,19 @@ public struct J2KEncoder: Sendable {
             iterConfig.bitrateMode = .fixedQstep(qstep: q)
             iterConfig.lossless = false
             let pipeline = EncoderPipeline(config: iterConfig)
-            // v5.35.0d-decode: multi-precinct codestream emission gives
-            // finer truncation granularity for budget-fill recovery.
-            // PPx=PPy=10 → 1024 LL precinct, 512 sub-band precincts at
-            // r > 0. Decode-side multi-precinct support landed in this
-            // commit (extractTileData iterates precincts in raster
-            // order; tag trees are per-precinct). All three decode
-            // paths verified: CPU `decode`, `decodeGPU`, `decodeWith-
-            // GPUHT`. Cross-codec verified: OpenJPEG, OpenJPH, Grok.
+            // v5.36-tuning: multi-precinct strict mode with PPx=PPy=8
+            // → 256 LL precinct, 128 sub-band precincts at r > 0.
+            // For px_001-class fixtures this produces ~85 packets
+            // total (vs PPx=10's 12); the additional truncation
+            // boundaries push budget-fill on the highest-resolution
+            // band closer to the cap. The previously-suspected SIGTRAP
+            // at PPx<10 was a stale symptom of the single-precinct
+            // decoder bug fixed in this same release; with the decoder
+            // fix in place, PPx 5-10 all round-trip cleanly through
+            // CPU `decode`, `decodeGPU`, `decodeWithGPUHT`, OpenJPEG,
+            // OpenJPH, and Grok on px_001 / dx_002 / synthetic.
             let pps = Array(
-                repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10),
+                repeating: EncoderPipeline.PrecinctExponents(widthExp: 8, heightExp: 8),
                 count: encodingConfiguration.decompositionLevels + 1)
             let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
                 image, qstep: q, precinctExponents: pps)

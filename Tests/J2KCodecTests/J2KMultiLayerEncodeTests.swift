@@ -372,6 +372,142 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         print("decodeWithGPUHT OK")
     }
 
+    /// Diagnostic: pinpoint the PPx<10 crash on px_001-class fixtures.
+    /// Sweep PPx from 10 down to 5 on px_001 (2459×1316), reporting at
+    /// which PPx value the encode/decode trips a precondition or
+    /// produces a malformed codestream.
+    func testPPxSweepOnPx001ToPinpointCrash() async throws {
+        guard let img = try loadPGM("px_study_001_instance_000001.pgm") else {
+            throw XCTSkip("px_001 fixture not found")
+        }
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+
+        for pp in (5...10).reversed() {
+            let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: pp, heightExp: pp), count: 6)
+            do {
+                let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+                    img, qstep: 30.0, precinctExponents: pps)
+                // Try CPU decode + decodeWithGPUHT
+                let cpu = try await J2KDecoder().decode(indexed.data)
+                _ = cpu
+                if J2KMetalSession.isAvailable {
+                    let session = J2KMetalSession()
+                    _ = try await J2KDecoder().decodeWithGPUHT(indexed.data, session: session)
+                }
+                print("PPx=\(pp): encode \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets — CPU+GPU HT decode OK")
+            } catch {
+                print("PPx=\(pp): FAILED — \(error)")
+                XCTFail("PPx=\(pp) failed: \(error)")
+                return
+            }
+        }
+    }
+
+    /// **HEADLINE v5.35 VALIDATION** — strict-mode auto-promote on real
+    /// medical fixtures at 2 bpp, validated across all 6 decode paths
+    /// with budget-fill ratio and PSNR gain measured.
+    ///
+    /// User targets (per session direction):
+    ///   - px_001 @ 2 bpp: v5.34 0.31× → target >0.40×, ideal >0.70×
+    ///   - dx_002 @ 2 bpp: v5.34 0.29× → target >0.40×, ideal >0.70×
+    ///
+    /// Validation matrix: each (fixture × decoder) cell must produce
+    /// a decoded image with width/height matching the source AND PSNR
+    /// > 0 dB (i.e., the decoder produced output, didn't crash, didn't
+    /// silently zero out blocks).
+    func testHeadlineStrictModeValidation_AcrossAllDecoders() async throws {
+        struct Fixture {
+            let name: String
+            let path: String
+            let v534FillRatio: Double  // baseline for comparison
+        }
+        let fixtures = [
+            Fixture(name: "px_001 (2459×1316)", path: "px_study_001_instance_000001.pgm", v534FillRatio: 0.312),
+            Fixture(name: "dx_002 (2800×2288)", path: "dx_study_002_instance_000001.pgm", v534FillRatio: 0.292),
+        ]
+        var ranAtLeastOne = false
+        print("\n=== v5.35 strict-mode auto-promote validation @ 2 bpp ===")
+
+        for fixture in fixtures {
+            guard let img = try loadPGM(fixture.path) else {
+                print("  SKIP \(fixture.name): fixture not found")
+                continue
+            }
+            ranAtLeastOne = true
+
+            // Encode via strict mode auto-promote (.constantBitrate(2.0)
+            // routes to encodeViaStrictBoundedQstep, which now uses
+            // multi-precinct via encodeMultiPrecinctWithPacketIndex).
+            var cfg = J2KEncodingConfiguration(
+                quality: 1.0, lossless: false,
+                decompositionLevels: 5, qualityLayers: 1,
+                progressionOrder: .lrcp, useHTJ2K: true,
+                useReversibleFilter: false,
+                htj2kBlockFormat: .conformant)
+            cfg.bitrateMode = .constantBitrate(bitsPerPixel: 2.0)
+            let encoded = try await J2KEncoder(encodingConfiguration: cfg).encode(img)
+
+            let totalSamples = img.width * img.height * img.componentCount
+            let cap = Int(Double(totalSamples) * 2.0 / 8.0)
+            let fillRatio = Double(encoded.count) / Double(cap)
+            XCTAssertLessThanOrEqual(encoded.count, cap,
+                "\(fixture.name) strict cap must be honoured")
+            XCTAssertGreaterThan(fillRatio, fixture.v534FillRatio - 0.01,
+                "\(fixture.name) v5.35 must not regress below v5.34's \(fixture.v534FillRatio)× baseline")
+
+            // CPU decode — measure PSNR (output validation)
+            let cpuDecoded = try await J2KDecoder().decode(encoded)
+            XCTAssertEqual(cpuDecoded.width, img.width)
+            XCTAssertEqual(cpuDecoded.height, img.height)
+            let cpuPsnr = computePSNR16(img.components[0].data, cpuDecoded.components[0].data)
+            XCTAssertGreaterThan(cpuPsnr, 0.0,
+                "\(fixture.name) CPU decode must produce non-zero output")
+
+            // GPU decode paths
+            var gpuPsnr = Double.nan
+            var gpuHTPsnr = Double.nan
+            if J2KMetalSession.isAvailable {
+                let session = J2KMetalSession()
+                let decoder = J2KDecoder()
+                let gpuDecoded = try await decoder.decodeGPU(encoded, session: session)
+                XCTAssertEqual(gpuDecoded.width, img.width)
+                gpuPsnr = computePSNR16(img.components[0].data, gpuDecoded.components[0].data)
+                XCTAssertGreaterThan(gpuPsnr, 0.0,
+                    "\(fixture.name) decodeGPU must produce non-zero output")
+
+                let gpuHTDecoded = try await decoder.decodeWithGPUHT(encoded, session: session)
+                XCTAssertEqual(gpuHTDecoded.width, img.width)
+                gpuHTPsnr = computePSNR16(img.components[0].data, gpuHTDecoded.components[0].data)
+                XCTAssertGreaterThan(gpuHTPsnr, 0.0,
+                    "\(fixture.name) decodeWithGPUHT must produce non-zero output")
+            }
+
+            // External decoders — exit code 0 required
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("headline_\(fixture.path).j2k")
+            try encoded.write(to: url)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let opj = runDecoder("opj_decompress", args: ["-i", url.path, "-o", "/tmp/h_opj.pgm"])
+            let ojph = runDecoder("ojph_expand", args: ["-i", url.path, "-o", "/tmp/h_ojph.pgm"])
+            let grk = runDecoder("grk_decompress", args: ["-i", url.path, "-o", "/tmp/h_grk.pgm"])
+
+            print(String(format: "  %@: bytes=%d, fill=%.3fx (v5.34: %.3fx → %.3fx)",
+                fixture.name, encoded.count, fillRatio, fixture.v534FillRatio, fillRatio))
+            print(String(format: "    PSNR: CPU=%.2f decodeGPU=%.2f decodeWithGPUHT=%.2f dB",
+                cpuPsnr, gpuPsnr, gpuHTPsnr))
+            print("    External decoders: OpenJPEG=\(opj) OpenJPH=\(ojph) Grok=\(grk)")
+
+            XCTAssertEqual(opj, 0, "\(fixture.name) OpenJPEG must decode")
+            XCTAssertEqual(ojph, 0, "\(fixture.name) OpenJPH must decode")
+            XCTAssertEqual(grk, 0, "\(fixture.name) Grok must decode")
+        }
+
+        if !ranAtLeastOne {
+            throw XCTSkip("no medical fixtures available")
+        }
+    }
+
     /// v5.35.0d: budget-fill measurement on real px_001 fixture using
     /// multi-precinct truncation. Targets: ≥ 0.5× cap fill (vs v5.34's
     /// 0.31×), and the truncated codestream still decodes in mainstream
