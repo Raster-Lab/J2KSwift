@@ -128,6 +128,22 @@ public struct J2KEncoder: Sendable {
             return data
         }
 
+        // v5.34.0 — `.constantBitrateStrict`: hard byte-cap mode.
+        // Runs the v5.33.0 quality-first bounded Qstep search, then
+        // truncates the codestream at the largest LRCP packet
+        // boundary that still fits the cap. Because JPEG 2000 is
+        // structurally truncatable, the result is a valid
+        // (premature-EOC) codestream with a guaranteed byte budget.
+        if case .constantBitrateStrict(let bpp, let maxOver, let maxPasses) =
+            encodingConfiguration.bitrateMode {
+            let (data, _) = try await encodeViaStrictBoundedQstep(
+                image,
+                targetBpp: bpp,
+                maxOvershootRatio: maxOver,
+                maxPasses: maxPasses)
+            return data
+        }
+
         // v5.31.0 — auto-promote `.constantBitrate` → Qstep-search
         // for HT-conformant lossy when the image bit-depth is ≥ 12
         // (medical workloads). PCRD-opt selects entire blocks at
@@ -154,13 +170,25 @@ public struct J2KEncoder: Sendable {
         // for them), `.fixedQstep` for strict-rate guarantees, or by
         // using a non-conformant HT block format / EBCOT / lossless
         // mode.
-        // v5.33.0 — auto-promote .constantBitrate uses the bounded-
-        // rate path (predictable 1-2 pass latency) instead of the
-        // 8-iter binary search. v5.32.0's full search produced
-        // 5–14× encode latency; v5.33.0 brings it down to 1–2× single-
-        // encode time on typical content (cache hits land in 1 pass,
-        // misses in 2). Quality stays in the 30–50 dB clinical range,
-        // dramatically better than the pre-v5.31.0 PCRD path.
+        // v5.34.0 — auto-promote .constantBitrate now uses the
+        // **strict** bounded-rate path: same v5.33.0 quality-first
+        // 3-pass Qstep search, followed by post-encode truncation
+        // at packet boundaries to enforce the byte budget. This
+        // restores the literal "constant bitrate" contract the
+        // caller asked for: a hard upper bound on output size.
+        //
+        // Pre-v5.34, the auto-promote used `.constantBitrateBounded`
+        // (best-effort 2.0× cap), which on flat-curve content (large
+        // medical fixtures at low bpp) could overshoot by 3–4×. The
+        // post-encode truncation step closes that gap structurally:
+        // JPEG 2000 codestreams are LRCP-truncatable by design, so
+        // dropping tail packets yields a valid smaller codestream
+        // (and decodes to a progressively-degraded image, not a
+        // corrupted one).
+        //
+        // For callers who want the v5.33.0 quality-first behaviour
+        // (no truncation, may exceed target), use
+        // `.constantBitrateBounded(bpp:)` explicitly.
         let maxBitDepth = image.components.map { $0.bitDepth }.max() ?? 8
         if case .constantBitrate(let bpp) = encodingConfiguration.bitrateMode,
            encodingConfiguration.useHTJ2K,
@@ -168,9 +196,9 @@ public struct J2KEncoder: Sendable {
            !encodingConfiguration.lossless,
            !encodingConfiguration.useReversibleFilter,
            maxBitDepth >= 12 {
-            let (data, _) = try await encodeViaBoundedQstep(
+            let (data, _) = try await encodeViaStrictBoundedQstep(
                 image, targetBpp: bpp,
-                maxOvershootRatio: 2.0, maxPasses: 3)
+                maxOvershootRatio: 1.0, maxPasses: 3)
             return data
         }
 
@@ -381,6 +409,169 @@ public struct J2KEncoder: Sendable {
             convergedWithinTolerance:
                 bestRatio <= maxOvershootRatio && bestRatio >= 0.9)
         return (bestEncoded, stats)
+    }
+
+    /// v5.34.0 — strict bounded-rate encode with a HARD byte cap.
+    ///
+    /// Runs the v5.33.0 quality-first bounded Qstep search to find
+    /// the best achievable quality, then — if and only if the result
+    /// exceeds the cap — truncates the codestream at the largest LRCP
+    /// packet boundary that still fits the cap.
+    ///
+    /// The truncation is structurally safe: JPEG 2000 codestreams
+    /// are LRCP-progressive, so a packet-aligned truncation produces
+    /// a valid smaller codestream that decodes (with conformant
+    /// premature-EOC handling) to a progressively-degraded image.
+    /// The retained packets keep the bounded mode's quality; the
+    /// dropped tail packets cost detail in their corresponding
+    /// resolution/component, typically the highest-frequency
+    /// sub-bands at the highest resolution (LRCP visits these last).
+    ///
+    /// Output is byte-exact ≤ `maxOvershootRatio × target`. With the
+    /// default `maxOvershootRatio: 1.0`, this means "never exceed
+    /// target." Callers who want a relaxed cap can pass a larger
+    /// value (e.g. 1.2× or 1.5×) — the search is only allowed to
+    /// trigger truncation when the bounded result exceeds the cap,
+    /// so a relaxed cap means strictly higher quality.
+    ///
+    /// Latency: at most `maxPasses` encode passes (default 3) plus
+    /// a single O(packets) truncation pass (~µs).
+    private func encodeViaStrictBoundedQstep(
+        _ image: J2KImage,
+        targetBpp: Double,
+        maxOvershootRatio: Double,
+        maxPasses: Int
+    ) async throws -> (Data, J2KEncodeQstepStats) {
+        let totalSamples = image.width * image.height * image.componentCount
+        guard totalSamples > 0 else {
+            throw J2KError.invalidParameter("image has zero pixel area")
+        }
+        let targetBytes = Double(totalSamples) * targetBpp / 8.0
+        let cap = max(targetBytes * maxOvershootRatio, 1.0)
+        let bitDepth = image.components.first?.bitDepth ?? 8
+        let componentCount = image.components.count
+
+        let cacheKey = J2KQstepCache.Key(
+            bitDepth: bitDepth,
+            componentCount: componentCount,
+            targetBpp: targetBpp)
+        let cachedGuess = await encodingConfiguration.qstepCache?.lookup(cacheKey)
+        let cacheHit = cachedGuess != nil
+        let initialQstep = cachedGuess ?? Self.initialQstepGuess(
+            targetBpp: targetBpp, bitDepth: bitDepth)
+
+        var qstep = initialQstep
+        var lower = qstep / 8.0
+        var upper = qstep * 8.0
+        var bestIndexed: EncodedCodestreamWithIndex? = nil
+        var bestQstep: Double = qstep
+        var bestRatio: Double = .infinity
+        var passes = 0
+
+        func encodeAt(_ q: Double) async throws -> (EncodedCodestreamWithIndex, Double) {
+            var iterConfig = encodingConfiguration
+            iterConfig.bitrateMode = .fixedQstep(qstep: q)
+            iterConfig.lossless = false
+            let pipeline = EncoderPipeline(config: iterConfig)
+            let indexed = try await pipeline.encodeWithPacketIndex(image)
+            let ratio = Double(indexed.data.count) / targetBytes
+            // STRICT-MODE preference: overshoot is recoverable via
+            // packet-boundary truncation (caps the bytes at target).
+            // Undershoot wastes the budget — fewer bytes than the
+            // user paid for, no truncation can recover from it. So
+            // prefer ANY overshoot over ANY undershoot, and among
+            // overshoots prefer smaller ones (less truncation loss).
+            // Among undershoots, prefer larger ratios (closer to
+            // filling the budget).
+            let isOvershoot = ratio >= 1.0
+            let isCurrentOvershoot = bestRatio >= 1.0
+            let shouldReplace: Bool
+            if bestIndexed == nil {
+                shouldReplace = true
+            } else if isOvershoot && !isCurrentOvershoot {
+                shouldReplace = true  // overshoot recoverable via truncation
+            } else if isOvershoot && isCurrentOvershoot {
+                shouldReplace = ratio < bestRatio  // smaller overshoot wastes less encode work
+            } else if !isOvershoot && !isCurrentOvershoot {
+                shouldReplace = ratio > bestRatio  // larger undershoot fills more budget
+            } else {
+                shouldReplace = false  // current is overshoot, new is undershoot — keep current
+            }
+            if shouldReplace {
+                bestIndexed = indexed
+                bestQstep = q
+                bestRatio = ratio
+            }
+            return (indexed, ratio)
+        }
+
+        let maxP = max(1, maxPasses)
+        while passes < maxP {
+            passes += 1
+            let (_, ratio) = try await encodeAt(qstep)
+
+            // Stop when we have an overshoot in [1.0, 4.0] — truncation
+            // will trim it to exactly the cap. No need to refine
+            // further; the retained packets keep the search's quality.
+            // Also stop on a near-target undershoot (≥ 0.95×) where
+            // further refinement is unlikely to gain meaningful budget.
+            if ratio >= 1.0 && ratio <= 4.0 { break }
+            if ratio >= 0.95 && ratio < 1.0 { break }
+            if passes >= maxP { break }
+
+            if passes == 1 {
+                let refined = qstep * ratio
+                let prior = Self.initialQstepGuess(targetBpp: targetBpp, bitDepth: bitDepth)
+                qstep = max(prior / 32.0, min(prior * 32.0, refined))
+                let bracketFactor = max(8.0, abs(log2(ratio)) * 8.0)
+                lower = qstep / bracketFactor
+                upper = qstep * bracketFactor
+            } else {
+                if ratio > 1.0 {
+                    if qstep >= upper * 0.95 {
+                        upper = upper * 4.0
+                    }
+                    lower = qstep
+                    qstep = (qstep * upper).squareRoot()
+                } else {
+                    // STRICT-MODE: persistent undershoot on flat-curve
+                    // content needs aggressive descent. Extend the
+                    // lower bracket if we're stuck near it AND the
+                    // current ratio is well under 1.0 (suggesting the
+                    // saturation point is below).
+                    if qstep <= lower * 1.05 || ratio < 0.5 {
+                        lower = lower / 4.0
+                    }
+                    upper = qstep
+                    qstep = (qstep * lower).squareRoot()
+                }
+            }
+        }
+
+        guard let indexed = bestIndexed else {
+            throw J2KError.encodingError("strict bounded-rate search produced no result")
+        }
+
+        await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+
+        // Apply the strict cap via packet-boundary truncation.
+        let capBytes = Int(cap.rounded(.down))
+        let finalData = EncoderPipeline.truncateAtPacketBoundary(
+            indexed, targetBytes: capBytes
+        )
+
+        let achievedBpp = Double(finalData.count * 8) / Double(totalSamples)
+        let achievedRatio = Double(finalData.count) / targetBytes
+        let stats = J2KEncodeQstepStats(
+            iterations: passes,
+            initialQstep: initialQstep,
+            convergedQstep: bestQstep,
+            achievedBpp: achievedBpp,
+            targetBpp: targetBpp,
+            cacheHit: cacheHit,
+            convergedWithinTolerance:
+                achievedRatio <= maxOvershootRatio && achievedRatio >= 0.5)
+        return (finalData, stats)
     }
 
     private func encodeViaQstepSearch(

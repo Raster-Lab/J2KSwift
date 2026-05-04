@@ -5,6 +5,126 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.34.0] — 2026-05-04
+
+**Strict bounded-rate mode — hard byte cap via codestream truncation**
+
+User spec: "make the byte cap real, even if that means exposing
+two separate modes: one for quality-first and one for strict
+bounded-rate." v5.33's `.constantBitrateBounded` capped overshoot
+best-effort but could exceed 2× on flat-curve content (large
+medical fixtures at low bpp; the encoder hits a content-determined
+byte floor where 3-pass Qstep search can't converge).
+
+v5.34 ships `.constantBitrateStrict(bpp, maxOvershootRatio: 1.0,
+maxPasses: 3)` — public enum case + the new auto-promote default
+for `.constantBitrate` on bitDepth >= 12 HT-conformant lossy.
+Output is byte-exact ≤ `maxOvershootRatio × target × pixelCount/8`.
+Default 1.0× = "never exceed target."
+
+### Algorithm: post-encode codestream truncation
+
+JPEG 2000 codestreams are LRCP-progressive: packets at lower
+resolutions / earlier components form a valid prefix at any packet
+boundary. v5.34 leverages this:
+
+1. Run the v5.33 quality-first 3-pass Qstep search (bias toward
+   overshoot, since truncation handles excess bytes for free).
+2. If the result exceeds the cap, truncate the codestream at the
+   largest LRCP packet boundary that still fits. Rewrite the SOT
+   marker's `Psot` field; append the EOC marker.
+
+The retained packets keep the bounded mode's quality. The dropped
+tail packets cost detail in the highest-resolution / highest-
+frequency sub-bands (last in LRCP order). Decoders handle the
+premature-EOC condition per ISO/IEC 15444-1 Annex B (zero-fill
+missing code blocks).
+
+### Two modes, two contracts
+
+| Mode | Cap | Quality | Latency | Use when |
+|---|---|---|---|---|
+| `.constantBitrateStrict(bpp)` (auto-promoted) | hard, byte-exact | bounded by truncation | 3 passes + truncation | DICOM PACS / archive — strict storage budget |
+| `.constantBitrateBounded(bpp, ...)` | best-effort 2.0× | quality-first | 3 passes | quality-first when overshoot is acceptable |
+| `.constantBitrateViaQstep(bpp, ...)` | unbounded (1.6-3×) | max | 8 passes | v5.31 max-quality behavior |
+| `.fixedQstep(qstep)` | unbounded | content-dependent | 1 pass | latency-critical, caller picks qstep |
+
+### Trade-off (auto-promote on real medical fixtures @ 2 bpp)
+
+| Fixture | px | v5.33 (bounded) | v5.34 (strict) |
+|---|---:|---:|---:|
+| **PSNR / bytes ratio** |  |  |  |
+| ct_001 (262k)  | 262k  | 61.20 dB / 2.91× | **20.15 dB / 0.96×** |
+| xa_001 (1.0M)  | 1.0M  | 63.58 dB / 3.32× | **17.52 dB / 0.93×** |
+| px_001 (3.2M)  | 3.2M  | 60.06 dB / 4.22× | **12.27 dB / 0.31×** |
+| dx_002 (6.4M)  | 6.4M  | 60.00 dB / 4.03× | **13.14 dB / 0.29×** |
+
+The headline contract has flipped: v5.33 prioritised quality and
+let bytes overshoot; v5.34 prioritises the byte cap and lets
+quality drop. This is a deliberate trade-off the user asked for
+and was the original literal contract of `.constantBitrate(bpp)`.
+
+The PSNR drop on flat-curve content is steeper than first
+inspection suggests because LRCP packet boundaries on this format
+land at a discrete, content-dependent set of byte offsets — most
+of the encoded bits are in the highest-resolution packets, which
+are large and either retained whole or dropped whole. So a 1.0×
+cap can land far below 1.0× achieved (px_001 hits 0.31×) because
+the next packet boundary above the cap is far past it. Quality
+drops accordingly.
+
+### Added
+
+- `.constantBitrateStrict(bpp, maxOvershootRatio: 1.0, maxPasses: 3)`
+  enum case in `J2KBitrateMode`. Hard byte cap via post-encode
+  codestream truncation at LRCP packet boundaries.
+- `EncoderPipeline.encodeWithPacketIndex(_:)` — internal entry that
+  returns the encoded codestream paired with structural offsets
+  (SOT marker position, tile data start, packet end offsets). Used
+  by strict mode to identify legal truncation points.
+- `EncoderPipeline.truncateAtPacketBoundary(_:targetBytes:)` —
+  static helper that takes a packet-indexed codestream and produces
+  a byte-bounded valid codestream. Rewrites Psot, appends EOC.
+- `J2KEncoder.encodeViaStrictBoundedQstep` — strict-mode encode
+  driver. Biases the search toward overshoot, applies truncation.
+- `EncodedCodestreamWithIndex` struct — public-internal type
+  carrying codestream + packet boundaries.
+
+### Changed
+
+- `.constantBitrate(bpp)` auto-promote on `useHTJ2K && htj2kBlockFormat
+  == .conformant && !lossless && !useReversibleFilter && bitDepth ≥
+  12` now routes to `.constantBitrateStrict` (1.0× cap, 3 passes)
+  instead of `.constantBitrateBounded` (2.0× best-effort, 3 passes).
+  Restores the literal "constant bitrate" contract.
+
+### Verified
+
+- `J2KConstantBitrateStrictTests` (6 tests) — strict cap honoured
+  on every fixture × bpp combination; relaxed cap honoured as upper
+  bound; truncated codestreams decode; auto-promote inherits strict.
+- `J2KEncodeWithPacketIndexParityTests` (2 tests) — encodeWithPacket-
+  Index produces byte-identical output to encode().
+- `J2KEncodeRateControlGateQualityTests` baseline updated for v5.34
+  strict-cap PSNR profile (14.65 dB → 13.0 dB on dx_002 @ 2 bpp).
+
+### Known characteristics
+
+- **PSNR can drop sharply on flat-curve high-bit-depth medical at
+  low bpp** (see table above). Quality can be recovered by
+  switching to `.constantBitrateBounded` explicitly.
+- **Output bytes can land far below cap** when the next packet
+  boundary above cap is far past it (px_001 @ 2 bpp hits 0.31×
+  cap). v5.35 target: better budget filling.
+
+### Reproducing
+
+```bash
+swift test -c release --filter J2KConstantBitrateStrictTests
+swift test -c release --filter J2KEncodeWithPacketIndexParityTests
+swift test -c release --filter J2KCrossScaleRDQualityProbe
+```
+
 ## [5.33.0] — 2026-05-04
 
 **Production-grade `.constantBitrateBounded` mode — predictable latency**

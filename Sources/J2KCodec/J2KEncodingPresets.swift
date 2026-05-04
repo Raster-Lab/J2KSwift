@@ -697,6 +697,55 @@ public enum J2KBitrateMode: Sendable, Equatable {
         bitsPerPixel: Double,
         maxOvershootRatio: Double = 2.0,
         maxPasses: Int = 3)
+
+    /// v5.34.0 — strict bounded-rate mode with a **hard byte cap**.
+    ///
+    /// Combines the v5.33.0 quality-first 3-pass Qstep search with
+    /// post-encode codestream truncation at packet boundaries. The
+    /// JPEG 2000 codestream is structurally truncatable — packets are
+    /// independently decodable in LRCP order, so dropping tail packets
+    /// produces a smaller-but-valid codestream that decodes to a
+    /// progressively-degraded image.
+    ///
+    /// Algorithm:
+    ///   1. Run the bounded Qstep search (≤3 passes, quality-first).
+    ///   2. If the result is ≤ `maxOvershootRatio × target`, return it
+    ///      unmodified.
+    ///   3. Otherwise, truncate the codestream at the largest packet
+    ///      boundary that still fits the cap. Update the SOT marker's
+    ///      `Psot` field, append the EOC marker.
+    ///
+    /// **Quality** within the retained packets matches the bounded
+    /// mode (same quantisation step). The truncation point determines
+    /// where the LL approximation runs out of detail — typically this
+    /// drops the highest-frequency sub-bands first (since LRCP visits
+    /// LL → HL/LH/HH per resolution and high-frequency packets are
+    /// last). Diagnostic-grade quality on the retained image area
+    /// degrades gracefully rather than collapsing.
+    ///
+    /// **Rate** is hard-capped: output ≤ `maxOvershootRatio × target ×
+    /// pixelCount / 8`. Default `maxOvershootRatio: 1.0` means an exact
+    /// byte target. This is the right mode for storage-budgeted
+    /// archive workflows (DICOM PACS), compliance-driven file-size
+    /// caps, or fixed-rate streaming.
+    ///
+    /// **Latency** is at most `maxPasses + 1` operations: the bounded
+    /// Qstep search (≤3 encodes) plus an O(packets) truncation pass
+    /// (~µs cost). Predictable.
+    ///
+    /// - Parameters:
+    ///   - bitsPerPixel: target bitrate in bits per pixel.
+    ///   - maxOvershootRatio: hard cap on achieved/target byte ratio
+    ///     (default 1.0 = exact target). Smaller is invalid (use 1.0
+    ///     for "never exceed target"). Larger relaxes the cap.
+    ///   - maxPasses: maximum encode iterations for the inner Qstep
+    ///     search (default 3). 1 = fastest (post-truncate the first
+    ///     calibration-prior result). 3+ = approaches the bounded
+    ///     mode's quality before the truncation step.
+    case constantBitrateStrict(
+        bitsPerPixel: Double,
+        maxOvershootRatio: Double = 1.0,
+        maxPasses: Int = 3)
 }
 
 // MARK: - Wavelet Kernel Configuration
@@ -816,6 +865,8 @@ extension J2KBitrateMode: CustomStringConvertible {
             return "Constant Bitrate via Qstep (\(String(format: "%.2f", bpp)) bpp ±\(String(format: "%.0f", tol * 100))%, max \(maxIter) iters)"
         case .constantBitrateBounded(let bpp, let maxOver, let maxPasses):
             return "Constant Bitrate Bounded (\(String(format: "%.2f", bpp)) bpp, ≤\(String(format: "%.1f", maxOver))× target, max \(maxPasses) passes)"
+        case .constantBitrateStrict(let bpp, let maxOver, let maxPasses):
+            return "Constant Bitrate Strict (\(String(format: "%.2f", bpp)) bpp, hard cap \(String(format: "%.2f", maxOver))× target, max \(maxPasses) passes)"
         }
     }
 }

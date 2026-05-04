@@ -185,6 +185,31 @@ final class ParallelResultCollector<T: Sendable>: Sendable {
 /// 5. Entropy Coding — EBCOT bit-plane coding per code block
 /// 6. Rate Control — quality layer formation
 /// 7. Codestream Generation — write JPEG 2000 markers and data
+/// Encoded JPEG 2000 codestream paired with structural offsets that
+/// describe where the codestream may be safely truncated at LRCP
+/// packet boundaries (v5.34.0 strict bounded-rate mode).
+///
+/// Produced by `EncoderPipeline.encodeWithPacketIndex`. Consumed by
+/// `EncoderPipeline.truncateAtPacketBoundary` and the public
+/// `.constantBitrateStrict` mode.
+struct EncodedCodestreamWithIndex: Sendable {
+    /// The full codestream (untruncated).
+    let data: Data
+    /// Byte offset of the SOT marker (0xFF90) in the codestream.
+    /// Used by truncation to rewrite the `Psot` field after slicing
+    /// the tile data.
+    let sotMarkerOffset: Int
+    /// Byte offset of the tile data (just past the SOD marker) in
+    /// the codestream. Tile data spans `[tileDataOffset, eocOffset)`.
+    let tileDataOffset: Int
+    /// Byte offsets in the codestream where each LRCP packet ends.
+    /// Each offset is a legal truncation point: slicing the
+    /// codestream at `packetEndOffsets[i]`, then appending the
+    /// EOC marker, yields a valid (premature-EOC) codestream
+    /// containing the first `i+1` packets.
+    let packetEndOffsets: [Int]
+}
+
 struct EncoderPipeline: Sendable {
     let config: J2KEncodingConfiguration
 
@@ -217,7 +242,7 @@ struct EncoderPipeline: Sendable {
             return nil
         case .constantQuality, .lossless:
             break
-        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
             // Fixed-qstep modes include every block; PCRD pass cap
             // doesn't apply. Returning nil disables the cap (same as
             // explicit bitrate modes).
@@ -390,6 +415,174 @@ struct EncoderPipeline: Sendable {
         }
 
         return codestream
+    }
+
+    // MARK: - Packet-Indexed Encode (for v5.34.0 strict bounded-rate)
+
+    /// Encodes an image and returns the codestream paired with the
+    /// LRCP packet end offsets needed for safe post-encode truncation.
+    ///
+    /// Uses the same CPU pipeline as `encode(_:)` but routes through
+    /// `generateCodestreamWithIndex` to capture packet boundaries.
+    /// Cost over the plain `encode(_:)` path is negligible (one Int
+    /// per packet, ~10s of packets typically).
+    func encodeWithPacketIndex(
+        _ image: J2KImage,
+        progress: ((EncoderProgressUpdate) -> Void)? = nil
+    ) async throws -> EncodedCodestreamWithIndex {
+        try image.validate()
+
+        // Stage 1: Preprocessing
+        reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
+        var componentData = try extractComponentData(from: image)
+        reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
+
+        for (compIdx, component) in image.components.enumerated() {
+            if !component.signed {
+                let dcOffset = Int32(1 << (component.bitDepth - 1))
+                componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    for i in 0..<buf.count {
+                        buf[i] &-= dcOffset
+                    }
+                }
+            }
+        }
+
+        // Stage 2: Colour Transform
+        reportProgress(progress, stage: .colorTransform, stageProgress: 0.0)
+        let (transformedData, transformedFloatData) = try applyColorTransform(componentData, image: image)
+        reportProgress(progress, stage: .colorTransform, stageProgress: 1.0)
+
+        // Stage 3: Wavelet Transform
+        reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
+        let (decompositions, actualDecompositionLevels) = try await applyWaveletTransform(
+            transformedData, floatComponents: transformedFloatData,
+            width: image.width, height: image.height
+        )
+        reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
+
+        let adaptiveLossyStepSizes = buildAdaptiveLossyStepSizes(
+            decompositions, image: image, totalLevels: actualDecompositionLevels
+        )
+
+        // Stage 4: Quantization (fused into entropy stage)
+        reportProgress(progress, stage: .quantization, stageProgress: 0.0)
+        let subandsForEntropy: [[SubbandInfo]] = decompositions
+        reportProgress(progress, stage: .quantization, stageProgress: 1.0)
+
+        // Stage 5: Entropy Coding
+        reportProgress(progress, stage: .entropyCoding, stageProgress: 0.0)
+        let codeBlocks = try await applyEntropyCoding(
+            subandsForEntropy, image: image,
+            adaptiveStepSizes: adaptiveLossyStepSizes,
+            totalLevels: actualDecompositionLevels
+        )
+        reportProgress(progress, stage: .entropyCoding, stageProgress: 1.0)
+
+        // Stage 6: Rate Control
+        reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
+        let layers = try applyRateControl(
+            codeBlocks: codeBlocks, totalPixels: image.width * image.height,
+            componentCount: image.components.count
+        )
+        reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
+
+        // Stage 7: Codestream Generation (with packet index)
+        reportProgress(progress, stage: .codestreamGeneration, stageProgress: 0.0)
+        let indexed = try generateCodestreamWithIndex(
+            image: image,
+            codeBlocks: codeBlocks,
+            layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveLossyStepSizes
+        )
+        reportProgress(progress, stage: .codestreamGeneration, stageProgress: 1.0)
+
+        return indexed
+    }
+
+    /// Truncates a packet-indexed codestream at the largest LRCP
+    /// packet boundary that still fits within `targetBytes`.
+    ///
+    /// JPEG 2000 codestreams are progressively decodable: at any
+    /// packet boundary, all preceding packets form a valid prefix.
+    /// Decoders treat the missing trailing packets as zero-data
+    /// (per ISO/IEC 15444-1 Annex B). Tier-1 decoders (OpenJPH,
+    /// Kakadu, J2KSwift) handle premature-EOC by filling the
+    /// missing code blocks with zero coefficients.
+    ///
+    /// The returned codestream:
+    ///   - Is byte-exact ≤ `targetBytes`.
+    ///   - Has the SOT marker's `Psot` field rewritten to reflect
+    ///     the truncated tile-part length.
+    ///   - Ends with the EOC marker.
+    ///
+    /// If `targetBytes` is too small to fit even the codestream
+    /// header (SOC..SOD) plus the smallest possible tile (zero
+    /// packets) plus EOC, returns the full codestream unchanged
+    /// (caller has set an unachievable cap).
+    static func truncateAtPacketBoundary(
+        _ encoded: EncodedCodestreamWithIndex,
+        targetBytes: Int
+    ) -> Data {
+        // Already within budget — no truncation needed.
+        if encoded.data.count <= targetBytes {
+            return encoded.data
+        }
+
+        // EOC is 2 bytes. We need (truncatedTileEnd + 2) ≤ targetBytes,
+        // where truncatedTileEnd is one of `packetEndOffsets` or
+        // `tileDataOffset` (zero packets).
+        let eocLength = 2
+        let maxTileEnd = targetBytes - eocLength
+        if maxTileEnd < encoded.tileDataOffset {
+            // Not enough room for even the header + EOC. Cannot
+            // produce a valid truncated codestream — return original
+            // (caller's cap is unachievable).
+            return encoded.data
+        }
+
+        // Find largest packet-end offset ≤ maxTileEnd. If none,
+        // truncate to zero packets (tileDataOffset).
+        var chosenEnd = encoded.tileDataOffset
+        for offset in encoded.packetEndOffsets {
+            if offset <= maxTileEnd {
+                chosenEnd = offset
+            } else {
+                break
+            }
+        }
+
+        // Build truncated codestream: header bytes + truncated tile
+        // bytes + EOC. Then rewrite Psot in the SOT marker.
+        let newTilePartLength = chosenEnd - encoded.tileDataOffset
+        // Psot = 2 (SOT marker) + 2 (Lsot) + 8 (segment) + 2 (SOD) + tile data
+        let newPsot = UInt32(2 + 2 + 8 + 2 + newTilePartLength)
+
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(chosenEnd + eocLength)
+        bytes.append(contentsOf: encoded.data.prefix(chosenEnd))
+
+        // Rewrite Psot. SOT marker segment layout per ISO 15444-1
+        // Annex A.4.2:
+        //   offset+0..2 : SOT marker (0xFF90)
+        //   offset+2..4 : Lsot — length of segment, including itself
+        //                 (always 10 for a single-tile encode)
+        //   offset+4..6 : Isot — tile index
+        //   offset+6..10: Psot — length of tile-part (4 bytes BE)
+        //   offset+10   : TPsot — tile-part index
+        //   offset+11   : TNsot — number of tile-parts
+        let psotOffset = encoded.sotMarkerOffset + 6
+        bytes[psotOffset]     = UInt8((newPsot >> 24) & 0xFF)
+        bytes[psotOffset + 1] = UInt8((newPsot >> 16) & 0xFF)
+        bytes[psotOffset + 2] = UInt8((newPsot >> 8) & 0xFF)
+        bytes[psotOffset + 3] = UInt8(newPsot & 0xFF)
+
+        // EOC marker: 0xFFD9
+        bytes.append(0xFF)
+        bytes.append(0xD9)
+
+        return Data(bytes)
     }
 
     // MARK: - GPU-Accelerated Encode
@@ -1446,12 +1639,12 @@ struct EncoderPipeline: Sendable {
             perComponentTargetBpp = bitsPerPixel / Double(max(1, componentCount))
         case .variableBitrate(_, let maxBitsPerPixel):
             perComponentTargetBpp = maxBitsPerPixel / Double(max(1, componentCount))
-        case .constantBitrateViaQstep, .constantBitrateBounded:
+        case .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
             // Each search iteration substitutes .fixedQstep, so this
             // branch should not be reached during normal flow. If a
             // caller invokes the pipeline directly with this mode,
             // fall through to the .fixedQstep behavior.
-            preconditionFailure(".constantBitrateViaQstep / .constantBitrateBounded should be intercepted by J2KEncoder.encode and converted to .fixedQstep per iteration")
+            preconditionFailure(".constantBitrateViaQstep / .constantBitrateBounded / .constantBitrateStrict should be intercepted by J2KEncoder.encode and converted to .fixedQstep per iteration")
         case .constantQuality, .lossless:
             perComponentTargetBpp = nil
         case .fixedQstep(let qstep):
@@ -2654,7 +2847,7 @@ struct EncoderPipeline: Sendable {
             return 0.18
         case .lossless:
             return Double.greatestFiniteMagnitude
-        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
             // Fixed-qstep modes include every block; HT refinement cap
             // is irrelevant since rate control is bypassed.
             return Double.greatestFiniteMagnitude
@@ -3331,7 +3524,7 @@ struct EncoderPipeline: Sendable {
         // iteration, so the same fast-path applies as a defensive
         // fallback when the pipeline is invoked directly.
         switch config.bitrateMode {
-        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
             var contributions = [Int: Int](minimumCapacity: codeBlocks.count)
             for cb in codeBlocks where cb.passeCount > 0 {
                 contributions[cb.index] = cb.passeCount
@@ -3376,7 +3569,7 @@ struct EncoderPipeline: Sendable {
             )
         case .lossless:
             rateConfig = .lossless
-        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded:
+        case .fixedQstep, .constantBitrateViaQstep, .constantBitrateBounded, .constantBitrateStrict:
             // Already short-circuited above. This branch only exists
             // for switch exhaustiveness — should be unreachable.
             preconditionFailure(".fixedQstep / .constantBitrateViaQstep / .constantBitrateBounded should have been handled by the fast-path above")
@@ -3396,6 +3589,30 @@ struct EncoderPipeline: Sendable {
         actualDecompositionLevels: Int,
         adaptiveStepSizes: [String: Double]
     ) throws -> Data {
+        return try generateCodestreamWithIndex(
+            image: image,
+            codeBlocks: codeBlocks,
+            layers: layers,
+            actualDecompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveStepSizes
+        ).data
+    }
+
+    /// Generates a JPEG 2000 codestream and returns the codestream
+    /// alongside structural offsets needed for safe post-encode
+    /// truncation at packet boundaries (v5.34.0 strict-rate mode).
+    ///
+    /// `packetEndOffsets` are byte offsets in the returned codestream
+    /// where each LRCP packet ends. Truncating the codestream at any
+    /// of these offsets and updating the SOT marker's `Psot` field
+    /// produces a valid (premature-EOC) JPEG 2000 codestream.
+    func generateCodestreamWithIndex(
+        image: J2KImage,
+        codeBlocks: [J2KCodeBlock],
+        layers: [QualityLayer],
+        actualDecompositionLevels: Int,
+        adaptiveStepSizes: [String: Double]
+    ) throws -> EncodedCodestreamWithIndex {
         // Pre-size buffer based on total code block data + marker/header overhead
         let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
         var writer = J2KBitWriter(capacity: totalBytes + totalBytes / 8 + 2048)
@@ -3435,23 +3652,31 @@ struct EncoderPipeline: Sendable {
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
-        let tileData = try generateTileData(
+        let (tileData, packetEndsInTile) = try generateTileData(
             codeBlocks: codeBlocks, layers: layers,
             decompositionLevels: actualDecompositionLevels,
             componentCount: image.components.count
         )
+        let sotMarkerOffset = writer.count
         try writeSOTMarker(&writer, tileIndex: 0, tilePartLength: tileData.count)
 
         // SOD — Start of Data
         writer.writeMarker(J2KMarker.sod.rawValue)
 
         // Tile bitstream data
+        let tileDataOffset = writer.count
         writer.writeBytes(tileData)
 
         // EOC — End of Codestream
         writer.writeMarker(J2KMarker.eoc.rawValue)
 
-        return writer.data
+        let packetEndsInCodestream = packetEndsInTile.map { $0 + tileDataOffset }
+        return EncodedCodestreamWithIndex(
+            data: writer.data,
+            sotMarkerOffset: sotMarkerOffset,
+            tileDataOffset: tileDataOffset,
+            packetEndOffsets: packetEndsInCodestream
+        )
     }
 
     /// Writes the SIZ marker segment (Image and Tile Size).
@@ -4027,10 +4252,16 @@ struct EncoderPipeline: Sendable {
     ///
     /// Uses LRCP progression: Layer → Resolution → Component → Precinct.
     /// Each packet uses raw bit packet headers per ISO/IEC 15444-1 Annex B.
+    ///
+    /// Returns the tile data along with byte offsets (within tileData)
+    /// marking the END of each emitted packet. These are legal LRCP
+    /// truncation points — slicing tileData at `packetEnds[i]` keeps
+    /// the first `i+1` packets intact and produces a smaller-but-valid
+    /// (premature-EOC) tile.
     private func generateTileData(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
         decompositionLevels: Int, componentCount: Int
-    ) throws -> Data {
+    ) throws -> (data: Data, packetEnds: [Int]) {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         // Pre-size writer buffer based on total code block data
         let totalBlockBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
@@ -4063,6 +4294,9 @@ struct EncoderPipeline: Sendable {
         let cbWidth = config.codeBlockSize.width
         let cbHeight = config.codeBlockSize.height
 
+        var packetEnds: [Int] = []
+        packetEnds.reserveCapacity(numResolutions * numComponents)
+
         // LRCP: 1 layer, iterate Resolution → Component
         for resLevel in 0..<numResolutions {
             for compIdx in 0..<numComponents {
@@ -4081,10 +4315,11 @@ struct EncoderPipeline: Sendable {
                     codeBlockWidth: cbWidth,
                     codeBlockHeight: cbHeight
                 )
+                packetEnds.append(tileWriter.count)
             }
         }
 
-        return tileWriter.data
+        return (tileWriter.data, packetEnds)
     }
 
     /// Writes a single JPEG 2000 packet directly into a shared bit writer.
