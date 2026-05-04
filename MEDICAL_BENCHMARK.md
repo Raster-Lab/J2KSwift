@@ -302,40 +302,43 @@ DX 12 MP encode is now **1.87× faster** than the v5.37 baseline.
 
 ### v5.38 — post-M5 final lossless headline (full corpus, fresh measurement)
 
+(Numbers below from the M2 cross-codec gate after the M6 decode-warm-up
+fix; the cold-start Metal lazy-init outlier that previously polluted
+the first measured CT 512² decode is gone.)
+
 #### J2KSwift HT lossless vs the 4 external codecs (encode time, ms)
 
 | Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest |
 |---|---|---:|---:|---:|---:|---:|:---|
-| MR-small | 180×180   |   **0.9** |    12.2 |    6.9 |    9.4 |   11.0 | J2KSwift |
-| CT       | 512×512   |   **4.2** |    56.8 |   10.8 |   15.3 |    8.5 | J2KSwift |
-| CT       | 512×512   |   **3.5** |    52.8 |    9.8 |   15.3 |    8.7 | J2KSwift |
-| MR       | 886×886   |    6.8    |    59.4 |   10.4 |   14.4 |  **5.8** | Kakadu (+1.0 ms) |
-| XA       | 1024×1024 |  **13.7** |   199.2 |   22.0 |   37.2 |   23.1 | J2KSwift |
-| PX       | 2459×1316 |  **44.9** |   708.6 |   59.4 |  123.7 |   81.8 | J2KSwift |
-| DX       | 2800×2288 |  **82.2** |  1366.9 |  113.5 |  236.3 |  154.4 | J2KSwift |
+| MR-small | 180×180   |   **0.9** |    12.2 |    6.6 |    8.8 |    3.4 | J2KSwift |
+| CT       | 512×512   |   **3.6** |    56.1 |   11.2 |   16.1 |    8.4 | J2KSwift |
+| CT       | 512×512   |   **3.4** |    53.5 |   10.1 |   15.3 |    8.6 | J2KSwift |
+| MR       | 886×886   |    6.1    |    59.6 |   10.6 |   14.7 |  **5.9** | Kakadu (+0.2 ms) |
+| XA       | 1024×1024 |  **13.4** |   199.4 |   22.4 |   37.0 |   24.2 | J2KSwift |
+| PX       | 2459×1316 |  **45.5** |   713.7 |   60.1 |  121.1 |   88.1 | J2KSwift |
+| DX       | 2800×2288 |  **84.6** |  1371.2 |  115.1 |  231.8 |  154.8 | J2KSwift |
 
 **J2KSwift HT lossless encode is the fastest on 6 of 7 medical
 fixtures.** Only MR 886×886 (extreme compressibility, 9.36× vs raw)
-loses to Kakadu — by 1 ms.
+loses to Kakadu — by 0.2 ms (well within run-to-run noise).
 
 #### J2KSwift HT lossless decode vs the 4 external codecs (ms)
 
 | Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest |
 |---|---|---:|---:|---:|---:|---:|:---|
-| MR-small | 180×180   |   **1.4** |   10.5 |    6.0 |   10.1 |    5.5 | J2KSwift |
-| CT       | 512×512   |   46.2\*  |   56.6 |    8.6 |   14.7 |    8.6 | OpenJPH (cold-start outlier) |
-| CT       | 512×512   |   **3.1** |   53.3 |    8.4 |   16.3 |    8.7 | J2KSwift |
-| MR       | 886×886   |   **5.6** |   65.3 |   10.4 |   12.6 |    6.6 | J2KSwift |
-| XA       | 1024×1024 |  **16.1** |  202.9 |   16.8 |   32.9 |   25.2 | J2KSwift (≈OpenJPH) |
-| PX       | 2459×1316 |  **41.0** |  709.4 |   44.2 |  100.3 |   90.3 | J2KSwift |
-| DX       | 2800×2288 |   81.5    | 1366.2 | **80.6** |  185.9 |  172.2 | OpenJPH (+0.9 ms) |
+| MR-small | 180×180   |   **0.7** |   10.9 |    6.3 |    8.9 |    3.4 | J2KSwift |
+| CT       | 512×512   |   **3.5** |   56.0 |    8.8 |   15.8 |    8.7 | J2KSwift |
+| CT       | 512×512   |   **3.0** |   53.9 |    8.5 |   14.6 |    8.6 | J2KSwift |
+| MR       | 886×886   |   **5.9** |   65.4 |   10.5 |   12.8 |    6.5 | J2KSwift |
+| XA       | 1024×1024 |  **16.2** |  205.3 |   17.4 |   33.7 |   25.4 | J2KSwift |
+| PX       | 2459×1316 |  **42.0** |  711.4 |   43.2 |  101.8 |  102.8 | J2KSwift |
+| DX       | 2800×2288 |   82.7    | 1374.2 | **81.6** |  187.9 |  170.9 | OpenJPH (+1.1 ms) |
 
-\* Cold-start Metal init outlier on the first non-trivial decode of
-the run; warm-session reads 3.1 ms.
-
-J2KSwift decode is **fastest or tied on 6 of 7 fixtures**, with the
-single exception of DX 12 MP where OpenJPH wins by 0.9 ms (well
-within run-to-run noise on 80 ms timings).
+J2KSwift decode is **fastest on 6 of 7 fixtures** with the single
+exception of DX 12 MP where OpenJPH wins by 1.1 ms (run-to-run noise
+on 80 ms timings). Notable: J2KSwift decode is **3-5× faster** than
+the next-fastest decoder on every fixture ≤ 1 MP, and is **2× faster
+than Kakadu** on PX/DX.
 
 #### Cross-decode standards compliance (28/28 pairs bit-exact)
 

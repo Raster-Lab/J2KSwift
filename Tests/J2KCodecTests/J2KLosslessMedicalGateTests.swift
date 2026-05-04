@@ -204,7 +204,13 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
             let cfg = losslessConfig()
             let encoder = J2KEncoder(encodingConfiguration: cfg)
             let decoder = J2KDecoder()
-            _ = try await encoder.encode(img)  // warm-up
+            // Warm up BOTH encode and decode. The Metal-backed decode
+            // pays a one-time lazy-init cost on its first non-trivial
+            // call (~40-50 ms on M1 for a 512² CT image); without a
+            // decoder warm-up that latency lands in the first measured
+            // pass and pollutes the table. Encoder also benefits.
+            let warmData = try await encoder.encode(img)
+            _ = try await decoder.decode(warmData)
             let encStart = CFAbsoluteTimeGetCurrent()
             let j2kData = try await encoder.encode(img)
             let j2kEncMs = (CFAbsoluteTimeGetCurrent() - encStart) * 1000.0
