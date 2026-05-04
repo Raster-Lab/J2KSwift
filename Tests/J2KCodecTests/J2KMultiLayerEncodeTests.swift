@@ -118,6 +118,114 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         XCTAssertEqual(exit, 0, "OpenJPEG must decode N=1 multi-layer codestream")
     }
 
+    /// Diagnostic: scale-up EBCOT multi-layer to N=4 and N=8, verify
+    /// OpenJPEG continues to decode. Confirms that the bug is HT-only.
+    func testEBCOTMultiLayerN4N8OpenJPEGDecodes() async throws {
+        let img = makeSyntheticImage(width: 256, height: 256)
+        for n in [4, 8, 16] {
+            var cfg = J2KEncodingConfiguration(
+                quality: 1.0, lossless: false,
+                decompositionLevels: 5, qualityLayers: 1,
+                progressionOrder: .lrcp, useHTJ2K: false,
+                useReversibleFilter: false,
+                htj2kBlockFormat: .conformant)
+            cfg.bitrateMode = .fixedQstep(qstep: 1.0)
+            let pipeline = EncoderPipeline(config: cfg)
+            let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
+                img, qstep: 1.0, numLayers: n)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ebcot_n\(n).j2k")
+            try indexed.data.write(to: url)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let exit = runDecoder("opj_decompress", args: [
+                "-i", url.path, "-o", "/tmp/ebcot_n\(n).pgm"
+            ])
+            print("EBCOT N=\(n) bytes=\(indexed.data.count) opj_exit=\(exit)")
+            XCTAssertEqual(exit, 0,
+                "EBCOT multi-layer N=\(n) must decode in OpenJPEG (multi-layer logic baseline)")
+        }
+    }
+
+    /// Diagnostic: does EBCOT (non-HT) multi-layer also fail in
+    /// OpenJPEG? If yes → my multi-layer logic has a fundamental bug.
+    /// If no → the bug is HT-specific (Part 15 packet header semantics).
+    func testEBCOTMultiLayerOpenJPEGDecodes() async throws {
+        let img = makeSyntheticImage(width: 256, height: 256)
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: false,  // EBCOT
+            useReversibleFilter: false,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .fixedQstep(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
+            img, qstep: 1.0, numLayers: 2)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ebcot_n2.j2k")
+        try indexed.data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let exit = runDecoder("opj_decompress", args: [
+            "-i", url.path, "-o", "/tmp/ebcot_test.pgm"
+        ])
+        print("EBCOT N=2 256×256 OpenJPEG decode exit: \(exit)")
+    }
+
+    /// Persist a small failing case (256×256 N=2 distributes data
+    /// across both layers) for offline opj_dump / hex inspection.
+    func testPersistN2_256x256ForOfflineInspection() async throws {
+        let img = makeSyntheticImage(width: 256, height: 256)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
+            img, qstep: 1.0, numLayers: 2)
+        try indexed.data.write(to: URL(fileURLWithPath: "/tmp/multilayer_256x256_n2.j2k"))
+
+        // Also persist an N=1 reference (which works in OpenJPEG)
+        let single = try await pipeline.encodeMultiLayerWithPacketIndex(
+            img, qstep: 1.0, numLayers: 1)
+        try single.data.write(to: URL(fileURLWithPath: "/tmp/multilayer_256x256_n1.j2k"))
+
+        print("256×256 N=2: \(indexed.data.count) bytes, packetEnds=\(indexed.packetEndOffsets)")
+        print("256×256 N=1: \(single.data.count) bytes, packetEnds=\(single.packetEndOffsets)")
+        print("tileDataOffset: \(indexed.tileDataOffset) sotMarkerOffset: \(indexed.sotMarkerOffset)")
+    }
+
+    /// Diagnostic: probe whether a successful N=2 OpenJPEG decode
+    /// is because PCRD distributes blocks across both layers, or
+    /// because PCRD trivially puts everything at layer 0 (in which
+    /// case layer 1 is entirely empty packets and the multi-layer
+    /// encoding logic isn't actually exercised).
+    func testN2BlockDistributionAcrossLayers() async throws {
+        let img = makeSyntheticImage(width: 256, height: 256)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+        let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
+            img, qstep: 1.0, numLayers: 2)
+
+        // 2 layers × (1 LL + 5 res × HL/LH/HH = 6 packets per layer) = 12 packets
+        XCTAssertEqual(indexed.packetEndOffsets.count, 12)
+
+        // For each packet, compute byte size = packetEnd - prevEnd
+        var prev = indexed.tileDataOffset
+        var sizes: [Int] = []
+        for end in indexed.packetEndOffsets {
+            sizes.append(end - prev)
+            prev = end
+        }
+        let layer0Sizes = Array(sizes.prefix(6))
+        let layer1Sizes = Array(sizes.suffix(6))
+        let layer0Total = layer0Sizes.reduce(0, +)
+        let layer1Total = layer1Sizes.reduce(0, +)
+        print("Layer 0 packet sizes: \(layer0Sizes), total \(layer0Total)")
+        print("Layer 1 packet sizes: \(layer1Sizes), total \(layer1Total)")
+        // Empty packet is just 1 byte (the "0" empty flag + byte align).
+        let layer1Empty = layer1Sizes.allSatisfy { $0 == 1 }
+        print("Layer 1 entirely empty packets? \(layer1Empty)")
+    }
+
     /// Diagnostic: sweep image size × layer count to find where
     /// OpenJPEG starts rejecting our multi-layer codestream.
     ///
