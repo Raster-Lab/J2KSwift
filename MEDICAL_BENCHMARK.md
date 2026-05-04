@@ -3,6 +3,72 @@
 **Date:** 2026-05-04 (R-D table at top reflects synthetic content; v5.31.0 cross-scale
 real-medical R-D measurement is in the new section below.)
 
+---
+
+## v5.38 — Lossless-only refocus (active)
+
+From **2026-05-05**, J2KSwift's product target is exact-reconstruction
+medical archival. Lossy R-D / Qstep / `.constantBitrateStrict` /
+constrained-RD / 9/7 GPU encode are parked as infrastructure (tests
+green; not extended). All v5.38+ work is lossless.
+
+### v5.38 M1 — lossless gate scaffolding
+
+`Tests/J2KCodecTests/J2KLosslessMedicalGateTests.swift::testLosslessRoundTripBitExactAcrossMedicalCorpus`
+exercises the medical corpus through `J2KEncoder(.lossless).encode →
+J2KDecoder.decode` and asserts bit-exact roundtrip. Helper module
+`Tests/J2KCodecTests/CrossCodecTooling.swift` consolidates the
+duplicated `runDecoder` / hard-coded `/opt/homebrew/bin` patterns and
+adds Kakadu (`/usr/local/bin/kdu_compress|kdu_expand`) to the codec
+roster.
+
+Numbers below are from a single Apple Silicon run (release build,
+warm session, n=1 measurement pass after a single warm-up).
+
+| Modality | Shape | Raw KB | J2KSwift KB | Ratio vs raw | Encode ms | Decode ms |
+|---|---|---:|---:|---:|---:|---:|
+| MR-small | 180×180   |    63 |    44 | 1.43× |   1.2 |   0.7 |
+| CT       | 512×512   |   512 |   426 | 1.20× |   6.9 |   3.9 |
+| CT       | 512×512   |   512 |   396 | 1.29× |   6.9 |   3.6 |
+| MR       | 886×886   |  1533 |   163 | **9.36×** |   7.7 |   6.0 |
+| XA       | 1024×1024 |  2048 |  1583 | 1.29× |  23.3 |  15.3 |
+| PX       | 2459×1316 |  6320 |  6280 | **1.01×** |  78.0 |  39.2 |
+| DX       | 2800×2288 | 12512 | 12385 | **1.01×** | 163.2 |  79.0 |
+
+**M1 pass gate**: every fixture is bit-exact (`MAE = 0`,
+`bitExactPixelMatch == true`). The PX / DX 1.01× ratios are flagged
+for M3 investigation — most likely a bit-depth / precinct / code-block
+default that's leaving compression on the table for high-resolution
+high-bit-depth content. **M1 ships as-is**: the gate's job is to
+catch regressions, not yet to maximize ratio.
+
+### v5.38 plan — milestones
+
+- **M1 (this section)** — gate scaffolding + bit-exact roundtrip table.
+- **M2** — extend the gate with external-codec columns (OpenJPEG,
+  OpenJPH, Grok, Kakadu 8.4.1 demo). Each codec compresses + decompresses
+  the same fixture; J2KSwift codestream is then fed to each external
+  decoder for bit-exact cross-decode assertion. Add the gate to the
+  mandatory precommit triple.
+- **M3** — `J2KLosslessEncodeStageProfile`: per-fixture stage breakdown
+  (preprocess / DWT / entropy / codestream) using existing
+  `J2KEncodeTimings` + `J2K_PROFILE`. Identify dominant stage on real
+  medical fixtures, then ship one targeted optimization. Investigate
+  the PX/DX low-ratio finding (likely defaults issue).
+- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M3 CPU
+  baseline locked).
+
+### v5.38 scope guardrails
+
+Parked through v5.38: `.constantBitrateStrict`,
+`truncateByConstrainedRD`, `truncateByRDOptimized`, Qstep search,
+PSNR-per-byte tuning, 9/7 lossy GPU encode. Their tests stay green;
+no extension work. If a lossless task appears to require touching
+them, surface the conflict before proceeding.
+
+---
+
+
 ## Test Images
 
 | Modality | Dimensions | Bit Depth | Description |
