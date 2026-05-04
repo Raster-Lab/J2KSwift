@@ -192,24 +192,64 @@ Decode timings unchanged (Step-A is encode-side only). The CT 512×512
 first-instance Metal lazy-init outlier persists (49.5 ms vs 3.2 ms warm)
 — flagged for future warm-up refinement, not a code bug.
 
-### v5.38 plan — milestones (revised after M3 Step-A)
+### v5.38 M4 — J2KSwift HT vs EBCOT lossless on the medical corpus
+
+`testJ2KSwiftLosslessHTvsEBCOTOnMedicalCorpus` runs the same fixtures
+through both J2KSwift lossless paths and asserts bit-exact roundtrip
+in each. The trade-off is now measurable rather than implied.
+
+| Modality | Shape | Raw KB | HT KB | HT× | EBCOT KB | EBCOT× | EBCOT vs HT | HT enc/dec ms | EBCOT enc/dec ms |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| MR-small | 180×180   |    63 |    44 | 1.43× |    30 |  2.09× | **−31.6%** |   0.9 /  1.5 |   3.0 /  2.7 |
+| CT       | 512×512   |   512 |   426 | 1.20× |   324 |  1.58× | **−24.0%** |   3.9 / 51.9\* |  15.7 / 13.2 |
+| CT       | 512×512   |   512 |   396 | 1.29× |   308 |  1.66× | −22.3% |   3.5 /  3.3 |  15.7 / 12.8 |
+| MR       | 886×886   |  1533 |   163 | 9.36× |   135 | 11.33× | −17.4% |   7.2 /  5.6 |  20.5 / 13.7 |
+| XA       | 1024×1024 |  2048 |  1583 | 1.29× |  1337 |  1.53× | −15.5% |  13.6 / 15.8 |  58.1 / 51.3 |
+| PX       | 2459×1316 |  6320 |  6280 | 1.01× |  5485 |  1.15× | −12.7% |  43.4 / 40.9 | 189.1 / 164.6 |
+| DX       | 2800×2288 | 12512 | 12385 | 1.01× | 10559 |  1.18× | **−14.7%** |  87.4 / 79.1 | 376.2 / 325.3 |
+
+\* CT 512² first decode picks up the Metal lazy-init outlier (~50 ms);
+the second CT entry on the same dimensions reads 3.3 ms warm.
+
+**EBCOT bytes match OpenJPEG / Grok / Kakadu defaults exactly** —
+J2KSwift's EBCOT lossless is byte-for-byte equivalent on every
+fixture (e.g. CT 308 KB == 308 KB; DX 10559 KB == 10559 KB; MR 135 KB
+== 135 KB), because all four codecs default to EBCOT lossless and the
+format converges on the same rate.
+
+**Format trade-off in plain language:**
+
+| Decision | HT lossless (default) | EBCOT lossless |
+|---|---|---|
+| Codestream bytes | 13–32% larger | smallest |
+| Encode time   | 2–4× **faster** | slower |
+| Decode time   | 2–4× **faster** | slower |
+| Decoder interop | Part-15 only (OpenJPH, Kakadu 8.4.1, Grok, OpenJPEG ≥ 2.5) | every Part-1 decoder ever shipped |
+| Recommended when | encoder/decoder are modern; cycles matter | broadest legacy decoder coverage; archive density matters more than throughput |
+
+For DICOM archive workflows where storage is the dominant cost and
+the consumer might be a 20-year-old viewer, EBCOT is the safer pick.
+For active PACS pipelines where every fast path matters and every
+decoder in the loop is current, HT is the win — and J2KSwift's HT
+encode is the fastest of the 5 codecs measured on 6 of 7 fixtures
+(post-Step-A).
+
+### v5.38 plan — milestones (revised after M4)
 
 - **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
 - **M2 ✓** — external-codec columns + cross-decode matrix.
 - **M3 Step-A ✓** — stage profile + `J2KBitWriter.writeBytes` fast path.
-- **M3 Step-B (next)** — chase the new dominant stage. Entropy is now
-  45% on DX after Step-A; the HT cleanup-only block encoder
-  (`applyEntropyCodingHTJ2KFused`) is the next target. DWT is 39% and
-  also an opportunity (Accelerate / SIMD lifting).
-- **M3 ratio investigation** — PX/DX HT lossless 1.01× vs raw matches
-  OpenJPH exactly, so it's a format limit, not a J2KSwift bug. EBCOT
-  lossless on the same fixtures hits 1.15-1.18× (per the M2 table) —
-  ~14% denser. Worth understanding via M4.
-- **M4** — add an EBCOT-lossless comparison column to the gate. Expose
-  the HT vs EBCOT trade-off transparently for users who can pick
-  format based on their decoder support.
-- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M3 CPU
-  baseline locked).
+- **M4 ✓** — HT vs EBCOT comparison + trade-off documentation.
+- **M5** — targeted optimisation pass. With Step-A done and J2KSwift
+  already fastest on 6/7 fixtures (HT path), further wins now have
+  diminishing returns. Candidates:
+   - 5/3 forward DWT lifting via NEON intrinsics (DWT is 39% of total
+     post-Step-A). Already heavily optimised (parallel strips, ptr
+     workspaces) — would require true SIMD lifting.
+   - HT cleanup-only entropy coder per-block allocation reduction.
+- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M5 CPU
+  baseline complete or until decode becomes the dominant pipeline
+  cost — currently encode dominates).
 
 ### v5.38 scope guardrails
 

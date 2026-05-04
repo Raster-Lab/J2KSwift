@@ -28,9 +28,10 @@ import Foundation
 
 final class J2KLosslessMedicalGateTests: XCTestCase {
 
-    /// Lossless config: HTJ2K conformant + reversible 5/3 + single
-    /// quality layer + LRCP. These match the production lossless
-    /// recommendation; if defaults shift, this test goes with them.
+    /// HT lossless config: HTJ2K conformant + reversible 5/3 + single
+    /// quality layer + LRCP. Production default for lossless;
+    /// produces codestreams interoperable with OpenJPH and Part-15
+    /// HT-aware decoders.
     private func losslessConfig() -> J2KEncodingConfiguration {
         var cfg = J2KEncodingConfiguration(
             quality: 1.0,
@@ -39,6 +40,26 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
             qualityLayers: 1,
             progressionOrder: .lrcp,
             useHTJ2K: true,
+            useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .lossless
+        return cfg
+    }
+
+    /// EBCOT lossless config: classic Part-1 EBCOT entropy coder +
+    /// reversible 5/3. Produces denser codestreams than HT lossless
+    /// (~13-15% smaller for high-bit-depth medical content) at the
+    /// cost of encode/decode parallelism. Available as a non-default
+    /// path; tested here so the M4 comparison can document the format
+    /// trade-off transparently.
+    private func ebcotLosslessConfig() -> J2KEncodingConfiguration {
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0,
+            lossless: true,
+            decompositionLevels: 5,
+            qualityLayers: 1,
+            progressionOrder: .lrcp,
+            useHTJ2K: false,
             useReversibleFilter: true,
             htj2kBlockFormat: .conformant)
         cfg.bitrateMode = .lossless
@@ -314,6 +335,102 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
                 return row.crossDecodeBitExact ? "✓" : "✗"
             }
             print("| \(r.modality) | \(r.label) | \(m("openjpeg")) | \(m("openjph")) | \(m("grok")) | \(m("kakadu")) |")
+        }
+    }
+
+    // MARK: - M4 HT vs EBCOT comparison
+
+    /// v5.38 M4 — runs the medical corpus through BOTH of J2KSwift's
+    /// lossless paths (HT cleanup-only and EBCOT) and tabulates bytes
+    /// + encode-time + decode-time + bit-exact roundtrip. This shows
+    /// J2KSwift users the HT-vs-EBCOT trade-off transparently:
+    ///
+    ///   HT lossless (default): faster encode/decode, larger files
+    ///                          (~13-15% denser than EBCOT on 16-bit
+    ///                          medical content), Part-15 only — can
+    ///                          only be decoded by HT-aware decoders.
+    ///
+    ///   EBCOT lossless:        denser files, slower encode/decode,
+    ///                          decodable by every Part-1 decoder
+    ///                          (broadest interop). Recommended when
+    ///                          archival storage is the priority and
+    ///                          the consumer might be a legacy decoder.
+    ///
+    /// Both paths produce bit-exact roundtrips (no LSB diff vs
+    /// original). Pass gate: every fixture roundtrips bit-exact in
+    /// both modes. The encode/decode time tables are diagnostic.
+    func testJ2KSwiftLosslessHTvsEBCOTOnMedicalCorpus() async throws {
+        struct Row {
+            let modality: String
+            let label: String
+            let pixels: Int
+            let rawBytes: Int
+            let htBytes: Int; let htEncMs: Double; let htDecMs: Double
+            let ebcotBytes: Int; let ebcotEncMs: Double; let ebcotDecMs: Double
+        }
+        var rows: [Row] = []
+        var ranAtLeastOne = false
+
+        for fixture in CrossCodecTooling.medicalCorpus {
+            guard let url = CrossCodecTooling.fixtureURL(fixture.path) else { continue }
+            guard let img = try CrossCodecTooling.loadPGM16BE(url) else { continue }
+            ranAtLeastOne = true
+
+            // ---- HT lossless ----
+            let htEnc = J2KEncoder(encodingConfiguration: losslessConfig())
+            let htDec = J2KDecoder()
+            _ = try await htEnc.encode(img)  // warm-up
+            let htEncStart = CFAbsoluteTimeGetCurrent()
+            let htData = try await htEnc.encode(img)
+            let htEncMs = (CFAbsoluteTimeGetCurrent() - htEncStart) * 1000.0
+            let htDecStart = CFAbsoluteTimeGetCurrent()
+            let htDecoded = try await htDec.decode(htData)
+            let htDecMs = (CFAbsoluteTimeGetCurrent() - htDecStart) * 1000.0
+            XCTAssertTrue(CrossCodecTooling.bitExactPixelMatch(img, htDecoded),
+                "\(fixture.modality) \(fixture.labelHint): HT lossless not bit-exact")
+
+            // ---- EBCOT lossless ----
+            let ebcotEnc = J2KEncoder(encodingConfiguration: ebcotLosslessConfig())
+            let ebcotDec = J2KDecoder()
+            _ = try await ebcotEnc.encode(img)  // warm-up
+            let ebcotEncStart = CFAbsoluteTimeGetCurrent()
+            let ebcotData = try await ebcotEnc.encode(img)
+            let ebcotEncMs = (CFAbsoluteTimeGetCurrent() - ebcotEncStart) * 1000.0
+            let ebcotDecStart = CFAbsoluteTimeGetCurrent()
+            let ebcotDecoded = try await ebcotDec.decode(ebcotData)
+            let ebcotDecMs = (CFAbsoluteTimeGetCurrent() - ebcotDecStart) * 1000.0
+            XCTAssertTrue(CrossCodecTooling.bitExactPixelMatch(img, ebcotDecoded),
+                "\(fixture.modality) \(fixture.labelHint): EBCOT lossless not bit-exact")
+
+            let pixels = img.width * img.height * img.componentCount
+            let bytesPerSample = (img.components[0].bitDepth + 7) / 8
+            let rawBytes = pixels * bytesPerSample
+
+            rows.append(Row(
+                modality: fixture.modality,
+                label: fixture.labelHint.isEmpty ? "\(img.width)×\(img.height)" : fixture.labelHint,
+                pixels: pixels, rawBytes: rawBytes,
+                htBytes: htData.count, htEncMs: htEncMs, htDecMs: htDecMs,
+                ebcotBytes: ebcotData.count, ebcotEncMs: ebcotEncMs, ebcotDecMs: ebcotDecMs))
+        }
+
+        if !ranAtLeastOne { throw XCTSkip("medical corpus fixtures not present") }
+
+        print("\n=== v5.38 M4 — J2KSwift HT vs EBCOT lossless on medical corpus ===")
+        print("| Modality | Shape | Raw KB | HT KB | HT× | EBCOT KB | EBCOT× | EBCOT vs HT | HT enc / dec ms | EBCOT enc / dec ms |")
+        print("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+        for r in rows {
+            let htRatio = Double(r.rawBytes) / Double(r.htBytes)
+            let ebcotRatio = Double(r.rawBytes) / Double(r.ebcotBytes)
+            let bytesDelta = Double(r.ebcotBytes - r.htBytes) / Double(r.htBytes) * 100.0
+            print(String(format: "| %@ | %@ | %d | %d | %.2f× | %d | %.2f× | %+.1f%% | %.1f / %.1f | %.1f / %.1f |",
+                r.modality, r.label,
+                r.rawBytes / 1024,
+                r.htBytes / 1024, htRatio,
+                r.ebcotBytes / 1024, ebcotRatio,
+                bytesDelta,
+                r.htEncMs, r.htDecMs,
+                r.ebcotEncMs, r.ebcotDecMs))
         }
     }
 }
