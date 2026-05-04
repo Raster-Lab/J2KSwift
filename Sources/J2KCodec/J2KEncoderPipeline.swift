@@ -501,6 +501,123 @@ struct EncoderPipeline: Sendable {
         return indexed
     }
 
+    // MARK: - v5.35.0b Multi-Layer Encode Entry Point
+
+    /// Encodes an image as a MULTI-LAYER LRCP codestream at a fixed
+    /// quantization step, returning the codestream paired with per-
+    /// layer-packet end offsets for finer-than-packet truncation in
+    /// strict bounded-rate mode.
+    ///
+    /// PCRD-opt assigns each block a first-inclusion layer based on
+    /// R-D slope, so layer 0 contains the highest-quality blocks,
+    /// layer N-1 the lowest. Truncating the codestream at any layer
+    /// boundary yields a valid prefix containing the K best layers.
+    ///
+    /// Use case: v5.35.0b strict bounded-rate. The strict-mode
+    /// encoder calls this with `numLayers=16-32` so post-encode
+    /// truncation has finer granularity (16-32× more truncation
+    /// boundaries than v5.34's single-layer 6-packet boundary set).
+    func encodeMultiLayerWithPacketIndex(
+        _ image: J2KImage,
+        qstep: Double,
+        numLayers: Int,
+        progress: ((EncoderProgressUpdate) -> Void)? = nil
+    ) async throws -> EncodedCodestreamWithIndex {
+        precondition(numLayers >= 1, "numLayers must be ≥ 1")
+        try image.validate()
+
+        // Stages 1-5: same as encodeWithPacketIndex but at fixed qstep
+        var iterConfig = config
+        iterConfig.bitrateMode = .fixedQstep(qstep: qstep)
+        iterConfig.lossless = false
+        let inner = EncoderPipeline(config: iterConfig)
+
+        reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
+        var componentData = try inner.extractComponentData(from: image)
+        for (compIdx, component) in image.components.enumerated() where !component.signed {
+            let dcOffset = Int32(1 << (component.bitDepth - 1))
+            componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                for i in 0..<buf.count { buf[i] &-= dcOffset }
+            }
+        }
+        reportProgress(progress, stage: .preprocessing, stageProgress: 1.0)
+
+        let (transformedData, transformedFloatData) =
+            try inner.applyColorTransform(componentData, image: image)
+
+        let (decompositions, actualDecompositionLevels) =
+            try await inner.applyWaveletTransform(
+                transformedData, floatComponents: transformedFloatData,
+                width: image.width, height: image.height)
+
+        let adaptiveLossyStepSizes = inner.buildAdaptiveLossyStepSizes(
+            decompositions, image: image, totalLevels: actualDecompositionLevels)
+
+        let codeBlocks = try await inner.applyEntropyCoding(
+            decompositions, image: image,
+            adaptiveStepSizes: adaptiveLossyStepSizes,
+            totalLevels: actualDecompositionLevels)
+
+        // Stage 6: multi-layer rate control. Build a synthetic
+        // RateControlConfiguration that uses the actual encoded byte
+        // budget as the layerCount-way split target. This drives PCRD
+        // to distribute blocks across N layers by R-D slope.
+        let totalEncodedBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        let totalPixels = image.width * image.height
+        let totalBpp = Double(totalEncodedBytes * 8) / Double(totalPixels)
+        let multiLayerRateConfig = RateControlConfiguration(
+            mode: .targetBitrate(totalBpp),
+            layerCount: numLayers,
+            componentCount: image.components.count,
+            useReversibleFilter: config.useReversibleFilter,
+            passesPerBitPlane: config.useHTJ2K ? 2 : 3
+        )
+        let layers = try J2KRateControl(configuration: multiLayerRateConfig)
+            .optimizeLayers(codeBlocks: codeBlocks, totalPixels: totalPixels)
+
+        // Stage 7: multi-layer codestream emission
+        let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        var writer = J2KBitWriter(capacity: totalBytes + totalBytes / 8 + 2048)
+
+        writer.writeMarker(J2KMarker.soc.rawValue)
+        try writeSIZMarker(&writer, image: image)
+        if config.useHTJ2K {
+            try writeCAPMarker(&writer)
+            try writeCPFMarker(&writer)
+        }
+        try writeCODMarker(
+            &writer, image: image,
+            decompositionLevels: actualDecompositionLevels,
+            numLayers: numLayers)
+        try writeQCDMarker(
+            &writer, image: image,
+            decompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveLossyStepSizes)
+        if config.useHTJ2K && config.htj2kBlockFormat == .conformant {
+            try writeHTBlockFormatCOM(&writer)
+        }
+
+        let (tileData, packetEndsInTile) = try generateMultiLayerTileData(
+            codeBlocks: codeBlocks, layers: layers,
+            decompositionLevels: actualDecompositionLevels,
+            componentCount: image.components.count)
+
+        let sotMarkerOffset = writer.count
+        try writeSOTMarker(
+            &writer, tileIndex: 0, tilePartLength: tileData.count)
+        writer.writeMarker(J2KMarker.sod.rawValue)
+        let tileDataOffset = writer.count
+        writer.writeBytes(tileData)
+        writer.writeMarker(J2KMarker.eoc.rawValue)
+
+        let packetEndsInCodestream = packetEndsInTile.map { $0 + tileDataOffset }
+        return EncodedCodestreamWithIndex(
+            data: writer.data,
+            sotMarkerOffset: sotMarkerOffset,
+            tileDataOffset: tileDataOffset,
+            packetEndOffsets: packetEndsInCodestream)
+    }
+
     /// Truncates a packet-indexed codestream at the largest LRCP
     /// packet boundary that still fits within `targetBytes`.
     ///
@@ -3782,7 +3899,12 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the COD marker segment (Coding Style Default).
-    private func writeCODMarker(_ writer: inout J2KBitWriter, image: J2KImage, decompositionLevels: Int) throws {
+    private func writeCODMarker(
+        _ writer: inout J2KBitWriter,
+        image: J2KImage,
+        decompositionLevels: Int,
+        numLayers: Int = 1
+    ) throws {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
@@ -3796,8 +3918,9 @@ struct EncoderPipeline: Sendable {
         // SGcod — Progression order: always LRCP (0) for compatibility
         segment.writeUInt8(0)
 
-        // Number of layers: use 1 for simple correct encoding
-        segment.writeUInt16(1)
+        // Number of layers (v5.35.0b: configurable for multi-layer strict
+        // mode; default 1 keeps existing single-layer encodes byte-identical)
+        segment.writeUInt16(UInt16(max(1, numLayers)))
 
         // Multiple component transform (1 = RCT/ICT, 0 = none)
         // MCT is applied whenever the encoder performs a colour transform (3+ components)
@@ -4316,6 +4439,219 @@ struct EncoderPipeline: Sendable {
                     codeBlockHeight: cbHeight
                 )
                 packetEnds.append(tileWriter.count)
+            }
+        }
+
+        return (tileWriter.data, packetEnds)
+    }
+
+    // MARK: - v5.35.0b Multi-Layer Tile Data Generation
+
+    /// Generates a multi-layer JPEG 2000 tile bitstream for strict
+    /// bounded-rate mode (v5.35.0b).
+    ///
+    /// Unlike `generateTileData` (which emits ONE packet per
+    /// resolution × component, all blocks in one layer), this function
+    /// emits N packets per resolution × component — one per layer.
+    /// PCRD assigns each block a "first inclusion layer" based on its
+    /// R-D slope; the block's data appears exactly once, in that
+    /// layer's packet for its band. Higher-layer packets for the same
+    /// band emit only inclusion-tag-tree continuation bits.
+    ///
+    /// This gives the strict-mode codestream truncator N× more legal
+    /// truncation boundaries, so a 1.0× cap can land much closer to
+    /// achieved bytes than the single-layer 6-packet boundary set
+    /// (which on px_001 / dx_002 dropped to 0.31× of cap).
+    ///
+    /// Returns the tile data along with byte offsets where each
+    /// emitted packet ends — N × numResolutions × numComponents
+    /// packet boundaries total. Truncation picks the largest offset
+    /// that fits the byte cap.
+    private func generateMultiLayerTileData(
+        codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
+        decompositionLevels: Int, componentCount: Int
+    ) throws -> (data: Data, packetEnds: [Int]) {
+        precondition(layers.count >= 1, "must have at least 1 layer")
+
+        // Build per-block first-inclusion-layer map. PCRD's
+        // QualityLayer.codeBlockContributions[blockIdx] is the
+        // cumulative pass count assigned to that block by layer L
+        // (or earlier). For HT cleanup-only the only meaningful
+        // values are 0 (excluded) and 1 (included). The layer where
+        // the value first becomes > 0 is the first-inclusion layer.
+        let neverIncludedSentinel: Int32 = 999
+        var firstInclusion: [Int: Int32] = [:]
+        for (layerIdx, layer) in layers.enumerated() {
+            for (blockIdx, passCount) in layer.codeBlockContributions
+            where passCount > 0 && firstInclusion[blockIdx] == nil {
+                firstInclusion[blockIdx] = Int32(layerIdx)
+            }
+        }
+
+        let totalBlockBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        var tileWriter = J2KBitWriter(
+            capacity: totalBlockBytes + totalBlockBytes / 8 + 1024)
+
+        // Group blocks by (resolution, component, subband)
+        struct BandKey: Hashable {
+            let res: Int; let comp: Int; let subband: J2KSubband
+        }
+        var blocksByBand: [BandKey: [J2KCodeBlock]] = [:]
+        for block in codeBlocks where block.passeCount > 0 || firstInclusion[block.index] != nil {
+            // Include all blocks that PCRD assigned to any layer; the
+            // per-layer packet emitter only emits data for the layer
+            // matching the block's first-inclusion layer.
+            let key = BandKey(
+                res: block.resolutionLevel,
+                comp: block.componentIndex,
+                subband: block.subband)
+            blocksByBand[key, default: []].append(block)
+        }
+
+        // Build per-band tag trees — persistent across layers. Each
+        // call to .encode(threshold:) emits only the new bits needed
+        // to advance the threshold. The `known` flag in the tree's
+        // node state means already-included leaves don't re-emit bits.
+        struct BandTrees {
+            var inclusion: J2KTagTree
+            var zbp: J2KTagTree
+        }
+        let cbWidth = config.codeBlockSize.width
+        let cbHeight = config.codeBlockSize.height
+        var trees: [BandKey: BandTrees] = [:]
+        for (key, band) in blocksByBand {
+            guard !band.isEmpty else { continue }
+            let blocksX = band.map { $0.x / cbWidth }.max()! + 1
+            let blocksY = band.map { $0.y / cbHeight }.max()! + 1
+            var inc = J2KTagTree(width: blocksX, height: blocksY)
+            var zbp = J2KTagTree(width: blocksX, height: blocksY)
+            for (idx, block) in band.enumerated() {
+                let layerVal = firstInclusion[block.index] ?? neverIncludedSentinel
+                inc.setValue(leafIndex: idx, value: layerVal)
+                if layerVal != neverIncludedSentinel {
+                    zbp.setValue(leafIndex: idx, value: Int32(block.zeroBitPlanes))
+                }
+            }
+            trees[key] = BandTrees(inclusion: inc, zbp: zbp)
+        }
+
+        let numResolutions = decompositionLevels + 1
+        let numComponents = componentCount
+
+        var packetEnds: [Int] = []
+        packetEnds.reserveCapacity(layers.count * numResolutions * numComponents)
+
+        // LRCP outer loop: layer → resolution → component (single-precinct)
+        for layerIdx in 0..<layers.count {
+            for resLevel in 0..<numResolutions {
+                for compIdx in 0..<numComponents {
+                    let subbands: [J2KSubband] = resLevel == 0
+                        ? [.ll] : [.hl, .lh, .hh]
+
+                    let bandKeys = subbands.map {
+                        BandKey(res: resLevel, comp: compIdx, subband: $0)
+                    }
+
+                    // Determine if this packet has any newly-included blocks
+                    var newlyIncludedBlocks: [J2KCodeBlock] = []
+                    for key in bandKeys {
+                        if let band = blocksByBand[key] {
+                            for block in band where firstInclusion[block.index] == Int32(layerIdx) {
+                                newlyIncludedBlocks.append(block)
+                            }
+                        }
+                    }
+
+                    tileWriter.setByteStuffing(true)
+
+                    if newlyIncludedBlocks.isEmpty {
+                        // Empty packet for this (layer, res, comp) —
+                        // tag trees still don't emit bits for this
+                        // packet (skipped). Decoders handle empty
+                        // packets identically.
+                        tileWriter.writeBit(false)
+                        tileWriter.alignToByte()
+                        tileWriter.setByteStuffing(false)
+                        packetEnds.append(tileWriter.count)
+                        continue
+                    }
+
+                    tileWriter.writeBit(true)
+
+                    // Emit per-band header
+                    for key in bandKeys {
+                        guard let band = blocksByBand[key], !band.isEmpty,
+                              var bandTrees = trees[key] else { continue }
+
+                        for (idx, block) in band.enumerated() {
+                            let firstInc = firstInclusion[block.index]
+                                ?? neverIncludedSentinel
+                            // Inclusion: encode threshold = layerIdx + 1.
+                            // Tree state tracks `known` so already-included
+                            // blocks (firstInc < layerIdx) emit nothing,
+                            // never-included blocks (firstInc > layerIdx)
+                            // emit continuation 0-bits, newly-included
+                            // (firstInc == layerIdx) emit final 1-bit.
+                            bandTrees.inclusion.encode(
+                                writer: &tileWriter,
+                                leafIndex: idx,
+                                threshold: Int32(layerIdx + 1))
+
+                            // Only newly-included blocks contribute data
+                            guard firstInc == Int32(layerIdx) else { continue }
+
+                            // ZBP tag tree (one-time per block)
+                            bandTrees.zbp.encode(
+                                writer: &tileWriter,
+                                leafIndex: idx,
+                                threshold: Int32(block.zeroBitPlanes) + 1)
+
+                            // Number of new coding passes — HT cleanup-only
+                            // is always 1 pass per block. Table B.4: "0"
+                            // encodes 1 pass.
+                            tileWriter.writeBit(false)
+
+                            // Length per ISO 15444-1 B.10.7. For HT
+                            // cleanup-only, passes = 1 → log2(passes) = 0.
+                            // Lblock starts at 3 and grows until totalBits
+                            // covers the length.
+                            let length = block.data.count
+                            var lblock = 3
+                            var totalBits = lblock
+                            let bitsNeeded = length > 0
+                                ? (Int.bitWidth - length.leadingZeroBitCount)
+                                : 1
+                            while totalBits < bitsNeeded {
+                                tileWriter.writeBit(true)
+                                lblock += 1
+                                totalBits = lblock
+                            }
+                            tileWriter.writeBit(false)
+                            if totalBits > 0 {
+                                try tileWriter.writeBits(
+                                    UInt32(length), count: totalBits)
+                            }
+                        }
+                        // Persist mutated tree state back
+                        trees[key] = bandTrees
+                    }
+
+                    // Pad header to byte boundary, then disable byte
+                    // stuffing for raw block data
+                    tileWriter.alignToByte()
+                    tileWriter.setByteStuffing(false)
+
+                    // Append raw bytes for newly-included blocks (band order, raster)
+                    for key in bandKeys {
+                        if let band = blocksByBand[key] {
+                            for block in band where firstInclusion[block.index] == Int32(layerIdx) {
+                                tileWriter.appendRawBytes(block.data)
+                            }
+                        }
+                    }
+
+                    packetEnds.append(tileWriter.count)
+                }
             }
         }
 
