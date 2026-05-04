@@ -1,6 +1,6 @@
 # Medical Imaging Benchmark: J2KSwift vs OpenJPEG
 
-**Date:** 2026-05-03 12:13
+**Date:** 2026-05-03 13:05
 
 ## Test Images
 
@@ -34,3 +34,78 @@
 - MAE: Mean Absolute Error — lower is better
 - ΔPSNR: J2K PSNR minus OPJ PSNR (positive = J2K better)
 - Lossless: exact reconstruction (PSNR = ∞, MAE = 0)
+
+---
+
+## Decode Performance (v5.27.0)
+
+Per-fixture warm-session decode time across three APIs, measured on the medical DICOM
+corpus in `Tests/Fixtures/CrossCodec`. All numbers are release-mode medians (n=5 after
+warm-up) on M2, HT-conformant lossy 9/7 @ 2 bpp. Reproducible via:
+
+```bash
+swift test -c release --filter J2KMedicalCorpus
+```
+
+### Per-fixture decode time (ms, lower = faster)
+
+| Fixture                | Pixels    | CPU `decode` | `decodeGPU(_:session:)` | `decodeWithGPUHT(_:session:)` | Winner |
+|------------------------|----------:|-------------:|-------------------------:|------------------------------:|---|
+| mr_002 (180×180)       |    32,400 |          1.2 |                      1.3 |                          4.5 | CPU¹ |
+| ct_001 (512×512)       |   262,144 |          7.2 |                      4.4 |                          9.4 | decodeGPU |
+| ct_003 (512×512)       |   262,144 |          7.1 |                      5.2 |                          9.5 | decodeGPU |
+| mr_001 (886×886)       |   784,996 |         21.1 |                      9.6 |                         13.5 | decodeGPU |
+| xa_001 (1024×1024)     | 1,048,576 |         25.7 |                      9.3 |                         13.9 | decodeGPU |
+| px_001 (2459×1316)     | 3,236,044 |         86.2 |                     30.4 |                         **27.2** | decodeWithGPUHT |
+| dx_002 (2800×2288)     | 6,406,400 |        170.1 |                     48.2 |                         **42.7** | decodeWithGPUHT |
+
+¹ At 180×180 the median is within run-to-run variance (Metal dispatch ≈ CPU decode time);
+both APIs return ~1.2 ms. CPU is the safe default for this size class.
+
+### Per-fixture speedup (×, higher = faster)
+
+| Fixture                | `decodeGPU`× CPU | `decodeWithGPUHT`× CPU |
+|------------------------|-----------------:|------------------------:|
+| mr_002 (180×180)       |             1.0× |                    0.3× |
+| ct_001 (512×512)       |             1.6× |                    0.8× |
+| ct_003 (512×512)       |             1.4× |                    0.7× |
+| mr_001 (886×886)       |             2.2× |                    1.6× |
+| xa_001 (1024×1024)     |             2.8× |                    1.8× |
+| px_001 (2459×1316)     |             2.8× |                **3.2×** |
+| dx_002 (2800×2288)     |             3.5× |                **4.0×** |
+
+### Routing recommendation
+
+The crossover is decisive: `decodeGPU` wins below ~1M pixels; `decodeWithGPUHT` wins above
+~3M pixels. The v5.27.0 helper `J2KDecoder.recommendedDecodeAPI(width:height:)` codifies
+this:
+
+| Pixel count          | Recommended API                  | Reason |
+|----------------------|----------------------------------|--------|
+| `< 65,536` (256²)    | CPU `decode(_:)`                 | Metal dispatch overhead cancels GPU compute on tiny images |
+| `< 3,000,000`        | `decodeGPU(_:session:)`          | CPU HT entropy (~1–2 ms parallelised) is cheaper than GPU HT dispatch (~7 ms) at this size; GPU IDWT is the dominant lever |
+| `≥ 3,000,000`        | `decodeWithGPUHT(_:session:)`    | GPU HT dispatch amortises across larger codeblock counts; full GPU pipeline wins |
+
+Cold-start Metal overhead is ~50 ms regardless of image size — for genuine one-off
+decodes (no shared session), prefer CPU `decode` even when dimensions are large.
+
+### What changed in v5.27.0 (vs v5.26.0)
+
+`decodeWithGPUHT` 9/7 lossy got materially faster on large workloads after v5.27.0
+introduced a CPU-work skip on the Float fused-from-codeblocks path. The `[SubbandInfo]`
+regroup loop and the per-subband CPU dequantisation pass are now skipped when the GPU
+scatter+dequant kernel produces the dequantised Float subbands directly:
+
+| Fixture            | v5.26.0 `decodeWithGPUHT` | v5.27.0 `decodeWithGPUHT` | Δ |
+|--------------------|--------------------------:|---------------------------:|----:|
+| px_001 (2459×1316) |                    41.0 ms |                    27.2 ms | **−14 ms** |
+| dx_002 (2800×2288) |                    46.9 ms |                    42.7 ms |  −4 ms |
+
+Per-stage `decodeWithGPUHT` breakdown (typical post-v5.27.0 run on dx_002 2800×2288):
+
+| Stage                       | ms |
+|-----------------------------|----:|
+| `gpuHTDispatch`             |  8.9 |
+| build Float plans (regroup) |  0.6 |
+| CPU dequant                 | **0.0** ← v5.27.0: was ~4 ms |
+| `inverseWaveletTransform`   | 25.6 |

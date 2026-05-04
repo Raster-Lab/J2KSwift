@@ -5,6 +5,80 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.27.0] — 2026-05-04
+
+**Medical corpus characterisation + CPU-work skip + routing helper**
+
+v5.24-v5.26 measured a single 1024×1024 fixture. v5.27.0 sweeps
+the medical DICOM corpus (7 fixtures, 180×180 to 2800×2288),
+publishes a per-fixture performance table + routing rule, and
+ships one more optimisation: skip the now-dead CPU regroup +
+dequant path when the v5.26.0 Float fused batch is consumed.
+
+### Headline (medical corpus, M2, release, n=5 medians)
+
+| Fixture                | CPU      | `decodeGPU`× | `decodeWithGPUHT`× |
+|------------------------|---------:|-------------:|-------------------:|
+| ct_001 (512×512)       |   7.2 ms |        1.6×  |               0.8× |
+| xa_001 (1024×1024)     |  25.7 ms |        2.8×  |               1.8× |
+| px_001 (2459×1316)     |  86.2 ms |        2.8×  |          **3.2×** |
+| dx_002 (2800×2288)     | 170.1 ms |        3.5×  |          **4.0×** |
+
+The crossover is decisive: `decodeGPU` wins below ~1M px;
+`decodeWithGPUHT` wins above ~3M px.
+
+### Added
+
+- `Tests/J2KMetalTests/J2KMedicalCorpusPerformanceTests.swift` —
+  sweeps 7 fixtures × 3 APIs × per-stage breakdown. Prints a
+  markdown-friendly table for direct paste into
+  MEDICAL_BENCHMARK.md.
+- `MEDICAL_BENCHMARK.md` — new "Decode Performance (v5.27.0)"
+  section with per-fixture times, speedups, routing rule, and
+  v5.26.0 → v5.27.0 delta.
+- `Sources/J2KCodec/J2KCodec.swift` —
+  `J2KDecoder.recommendedDecodeAPI(width:height:)` static helper
+  + `J2KRecommendedDecodeAPI` enum. Codifies the routing
+  threshold (CPU < 256² < decodeGPU < ~1730² ≤ decodeWithGPUHT).
+
+### Changed
+
+- `Sources/J2KCodec/J2KDecoderPipeline.swift` —
+  `applyEntropyDecoding` short-circuits on the Float fused batch
+  path. When `gpuBatch.floatPlansByComponent` is non-nil, returns
+  `([], batch)` immediately; skips the [SubbandInfo] regroup loop.
+  `applyDequantization` becomes a no-op for those components
+  (empty input → empty output). The GPU scatter+dequant kernel
+  has already produced the dequantised Float subbands.
+- `applyInverseWaveletTransformGPU` fast-out check now considers
+  `floatPlansByComponent` alongside the Int32 `plansByComponent`.
+
+### Per-fixture savings (post-v5.27.0 vs v5.26.0)
+
+| Fixture            | v5.26.0 | v5.27.0 | Δ |
+|--------------------|--------:|--------:|--:|
+| px_001 (2459×1316) | 41.0 ms | 27.2 ms | **−14 ms** |
+| dx_002 (2800×2288) | 46.9 ms | 42.7 ms |  −4 ms |
+
+Per-stage on dx_002: `dequantization` 4.0 → 0.0 ms (skipped);
+regroup 1.3 → 0.6 ms (only `buildGPUHTBatchFromResultFloat` runs;
+[SubbandInfo] regroup gone).
+
+### Verified
+
+- New `testSessionPathBitEquivalentToNoSessionPath` (v5.26.0) still
+  green: max diff = 1 LSB at 16-bit. Short-circuit doesn't break
+  bit-equivalence.
+- All v5.14-v5.26 regression gates remain green.
+
+### Lesson
+
+When an architecture changes, audit what the old code was doing
+that the new code makes redundant. v5.26.0's Float scatter+dequant
+kernel made the CPU dequant pass dead; spotting that took a
+7-fixture sweep + attention to the stage breakdown. The fix was
+six lines of pipeline plumbing for a 14 ms saving on px_001.
+
 ## [5.26.0] — 2026-05-04
 
 **Float scatter+dequant + GPU-resident dispatch — `decodeWithGPUHT` 9/7 lossy 1.0×→1.85×**

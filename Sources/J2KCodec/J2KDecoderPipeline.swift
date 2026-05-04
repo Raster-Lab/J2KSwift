@@ -1651,6 +1651,25 @@ struct DecoderPipeline: Sendable {
         let gpuPreDecoded: [Int: [Int32]] = gpuEarly.preDecoded
         let gpuBatch: J2KGPUHTBatch? = gpuEarly.batch
 
+        // v5.27.0 short-circuit: when the Float fused batch is built
+        // (9/7 lossy on session-warm path; all blocks GPU-decoded;
+        // dequant baked into the scatter kernel), the downstream IDWT
+        // consumes the codeblock buffer directly via
+        // `inverse2DFullFusedFromCodeblocks`. The CPU regroup that
+        // follows would build `[SubbandInfo]` only for the dead-code
+        // case where the IDWT falls back to per-level upload — and
+        // that fallback never fires when `floatPlansByComponent` is
+        // populated (the IDWT routes to the fused path first). Skip
+        // the regroup entirely; return empty `[SubbandInfo]`. The
+        // downstream `applyDequantization` becomes a no-op (empty
+        // input → empty output), saving the CPU dequant work too
+        // (which was already wasted, since the GPU scatter applied
+        // dequant). Net savings on dx_002 (2800×2288): ~5 ms (regroup
+        // ~1 ms + dequant ~4 ms).
+        if let batch = gpuBatch, batch.floatPlansByComponent != nil {
+            return ([], batch)
+        }
+
         // Struct key avoids per-block string interpolation allocations.
         struct SubbandKey: Hashable {
             let componentIndex: Int; let level: Int; let subband: J2KSubband
@@ -3068,7 +3087,14 @@ struct DecoderPipeline: Sendable {
             // descriptors. Without this, the gpuBatch path is dead
             // code on the v5.9 fast lane and session decode collapses
             // to DC-offset-only output (the v5.9b bug).
-            let hasGPUBatchPlan = gpuBatch?.plansByComponent[compIdx] != nil
+            // v5.27.0: include Float plans alongside Int32 plans —
+            // when 9/7 lossy fused-from-codeblocks fires, the
+            // Int32 `plansByComponent` is empty but
+            // `floatPlansByComponent` carries the live plan, so the
+            // fast-out must not zero-fill in that case.
+            let hasGPUBatchPlan =
+                gpuBatch?.plansByComponent[compIdx] != nil
+                || (gpuBatch?.floatPlansByComponent?[compIdx]?.isEmpty == false)
             if compSubbands.isEmpty && !hasGPUBatchPlan {
                 componentData.append([Double](repeating: 0.0, count: metadata.width * metadata.height))
                 continue

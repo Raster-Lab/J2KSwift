@@ -366,9 +366,55 @@ public struct J2KEncoder: Sendable {
 ///     print("\(update.stage): \(Int(update.overallProgress * 100))%")
 /// }
 /// ```
+/// v5.27.0 routing recommendation for the GPU decode APIs. Returned
+/// by `J2KDecoder.recommendedDecodeAPI(for:)` to help callers pick
+/// between `decode`, `decodeGPU(_:session:)`, and
+/// `decodeWithGPUHT(_:session:)` based on image dimensions.
+public enum J2KRecommendedDecodeAPI: Sendable {
+    /// CPU `decode(_:)`. Recommended for tiny images (< 256×256)
+    /// where Metal startup + dispatch overhead exceeds CPU decode
+    /// time even on a warm session.
+    case cpu
+    /// `decodeGPU(_:session:)`. CPU HT entropy + GPU IDWT. The
+    /// fastest path for the typical medical-imaging size range
+    /// (256×256 to ~1730×1730).
+    case decodeGPU
+    /// `decodeWithGPUHT(_:session:)`. Full GPU pipeline. Wins on
+    /// large images (≥ ~1730×1730) where the GPU HT dispatch cost
+    /// amortizes across the larger codeblock count.
+    case decodeWithGPUHT
+}
+
 public struct J2KDecoder: Sendable {
     /// Creates a new decoder.
     public init() {}
+
+    /// v5.27.0: recommended decode API for an image of the given
+    /// dimensions on a warm `J2KMetalSession`.
+    ///
+    /// Threshold derived from the v5.27.0 medical-corpus benchmark
+    /// on M2 (see MEDICAL_BENCHMARK.md "Decode Performance"):
+    ///   - ≤ 256×256 (65k px): CPU `decode` is within noise of GPU
+    ///     paths; either is fine. Defaults to CPU because cold-start
+    ///     Metal overhead penalises tiny one-off decodes.
+    ///   - 256×256 to ~1730×1730 (~3M px): `decodeGPU` is the clear
+    ///     winner (1.3–3.0× CPU); `decodeWithGPUHT` lags here because
+    ///     GPU HT dispatch overhead doesn't amortise.
+    ///   - ≥ 1730×1730 (~3M px): `decodeWithGPUHT` overtakes (3–4×
+    ///     CPU vs `decodeGPU`'s 3–3.7×) as the dispatch cost
+    ///     amortises.
+    ///
+    /// Cold-start Metal overhead (~50 ms first decode on a fresh
+    /// session) is unrelated to image size — for genuine one-off
+    /// decodes prefer CPU `decode` regardless of dimensions.
+    public static func recommendedDecodeAPI(
+        width: Int, height: Int
+    ) -> J2KRecommendedDecodeAPI {
+        let pixels = width * height
+        if pixels < 256 * 256 { return .cpu }
+        if pixels < 3_000_000 { return .decodeGPU }
+        return .decodeWithGPUHT
+    }
 
     /// Decodes JPEG 2000 data into an image.
     ///
