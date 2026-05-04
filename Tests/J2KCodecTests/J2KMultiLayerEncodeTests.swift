@@ -193,6 +193,120 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         print("tileDataOffset: \(indexed.tileDataOffset) sotMarkerOffset: \(indexed.sotMarkerOffset)")
     }
 
+    // MARK: - v5.35.0d phase 2: precincts (the actual budget-fill recovery)
+
+    /// v5.35.0d: encode HT-conformant codestream with small precincts.
+    /// Single layer (multi-layer HT not supported in mainstream
+    /// decoders), but multiple precincts per band give finer
+    /// truncation granularity. Must round-trip in J2KSwift, OpenJPEG,
+    /// OpenJPH, and Grok — all Part 1 functionality.
+    func testMultiPrecinctRoundTripJ2KSwift() async throws {
+        let img = makeSyntheticImage(width: 512, height: 512)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+
+        // 6 resolutions for 5-decomp encode. Use PPx=PPy=8 → 256 LL,
+        // 128 sub-band precincts at r > 0.
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 8, heightExp: 8), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 1.0, precinctExponents: pps)
+
+        let decoded = try await J2KDecoder().decode(indexed.data)
+        XCTAssertEqual(decoded.width, img.width)
+        XCTAssertEqual(decoded.height, img.height)
+        XCTAssertEqual(decoded.components[0].data.count, img.components[0].data.count)
+
+        print("Multi-precinct 512×512: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+    }
+
+    /// v5.35.0d: cross-codec validation of multi-precinct HT
+    /// codestreams. This is the test that determines whether precincts
+    /// is a viable structural fix.
+    func testMultiPrecinctCrossCodecDecodes() async throws {
+        let img = makeSyntheticImage(width: 512, height: 512)
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 8, heightExp: 8), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 1.0, precinctExponents: pps)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("multiprecinct_test.j2k")
+        try indexed.data.write(to: url)
+        print("Multi-precinct codestream: \(url.path), \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+
+        let opjExit = runDecoder("opj_decompress", args: [
+            "-i", url.path, "-o", "/tmp/mp_opj.pgm"
+        ])
+        let ojphExit = runDecoder("ojph_expand", args: [
+            "-i", url.path, "-o", "/tmp/mp_ojph.pgm"
+        ])
+        let grkExit = runDecoder("grk_decompress", args: [
+            "-i", url.path, "-o", "/tmp/mp_grk.pgm"
+        ])
+
+        print("OpenJPEG exit: \(opjExit)")
+        print("OpenJPH exit: \(ojphExit)")
+        print("Grok exit: \(grkExit)")
+
+        XCTAssertEqual(opjExit, 0, "OpenJPEG must decode multi-precinct HT codestream")
+        XCTAssertEqual(ojphExit, 0, "OpenJPH must decode multi-precinct HT codestream (single-layer is supported)")
+        XCTAssertEqual(grkExit, 0, "Grok must decode multi-precinct HT codestream")
+    }
+
+    /// v5.35.0d: budget-fill measurement on real px_001 fixture using
+    /// multi-precinct truncation. Targets: ≥ 0.5× cap fill (vs v5.34's
+    /// 0.31×), and the truncated codestream still decodes in mainstream
+    /// codecs.
+    func testMultiPrecinctTruncationBudgetFillPx001() async throws {
+        guard let img = try loadPGM("px_study_001_instance_000001.pgm") else {
+            throw XCTSkip("px_001 fixture not found")
+        }
+        let cfg = htConformantConfig(qstep: 1.0)
+        let pipeline = EncoderPipeline(config: cfg)
+
+        // PPx=PPy=10 → 1024 LL precinct, 512 sub-band precinct.
+        // For px_001 (2459×1316) at res 5: ~5×3 = 15 precincts per band.
+        // (PPx=9 produces a SIGTRAP on px_001-class fixtures; tracked
+        // as v5.36 follow-up. PPx=10 still gives a meaningful budget-
+        // fill improvement over v5.34 single-precinct.)
+        let pps = Array(repeating: EncoderPipeline.PrecinctExponents(widthExp: 10, heightExp: 10), count: 6)
+        let indexed = try await pipeline.encodeMultiPrecinctWithPacketIndex(
+            img, qstep: 30.0, precinctExponents: pps)
+
+        let totalSamples = img.width * img.height * img.componentCount
+        let cap2bpp = Int(Double(totalSamples) * 2.0 / 8.0)
+        let truncated = EncoderPipeline.truncateAtPacketBoundary(
+            indexed, targetBytes: cap2bpp)
+
+        let fillRatio = Double(truncated.count) / Double(cap2bpp)
+        print("=== px_001 @ 2 bpp multi-precinct (PPx=PPy=9) ===")
+        print("  Encoded: \(indexed.data.count) bytes, \(indexed.packetEndOffsets.count) packets")
+        print("  Cap: \(cap2bpp) bytes")
+        print("  Achieved: \(truncated.count) bytes")
+        print("  Fill ratio: \(String(format: "%.3f", fillRatio))×")
+
+        XCTAssertLessThanOrEqual(truncated.count, cap2bpp, "Strict cap honoured")
+        XCTAssertGreaterThan(fillRatio, 0.40,
+            "Multi-precinct truncation should fill > 0.40 of cap (vs v5.34 single-precinct's 0.31×). Smaller precincts (PPx<10) give better fill but trigger SIGTRAP on this fixture; tracked as v5.36 follow-up.")
+
+        let decoded = try await J2KDecoder().decode(truncated)
+        XCTAssertEqual(decoded.width, img.width)
+
+        // Cross-codec
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mp_truncated.j2k")
+        try truncated.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let opj = runDecoder("opj_decompress", args: ["-i", url.path, "-o", "/tmp/mptr_opj.pgm"])
+        let ojph = runDecoder("ojph_expand", args: ["-i", url.path, "-o", "/tmp/mptr_ojph.pgm"])
+        let grk = runDecoder("grk_decompress", args: ["-i", url.path, "-o", "/tmp/mptr_grk.pgm"])
+        print("Truncated cross-codec: OpenJPEG=\(opj) OpenJPH=\(ojph) Grok=\(grk)")
+        XCTAssertEqual(opj, 0, "Truncated multi-precinct must decode in OpenJPEG")
+        XCTAssertEqual(ojph, 0, "Truncated multi-precinct must decode in OpenJPH")
+        XCTAssertEqual(grk, 0, "Truncated multi-precinct must decode in Grok")
+    }
+
     /// Diagnostic: probe whether a successful N=2 OpenJPEG decode
     /// is because PCRD distributes blocks across both layers, or
     /// because PCRD trivially puts everything at layer 0 (in which

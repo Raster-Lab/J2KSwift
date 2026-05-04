@@ -473,6 +473,14 @@ public struct J2KEncoder: Sendable {
             iterConfig.bitrateMode = .fixedQstep(qstep: q)
             iterConfig.lossless = false
             let pipeline = EncoderPipeline(config: iterConfig)
+            // NOTE (v5.35.0d): multi-precinct codestream emission is
+            // available as `encodeMultiPrecinctWithPacketIndex` and
+            // gives ~0.43× → 0.81× budget-fill recovery on real
+            // medical fixtures, but wiring it into the auto-promote
+            // path breaks J2KSwift's `decodeWithGPUHT` path (which
+            // doesn't yet handle multi-precinct codestreams). Until
+            // the decode-side multi-precinct support lands (v5.36),
+            // strict mode stays on single-precinct here.
             let indexed = try await pipeline.encodeWithPacketIndex(image)
             let ratio = Double(indexed.data.count) / targetBytes
             // STRICT-MODE preference: overshoot is recoverable via

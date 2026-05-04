@@ -501,6 +501,262 @@ struct EncoderPipeline: Sendable {
         return indexed
     }
 
+    // MARK: - v5.35.0d Multi-Precinct Encode (single-layer, fine granularity)
+
+    /// Generates a tile bitstream as a SINGLE LAYER but with multiple
+    /// precincts per resolution — finer truncation granularity for
+    /// strict bounded-rate mode (v5.35.0d). Unlike multi-layer (which
+    /// is theoretically valid but unsupported in practice by OpenJPH
+    /// / OpenJPEG HT decoders), precincts are Part 1 functionality
+    /// fully supported by all mainstream decoders.
+    ///
+    /// Each (resolution, component, precinct) emits a separate packet.
+    /// With small precinct sizes the highest-resolution band gets many
+    /// small packets, giving the truncator many packet boundaries to
+    /// land on.
+    ///
+    /// Returns the tile data along with byte offsets where each
+    /// emitted packet ends.
+    private func generateMultiPrecinctTileData(
+        codeBlocks: [J2KCodeBlock],
+        layers: [QualityLayer],
+        decompositionLevels: Int,
+        componentCount: Int,
+        precinctExponents: [PrecinctExponents]
+    ) throws -> (data: Data, packetEnds: [Int]) {
+        precondition(precinctExponents.count == decompositionLevels + 1)
+        let effectiveBlocks = applyLayerTruncation(codeBlocks: codeBlocks, layers: layers)
+
+        let cbWidth = config.codeBlockSize.width
+        let cbHeight = config.codeBlockSize.height
+
+        // Group blocks by (res, comp, subband, precinct).
+        struct PrecinctKey: Hashable {
+            let res: Int; let comp: Int; let subband: J2KSubband
+            let py: Int; let px: Int
+        }
+        // Effective sub-band precinct size for the block's resolution.
+        func subbandPrecinctSize(forRes res: Int) -> (w: Int, h: Int) {
+            let pp = precinctExponents[res]
+            // Per ISO 15444-1 A.6.1: r > 0 sub-band precinct = 2^(PPx-1) × 2^(PPy-1)
+            // r == 0 (LL): precinct = 2^PPx × 2^PPy
+            let wExp = res == 0 ? pp.widthExp : max(0, pp.widthExp - 1)
+            let hExp = res == 0 ? pp.heightExp : max(0, pp.heightExp - 1)
+            return (1 << wExp, 1 << hExp)
+        }
+
+        var blocksByPrecinct: [PrecinctKey: [J2KCodeBlock]] = [:]
+        // Track band max coords per (res, comp, subband) so we know the precinct grid extent.
+        struct BandKey: Hashable { let res: Int; let comp: Int; let subband: J2KSubband }
+        var bandMaxX: [BandKey: Int] = [:]
+        var bandMaxY: [BandKey: Int] = [:]
+        for block in effectiveBlocks {
+            let bk = BandKey(res: block.resolutionLevel, comp: block.componentIndex, subband: block.subband)
+            bandMaxX[bk] = max(bandMaxX[bk] ?? 0, block.x + block.width - 1)
+            bandMaxY[bk] = max(bandMaxY[bk] ?? 0, block.y + block.height - 1)
+            let (pw, ph) = subbandPrecinctSize(forRes: block.resolutionLevel)
+            let py = block.y / ph
+            let px = block.x / pw
+            let key = PrecinctKey(
+                res: block.resolutionLevel, comp: block.componentIndex,
+                subband: block.subband, py: py, px: px)
+            blocksByPrecinct[key, default: []].append(block)
+        }
+
+        let numResolutions = decompositionLevels + 1
+        let numComponents = componentCount
+
+        // For each (res, comp), compute precinct grid extent
+        // (numPrecinctsX × numPrecinctsY for the resolution level).
+        // The grid is determined by the largest sub-band at that
+        // resolution; for r > 0 all sub-bands HL/LH/HH share a
+        // precinct grid of the same dimensions.
+        func precinctGridExtent(res: Int, comp: Int) -> (nx: Int, ny: Int) {
+            let subbands: [J2KSubband] = res == 0 ? [.ll] : [.hl, .lh, .hh]
+            let (pw, ph) = subbandPrecinctSize(forRes: res)
+            var nx = 0, ny = 0
+            for sb in subbands {
+                let bk = BandKey(res: res, comp: comp, subband: sb)
+                if let mx = bandMaxX[bk], let my = bandMaxY[bk] {
+                    nx = max(nx, mx / pw + 1)
+                    ny = max(ny, my / ph + 1)
+                }
+            }
+            return (max(1, nx), max(1, ny))
+        }
+
+        let totalBlockBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        var tileWriter = J2KBitWriter(
+            capacity: totalBlockBytes + totalBlockBytes / 8 + 1024)
+        var packetEnds: [Int] = []
+
+        // LRCP: layer × resolution × component × precinct (raster order)
+        for _ in 0..<max(1, layers.count) {
+            for resLevel in 0..<numResolutions {
+                for compIdx in 0..<numComponents {
+                    let (nx, ny) = precinctGridExtent(res: resLevel, comp: compIdx)
+                    let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
+                    let (pw, ph) = subbandPrecinctSize(forRes: resLevel)
+                    for py in 0..<ny {
+                        for px in 0..<nx {
+                            // Gather blocks for this precinct, per sub-band.
+                            // Remap each block to precinct-local coordinates
+                            // so writePacket's tag-tree dimension calculation
+                            // (max(block.x)/cbW + 1) reflects the PRECINCT's
+                            // block grid, not the whole band's.
+                            let precinctOriginX = px * pw
+                            let precinctOriginY = py * ph
+                            var bandBlocksList: [[J2KCodeBlock]] = []
+                            for sb in subbands {
+                                let key = PrecinctKey(
+                                    res: resLevel, comp: compIdx,
+                                    subband: sb, py: py, px: px)
+                                let blocks = blocksByPrecinct[key] ?? []
+                                let remapped = blocks.map { b -> J2KCodeBlock in
+                                    J2KCodeBlock(
+                                        index: b.index,
+                                        x: b.x - precinctOriginX,
+                                        y: b.y - precinctOriginY,
+                                        width: b.width,
+                                        height: b.height,
+                                        subband: b.subband,
+                                        componentIndex: b.componentIndex,
+                                        resolutionLevel: b.resolutionLevel,
+                                        data: b.data,
+                                        passeCount: b.passeCount,
+                                        zeroBitPlanes: b.zeroBitPlanes,
+                                        passSegmentLengths: b.passSegmentLengths,
+                                        cumulativePassBytes: b.cumulativePassBytes)
+                                }
+                                bandBlocksList.append(remapped)
+                            }
+                            try writePacket(
+                                into: &tileWriter,
+                                bandBlocks: bandBlocksList,
+                                codeBlockWidth: cbWidth,
+                                codeBlockHeight: cbHeight)
+                            packetEnds.append(tileWriter.count)
+                        }
+                    }
+                }
+            }
+        }
+
+        return (tileWriter.data, packetEnds)
+    }
+
+    /// v5.35.0d single-layer multi-precinct encode entry point.
+    ///
+    /// Reuses the encode pipeline up to entropy coding, then emits a
+    /// single-layer codestream where each band is divided into
+    /// precincts (Part 1 functionality, fully supported by mainstream
+    /// decoders). Strict mode uses this for finer-than-band truncation
+    /// granularity, replacing the multi-layer approach (which produced
+    /// codestreams incompatible with OpenJPH and OpenJPEG's HT
+    /// decoders).
+    ///
+    /// `precinctExponents`: per-resolution PPx/PPy values per ISO
+    /// 15444-1 A.6.1. For r=0 the precinct covers a 2^PPx × 2^PPy
+    /// region of LL; for r > 0 the sub-band precinct is half-size.
+    /// Suggested: PPx=PPy=9 → 512 LL precinct, 256 sub-band precincts.
+    func encodeMultiPrecinctWithPacketIndex(
+        _ image: J2KImage,
+        qstep: Double,
+        precinctExponents: [PrecinctExponents],
+        progress: ((EncoderProgressUpdate) -> Void)? = nil
+    ) async throws -> EncodedCodestreamWithIndex {
+        try image.validate()
+        var iterConfig = config
+        iterConfig.bitrateMode = .fixedQstep(qstep: qstep)
+        iterConfig.lossless = false
+        let inner = EncoderPipeline(config: iterConfig)
+
+        var componentData = try inner.extractComponentData(from: image)
+        for (compIdx, component) in image.components.enumerated() where !component.signed {
+            let dcOffset = Int32(1 << (component.bitDepth - 1))
+            componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                for i in 0..<buf.count { buf[i] &-= dcOffset }
+            }
+        }
+
+        let (transformedData, transformedFloatData) =
+            try inner.applyColorTransform(componentData, image: image)
+
+        let (decompositions, actualDecompositionLevels) =
+            try await inner.applyWaveletTransform(
+                transformedData, floatComponents: transformedFloatData,
+                width: image.width, height: image.height)
+
+        let adaptiveLossyStepSizes = inner.buildAdaptiveLossyStepSizes(
+            decompositions, image: image, totalLevels: actualDecompositionLevels)
+
+        let codeBlocks = try await inner.applyEntropyCoding(
+            decompositions, image: image,
+            adaptiveStepSizes: adaptiveLossyStepSizes,
+            totalLevels: actualDecompositionLevels)
+
+        // Single-layer; the multi-precinct emission gives the truncation
+        // granularity, so PCRD doesn't need to split layers.
+        let layers = [QualityLayer(
+            index: 0, targetRate: nil,
+            codeBlockContributions: Dictionary(
+                uniqueKeysWithValues: codeBlocks.map { ($0.index, $0.passeCount) }))]
+
+        // Stage 7: codestream with precincts
+        let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
+        var writer = J2KBitWriter(capacity: totalBytes + totalBytes / 8 + 2048)
+
+        writer.writeMarker(J2KMarker.soc.rawValue)
+        try writeSIZMarker(&writer, image: image)
+        if config.useHTJ2K {
+            try writeCAPMarker(&writer)
+            try writeCPFMarker(&writer)
+        }
+        // Pad / truncate precinctExponents to actualDecompositionLevels + 1
+        let actualNumRes = actualDecompositionLevels + 1
+        let pps: [PrecinctExponents]
+        if precinctExponents.count == actualNumRes {
+            pps = precinctExponents
+        } else if precinctExponents.count > actualNumRes {
+            pps = Array(precinctExponents.prefix(actualNumRes))
+        } else {
+            let pad = precinctExponents.last ?? PrecinctExponents(widthExp: 15, heightExp: 15)
+            pps = precinctExponents + Array(repeating: pad, count: actualNumRes - precinctExponents.count)
+        }
+        try writeCODMarker(
+            &writer, image: image,
+            decompositionLevels: actualDecompositionLevels,
+            numLayers: 1, precinctSizes: pps)
+        try writeQCDMarker(
+            &writer, image: image,
+            decompositionLevels: actualDecompositionLevels,
+            adaptiveStepSizes: adaptiveLossyStepSizes)
+        if config.useHTJ2K && config.htj2kBlockFormat == .conformant {
+            try writeHTBlockFormatCOM(&writer)
+        }
+
+        let (tileData, packetEndsInTile) = try generateMultiPrecinctTileData(
+            codeBlocks: codeBlocks, layers: layers,
+            decompositionLevels: actualDecompositionLevels,
+            componentCount: image.components.count,
+            precinctExponents: pps)
+
+        let sotMarkerOffset = writer.count
+        try writeSOTMarker(
+            &writer, tileIndex: 0, tilePartLength: tileData.count)
+        writer.writeMarker(J2KMarker.sod.rawValue)
+        let tileDataOffset = writer.count
+        writer.writeBytes(tileData)
+        writer.writeMarker(J2KMarker.eoc.rawValue)
+
+        let packetEndsInCodestream = packetEndsInTile.map { $0 + tileDataOffset }
+        return EncodedCodestreamWithIndex(
+            data: writer.data,
+            sotMarkerOffset: sotMarkerOffset,
+            tileDataOffset: tileDataOffset,
+            packetEndOffsets: packetEndsInCodestream)
+    }
+
     // MARK: - v5.35.0b Multi-Layer Encode Entry Point
 
     /// Encodes an image as a MULTI-LAYER LRCP codestream at a fixed
@@ -3898,21 +4154,41 @@ struct EncoderPipeline: Sendable {
         writer.writeMarkerSegment(J2KMarker.cpf.rawValue, segmentData: segment.data)
     }
 
+    /// Per-resolution precinct size exponents. Width = 2^widthExp,
+    /// height = 2^heightExp. ISO 15444-1 A.6.1: for resolution 0 (LL)
+    /// the precinct covers a 2^PPx × 2^PPy region of LL; for r > 0
+    /// the precinct covers 2^(PPx-1) × 2^(PPy-1) in each HL/LH/HH
+    /// sub-band. Range 0–15 each.
+    struct PrecinctExponents: Sendable, Equatable {
+        let widthExp: Int
+        let heightExp: Int
+    }
+
     /// Writes the COD marker segment (Coding Style Default).
+    ///
+    /// `precinctSizes` (v5.35.0d): if provided, must have one entry
+    /// per resolution (decompositionLevels + 1). Sets Scod bit 0 = 1
+    /// and emits per-resolution precinct exponents at the end of
+    /// SPcod. Pass `nil` for the default precinct behaviour (one
+    /// precinct per band, equivalent to PPx=PPy=15).
     private func writeCODMarker(
         _ writer: inout J2KBitWriter,
         image: J2KImage,
         decompositionLevels: Int,
-        numLayers: Int = 1
+        numLayers: Int = 1,
+        precinctSizes: [PrecinctExponents]? = nil
     ) throws {
         var segment = J2KBitWriter()
 
         // Scod — Coding style flags
-        // Bit 0: Default precinct sizes specified
+        // Bit 0: User-defined precinct sizes specified (else default)
         // Bit 1: SOP markers
         // Bit 2: EPH markers
         // Bits 3-7: reserved (must be 0)
-        let scod: UInt8 = 0
+        var scod: UInt8 = 0
+        if precinctSizes != nil {
+            scod |= 0x01
+        }
         segment.writeUInt8(scod)
 
         // SGcod — Progression order: always LRCP (0) for compatibility
@@ -3958,6 +4234,19 @@ struct EncoderPipeline: Sendable {
 
         // Wavelet transform type (0 = 9/7 irreversible, 1 = 5/3 reversible)
         segment.writeUInt8(config.useReversibleFilter ? 1 : 0)
+
+        // Optional: per-resolution precinct sizes. ISO 15444-1 A.6.1.
+        // One byte per resolution; low nibble = width exponent,
+        // high nibble = height exponent.
+        if let pps = precinctSizes {
+            precondition(pps.count == decompositionLevels + 1,
+                "precinctSizes must have one entry per resolution")
+            for pp in pps {
+                let lo = UInt8(pp.widthExp & 0x0F)
+                let hi = UInt8((pp.heightExp & 0x0F) << 4)
+                segment.writeUInt8(hi | lo)
+            }
+        }
 
         writer.writeMarkerSegment(J2KMarker.cod.rawValue, segmentData: segment.data)
     }
