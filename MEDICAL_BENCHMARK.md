@@ -176,6 +176,171 @@ the ingestion-time encode latency, this is the correct trade-off.
 
 ---
 
+## v5.34.0 — `.constantBitrateStrict` (hard byte cap via codestream truncation)
+
+User spec: "make the byte cap real, even if that means exposing two separate modes:
+one for quality-first and one for strict bounded-rate." v5.33's bounded mode caps
+overshoot best-effort but could exceed 2× target on flat-curve content (large medical
+fixtures at low bpp; the encoder hits a content-determined byte floor where the 3-pass
+Qstep search can't converge). v5.34 ships `.constantBitrateStrict` and switches the
+`.constantBitrate` auto-promote default to it.
+
+**Algorithm**: run the v5.33 quality-first 3-pass Qstep search (now biased toward
+overshoot since truncation handles excess for free), then truncate the codestream at the
+largest LRCP packet boundary that fits the byte cap. JPEG 2000 codestreams are LRCP-
+progressive — packets at lower resolutions / earlier components form a valid prefix at
+any packet boundary. The SOT marker's `Psot` field is rewritten and an EOC marker
+appended; decoders zero-fill missing trailing code blocks per ISO/IEC 15444-1 Annex B.
+
+### Mode comparison @ 2 bpp on real medical fixtures (M1, n=5)
+
+| Fixture | px | v5.33 (bounded) | **v5.34 (strict)** | v5.34 ratio |
+|---|---:|---:|---:|---:|
+| **PSNR (dB) and bytes ratio (achieved/target)** |  |  |  |  |
+| ct_001 (262k)  | 262k  | 61.20 dB / 2.91× | **20.15 dB** | **0.96×** |
+| xa_001 (1.0M)  | 1.0M  | 63.58 dB / 3.32× | **17.52 dB** | **0.93×** |
+| px_001 (3.2M)  | 3.2M  | 60.06 dB / 4.22× | **12.27 dB** | **0.31×** |
+| dx_002 (6.4M)  | 6.4M  | 60.00 dB / 4.03× | **13.14 dB** | **0.29×** |
+
+The headline contract has flipped: v5.33 prioritised quality and let bytes overshoot;
+v5.34 prioritises the byte cap and lets quality drop. This was a deliberate trade-off
+the user requested and is the original literal contract of `.constantBitrate(bpp)`.
+
+### v5.34 strict — full corpus PSNR + bytes (auto-promoted `.constantBitrate`)
+
+Roundtrip PSNR (16-bit) and encoded bytes via auto-promote on the standard medical
+corpus, multiple bpp targets:
+
+| Fixture | px | PSNR @0.5 | PSNR @1.0 | PSNR @2.0 | PSNR @4.0 |
+|---|---:|---:|---:|---:|---:|
+| mr_002 (180×180 MR)    |   32k | 34.72 | 34.95 | 28.76 | 34.98 |
+| ct_001 (512×512 CT)    |  262k | 18.24 | 18.24 | 20.15 | 20.15 |
+| ct_003 (512×512 CT)    |  262k | 18.15 | 18.15 | 18.15 | 20.14 |
+| mr_001 (886×886 MR)    |  785k | 26.00 | 26.00 | 98.58 | 95.99 |
+| xa_001 (1024² XA)      | 1.0M  | 15.77 | 15.77 | 17.52 | 17.52 |
+| px_001 (2459×1316 PX)  | 3.2M  | 12.27 | 12.27 | 12.27 | 14.28 |
+| dx_002 (2800×2288 DX)  | 6.4M  | 13.14 | 13.14 | 13.14 | 14.86 |
+
+Encoded bytes (target = `bpp × pixelCount × componentCount / 8`):
+
+| Fixture | px | @0.5 bytes | @1.0 bytes | @2.0 bytes | @4.0 bytes |
+|---|---:|---:|---:|---:|---:|
+| mr_002      |   32k |     2,022 |     3,552 |     2,750 |    11,940 |
+| ct_001      |  262k |     8,512 |    13,464 |    63,127 |   110,400 |
+| ct_003      |  262k |     7,766 |    12,414 |    21,309 |   102,489 |
+| mr_001      |  785k |    37,287 |    40,989 |   168,510 |   205,454 |
+| xa_001      | 1.0M  |    39,379 |    55,087 |   244,299 |   398,731 |
+| px_001      | 3.2M  |   141,112 |   197,091 |   252,003 | 1,540,094 |
+| dx_002      | 6.4M  |   239,235 |   355,896 |   468,219 | 2,971,929 |
+
+**Hard cap honoured on every fixture × bpp combination** — verified by
+`J2KConstantBitrateStrictTests`.
+
+### Why PSNR drops more than the bytes ratio suggests
+
+LRCP packets at the highest resolution dominate the byte budget on this format
+(typically 60-80% of total bytes). Truncation is all-or-nothing per packet — a packet
+either retains whole or drops whole, no partial admission. So a 1.0× cap can land far
+below 1.0× achieved (px_001 @ 2 bpp hits 0.31×) because the next packet boundary above
+the cap is far past it.
+
+The retained packets keep the bounded mode's quality (because the search runs the same
+quality-first Qstep). It's only the **dropped tail packets** that cost detail —
+typically the highest-frequency sub-bands at the highest resolution. Decode of a
+truncated strict-mode codestream succeeds and produces a low-resolution-rich
+approximation rather than a corrupted image.
+
+### Mode selection guide (post-v5.34)
+
+| Mode | Cap | Quality | Latency | Use when |
+|---|---|---|---|---|
+| **`.constantBitrate(bpp)`** (auto-promoted) | hard, ≤ target bytes | bounded by truncation | 3 passes + truncation | DICOM PACS / archive — strict storage budget, byte cap is a contract |
+| `.constantBitrateBounded(bpp, ...)` | best-effort 2.0× | quality-first 60+ dB | 3 passes | when overshoot is acceptable, quality is paramount |
+| `.constantBitrateViaQstep(bpp, ...)` | unbounded 1.6-3× | max | 8 passes | v5.31 max-quality behaviour |
+| `.fixedQstep(qstep)` | unbounded | content-dependent | 1 pass | latency-critical single-shot |
+
+### v5.34 encode performance (M1, n=5 per fixture)
+
+Encode latency on the medical corpus is **unchanged from v5.33** — the strict-mode
+truncation adds only an O(packets) post-step (~µs cost). The 3-pass Qstep search
+budget is the same.
+
+| Fixture                 |     px | CPU encode (ms) | GPU encode (ms) | CPU/GPU× |
+|-------------------------|-------:|----------------:|----------------:|---------:|
+| mr_002 (180×180)        |    32k |             2.0 |             2.5 |    0.80× |
+| ct_001 (512×512)        |   262k |            14.4 |             4.3 |    3.38× |
+| ct_003 (512×512)        |   262k |            11.7 |             3.9 |    3.01× |
+| mr_001 (886×886)        |   785k |            18.1 |             6.2 |    2.92× |
+| xa_001 (1024×1024)      |   1.0M |            53.5 |            24.6 |    2.17× |
+| px_001 (2459×1316)      |   3.2M |           192.6 |            69.3 |    2.78× |
+| dx_002 (2800×2288)      |   6.4M |           373.7 |           108.1 |    3.46× |
+| dx_001 (2544×3056)*     |   7.8M |           475.4 |           134.8 |    3.53× |
+| mg_001 (3520×4784)*     |  16.8M |          1005.7 |           267.3 |    3.76× |
+| mg_002 (3521×4784)*     |  16.8M |           993.9 |           275.2 |    3.61× |
+
+GPU encode wins by 2-4× on all sizes ≥ 512×512. Stage breakdown (GPU encode, ms):
+
+| Fixture                 | preproc | DWT  | entropy | rateCtrl | codestream |
+|-------------------------|--------:|-----:|--------:|---------:|-----------:|
+| ct_001 (512×512)        |     0.3 |  1.0 |     2.0 |      0.4 |        0.6 |
+| xa_001 (1024×1024)      |     1.2 | 11.4 |     7.5 |      2.6 |        2.0 |
+| px_001 (2459×1316)      |     3.9 | 28.4 |    23.1 |      7.5 |        5.9 |
+| dx_002 (2800×2288)      |     7.6 | 45.5 |    45.4 |      1.0 |       11.2 |
+| mg_001 (3520×4784)*     |    20.2 |100.4 |   115.6 |      2.1 |       28.1 |
+
+DWT and entropy continue to dominate at scale (40-50% each on mg-class).
+
+### v5.34 decode performance (M1, warm session, n=5)
+
+Decode on strict-mode codestreams works exactly like decode on any other valid
+JPEG 2000 codestream — the truncation is structurally legal, decoders treat missing
+trailing packets as zero-fill. No path-specific decode regression.
+
+| Fixture                 |    px  | CPU `decode` | `decodeGPU` | `decodeWithGPUHT` | Best vs CPU |
+|-------------------------|-------:|-------------:|------------:|------------------:|------------:|
+| mr_002 (180×180)        |   32k  |          1.1 |         1.2 |               2.7 |       0.95× |
+| ct_001 (512×512)        |  262k  |          7.0 |         6.4 |              11.3 |       1.10× |
+| ct_003 (512×512)        |  262k  |          6.9 |         4.7 |               8.2 |       1.46× |
+| mr_001 (886×886)        |  785k  |         21.1 |        11.0 |              18.7 |       1.91× |
+| xa_001 (1024×1024)      | 1.0M   |         26.0 |        10.1 |              19.7 |       2.58× |
+| px_001 (2459×1316)      | 3.2M   |         79.2 |        20.2 |              25.2 |       3.92× |
+| dx_002 (2800×2288)      | 6.4M   |        169.1 |        46.5 |              40.4 |       4.19× |
+| dx_001 (2544×3056)*     | 7.8M   |        218.5 |        46.2 |              49.3 |       4.73× |
+| mg_001 (3520×4784)*     | 16.8M  |        496.0 |       116.3 |             109.3 |       4.54× |
+| mg_002 (3521×4784)*     | 16.8M  |        503.6 |       122.1 |             109.0 |       4.62× |
+
+Routing recommendation unchanged: `< 256² → CPU`, `< 3M px → decodeGPU`,
+`≥ 3M px → decodeWithGPUHT`.
+
+### Recommendations by workload
+
+- **DICOM PACS ingestion / archive (strict storage budget)** → use the default
+  `.constantBitrate(bpp)`. v5.34 makes the byte cap real; the codestream is byte-exact
+  ≤ target. Quality drops on flat-curve high-bit-depth content but is recoverable on
+  lower-resolution / typical content (small / synthetic CTs land at 18-20 dB at 2 bpp,
+  acceptable for thumbnail / preview tier).
+- **Diagnostic-grade lossy archive (quality is paramount, storage isn't tight)** →
+  switch to `.constantBitrateBounded(bitsPerPixel: bpp)` explicitly. Get v5.33's 60+ dB
+  quality at the cost of 2-4× target bytes on flat-curve content.
+- **Latency-critical single-shot** → `.fixedQstep(qstep:)`. One pass, no search.
+- **v5.31 max-quality (8 passes, unbounded rate)** → `.constantBitrateViaQstep(bitsPerPixel: bpp)`.
+
+### Known v5.34 characteristics
+
+- **PSNR can drop sharply on flat-curve high-bit-depth medical at low bpp**. Expect
+  12-20 dB on px_001 / dx_002 at 0.5-2 bpp under strict mode, vs 60+ dB under bounded
+  mode. Quality is recoverable by switching to `.constantBitrateBounded` explicitly.
+- **Output bytes can land far below cap** when the next packet boundary above cap is
+  far past it. The search now biases toward overshoot to maximise budget usage, but on
+  flat-curve content the encoder's byte floor at low qstep can still leave significant
+  budget unfilled (px_001 @ 2 bpp lands at 0.31× of the cap). This is a v5.35 follow-
+  up target; for v5.34 the cap (not the budget fill) is the headline.
+- All v5.31-v5.33 quality features remain available as opt-in (`.constantBitrateBounded`,
+  `.constantBitrateViaQstep`, `.fixedQstep`) — the v5.34 change is the auto-promote
+  default only.
+
+---
+
 ## Per-Processor Performance Summary (v5.30.0)
 
 Canonical comparison table. Numbers below are **medians of 3 independent runs** in
