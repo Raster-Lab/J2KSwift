@@ -1,0 +1,76 @@
+=== v5.30.0 medical corpus warm encode benchmark ===
+Processor: Apple M2
+Image: HT-conformant lossy 9/7 @ 2.0 bpp, n=5 per fixture
+Synthetic fixtures (LCG noise, no real medical content) marked with *
+| Fixture | px | CPU encode ms | GPU encode ms | CPU/GPU× |
+| mr_002 (180×180) | 32400 | 2.4 | 2.4 | 1.01× |
+| ct_001 (512×512) | 262144 | 4.5 | 4.2 | 1.07× |
+| ct_003 (512×512) | 262144 | 3.9 | 4.0 | 0.96× |
+| mr_001 (886×886) | 784996 | 6.6 | 6.4 | 1.02× |
+| xa_001 (1024×1024) | 1048576 | 17.1 | 24.0 | 0.71× |
+| px_001 (2459×1316) | 3236044 | 51.7 | 70.3 | 0.73× |
+| dx_002 (2800×2288) | 6406400 | 85.7 | 110.1 | 0.78× |
+| dx_001 (2544×3056)* | 7774464 | 103.0 | 139.6 | 0.74× |
+| mg_001 (3520×4784)* | 16839680 | 226.6 | 267.2 | 0.85× |
+| mg_002 (3521×4784)* | 16844464 | 219.8 | 277.2 | 0.79× |
+Per-fixture CPU encode stage breakdown (means, ms):
+| Fixture | preproc | colour | DWT | quant | entropy | rateCtrl | codestream |
+| mr_002 (180×180) | 0.0 | 0.0 | 0.3 | 0.0 | 0.4 | 1.5 | 0.2 |
+| ct_001 (512×512) | 0.3 | 0.0 | 0.8 | 0.0 | 2.3 | 0.4 | 0.6 |
+| ct_003 (512×512) | 0.3 | 0.0 | 0.8 | 0.0 | 1.9 | 0.3 | 0.6 |
+| mr_001 (886×886) | 0.9 | 0.0 | 2.4 | 0.1 | 1.9 | 0.3 | 0.9 |
+| xa_001 (1024×1024) | 1.2 | 0.0 | 3.5 | 0.1 | 7.7 | 2.6 | 1.9 |
+| px_001 (2459×1316) | 3.8 | 0.0 | 10.7 | 0.1 | 23.3 | 7.5 | 5.8 |
+| dx_002 (2800×2288) | 7.5 | 0.0 | 21.6 | 0.2 | 45.2 | 1.0 | 11.0 |
+| dx_001 (2544×3056)* | 9.1 | 0.0 | 26.0 | 0.2 | 54.1 | 1.1 | 13.2 |
+| mg_001 (3520×4784)* | 20.6 | 0.0 | 59.2 | 0.2 | 118.2 | 2.5 | 29.0 |
+| mg_002 (3521×4784)* | 19.5 | 0.0 | 53.0 | 0.2 | 116.1 | 2.3 | 27.9 |
+Per-fixture GPU encode stage breakdown (means, ms):
+| Fixture | preproc | colour | DWT | quant | entropy | rateCtrl | codestream |
+| mr_002 (180×180) | 0.0 | 0.0 | 0.3 | 0.0 | 0.4 | 1.4 | 0.2 |
+| ct_001 (512×512) | 0.3 | 0.0 | 1.0 | 0.0 | 2.2 | 0.4 | 0.6 |
+| ct_003 (512×512) | 0.3 | 0.0 | 1.1 | 0.0 | 1.9 | 0.3 | 0.6 |
+| mr_001 (886×886) | 0.9 | 0.0 | 2.7 | 0.1 | 1.9 | 0.3 | 0.9 |
+| xa_001 (1024×1024) | 1.2 | 0.0 | 11.5 | 0.1 | 7.2 | 2.6 | 1.9 |
+| px_001 (2459×1316) | 3.9 | 0.0 | 28.7 | 0.1 | 23.4 | 7.5 | 6.0 |
+| dx_002 (2800×2288) | 7.6 | 0.0 | 48.3 | 0.1 | 43.6 | 1.0 | 10.7 |
+| dx_001 (2544×3056)* | 9.3 | 0.0 | 58.7 | 0.2 | 55.5 | 1.1 | 13.0 |
+| mg_001 (3520×4784)* | 19.6 | 0.0 | 99.8 | 0.2 | 117.1 | 2.0 | 28.2 |
+| mg_002 (3521×4784)* | 19.9 | 0.0 | 110.8 | 0.2 | 121.2 | 2.3 | 28.6 |
+=== v5.30.0 cold-start vs preWarm benchmark ===
+Processor: Apple M2
+Image: 512×512 16-bit lossy 9/7 @ 2.0 bpp
+Cold session  first decode:  40.2 ms  (cold-start cost included)
+Cold session  second decode: 12.4 ms  (warm baseline)
+preWarm() call itself:        27.9 ms
+Warm session  first decode:   9.3 ms  (after preWarm)
+Warm session  second decode:  9.3 ms  (warm baseline)
+Cold-start eliminated:        30.9 ms  (= cold-first 40.2 − warm-first 9.3)
+Total cost (preWarm + first): 37.2 ms vs cold-first 40.2 ms
+=== v5.30.0 medical corpus warm-session decode benchmark ===
+Processor: Apple M2
+Image: HT-conformant lossy 9/7 @ 2.0 bpp, n=5 per fixture
+Synthetic fixtures (LCG noise, no real medical content) marked with *
+| Fixture | px | CPU ms | decodeGPU ms | decodeWithGPUHT ms | decodeGPU× | decodeWithGPUHT× | Winner |
+| mr_002 (180×180) | 32400 | 1.2 | 1.4 | 5.1 | 0.85× | 0.24× | CPU |
+| ct_001 (512×512) | 262144 | 7.6 | 5.7 | 9.3 | 1.33× | 0.82× | decodeGPU |
+| ct_003 (512×512) | 262144 | 7.3 | 4.1 | 9.6 | 1.80× | 0.76× | decodeGPU |
+| mr_001 (886×886) | 784996 | 23.2 | 12.4 | 16.3 | 1.88× | 1.42× | decodeGPU |
+| xa_001 (1024×1024) | 1048576 | 27.6 | 9.0 | 14.3 | 3.06× | 1.93× | decodeGPU |
+| px_001 (2459×1316) | 3236044 | 86.8 | 32.2 | 26.6 | 2.69× | 3.26× | decodeWithGPUHT |
+| dx_002 (2800×2288) | 6406400 | 172.1 | 53.5 | 44.2 | 3.21× | 3.89× | decodeWithGPUHT |
+| dx_001 (2544×3056)* | 7774464 | 226.8 | 64.8 | 51.5 | 3.50× | 4.40× | decodeWithGPUHT |
+| mg_001 (3520×4784)* | 16839680 | 523.4 | 145.4 | 125.4 | 3.60× | 4.17× | decodeWithGPUHT |
+| mg_002 (3521×4784)* | 16844464 | 513.9 | 154.9 | 124.7 | 3.32× | 4.12× | decodeWithGPUHT |
+Per-fixture decodeWithGPUHT stage breakdown (means, ms):
+| Fixture | gpuHTDispatch | regroup | dequant | IDWT |
+| mr_002 (180×180) | 4.3 | 0.1 | 0.0 | 0.1 |
+| ct_001 (512×512) | 6.5 | 0.3 | 0.0 | 2.3 |
+| ct_003 (512×512) | 6.6 | 0.3 | 0.0 | 2.8 |
+| mr_001 (886×886) | 8.3 | 0.1 | 0.0 | 6.8 |
+| xa_001 (1024×1024) | 7.8 | 0.1 | 0.0 | 5.0 |
+| px_001 (2459×1316) | 7.9 | 0.6 | 0.0 | 14.7 |
+| dx_002 (2800×2288) | 9.2 | 0.6 | 0.0 | 26.9 |
+| dx_001 (2544×3056)* | 9.2 | 0.6 | 0.0 | 33.0 |
+| mg_001 (3520×4784)* | 11.9 | 2.3 | 0.0 | 91.1 |
+| mg_002 (3521×4784)* | 11.4 | 3.4 | 0.0 | 91.5 |

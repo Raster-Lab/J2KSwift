@@ -27,6 +27,19 @@ import Foundation
 @testable import J2KCodec
 @testable import J2KMetal
 
+/// Read `machdep.cpu.brand_string` so the benchmark output self-
+/// tags with the processor (e.g. "Apple M2", "Apple M4 Pro") —
+/// makes M2 vs M4 result tables in MEDICAL_BENCHMARK.md
+/// unambiguous.
+func processorBrandString() -> String {
+    var size: size_t = 0
+    sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+    guard size > 0 else { return "(unknown)" }
+    var buffer = [CChar](repeating: 0, count: size)
+    sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0)
+    return String(cString: buffer)
+}
+
 final class J2KMedicalCorpusPerformanceTests: XCTestCase {
 
     /// Fixture descriptor: real fixture has a non-empty `path`;
@@ -255,7 +268,8 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
 
         // Print a markdown-friendly table for direct paste into
         // MEDICAL_BENCHMARK.md.
-        print("=== v5.28.0 medical corpus warm-session benchmark ===")
+        print("=== v5.30.0 medical corpus warm-session decode benchmark ===")
+        print("Processor: \(processorBrandString())")
         print("Image: HT-conformant lossy 9/7 @ \(bpp) bpp, n=\(n) per fixture")
         print("Synthetic fixtures (LCG noise, no real medical content) marked with *")
         if !skipped.isEmpty {
@@ -332,7 +346,8 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
         _ = try await warmDecoder.decodeWithGPUHT(encoded, session: warmSession)
         let warmSecondMs = Date().timeIntervalSince(warmT1) * 1000
 
-        print("=== v5.28.0 cold-start vs preWarm benchmark ===")
+        print("=== v5.30.0 cold-start vs preWarm benchmark ===")
+        print("Processor: \(processorBrandString())")
         print("Image: 512×512 16-bit lossy 9/7 @ 2.0 bpp")
         print(String(format: "Cold session  first decode:  %.1f ms  (cold-start cost included)", coldFirstMs))
         print(String(format: "Cold session  second decode: %.1f ms  (warm baseline)", coldSecondMs))

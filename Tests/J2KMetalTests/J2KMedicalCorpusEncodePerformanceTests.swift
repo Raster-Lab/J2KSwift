@@ -30,6 +30,15 @@ import Foundation
 @testable import J2KCodec
 @testable import J2KMetal
 
+private func encProcessorBrandString() -> String {
+    var size: size_t = 0
+    sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+    guard size > 0 else { return "(unknown)" }
+    var buffer = [CChar](repeating: 0, count: size)
+    sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0)
+    return String(cString: buffer)
+}
+
 final class J2KMedicalCorpusEncodePerformanceTests: XCTestCase {
 
     /// Reuse the same fixture set as the decode-side corpus
@@ -210,7 +219,8 @@ final class J2KMedicalCorpusEncodePerformanceTests: XCTestCase {
                 gpuStages: gpuRes.stages))
         }
 
-        print("=== v5.29.0 medical corpus warm encode benchmark ===")
+        print("=== v5.30.0 medical corpus warm encode benchmark ===")
+        print("Processor: \(encProcessorBrandString())")
         print("Image: HT-conformant lossy 9/7 @ \(bpp) bpp, n=\(n) per fixture")
         print("Synthetic fixtures (LCG noise, no real medical content) marked with *")
         if !skipped.isEmpty {

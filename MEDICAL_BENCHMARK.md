@@ -37,6 +37,95 @@
 
 ---
 
+## Per-Processor Performance Summary (v5.30.0)
+
+Canonical comparison table. Numbers below are **medians of 3 independent runs** in
+release mode, n=5 timing samples per fixture per API per run, HT-conformant lossy 9/7
+@ 2 bpp. Raw run logs in [`benchmarks/`](benchmarks/).
+
+### Decode (warm session, ms)
+
+| Fixture                | Pixels | API                           | **Apple M2** | **Apple M4** ¹ |
+|------------------------|-------:|-------------------------------|-------------:|---------------:|
+| px_001 (2459×1316)     |  3.2M  | CPU `decode`                  |       87.1   |        TBD     |
+|                        |        | `decodeGPU(_:session:)`       |       30.5   |        TBD     |
+|                        |        | `decodeWithGPUHT(_:session:)` |       27.2   |        TBD     |
+| dx_002 (2800×2288)     |  6.4M  | CPU `decode`                  |      171.4   |        TBD     |
+|                        |        | `decodeGPU(_:session:)`       |       51.6   |        TBD     |
+|                        |        | `decodeWithGPUHT(_:session:)` |       42.3   |        TBD     |
+| dx_001 (2544×3056)*    |  7.8M  | CPU `decode`                  |      223.9   |        TBD     |
+|                        |        | `decodeGPU(_:session:)`       |       56.9   |        TBD     |
+|                        |        | `decodeWithGPUHT(_:session:)` |       51.5   |        TBD     |
+| mg_001 (3520×4784)*    | 16.8M  | CPU `decode`                  |      515.0   |        TBD     |
+|                        |        | `decodeGPU(_:session:)`       |      145.4   |        TBD     |
+|                        |        | `decodeWithGPUHT(_:session:)` |      119.7   |        TBD     |
+| mg_002 (3521×4784)*    | 16.8M  | CPU `decode`                  |      511.5   |        TBD     |
+|                        |        | `decodeGPU(_:session:)`       |      149.8   |        TBD     |
+|                        |        | `decodeWithGPUHT(_:session:)` |      123.1   |        TBD     |
+
+### Decode peak speedups (CPU `decode` baseline = 1.0×)
+
+| Fixture                | API                           | **Apple M2** | **Apple M4** ¹ |
+|------------------------|-------------------------------|-------------:|---------------:|
+| px_001 (2459×1316)     | `decodeWithGPUHT(_:session:)` |        3.2×  |        TBD     |
+| dx_002 (2800×2288)     | `decodeWithGPUHT(_:session:)` |        4.0×  |        TBD     |
+| dx_001 (2544×3056)*    | `decodeWithGPUHT(_:session:)` |        4.3×  |        TBD     |
+| **mg_001 (3520×4784)*** | `decodeWithGPUHT(_:session:)` |    **4.3×**  |        TBD     |
+| mg_002 (3521×4784)*    | `decodeWithGPUHT(_:session:)` |        4.2×  |        TBD     |
+
+### Encode (CPU `encode`, ms)
+
+| Fixture                | Pixels  | **Apple M2** | **Apple M4** ¹ |
+|------------------------|--------:|-------------:|---------------:|
+| ct_001 (512×512)       |   262k  |         4.3  |        TBD     |
+| xa_001 (1024×1024)     |   1.0M  |        16.0  |        TBD     |
+| px_001 (2459×1316)     |   3.2M  |        51.6  |        TBD     |
+| dx_002 (2800×2288)     |   6.4M  |        85.7  |        TBD     |
+| dx_001 (2544×3056)*    |   7.8M  |       103.0  |        TBD     |
+| mg_001 (3520×4784)*    |  16.8M  |       224.9  |        TBD     |
+| mg_002 (3521×4784)*    |  16.8M  |       218.4  |        TBD     |
+
+`encodeGPU` is currently a regression at every fixture size on M2 (CPU/GPU 0.66×–1.04×).
+Re-evaluate this on M4 — different GPU/CPU balance may change which side wins. Captured
+in the same M4 run (CPU/GPU column from the encode table).
+
+### Cold-start vs `preWarm()` (512×512, ms)
+
+| Metric                              | **Apple M2** | **Apple M4** ¹ |
+|-------------------------------------|-------------:|---------------:|
+| Cold-session first decode           |        53.8  |        TBD     |
+| `preWarm()` itself                  |        52.7  |        TBD     |
+| First user decode after `preWarm()` |        12.9  |        TBD     |
+| Cold-start eliminated by `preWarm`  |        40.9  |        TBD     |
+
+¹ M4 capture pending. To populate, run on the M4 machine:
+
+```bash
+swift test -c release --filter "J2KMedicalCorpus" 2>&1 \
+  | grep -E "^(=== |Processor:|Image:|Synthetic|Skipped|\| |Per-fixture|Cold session|preWarm|Warm session|Cold-start|Total cost)" \
+  > benchmarks/M4_run1.txt
+```
+
+Repeat 3× (`M4_run1.txt`, `M4_run2.txt`, `M4_run3.txt`); take per-fixture medians; fill
+in the `Apple M4` column above. The benchmark auto-tags with `Processor:` from
+`sysctlbyname("machdep.cpu.brand_string", …)` so each file is self-identifying. See
+[`benchmarks/README.md`](benchmarks/README.md) for full notes.
+
+### Variance characterisation (M2)
+
+| Metric type                | Range across 3 runs | Median used |
+|----------------------------|---------------------|-------------|
+| End-to-end decode (large)  | ±5%                 | yes         |
+| End-to-end encode (large)  | ±3%                 | yes         |
+| `gpuHTDispatch` (sub-stage) | ±20% (Metal/system) | yes         |
+| Cold-start first decode    | ±25% (variable)     | yes         |
+| `preWarm()` itself         | ±60% (cache warmth) | yes         |
+
+The release-mode benchmarks below this section retain the v5.28.0–v5.30.0 release-by-
+release detail. Use the table above for the canonical processor comparison.
+
+---
+
 ## Decode Performance (v5.28.0)
 
 Per-fixture warm-session decode time across three APIs, measured on the medical DICOM
