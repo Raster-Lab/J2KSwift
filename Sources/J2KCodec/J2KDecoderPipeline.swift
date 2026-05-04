@@ -2845,6 +2845,20 @@ struct DecoderPipeline: Sendable {
             return try await applyInverseWaveletTransform(subbands, metadata: metadata)
         }
 
+        // v5.20.0 medical-grade gate: GPU 9/7 (irreversible) IDWT
+        // currently diverges from the CPU reference by max ~45000 in
+        // 16-bit space (avg ~19000). Far beyond Float-vs-Double
+        // precision tolerance — there's an unidentified correctness
+        // bug in the GPU lossy IDWT kernel chain. Until it's fixed
+        // (tracked for v5.21.0+), force 9/7 lossy through the CPU
+        // path. Lossless 5/3 (reversible) GPU IDWT remains active —
+        // it's bit-exact and gated by v5.7+ regression tests.
+        // See `Tests/J2KCodecTests/J2KGPULossy97DivergenceTests.swift`
+        // for the bisection proof.
+        if case .irreversible97 = metadata.configuration.waveletFilter {
+            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
+        }
+
         // Select filter and dispatch path based on configuration. Reversible
         // 5/3 takes the bit-exact Int32 GPU path: subbands stay as Int32
         // throughout multi-level reconstruction, so the result matches

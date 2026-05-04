@@ -5,6 +5,51 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.20.0] — 2026-05-04
+
+**GPU 9/7 lossy decode correctness fix (medical-grade critical)**
+
+Investigation that started as "ratify GPU 9/7 lossy decode" surfaced
+a silent data-corruption defect: `decodeGPU(_:)` and
+`decodeWithGPUHT(_:)` for 9/7 lossy codestreams produce dramatically
+different output from `decode(_:)`. Max abs diff ~45,000 in 16-bit
+space (avg ~19,000) — far beyond Float-vs-Double precision tolerance.
+Bisection confirmed the bug is in the GPU IDWT for `.irreversible97`,
+NOT GPU HT entropy decode (which v5.15/v5.16 already ratified).
+
+### Fixed
+
+- `Sources/J2KCodec/J2KDecoderPipeline.swift:applyInverseWaveletTransformGPU`
+  now forces 9/7 lossy through the CPU IDWT until the underlying
+  Metal kernel bug is identified and fixed. After the gate, all
+  three decode paths produce identical output for 9/7 lossy.
+
+### Added
+
+- `Tests/J2KCodecTests/J2KGPULossy97DivergenceTests.swift`:
+  - `testBisectDecodePaths` — runs `decode`, `decodeGPU`,
+    `decodeWithGPUHT` on the same 4 bpp lossy 9/7 CT codestream
+    and asserts max abs diff is exactly 0 between CPU and either
+    GPU path. Future regressions that remove the gate without
+    fixing the kernel will fail this test.
+
+### Known issues (deferred to v5.21.0+)
+
+- **GPU IDWT for 9/7 is broken** and currently disabled. Root cause
+  not yet identified — could be Metal kernel precision,
+  dequantization, or subband layout. Until fixed, 9/7 lossy decode
+  runs at CPU speed regardless of which decode entry point is
+  called. Performance for 9/7 lossy on the GPU is the v5.21.0
+  motivation.
+
+### User impact
+
+Callers who invoked `decodeGPU(_:)` or `decodeWithGPUHT(_:)` on 9/7
+lossy codestreams pre-v5.20.0 received corrupt output (~19k LSB
+average error in 16-bit space). After v5.20.0, those calls produce
+correct output (matching `decode(_:)`) but at CPU IDWT speed. Stored
+9/7 lossy J2K codestreams are unaffected — the bug was decode-only.
+
 ## [5.19.1] — 2026-05-04
 
 **Faster qstep search — probe + cache + early-exit**
