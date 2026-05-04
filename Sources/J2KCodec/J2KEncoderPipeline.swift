@@ -1725,22 +1725,39 @@ struct EncoderPipeline: Sendable {
                         signed: component.signed
                     )
                 }
+                // v5.38 M7: hoist the (byteOrder × signedness) branches
+                // out of the per-pixel hot loop. Both are constant for a
+                // single component; specialising the loop to one of 4
+                // closed-form bodies lets LLVM auto-vectorise the
+                // UInt16 widening into NEON Int32 stores. For 12 MP DX
+                // this loop runs 12M iterations per encode.
                 data.withUnsafeBytes { buffer in
-                    guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                    guard let srcPtr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                         return
                     }
-                    for i in 0..<sampleCount {
-                        let value: UInt16
-                        switch byteOrder {
-                        case .littleEndian:
-                            value = UInt16(ptr[i * 2]) | (UInt16(ptr[i * 2 + 1]) << 8)
-                        case .bigEndian:
-                            value = (UInt16(ptr[i * 2]) << 8) | UInt16(ptr[i * 2 + 1])
-                        }
-                        if component.signed {
-                            pixels[i] = Int32(Int16(bitPattern: value))
-                        } else {
-                            pixels[i] = Int32(value)
+                    pixels.withUnsafeMutableBufferPointer { dstBuf in
+                        let dst = dstBuf.baseAddress!
+                        switch (byteOrder, component.signed) {
+                        case (.bigEndian, false):
+                            for i in 0..<sampleCount {
+                                let v = (UInt16(srcPtr[i &* 2]) << 8) | UInt16(srcPtr[i &* 2 &+ 1])
+                                dst[i] = Int32(v)
+                            }
+                        case (.bigEndian, true):
+                            for i in 0..<sampleCount {
+                                let v = (UInt16(srcPtr[i &* 2]) << 8) | UInt16(srcPtr[i &* 2 &+ 1])
+                                dst[i] = Int32(Int16(bitPattern: v))
+                            }
+                        case (.littleEndian, false):
+                            for i in 0..<sampleCount {
+                                let v = UInt16(srcPtr[i &* 2]) | (UInt16(srcPtr[i &* 2 &+ 1]) << 8)
+                                dst[i] = Int32(v)
+                            }
+                        case (.littleEndian, true):
+                            for i in 0..<sampleCount {
+                                let v = UInt16(srcPtr[i &* 2]) | (UInt16(srcPtr[i &* 2 &+ 1]) << 8)
+                                dst[i] = Int32(Int16(bitPattern: v))
+                            }
                         }
                     }
                 }

@@ -284,21 +284,54 @@ DWT savings show through proportionally.
 
 DX 12 MP encode is now **1.87× faster** than the v5.37 baseline.
 
-### v5.38 plan — milestones (revised after M5)
+### v5.38 M7 — extractComponentData branch hoist → preprocess −66 to −72%
+
+The 16-bit input extraction loop in `extractComponentData` had two
+branches inside the per-pixel hot loop:
+   - `switch byteOrder { case .littleEndian: ... case .bigEndian: ... }`
+   - `if component.signed { ... } else { ... }`
+
+Both are constant for a single component but LLVM was not hoisting
+them — the per-pixel branch cost added up over 12M iterations on DX.
+
+Fix: specialise the loop to one of 4 closed-form bodies before the
+loop runs (`(byteOrder, signed) ∈ {LE,BE} × {true,false}`), so the
+per-pixel body is straight-line UInt16 widening + Int32 store. With
+the branches gone, LLVM auto-vectorises the body.
+
+#### Encode stage profile, post-M5 vs post-M7 (median of 5 runs, ms)
+
+| Fixture | Stage | Post-M5 | Post-M7 | Δ |
+|---|---|---:|---:|---:|
+| **DX 2800×2288**     | Total      |  83.83 |  81.36 | **−3.0%** |
+|                      | Preprocess |   7.18 |   2.43 | **−66.2%** |
+| **PX 2459×1316**     | Total      |  42.72 |  39.77 | **−6.9%** |
+|                      | Preprocess |   3.65 |   1.16 | **−68.2%** |
+| **CT 512×512**       | Total      |   3.48 |   3.18 | **−8.6%** |
+|                      | Preprocess |   0.29 |   0.08 | **−72.4%** |
+| **MR 886×886**       | Total      |   6.08 |   5.66 | **−6.9%** |
+|                      | Preprocess |   0.86 |   0.26 | **−69.8%** |
+
+Preprocess stage drops 66-72% across the full corpus.
+
+The encode performance regression suite also picked up the win:
+55.3 s (pre-Step-A) → 34.6 s (post-Step-A) → 32.8 s (post-M7) for the
+same workload.
+
+### v5.38 plan — milestones (revised after M7)
 
 - **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
 - **M2 ✓** — external-codec columns + cross-decode matrix.
-- **M3 + Step-A ✓** — stage profile + `J2KBitWriter.writeBytes` fast
-  path (DX 1.78× speedup).
+- **M3 + Step-A ✓** — `J2KBitWriter.writeBytes` fast path (DX 1.78×).
 - **M4 ✓** — HT vs EBCOT comparison + trade-off documentation.
 - **M5 ✓** — branchless 5/3 forward lifting (DWT 9-15% faster).
-- **M6 (next)** — entropy stage is the new persistent dominant stage
-  (44-54% across the corpus). The HT cleanup-only block encoder's
-  per-quad scanning is the next target. Higher correctness risk;
-  needs careful staging.
-- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M6 CPU
-  baseline complete or until decode becomes the dominant pipeline
-  cost — currently encode dominates).
+- **M6 ✓** — M2 cross-codec decode warm-up; clean post-warm-up table.
+- **M7 ✓** — extractComponentData branch hoist (preprocess −66-72%).
+- **M8 (next)** — entropy stage is now 49-54% on most fixtures. The
+  HT cleanup-only block encoder's per-quad scanning is the next
+  target. Higher correctness risk; needs careful staging.
+- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M8 CPU
+  baseline complete).
 
 ### v5.38 — post-M5 final lossless headline (full corpus, fresh measurement)
 
