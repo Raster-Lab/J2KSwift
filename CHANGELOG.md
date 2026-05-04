@@ -5,6 +5,73 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.28.0] — 2026-05-04
+
+**Mammography corpus extension + `preWarm()` cold-start helper**
+
+v5.27.0 measured 7 medical fixtures up to 2800×2288 and codified
+the routing rule. Three larger fixtures (mammography, up to 16.8M
+px) weren't checked in. v5.28.0 extends the corpus to those sizes
+via synthetic equivalents, validates the routing rule keeps holding
+all the way up to 17M pixels, and adds a `preWarm()` helper that
+eliminates ~30 ms of cold-start cost.
+
+### Headline 1 — mammography validates the architecture
+
+| Fixture                | Pixels  | CPU      | `decodeWithGPUHT`× |
+|------------------------|--------:|---------:|--------------------:|
+| dx_001 (2544×3056)*    |   7.8M  |  223 ms  |              4.4×   |
+| mg_001 (3520×4784)*    |  16.8M  |  503 ms  |          **4.6×**   |
+| mg_002 (3521×4784)*    |  16.8M  |  500 ms  |              4.4×   |
+
+`*` synthetic LCG-noise fixtures (real PGMs not in-repo).
+`decodeWithGPUHT` keeps gaining headroom up to 17M pixels.
+
+### Headline 2 — `preWarm()` eliminates cold-start
+
+| 512×512 16-bit lossy 9/7, M2  | Without preWarm | With preWarm |
+|-------------------------------|----------------:|-------------:|
+| Cold first decode             |      40–49 ms   |       —      |
+| `preWarm()` itself            |        —        |    27–32 ms  |
+| First user decode after warm  |        —        |  **9–16 ms** |
+| Cold-start cost eliminated    |        —        |    25–30 ms  |
+
+Crossover at N=2 decodes — any workload that decodes more than
+one image benefits from `preWarm()`.
+
+### Added
+
+- `Sources/J2KCodec/J2KMetalSession.swift` —
+  `preWarm(includeWarmupDispatch:)` async helper. Initialises
+  device, loads shaders, pre-compiles 11 decode-hot-path
+  pipelines in parallel, runs a tiny 256×256 synthetic decode to
+  exercise the non-pipeline lazy-init paths (VLC table upload,
+  buffer pool first-fetch, Metal driver first-dispatch fence).
+- `Tests/J2KMetalTests/J2KMedicalCorpusPerformanceTests.swift` —
+  3 new synthetic fixtures (dx_001, mg_001, mg_002) plus
+  `testColdStartVsPreWarmFirstDecodeLatency` measurement gate.
+  `Fixture` struct with optional `synthDimensions` for missing-
+  on-disk fallback.
+- `MEDICAL_BENCHMARK.md` — Decode Performance table extended to
+  10 fixtures; new "Cold-Start vs `preWarm()`" subsection.
+
+### Verified
+
+- All 9/7 correctness gates remain green (max diff = 1 LSB at
+  16-bit on session bit-equivalence).
+- New corpus benchmark passes; cold-start test passes (savings
+  consistently 25–30 ms across runs).
+- 4 pre-existing perf-aspirational test failures unaffected.
+
+### Lesson
+
+First attempt at `preWarm()` only compiled shader pipelines and
+saved ~10 ms — way short of the ~30 ms target. Missing piece:
+exercising the actual GPU dispatch path. Modern GPU API cold-
+start cost isn't all shader compilation; driver-side state init
+happens lazily on first dispatch and can dominate. Pre-warming
+has to exercise the hot path, not just compile its prerequisites.
+
 ## [5.27.0] — 2026-05-04
 
 **Medical corpus characterisation + CPU-work skip + routing helper**

@@ -29,15 +29,37 @@ import Foundation
 
 final class J2KMedicalCorpusPerformanceTests: XCTestCase {
 
-    /// Fixtures, ordered by total pixel count (small → large).
-    private static let fixtures: [(name: String, path: String)] = [
-        ("mr_002 (180×180)",     "mr_study_002_instance_000100.pgm"),
-        ("ct_001 (512×512)",     "ct_study_001_instance_000001.pgm"),
-        ("ct_003 (512×512)",     "ct_study_003_instance_000050.pgm"),
-        ("mr_001 (886×886)",     "mr_study_001_instance_000001.pgm"),
-        ("xa_001 (1024×1024)",   "xa_study_001_instance_000001.pgm"),
-        ("px_001 (2459×1316)",   "px_study_001_instance_000001.pgm"),
-        ("dx_002 (2800×2288)",   "dx_study_002_instance_000001.pgm"),
+    /// Fixture descriptor: real fixture has a non-empty `path`;
+    /// synthetic fixture has `path == nil` and uses `synthDimensions`.
+    /// v5.28.0 extends the corpus to mammography sizes; the
+    /// `dx_001`/`mg_001`/`mg_002` fixtures aren't checked into git
+    /// (PGMs at 17 MP × 16 bit = ~32 MB each). They synthesise as
+    /// LCG-noise images at the same dimensions; perf scales primarily
+    /// with pixel count + (constant-bitrate) bitstream length, both
+    /// of which match the real fixture, so the timing comparison
+    /// remains valid for routing-rule characterisation.
+    struct Fixture: Sendable {
+        let name: String
+        let path: String?
+        let synthDimensions: (Int, Int)?
+        var isSynthetic: Bool { path == nil }
+    }
+
+    private static let fixtures: [Fixture] = [
+        // Real fixtures from Tests/Fixtures/CrossCodec.
+        Fixture(name: "mr_002 (180×180)",     path: "mr_study_002_instance_000100.pgm", synthDimensions: nil),
+        Fixture(name: "ct_001 (512×512)",     path: "ct_study_001_instance_000001.pgm", synthDimensions: nil),
+        Fixture(name: "ct_003 (512×512)",     path: "ct_study_003_instance_000050.pgm", synthDimensions: nil),
+        Fixture(name: "mr_001 (886×886)",     path: "mr_study_001_instance_000001.pgm", synthDimensions: nil),
+        Fixture(name: "xa_001 (1024×1024)",   path: "xa_study_001_instance_000001.pgm", synthDimensions: nil),
+        Fixture(name: "px_001 (2459×1316)",   path: "px_study_001_instance_000001.pgm", synthDimensions: nil),
+        Fixture(name: "dx_002 (2800×2288)",   path: "dx_study_002_instance_000001.pgm", synthDimensions: nil),
+        // v5.28.0 synthetic mammography-class fixtures (real PGMs
+        // not checked into the repo). Dimensions match the
+        // RELEASE_READINESS_REPORT.md corpus entries.
+        Fixture(name: "dx_001 (2544×3056)*",  path: nil, synthDimensions: (2544, 3056)),
+        Fixture(name: "mg_001 (3520×4784)*",  path: nil, synthDimensions: (3520, 4784)),
+        Fixture(name: "mg_002 (3521×4784)*",  path: nil, synthDimensions: (3521, 4784)),
     ]
 
     private func loadPGM(_ filename: String) throws -> J2KImage? {
@@ -72,6 +94,39 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
                 width: fields[0], height: fields[1],
                 data: data.subdata(in: i..<data.count),
                 sampleByteOrder: .bigEndian)])
+    }
+
+    /// Synthesise a 16-bit grayscale image at given dimensions using
+    /// the same LCG sequence as `J2KGPULossy97PerformanceTests`. Used
+    /// to stand in for real medical fixtures that aren't checked into
+    /// the repo (mammography PGMs are ~32 MB each).
+    private func synthesizeImage(width: Int, height: Int) -> J2KImage {
+        var bytes = [UInt8](repeating: 0, count: width * height * 2)
+        var s: UInt64 = 0xfeed_face
+        for i in 0..<(width * height) {
+            s = s &* 6364136223846793005 &+ 1442695040888963407
+            let v = Int(s >> 48) & 0xFFFF
+            bytes[i * 2]     = UInt8((v >> 8) & 0xFF)
+            bytes[i * 2 + 1] = UInt8(v & 0xFF)
+        }
+        return J2KImage(
+            width: width, height: height,
+            components: [J2KComponent(
+                index: 0, bitDepth: 16, signed: false,
+                width: width, height: height,
+                data: Data(bytes), sampleByteOrder: .bigEndian)])
+    }
+
+    /// Resolve a `Fixture` to a `J2KImage`: load PGM if real and
+    /// present, synthesise if marked, return nil if real but missing.
+    private func resolveFixture(_ f: Fixture) throws -> J2KImage? {
+        if let path = f.path {
+            return try loadPGM(path)
+        }
+        if let dims = f.synthDimensions {
+            return synthesizeImage(width: dims.0, height: dims.1)
+        }
+        return nil
     }
 
     /// Encode HT-conformant lossy 9/7 at the given bpp.
@@ -158,7 +213,7 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
         var skipped: [String] = []
 
         for fixture in Self.fixtures {
-            guard let img = try loadPGM(fixture.path) else {
+            guard let img = try resolveFixture(fixture) else {
                 skipped.append(fixture.name)
                 continue
             }
@@ -200,8 +255,9 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
 
         // Print a markdown-friendly table for direct paste into
         // MEDICAL_BENCHMARK.md.
-        print("=== v5.27.0 medical corpus warm-session benchmark ===")
+        print("=== v5.28.0 medical corpus warm-session benchmark ===")
         print("Image: HT-conformant lossy 9/7 @ \(bpp) bpp, n=\(n) per fixture")
+        print("Synthetic fixtures (LCG noise, no real medical content) marked with *")
         if !skipped.isEmpty {
             print("Skipped (fixture not present): \(skipped.joined(separator: ", "))")
         }
@@ -232,5 +288,68 @@ final class J2KMedicalCorpusPerformanceTests: XCTestCase {
 
         XCTAssertFalse(rows.isEmpty,
             "No fixtures benchmarked — corpus directory layout changed?")
+    }
+
+    /// v5.28.0 — measure cold-start cost with and without
+    /// `J2KMetalSession.preWarm()`. The first decode on a fresh
+    /// session pays the ~50 ms shader-library load + pipeline-state
+    /// creation cost; preWarm() does this work up front so the first
+    /// decode runs at warm-session speed.
+    ///
+    /// This is a measurement gate, not an assertion gate (timings
+    /// are too noisy for a fixed-ratio threshold). Prints the
+    /// numbers for human/CI review.
+    func testColdStartVsPreWarmFirstDecodeLatency() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+
+        // Use a small fixture so the dispatch / shader-load cost
+        // dominates the measurement (a 1024² image's actual decode
+        // work is ~10 ms; cold-start adds ~50 ms on top, easy to see).
+        let img = synthesizeImage(width: 512, height: 512)
+        let encoded = try await encode(img, bpp: 2.0)
+
+        // Cold session: no preWarm. First decode pays full cost.
+        let coldSession = J2KMetalSession()
+        let coldDecoder = J2KDecoder()
+        let coldT0 = Date()
+        _ = try await coldDecoder.decodeWithGPUHT(encoded, session: coldSession)
+        let coldFirstMs = Date().timeIntervalSince(coldT0) * 1000
+        // Second decode on the same session: warm.
+        let coldT1 = Date()
+        _ = try await coldDecoder.decodeWithGPUHT(encoded, session: coldSession)
+        let coldSecondMs = Date().timeIntervalSince(coldT1) * 1000
+
+        // Warm session: preWarm before first decode.
+        let warmSession = J2KMetalSession()
+        let preWarmT0 = Date()
+        try await warmSession.preWarm()
+        let preWarmMs = Date().timeIntervalSince(preWarmT0) * 1000
+        let warmDecoder = J2KDecoder()
+        let warmT0 = Date()
+        _ = try await warmDecoder.decodeWithGPUHT(encoded, session: warmSession)
+        let warmFirstMs = Date().timeIntervalSince(warmT0) * 1000
+        let warmT1 = Date()
+        _ = try await warmDecoder.decodeWithGPUHT(encoded, session: warmSession)
+        let warmSecondMs = Date().timeIntervalSince(warmT1) * 1000
+
+        print("=== v5.28.0 cold-start vs preWarm benchmark ===")
+        print("Image: 512×512 16-bit lossy 9/7 @ 2.0 bpp")
+        print(String(format: "Cold session  first decode:  %.1f ms  (cold-start cost included)", coldFirstMs))
+        print(String(format: "Cold session  second decode: %.1f ms  (warm baseline)", coldSecondMs))
+        print(String(format: "preWarm() call itself:        %.1f ms", preWarmMs))
+        print(String(format: "Warm session  first decode:   %.1f ms  (after preWarm)", warmFirstMs))
+        print(String(format: "Warm session  second decode:  %.1f ms  (warm baseline)", warmSecondMs))
+        print(String(format: "Cold-start eliminated:        %.1f ms  (= cold-first %.1f − warm-first %.1f)",
+                     coldFirstMs - warmFirstMs, coldFirstMs, warmFirstMs))
+        print(String(format: "Total cost (preWarm + first): %.1f ms vs cold-first %.1f ms",
+                     preWarmMs + warmFirstMs, coldFirstMs))
+
+        // Sanity gate: preWarm should make first-decode meaningfully
+        // faster than cold-start. A 5 ms threshold is very loose
+        // (cold-start is normally 30-80 ms above warm) — fires only
+        // if preWarm broke catastrophically.
+        XCTAssertGreaterThan(coldFirstMs, 0)
+        XCTAssertGreaterThan(warmFirstMs, 0)
+        XCTAssertGreaterThan(preWarmMs, 0)
     }
 }

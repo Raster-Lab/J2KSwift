@@ -37,7 +37,7 @@
 
 ---
 
-## Decode Performance (v5.27.0)
+## Decode Performance (v5.28.0)
 
 Per-fixture warm-session decode time across three APIs, measured on the medical DICOM
 corpus in `Tests/Fixtures/CrossCodec`. All numbers are release-mode medians (n=5 after
@@ -51,28 +51,42 @@ swift test -c release --filter J2KMedicalCorpus
 
 | Fixture                | Pixels    | CPU `decode` | `decodeGPU(_:session:)` | `decodeWithGPUHT(_:session:)` | Winner |
 |------------------------|----------:|-------------:|-------------------------:|------------------------------:|---|
-| mr_002 (180×180)       |    32,400 |          1.2 |                      1.3 |                          4.5 | CPU¹ |
-| ct_001 (512×512)       |   262,144 |          7.2 |                      4.4 |                          9.4 | decodeGPU |
-| ct_003 (512×512)       |   262,144 |          7.1 |                      5.2 |                          9.5 | decodeGPU |
-| mr_001 (886×886)       |   784,996 |         21.1 |                      9.6 |                         13.5 | decodeGPU |
-| xa_001 (1024×1024)     | 1,048,576 |         25.7 |                      9.3 |                         13.9 | decodeGPU |
-| px_001 (2459×1316)     | 3,236,044 |         86.2 |                     30.4 |                         **27.2** | decodeWithGPUHT |
-| dx_002 (2800×2288)     | 6,406,400 |        170.1 |                     48.2 |                         **42.7** | decodeWithGPUHT |
+| mr_002 (180×180)       |    32,400 |          1.2 |                      1.2 |                          4.7 | CPU¹ |
+| ct_001 (512×512)       |   262,144 |          7.1 |                      4.4 |                         17.1 | decodeGPU |
+| ct_003 (512×512)       |   262,144 |          7.4 |                      3.7 |                          9.3 | decodeGPU |
+| mr_001 (886×886)       |   784,996 |         21.0 |                      9.0 |                         13.2 | decodeGPU |
+| xa_001 (1024×1024)     | 1,048,576 |         25.6 |                      8.8 |                         14.0 | decodeGPU |
+| px_001 (2459×1316)     | 3,236,044 |         86.2 |                     30.3 |                         **26.7** | decodeWithGPUHT |
+| dx_002 (2800×2288)     | 6,406,400 |        167.8 |                     46.0 |                         **42.0** | decodeWithGPUHT |
+| dx_001 (2544×3056)*    | 7,774,464 |        223.6 |                     56.5 |                         **51.2** | decodeWithGPUHT |
+| mg_001 (3520×4784)*    | 16,839,680 |        502.8 |                    140.2 |                        **110.2** | decodeWithGPUHT |
+| mg_002 (3521×4784)*    | 16,844,464 |        499.7 |                    152.9 |                        **113.6** | decodeWithGPUHT |
 
 ¹ At 180×180 the median is within run-to-run variance (Metal dispatch ≈ CPU decode time);
-both APIs return ~1.2 ms. CPU is the safe default for this size class.
+both GPU APIs return ~1.2 ms. CPU is the safe default for this size class.
+
+\* v5.28.0 synthetic fixtures (LCG noise at the indicated dimensions). The real
+mammography PGMs aren't in-repo (~32 MB each). Decode timing scales with pixel count and
+constant-bitrate bitstream length, both of which match the real fixtures, so the routing-
+rule characterisation remains valid.
 
 ### Per-fixture speedup (×, higher = faster)
 
 | Fixture                | `decodeGPU`× CPU | `decodeWithGPUHT`× CPU |
 |------------------------|-----------------:|------------------------:|
 | mr_002 (180×180)       |             1.0× |                    0.3× |
-| ct_001 (512×512)       |             1.6× |                    0.8× |
-| ct_003 (512×512)       |             1.4× |                    0.7× |
-| mr_001 (886×886)       |             2.2× |                    1.6× |
-| xa_001 (1024×1024)     |             2.8× |                    1.8× |
+| ct_001 (512×512)       |             1.6× |                    0.4× |
+| ct_003 (512×512)       |             2.0× |                    0.8× |
+| mr_001 (886×886)       |             2.3× |                    1.6× |
+| xa_001 (1024×1024)     |             2.9× |                    1.8× |
 | px_001 (2459×1316)     |             2.8× |                **3.2×** |
-| dx_002 (2800×2288)     |             3.5× |                **4.0×** |
+| dx_002 (2800×2288)     |             3.7× |                **4.0×** |
+| dx_001 (2544×3056)*    |             4.0× |                **4.4×** |
+| mg_001 (3520×4784)*    |             3.6× |                **4.6×** |
+| mg_002 (3521×4784)*    |             3.3× |                **4.4×** |
+
+The crossover is decisive: `decodeWithGPUHT` overtakes `decodeGPU` at ~3M pixels and
+keeps gaining headroom up through 17M pixels (mammography), where it hits **4.6× CPU**.
 
 ### Routing recommendation
 
@@ -109,3 +123,46 @@ Per-stage `decodeWithGPUHT` breakdown (typical post-v5.27.0 run on dx_002 2800×
 | build Float plans (regroup) |  0.6 |
 | CPU dequant                 | **0.0** ← v5.27.0: was ~4 ms |
 | `inverseWaveletTransform`   | 25.6 |
+
+---
+
+## Cold-Start vs `preWarm()` (v5.28.0)
+
+A fresh `J2KMetalSession` pays ~30–50 ms on the first decode for Metal device init,
+shader-library load, pipeline-state creation, VLC-table upload, and Metal driver
+first-dispatch fence. Subsequent decodes on the same session run at warm-baseline speed
+(~10–15 ms for a 512×512 fixture).
+
+`J2KMetalSession.preWarm()` (v5.28.0) does the cold-start work up front so the first
+*user* decode runs at warm speed:
+
+| Metric (512×512 16-bit lossy 9/7, M2, release) | Without `preWarm` | With `preWarm` |
+|------------------------------------------------|------------------:|---------------:|
+| Cold first decode                              |        40–49 ms   |          —     |
+| `preWarm()` call itself                        |          —        |     27–32 ms   |
+| First user decode after `preWarm`              |          —        |     **9–16 ms** |
+| Warm baseline (subsequent decodes)             |        10–15 ms   |     10–15 ms   |
+| Cold-start cost eliminated                     |          —        |     25–30 ms   |
+
+What `preWarm` does:
+
+1. Initialises the `MTLDevice` and `MTLCommandQueue`.
+2. Loads the shader library (bundled `default.metallib` or in-source compile).
+3. Pre-creates `MTLComputePipelineState` for every decode-hot-path kernel, in parallel.
+4. Runs a tiny synthetic 256×256 decode through `decodeWithGPUHT` to exercise the rest
+   of the lazy-init paths (VLC table upload, buffer pool first-fetch, Metal driver
+   first-dispatch fence). Without this step `preWarm` only saves ~10–13 ms instead of
+   the full 25–30 ms.
+
+**When to use:** PACS daemons, batch decoders, server-side workers — anywhere a
+long-lived process decodes many images. Call `preWarm` once at SDK init.
+
+**When to skip:** genuine one-off CLI invocations. Total wall-clock for `preWarm` + 1
+decode (~36–46 ms) is roughly the same as cold first decode (~40–49 ms), so the savings
+need at least a second decode to be worthwhile.
+
+Reproducible via:
+
+```bash
+swift test -c release --filter testColdStartVsPreWarm
+```
