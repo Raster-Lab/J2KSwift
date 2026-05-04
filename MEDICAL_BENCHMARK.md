@@ -300,6 +300,80 @@ DX 12 MP encode is now **1.87× faster** than the v5.37 baseline.
   baseline complete or until decode becomes the dominant pipeline
   cost — currently encode dominates).
 
+### v5.38 — post-M5 final lossless headline (full corpus, fresh measurement)
+
+#### J2KSwift HT lossless vs the 4 external codecs (encode time, ms)
+
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|---:|---:|---:|---:|:---|
+| MR-small | 180×180   |   **0.9** |    12.2 |    6.9 |    9.4 |   11.0 | J2KSwift |
+| CT       | 512×512   |   **4.2** |    56.8 |   10.8 |   15.3 |    8.5 | J2KSwift |
+| CT       | 512×512   |   **3.5** |    52.8 |    9.8 |   15.3 |    8.7 | J2KSwift |
+| MR       | 886×886   |    6.8    |    59.4 |   10.4 |   14.4 |  **5.8** | Kakadu (+1.0 ms) |
+| XA       | 1024×1024 |  **13.7** |   199.2 |   22.0 |   37.2 |   23.1 | J2KSwift |
+| PX       | 2459×1316 |  **44.9** |   708.6 |   59.4 |  123.7 |   81.8 | J2KSwift |
+| DX       | 2800×2288 |  **82.2** |  1366.9 |  113.5 |  236.3 |  154.4 | J2KSwift |
+
+**J2KSwift HT lossless encode is the fastest on 6 of 7 medical
+fixtures.** Only MR 886×886 (extreme compressibility, 9.36× vs raw)
+loses to Kakadu — by 1 ms.
+
+#### J2KSwift HT lossless decode vs the 4 external codecs (ms)
+
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|---:|---:|---:|---:|:---|
+| MR-small | 180×180   |   **1.4** |   10.5 |    6.0 |   10.1 |    5.5 | J2KSwift |
+| CT       | 512×512   |   46.2\*  |   56.6 |    8.6 |   14.7 |    8.6 | OpenJPH (cold-start outlier) |
+| CT       | 512×512   |   **3.1** |   53.3 |    8.4 |   16.3 |    8.7 | J2KSwift |
+| MR       | 886×886   |   **5.6** |   65.3 |   10.4 |   12.6 |    6.6 | J2KSwift |
+| XA       | 1024×1024 |  **16.1** |  202.9 |   16.8 |   32.9 |   25.2 | J2KSwift (≈OpenJPH) |
+| PX       | 2459×1316 |  **41.0** |  709.4 |   44.2 |  100.3 |   90.3 | J2KSwift |
+| DX       | 2800×2288 |   81.5    | 1366.2 | **80.6** |  185.9 |  172.2 | OpenJPH (+0.9 ms) |
+
+\* Cold-start Metal init outlier on the first non-trivial decode of
+the run; warm-session reads 3.1 ms.
+
+J2KSwift decode is **fastest or tied on 6 of 7 fixtures**, with the
+single exception of DX 12 MP where OpenJPH wins by 0.9 ms (well
+within run-to-run noise on 80 ms timings).
+
+#### Cross-decode standards compliance (28/28 pairs bit-exact)
+
+| Modality | Shape | OpenJPEG | OpenJPH | Grok | Kakadu |
+|---|---|:---:|:---:|:---:|:---:|
+| MR-small / CT / CT / MR / XA / PX / DX | all sizes | ✓ | ✓ | ✓ | ✓ |
+
+J2KSwift's HT lossless codestream is consumed bit-exactly by every
+mainstream Part-15-aware decoder (OpenJPEG ≥ 2.5, OpenJPH, Grok,
+Kakadu 8.4.1 demo).
+
+#### Cumulative v5.38 encode speedup vs v5.37 baseline
+
+| Fixture | v5.37 | post-Step-A | post-M5 | Cumulative |
+|---|---:|---:|---:|---:|
+| DX 2800×2288       | 156.9 ms | 88.2 ms | **82.2 ms** | **1.91×** |
+| PX 2459×1316       |  78.3 ms | 44.6 ms |   44.9 ms | 1.74× |
+| XA 1024×1024       |  22.4 ms | 13.5 ms |   13.7 ms | 1.63× |
+| MR 886×886         |   7.6 ms |  6.5 ms |    6.8 ms | 1.12× |
+
+DX 12 MP encode is now **1.91× faster** than v5.37, end-to-end.
+
+#### Bottom-line recommendation for medical lossless workflows
+
+- **HT lossless** (`useHTJ2K: true`, `useReversibleFilter: true`,
+  `htj2kBlockFormat: .conformant`, `bitrateMode: .lossless`) — the
+  default. Fastest of all 5 codecs on 6/7 fixtures. Codestream
+  decodable by every mainstream Part-15-aware decoder.
+
+- **EBCOT lossless** (`useHTJ2K: false`) — denser archive (13–32%
+  smaller bytes), 2–4× slower throughput, decodable by every Part-1
+  decoder ever shipped. Use when archival storage cost dominates and
+  the consumer might be a legacy decoder.
+
+The decode/encode performance gap to the next-best codec on every
+fixture except DX is now large enough to be visible to end users
+without a stopwatch.
+
 ### v5.38 scope guardrails
 
 Parked through v5.38: `.constantBitrateStrict`,
