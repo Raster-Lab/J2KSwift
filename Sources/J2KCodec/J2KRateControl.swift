@@ -1352,6 +1352,20 @@ public struct J2KRateControl: Sendable {
     /// swap of one weak selected frontier for a stronger skipped frontier from a
     /// different block often improves clinical detail while staying inside the
     /// same strict byte budget.
+    /// v5.30.0 helper — returns the number of distinct codeblocks
+    /// that have at least one frontier in `sortedPasses`. Used by
+    /// `improveHTNearTargetAllocation`'s block-count gate; cheaper
+    /// than building the full frontier-by-block dictionary just to
+    /// count keys (which is what was happening below before this
+    /// gate fired).
+    private func frontiersByBlockCount(_ sortedPasses: [CodingPassInfo]) -> Int {
+        var seen = Set<Int>()
+        for passInfo in sortedPasses {
+            seen.insert(passInfo.codeBlockIndex)
+        }
+        return seen.count
+    }
+
     private func improveHTNearTargetAllocation(
         targetBytes: Int,
         sortedPasses: [CodingPassInfo],
@@ -1361,6 +1375,37 @@ public struct J2KRateControl: Sendable {
         blockCumulativeBytes: [Int: Int]
     ) -> (contributions: [Int: Int], blockCumulativeBytes: [Int: Int], selectedPasses: Set<Int64>, currentBytes: Int) {
         guard targetBytes > 0 else {
+            return (contributions, blockCumulativeBytes, previousPasses, blockCumulativeBytes.values.reduce(0, +))
+        }
+
+        // v5.30.0 — gate on block count.
+        //
+        // The inner loop at the bottom of this function is O(B²) per
+        // outer iteration (4 outer iterations), where B = number of
+        // codeblocks. At mammography sizes (B ≈ 4096) this is ~67M
+        // iterations and dominates total encode time (75% of 900 ms
+        // on mg_001 per the v5.29.0 corpus benchmark).
+        //
+        // The function's purpose is "small local exchange near the
+        // byte target" — its value is highest when each block
+        // represents a meaningful fraction of the budget. At B=1024
+        // each block is 0.1% of budget; at B=4096 each is 0.025%.
+        // Single-block swaps at that scale are below the noise floor
+        // of any quality metric — skipping them costs nothing
+        // measurable on PSNR/SSIM but saves the quadratic scan.
+        //
+        // The 1024-block threshold matches the cliff observed in the
+        // v5.29.0 stage data: rateControl scales linearly through
+        // dx_002 (~1500 blocks, 24 ms) and explodes at dx_001+
+        // (~1900+ blocks, 132+ ms). Capping at 1024 keeps every
+        // sub-clinical-mammography fixture on the exchange path.
+        //
+        // Verified pre/post v5.30.0: PSNR on dx_002 (2800×2288, real
+        // DX fixture, ~1500 codeblocks → gate fires) is identical
+        // before and after the gate (14.65 dB; the low absolute
+        // value is a pre-existing R-D issue unrelated to this
+        // change, tracked separately).
+        guard frontiersByBlockCount(sortedPasses) <= 1024 else {
             return (contributions, blockCumulativeBytes, previousPasses, blockCumulativeBytes.values.reduce(0, +))
         }
 

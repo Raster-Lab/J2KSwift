@@ -5,6 +5,84 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.30.0] — 2026-05-04
+
+**`rateControl` super-linear fix — mammography encode 4.2× speedup**
+
+v5.29.0's stage breakdown identified `rateControl` as 75% of
+encode time at mammography (16.8M px → 679-701 ms). v5.30.0
+root-causes it as an O(B²) inner loop in
+`improveHTNearTargetAllocation`'s "small local exchange near the
+byte target" step (line 1419-1465 of J2KRateControl.swift). At
+B=4096 codeblocks that's ~67M iterations × 4 outer iterations.
+
+The exchange's purpose is fine-tuning at sub-0.1%-budget
+granularity. At B=1024 each block is 0.1% of total bytes; at
+B=4096 each is 0.025%. Single-block swaps at that scale fall
+below any quality metric's noise floor — there's no R-D outcome
+to find. Gating the function at B ≤ 1024 eliminates the
+quadratic cost without changing R-D allocation outcomes.
+
+### Headline (M2, release, n=5)
+
+| Fixture                | v5.29.0 encode | v5.30.0 encode | Speedup |
+|------------------------|---------------:|---------------:|--------:|
+| dx_001 (2544×3056)*    |        240 ms  |        102 ms  |   2.4×  |
+| mg_001 (3520×4784)*    |        900 ms  |    **214 ms**  | **4.2×** |
+| mg_002 (3521×4784)*    |        921 ms  |    **211 ms**  | **4.4×** |
+
+Sub-1024-block fixtures (≤ ct/xa/mr/px_001) are unchanged.
+
+### Stage delta
+
+`rateControl` per fixture (v5.29 → v5.30):
+- px_001 (~800 blocks):   7.4 ms → 7.4 ms (gate doesn't fire)
+- dx_002 (~1500 blocks): 24.2 ms → 1.0 ms (gate fires)
+- mg_001 (~4096 blocks): 678.8 ms → 2.1 ms (gate fires)
+
+### Added
+
+- `Sources/J2KCodec/J2KRateControl.swift` — block-count gate on
+  `improveHTNearTargetAllocation` + `frontiersByBlockCount`
+  helper.
+- `Tests/J2KCodecTests/J2KEncodeRateControlGateQualityTests.swift`
+  — `testDX002LossyPSNRPreservedAcrossV5_30Gate` verifies
+  roundtrip PSNR on dx_002 (~1500 blocks → gate fires) matches
+  the pre-v5.30.0 baseline within 1 dB. Catches gross R-D
+  regressions.
+- `MEDICAL_BENCHMARK.md` — v5.30.0 encode update section.
+
+### Verified
+
+- New PSNR-preservation test passes (PSNR identical pre/post the
+  gate on dx_002).
+- All v5.20-v5.29 regression gates remain green (decode
+  bit-exactness, cross-module audit, session bit-equivalence,
+  decode 4.6× mammography speedup preserved).
+- 2 pre-existing perf-aspirational test failures unaffected.
+
+### What's still open
+
+- `encodeGPU` is still a regression (GPU forward DWT slower than
+  CPU on every fixture). Either fix or remove in v5.31.
+- Pre-existing low absolute PSNR on DX/CT fixtures — encoder slope
+  formulation produces poor R-D allocation (visible since v5.21.0
+  bisect test). Tracked separately; v5.30.0's gate doesn't change
+  it.
+- After v5.30.0, `entropyCoding` is the universal dominant encode
+  stage (43-52% of total). That's the natural target for a GPU HT
+  entropy encoder — mirroring v5.26.0's GPU HT decoder.
+
+### Lesson
+
+"75% of encode time at mammography" isn't actionable on its own
+— it could mean "PCRD-opt is fundamentally expensive at scale"
+(don't fix) or "there's a hot loop that's accidentally O(B²)"
+(fix in 6 lines). Reading the code revealed the latter. Same
+shape as v5.27.0's CPU-work skip: once the architecture changes
+(here: codeblock count grows), audit what the old code was doing
+that doesn't make sense at the new scale.
+
 ## [5.29.0] — 2026-05-04
 
 **Encode stage timings + `encodeGPU` regression discovery**

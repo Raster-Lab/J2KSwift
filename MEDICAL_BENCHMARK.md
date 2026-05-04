@@ -228,17 +228,48 @@ swift test -c release --filter J2KMedicalCorpusEncode
    block coding is 42–49% of total encode time. This is the natural target for any
    GPU-accelerated HT *encoder* mirroring the v5.26.0 GPU HT *decoder* infrastructure.
 
-### Routing recommendation today (v5.29.0)
+### Routing recommendation today
 
-For encode, **always use `encode(_:)`** (CPU). The `encodeGPU(_:)` path is currently
-a regression at every fixture size we measured. This is the inverse of decode (where
-`decodeGPU` and `decodeWithGPUHT` win materially over CPU on warm session).
+For encode, **always use `encode(_:)`** (CPU). `encodeGPU(_:)` is currently a regression
+at every measured fixture size. This is the inverse of decode (where `decodeGPU` and
+`decodeWithGPUHT` win materially over CPU on warm session).
 
-The next architectural levers — in order of expected impact:
+---
 
-1. **PCRD super-linear scaling** at large workloads — investigate why rateControl on
-   17M-pixel mammography is 700 ms when 1M-pixel xa_001 is 2.6 ms.
-2. **GPU HT entropy encoder** — the same architectural pattern that worked for decode
-   (GPU-resident codeblock buffer, fused-from-codeblocks IDWT) should apply to encode.
-3. **Fix or remove `encodeGPU`** — either make GPU forward DWT competitive with CPU,
-   or stop calling it `encodeGPU` and route to CPU when GPU is slower.
+## Encode Performance update (v5.30.0)
+
+v5.29.0's stage breakdown identified `rateControl` as 75% of encode time at mammography
+sizes (679–701 ms / 900–920 ms), super-linear scaling. v5.30.0 root-causes it as an
+O(B²) inner loop in `improveHTNearTargetAllocation` (a "small local exchange near the
+byte target" step that scales catastrophically at large block counts) and adds a
+`B ≤ 1024` gate that skips the exchange where individual-block swaps are <0.1% of the
+budget anyway.
+
+### Per-fixture impact (v5.29.0 → v5.30.0)
+
+| Fixture                | rateCtrl v5.29 | rateCtrl v5.30 | Total v5.29 | Total v5.30 | Encode speedup |
+|------------------------|---------------:|---------------:|------------:|------------:|---------------:|
+| ct_001 (512×512)       |        0.4 ms  |        0.4 ms  |     4.1 ms  |     4.0 ms  | (unchanged)    |
+| xa_001 (1024×1024)     |        2.6 ms  |        2.5 ms  |    17.0 ms  |    15.9 ms  | (unchanged)    |
+| px_001 (2459×1316)     |        7.4 ms  |        7.4 ms  |    50.1 ms  |    52.3 ms  | (unchanged)    |
+| dx_002 (2800×2288)     |       24.2 ms  |    **1.0 ms**  |   110.1 ms  |    82.0 ms  |     **1.3×**   |
+| dx_001 (2544×3056)*    |      132.3 ms  |    **1.1 ms**  |   239.6 ms  |   101.7 ms  |     **2.4×**   |
+| mg_001 (3520×4784)*    |      678.8 ms  |    **2.1 ms**  |   899.7 ms  |   214.2 ms  |     **4.2×**   |
+| mg_002 (3521×4784)*    |      701.1 ms  |    **2.1 ms**  |   920.5 ms  |   210.5 ms  |     **4.4×**   |
+
+The gate fires for fixtures with > 1024 codeblocks (dx_002 and larger). Below the
+threshold the exchange runs unchanged — small fixtures see no behavioural difference.
+
+### Quality verification
+
+`Tests/J2KCodecTests/J2KEncodeRateControlGateQualityTests.swift` —
+`testDX002LossyPSNRPreservedAcrossV5_30Gate` asserts roundtrip PSNR on dx_002 (2800×2288,
+~1500 codeblocks → gate fires) is preserved within 1 dB of the pre-v5.30.0 baseline.
+The exchange's purpose is "small local swaps that fine-tune R-D allocation" — at these
+scales each block is <0.1% of total budget, so swap candidates are below any quality
+metric's noise floor. Verified empirically: PSNR is identical pre/post the gate.
+
+(The absolute PSNR on dx_002 at 2 bpp is 14.65 dB, which is low. That's a pre-existing
+R-D issue in the encoder's slope formulation on DX/CT fixtures — also visible in
+v5.21.0's `testBisectDecodePaths` showing ~2194 LSB avg diff at 4 bpp — and tracked
+separately. v5.30.0's gate doesn't change it.)
