@@ -1591,19 +1591,18 @@ struct DecoderPipeline: Sendable {
             }
             if gpuInputs.isEmpty { return ([:], nil) }
 
-            // v5.8 fused path: requires session + reversible 5/3.
-            if let session = metalSession, !isIrreversibleFilter {
+            // v5.8 fused path: 5/3 lossless via Int32 fused IDWT.
+            // v5.26.0: 9/7 lossy via Float fused IDWT (scatter+dequant
+            // baked into a Float scatter kernel; CPU dequant skipped
+            // downstream by `applyDequantization` when the batch
+            // carries `floatPlansByComponent`).
+            if let session = metalSession {
                 let fusedT0 = DispatchTime.now()
                 let fusedRes = try await J2KGPUHTDispatch.decodeBatchGPUResident(
                     blocks: gpuInputs, session: session)
                 let fusedDt = Double(DispatchTime.now().uptimeNanoseconds - fusedT0.uptimeNanoseconds) / 1_000_000_000
                 J2KDecodeTimings.recordGPUHTDispatch(fusedDt)
                 if let res = fusedRes {
-                    // res.decodedBlockCoefficients +
-                    // decodedBlockOutputOffsets are keyed by
-                    // dispatcher-input index (gpuInputs index, NOT
-                    // pipeline block index). Remap to pipeline
-                    // index via inputOriginalIndices.
                     var remappedCoeffs: [Int: [Int32]] = [:]
                     var remappedOffsets: [Int: Int] = [:]
                     for (gpuIdx, coeffs) in res.decodedBlockCoefficients {
@@ -1612,18 +1611,23 @@ struct DecoderPipeline: Sendable {
                     for (gpuIdx, offset) in res.decodedBlockOutputOffsets {
                         remappedOffsets[inputOriginalIndices[gpuIdx]] = offset
                     }
-                    // If any blocks were ineligible (parse failure
-                    // etc), return the buffer and fall through with
-                    // coeffs only. [SubbandInfo] regroup still
-                    // produces correct LH/HL/HH for the non-fused
-                    // DWT path; we just skip fusion.
                     if res.cpuFallbackIndices.isEmpty {
-                        let batch = buildGPUHTBatchFromResult(
-                            codeblockBuffer: res.codeblockBuffer,
-                            outputSampleCount: res.outputSampleCount,
-                            decodedBlockOutputOffsets: remappedOffsets,
-                            blocks: blocks, metadata: metadata,
-                            bufferPool: session.bufferPool)
+                        let batch: J2KGPUHTBatch
+                        if isIrreversibleFilter {
+                            batch = buildGPUHTBatchFromResultFloat(
+                                codeblockBuffer: res.codeblockBuffer,
+                                outputSampleCount: res.outputSampleCount,
+                                decodedBlockOutputOffsets: remappedOffsets,
+                                blocks: blocks, metadata: metadata,
+                                bufferPool: session.bufferPool)
+                        } else {
+                            batch = buildGPUHTBatchFromResult(
+                                codeblockBuffer: res.codeblockBuffer,
+                                outputSampleCount: res.outputSampleCount,
+                                decodedBlockOutputOffsets: remappedOffsets,
+                                blocks: blocks, metadata: metadata,
+                                bufferPool: session.bufferPool)
+                        }
                         return (remappedCoeffs, batch)
                     }
                     await session.bufferPool.returnBuffer(res.codeblockBuffer)
@@ -2185,6 +2189,111 @@ struct DecoderPipeline: Sendable {
             codeblockBuffer: codeblockBuffer,
             outputSampleCount: outputSampleCount,
             plansByComponent: plansByComponent,
+            floatPlansByComponent: nil,
+            bufferPool: bufferPool)
+    }
+
+    /// v5.26.0 Float counterpart of `buildGPUHTBatchFromResult` for
+    /// the 9/7 lossy fused-from-codeblocks path. Identical descriptor
+    /// layout per block; additional `stepSize` per descriptor is
+    /// looked up via the same QCD-key convention `applyDequantization`
+    /// uses, with the HTJ2K `stepSize` (no ×0.5 EBCOT compensation —
+    /// HTJ2K coefficients are at natural scale).
+    private func buildGPUHTBatchFromResultFloat(
+        codeblockBuffer: any MTLBuffer,
+        outputSampleCount: Int,
+        decodedBlockOutputOffsets: [Int: Int],
+        blocks: [CodeBlockInfo],
+        metadata: CodestreamMetadata,
+        bufferPool: J2KMetalBufferPool
+    ) -> J2KGPUHTBatch {
+        let levels = metadata.configuration.decompositionLevels
+        var floatPlans: [Int: [J2KMetalDWT.LevelScatterPlanFloat]] = [:]
+        let maxComponent = max(
+            metadata.componentCount - 1,
+            blocks.map { $0.componentIndex }.max() ?? 0)
+        let quantSteps = metadata.quantizationSteps
+
+        for compIdx in 0...maxComponent {
+            let compW = metadata.width / max(metadata.components[compIdx].subsamplingX, 1)
+            let compH = metadata.height / max(metadata.components[compIdx].subsamplingY, 1)
+            var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
+            for _ in 0..<levels {
+                let (pw, ph) = levelSizes.last!
+                levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
+            }
+
+            var levelPlans: [J2KMetalDWT.LevelScatterPlanFloat] = []
+            for level in (1...levels).reversed() {
+                let parentW = levelSizes[level - 1].width
+                let parentH = levelSizes[level - 1].height
+                let llW = levelSizes[level].width
+                let llH = levelSizes[level].height
+                let hlW = parentW - llW
+                let lhH = parentH - llH
+
+                var descs: [J2KMetalSubbandScatterDescriptorFloat] = []
+                var maxBlockW = 0
+                var maxBlockH = 0
+                for (i, block) in blocks.enumerated() {
+                    guard block.componentIndex == compIdx,
+                          let outputOffset = decodedBlockOutputOffsets[i]
+                    else { continue }
+                    let isLLForInnermost =
+                        block.subband == .ll && block.level == 0 && level == levels
+                    let isDetailForThisLevel =
+                        block.subband != .ll && block.level == level
+                    guard isLLForInnermost || isDetailForThisLevel else { continue }
+                    let target: UInt32
+                    let stride: Int
+                    switch block.subband {
+                    case .ll: target = 0; stride = llW
+                    case .lh: target = 1; stride = llW
+                    case .hl: target = 2; stride = hlW
+                    case .hh: target = 3; stride = hlW
+                    }
+                    // Same key convention as applyDequantization:
+                    // LL is "LL_0"; detail subbands use resolution
+                    // numbering (resLevel = NL - decomLevel + 1).
+                    let key: String
+                    if block.subband == .ll {
+                        key = "LL_0"
+                    } else {
+                        let resLevel = levels - level + 1
+                        key = "\(block.subband.rawValue)_\(resLevel)"
+                    }
+                    let stepSize = Float(quantSteps[key] ?? 1.0)
+                    descs.append(J2KMetalSubbandScatterDescriptorFloat(
+                        codeblockOffset: UInt32(outputOffset),
+                        blockWidth: UInt32(block.width),
+                        blockHeight: UInt32(block.height),
+                        subbandX: UInt32(block.x),
+                        subbandY: UInt32(block.y),
+                        subbandStride: UInt32(stride),
+                        targetSubband: target,
+                        stepSize: stepSize))
+                    maxBlockW = max(maxBlockW, block.width)
+                    maxBlockH = max(maxBlockH, block.height)
+                }
+
+                levelPlans.append(J2KMetalDWT.LevelScatterPlanFloat(
+                    scatterDescriptors: descs,
+                    llWidth: llW, llHeight: llH,
+                    lhWidth: llW, lhHeight: lhH,
+                    hlWidth: hlW, hlHeight: llH,
+                    hhWidth: hlW, hhHeight: lhH,
+                    originalWidth: parentW, originalHeight: parentH,
+                    maxBlockWidth: max(maxBlockW, 1),
+                    maxBlockHeight: max(maxBlockH, 1)))
+            }
+            floatPlans[compIdx] = levelPlans
+        }
+
+        return J2KGPUHTBatch(
+            codeblockBuffer: codeblockBuffer,
+            outputSampleCount: outputSampleCount,
+            plansByComponent: [:],
+            floatPlansByComponent: floatPlans,
             bufferPool: bufferPool)
     }
 
@@ -3113,7 +3222,19 @@ struct DecoderPipeline: Sendable {
                 }
 
                 let currentLL: [Float]
-                if metalSession != nil {
+                if let batch = gpuBatch,
+                   let floatPlans = batch.floatPlansByComponent?[compIdx] {
+                    // v5.26.0 Float fused-from-codeblocks: scatter +
+                    // dequant + multi-level IDWT in one cb, sourcing
+                    // LH/HL/HH from the GPU-resident codeblock buffer.
+                    // No per-level CPU upload of subbands; dequant
+                    // baked into the scatter kernel (HTJ2K conformant
+                    // cleanup-only formula `(coeff ± 0.5) * stepSize`).
+                    currentLL = try await metalDWT.inverse2DFullFusedFromCodeblocks(
+                        codeblockBuffer: batch.codeblockBuffer,
+                        levelsPlan: floatPlans,
+                        initialLL: nil)
+                } else if metalSession != nil {
                     // v5.25.0 multi-level Float fused: chains all levels
                     // into one cb, single readback at the outermost
                     // level. Closes the per-level upload/readback that

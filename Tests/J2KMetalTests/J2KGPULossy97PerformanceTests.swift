@@ -1,48 +1,60 @@
 // J2KGPULossy97PerformanceTests.swift
-// v5.25.0 — Float multi-level fused IDWT lands; 9/7 lossy speedup
-// jumps from ~1.4× to ~2.6–3.1× on warm session.
+// v5.26.0 — Float scatter+dequant kernel + GPU-resident dispatch
+// for 9/7 lossy. `decodeWithGPUHT` warm-session speedup goes from
+// ~1.0× to ~1.85× by routing 9/7 lossy through the same
+// `decodeBatchGPUResident` + scatter+IDWT fused path that 5/3
+// lossless has been using since v5.8.
 //
-// History: v5.20.0 caught the GPU 9/7 IDWT correctness bug;
-// v5.21.0 fixed it; v5.22.0 locked in cross-module convention;
-// v5.23.0 measured warm-session end-to-end speedup; v5.24.0 split
-// the timer into stages and revealed that GPU IDWT was the
-// dominant win and the per-level upload/readback was the next
-// architectural lever. v5.25.0 closes that lever by adding
-// `J2KMetalDWT.inverse2DMultiLevelFused` (Float variant) and
-// wiring it into `applyInverseWaveletTransformGPU`'s 9/7 branch.
+// History: v5.20.0 caught GPU 9/7 IDWT correctness bug; v5.21.0
+// fixed it; v5.22.0 locked in cross-module convention; v5.23.0
+// measured end-to-end; v5.24.0 split into stages + decodeGPU
+// session API; v5.25.0 added Float multi-level fused IDWT (closed
+// per-level readback). v5.26.0 closes the remaining levers for
+// `decodeWithGPUHT` 9/7 lossy: GPU-resident codeblock buffer (no
+// readback), Float scatter+dequant kernel, fused-from-codeblocks
+// IDWT (no per-level CPU upload of LH/HL/HH).
 //
 // Three-way warm-session result (release, M2, 1024×1024 16-bit
-// lossy 9/7 @ 2 bpp, n=5 medians, post-v5.25.0):
+// lossy 9/7 @ 2 bpp, n=5 medians, post-v5.26.0; runs 2-4 of 4):
 //
 //   path                    end-to-end   speedup
-//   CPU       (decode)         ~26.6 ms  1.00×  baseline
-//   decodeGPU (CPU HT + GPU IDWT)  ~10.0 ms  2.64–3.13×  ← winner
-//   decodeWithGPUHT (GPU HT+IDWT)  ~26.5 ms  1.00–1.36×
+//   CPU       (decode)         ~25.7 ms  1.00×  baseline
+//   decodeGPU (CPU HT + GPU IDWT)         ~9.8 ms   2.5–3.1×  ← winner
+//   decodeWithGPUHT (GPU HT+IDWT, fused)  ~14.0 ms  1.81–1.86× ← v5.26.0 win
 //
-// Per-stage means (typical post-v5.25.0):
+// Per-stage means (typical run on warm session post-v5.26.0):
 //
 //   stage                    CPU   gpuIDWT  GPU-HT
-//   entropyDecoding          1.5   1.4      15.8
-//     ├─ gpuHTDispatch       0.0   0.0      15.3  ← still the regression
-//     └─ regroup (CPU)       1.5   1.4       0.4
-//   inverseWaveletTransform  23.4  7.4      10.8  ← v5.25.0 win
+//   entropyDecoding          1.3   1.3       7.5
+//     ├─ gpuHTDispatch       0.0   0.0       7.1  ← v5.26.0: was 15ms+
+//     └─ regroup (CPU)       1.3   1.3       0.4
+//   inverseWaveletTransform  22.7  7.0       5.0  ← v5.26.0: was ~10 ms
 //
-// IDWT delta vs v5.24.0: gpuIDWT path 15.2 → 7.4 ms (50% drop).
-// `decodeWithGPUHT` IDWT also benefits (10.6 → ~10 ms-ish, smaller
-// effect because the GPU-HT path was already partially fused).
+// What changed in v5.26.0:
+//   1. `applyEntropyDecoding`'s fused-batch gate dropped
+//      `!isIrreversibleFilter`. 9/7 lossy now also routes through
+//      `decodeBatchGPUResident` instead of the fallback `decodeBatch`
+//      (which paid a full host readback). Saves ~8 ms on
+//      `gpuHTDispatch` for 9/7 lossy on this workload.
+//   2. New Float scatter+dequant Metal kernel
+//      (`j2k_subband_scatter_float_dequant`). Reads Int32 codeblock
+//      output, applies `(coeff ± 0.5) * stepSize` (HTJ2K conformant
+//      cleanup-only dequant formula), writes Float to per-subband
+//      2D layout. `inverse2DFullFusedFromCodeblocks` Float variant
+//      chains scatter + multi-level IDWT in one cb. Saves ~5 ms on
+//      `inverseWaveletTransform` for `decodeWithGPUHT` 9/7 lossy.
 //
 // What's still open:
-//   1. The 15.3 ms `gpuHTDispatch` overhead remains — this is why
-//      `decodeWithGPUHT` is a wash. Reducing per-tile dispatch
-//      cost is a separate optimisation track.
-//   2. The fused path still uploads LH/HL/HH from CPU per level;
-//      a Float scatter kernel from a GPU-resident codeblock buffer
-//      would close that too, but only `decodeWithGPUHT` benefits
-//      (the entropy stage is what produces the codeblock buffer).
+//   - `decodeGPU` (CPU HT + GPU IDWT) remains the fastest path on
+//     this workload because parallelised CPU HT (~1.3 ms) is still
+//     cheaper than even the v5.26.0-reduced GPU HT dispatch (~7 ms).
+//     `decodeWithGPUHT` overtakes only when the dispatch
+//     amortises — likely on much larger images.
 //
 // Gate semantics: MEASUREMENT gate, not assertion gate. Variance
-// across release-mode runs is real (sub-stage timings move ±20%).
-// Correctness is guarded by the v5.20-v5.22 audit gates.
+// across release-mode runs is real (the first run after a metallib
+// regen / cold cache shows ~2× higher dispatch). Correctness is
+// guarded by the v5.20-v5.22 + v5.26 audit gates.
 
 import XCTest
 import Foundation

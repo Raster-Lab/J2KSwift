@@ -29,6 +29,7 @@ import XCTest
 import Foundation
 @testable import J2KCore
 @testable import J2KCodec
+@testable import J2KMetal
 
 final class J2KGPULossy97DivergenceTests: XCTestCase {
 
@@ -125,5 +126,57 @@ final class J2KGPULossy97DivergenceTests: XCTestCase {
         let avgGpuVsCpu = Double(gpuVsCpu.sumDiff) / Double(gpuVsCpu.count)
         XCTAssertLessThan(avgGpuVsCpu, 0.5,
             "average GPU vs CPU diff exceeds Float-precision tolerance: \(avgGpuVsCpu)")
+    }
+
+    /// v5.26.0 medical-grade gate — verify the new Float fused-from-
+    /// codeblocks path (only fires for `decodeGPU(_:session:)` and
+    /// `decodeWithGPUHT(_:session:)` on conformant 9/7 lossy
+    /// codestreams) produces output that matches the no-session
+    /// path within Float-precision tolerance.
+    ///
+    /// The session-warm benchmark exercises the new path but
+    /// doesn't verify correctness; testBisectDecodePaths verifies
+    /// correctness but uses the no-session path. This test bridges
+    /// both: it compares session vs no-session decode for both
+    /// `decodeGPU` and `decodeWithGPUHT`.
+    func testSessionPathBitEquivalentToNoSessionPath() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
+        let img = try loadCT()
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: true,
+            useReversibleFilter: false,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .constantBitrate(bitsPerPixel: 4.0)
+        let encoded = try await J2KEncoder(encodingConfiguration: cfg).encode(img)
+
+        let session = J2KMetalSession()
+
+        let gpuNoSession   = try await J2KDecoder().decodeGPU(encoded)
+        let gpuWithSession = try await J2KDecoder().decodeGPU(encoded, session: session)
+        let gpuHTNoSession   = try await J2KDecoder().decodeWithGPUHT(encoded)
+        let gpuHTWithSession = try await J2KDecoder().decodeWithGPUHT(encoded, session: session)
+
+        let gpuSessionVsNo   = maxAbsDiff16(
+            gpuNoSession.components[0].data, gpuWithSession.components[0].data)
+        let gpuHTSessionVsNo = maxAbsDiff16(
+            gpuHTNoSession.components[0].data, gpuHTWithSession.components[0].data)
+
+        print("=== v5.26.0 session vs no-session bit-equivalence ===")
+        print("decodeGPU       session vs no-session: max=\(gpuSessionVsNo.maxDiff) avg=\(gpuSessionVsNo.sumDiff / Int64(max(1, gpuSessionVsNo.count)))")
+        print("decodeWithGPUHT session vs no-session: max=\(gpuHTSessionVsNo.maxDiff) avg=\(gpuHTSessionVsNo.sumDiff / Int64(max(1, gpuHTSessionVsNo.count)))")
+
+        // Tolerance: 4 LSB at 16-bit, same as testBisectDecodePaths.
+        // Float-precision drift between the v5.25.0 multi-level fused
+        // path (no-session uses per-level inverse2D; session uses
+        // multi-level fused or v5.26.0 fused-from-codeblocks) is
+        // expected — neither path is bit-exact with the per-level
+        // path because float ordering of operations differs across
+        // command-buffer boundaries.
+        XCTAssertLessThanOrEqual(gpuSessionVsNo.maxDiff, 4,
+            "decodeGPU session vs no-session must match within 4 LSB; got max=\(gpuSessionVsNo.maxDiff)")
+        XCTAssertLessThanOrEqual(gpuHTSessionVsNo.maxDiff, 4,
+            "decodeWithGPUHT session vs no-session must match within 4 LSB; got max=\(gpuHTSessionVsNo.maxDiff)")
     }
 }

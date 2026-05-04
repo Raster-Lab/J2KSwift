@@ -5,6 +5,98 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.26.0] — 2026-05-04
+
+**Float scatter+dequant + GPU-resident dispatch — `decodeWithGPUHT` 9/7 lossy 1.0×→1.85×**
+
+v5.25.0 closed per-level readback in the 9/7 lossy IDWT (Float
+multi-level fused). v5.26.0 closes the remaining levers for
+`decodeWithGPUHT` 9/7 lossy: extends the GPU-resident batch path
+(previously 5/3-only) to 9/7 lossy via a new Float scatter+dequant
+Metal kernel and a Float fused-from-codeblocks IDWT.
+
+### Headline (M2, release, 1024×1024 16-bit lossy 9/7 @ 2 bpp, n=5)
+
+| Path | v5.25.0 speedup | v5.26.0 speedup |
+|---|---:|---:|
+| `decodeGPU(_:session:)` | 2.64–3.13× | 2.55–3.07× |
+| `decodeWithGPUHT(_:session:)` | 1.00–1.36× | **1.81–1.86×** |
+
+Two compounding wins:
+
+1. `gpuHTDispatch` 15+ ms → ~7 ms — switched 9/7 lossy entropy
+   dispatch from `decodeBatch` (full host readback of codeblock
+   buffer) to `decodeBatchGPUResident` (no readback). This alone
+   saves ~8 ms per decode.
+2. `inverseWaveletTransform` 10+ ms → ~5 ms — Float scatter+dequant
+   kernel + fused-from-codeblocks IDWT. Skips per-level CPU upload
+   of LH/HL/HH (sourced from the GPU-resident codeblock buffer
+   instead) and bakes dequant into the scatter step.
+
+### Added
+
+- `Sources/J2KMetal/J2KShaders.metal` (and embedded fallback) —
+  `j2k_subband_scatter_float_dequant` kernel. Reads Int32 codeblock
+  output, applies HTJ2K conformant cleanup-only dequant
+  `(coeff ± 0.5) * stepSize`, writes Float to subband layout.
+- `Sources/J2KMetal/J2KMetalSubbandScatter.swift` —
+  `J2KMetalSubbandScatterDescriptorFloat` (32-byte layout, replaces
+  `_pad` with `stepSize: Float`).
+- `Sources/J2KMetal/J2KMetalDWT.swift` —
+  `LevelScatterPlanFloat` + `inverse2DFullFusedFromCodeblocks`
+  (Float overload). Mirror of the Int32 5/3 lossless path.
+- `Sources/J2KMetal/J2KMetalShaderLibrary.swift` —
+  `.subbandScatterFloatDequant` shader function case.
+- `Tests/J2KCodecTests/J2KGPULossy97DivergenceTests.swift` —
+  `testSessionPathBitEquivalentToNoSessionPath` — verifies the
+  session-warm path (which exercises v5.26.0 code) matches the
+  no-session path within 4 LSB at 16-bit. Observed: max diff = 1.
+
+### Changed
+
+- `Sources/J2KCodec/J2KGPUHTDispatch.swift` — `J2KGPUHTBatch`
+  gained `floatPlansByComponent: [Int: [LevelScatterPlanFloat]]?`
+  field. Non-nil for 9/7 lossy fused-from-codeblocks; mutually
+  exclusive with the Int32 `plansByComponent`.
+- `Sources/J2KCodec/J2KDecoderPipeline.swift`:
+  - `applyEntropyDecoding` fused-batch gate dropped
+    `!isIrreversibleFilter`. 9/7 lossy now also routes through
+    `decodeBatchGPUResident`. New `buildGPUHTBatchFromResultFloat`
+    helper produces the Float batch with per-block stepSize lookup.
+  - `applyInverseWaveletTransformGPU` 9/7 branch consumes Float
+    batch when present; falls back to v5.25.0 multi-level fused
+    (CPU-uploaded subbands) otherwise.
+- `Sources/J2KMetal/default.metallib` regenerated with the new
+  kernel.
+
+### Verified
+
+- New `testSessionPathBitEquivalentToNoSessionPath` passes: max
+  diff = 1 LSB, avg = 0 (Float-precision noise).
+- Existing v5.21.0 `testBisectDecodePaths` still green.
+- All v5.14-v5.25 regression gates remain green.
+
+### What's still open
+
+- `decodeGPU(_:session:)` remains the fastest API on this workload
+  because CPU HT entropy (~1.3 ms parallelised) beats even the
+  v5.26.0-reduced GPU HT dispatch (~7 ms).
+- `decodeWithGPUHT` becomes the right choice on workloads where
+  the GPU dispatch amortises — likely much larger images. That
+  crossover hasn't been characterised yet.
+
+### Lesson
+
+The expected gain from extending the fused batch path to 9/7
+lossy was thought to be modest — closing per-level upload was
+thought to save ~1-2 ms. Reality: the bigger latent win was
+switching the entropy dispatch from `decodeBatch` to
+`decodeBatchGPUResident`, saving ~8 ms. The original gate
+`!isIrreversibleFilter` was locking 9/7 lossy out of BOTH wins.
+Removing it compounded the savings. Lesson: when a feature is
+gated against multiple optimisations under one boolean, the cost
+is the sum, not the visible item.
+
 ## [5.25.0] — 2026-05-04
 
 **Float multi-level fused IDWT — 9/7 lossy speedup jumps to 2.6–3.1×**

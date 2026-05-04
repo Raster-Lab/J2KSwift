@@ -2393,3 +2393,72 @@ kernel void j2k_subband_scatter(
     else if (d.targetSubband == 2) hlOut[dstIdx] = value;
     else hhOut[dstIdx] = value;
 }
+
+// MARK: - Subband scatter + dequant (Float, v5.26.0)
+//
+// Mirror of j2k_subband_scatter for the 9/7 lossy fused-from-
+// codeblocks path: reads Int32 codeblock samples, applies HTJ2K
+// conformant cleanup-only dequantisation, writes Float to the
+// per-subband 2D buffers. Closes the CPU dequant + per-level
+// upload of LH/HL/HH that the v5.25.0 multi-level fused IDWT
+// still paid.
+//
+// Dequant formula (HTJ2K conformant cleanup-only):
+//   coeff == 0 → 0
+//   coeff > 0  → (coeff + 0.5) * stepSize
+//   coeff < 0  → (coeff - 0.5) * stepSize
+//
+// Matches `applyDequantization`'s irreversible-9/7 + useHTJ2K +
+// !hasHTMask branch; conformant blocks never carry partial
+// refinement (htPartiallyRefined is always empty on the Part-15
+// cleanup-only path), so the per-coefficient mask check from CPU
+// dequant is unnecessary here.
+
+struct GPUScatterDescriptorFloat {
+    uint  codeblockOffset;
+    uint  blockWidth;
+    uint  blockHeight;
+    uint  subbandX;
+    uint  subbandY;
+    uint  subbandStride;
+    uint  targetSubband;
+    float stepSize;
+};
+
+kernel void j2k_subband_scatter_float_dequant(
+    device const GPUScatterDescriptorFloat* descs        [[buffer(0)]],
+    device const int*                       codeblocks   [[buffer(1)]],
+    device float*                           llOut        [[buffer(2)]],
+    device float*                           lhOut        [[buffer(3)]],
+    device float*                           hlOut        [[buffer(4)]],
+    device float*                           hhOut        [[buffer(5)]],
+    constant uint&                          descCount    [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    uint blockIdx = gid.z;
+    if (blockIdx >= descCount) return;
+    GPUScatterDescriptorFloat d = descs[blockIdx];
+    uint col = gid.x;
+    uint row = gid.y;
+    if (col >= d.blockWidth || row >= d.blockHeight) return;
+
+    uint srcIdx = d.codeblockOffset + row * d.blockWidth + col;
+    uint dstX = d.subbandX + col;
+    uint dstY = d.subbandY + row;
+    uint dstIdx = dstY * d.subbandStride + dstX;
+    int coeff = codeblocks[srcIdx];
+
+    float value;
+    if (coeff == 0) {
+        value = 0.0f;
+    } else if (coeff > 0) {
+        value = (float(coeff) + 0.5f) * d.stepSize;
+    } else {
+        value = (float(coeff) - 0.5f) * d.stepSize;
+    }
+
+    if (d.targetSubband == 0) llOut[dstIdx] = value;
+    else if (d.targetSubband == 1) lhOut[dstIdx] = value;
+    else if (d.targetSubband == 2) hlOut[dstIdx] = value;
+    else hhOut[dstIdx] = value;
+}

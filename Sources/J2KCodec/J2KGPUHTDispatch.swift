@@ -90,7 +90,15 @@ struct J2KGPUHTBatch: Sendable {
     let codeblockBuffer: any MTLBuffer
     let outputSampleCount: Int
     /// Per component → per level (innermost first) → scatter plan.
+    /// Used by the 5/3 lossless fused-from-codeblocks IDWT (Int32).
     let plansByComponent: [Int: [J2KMetalDWT.LevelScatterPlan]]
+    /// v5.26.0: per component → per level → Float scatter plan with
+    /// dequantisation baked into the scatter descriptors. Non-nil
+    /// only for the 9/7 lossy fused-from-codeblocks path; consumers
+    /// that see this populated route to the Float fused IDWT and
+    /// skip CPU `applyDequantization`. Mutually exclusive with the
+    /// Int32 `plansByComponent` (which stays empty in this case).
+    let floatPlansByComponent: [Int: [J2KMetalDWT.LevelScatterPlanFloat]]?
     /// The pool that owns `codeblockBuffer`. After the fused
     /// dispatch, return the buffer to this pool.
     let bufferPool: J2KMetalBufferPool

@@ -56,6 +56,41 @@ public struct J2KMetalSubbandScatterDescriptor: Sendable {
     }
 }
 
+/// v5.26.0 Float-and-dequant variant of the scatter descriptor.
+/// Replaces the trailing `_pad` with a `Float stepSize` carrying
+/// the per-subband dequantisation step. The 9/7 lossy fused-from-
+/// codeblocks scatter kernel reads Int32 codeblock data, applies
+/// `(coeff ± 0.5) * stepSize` (HTJ2K conformant cleanup-only), and
+/// writes Float into LL/LH/HL/HH 2D buffers in a single pass.
+@frozen
+public struct J2KMetalSubbandScatterDescriptorFloat: Sendable {
+    public let codeblockOffset: UInt32
+    public let blockWidth: UInt32
+    public let blockHeight: UInt32
+    public let subbandX: UInt32
+    public let subbandY: UInt32
+    public let subbandStride: UInt32
+    public let targetSubband: UInt32
+    /// Per-block dequantisation step size. The kernel applies
+    /// `(coeff ± 0.5) * stepSize` (or zero if coeff == 0).
+    public let stepSize: Float
+
+    public init(
+        codeblockOffset: UInt32, blockWidth: UInt32, blockHeight: UInt32,
+        subbandX: UInt32, subbandY: UInt32, subbandStride: UInt32,
+        targetSubband: UInt32, stepSize: Float
+    ) {
+        self.codeblockOffset = codeblockOffset
+        self.blockWidth = blockWidth
+        self.blockHeight = blockHeight
+        self.subbandX = subbandX
+        self.subbandY = subbandY
+        self.subbandStride = subbandStride
+        self.targetSubband = targetSubband
+        self.stepSize = stepSize
+    }
+}
+
 /// Target subband identifier matching the MSL kernel's
 /// `targetSubband` switch. Provides a Swift-side enum with
 /// stable raw values.

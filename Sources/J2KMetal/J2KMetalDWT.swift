@@ -1324,6 +1324,247 @@ public actor J2KMetalDWT {
     }
     #endif
 
+    /// v5.26.0 Float counterpart of `LevelScatterPlan` for the 9/7
+    /// lossy fused-from-codeblocks path. The descriptors carry a
+    /// per-block Float `stepSize`; the scatter+dequant kernel
+    /// applies `(coeff ± 0.5) * stepSize` (HTJ2K conformant
+    /// cleanup-only) and writes Float to the per-subband 2D buffers.
+    public struct LevelScatterPlanFloat: Sendable {
+        public let scatterDescriptors: [J2KMetalSubbandScatterDescriptorFloat]
+        public let llWidth: Int
+        public let llHeight: Int
+        public let lhWidth: Int
+        public let lhHeight: Int
+        public let hlWidth: Int
+        public let hlHeight: Int
+        public let hhWidth: Int
+        public let hhHeight: Int
+        public let originalWidth: Int
+        public let originalHeight: Int
+        public let maxBlockWidth: Int
+        public let maxBlockHeight: Int
+
+        public init(
+            scatterDescriptors: [J2KMetalSubbandScatterDescriptorFloat],
+            llWidth: Int, llHeight: Int,
+            lhWidth: Int, lhHeight: Int,
+            hlWidth: Int, hlHeight: Int,
+            hhWidth: Int, hhHeight: Int,
+            originalWidth: Int, originalHeight: Int,
+            maxBlockWidth: Int, maxBlockHeight: Int
+        ) {
+            self.scatterDescriptors = scatterDescriptors
+            self.llWidth = llWidth; self.llHeight = llHeight
+            self.lhWidth = lhWidth; self.lhHeight = lhHeight
+            self.hlWidth = hlWidth; self.hlHeight = hlHeight
+            self.hhWidth = hhWidth; self.hhHeight = hhHeight
+            self.originalWidth = originalWidth
+            self.originalHeight = originalHeight
+            self.maxBlockWidth = maxBlockWidth
+            self.maxBlockHeight = maxBlockHeight
+        }
+    }
+
+    #if canImport(Metal)
+    /// v5.26.0 Float counterpart of `inverse2DInt32FullFusedFromCodeblocks`
+    /// for the 9/7 lossy path. Mirrors the Int32 version's structure
+    /// but uses the Float scatter+dequant kernel and the Float
+    /// inverse-IDWT chainable encoder.
+    ///
+    /// - Parameters:
+    ///   - codeblockBuffer: GPU buffer of Int32 codeblock samples
+    ///     (HT cleanup integer-magnitude output). Unchanged from the
+    ///     Int32 path — dequant is baked into the scatter kernel.
+    ///   - levelsPlan: per-level Float scatter plans, ordered
+    ///     innermost first.
+    ///   - initialLL: optional outermost-level LL Float (uploaded on
+    ///     the innermost level only); `nil` defaults to all-zero.
+    /// - Returns: outermost-level Float output of size
+    ///   `levelsPlan.last!.originalWidth × originalHeight`.
+    public func inverse2DFullFusedFromCodeblocks(
+        codeblockBuffer: any MTLBuffer,
+        levelsPlan: [LevelScatterPlanFloat],
+        initialLL: [Float]?
+    ) async throws -> [Float] {
+        guard !levelsPlan.isEmpty else {
+            throw J2KError.invalidParameter("levelsPlan must be non-empty")
+        }
+        for i in 1..<levelsPlan.count {
+            let prev = levelsPlan[i - 1]
+            let cur = levelsPlan[i]
+            guard cur.llWidth == prev.originalWidth,
+                  cur.llHeight == prev.originalHeight else {
+                throw J2KError.invalidParameter(
+                    "levelsPlan chain mismatch at level \(i): " +
+                    "expected LL=\(prev.originalWidth)×\(prev.originalHeight), " +
+                    "got \(cur.llWidth)×\(cur.llHeight)")
+            }
+        }
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let strideF = MemoryLayout<Float>.stride
+
+        let scatterPipeline = try await shaderLibrary.computePipeline(for: .subbandScatterFloatDequant)
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create float full-fused cb")
+        }
+
+        var inFlight: [any MTLBuffer] = []
+        var currentLLBuffer: (any MTLBuffer)? = nil
+        var finalOutputBuffer: (any MTLBuffer)? = nil
+        var finalWidth = 0
+        var finalHeight = 0
+
+        for (planIdx, plan) in levelsPlan.enumerated() {
+            let isLastLevel = (planIdx == levelsPlan.count - 1)
+
+            let llBuffer: any MTLBuffer
+            if let prev = currentLLBuffer {
+                llBuffer = prev
+            } else {
+                let llCount = plan.llWidth * plan.llHeight
+                let bytes = max(llCount * strideF, 1)
+                if let initial = initialLL, initial.count == llCount {
+                    let buf = try await bufferPool.acquireBuffer(
+                        device: device, size: bytes, strategy: .shared)
+                    inFlight.append(buf)
+                    initial.withUnsafeBytes { src in
+                        buf.contents().copyMemory(
+                            from: src.baseAddress!, byteCount: src.count)
+                    }
+                    llBuffer = buf
+                } else {
+                    let buf = try await bufferPool.acquireBuffer(
+                        device: device, size: bytes, strategy: .private)
+                    inFlight.append(buf)
+                    if let blit = cb.makeBlitCommandEncoder() {
+                        blit.fill(buffer: buf, range: 0..<bytes, value: 0)
+                        blit.endEncoding()
+                    }
+                    llBuffer = buf
+                }
+            }
+
+            let lhCount = plan.lhWidth * plan.lhHeight
+            let hlCount = plan.hlWidth * plan.hlHeight
+            let hhCount = plan.hhWidth * plan.hhHeight
+            let lhBytes = max(lhCount * strideF, 1)
+            let hlBytes = max(hlCount * strideF, 1)
+            let hhBytes = max(hhCount * strideF, 1)
+            let lhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: lhBytes, strategy: .private)
+            inFlight.append(lhBuffer)
+            let hlBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: hlBytes, strategy: .private)
+            inFlight.append(hlBuffer)
+            let hhBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: hhBytes, strategy: .private)
+            inFlight.append(hhBuffer)
+            if let blit = cb.makeBlitCommandEncoder() {
+                blit.fill(buffer: lhBuffer, range: 0..<lhBytes, value: 0)
+                blit.fill(buffer: hlBuffer, range: 0..<hlBytes, value: 0)
+                blit.fill(buffer: hhBuffer, range: 0..<hhBytes, value: 0)
+                blit.endEncoding()
+            }
+
+            let descStride = MemoryLayout<J2KMetalSubbandScatterDescriptorFloat>.stride
+            let descCount = plan.scatterDescriptors.count
+            let descBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: max(descCount * descStride, 1))
+            inFlight.append(descBuffer)
+            if descCount > 0 {
+                plan.scatterDescriptors.withUnsafeBufferPointer { src in
+                    descBuffer.contents().copyMemory(
+                        from: UnsafeRawPointer(src.baseAddress!),
+                        byteCount: descCount * descStride)
+                }
+            }
+
+            // Encoder 1: Float scatter+dequant.
+            if descCount > 0 {
+                guard let scatterEnc = cb.makeComputeCommandEncoder() else {
+                    throw J2KError.internalError("Failed to create float scatter encoder")
+                }
+                scatterEnc.setComputePipelineState(scatterPipeline)
+                scatterEnc.setBuffer(descBuffer, offset: 0, index: 0)
+                scatterEnc.setBuffer(codeblockBuffer, offset: 0, index: 1)
+                scatterEnc.setBuffer(llBuffer, offset: 0, index: 2)
+                scatterEnc.setBuffer(lhBuffer, offset: 0, index: 3)
+                scatterEnc.setBuffer(hlBuffer, offset: 0, index: 4)
+                scatterEnc.setBuffer(hhBuffer, offset: 0, index: 5)
+                var dc = UInt32(descCount)
+                scatterEnc.setBytes(&dc, length: MemoryLayout<UInt32>.stride, index: 6)
+                let gridW = max(1, plan.maxBlockWidth)
+                let gridH = max(1, plan.maxBlockHeight)
+                scatterEnc.dispatchThreads(
+                    MTLSize(width: gridW, height: gridH, depth: descCount),
+                    threadsPerThreadgroup: MTLSize(
+                        width: min(gridW, 8), height: min(gridH, 8), depth: 1))
+                scatterEnc.endEncoding()
+            }
+
+            // Encoders 2-3: Float inverse-2D (vertical + horizontal).
+            let hLowBuffer = try await bufferPool.acquireBuffer(
+                device: device, size: plan.llWidth * plan.originalHeight * strideF,
+                strategy: .private)
+            inFlight.append(hLowBuffer)
+            let hHighBuffer = try await bufferPool.acquireBuffer(
+                device: device,
+                size: max(plan.originalWidth / 2, 1) * plan.originalHeight * strideF,
+                strategy: .private)
+            inFlight.append(hHighBuffer)
+            let outputBuffer = try await bufferPool.acquireBuffer(
+                device: device,
+                size: plan.originalWidth * plan.originalHeight * strideF,
+                strategy: isLastLevel ? .shared : .private)
+            inFlight.append(outputBuffer)
+
+            try await encodeInverse2D(
+                into: cb,
+                ll: llBuffer, lh: lhBuffer, hl: hlBuffer, hh: hhBuffer,
+                hLow: hLowBuffer, hHigh: hHighBuffer,
+                output: outputBuffer,
+                originalWidth: plan.originalWidth,
+                originalHeight: plan.originalHeight,
+                halfW: plan.llWidth)
+
+            currentLLBuffer = outputBuffer
+            finalOutputBuffer = outputBuffer
+            finalWidth = plan.originalWidth
+            finalHeight = plan.originalHeight
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Full-fused inverse 9/7 GPU dispatch failed: " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let result = readFloatArray(
+            from: finalOutputBuffer!, elementCount: finalWidth * finalHeight)
+
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return result
+    }
+    #else
+    public func inverse2DFullFusedFromCodeblocks(
+        codeblockBuffer: Any,
+        levelsPlan: [LevelScatterPlanFloat],
+        initialLL: [Float]?
+    ) async throws -> [Float] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+    #endif
+
     public func inverse2DInt32(
         subbands: J2KMetalDWTSubbandsInt32,
         backend: J2KMetalDWTBackend = .auto

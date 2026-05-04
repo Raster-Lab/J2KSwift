@@ -145,6 +145,12 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// `getSubbandAsInt32` loop in J2KDecoderPipeline. v5.7.0
     /// foundation for HT cleanup → DWT command-buffer fusion.
     case subbandScatter = "j2k_subband_scatter"
+    /// v5.26.0 Float scatter + HTJ2K conformant dequant. Mirror of
+    /// `subbandScatter` for the 9/7 lossy fused-from-codeblocks
+    /// path; reads Int32 codeblocks, applies dequantisation
+    /// (`(coeff ± 0.5) * stepSize`), writes Float to per-subband 2D
+    /// buffers. Only used when `useGPUHT && useConformant && 9/7`.
+    case subbandScatterFloatDequant = "j2k_subband_scatter_float_dequant"
 }
 
 // MARK: - Shader Library Configuration
@@ -2895,6 +2901,62 @@ enum J2KMetalShaderSource {
         // time per dispatched grid cell — no warp divergence, since
         // all threads of the same block share the same
         // d.targetSubband.
+        if (d.targetSubband == 0) llOut[dstIdx] = value;
+        else if (d.targetSubband == 1) lhOut[dstIdx] = value;
+        else if (d.targetSubband == 2) hlOut[dstIdx] = value;
+        else hhOut[dstIdx] = value;
+    }
+
+    // MARK: - Subband scatter + dequant (Float, v5.26.0)
+    //
+    // Mirror of j2k_subband_scatter for the 9/7 lossy fused-from-
+    // codeblocks path: reads Int32 codeblocks, applies HTJ2K
+    // conformant cleanup-only dequantisation, writes Float to the
+    // per-subband 2D buffers.
+
+    struct GPUScatterDescriptorFloat {
+        uint  codeblockOffset;
+        uint  blockWidth;
+        uint  blockHeight;
+        uint  subbandX;
+        uint  subbandY;
+        uint  subbandStride;
+        uint  targetSubband;
+        float stepSize;
+    };
+
+    kernel void j2k_subband_scatter_float_dequant(
+        device const GPUScatterDescriptorFloat* descs        [[buffer(0)]],
+        device const int*                       codeblocks   [[buffer(1)]],
+        device float*                           llOut        [[buffer(2)]],
+        device float*                           lhOut        [[buffer(3)]],
+        device float*                           hlOut        [[buffer(4)]],
+        device float*                           hhOut        [[buffer(5)]],
+        constant uint&                          descCount    [[buffer(6)]],
+        uint3 gid [[thread_position_in_grid]]
+    ) {
+        uint blockIdx = gid.z;
+        if (blockIdx >= descCount) return;
+        GPUScatterDescriptorFloat d = descs[blockIdx];
+        uint col = gid.x;
+        uint row = gid.y;
+        if (col >= d.blockWidth || row >= d.blockHeight) return;
+
+        uint srcIdx = d.codeblockOffset + row * d.blockWidth + col;
+        uint dstX = d.subbandX + col;
+        uint dstY = d.subbandY + row;
+        uint dstIdx = dstY * d.subbandStride + dstX;
+        int coeff = codeblocks[srcIdx];
+
+        float value;
+        if (coeff == 0) {
+            value = 0.0f;
+        } else if (coeff > 0) {
+            value = (float(coeff) + 0.5f) * d.stepSize;
+        } else {
+            value = (float(coeff) - 0.5f) * d.stepSize;
+        }
+
         if (d.targetSubband == 0) llOut[dstIdx] = value;
         else if (d.targetSubband == 1) lhOut[dstIdx] = value;
         else if (d.targetSubband == 2) hlOut[dstIdx] = value;
