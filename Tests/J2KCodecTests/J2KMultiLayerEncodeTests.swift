@@ -372,6 +372,66 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         print("decodeWithGPUHT OK")
     }
 
+    /// **v5.37 R-D BENCHMARK** — strict-mode PSNR vs bpp curve on the
+    /// medical corpus, post-v5.36 multi-precinct.
+    ///
+    /// Captures the current strict-mode R-D characteristic. PSNR-per-
+    /// byte recovery (v5.37 work) needs this baseline to know where
+    /// the gains lie. Sweeps bpp ∈ {0.25, 0.5, 1.0, 2.0, 4.0} on
+    /// px_001 + dx_002, reporting (achieved bpp, PSNR) pairs.
+    ///
+    /// Comparison rows:
+    ///   - v5.34 single-precinct (truncated very early): the
+    ///     pre-existing baseline.
+    ///   - v5.36 multi-precinct (truncated finely): current state.
+    ///   - v5.37 target (TBD): smarter packet selection / R-D-aware
+    ///     truncation should push the same byte budget to more PSNR.
+    func testStrictModeRDBenchmark_PostMultiPrecinct() async throws {
+        struct Fixture { let name: String; let path: String }
+        let fixtures = [
+            Fixture(name: "px_001 (3.2M)", path: "px_study_001_instance_000001.pgm"),
+            Fixture(name: "dx_002 (6.4M)", path: "dx_study_002_instance_000001.pgm"),
+        ]
+        let bpps: [Double] = [0.25, 0.5, 1.0, 2.0, 4.0]
+
+        var ranAtLeastOne = false
+        print("\n=== v5.37 strict-mode R-D benchmark (post-v5.36 multi-precinct) ===")
+        print("| Fixture | bpp target | bytes target | bytes achieved | fill ratio | PSNR (dB) |")
+        print("|---|---:|---:|---:|---:|---:|")
+
+        for fixture in fixtures {
+            guard let img = try loadPGM(fixture.path) else {
+                print("  SKIP \(fixture.name): fixture not found")
+                continue
+            }
+            ranAtLeastOne = true
+            let totalSamples = img.width * img.height * img.componentCount
+
+            for bpp in bpps {
+                var cfg = J2KEncodingConfiguration(
+                    quality: 1.0, lossless: false,
+                    decompositionLevels: 5, qualityLayers: 1,
+                    progressionOrder: .lrcp, useHTJ2K: true,
+                    useReversibleFilter: false,
+                    htj2kBlockFormat: .conformant)
+                cfg.bitrateMode = .constantBitrate(bitsPerPixel: bpp)
+                let encoded = try await J2KEncoder(encodingConfiguration: cfg).encode(img)
+                let target = Int(Double(totalSamples) * bpp / 8.0)
+                let fill = Double(encoded.count) / Double(target)
+                let decoded = try await J2KDecoder().decode(encoded)
+                let psnr = computePSNR16(img.components[0].data, decoded.components[0].data)
+                XCTAssertLessThanOrEqual(encoded.count, target,
+                    "\(fixture.name) @ \(bpp) bpp: cap must be honoured")
+                print(String(format: "| %@ | %.2f | %d | %d | %.3fx | %.2f |",
+                    fixture.name, bpp, target, encoded.count, fill, psnr))
+            }
+        }
+
+        if !ranAtLeastOne {
+            throw XCTSkip("no medical fixtures available")
+        }
+    }
+
     /// Diagnostic: pinpoint the PPx<10 crash on px_001-class fixtures.
     /// Sweep PPx from 10 down to 5 on px_001 (2459×1316), reporting at
     /// which PPx value the encode/decode trips a precondition or

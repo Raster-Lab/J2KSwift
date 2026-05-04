@@ -493,6 +493,71 @@ For a `.constantBitrate(2 bpp)` encode on px_001:
   ships but isn't used. Cross-codec interop gap (OpenJPH HT = 1 layer, OpenJPEG HT
   decode rejects multi-layer) remains an ecosystem issue, not a J2KSwift bug.
 
+### v5.37 R-D baseline — strict-mode quality vs bpp curve
+
+Strict-mode auto-promote (`.constantBitrate(bpp)`) on real medical fixtures, sweeping
+bpp ∈ {0.25, 0.5, 1.0, 2.0, 4.0}. Captured to drive v5.37 PSNR-per-byte improvement
+work. Reproducible via:
+
+```bash
+swift test -c release --filter "J2KMultiLayerEncodeTests/testStrictModeRDBenchmark_PostMultiPrecinct"
+```
+
+| Fixture | bpp target | bytes target | bytes achieved | fill ratio | PSNR (dB) |
+|---|---:|---:|---:|---:|---:|
+| px_001 (3.2M) | 0.25 | 101,126 |    94,327 | 0.933× | 12.25 |
+| px_001 (3.2M) | 0.50 | 202,252 |   201,121 | 0.994× | 12.55 |
+| px_001 (3.2M) | 1.00 | 404,505 |   375,007 | 0.927× | 12.87 |
+| px_001 (3.2M) | 2.00 | 809,011 |   764,561 | 0.945× | 13.69 |
+| px_001 (3.2M) | 4.00 | 1,618,022 | 1,540,231 | 0.952× | 14.28 |
+| dx_002 (6.4M) | 0.25 | 200,200 |   194,809 | 0.973× | 13.33 |
+| dx_002 (6.4M) | 0.50 | 400,400 |   381,103 | 0.952× | 13.41 |
+| dx_002 (6.4M) | 1.00 | 800,800 |   789,609 | 0.986× | 13.83 |
+| dx_002 (6.4M) | 2.00 | 1,601,600 | 1,601,181 | 1.000× | 14.57 |
+| dx_002 (6.4M) | 4.00 | 3,203,200 | 3,189,551 | 0.996× | 14.86 |
+
+**Two findings drive v5.37 priority work:**
+
+1. **Fill ratio is excellent** (0.93-1.00× across all bpp targets) — multi-precinct
+   delivered. The byte-budget side is solved.
+
+2. **PSNR R-D curve is FLAT** — only 0.4-0.5 dB per doubling of bpp on these
+   fixtures. A proper R-D curve gives 10-15 dB per doubling (v5.31 unbounded
+   reference: ~46 dB at 2 bpp on px_001 vs strict's 13.69 dB → 32 dB gap that the
+   fill-ratio fix did not close). Most of the 16× more bytes spent at 4 bpp vs
+   0.25 bpp goes into LL/low-resolution content that contributes little PSNR,
+   while high-frequency detail packets are truncated away because LRCP-order
+   stream truncation drops the highest-resolution packets first.
+
+### v5.37 priority list (post-budget-fill)
+
+In order of expected PSNR-per-byte impact:
+
+1. **Smarter packet selection under hard cap** — replace LRCP-stream truncation
+   with R-D-aware truncation: rank packets by distortion-saved-per-byte (using
+   `block.coefficientSquaredSum × subband_weight`), greedy-include in slope order
+   until the cap is hit, emit unselected packets as empty bits. Same byte budget,
+   different content retained — high-frequency detail packets stay in.
+
+2. **High-frequency preservation under strict truncation** — at small caps the
+   selector should still keep the LL band (otherwise reconstruction collapses to
+   noise); a guaranteed-LL floor + R-D selection over the rest.
+
+3. **Smarter qstep under hard cap** — currently the search picks the qstep that
+   maximises overshoot then truncates. Better: pick a qstep that tracks
+   `cap × ~1.05` (slight overshoot) so truncation drops only 5% of bytes. Less
+   waste of high-quality bytes.
+
+4. **Quality-floor / warning policy** — when strict mode produces output with
+   PSNR or fill-ratio below a threshold, populate a warning in
+   `J2KEncodeQstepStats` (or surface via callback). Lets PACS workflows detect
+   "this image needs different settings" without round-tripping the decode.
+
+5. **Strict-mode R-D benchmark** — already shipped (this section). Re-run after
+   each priority-1/2/3/4 change to measure improvement.
+
+6. **Metal forward DWT rewrite** — separate perf priority (not strict-mode quality).
+
 ---
 
 ## v5.33 → v5.34 migration guide
