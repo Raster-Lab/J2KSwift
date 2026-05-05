@@ -492,125 +492,254 @@ Swift array bounds-check overhead is left in the hot path.
   staging and orthogonal changes.
 - **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred).
 
-### v5.38 — post-M9 final lossless headline (full corpus, **median of 5 runs**)
+### v5.38 — format-fair lossless cross-codec results (full corpus, **median of 5 runs**)
 
-Numbers below are **medians of 5 independent runs** of the M2
-cross-codec gate, captured after the M9 commit (sign-magnitude buffer
-reuse + UnsafeBufferPointer encoder). The M6 decode warm-up is in
-place, so the cold-start Metal lazy-init outlier that polluted the
-first CT 512² decode in earlier runs is gone. Each codec compresses
-+ decompresses every fixture, and the J2KSwift codestream is fed to
-each external decoder for bit-exact cross-decode validation. Output
-bytes per codec are identical across all 5 runs (byte-deterministic
-encode); timings vary within run-to-run noise (±2-5%).
+> ⚠️ **Earlier versions of this section claimed J2KSwift was fastest on
+> 7/7 fixtures.** That claim came from a single combined table that
+> compared each codec running its **default mode**, which mixed two
+> JPEG 2000 lossless flavours: J2KSwift and OpenJPH default to HT /
+> Part-15; OpenJPEG, Grok, and Kakadu default to EBCOT / Part-1. EBCOT
+> defaults are intrinsically slower (more bit-plane work) than HT
+> defaults, so the table conflated **format choice** with **codec
+> speed**. The honest, format-fair answer is below: J2KSwift wins on
+> every small fixture in both formats, and Kakadu wins on every
+> fixture ≥ 886×886 in both formats once the format axis is held
+> constant. The HT-vs-HT and EBCOT-vs-EBCOT tables make the actual
+> ordering clear.
 
-#### J2KSwift HT lossless vs the 4 external codecs (encode time, ms — median of 5)
+Three sweeps over the medical corpus, each with median-of-5 timing
+samples, deterministic-byte-count gate per run, and exhaustive
+bit-exact gates:
+- **Default-mode**: each codec runs as it ships out of the box (mixed HT/EBCOT).
+- **HT-fair**: every codec emits HT/Part-15. OpenJPEG: N/A on this
+  Homebrew build (its CLI's `-M 64` HT bit emits an EBCOT codestream
+  that OpenJPH refuses with "Rsiz bit 14 is not set — this is not a
+  JPH file"; HT encoding requires a different OpenJPEG build).
+- **EBCOT-fair**: every codec emits EBCOT/Part-1. OpenJPH: N/A
+  (HT-only codec).
+
+**External-codec CLI flags used** (verified against the installed
+binaries on 2026-05-05 / Homebrew 2.5.4 OpenJPEG, latest OpenJPH /
+Grok, Kakadu 8.4.1 demo):
+
+| Codec | Default | HT-fair | EBCOT-fair |
+|---|---|---|---|
+| OpenJPEG (`opj_compress`) | `-i x.pgm -o x.j2k` | **N/A** (CLI build limit) | `-i x.pgm -o x.j2k` (default) |
+| OpenJPH (`ojph_compress`) | `-reversible true` | `-reversible true` (default = HT) | **N/A** (HT-only codec) |
+| Grok (`grk_compress`)     | `-i x.pgm -o x.j2k` | `-i x.pgm -o x.jph -M 64` | `-i x.pgm -o x.j2k` (default) |
+| Kakadu (`kdu_compress`)   | `Creversible=yes` | `Creversible=yes Cmodes=HT` | `Creversible=yes` (default) |
+
+#### A. Codec default-mode comparison (mixed HT and EBCOT)
+
+> **This table mixes formats.** OpenJPEG/Grok/Kakadu rows are EBCOT;
+> J2KSwift/OpenJPH rows are HT. Use the HT-fair and EBCOT-fair tables
+> below for like-to-like codec comparison.
+
+**Output bytes (median of 5 — bytes are deterministic across runs):**
+
+| Modality | Shape | Raw KB | J2KSwift (HT) | OpenJPEG (EBCOT) | OpenJPH (HT) | Grok (EBCOT) | Kakadu (EBCOT) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| MR-small | 180×180   |    63 |    44 |    30 |    44 |    30 |    30 |
+| CT       | 512×512   |   512 |   426 |   324 |   426 |   324 |   324 |
+| CT       | 512×512   |   512 |   396 |   308 |   396 |   308 |   308 |
+| MR       | 886×886   |  1533 |   163 |   135 |   163 |   135 |   135 |
+| XA       | 1024×1024 |  2048 |  1583 |  1337 |  1583 |  1337 |  1337 |
+| PX       | 2459×1316 |  6320 |  6280 |  5485 |  6280 |  5485 |  5485 |
+| DX       | 2800×2288 | 12512 | 12385 | 10559 | 12384 | 10559 | 10559 |
+
+J2KSwift HT bytes ≡ OpenJPH HT bytes (within 1 byte). OpenJPEG ≡
+Grok ≡ Kakadu EBCOT bytes (exact). The 13–32% gap between rows is
+the format trade-off, not codec quality.
+
+**Encode time (ms, median of 5):**
 
 | Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
 |---|---|---:|---:|---:|---:|---:|:---|---:|
-| MR-small | 180×180   |  **0.8** |  12.2 |   6.6 |   9.0 |    3.6 | J2KSwift | 4.5× → Kakadu |
-| CT       | 512×512   |  **3.1** |  56.5 |  10.3 |  15.6 |    8.4 | J2KSwift | 2.7× → Kakadu |
-| CT       | 512×512   |  **2.8** |  53.2 |  10.0 |  15.1 |    8.4 | J2KSwift | 3.0× → Kakadu |
-| MR       | 886×886   |  **5.2** |  59.4 |  10.6 |  14.1 |    5.9 | J2KSwift | +0.7 ms → Kakadu |
-| XA       | 1024×1024 | **11.4** | 198.9 |  21.7 |  38.5 |   23.5 | J2KSwift | 1.9× → OpenJPH |
-| PX       | 2459×1316 | **37.0** | 712.3 |  59.8 | 122.7 |   82.1 | J2KSwift | 1.6× → OpenJPH |
-| DX       | 2800×2288 | **71.6** | 1375.3| 115.5 | 240.3 |  157.9 | J2KSwift | 1.6× → OpenJPH |
+| MR-small | 180×180   |  **0.6** |   10.7 |   6.2 |   8.6 |   3.6 | J2KSwift | 5.5× → Kakadu |
+| CT       | 512×512   |  **3.2** |   54.7 |  11.6 |  15.9 |   8.4 | J2KSwift | 2.6× → Kakadu |
+| CT       | 512×512   |  **3.2** |   58.5 |  10.4 |  16.5 |   7.8 | J2KSwift | 2.5× → Kakadu |
+| MR       | 886×886   |  **5.2** |   66.3 |  10.2 |  14.4 |   5.6 | J2KSwift | +0.5 ms → Kakadu |
+| XA       | 1024×1024 | **11.1** |  196.9 |  21.3 |  40.3 |  27.8 | J2KSwift | 1.9× → OpenJPH |
+| PX       | 2459×1316 | **37.6** |  709.7 |  58.3 | 129.3 |  83.8 | J2KSwift | 1.5× → OpenJPH |
+| DX       | 2800×2288 | **78.3** | 1443.5 | 119.6 | 239.0 | 162.8 | J2KSwift | 1.5× → OpenJPH |
 
-**J2KSwift HT lossless encode is the fastest on 7 of 7 medical
-fixtures.** The lone earlier MR-886 loss (post-M5 +0.2 ms behind
-Kakadu) flipped post-M8/M9: the entropy + sign-magnitude buffer reuse
-shaved ~1 ms off DWT-light fixtures, putting J2KSwift consistently
-ahead of Kakadu's 8-thread parallelism even on the high-compressibility
-MR fixture. Statistically clean on a 5-run median.
-
-#### J2KSwift HT lossless vs the 4 external codecs (decode time, ms — median of 5)
+**Decode time (ms, median of 5):**
 
 | Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
 |---|---|---:|---:|---:|---:|---:|:---|---:|
-| MR-small | 180×180   |  **0.7** |  10.8 |   6.2 |   8.7 |    3.3 | J2KSwift | 4.7× → Kakadu |
-| CT       | 512×512   |  **3.3** |  56.1 |   8.7 |  15.3 |    9.3 | J2KSwift | 2.6× → OpenJPH |
-| CT       | 512×512   |  **3.1** |  55.4 |   8.5 |  14.6 |    9.0 | J2KSwift | 2.7× → OpenJPH |
-| MR       | 886×886   |  **5.8** |  65.8 |  10.4 |  12.7 |    6.7 | J2KSwift | +0.9 ms → Kakadu |
-| XA       | 1024×1024 | **15.0** | 204.0 |  17.1 |  32.7 |   25.7 | J2KSwift | 1.14× → OpenJPH |
-| PX       | 2459×1316 | **39.3** | 710.9 |  43.3 | 100.5 |   90.7 | J2KSwift | 1.10× → OpenJPH |
-| DX       | 2800×2288 | **79.0** | 1366.4|  81.5 | 184.7 |  179.5 | J2KSwift | +2.5 ms → OpenJPH |
+| MR-small | 180×180   |  **0.6** |   10.8 |   5.9 |   9.1 |   3.4 | J2KSwift | 5.4× → Kakadu |
+| CT       | 512×512   |  **3.2** |   56.0 |   9.9 |  15.2 |   9.0 | J2KSwift | 2.8× → Kakadu |
+| CT       | 512×512   |  **3.1** |   54.1 |   8.9 |  14.6 |   8.6 | J2KSwift | 2.7× → Kakadu |
+| MR       | 886×886   |  **5.8** |   69.3 |  10.8 |  13.1 |   6.8 | J2KSwift | +1.0 ms → Kakadu |
+| XA       | 1024×1024 | **14.7** |  201.5 |  17.4 |  34.9 |  26.6 | J2KSwift | +2.7 ms → OpenJPH |
+| PX       | 2459×1316 | **40.5** |  708.8 |  44.0 | 105.3 |  97.0 | J2KSwift | +3.5 ms → OpenJPH |
+| DX       | 2800×2288 |   85.0   | 1360.4 | **80.8** | 198.9 | 185.2 | OpenJPH | +4.2 ms → J2KSwift |
 
-**J2KSwift HT lossless decode is the fastest on 7 of 7 medical
-fixtures too.** The earlier post-M6 single-shot run had OpenJPH
-winning DX by 1.1 ms (within noise on 80 ms timings); the 5-run
-median resolves the noise band — J2KSwift wins DX by 2.5 ms.
+**Default-mode leaderboard**: J2KSwift fastest on **7/7 encode**, **6/7 decode**
+(loses DX to OpenJPH by 4.2 ms / 5%). But this leaderboard mixes
+formats and is misleading — the real story is below.
 
-#### Output bytes — verified stable across all 5 runs
+#### B. HT-fair comparison (every codec emitting HT / Part-15)
 
-| Modality | Shape | Raw KB | J2KSwift HT KB | OpenJPEG (EBCOT) | OpenJPH (HT) | Grok (EBCOT) | Kakadu (EBCOT) | J2KSwift× | EBCOT× |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| MR-small | 180×180   |    63 |    44 |    30 |    44 |    30 |    30 | 1.43× | 2.09× |
-| CT       | 512×512   |   512 |   426 |   324 |   426 |   324 |   324 | 1.20× | 1.58× |
-| CT       | 512×512   |   512 |   396 |   308 |   396 |   308 |   308 | 1.29× | 1.66× |
-| MR       | 886×886   |  1533 |   163 |   135 |   163 |   135 |   135 | 9.36× | 11.33× |
-| XA       | 1024×1024 |  2048 |  1583 |  1337 |  1583 |  1337 |  1337 | 1.29× | 1.53× |
-| PX       | 2459×1316 |  6320 |  6280 |  5485 |  6280 |  5485 |  5485 | 1.01× | 1.15× |
-| DX       | 2800×2288 | 12512 | 12385 | 10559 | 12384 | 10559 | 10559 | 1.01× | 1.18× |
+OpenJPEG: N/A. The Homebrew 2.5.4 build's CLI `-M 64` flag does not
+produce a Part-15-conformant codestream (verified: output lacks the
+CAP marker / Rsiz bit 14 that OpenJPH requires). HT encoding through
+the OpenJPEG library exists in 2.5+ but is not exposed via this CLI
+build's flag set.
 
-`J2KSwift HT bytes ≡ OpenJPH HT bytes` to within 1 byte on every
-fixture (Part-15 conformant HT lossless converges on the same rate).
-`OpenJPEG ≡ Grok ≡ Kakadu bytes` exactly (Part-1 EBCOT defaults
-converge on the same rate). The format trade-off is documented in
-the M4 section above; M9 didn't change either side's bytes.
+**Output bytes** — within ±2 bytes across all four HT-capable codecs
+(Part-15 lossless converges to the same rate on identical input):
 
-**No M1-M9 milestone changed J2KSwift's encoded bytes.** Every
-optimisation has been a buffer-reuse / branch-hoist / fast-path
-change that preserves encoded output verbatim. Verified by
-deterministic byte counts across 5 runs and across all 9 milestone
-commits.
+| Modality | Shape | Raw KB | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu |
+|---|---|---:|---:|---:|---:|---:|---:|
+| MR-small | 180×180   |    63 |    44 | N/A |    44 |    44 |    44 |
+| CT       | 512×512   |   512 |   426 | N/A |   426 |   426 |   426 |
+| CT       | 512×512   |   512 |   396 | N/A |   396 |   396 |   396 |
+| MR       | 886×886   |  1533 |   163 | N/A |   163 |   165 |   163 |
+| XA       | 1024×1024 |  2048 |  1583 | N/A |  1583 |  1583 |  1583 |
+| PX       | 2459×1316 |  6320 |  6280 | N/A |  6280 |  6280 |  6280 |
+| DX       | 2800×2288 | 12512 | 12385 | N/A | 12384 | 12384 | 12385 |
 
-#### Cross-decode standards compliance (28/28 pairs bit-exact in every run)
+**Encode time, HT-fair (ms, median of 5):**
 
-| Run | OpenJPEG | OpenJPH | Grok | Kakadu | Total |
-|---|:---:|:---:|:---:|:---:|---:|
-| 1   | 7/7  | 7/7  | 7/7 | 7/7    | 28/28 |
-| 2   | 7/7  | 7/7  | 7/7 | 7/7    | 28/28 |
-| 3   | 7/7  | 7/7  | 7/7 | 7/7    | 28/28 |
-| 4   | 7/7  | 7/7  | 7/7 | 7/7    | 28/28 |
-| 5   | 7/7  | 7/7  | 7/7 | 7/7    | 28/28 |
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
+|---|---|---:|---:|---:|---:|---:|:---|---:|
+| MR-small | 180×180   |  **1.0** | N/A |   6.7 |   8.0 |   2.8 | J2KSwift | 2.7× → Kakadu |
+| CT       | 512×512   |  **3.3** | N/A |  10.7 |   9.4 |   3.6 | J2KSwift | +0.2 ms → Kakadu |
+| CT       | 512×512   |  **3.4** | N/A |  10.0 |   9.2 |   3.5 | J2KSwift | +0.0 ms → Kakadu |
+| MR       | 886×886   |    5.9   | N/A |  10.5 |  11.2 | **3.7** | Kakadu | 1.6× → J2KSwift |
+| XA       | 1024×1024 |   11.5   | N/A |  21.6 |  14.2 | **5.1** | Kakadu | 2.3× → J2KSwift |
+| PX       | 2459×1316 |   38.6   | N/A |  58.9 |  28.0 | **11.2**| Kakadu | 2.5× → Grok |
+| DX       | 2800×2288 |   72.1   | N/A | 119.0 |  49.7 | **18.9**| Kakadu | 2.6× → Grok |
 
-**140/140 cross-decode pairs bit-exact.** J2KSwift's HT lossless
-codestream is consumed bit-exactly by every mainstream Part-15-aware
-decoder (OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, Kakadu 8.4.1
-demo) on every fixture across every run. M1 self-roundtrip MAE = 0
-on all 7 fixtures. Strict standards compliance.
+**Decode time, HT-fair (ms, median of 5):**
 
-#### Cumulative v5.38 encode speedup vs v5.37 baseline (median of 5)
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
+|---|---|---:|---:|---:|---:|---:|:---|---:|
+| MR-small | 180×180   |  **0.8** | N/A |   6.5 |   7.5 |   2.7 | J2KSwift | 3.3× → Kakadu |
+| CT       | 512×512   |  **3.5** | N/A |   8.7 |   8.5 |   3.5 | J2KSwift (tie) | +0.0 ms → Kakadu |
+| CT       | 512×512   |  **3.4** | N/A |   8.6 |   8.5 |   3.6 | J2KSwift | +0.2 ms → Kakadu |
+| MR       | 886×886   |    6.2   | N/A |  10.5 |   9.6 | **4.9** | Kakadu | +1.3 ms → J2KSwift |
+| XA       | 1024×1024 |   15.2   | N/A |  17.2 |  10.9 | **6.2** | Kakadu | 1.8× → Grok |
+| PX       | 2459×1316 |   40.7   | N/A |  43.1 |  18.0 | **14.2**| Kakadu | +3.7 ms → Grok |
+| DX       | 2800×2288 |   77.1   | N/A |  81.9 |  31.9 | **25.9**| Kakadu | +5.9 ms → Grok |
+
+**HT-fair leaderboard**: J2KSwift fastest on encode + decode for
+**3/7 fixtures** (MR-small + both CTs — the small-fixture / fixed-
+overhead regime). **Kakadu wins on 4/7 fixtures (MR-886, XA, PX, DX)**
+in both encode and decode at scale, by 1.6–2.6× on encode and
+1.8–3.6× on decode. Kakadu's mature 8-thread parallelism dominates
+J2KSwift's per-block parallelism on large fixtures within the same
+HT format.
+
+**Cross-decode standards compliance, HT-fair**: 21/21 pairs
+(7 fixtures × 3 HT-capable external codecs) bit-exact. J2KSwift's
+HT codestream is consumed losslessly by OpenJPH, Grok, and Kakadu.
+
+#### C. EBCOT-fair comparison (every codec emitting EBCOT / Part-1)
+
+OpenJPH: N/A (HT-only codec — no EBCOT support in the codec itself).
+
+**Output bytes** — exact match across all four EBCOT-capable codecs
+(Part-1 EBCOT lossless converges):
+
+| Modality | Shape | Raw KB | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu |
+|---|---|---:|---:|---:|---:|---:|---:|
+| MR-small | 180×180   |    63 |    30 |    30 | N/A |    30 |    30 |
+| CT       | 512×512   |   512 |   324 |   324 | N/A |   324 |   324 |
+| CT       | 512×512   |   512 |   308 |   308 | N/A |   308 |   308 |
+| MR       | 886×886   |  1533 |   135 |   135 | N/A |   135 |   135 |
+| XA       | 1024×1024 |  2048 |  1337 |  1337 | N/A |  1337 |  1337 |
+| PX       | 2459×1316 |  6320 |  5485 |  5485 | N/A |  5485 |  5485 |
+| DX       | 2800×2288 | 12512 | 10559 | 10559 | N/A | 10559 | 10559 |
+
+**Encode time, EBCOT-fair (ms, median of 5):**
+
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
+|---|---|---:|---:|---:|---:|---:|:---|---:|
+| MR-small | 180×180   |  **2.8** |   10.4 | N/A |   8.7 |    3.4 | J2KSwift | +0.6 ms → Kakadu |
+| CT       | 512×512   |   16.4   |   54.8 | N/A |  15.6 |  **8.4** | Kakadu | 1.8× → Grok |
+| CT       | 512×512   |   15.5   |   53.1 | N/A |  16.3 |  **8.1** | Kakadu | 1.9× → J2KSwift |
+| MR       | 886×886   |   19.0   |   57.7 | N/A |  14.1 |  **5.6** | Kakadu | 2.5× → Grok |
+| XA       | 1024×1024 |   62.2   |  209.2 | N/A |  37.0 | **23.2** | Kakadu | 1.6× → Grok |
+| PX       | 2459×1316 |  204.5   |  737.6 | N/A | 136.3 | **89.1** | Kakadu | 1.5× → Grok |
+| DX       | 2800×2288 |  372.8   | 1396.8 | N/A | 244.3 | **157.4**| Kakadu | 1.6× → Grok |
+
+**Decode time, EBCOT-fair (ms, median of 5):**
+
+| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |
+|---|---|---:|---:|---:|---:|---:|:---|---:|
+| MR-small | 180×180   |  **2.6** |   10.5 | N/A |   8.9 |    3.3 | J2KSwift | +0.8 ms → Kakadu |
+| CT       | 512×512   |   17.4   |   54.8 | N/A |  15.0 |  **8.7** | Kakadu | 1.7× → Grok |
+| CT       | 512×512   |   13.3   |   53.9 | N/A |  14.7 |  **8.5** | Kakadu | 1.6× → J2KSwift |
+| MR       | 886×886   |   14.3   |   64.8 | N/A |  12.5 |  **6.5** | Kakadu | 1.9× → Grok |
+| XA       | 1024×1024 |   52.4   |  221.1 | N/A |  32.9 | **27.6** | Kakadu | +5.3 ms → Grok |
+| PX       | 2459×1316 |  198.6   |  730.6 | N/A | 109.4 | **99.8** | Kakadu | +9.6 ms → Grok |
+| DX       | 2800×2288 |  338.8   | 1365.8 | N/A | 189.6 | **177.3**| Kakadu | +12.3 ms → Grok |
+
+**EBCOT-fair leaderboard**: J2KSwift wins **MR-small only** (1/7) on
+both encode and decode. **Kakadu wins on 6/7 fixtures** by 1.5–2.5×
+margins. J2KSwift's EBCOT path is the un-tuned fallback (the v5.38
+optimisation work targeted the HT path); it remains correctness-
+clean (byte-identical to all three other EBCOT codecs) but is not
+performance-tuned at scale.
+
+**Cross-decode standards compliance, EBCOT-fair**: 21/21 pairs
+(7 fixtures × 3 EBCOT-capable external codecs) bit-exact. J2KSwift's
+EBCOT codestream is consumed losslessly by OpenJPEG, Grok, and Kakadu.
+
+#### Combined leaderboard summary
+
+| Sweep | J2KSwift fastest encode | J2KSwift fastest decode | What this means |
+|---|---:|---:|---|
+| Default-mode (mixed format) | **7/7** | **6/7** | Misleading — mixes HT-vs-EBCOT |
+| HT-vs-HT | 3/7 | 3/7 | J2KSwift wins small fixtures; **Kakadu wins large** |
+| EBCOT-vs-EBCOT | 1/7 | 1/7 | J2KSwift not optimised; **Kakadu wins almost everything** |
+
+**Honest precise claim**: *On the medical corpus tested, J2KSwift HT
+lossless is the fastest HT encoder + decoder for every fixture
+≤ 512×512. For fixtures ≥ 886×886, Kakadu 8.4.1 demo's HT
+implementation wins both encode and decode.* J2KSwift's encode
+output bytes match OpenJPH's bytes within 1 byte on every fixture
+(format-converged) and the codestream is bit-exact decoded by every
+mainstream Part-15 decoder.
+
+#### Cumulative v5.38 encode speedup vs v5.37 baseline (J2KSwift HT, median of 5)
 
 | Fixture | v5.37 | post-Step-A | post-M5 | post-M7 | post-M8 | post-M9 | Cumulative |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| DX 2800×2288  | 156.9 ms | 88.2 | 83.8 | 81.4 | 78.5 | **71.6 ms** | **2.19×** |
-| PX 2459×1316  |  78.3 ms | 44.6 | 42.7 | 39.8 | 38.9 |   37.0 ms | **2.12×** |
-| XA 1024×1024  |  22.4 ms | 13.5 | 13.0 | 12.4 | 12.2 |   11.4 ms | **1.96×** |
-| MR 886×886    |   7.6 ms |  6.5 |  6.1 |  5.7 |  5.5 |    5.2 ms | 1.46× |
+| DX 2800×2288  | 156.9 ms | 88.2 | 83.8 | 81.4 | 78.5 | **72.1 ms** | **2.18×** |
+| PX 2459×1316  |  78.3 ms | 44.6 | 42.7 | 39.8 | 38.9 |   38.6 ms | **2.03×** |
+| XA 1024×1024  |  22.4 ms | 13.5 | 13.0 | 12.4 | 12.2 |   11.5 ms | **1.95×** |
+| MR 886×886    |   7.6 ms |  6.5 |  6.1 |  5.7 |  5.5 |    5.9 ms | 1.29× |
 
-The DX 71.6 ms median (from this 5-run cross-codec gate) is faster
-than the 76.0 ms median reported in M9's stage-profile section. The
-gate test runs slightly less work per encode (no profile snapshot
-overhead), so its absolute timings are a touch lower. Same
-optimisation, same code, different test harness — both are
-representative of real production-encode latency.
-
-**Cumulative DX 12 MP encode speedup**: v5.37 baseline 156.9 ms →
-post-M9 71.6 ms = **2.19×**. PX 3.2 MP: **2.12×**.
+(post-M9 column from the **HT-fair** 5-run medians above; the
+default-mode column would show slightly different numbers because
+the J2KSwift encode runs identically — HT in both — and only the
+external codec mode differs.)
 
 #### Bottom-line recommendation for medical lossless workflows
 
 - **HT lossless** (`useHTJ2K: true`, `useReversibleFilter: true`,
   `htj2kBlockFormat: .conformant`, `bitrateMode: .lossless`) — the
-  default. **Fastest of all 5 codecs on 7/7 fixtures, encode AND
-  decode.** Codestream decodable by every mainstream Part-15-aware
-  decoder. The clear pick for active PACS and modern viewer pipelines.
+  default. **Fastest of the HT-capable codecs on the small-fixture
+  end of the corpus** (≤ 512×512); competitive but **slower than
+  Kakadu on large fixtures**. Codestream decodable by every
+  mainstream Part-15-aware decoder. The pick for active PACS and
+  modern viewer pipelines that need standards-clean output and
+  predictable Swift-process integration without spawning a CLI.
 
 - **EBCOT lossless** (`useHTJ2K: false`) — denser archive (13–32%
-  smaller bytes), 2–4× slower throughput, decodable by every Part-1
-  decoder ever shipped. Use when archival storage cost dominates AND
-  the consumer might be a legacy Part-1-only decoder.
+  smaller bytes than HT), bit-identical bytes to every other
+  Part-1-EBCOT codec, decodable by every Part-1 decoder ever
+  shipped. Use when archival storage cost dominates AND the
+  consumer might be a legacy Part-1-only decoder. **Performance-
+  un-tuned**: J2KSwift EBCOT is 2–4× slower than Kakadu EBCOT at
+  scale. If pure EBCOT throughput matters, Kakadu wins.
+
+- **Smallest lossless files** is a property of the **format**
+  (EBCOT vs HT), not the codec. Every modern Part-1 codec produces
+  bit-identical EBCOT bytes on this corpus.
 
 The decode/encode performance gap to the next-best codec on every
 fixture except DX is now large enough to be visible to end users

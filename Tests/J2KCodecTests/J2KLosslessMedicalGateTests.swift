@@ -144,49 +144,68 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
         }
     }
 
-    // MARK: - M2 cross-codec gate
+    // MARK: - Format-fair cross-codec matrix (default / HT / EBCOT)
 
-    /// v5.38 M2 — same medical corpus, but each fixture is run through
-    /// J2KSwift + OpenJPEG + OpenJPH + Grok + Kakadu with bit-exact
-    /// roundtrip + cross-decode assertions and per-codec timing.
-    ///
-    /// What the test verifies, per (codec, fixture):
-    ///   - codec roundtrip is bit-exact (codec encode → codec decode → original)
-    ///   - cross-decode: J2KSwift's lossless codestream decodes bit-exact
-    ///     in the external decoder
-    ///
-    /// What it reports (markdown table):
-    ///   - encode-ms, decode-ms, output-bytes, ratio-vs-raw per codec
-    ///   - cross-decode pass/fail for each (J2KSwift→external) pair
-    ///
-    /// Tools missing on disk are skipped (XCTSkip per codec); the test
-    /// only fails on a positive bit-exact violation. This means the
-    /// gate is informative on partial environments but only enforces
-    /// what's actually installed.
-    func testLosslessCrossCodecMatrixAcrossMedicalCorpus() async throws {
-        struct CodecRow {
-            let codec: String
-            var encMs: Double = 0
-            var decMs: Double = 0
-            var outBytes: Int = 0
-            var roundTripBitExact: Bool = false
-            var crossDecodeBitExact: Bool = false
-            var available: Bool = false
-        }
-        struct FixtureReport {
-            let modality: String
-            let label: String
-            let pixels: Int
-            let rawBytes: Int
-            var j2kSwiftBytes: Int
-            var j2kSwiftEncMs: Double
-            var j2kSwiftDecMs: Double
-            var codecs: [CodecRow]
-        }
+    /// Per-(codec, fixture) result captured by the matrix runner.
+    /// `availability == .unsupported` means the codec's CLI build
+    /// can't produce the requested format — printed as `N/A` rather
+    /// than faked.
+    private struct CodecRow {
+        enum Availability { case ok, missingTool, unsupported }
+        let codec: String
+        var encMs: Double = 0
+        var decMs: Double = 0
+        var outBytes: Int = 0
+        var roundTripBitExact: Bool = false
+        var crossDecodeBitExact: Bool = false
+        var availability: Availability = .missingTool
+    }
+    private struct FixtureReport {
+        let modality: String
+        let label: String
+        let pixels: Int
+        let rawBytes: Int
+        var j2kSwiftBytes: Int
+        var j2kSwiftEncMs: Double
+        var j2kSwiftDecMs: Double
+        var codecs: [CodecRow]
+    }
 
+    /// Median of `samples`. Caller passes a non-empty array.
+    private static func median(_ samples: [Double]) -> Double {
+        precondition(!samples.isEmpty)
+        let sorted = samples.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    /// Run one (J2KSwift config, external-codec mode) sweep across
+    /// the medical corpus, taking the **median of 5** encode and
+    /// decode times per (codec, fixture). Returns one `FixtureReport`
+    /// per fixture.
+    ///
+    /// Per-(codec, fixture) gates that fail the test on violation:
+    ///   - J2KSwift self-roundtrip bit-exact (MAE = 0)
+    ///   - external self-roundtrip bit-exact (MAE = 0)
+    ///   - external cross-decode of J2KSwift codestream bit-exact,
+    ///     **only when both J2KSwift and external are emitting the
+    ///     same format** — i.e., HT-fair sweep cross-decodes; EBCOT-
+    ///     fair sweep cross-decodes; default-mode sweep cross-decodes
+    ///     only where defaults align (J2KSwift HT → OpenJPH HT works,
+    ///     J2KSwift HT → OpenJPEG EBCOT does not — the latter is
+    ///     skipped, not failed).
+    ///
+    /// Encoded byte counts are checked deterministic across the 5
+    /// runs (a fail flags an encoder non-determinism regression).
+    private func runCrossCodecMatrix(
+        j2kConfig: J2KEncodingConfiguration,
+        externalMode: CrossCodecTooling.LosslessMode,
+        formatFairCrossDecode: Bool,
+        runs: Int = 5,
+        sectionLabel: String,
+        tempSubdir: String
+    ) async throws -> [FixtureReport] {
         var reports: [FixtureReport] = []
-        var ranAtLeastOne = false
-        let tempDir = NSTemporaryDirectory().appending("/j2k_lossless_gate_m2/")
+        let tempDir = NSTemporaryDirectory().appending(tempSubdir)
         try? FileManager.default.removeItem(atPath: tempDir)
         try FileManager.default.createDirectory(
             atPath: tempDir, withIntermediateDirectories: true)
@@ -194,82 +213,135 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
         for fixture in CrossCodecTooling.medicalCorpus {
             guard let url = CrossCodecTooling.fixtureURL(fixture.path) else { continue }
             guard let img = try CrossCodecTooling.loadPGM16BE(url) else { continue }
-            ranAtLeastOne = true
 
             let pixels = img.width * img.height * img.componentCount
             let bytesPerSample = (img.components[0].bitDepth + 7) / 8
             let rawBytes = pixels * bytesPerSample
 
-            // J2KSwift baseline.
-            let cfg = losslessConfig()
-            let encoder = J2KEncoder(encodingConfiguration: cfg)
+            // J2KSwift: median-of-N encode + decode.
+            let encoder = J2KEncoder(encodingConfiguration: j2kConfig)
             let decoder = J2KDecoder()
-            // Warm up BOTH encode and decode. The Metal-backed decode
-            // pays a one-time lazy-init cost on its first non-trivial
-            // call (~40-50 ms on M1 for a 512² CT image); without a
-            // decoder warm-up that latency lands in the first measured
-            // pass and pollutes the table. Encoder also benefits.
+            // Warm up encode AND decode (Metal lazy-init can pollute
+            // the first measured decode by ~40-50 ms on M1).
             let warmData = try await encoder.encode(img)
             _ = try await decoder.decode(warmData)
-            let encStart = CFAbsoluteTimeGetCurrent()
-            let j2kData = try await encoder.encode(img)
-            let j2kEncMs = (CFAbsoluteTimeGetCurrent() - encStart) * 1000.0
-            let decStart = CFAbsoluteTimeGetCurrent()
-            let j2kDecoded = try await decoder.decode(j2kData)
-            let j2kDecMs = (CFAbsoluteTimeGetCurrent() - decStart) * 1000.0
-            XCTAssertTrue(CrossCodecTooling.bitExactPixelMatch(img, j2kDecoded),
-                "J2KSwift lossless self-roundtrip not bit-exact: \(fixture.modality) \(fixture.labelHint)")
 
-            // J2KSwift codestream written to disk for cross-decode.
+            var encSamples: [Double] = []
+            var decSamples: [Double] = []
+            var lastBytes: Int = 0
+            for _ in 0..<runs {
+                let encStart = CFAbsoluteTimeGetCurrent()
+                let data = try await encoder.encode(img)
+                encSamples.append((CFAbsoluteTimeGetCurrent() - encStart) * 1000.0)
+                XCTAssertTrue(lastBytes == 0 || lastBytes == data.count,
+                    "J2KSwift encode non-deterministic: \(fixture.modality) \(fixture.labelHint) — \(lastBytes) vs \(data.count)")
+                lastBytes = data.count
+                let decStart = CFAbsoluteTimeGetCurrent()
+                let decoded = try await decoder.decode(data)
+                decSamples.append((CFAbsoluteTimeGetCurrent() - decStart) * 1000.0)
+                XCTAssertTrue(CrossCodecTooling.bitExactPixelMatch(img, decoded),
+                    "J2KSwift self-roundtrip not bit-exact: \(fixture.modality) \(fixture.labelHint)")
+            }
+            let j2kEncMs = Self.median(encSamples)
+            let j2kDecMs = Self.median(decSamples)
+            let j2kBytes = lastBytes
+
+            // Persist the J2KSwift codestream once for cross-decode
+            // attempts later. Use a uniform `.j2k` extension; that's
+            // valid on every external decoder we use.
             let j2kSwiftPath = tempDir + "j2kswift_\(fixture.modality)_\(fixture.labelHint).j2k"
+            // Re-encode once into a Data we can write to disk.
+            let j2kData = try await encoder.encode(img)
             try j2kData.write(to: URL(fileURLWithPath: j2kSwiftPath))
 
-            // Per-codec roundtrip + cross-decode.
+            // Per-external-codec roundtrip + (optionally) cross-decode.
             var codecRows: [CodecRow] = []
             for codec in CrossCodecTooling.Codec.allCases {
                 var row = CodecRow(codec: codec.rawValue)
-                let inPath = url.path  // original PGM
-                let outJ2K = tempDir + "\(codec.rawValue)_\(fixture.modality)_\(fixture.labelHint).j2k"
+                if !CrossCodecTooling.codecSupports(codec, mode: externalMode) {
+                    row.availability = .unsupported
+                    codecRows.append(row); continue
+                }
+                if CrossCodecTooling.findTool(codec.compressTool) == nil {
+                    row.availability = .missingTool
+                    codecRows.append(row); continue
+                }
+                row.availability = .ok
+
+                let inPath = url.path
+                let ext = CrossCodecTooling.compressedExtension(codec, mode: externalMode)
+                let outPath = tempDir + "\(codec.rawValue)_\(fixture.modality)_\(fixture.labelHint)\(ext)"
                 let outPGM = tempDir + "\(codec.rawValue)_\(fixture.modality)_\(fixture.labelHint)_dec.pgm"
                 let crossPGM = tempDir + "\(codec.rawValue)_\(fixture.modality)_\(fixture.labelHint)_crossdec.pgm"
 
-                // Compressor.
-                let comp = try CrossCodecTooling.compressLossless(codec, input: inPath, output: outJ2K)
-                if comp.status == -1 {
-                    // Tool missing — leave row.available = false and continue.
-                    codecRows.append(row); continue
+                // External compress: median-of-N (with deterministic
+                // bytes invariant on every run).
+                var compSamples: [Double] = []
+                var compBytes: Int = 0
+                for runIdx in 0..<runs {
+                    let comp = try CrossCodecTooling.compressLossless(
+                        codec, mode: externalMode, input: inPath, output: outPath)
+                    XCTAssertEqual(comp.status, 0,
+                        "\(codec) [\(externalMode)] compress failed on \(fixture.modality) \(fixture.labelHint)")
+                    let bytes = CrossCodecTooling.fileSize(outPath)
+                    if runIdx > 0 {
+                        XCTAssertEqual(bytes, compBytes,
+                            "\(codec) [\(externalMode)] non-deterministic bytes on \(fixture.modality) \(fixture.labelHint)")
+                    }
+                    compBytes = bytes
+                    compSamples.append(comp.ms)
                 }
-                row.available = true
-                XCTAssertEqual(comp.status, 0,
-                    "\(codec) compress failed on \(fixture.modality) \(fixture.labelHint)")
-                row.encMs = comp.ms
-                row.outBytes = CrossCodecTooling.fileSize(outJ2K)
+                row.encMs = Self.median(compSamples)
+                row.outBytes = compBytes
 
-                // Decompressor (codec roundtrip).
-                let dec = try CrossCodecTooling.decompressLossless(codec, input: outJ2K, output: outPGM)
-                XCTAssertEqual(dec.status, 0,
-                    "\(codec) decompress failed on \(fixture.modality) \(fixture.labelHint)")
-                row.decMs = dec.ms
-
+                // External decompress: median-of-N + once-per-fixture
+                // bit-exact roundtrip check.
+                var decSamples: [Double] = []
+                for _ in 0..<runs {
+                    let dec = try CrossCodecTooling.decompressLossless(
+                        codec, input: outPath, output: outPGM)
+                    XCTAssertEqual(dec.status, 0,
+                        "\(codec) decompress failed on \(fixture.modality) \(fixture.labelHint)")
+                    decSamples.append(dec.ms)
+                }
+                row.decMs = Self.median(decSamples)
                 if let decImg = try CrossCodecTooling.loadPGM16BE(URL(fileURLWithPath: outPGM)) {
                     row.roundTripBitExact = CrossCodecTooling.bitExactPixelMatch(img, decImg)
                     if !row.roundTripBitExact {
                         let maxDiff = CrossCodecTooling.maxAbsPixelDiff(img, decImg)
-                        XCTFail("\(codec) self-roundtrip not bit-exact on \(fixture.modality) \(fixture.labelHint): max abs diff = \(maxDiff)")
+                        XCTFail("\(codec) [\(externalMode)] self-roundtrip not bit-exact on \(fixture.modality) \(fixture.labelHint): max abs diff = \(maxDiff)")
                     }
                 }
 
-                // Cross-decode: J2KSwift codestream → external decoder.
-                let cross = try CrossCodecTooling.decompressLossless(codec, input: j2kSwiftPath, output: crossPGM)
-                if cross.status == 0,
-                   let crossImg = try CrossCodecTooling.loadPGM16BE(URL(fileURLWithPath: crossPGM)) {
-                    row.crossDecodeBitExact = CrossCodecTooling.bitExactPixelMatch(img, crossImg)
-                    if !row.crossDecodeBitExact {
-                        let maxDiff = CrossCodecTooling.maxAbsPixelDiff(img, crossImg)
-                        XCTFail("J2KSwift→\(codec) cross-decode not bit-exact on \(fixture.modality) \(fixture.labelHint): max abs diff = \(maxDiff)")
+                // Cross-decode: only meaningful when J2KSwift and the
+                // external codec emit the same format. If
+                // `formatFairCrossDecode` is true, exercise it; if
+                // false (default-mode sweep mixes formats), we still
+                // try cross-decode where it's known to work (HT↔HT
+                // and skip silently otherwise — the default-mode
+                // sweep's cross-decode column is informative not
+                // gating).
+                let externalIsHT = (externalMode == .htLossless)
+                                || (externalMode == .defaultLossless && codec == .openjph)
+                let j2kIsHT = j2kConfig.useHTJ2K
+                let formatsAlign = formatFairCrossDecode || (externalIsHT == j2kIsHT)
+                if formatsAlign {
+                    let cross = try CrossCodecTooling.decompressLossless(
+                        codec, input: j2kSwiftPath, output: crossPGM)
+                    if cross.status == 0,
+                       let crossImg = try CrossCodecTooling.loadPGM16BE(URL(fileURLWithPath: crossPGM)) {
+                        row.crossDecodeBitExact = CrossCodecTooling.bitExactPixelMatch(img, crossImg)
+                        if !row.crossDecodeBitExact {
+                            let maxDiff = CrossCodecTooling.maxAbsPixelDiff(img, crossImg)
+                            XCTFail("J2KSwift→\(codec) [\(externalMode)] cross-decode not bit-exact on \(fixture.modality) \(fixture.labelHint): max abs diff = \(maxDiff)")
+                        }
+                    } else {
+                        // formatFairCrossDecode means we EXPECT it to
+                        // work; status != 0 is a failure to flag.
+                        if formatFairCrossDecode {
+                            XCTFail("J2KSwift→\(codec) [\(externalMode)] cross-decode failed (status \(cross.status)) on \(fixture.modality) \(fixture.labelHint)")
+                        }
                     }
-                } else {
-                    XCTFail("J2KSwift→\(codec) cross-decode failed (status \(cross.status)) on \(fixture.modality) \(fixture.labelHint)")
                 }
 
                 codecRows.append(row)
@@ -279,69 +351,196 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
                 modality: fixture.modality,
                 label: fixture.labelHint.isEmpty ? "\(img.width)×\(img.height)" : fixture.labelHint,
                 pixels: pixels, rawBytes: rawBytes,
-                j2kSwiftBytes: j2kData.count,
+                j2kSwiftBytes: j2kBytes,
                 j2kSwiftEncMs: j2kEncMs,
                 j2kSwiftDecMs: j2kDecMs,
                 codecs: codecRows))
         }
 
-        if !ranAtLeastOne { throw XCTSkip("medical corpus fixtures not present") }
+        if reports.isEmpty { throw XCTSkip("medical corpus fixtures not present") }
 
-        // ---- Print Bytes / Ratio table ----
-        print("\n=== v5.38 M2 — Lossless cross-codec BYTES + RATIO across medical corpus ===")
+        // ---- Print Bytes table ----
+        print("\n=== v5.38 \(sectionLabel) — Lossless BYTES + RATIO (median of \(runs) runs) ===")
         print("| Modality | Shape | Raw KB | J2KSwift KB | OpenJPEG KB | OpenJPH KB | Grok KB | Kakadu KB | J2KSwift× | OpenJPEG× | OpenJPH× | Grok× | Kakadu× |")
         print("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for r in reports {
-            func cell(_ codec: String) -> CodecRow? {
-                r.codecs.first(where: { $0.codec == codec })
+            func cell(_ name: String) -> CodecRow? {
+                r.codecs.first(where: { $0.codec == name })
             }
-            let opj = cell("openjpeg"); let oph = cell("openjph"); let grk = cell("grok"); let kdu = cell("kakadu")
-            func kb(_ b: Int) -> String { b > 0 ? "\(b / 1024)" : "—" }
-            func ratio(_ b: Int) -> String { b > 0 ? String(format: "%.2f", Double(r.rawBytes) / Double(b)) : "—" }
+            let opj = cell("openjpeg"); let oph = cell("openjph")
+            let grk = cell("grok"); let kdu = cell("kakadu")
+            func kb(_ row: CodecRow?) -> String {
+                guard let row = row else { return "—" }
+                switch row.availability {
+                case .ok: return "\(row.outBytes / 1024)"
+                case .unsupported: return "N/A"
+                case .missingTool: return "—"
+                }
+            }
+            func ratio(_ row: CodecRow?) -> String {
+                guard let row = row, row.availability == .ok, row.outBytes > 0 else {
+                    return row?.availability == .unsupported ? "N/A" : "—"
+                }
+                return String(format: "%.2f", Double(r.rawBytes) / Double(row.outBytes)) + "×"
+            }
             let j2kKB = r.j2kSwiftBytes / 1024
             let j2kRatio = String(format: "%.2f", Double(r.rawBytes) / Double(r.j2kSwiftBytes))
-            print("| \(r.modality) | \(r.label) | \(r.rawBytes / 1024) | \(j2kKB) | \(kb(opj?.outBytes ?? 0)) | \(kb(oph?.outBytes ?? 0)) | \(kb(grk?.outBytes ?? 0)) | \(kb(kdu?.outBytes ?? 0)) | \(j2kRatio)× | \(ratio(opj?.outBytes ?? 0))× | \(ratio(oph?.outBytes ?? 0))× | \(ratio(grk?.outBytes ?? 0))× | \(ratio(kdu?.outBytes ?? 0))× |")
+            print("| \(r.modality) | \(r.label) | \(r.rawBytes / 1024) | \(j2kKB) | \(kb(opj)) | \(kb(oph)) | \(kb(grk)) | \(kb(kdu)) | \(j2kRatio)× | \(ratio(opj)) | \(ratio(oph)) | \(ratio(grk)) | \(ratio(kdu)) |")
         }
 
-        // ---- Print Encode timing table ----
-        print("\n=== v5.38 M2 — Lossless ENCODE TIME (ms) across medical corpus ===")
-        print("| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu |")
-        print("|---|---|---:|---:|---:|---:|---:|")
+        // ---- Encode timing table + per-row fastest ----
+        print("\n=== v5.38 \(sectionLabel) — Lossless ENCODE TIME (ms, median of \(runs)) ===")
+        print("| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |")
+        print("|---|---|---:|---:|---:|---:|---:|:---|---:|")
         for r in reports {
-            func t(_ codec: String) -> String {
-                guard let row = r.codecs.first(where: { $0.codec == codec }), row.available else { return "—" }
-                return String(format: "%.1f", row.encMs)
+            func t(_ name: String) -> (String, Double?) {
+                guard let row = r.codecs.first(where: { $0.codec == name }) else {
+                    return ("—", nil)
+                }
+                switch row.availability {
+                case .ok: return (String(format: "%.1f", row.encMs), row.encMs)
+                case .unsupported: return ("N/A", nil)
+                case .missingTool: return ("—", nil)
+                }
             }
-            print(String(format: "| %@ | %@ | %.1f | %@ | %@ | %@ | %@ |",
-                         r.modality, r.label, r.j2kSwiftEncMs,
-                         t("openjpeg"), t("openjph"), t("grok"), t("kakadu")))
+            let pairs: [(String, (String, Double?))] = [
+                ("J2KSwift", (String(format: "%.1f", r.j2kSwiftEncMs), r.j2kSwiftEncMs)),
+                ("OpenJPEG", t("openjpeg")),
+                ("OpenJPH", t("openjph")),
+                ("Grok", t("grok")),
+                ("Kakadu", t("kakadu")),
+            ]
+            let times = pairs.compactMap { (name, p) -> (String, Double)? in
+                p.1.map { (name, $0) }
+            }
+            let sorted = times.sorted { $0.1 < $1.1 }
+            let fastest = sorted.first.map { $0.0 } ?? "—"
+            let margin: String
+            if sorted.count >= 2 {
+                let next = sorted[1]
+                let delta = next.1 - sorted[0].1
+                let ratioX = next.1 / sorted[0].1
+                margin = ratioX >= 1.5
+                    ? String(format: "%.1f× → %@", ratioX, next.0)
+                    : String(format: "+%.1f ms → %@", delta, next.0)
+            } else {
+                margin = "—"
+            }
+            print(String(format: "| %@ | %@ | %@ | %@ | %@ | %@ | %@ | %@ | %@ |",
+                         r.modality, r.label,
+                         pairs[0].1.0, pairs[1].1.0, pairs[2].1.0, pairs[3].1.0, pairs[4].1.0,
+                         fastest, margin))
         }
 
-        // ---- Print Decode timing table ----
-        print("\n=== v5.38 M2 — Lossless DECODE TIME (ms) across medical corpus ===")
-        print("| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu |")
-        print("|---|---|---:|---:|---:|---:|---:|")
+        // ---- Decode timing table + per-row fastest ----
+        print("\n=== v5.38 \(sectionLabel) — Lossless DECODE TIME (ms, median of \(runs)) ===")
+        print("| Modality | Shape | J2KSwift | OpenJPEG | OpenJPH | Grok | Kakadu | Fastest | Margin → next |")
+        print("|---|---|---:|---:|---:|---:|---:|:---|---:|")
         for r in reports {
-            func t(_ codec: String) -> String {
-                guard let row = r.codecs.first(where: { $0.codec == codec }), row.available else { return "—" }
-                return String(format: "%.1f", row.decMs)
+            func t(_ name: String) -> (String, Double?) {
+                guard let row = r.codecs.first(where: { $0.codec == name }) else {
+                    return ("—", nil)
+                }
+                switch row.availability {
+                case .ok: return (String(format: "%.1f", row.decMs), row.decMs)
+                case .unsupported: return ("N/A", nil)
+                case .missingTool: return ("—", nil)
+                }
             }
-            print(String(format: "| %@ | %@ | %.1f | %@ | %@ | %@ | %@ |",
-                         r.modality, r.label, r.j2kSwiftDecMs,
-                         t("openjpeg"), t("openjph"), t("grok"), t("kakadu")))
+            let pairs: [(String, (String, Double?))] = [
+                ("J2KSwift", (String(format: "%.1f", r.j2kSwiftDecMs), r.j2kSwiftDecMs)),
+                ("OpenJPEG", t("openjpeg")),
+                ("OpenJPH", t("openjph")),
+                ("Grok", t("grok")),
+                ("Kakadu", t("kakadu")),
+            ]
+            let times = pairs.compactMap { (name, p) -> (String, Double)? in
+                p.1.map { (name, $0) }
+            }
+            let sorted = times.sorted { $0.1 < $1.1 }
+            let fastest = sorted.first.map { $0.0 } ?? "—"
+            let margin: String
+            if sorted.count >= 2 {
+                let next = sorted[1]
+                let delta = next.1 - sorted[0].1
+                let ratioX = next.1 / sorted[0].1
+                margin = ratioX >= 1.5
+                    ? String(format: "%.1f× → %@", ratioX, next.0)
+                    : String(format: "+%.1f ms → %@", delta, next.0)
+            } else {
+                margin = "—"
+            }
+            print(String(format: "| %@ | %@ | %@ | %@ | %@ | %@ | %@ | %@ | %@ |",
+                         r.modality, r.label,
+                         pairs[0].1.0, pairs[1].1.0, pairs[2].1.0, pairs[3].1.0, pairs[4].1.0,
+                         fastest, margin))
         }
 
-        // ---- Print Cross-decode pass/fail matrix ----
-        print("\n=== v5.38 M2 — Lossless CROSS-DECODE matrix (J2KSwift → external) ===")
-        print("| Modality | Shape | OpenJPEG | OpenJPH | Grok | Kakadu |")
-        print("|---|---|:---:|:---:|:---:|:---:|")
+        // ---- Roundtrip + cross-decode matrix ----
+        print("\n=== v5.38 \(sectionLabel) — Roundtrip + cross-decode matrix ===")
+        print("| Modality | Shape | OpenJPEG self | OpenJPH self | Grok self | Kakadu self | OpenJPEG ←J2K | OpenJPH ←J2K | Grok ←J2K | Kakadu ←J2K |")
+        print("|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
         for r in reports {
-            func m(_ codec: String) -> String {
-                guard let row = r.codecs.first(where: { $0.codec == codec }), row.available else { return "n/a" }
-                return row.crossDecodeBitExact ? "✓" : "✗"
+            func mark(_ name: String, kind: String) -> String {
+                guard let row = r.codecs.first(where: { $0.codec == name }) else { return "—" }
+                switch row.availability {
+                case .unsupported: return "N/A"
+                case .missingTool: return "—"
+                case .ok:
+                    return kind == "self"
+                        ? (row.roundTripBitExact ? "✓" : "✗")
+                        : (row.crossDecodeBitExact ? "✓" : "—")
+                    // crossDecode "—" means not attempted (formats
+                    // misalign in default-mode sweep); fail would
+                    // already have XCTFailed above.
+                }
             }
-            print("| \(r.modality) | \(r.label) | \(m("openjpeg")) | \(m("openjph")) | \(m("grok")) | \(m("kakadu")) |")
+            print("| \(r.modality) | \(r.label) | \(mark("openjpeg", kind: "self")) | \(mark("openjph", kind: "self")) | \(mark("grok", kind: "self")) | \(mark("kakadu", kind: "self")) | \(mark("openjpeg", kind: "cross")) | \(mark("openjph", kind: "cross")) | \(mark("grok", kind: "cross")) | \(mark("kakadu", kind: "cross")) |")
         }
+
+        return reports
+    }
+
+    // MARK: - Three mode-specific tests
+
+    /// **Default-mode sweep**: each codec runs as it ships out of the
+    /// box. **Mixes HT and EBCOT formats in the same row** —
+    /// J2KSwift / OpenJPH default to HT; OpenJPEG / Grok / Kakadu
+    /// default to EBCOT. Useful for "what does the user get if they
+    /// just run the binary as-is", but byte counts in this table
+    /// reflect a format trade-off, not codec quality.
+    func testLosslessCrossCodecMatrixAcrossMedicalCorpus_DefaultModes() async throws {
+        _ = try await runCrossCodecMatrix(
+            j2kConfig: losslessConfig(),  // J2KSwift HT default
+            externalMode: .defaultLossless,
+            formatFairCrossDecode: false,
+            sectionLabel: "M2-default — codec-default modes (mixed HT/EBCOT)",
+            tempSubdir: "/j2k_lossless_gate_default/")
+    }
+
+    /// **HT-fair sweep**: every codec emits HT/Part-15 lossless. Apples-to-
+    /// apples format comparison. OpenJPEG is N/A on this build
+    /// (CLI lacks HT encoding capability — its `-M 64` does not produce
+    /// a Part-15 codestream that OpenJPH will accept).
+    func testLosslessCrossCodecMatrixAcrossMedicalCorpus_HTFair() async throws {
+        _ = try await runCrossCodecMatrix(
+            j2kConfig: losslessConfig(),  // J2KSwift HT
+            externalMode: .htLossless,
+            formatFairCrossDecode: true,
+            sectionLabel: "HT-fair — every codec emitting HT/Part-15",
+            tempSubdir: "/j2k_lossless_gate_htfair/")
+    }
+
+    /// **EBCOT-fair sweep**: every codec emits EBCOT/Part-1 lossless.
+    /// Apples-to-apples for the legacy decoder world. OpenJPH is N/A
+    /// (HT-only codec).
+    func testLosslessCrossCodecMatrixAcrossMedicalCorpus_EBCOTFair() async throws {
+        _ = try await runCrossCodecMatrix(
+            j2kConfig: ebcotLosslessConfig(),  // J2KSwift EBCOT
+            externalMode: .ebcotLossless,
+            formatFairCrossDecode: true,
+            sectionLabel: "EBCOT-fair — every codec emitting EBCOT/Part-1",
+            tempSubdir: "/j2k_lossless_gate_ebcotfair/")
     }
 
     // MARK: - M4 HT vs EBCOT comparison

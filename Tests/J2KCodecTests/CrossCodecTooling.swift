@@ -101,39 +101,112 @@ enum CrossCodecTooling {
         return (proc.terminationStatus, ms)
     }
 
+    // MARK: - Lossless mode selection
+
+    /// Lossless codestream-format selection for the cross-codec gate.
+    ///
+    /// Two JPEG 2000 lossless flavours interoperate but produce
+    /// different byte counts on the same input: classic Part 1 EBCOT
+    /// (denser on high-bit-depth medical content, ~13-15% smaller
+    /// than HT) and Part 15 HT cleanup-only (faster encode/decode,
+    /// looser bytes). The default-mode invocations vary across the
+    /// installed codecs:
+    /// - J2KSwift: HT default
+    /// - OpenJPH:  HT only (no EBCOT support — capability limit)
+    /// - OpenJPEG: EBCOT default; CLI in this build cannot encode HT
+    ///             (the `-M 64` HT bit emits an EBCOT codestream that
+    ///             OpenJPH refuses with "Rsiz bit 14 is not set —
+    ///             this is not a JPH file"; HT encoding requires a
+    ///             different OpenJPEG build configuration)
+    /// - Grok:     EBCOT default; HT requires `.jph` extension + `-M 64`
+    /// - Kakadu:   EBCOT default; HT requires `Cmodes=HT`
+    ///
+    /// Pass `.htLossless` or `.ebcotLossless` to compare the same
+    /// format across codecs (format-fair); pass `.defaultLossless`
+    /// for the as-shipped codec defaults (mixed format).
+    public enum LosslessMode {
+        case defaultLossless
+        case htLossless
+        case ebcotLossless
+    }
+
+    /// Whether a codec supports a given mode through its installed
+    /// CLI on this machine (probed against macOS Homebrew 2026-05-05).
+    /// Returning `false` means the cross-codec gate should mark the
+    /// cell as N/A rather than fake a result.
+    static func codecSupports(_ codec: Codec, mode: LosslessMode) -> Bool {
+        switch (codec, mode) {
+        case (.openjpeg, .htLossless): return false  // CLI build limit
+        case (.openjph,  .ebcotLossless): return false  // HT-only codec
+        default: return true
+        }
+    }
+
     // MARK: - Codec-specific lossless invocations
     //
-    // Each codec has its own preferred lossless flag. Below we centralise
-    // the canonical lossless invocation for compressors and decompressors,
-    // verified against the installed binaries on 2026-05-05:
-    //   - opj_compress  v2.5.4  : default is lossless when no rate given.
-    //   - ojph_compress         : `-reversible true` for 5/3 lossless.
-    //   - grk_compress          : default is lossless when no rate given.
-    //   - kdu_compress  v8.4.1  : `Creversible=yes` for 5/3 lossless.
+    // Below we centralise the canonical lossless invocation for each
+    // codec across the three modes, verified against the installed
+    // binaries on 2026-05-05:
+    //
+    //   - opj_compress  v2.5.4  default = EBCOT; HT not exposed via CLI
+    //   - ojph_compress         HT-only;          EBCOT N/A
+    //   - grk_compress          default = EBCOT; HT via .jph + -M 64
+    //   - kdu_compress  v8.4.1  default = EBCOT; HT via Cmodes=HT
+    //
+    // The output extension is fixed per codec: `.j2k` for EBCOT and
+    // OpenJPEG/Kakadu HT, `.jph` for Grok HT (Grok requires the
+    // jph extension to honour the `-M 64` mode flag — a `.j2k` HT
+    // request errors with "High throughput compression mode cannot
+    // be used for non-HTJ2K file"). Callers must pass the matching
+    // extension via `output`.
 
     /// Runs the lossless compressor for `codec` on `input` (a PGM
-    /// path) and writes a J2K codestream to `output`. Returns
-    /// (status, ms). 0 status indicates success.
-    static func compressLossless(_ codec: Codec, input: String, output: String) throws -> (status: Int32, ms: Double) {
+    /// path) and writes a J2K (or .jph) codestream to `output`.
+    /// Returns (status, ms). Returns (-1, 0) if the tool isn't
+    /// installed; returns (-2, 0) if the requested mode isn't
+    /// supported by this codec's installed CLI.
+    static func compressLossless(
+        _ codec: Codec,
+        mode: LosslessMode,
+        input: String,
+        output: String
+    ) throws -> (status: Int32, ms: Double) {
+        guard codecSupports(codec, mode: mode) else { return (-2, 0.0) }
         guard let tool = findTool(codec.compressTool) else {
             return (-1, 0.0)
         }
         let args: [String]
-        switch codec {
-        case .openjpeg:
+        switch (codec, mode) {
+        // --- defaults ---
+        case (.openjpeg, .defaultLossless), (.openjpeg, .ebcotLossless):
             args = ["-i", input, "-o", output]
-        case .openjph:
+        case (.openjph, .defaultLossless), (.openjph, .htLossless):
             args = ["-i", input, "-o", output, "-reversible", "true"]
-        case .grok:
+        case (.grok, .defaultLossless), (.grok, .ebcotLossless):
             args = ["-i", input, "-o", output]
-        case .kakadu:
+        case (.kakadu, .defaultLossless), (.kakadu, .ebcotLossless):
             args = ["-i", input, "-o", output, "Creversible=yes", "-quiet"]
+
+        // --- explicit HT (where supported by CLI) ---
+        case (.grok, .htLossless):
+            // Grok requires the `.jph` extension to accept `-M 64`.
+            // The caller is expected to pass an output ending in `.jph`.
+            args = ["-i", input, "-o", output, "-M", "64"]
+        case (.kakadu, .htLossless):
+            args = ["-i", input, "-o", output, "Creversible=yes", "Cmodes=HT", "-quiet"]
+
+        // --- unreachable per `codecSupports` guard above ---
+        case (.openjpeg, .htLossless),
+             (.openjph, .ebcotLossless):
+            return (-2, 0.0)
         }
         return try timeTool(tool, args: args)
     }
 
-    /// Runs the decompressor for `codec` on `input` (J2K codestream)
-    /// and writes a PGM to `output`. Returns (status, ms).
+    /// Runs the decompressor for `codec` on `input` (J2K or .jph
+    /// codestream) and writes a PGM to `output`. Returns (status, ms).
+    /// Decompressors don't need a mode parameter — they auto-detect
+    /// the format from the codestream header.
     static func decompressLossless(_ codec: Codec, input: String, output: String) throws -> (status: Int32, ms: Double) {
         guard let tool = findTool(codec.decompressTool) else {
             return (-1, 0.0)
@@ -150,6 +223,16 @@ enum CrossCodecTooling {
             args = ["-i", input, "-o", output, "-quiet"]
         }
         return try timeTool(tool, args: args)
+    }
+
+    /// File extension a given codec needs for its compressed output
+    /// in a given mode. Most cases use `.j2k`; Grok HT mode requires
+    /// `.jph`.
+    static func compressedExtension(_ codec: Codec, mode: LosslessMode) -> String {
+        switch (codec, mode) {
+        case (.grok, .htLossless): return ".jph"
+        default: return ".j2k"
+        }
     }
 
     /// Returns the file size of `path`, or 0 if missing. Convenience
