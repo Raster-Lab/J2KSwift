@@ -64,6 +64,15 @@ final class HTTileOriginPropagationTests: XCTestCase {
     /// This is the v6-alpha3 step 3 plumbing assertion: tile k > 0
     /// must NOT silently encode at (0, 0); it must encode at its
     /// real image-coordinate origin.
+    ///
+    /// **v6-alpha3 step 4 update**: the multi-tile encoder now
+    /// validates the layout's parity alignment up front
+    /// (`J2KError.invalidTileConfiguration` if any tile origin is not
+    /// a multiple of `2^decompositionLevels`). This test now covers
+    /// only the 32-aligned XA case where the encoder accepts the
+    /// layout and we can observe origin propagation. The
+    /// non-32-aligned MR/PX/DX layouts are exercised in
+    /// `HTMultiTileTrapReproducer` which asserts the clean throw.
     func testMultiTileOriginsReachEncoder() async throws {
         struct Probe {
             let label: String
@@ -73,41 +82,24 @@ final class HTTileOriginPropagationTests: XCTestCase {
             let expectedOrigins: [(Int, Int)]   // row-major
         }
         let probes: [Probe] = [
-            // MR 886×886, 2x2 → 443×443 tiles
-            Probe(label: "MR 886×886 2x2", imageW: 886, imageH: 886,
-                  mode: .tiles2x2,
-                  expectedOrigins: [(0, 0), (443, 0), (0, 443), (443, 443)]),
-            // PX 2459×1316, 2x2 → 1230×658 tiles
-            Probe(label: "PX 2459×1316 2x2", imageW: 2459, imageH: 1316,
-                  mode: .tiles2x2,
-                  expectedOrigins: [(0, 0), (1230, 0), (0, 658), (1230, 658)]),
-            // DX 2800×2288, 2x2 → 1400×1144 tiles
-            Probe(label: "DX 2800×2288 2x2", imageW: 2800, imageH: 2288,
-                  mode: .tiles2x2,
-                  expectedOrigins: [(0, 0), (1400, 0), (0, 1144), (1400, 1144)]),
-            // DX 2800×2288, 4x4 → 700×572 tiles
-            Probe(label: "DX 2800×2288 4x4", imageW: 2800, imageH: 2288,
-                  mode: .tiles4x4,
-                  expectedOrigins: (0..<16).map { k in
-                      let col = k % 4, row = k / 4
-                      return (col * 700, row * 572)
-                  }),
-            // XA 1024×1024, 2x2 → 512×512 tiles (the v6-alpha2-aligned
-            // case — included as a regression check that even-aligned
-            // origins also propagate)
+            // XA 1024×1024 2x2 — 32-aligned, multi-tile fires
             Probe(label: "XA 1024×1024 2x2", imageW: 1024, imageH: 1024,
                   mode: .tiles2x2,
                   expectedOrigins: [(0, 0), (512, 0), (0, 512), (512, 512)]),
+            // XA 1024×1024 4x4 — 32-aligned, multi-tile fires
+            Probe(label: "XA 1024×1024 4x4", imageW: 1024, imageH: 1024,
+                  mode: .tiles4x4,
+                  expectedOrigins: (0..<16).map { k in
+                      let col = k % 4, row = k / 4
+                      return (col * 256, row * 256)
+                  }),
         ]
 
         for probe in probes {
-            // Build the layout *bypassing* the planner constraint —
-            // we want to observe origin propagation regardless of
-            // whether the planner would currently fall back to
-            // single. The planner constraint is enforced at
-            // `J2KEncoder.encode`, not at the multi-tile dispatcher
-            // entry, so calling `J2KMultiTileEncoder.encode` directly
-            // with a synthetic layout works.
+            // Build the layout *bypassing* the planner — XA's
+            // 32-aligned layout passes the v6-alpha3 step 4 guard,
+            // so the encode succeeds and we can observe per-tile
+            // origins via the `J2KTileWorkObservation` struct.
             let (cols, rows): (Int, Int)
             switch probe.mode {
             case .tiles2x2:  (cols, rows) = (2, 2)

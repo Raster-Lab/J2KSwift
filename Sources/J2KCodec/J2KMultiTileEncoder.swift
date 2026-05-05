@@ -65,6 +65,69 @@ enum J2KMultiTileEncoder {
         let n = layout.tileCount
         precondition(n >= 1, "tile count must be ≥ 1")
 
+        // v6-alpha3 step 4: parity-alignment guard.
+        //
+        // The wrap-and-stitch path produces per-tile *standalone*
+        // codestreams whose `SIZ` marker declares image origin
+        // (0, 0) within the per-tile codestream. Step 3 made the
+        // per-tile DWT call use the tile's actual image-coordinate
+        // origin, which is mathematically correct — but the
+        // resulting per-tile codestream is now internally
+        // inconsistent: its SIZ declares origin (0, 0) while its
+        // content was encoded for a non-zero origin. The decoder
+        // cannot recover from this mismatch:
+        //
+        //   - J2KSwift's own (not-yet-parity-aware) decoder traps
+        //     in `J2KHTConformantMagSgnCoder.read(count:)` with
+        //     "MagSgn read width > 32" because the band sizes it
+        //     computes from the (0, 0)-origin SIZ disagree with
+        //     the encoder's parity-aware band sizes. The MagSgn
+        //     stream alignment drifts and the next codeword width
+        //     reads as garbage > 32 bits.
+        //   - External (parity-aware) decoders accept the stitched
+        //     codestream's main header (which DOES carry the
+        //     correct tile grid) and apply parity-aware inverse
+        //     DWT — but the per-tile body bytes still carry a
+        //     subtle wrap-and-stitch incompatibility that
+        //     produces wrong pixels (verified empirically:
+        //     OpenJPH/Grok/Kakadu max diff was 64371 pre-step-3
+        //     and is 65281 post-step-3 on MR 886×886 2x2 — the
+        //     encoder behaviour changed but the cross-decode bug
+        //     persists).
+        //
+        // Tests bypassing the v6-alpha2 planner can pass a layout
+        // that violates the parity-alignment constraint. Production
+        // never sees such layouts because the planner refuses
+        // them up-front. This guard refuses the encode here with
+        // a clear error rather than producing a malformed
+        // codestream that traps J2KSwift's decoder downstream.
+        //
+        // The constraint is identical to the v6-alpha2 planner
+        // constraint: every tile origin must be a multiple of
+        // `2^configuration.decompositionLevels` in both axes —
+        // because that's the only origin range for which the
+        // parity-aware DWT routes to the no-origin fast path at
+        // every decomposition level (and produces a codestream
+        // a non-parity-aware decoder can read).
+        //
+        // The proper fix (native multi-tile codestream assembler
+        // emitting one main header + N tile-parts) lives in
+        // v6-alpha3 step 5+. Until that lands, the wrap-and-stitch
+        // path is restricted to 32-aligned origins.
+        let minDim = 1 << configuration.decompositionLevels
+        for k in 0..<n {
+            let r = layout.rect(forTile: k)
+            if (r.x % minDim != 0) || (r.y % minDim != 0) {
+                throw J2KError.invalidTileConfiguration(
+                    "v6-alpha3 step 4: wrap-and-stitch multi-tile cannot represent tile " +
+                    "\(k) at origin (\(r.x), \(r.y)) — origin must be a multiple of " +
+                    "2^decompositionLevels (= \(minDim)) in both axes for the per-tile " +
+                    "codestream to remain self-consistent. Native multi-tile assembler " +
+                    "(v6-alpha3 step 5+) required for non-aligned origins."
+                )
+            }
+        }
+
         // Per-tile encode tasks. Each task captures its tile index
         // so we can sort results back into deterministic order.
         var perTileBytes = [Data?](repeating: nil, count: n)

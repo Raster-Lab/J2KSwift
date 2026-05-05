@@ -725,3 +725,174 @@ re-measured.
 > blocked until MR/PX/DX cross-decode passes through OpenJPH,
 > Grok, and Kakadu.** The Kakadu HT advantage on fixtures ≥ 886×886
 > documented in the v5.38 HT-fair table stands.
+
+---
+
+## v6-alpha3 step 4 — locate downstream blocker, install fail-fast guard
+
+### What the trap actually was
+
+Step 3 plumbed origin into the DWT call. Step 4 reproduced the
+SIGTRAP on a minimal 90×90 → 2×2 → 45×45 synthetic fixture (45 is
+not 32-aligned) and traced it to its first failure point: not in
+the encoder at all, but in the **decoder** —
+`J2KCodec/J2KHTConformantMagSgnCoder.swift:132: Precondition
+failed: MagSgn read width > 32`.
+
+Tracing the decode-side band-size computation
+(`J2KDWT1DOptimized.inverseTransform53Symmetric`,
+`J2KDWT1D.inverseTransform53`) confirmed the J2KSwift decoder is
+**not parity-aware**: it always interleaves with
+`result[i*2] = even[i]; result[i*2+1] = odd[i]` — fine for
+origin (0, 0) but wrong for any other origin. When the encoder
+produces parity-aware bytes for origin (45, 0) but the decoder
+reads them assuming origin (0, 0), the band sizes disagree, the
+MagSgn byte-stream alignment drifts, and the next codeword reads
+as a width > 32 → precondition trap.
+
+### Why wrap-and-stitch can't legally represent the parity-correct output
+
+Each per-tile encode in the wrap-and-stitch path is a *standalone*
+J2K codestream. Its `SIZ` marker declares `XOsiz = YOsiz = XTOsiz
+= YTOsiz = 0` — origin (0, 0). After step 3, the per-tile
+encoder's *content* is encoded for the tile's actual
+image-coordinate origin (e.g., (443, 0) for MR tile 1). The
+result is an **internally-inconsistent** standalone codestream:
+its declared origin doesn't match its content. Three failure
+modes follow:
+
+| Decoder | Outcome | Why |
+|---|---|---|
+| J2KSwift's own decoder (per-tile standalone) | SIGTRAP in MagSgn read | not parity-aware, band sizes from SIZ origin (0, 0) ≠ encoder's parity-aware sizes |
+| J2KSwift's own decoder (stitched multi-tile) | same SIGTRAP | inverse DWT has no per-tile origin propagation |
+| External (parity-aware) decoders on stitched output | exit 0, max abs diff = 65281 | accepts the codestream, applies parity-aware inverse DWT, but per-tile body bytes carry a wrap-and-stitch incompatibility ([different from v6-alpha2's 64371](#v6-alpha2-the-parity-matrix-that-nailed-root-cause); the encoder behaviour did change but not in a way that closes the gap) |
+
+The wrap-and-stitch model **cannot legally represent** parity-
+correct multi-tile encoding because the per-tile codestream's
+single-tile SIZ has no place to declare a non-zero tile-grid
+origin. The proper fix is the **native multi-tile assembler**
+(v6-alpha3 step 5): emit one main header + N tile-parts in a
+single pass, no per-tile standalone codestreams to stitch.
+
+### The step-4 guard
+
+Rather than land the full step-5 refactor in this commit, step 4
+adds a **fail-fast guard** at the entry to
+`J2KMultiTileEncoder.encode(...)`. The guard refuses any layout
+whose tile origins aren't multiples of `2^decompositionLevels` in
+both axes, throwing `J2KError.invalidTileConfiguration` with a
+clear message:
+
+```swift
+let minDim = 1 << configuration.decompositionLevels
+for k in 0..<n {
+    let r = layout.rect(forTile: k)
+    if (r.x % minDim != 0) || (r.y % minDim != 0) {
+        throw J2KError.invalidTileConfiguration(
+            "v6-alpha3 step 4: wrap-and-stitch multi-tile cannot " +
+            "represent tile \(k) at origin (\(r.x), \(r.y)) — " +
+            "origin must be a multiple of 2^decompositionLevels " +
+            "(= \(minDim)) in both axes for the per-tile " +
+            "codestream to remain self-consistent. Native " +
+            "multi-tile assembler (v6-alpha3 step 5+) required " +
+            "for non-aligned origins.")
+    }
+}
+```
+
+The constraint duplicates the v6-alpha2 planner's check at a
+deeper layer of the pipeline. **Production never sees a
+violating layout** because the planner rejects it up front;
+only test code that bypasses the planner can hit the guard.
+What the guard buys: those tests get a *clean error*, not a
+SIGTRAP.
+
+### v6-alpha3 step 4 — non-crash regression tests
+
+`Tests/J2KCodecTests/HTMultiTileTrapReproducer.swift` adds seven
+tests:
+
+| Test | What it asserts |
+|---|---|
+| `testPlannerBypassedMR2x2DoesNotTrap` | MR 886×886 / 2x2 (origins include 443) → clean `J2KError.invalidTileConfiguration` throw, no SIGTRAP |
+| `testPlannerBypassedPX2x2DoesNotTrap` | PX 2459×1316 / 2x2 (origins 1230, 658) → clean throw |
+| `testPlannerBypassedDX2x2DoesNotTrap` | DX 2800×2288 / 2x2 (origins 1400, 1144) → clean throw |
+| `testPlannerBypassedDX4x4DoesNotTrap` | DX 2800×2288 / 4x4 (origins 700, 572) → clean throw |
+| `testPlannerBypassedSyntheticOddOriginDoesNotTrap` | Synthetic 90×90 / 2x2 (origin 45) → clean throw — the minimal reproducer, runs without medical fixtures |
+| `testThirtyTwoAlignedXAStillSucceeds` | XA 1024×1024 / 2x2 (origins 512) → encode + self-roundtrip bit-exact |
+| `testThirtyTwoAlignedSyntheticStillSucceeds` | Synthetic 64×64 / 2x2 (origins 32) → encode succeeds |
+
+All seven pass.
+
+### Mandatory commit gates (default off)
+
+All green:
+
+| Suite | Result |
+|---|---|
+| `HTDWTParityAwarenessTests` (1D parity-aware DWT) | 4/4 |
+| `HTDWT2DParityAwarenessTests` (2D + multi-level) | 8/8 |
+| `HTTileOriginPropagationTests` (step 3 plumbing, XA-only after step 4) | 4/4 |
+| `HTMultiTileTrapReproducer` (step 4 non-crash regression) | 7/7 |
+| `J2KLosslessMedicalGateTests` (HT-fair 21/21, EBCOT-fair 28/28) | 5/5 |
+| `J2KMedicalCorpusEncodePerformanceTests` | 2/2 |
+| `J2KStrictCrossCodecValidationTests` | 3/3 |
+
+Production single-tile bytes are byte-identical to v5.38 / v5.39 /
+v6-alpha2.
+
+### What's still NOT in this step (deferred to v6-alpha3 step 5+)
+
+The fail-fast guard is **not a substitute for the actual fix**;
+it's a hygiene improvement that turns SIGTRAPs into diagnosable
+errors. The architectural blocker remains:
+
+1. **Native multi-tile codestream assembler** (step 5). Replace
+   `J2KMultiTileAssembler.stitch` (which glues N standalone
+   per-tile codestreams) with a single-pass
+   `generateCodestream` that emits one main header + N tile-
+   parts using the parity-aware DWT for each tile. The native
+   assembler doesn't need per-tile standalone codestreams, so
+   the SIZ-vs-content inconsistency goes away.
+
+2. **Parity-aware J2KSwift decoder inverse DWT** (step 6). The
+   existing `J2KDWT1D{,Optimized}.inverseTransform53*` functions
+   hard-code origin (0, 0) interleaving. To self-roundtrip a
+   native-multi-tile codestream, the decoder needs an
+   `uOrigin:` parameter on the inverse 1D and the per-tile
+   inverse-DWT call needs to thread the tile's image-coordinate
+   origin through it. Symmetric to the encoder's step 1+2 but
+   on the decode side.
+
+3. **Cross-decode validation on non-32-aligned fixtures** (step
+   7). Re-run `HTTileParityMatrixTests` and confirm MR / PX /
+   DX cells flip from FAIL to bit-exact under the native
+   assembler. Once that's green, the v6-alpha2 planner
+   constraint can be relaxed.
+
+4. **Perf re-measurement vs M4 ceiling** (step 8). Median-of-5
+   wall time on MR / PX / DX / XA single-tile vs best-correct
+   multi-tile; re-measure the v5.38 HT-fair Kakadu comparison
+   table.
+
+### v6-alpha3 step 4 — final precise claim
+
+> v6-alpha3 step 4 removes the downstream trap exposed by
+> origin-aware DWT on non-32-aligned multi-tile fixtures and
+> identifies the first post-DWT structural assumption blocking
+> native multi-tile: the J2KSwift decoder's inverse 5/3 DWT is
+> not parity-aware, and the wrap-and-stitch encoder's per-tile
+> standalone codestream cannot legally declare a non-zero tile
+> origin. Step 4 lands a fail-fast guard
+> (`J2KMultiTileEncoder.encode` throws
+> `J2KError.invalidTileConfiguration` on non-32-aligned layouts)
+> that turns SIGTRAPs into clean errors; production never sees
+> the guard fire because the v6-alpha2 planner already enforces
+> the same constraint up front. **This is not a broad security
+> detour; it is the next Kakadu-performance unblocker. Planner
+> relaxation and Kakadu remeasurement remain blocked until
+> MR/PX/DX cross-decode passes through OpenJPH, Grok, and
+> Kakadu** — which requires the v6-alpha3 step 5+ native
+> multi-tile assembler and the step-6 parity-aware decoder
+> inverse DWT. The Kakadu HT advantage on fixtures ≥ 886×886
+> documented in the v5.38 HT-fair table stands.
