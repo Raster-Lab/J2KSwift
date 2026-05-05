@@ -719,6 +719,107 @@ struct AcceleratedDWT2D: Sendable {
         for i in 0..<highCount { output[lowCount + i] = odd[i] }
     }
 
+    /// v6-alpha3 — parity-aware forward 1D 5/3 reversible DWT.
+    ///
+    /// Same arithmetic as the workspace variant below, generalised
+    /// over the **tile-component image-coordinate origin** in this
+    /// axis (`u`). The JPEG 2000 5/3 reversible DWT places
+    /// low-pass samples at image-even positions and high-pass at
+    /// image-odd; for tiles whose image-coordinate origin has odd
+    /// parity, the local-index-to-band mapping flips and the
+    /// symmetric-extension boundary cases reflect over a different
+    /// axis. This is the "tile-component-origin parity" gotcha that
+    /// made v5.39 M4's wrap-and-stitch multi-tile path fail external
+    /// cross-decode for tile origins that aren't aligned to
+    /// `2^decompositionLevels`.
+    ///
+    /// When `u == 0` (or any even `u`) the output is bit-identical
+    /// to the no-origin overload — this is verified by
+    /// `Tests/J2KCodecTests/HTDWTParityAwarenessTests.swift`.
+    ///
+    /// **Reference**: ISO/IEC 15444-1 Annex F.4.4 (1-D forward DWT)
+    /// and F.4.8.1.2 (5/3 reversible filter). Symmetric whole-sample
+    /// mirror reflection at tile boundaries (mirror axis at the
+    /// boundary sample, not at half-step offset).
+    static func forward53_1D(
+        _ input: UnsafePointer<Int32>,
+        _ output: UnsafeMutablePointer<Int32>,
+        count n: Int,
+        uOrigin u: Int,
+        workspace ws: DWTWorkspace53
+    ) {
+        guard n >= 2 else {
+            if n == 1 { output[0] = input[0] }
+            return
+        }
+        // Even-origin path is bit-identical to the no-origin
+        // overload, so just route to it. This both saves code and
+        // guarantees zero regression on single-tile encodes.
+        if (u & 1) == 0 {
+            forward53_1D(input, output, count: n, workspace: ws)
+            return
+        }
+
+        // Odd-origin path. Image-coord parity flips local-vs-band
+        // mapping:
+        //   local even index → image-odd position → H band source
+        //   local odd index  → image-even position → L band source
+        // and the band counts swap relative to the even-origin case:
+        //   lowCount  = floor(n/2)   (was ceil(n/2))
+        //   highCount = ceil(n/2)    (was floor(n/2))
+        let lowCount  = n / 2
+        let highCount = n - lowCount
+        let evenPtr = ws.even.baseAddress!  // L band coefficients
+        let oddPtr  = ws.odd.baseAddress!   // H band coefficients
+
+        // Gather: L from local-odd, H from local-even.
+        for i in 0..<lowCount  { evenPtr[i] = input[i &* 2 &+ 1] }
+        for i in 0..<highCount { oddPtr[i]  = input[i &* 2] }
+
+        // Predict (compute H from L neighbours):
+        //   H_band[i] = X_image[2k+1] - (X_image[2k] + X_image[2k+2]) / 2
+        // For odd origin, H_band[0] is the left-most sample in the
+        // tile (image-odd at position u). Its left neighbour
+        // X_image[u-1] mirrors to X_image[u+1] (= L_band[0]); right
+        // neighbour X_image[u+1] is also L_band[0]. So H_band[0]
+        // uses L_band[0] for BOTH neighbours.
+        // H_band[i] for 1 ≤ i < lowCount uses L_band[i-1] and L_band[i].
+        // H_band[lowCount] (only when highCount > lowCount, i.e.,
+        // n is odd) is at the right edge: both neighbours mirror to
+        // L_band[lowCount-1].
+        if highCount > 0 {
+            // Left mirror: H[0] -= L[0] (≡ -((L[0]+L[0]) >> 1))
+            oddPtr[0] = oddPtr[0] &- evenPtr[0]
+        }
+        let predictInteriorEnd = min(highCount, lowCount)
+        for i in 1..<predictInteriorEnd {
+            oddPtr[i] = oddPtr[i] &- ((evenPtr[i &- 1] &+ evenPtr[i]) >> 1)
+        }
+        if highCount > lowCount {
+            // Right mirror at tile edge — n odd, oddOrigin.
+            oddPtr[lowCount] = oddPtr[lowCount] &- evenPtr[lowCount - 1]
+        }
+
+        // Update (compute L from H neighbours):
+        //   L_band[i] = X_image[2k] + (H_left + H_right + 2) / 4
+        // For odd origin, L_band[0] is at image position u+1; its
+        // left H neighbour is at image u (= H_band[0]) and right H
+        // neighbour at image u+2 (= H_band[1]). Both exist (no left
+        // mirror at i=0!) — that's the qualitative difference from
+        // the even-origin case.
+        // For L_band[i] generally, neighbours are H_band[i] (left)
+        // and H_band[i+1] (right). Right boundary mirror when
+        // i+1 ≥ highCount: oddPtr[highCount-1].
+        for i in 0..<lowCount {
+            let leftH  = oddPtr[i]
+            let rightH = (i &+ 1 < highCount) ? oddPtr[i &+ 1] : oddPtr[highCount &- 1]
+            evenPtr[i] = evenPtr[i] &+ ((leftH &+ rightH &+ 2) >> 2)
+        }
+
+        memcpy(output, evenPtr, lowCount * MemoryLayout<Int32>.size)
+        memcpy(output + lowCount, oddPtr, highCount * MemoryLayout<Int32>.size)
+    }
+
     /// Forward 1D Le Gall 5/3 lifting using a preallocated workspace.
     ///
     /// Eliminates heap allocation of even/odd arrays on each call.

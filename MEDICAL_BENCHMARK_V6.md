@@ -362,3 +362,119 @@ claim stands.**
 > XA 1024² is the only corpus fixture currently delivering a
 > multi-tile speedup (28 %, clears the 15 % gate). Closing the
 > Kakadu HT gap on the rest of the corpus is v6-alpha3 work.
+
+---
+
+## v6-alpha3 step 1 — parity-aware 5/3 forward 1D DWT (math primitive)
+
+### What landed
+
+The mathematical primitive that v6-alpha3 needs to build on:
+**`AcceleratedDWT2D.forward53_1D(_:_:count:uOrigin:workspace:)`** in
+`Sources/J2KCodec/J2KAcceleratedEncoder.swift`. New parity-aware
+overload of the existing 1D forward 5/3 reversible DWT.
+
+The signature gains one parameter — `uOrigin: Int` — the
+tile-component image-coordinate origin in this axis. Behaviour:
+
+- `uOrigin == 0` (or any even value): output is **bit-identical**
+  to the no-origin overload. The function early-returns to the
+  existing path (same code, same lifting bulk, same boundary
+  handling). This is the regression guard for the production
+  single-tile encode hot path.
+- `uOrigin & 1 == 1` (odd origin): the local-index-to-band mapping
+  flips per ISO/IEC 15444-1 F.4.4 (low-pass samples gather from
+  local-odd indices because image-even positions in [u, u+n) are
+  at local-odd; high-pass gather from local-even). Boundary cases
+  reflect over a different mirror axis. Lifting arithmetic is
+  identical to the even-origin case.
+
+### Unit tests
+
+`Tests/J2KCodecTests/HTDWTParityAwarenessTests.swift` covers four
+invariants:
+
+| Invariant | Test |
+|---|---|
+| Even-origin output is byte-identical to no-origin overload | `testEvenOriginIsByteIdenticalToNoOriginOverload` (n ∈ 2…32, u ∈ {0, 2, 4, 100, 1024}) |
+| Band counts swap on odd origin (`lowCount = ⌊n/2⌋, highCount = ⌈n/2⌉`) | `testBandCountsForOddOriginSwap` (n ∈ 2…20) |
+| Odd-origin forward+inverse roundtrips bit-exactly | `testOddOriginRoundTripIsBitExact` (n ∈ 2…32, u ∈ {1, 3, 5, 33, 99, 1399}) |
+| Even-origin forward+inverse via reference inverse also roundtrips | `testEvenOriginRoundTripViaReferenceInverse` (sanity) |
+
+The reference inverse is implemented inline in the test (the
+production inverse 5/3 lives inside the decoder pipeline and is
+harder to call in isolation). Forward uses the new parity-aware
+production code; inverse uses a parity-aware reference. Every
+(n, u) pair in the test matrix passes — the math primitive is
+verified.
+
+### Mandatory commit gates
+
+All green with the new code in source (default path unchanged):
+
+- `J2KLosslessMedicalGateTests` (HT-fair cross-decode 21/21,
+  self-roundtrip 7/7) — pass
+- `J2KMedicalCorpusEncodePerformanceTests` — pass
+- `J2KStrictCrossCodecValidationTests` — pass
+
+### What's NOT yet in this step (deferred to v6-alpha3 step 2+)
+
+**This commit lands the math primitive only.** Threading origin
+through to actually fix non-32-aligned multi-tile fixtures
+requires multi-step work that is **not** part of this commit:
+
+1. **`forward2D_53` recursion + multi-level origin tracking.**
+   The 2D function calls `forward53_1D` once per row and once per
+   column, and the encoder calls `forward2D_53` recursively for
+   each decomposition level. Each level's LL band has its origin
+   at `floor(parent_origin / 2)` (per spec F.4.4), which can flip
+   parity at every level. Threading this requires changing the
+   2D function signature and the multi-level recursion in the
+   pipeline.
+
+2. **Code-block grid origin.** Code-block partition origins are
+   in tile-component coordinates which already start at (0, 0),
+   so this is likely already correct — but needs audit on the
+   parity-corrected codestream where band sizes shift.
+
+3. **Packet header generation.** `generateTileData` packetises
+   block bytes in LRCP order. The packet header's per-band
+   block-inclusion tag-trees encode block coordinates that may
+   need origin awareness when band dimensions shift.
+
+4. **Native multi-tile codestream assembler.** Replace
+   `J2KMultiTileAssembler.stitch` (wrap-and-stitch) with a single
+   pass through `generateCodestream` that emits one main header
+   + N tile-parts using the parity-aware DWT for each tile.
+
+5. **Cross-decode validation on non-32-aligned fixtures.** The
+   parity matrix test (`HTTileParityMatrixTests`) currently
+   shows MR/PX/DX failing every cross-decode cell on the
+   wrap-and-stitch path. After native multi-tile lands, the
+   parity matrix should show **all cells passing** for every
+   fixture, and the planner constraint can be relaxed.
+
+6. **Perf re-measurement.** M4 prototype showed multi-tile
+   ceiling at DX −30 % / PX −40 % / MR −51 % via 4×4 (median of
+   5). After native multi-tile lands and cross-decode passes, the
+   real perf gain on these fixtures (vs the v5.38 single-tile
+   baseline) needs re-measuring with median-of-5 + mandatory
+   commit gates per fixture.
+
+### v6-alpha3 step 1 — final precise claim
+
+> A parity-aware 5/3 forward 1D DWT primitive lands in
+> `AcceleratedDWT2D.forward53_1D(...uOrigin:workspace:)`. It is
+> bit-identical to the existing function at any even origin
+> (regression-safe for production single-tile) and produces
+> mathematically reversible output at odd origins (verified by
+> 4 unit tests covering n ∈ 2…32 and u ∈ {0, 1, 2, 3, 5, 33, 99,
+> 100, 1024, 1399}). **This is a building-block commit, not a
+> shipping fix**: the v6-alpha2 planner constraint still forces
+> non-32-aligned multi-tile cells to fall back to single-tile,
+> and the Kakadu HT advantage on fixtures ≥ 886×886 stands.
+> v6-alpha3 step 2+ will plumb this primitive through the 2D DWT,
+> code-block grid, packet headers, and codestream assembler so
+> that DX/PX/MR multi-tile cross-decode passes — at which point
+> the planner constraint can be relaxed and the v5.38 HT-fair
+> table re-measured.
