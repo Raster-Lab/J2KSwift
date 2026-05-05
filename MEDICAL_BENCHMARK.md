@@ -428,15 +428,68 @@ The encode performance regression suite likewise picked up the win:
 55.3s (pre-Step-A) → 29.3s (post-M9) for the same workload —
 **1.89× faster end-to-end** on the regression suite.
 
-### v5.38 plan — milestones (revised after M9)
+### v5.38 M10 — what didn't work (negative result)
+
+After M9 left entropy as the dominant DX stage (~33 ms / 44%), M10
+targeted the per-quad scanning hot loop in
+`HTBlockEncoderConformant.encode`. Two micro-optimisation attempts
+were measured against the M9 baseline; both came in within run-to-run
+noise. Reverted; baseline preserved.
+
+**Attempt 1 — interior fast-path** in `processQuad`. When
+`baseX + 1 < width && baseY + 1 < height` (true for every quad in a
+full-size 64×64 code block — the common case on the medical corpus),
+skip the per-fetch `guard x < width, y < height else { return 0 }`
+boundary check and use direct pointer indexing for all four samples.
+Only boundary blocks fall back to `fetch()`.
+
+Result on DX 12 MP (median of 10 runs): **74.65 ms vs 74.19 ms M9
+baseline = +0.6 ms regression.** Distribution-wise consistently a
+touch slower across percentiles. The CPU branch predictor was
+already handling the original `guard` pattern well (it always
+succeeds for interior quads), and the explicit `if/else` dispatch
+adds slight overhead from the additional comparison and the wider
+fast-path body.
+
+**Attempt 2 — `@inline(__always)` hints** on the nested `sampleInfo`
+and `fetch` functions, on the theory that LLVM might not be fully
+inlining the nested closures despite Swift's typical default.
+
+Result on DX 12 MP (median of 10 runs): **73.41 ms vs 74.19 ms M9
+baseline = −0.78 ms / −1.0%.** The mean delta (0.58 ms) is within
+1σ of the run-to-run variance (~1.5 ms). Not statistically
+significant. Reverted.
+
+**Why both failed**: the M9 baseline is already heavily optimised.
+The per-quad branches are predictable (CPU branch predictor settles
+in within ~5 iterations and stays correct for 1024 quads); the
+nested closures appear to be inlined or specialised already; the
+underlying access is `UnsafeBufferPointer<UInt32>` (M9), so no
+Swift array bounds-check overhead is left in the hot path.
+
+**Where further gains are still possible** (higher correctness risk):
+- True SIMD per-quad sample loads via NEON intrinsics (4-way data
+  parallelism within each quad). The state-propagation between
+  quads (lep / lcxp / kappaA / kappaB / c_q / maxE) makes this
+  invasive; the encoder would need restructuring.
+- Block-level batch processing (process all quads of a block in
+  parallel, then serialise the MEL/VLC stream emission). Would
+  require buffering per-quad context and careful ordering.
+- Custom `clz`/`ctz` for `leadingZeroBitCount` in `sampleInfo` if
+  Swift's emitted code is suboptimal — but `UInt32.leadingZeroBitCount`
+  already maps to NEON `vclz` on Apple Silicon.
+
+### v5.38 plan — milestones (revised after M10 negative result)
 
 - **M1-M8 ✓** — see prior sections.
 - **M9 ✓** — sign-magnitude buffer reuse + pointer-based encoder
   (DX entropy −10.3%, total cumulative 2.06×).
-- **M10 (next)** — possible follow-ups, all higher risk:
-   - SIMD per-quad sample fetching in `HTBlockEncoderConformant`
-     (4-way data parallelism within each quad).
-   - vLOAD/vSTORE bulk transpose in 5/3 forward column passes.
+- **M10 (closed, negative)** — micro-optimisation attempts on the
+  per-quad scan didn't beat the M9 baseline above noise. Lessons
+  preserved here; baseline preserved in source.
+- **M11+ candidates** — true SIMD per-quad with NEON intrinsics,
+  block-level batch processing. Both higher risk; require careful
+  staging and orthogonal changes.
 - **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred).
 
 ### v5.38 — post-M5 final lossless headline (full corpus, fresh measurement)
