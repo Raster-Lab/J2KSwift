@@ -896,3 +896,181 @@ errors. The architectural blocker remains:
 > multi-tile assembler and the step-6 parity-aware decoder
 > inverse DWT. The Kakadu HT advantage on fixtures ≥ 886×886
 > documented in the v5.38 HT-fair table stands.
+
+---
+
+## v6-alpha3 step 5 — native multi-tile codestream assembler
+
+### What landed
+
+Step 5 replaces wrap-and-stitch with a **native multi-tile
+codestream assembler**. The encoder no longer produces N
+standalone per-tile codestreams glued at byte-level — it emits
+ONE legal HTJ2K codestream with a single main header and N
+tile-parts, encoding each tile with its real image-coordinate
+origin via the parity-aware DWT path landed in steps 1+2+3.
+
+| File | Change |
+|---|---|
+| `Sources/J2KCodec/J2KEncoderPipeline.swift` | New `EncoderPipeline.encodeNativeMultiTile(image:layout:)` produces the full multi-tile codestream. New private `runEncodeStagesForNativeAssembly(image:tileOriginX:tileOriginY:)` runs preprocess + DWT(parity-aware) + entropy + rate-control + `generateTileData` and returns ONLY the tile-data bytes (no SOC/SIZ/SOT/SOD/EOC). New private `writeSIZMarkerMultiTile(...)` writes a SIZ marker that carries full image dims + tile grid (the existing private `writeSIZMarker` hard-codes single-tile dims and stays as-is for the single-tile path). |
+| `Sources/J2KCodec/J2KMultiTileEncoder.swift` | `J2KMultiTileEncoder.encode(...)` no longer slices each tile to a standalone J2K and stitches headers — it now calls `EncoderPipeline.encodeNativeMultiTile(...)` directly. The step-4 fail-fast guard is removed (it papered over the wrap-and-stitch SIZ-vs-content inconsistency, which step 5 eliminates structurally). The v6-alpha2 planner constraint stays in place to gate production routing. |
+
+### Codestream structure (post step 5)
+
+For a 2×2 layout:
+
+```
+SOC (2 bytes)
+SIZ  — Xsiz/Ysiz = full image dims, XTsiz/YTsiz = tile dims
+CAP/CPF (HTJ2K Part-15 capability markers)
+COD  — single, shared across tiles
+QCD  — single, shared across tiles
+COM  — J2KSwift HT-conformant block format signal
+SOT(Isot=0)  +  SOD  +  tile-data 0
+SOT(Isot=1)  +  SOD  +  tile-data 1
+SOT(Isot=2)  +  SOD  +  tile-data 2
+SOT(Isot=3)  +  SOD  +  tile-data 3
+EOC
+```
+
+Each `Psot` field on the SOT marker is the byte length from the
+start of SOT to the last byte of tile-part data (per spec); each
+SOT's Psot points exactly to the start of the next SOT, and the
+last tile's Psot points to the EOC.
+
+### Structural unit tests
+
+`Tests/J2KCodecTests/HTNativeMultiTileAssemblerTests.swift`
+adds 13 tests covering structural invariants and cross-decode:
+
+| Test | What it asserts |
+|---|---|
+| `testNativeAssemblerEmitsSingleSOC` | exactly one SOC marker |
+| `testNativeAssemblerEmitsSingleSIZ` | exactly one SIZ; Xsiz/Ysiz = image dims, XTsiz/YTsiz = tile dims |
+| `testNativeAssemblerEmitsExpectedSOTCountFor2x2` | 4 SOT + 4 SOD markers in 2x2 layout |
+| `testNativeAssemblerSOTTileIndicesAreCorrect` | SOT.Isot fields = 0,1,2,3 in row-major order |
+| `testNativeAssemblerPsotLengthsAreValid` | each SOT's Psot points to next SOT or EOC |
+| `testNativeAssemblerDoesNotCopyPerTileMainHeaders` | at most 1 each of SIZ/COD/QCD/CAP/CPF (wrap-and-stitch would have N) |
+| `testNativeAssemblerXA2x2SelfRoundtrip` | XA self-roundtrip bit-exact |
+| `testNativeAssemblerXA2x2CrossDecodeOpenJPHGrokKakadu` | XA cross-decode bit-exact through all 3 external HT decoders |
+| `testNativeAssemblerMR2x2DoesNotUseWrapAndStitch` | MR 886×886 2x2 produces structurally-valid native codestream |
+| `testNativeAssemblerPX2x2DoesNotUseWrapAndStitch` | PX 2459×1316 2x2 same |
+| `testNativeAssemblerDX2x2DoesNotUseWrapAndStitch` | DX 2800×2288 2x2 same |
+| `testNativeAssemblerDX4x4DoesNotUseWrapAndStitch` | DX 2800×2288 4x4 same |
+| `testNativeAssemblerExternalCrossDecodeProbe` | diagnostic probe — runs every fixture through OpenJPH/Grok/Kakadu, prints results |
+
+All 13 pass.
+
+### Cross-decode probe (post step 5, diagnostic only)
+
+| Modality | Shape | Mode | OpenJPH | Grok | Kakadu |
+|---|---|---|---:|---:|---:|
+| **XA** | **1024×1024** | **2x2** | **0** | **0** | **0** |
+| MR | 886×886 | 2x2 | 65281 | 65281 | 65281 |
+| PX | 2459×1316 | 2x2 | FAIL | 63116 | FAIL |
+| DX | 2800×2288 | 2x2 | FAIL | 32768 | FAIL |
+| DX | 2800×2288 | 4x4 | FAIL | 65533 | FAIL |
+
+(Numbers are max-abs-pixel-diff; `0` = bit-exact; `FAIL` = decoder
+exit non-zero.)
+
+**XA 2x2 cross-decode is bit-exact through every external decoder**
+— the regression guard for the v6-alpha2-aligned fixture holds.
+**MR/PX/DX are not yet bit-exact**, but the cells now have a
+characteristic post-step-5 shape: Grok accepts every codestream
+(it's the most lenient), while OpenJPH/Kakadu reject PX and DX
+2x2/4x4. The wrong-pixels values for MR (65281) match the
+post-step-3 wrap-and-stitch readings — meaning step 5's
+structural fix didn't move the wire-level cross-decode bug:
+the bug is *downstream of the codestream container* (most likely
+in code-block grid construction or packet header generation
+under parity-shifted bands).
+
+### Step-4 → step-5 changes for the trap-reproducer suite
+
+`Tests/J2KCodecTests/HTMultiTileTrapReproducer.swift` updated for
+the post-step-5 reality:
+
+- The step-4 guard threw `J2KError.invalidTileConfiguration` on
+  non-32-aligned layouts. Step 5 replaced wrap-and-stitch with
+  the native assembler, eliminating the underlying bug, so the
+  guard is removed.
+- The five `testPlannerBypassed{MR,PX,DX,Synthetic}…DoesNotTrap`
+  tests now assert "the call completes without SIGTRAP" — either
+  succeeds with a non-empty codestream (the new normal) or
+  throws a `J2KError` (kept as an acceptable outcome so a future
+  intentional guard can be added without rewriting these tests).
+  All 5 still pass.
+- The two 32-aligned happy-path tests remain bit-exact: XA 2x2
+  self-roundtrip + synthetic 64×64.
+
+### Mandatory commit gates (default off)
+
+All green. **46 tests, 0 failures.**
+
+| Suite | Result |
+|---|---|
+| `HTDWTParityAwarenessTests` (1D parity-aware DWT) | 4/4 |
+| `HTDWT2DParityAwarenessTests` (2D + multi-level) | 8/8 |
+| `HTTileOriginPropagationTests` (step 3 plumbing, XA + step-3 origin probes) | 4/4 |
+| `HTMultiTileTrapReproducer` (post-step-5 native: encode completes without trap, no SIGTRAP regression) | 7/7 |
+| `HTNativeMultiTileAssemblerTests` (step 5: structural + XA cross-decode + MR/PX/DX probes) | 13/13 |
+| `J2KLosslessMedicalGateTests` (HT-fair 21/21, EBCOT-fair 28/28, default 7/7, self-roundtrip 7/7, HT-vs-EBCOT) | 5/5 |
+| `J2KMedicalCorpusEncodePerformanceTests` | 2/2 |
+| `J2KStrictCrossCodecValidationTests` | 3/3 |
+
+Production single-tile bytes are byte-identical to v5.38 / v5.39 /
+v6-alpha2.
+
+### What's still NOT in this step (deferred to v6-alpha3 step 6+)
+
+The native assembler eliminates the wrap-and-stitch SIZ-vs-content
+inconsistency, but **MR/PX/DX cross-decode is still wrong-pixels
+on external decoders**. The data above shows the failure mode
+unchanged from step 3 — meaning the bug is downstream of the
+codestream container. Two structural fixes remain:
+
+1. **Code-block grid + packet header origin awareness** (step 6
+   scope). Code-block partition origins are tile-component-relative
+   (already (0, 0) per tile-component, conceptually correct). But
+   when DWT band sizes shift due to image-coordinate origin parity,
+   block loop limits, per-block `(x, y)` indices, and packet-header
+   tag-tree dimensions all need to reflect the actual band shapes.
+   The `Grok-accepts-but-wrong-pixels` and
+   `OpenJPH/Kakadu-rejects-PX/DX` patterns above suggest one or
+   both of these stages still uses an even-origin band shape
+   somewhere.
+
+2. **Parity-aware J2KSwift decoder inverse DWT** (also step 6).
+   The existing `J2KDWT1D{,Optimized}.inverseTransform53*`
+   functions hard-code origin (0, 0) interleaving; J2KSwift
+   self-roundtrip on non-32-aligned tiles still fails. Symmetric
+   to the encoder steps 1+2 but on the decode side.
+
+3. **MR/PX/DX cross-decode validation + planner relaxation** (step
+   7). Once 1 and 2 land, re-run `HTTileParityMatrixTests` against
+   the native path and confirm MR/PX/DX flip from FAIL to
+   bit-exact through OpenJPH/Grok/Kakadu. The v6-alpha2 planner
+   constraint can then be relaxed.
+
+4. **Perf re-measurement vs M4 ceiling + Kakadu remeasurement**
+   (step 8).
+
+### v6-alpha3 step 5 — final precise claim
+
+> v6-alpha3 step 5 replaces wrap-and-stitch with a native
+> multi-tile codestream assembler that emits one main header
+> plus N tile-parts. Each tile is encoded with its real
+> image-coordinate origin using the parity-aware DWT path. This
+> removes the standalone per-tile SIZ/content inconsistency
+> identified in step 4 and structurally validates on every
+> medical fixture (single SOC + SIZ + COD + QCD + N SOTs +
+> EOC, no per-tile main-header copies). XA 2x2 cross-decode
+> through OpenJPH, Grok, and Kakadu remains bit-exact.
+> **Planner relaxation and Kakadu remeasurement remain blocked
+> until MR/PX/DX cross-decode passes through OpenJPH, Grok, and
+> Kakadu**, and J2KSwift self-roundtrip on non-aligned tiles
+> still requires step 6 parity-aware decoder inverse DWT plus
+> the code-block / packet-header origin audit. The Kakadu HT
+> advantage on fixtures ≥ 886×886 documented in the v5.38
+> HT-fair table stands.

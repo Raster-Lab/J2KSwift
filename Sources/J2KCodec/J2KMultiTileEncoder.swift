@@ -1,23 +1,26 @@
 // J2KMultiTileEncoder.swift
-// v5.39 M4 / v6-alpha1 — multi-tile HT lossless prototype: scheduler
-// + outer encode wrapper.
+// v5.39 M4 / v6-alpha1 — multi-tile HT lossless prototype.
+// v6-alpha3 step 5 — switched from wrap-and-stitch to the native
+// multi-tile codestream assembler in `EncoderPipeline`. The
+// dispatcher now produces ONE legal codestream with a single main
+// header and N tile-parts, instead of N standalone codestreams
+// stitched at byte level. Each tile is still encoded with the
+// parity-aware DWT at its real image-coordinate origin
+// (v6-alpha3 step 1+2+3).
 //
-// Per-tile encode is currently the existing `J2KEncoder.encode(_:)`
-// pipeline applied to a sub-image (so M5/M7/M8/M9 wins persist
-// unchanged inside each tile). The scheduler runs N tile encodes
-// in parallel via `withTaskGroup`, captures per-tile wall time and
-// output bytes, and returns results in deterministic tile-index
-// order.
+// Production code path is unchanged: the v6-alpha2 planner still
+// constrains layouts to 32-aligned tile origins (because the
+// J2KSwift decoder's inverse 5/3 DWT is not yet parity-aware —
+// step 6's scope), and the public entry `J2KEncoder.encode(_:)`
+// only invokes this module when `J2K_HT_TILE_MODE` requests
+// multi-tile and the planner accepts the layout.
 //
-// Production code path is unchanged: this module is only invoked
-// when the planner returns a multi-tile layout. Single-tile
-// callers go straight to the existing pipeline.
-//
-// Determinism note: parallel encode is deterministic in the bytes
-// each tile produces (each tile's encode is fully deterministic
-// per the existing pipeline). The order of completion may vary;
-// we collect with explicit indices and sort, so the stitched
-// output is byte-identical across runs at the same tile mode.
+// Determinism: native assembly is deterministic — same input +
+// same layout produces byte-identical output across runs. The
+// per-tile-encode parallelism that wrap-and-stitch used via
+// `withTaskGroup` is not yet ported to the native path; that's a
+// perf concern for a separate step once the structural
+// correctness is established.
 
 import Foundation
 @preconcurrency import J2KCore
@@ -65,133 +68,66 @@ enum J2KMultiTileEncoder {
         let n = layout.tileCount
         precondition(n >= 1, "tile count must be ≥ 1")
 
-        // v6-alpha3 step 4: parity-alignment guard.
+        // v6-alpha3 step 5: the step-4 parity-alignment guard
+        // (which refused non-32-aligned origins to prevent the
+        // wrap-and-stitch path from producing trap-prone bytes)
+        // is REMOVED in step 5. The wrap-and-stitch path itself
+        // is gone — replaced by `EncoderPipeline.encodeNativeMultiTile`,
+        // which produces ONE legal codestream with a single main
+        // header and N tile-parts, encoding each tile with its
+        // real image-coordinate origin via the parity-aware DWT.
+        // The native assembler structurally handles any origin.
         //
-        // The wrap-and-stitch path produces per-tile *standalone*
-        // codestreams whose `SIZ` marker declares image origin
-        // (0, 0) within the per-tile codestream. Step 3 made the
-        // per-tile DWT call use the tile's actual image-coordinate
-        // origin, which is mathematically correct — but the
-        // resulting per-tile codestream is now internally
-        // inconsistent: its SIZ declares origin (0, 0) while its
-        // content was encoded for a non-zero origin. The decoder
-        // cannot recover from this mismatch:
-        //
-        //   - J2KSwift's own (not-yet-parity-aware) decoder traps
-        //     in `J2KHTConformantMagSgnCoder.read(count:)` with
-        //     "MagSgn read width > 32" because the band sizes it
-        //     computes from the (0, 0)-origin SIZ disagree with
-        //     the encoder's parity-aware band sizes. The MagSgn
-        //     stream alignment drifts and the next codeword width
-        //     reads as garbage > 32 bits.
-        //   - External (parity-aware) decoders accept the stitched
-        //     codestream's main header (which DOES carry the
-        //     correct tile grid) and apply parity-aware inverse
-        //     DWT — but the per-tile body bytes still carry a
-        //     subtle wrap-and-stitch incompatibility that
-        //     produces wrong pixels (verified empirically:
-        //     OpenJPH/Grok/Kakadu max diff was 64371 pre-step-3
-        //     and is 65281 post-step-3 on MR 886×886 2x2 — the
-        //     encoder behaviour changed but the cross-decode bug
-        //     persists).
-        //
-        // Tests bypassing the v6-alpha2 planner can pass a layout
-        // that violates the parity-alignment constraint. Production
-        // never sees such layouts because the planner refuses
-        // them up-front. This guard refuses the encode here with
-        // a clear error rather than producing a malformed
-        // codestream that traps J2KSwift's decoder downstream.
-        //
-        // The constraint is identical to the v6-alpha2 planner
-        // constraint: every tile origin must be a multiple of
-        // `2^configuration.decompositionLevels` in both axes —
-        // because that's the only origin range for which the
-        // parity-aware DWT routes to the no-origin fast path at
-        // every decomposition level (and produces a codestream
-        // a non-parity-aware decoder can read).
-        //
-        // The proper fix (native multi-tile codestream assembler
-        // emitting one main header + N tile-parts) lives in
-        // v6-alpha3 step 5+. Until that lands, the wrap-and-stitch
-        // path is restricted to 32-aligned origins.
-        let minDim = 1 << configuration.decompositionLevels
-        for k in 0..<n {
-            let r = layout.rect(forTile: k)
-            if (r.x % minDim != 0) || (r.y % minDim != 0) {
-                throw J2KError.invalidTileConfiguration(
-                    "v6-alpha3 step 4: wrap-and-stitch multi-tile cannot represent tile " +
-                    "\(k) at origin (\(r.x), \(r.y)) — origin must be a multiple of " +
-                    "2^decompositionLevels (= \(minDim)) in both axes for the per-tile " +
-                    "codestream to remain self-consistent. Native multi-tile assembler " +
-                    "(v6-alpha3 step 5+) required for non-aligned origins."
-                )
-            }
+        // Production behaviour is unchanged: the v6-alpha2 planner
+        // still enforces 32-alignment up front (because the
+        // J2KSwift decoder's inverse 5/3 DWT is not yet parity-
+        // aware — that's v6-alpha3 step 6's scope). Non-aligned
+        // layouts only reach this dispatcher when test code
+        // bypasses the planner, and step 5 wants those probes
+        // to *succeed* (producing a structurally valid codestream
+        // that external parity-aware decoders may or may not
+        // reconstruct correctly), not throw a guard error.
+
+        // v6-alpha3 step 5: native multi-tile codestream assembler.
+        // Replaces the wrap-and-stitch path that produced N
+        // standalone per-tile codestreams and concatenated them
+        // (the SIZ-vs-content inconsistency that step 4 traced).
+        // The native assembler emits ONE legal codestream with a
+        // single main header and N tile-parts; each tile is
+        // encoded with its real image-coordinate origin via the
+        // parity-aware DWT path landed in steps 1+2+3.
+        let pipeline = EncoderPipeline(config: configuration)
+        let (codestream, partials) =
+            try await pipeline.encodeNativeMultiTile(image, layout: layout)
+
+        let observations = partials.map { partial -> J2KTileWorkObservation in
+            // We don't have a per-tile output-byte count from the
+            // native assembler (the encoded tile data lives inside
+            // the unified codestream), so we report the size of the
+            // tile-data payload (excluding SOT/SOD overhead).
+            return J2KTileWorkObservation(
+                tileIndex: 0,  // filled below
+                pixels: partial.pixels,
+                tileBytes: partial.tileData.count,
+                encodeMs: partial.encodeMs,
+                originX: partial.originX,
+                originY: partial.originY)
         }
-
-        // Per-tile encode tasks. Each task captures its tile index
-        // so we can sort results back into deterministic order.
-        var perTileBytes = [Data?](repeating: nil, count: n)
-        var observations = [J2KTileWorkObservation?](repeating: nil, count: n)
-
-        try await withThrowingTaskGroup(
-            of: (Int, Data, Double, Int, Int).self
-        ) { group in
-            for k in 0..<n {
-                let captureImage = image
-                let captureLayout = layout
-                let captureConfig = configuration
-                group.addTask {
-                    // v6-alpha3 step 3: compute the tile's actual
-                    // image-coordinate origin and thread it into the
-                    // per-tile encode. The slicer carves the
-                    // sub-image's pixel data; the origin is the rect
-                    // returned by the layout (matches what the
-                    // multi-tile decoder will use to place tile k's
-                    // pixels back into the image grid).
-                    let r = captureLayout.rect(forTile: k)
-                    let subImage = try J2KTileImageSlicer.sliceTile(
-                        from: captureImage,
-                        layout: captureLayout,
-                        tileIndex: k)
-                    let encoder = J2KEncoder(encodingConfiguration: captureConfig)
-                    let t0 = CFAbsoluteTimeGetCurrent()
-                    // Route directly to the single-tile pipeline,
-                    // origin-aware overload. Bypassing the planner so
-                    // we don't recurse.
-                    let bytes = try await encoder._singleTileEncode(
-                        subImage,
-                        tileOriginX: r.x,
-                        tileOriginY: r.y)
-                    let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
-                    return (k, bytes, dt, r.x, r.y)
-                }
-            }
-            for try await (k, bytes, dt, ox, oy) in group {
-                perTileBytes[k] = bytes
-                let r = layout.rect(forTile: k)
-                observations[k] = J2KTileWorkObservation(
-                    tileIndex: k,
-                    pixels: r.w * r.h,
-                    tileBytes: bytes.count,
-                    encodeMs: dt,
-                    originX: ox,
-                    originY: oy)
-            }
+        // Re-index the observations to carry their actual tile index
+        // (the partials are already in row-major tile-index order).
+        let indexedObservations = observations.enumerated().map { (k, obs) in
+            J2KTileWorkObservation(
+                tileIndex: k,
+                pixels: obs.pixels,
+                tileBytes: obs.tileBytes,
+                encodeMs: obs.encodeMs,
+                originX: obs.originX,
+                originY: obs.originY)
         }
-
-        // Assemble in deterministic tile-index order.
-        let orderedTileBytes = perTileBytes.compactMap { $0 }
-        precondition(orderedTileBytes.count == n,
-                     "missing per-tile codestream after parallel encode")
-
-        let stitched = try J2KMultiTileAssembler.stitch(
-            perTile: orderedTileBytes,
-            imageWidth: image.width,
-            imageHeight: image.height)
 
         return J2KMultiTileEncodeResult(
-            codestream: stitched,
+            codestream: codestream,
             layout: layout,
-            observations: observations.compactMap { $0 })
+            observations: indexedObservations)
     }
 }

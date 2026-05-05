@@ -471,6 +471,246 @@ struct EncoderPipeline: Sendable {
         return codestream
     }
 
+    // MARK: - v6-alpha3 step 5: Native Multi-Tile Codestream Assembler
+
+    /// Internal product of `runEncodeStagesForNativeAssembly`:
+    /// the tile-data bytes (everything that goes between SOD and
+    /// the next SOT or EOC) plus the parameters needed by the
+    /// shared main header.
+    struct NativeTilePartial: Sendable {
+        let tileData: Data
+        let actualLevels: Int
+        let adaptiveStepSizes: [String: Double]
+        let originX: Int
+        let originY: Int
+        let pixels: Int
+        let encodeMs: Double
+    }
+
+    /// v6-alpha3 step 5 — native multi-tile codestream assembler.
+    ///
+    /// Emits ONE legal HTJ2K codestream with a single main header
+    /// (SOC + SIZ + CAP/CPF + COD + QCD + COM) plus N tile-parts
+    /// (SOT + SOD + tile-data) and a closing EOC. **No standalone
+    /// per-tile codestreams are produced and no headers are
+    /// stitched.** Each tile is encoded with its real
+    /// image-coordinate origin via the parity-aware DWT path
+    /// (v6-alpha3 step 1+2), so MR / PX / DX non-32-aligned tile
+    /// origins no longer hit the wrap-and-stitch SIZ-vs-content
+    /// inconsistency identified in step 4.
+    ///
+    /// The output's main-header SIZ carries:
+    ///   - `Xsiz`/`Ysiz` = full image dimensions
+    ///   - `XTsiz`/`YTsiz` = tile dimensions from the layout
+    ///   - `XTOsiz`/`YTOsiz` = 0 (J2KSwift always uses tile grid
+    ///     origin (0, 0))
+    /// — exactly what an external parity-aware decoder needs to
+    /// compute each tile's image-coordinate origin and apply the
+    /// correct inverse-DWT lifting parity per tile.
+    func encodeNativeMultiTile(
+        _ image: J2KImage,
+        layout: J2KTileLayout
+    ) async throws -> (codestream: Data, partials: [NativeTilePartial]) {
+        precondition(layout.isMultiTile, "encodeNativeMultiTile: layout must be multi-tile")
+        try image.validate()
+
+        // 1) Run preprocess + DWT(parity-aware) + entropy + rate
+        // control + generateTileData per tile. These stages are
+        // independent across tiles (each tile is its own JPEG 2000
+        // tile-component). Sequential for correctness simplicity in
+        // step 5; parallelisation is a separate perf concern (the
+        // wrap-and-stitch path used `withTaskGroup` and we can do
+        // the same here in a future step once correctness is
+        // established).
+        var partials: [NativeTilePartial] = []
+        partials.reserveCapacity(layout.tileCount)
+        for k in 0..<layout.tileCount {
+            let r = layout.rect(forTile: k)
+            let subImage = try J2KTileImageSlicer.sliceTile(
+                from: image, layout: layout, tileIndex: k)
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let (tileData, levels, stepSizes) =
+                try await runEncodeStagesForNativeAssembly(
+                    subImage,
+                    tileOriginX: r.x, tileOriginY: r.y)
+            let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
+            partials.append(NativeTilePartial(
+                tileData: tileData,
+                actualLevels: levels,
+                adaptiveStepSizes: stepSizes,
+                originX: r.x, originY: r.y,
+                pixels: r.w * r.h,
+                encodeMs: dt))
+        }
+
+        // 2) All tiles in an HTJ2K lossless 5/3 codestream share the
+        // same COD/QCD because epsilons depend only on bit-depth +
+        // guard bits + DWT level (content-independent). For the
+        // first prototype, take the parameters from tile 0; if any
+        // subsequent tile disagrees we fail loudly — that would
+        // indicate an unexpected configuration drift.
+        let levels = partials[0].actualLevels
+        let stepSizes = partials[0].adaptiveStepSizes
+        for (k, partial) in partials.enumerated().dropFirst() {
+            guard partial.actualLevels == levels else {
+                throw J2KError.invalidTileConfiguration(
+                    "v6-alpha3 step 5 native assembler: tile \(k) has \(partial.actualLevels) " +
+                    "decomposition levels but tile 0 has \(levels). Multi-tile encode requires " +
+                    "all tiles to share the same decomposition depth.")
+            }
+        }
+
+        // 3) Build the multi-tile codestream: main header, then
+        // per-tile (SOT + SOD + data), then EOC.
+        let totalTileBytes = partials.reduce(0) { $0 + $1.tileData.count }
+        var writer = J2KBitWriter(capacity: totalTileBytes + 2048)
+
+        // SOC — Start of Codestream.
+        writer.writeMarker(J2KMarker.soc.rawValue)
+
+        // SIZ — main header carries full image dims + tile grid.
+        // (Differs from the existing private `writeSIZMarker` which
+        // hard-codes single-tile dimensions; the multi-tile variant
+        // is implemented inline here so the main header reflects
+        // the actual tile grid.)
+        try writeSIZMarkerMultiTile(&writer, image: image, layout: layout)
+
+        // CAP/CPF — HTJ2K Part-15 capability markers.
+        if config.useHTJ2K {
+            try writeCAPMarker(&writer)
+            try writeCPFMarker(&writer)
+        }
+
+        // COD/QCD — coding style + quantisation, shared across all
+        // tiles. Re-uses the existing private writers so bytes match
+        // what single-tile encode produces.
+        try writeCODMarker(&writer, image: image, decompositionLevels: levels)
+        try writeQCDMarker(
+            &writer, image: image,
+            decompositionLevels: levels,
+            adaptiveStepSizes: stepSizes)
+
+        // COM — J2KSwift-private HT block format signal.
+        if config.useHTJ2K && config.htj2kBlockFormat == .conformant {
+            try writeHTBlockFormatCOM(&writer)
+        }
+
+        // 4) Per-tile: SOT + SOD + tile-data.
+        for (k, partial) in partials.enumerated() {
+            try writeSOTMarker(
+                &writer, tileIndex: k, tilePartLength: partial.tileData.count)
+            writer.writeMarker(J2KMarker.sod.rawValue)
+            writer.writeBytes(partial.tileData)
+        }
+
+        // 5) EOC — End of Codestream.
+        writer.writeMarker(J2KMarker.eoc.rawValue)
+
+        return (writer.data, partials)
+    }
+
+    /// Run preprocess + colour transform + parity-aware DWT +
+    /// entropy + rate control + tile-data generation for one tile.
+    /// Returns just the tile-data bytes (no header markers,
+    /// no SOT/SOD/EOC). The companion `actualLevels` and
+    /// `adaptiveStepSizes` are returned so the caller can verify
+    /// they match across all tiles before writing the shared main
+    /// header.
+    func runEncodeStagesForNativeAssembly(
+        _ tileImage: J2KImage,
+        tileOriginX: Int, tileOriginY: Int
+    ) async throws -> (tileData: Data, actualLevels: Int, adaptiveStepSizes: [String: Double]) {
+        try tileImage.validate()
+
+        // Stage 1: Preprocessing — extract component data + DC shift.
+        var componentData = try extractComponentData(from: tileImage)
+        for (compIdx, component) in tileImage.components.enumerated() {
+            if !component.signed {
+                let dcOffset = Int32(1 << (component.bitDepth - 1))
+                componentData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    for i in 0..<buf.count { buf[i] &-= dcOffset }
+                }
+            }
+        }
+
+        // Stage 2: Colour transform (no-op for single-component
+        // medical greyscale — the medical corpus the v6 work
+        // targets — but call it for correctness).
+        let (transformedData, transformedFloatData) =
+            try applyColorTransform(componentData, image: tileImage)
+
+        // Stage 3: Parity-aware forward 5/3 DWT — uses the per-tile
+        // image-coordinate origin so band layouts match what an
+        // external multi-tile decoder will compute when reading the
+        // stitched main header's tile grid.
+        let (decompositions, actualLevels) = try await applyWaveletTransform(
+            transformedData, floatComponents: transformedFloatData,
+            width: tileImage.width, height: tileImage.height,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+
+        // Stage 4: Build adaptive step sizes (lossless reversible →
+        // content-independent epsilons; same value per band across
+        // all tiles).
+        let adaptiveStepSizes = buildAdaptiveLossyStepSizes(
+            decompositions, image: tileImage, totalLevels: actualLevels)
+
+        // Stage 5: Entropy coding (HT or EBCOT depending on config).
+        let codeBlocks = try await applyEntropyCoding(
+            decompositions, image: tileImage,
+            adaptiveStepSizes: adaptiveStepSizes,
+            totalLevels: actualLevels)
+
+        // Stage 6: Rate control (lossless → all passes included).
+        let layers = try applyRateControl(
+            codeBlocks: codeBlocks,
+            totalPixels: tileImage.width * tileImage.height,
+            componentCount: tileImage.components.count)
+
+        // Stage 7: Tile-data generation — produces the bytes that
+        // sit between SOD and the next SOT/EOC. Note: we do NOT
+        // call `generateCodestream` here — that would emit a
+        // standalone codestream with full headers. We want only
+        // the tile-data portion.
+        let (tileData, _) = try generateTileData(
+            codeBlocks: codeBlocks, layers: layers,
+            decompositionLevels: actualLevels,
+            componentCount: tileImage.components.count)
+
+        return (tileData, actualLevels, adaptiveStepSizes)
+    }
+
+    /// Multi-tile variant of `writeSIZMarker`: writes the SIZ for
+    /// the FULL image (Xsiz/Ysiz) with a non-trivial tile grid
+    /// (XTsiz/YTsiz from the layout). The existing
+    /// `writeSIZMarker(_:image:)` hard-codes single-tile dimensions
+    /// — this overload exists so the native multi-tile main header
+    /// can carry both image and tile-grid dimensions in a single
+    /// SIZ marker, the way the JPEG 2000 spec intends.
+    private func writeSIZMarkerMultiTile(
+        _ writer: inout J2KBitWriter,
+        image: J2KImage, layout: J2KTileLayout
+    ) throws {
+        var segment = J2KBitWriter()
+        let capabilities = J2KPart2Capabilities(configuration: config)
+        segment.writeUInt16(capabilities.rsizValue)
+        segment.writeUInt32(UInt32(image.width))           // Xsiz
+        segment.writeUInt32(UInt32(image.height))          // Ysiz
+        segment.writeUInt32(0)                             // XOsiz
+        segment.writeUInt32(0)                             // YOsiz
+        segment.writeUInt32(UInt32(layout.tileWidth))      // XTsiz
+        segment.writeUInt32(UInt32(layout.tileHeight))     // YTsiz
+        segment.writeUInt32(0)                             // XTOsiz
+        segment.writeUInt32(0)                             // YTOsiz
+        segment.writeUInt16(UInt16(image.components.count))
+        for component in image.components {
+            let ssiz = UInt8((component.signed ? 0x80 : 0x00) | ((component.bitDepth - 1) & 0x7F))
+            segment.writeUInt8(ssiz)
+            segment.writeUInt8(UInt8(component.subsamplingX))
+            segment.writeUInt8(UInt8(component.subsamplingY))
+        }
+        writer.writeMarkerSegment(J2KMarker.siz.rawValue, segmentData: segment.data)
+    }
+
     // MARK: - Packet-Indexed Encode (for v5.34.0 strict bounded-rate)
 
     /// Encodes an image and returns the codestream paired with the
