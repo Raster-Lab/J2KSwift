@@ -25,11 +25,19 @@ import Foundation
 /// Per-tile observation captured by the work scheduler — used by
 /// the M4 benchmark to print the load-balance table and is part
 /// of the diagnostic surface, not the production return.
+///
+/// v6-alpha3 step 3 added `originX` / `originY` so tests can probe
+/// that the multi-tile dispatcher actually threaded the per-tile
+/// image-coordinate origin into the encoder pipeline (rather than
+/// silently encoding every tile at (0, 0) as the wrap-and-stitch
+/// prototype did).
 public struct J2KTileWorkObservation: Sendable {
     public let tileIndex: Int
     public let pixels: Int
     public let tileBytes: Int
     public let encodeMs: Double
+    public let originX: Int
+    public let originY: Int
 }
 
 /// Aggregated result of a multi-tile encode — both the assembled
@@ -63,34 +71,48 @@ enum J2KMultiTileEncoder {
         var observations = [J2KTileWorkObservation?](repeating: nil, count: n)
 
         try await withThrowingTaskGroup(
-            of: (Int, Data, Double).self
+            of: (Int, Data, Double, Int, Int).self
         ) { group in
             for k in 0..<n {
                 let captureImage = image
                 let captureLayout = layout
                 let captureConfig = configuration
                 group.addTask {
+                    // v6-alpha3 step 3: compute the tile's actual
+                    // image-coordinate origin and thread it into the
+                    // per-tile encode. The slicer carves the
+                    // sub-image's pixel data; the origin is the rect
+                    // returned by the layout (matches what the
+                    // multi-tile decoder will use to place tile k's
+                    // pixels back into the image grid).
+                    let r = captureLayout.rect(forTile: k)
                     let subImage = try J2KTileImageSlicer.sliceTile(
                         from: captureImage,
                         layout: captureLayout,
                         tileIndex: k)
                     let encoder = J2KEncoder(encodingConfiguration: captureConfig)
                     let t0 = CFAbsoluteTimeGetCurrent()
-                    // Route directly to the single-tile pipeline —
-                    // bypassing the planner so we don't recurse.
-                    let bytes = try await encoder._singleTileEncode(subImage)
+                    // Route directly to the single-tile pipeline,
+                    // origin-aware overload. Bypassing the planner so
+                    // we don't recurse.
+                    let bytes = try await encoder._singleTileEncode(
+                        subImage,
+                        tileOriginX: r.x,
+                        tileOriginY: r.y)
                     let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
-                    return (k, bytes, dt)
+                    return (k, bytes, dt, r.x, r.y)
                 }
             }
-            for try await (k, bytes, dt) in group {
+            for try await (k, bytes, dt, ox, oy) in group {
                 perTileBytes[k] = bytes
                 let r = layout.rect(forTile: k)
                 observations[k] = J2KTileWorkObservation(
                     tileIndex: k,
                     pixels: r.w * r.h,
                     tileBytes: bytes.count,
-                    encodeMs: dt)
+                    encodeMs: dt,
+                    originX: ox,
+                    originY: oy)
             }
         }
 

@@ -318,12 +318,26 @@ struct EncoderPipeline: Sendable {
     /// - Throws: ``J2KError`` if encoding fails.
     func encode(
         _ image: J2KImage,
-        progress: ((EncoderProgressUpdate) -> Void)? = nil
+        progress: ((EncoderProgressUpdate) -> Void)? = nil,
+        tileOriginX: Int = 0, tileOriginY: Int = 0
     ) async throws -> Data {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         var stageStart = CFAbsoluteTimeGetCurrent()
 
         try image.validate()
+
+        // v6-alpha3 step 3: optional diagnostic for multi-tile
+        // origin propagation. Off by default; opt-in via env var
+        // `J2K_HT_TILE_DEBUG_ORIGINS=1`.
+        if EncoderPipeline._htTileDebugOrigins {
+            let levels = config.decompositionLevels
+            let originAware = (tileOriginX != 0 || tileOriginY != 0)
+            print(String(format:
+                "    HT_TILE_DEBUG: image=%dx%d origin=(%d,%d) levels=%d originAware=%@",
+                image.width, image.height,
+                tileOriginX, tileOriginY,
+                levels, originAware ? "yes" : "no"))
+        }
 
         // Stage 1: Preprocessing — extract component data as Int32 arrays
         reportProgress(progress, stage: .preprocessing, stageProgress: 0.0)
@@ -366,7 +380,8 @@ struct EncoderPipeline: Sendable {
         reportProgress(progress, stage: .waveletTransform, stageProgress: 0.0)
         let (decompositions, actualDecompositionLevels) = try await applyWaveletTransform(
             transformedData, floatComponents: transformedFloatData,
-            width: image.width, height: image.height
+            width: image.width, height: image.height,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY
         )
         reportProgress(progress, stage: .waveletTransform, stageProgress: 1.0)
 
@@ -2231,7 +2246,8 @@ struct EncoderPipeline: Sendable {
     /// - Returns: A tuple of (subbands per component, actual decomposition levels used).
     private func applyWaveletTransform(
         _ components: [[Int32]], floatComponents: [[Float]]? = nil,
-        width: Int, height: Int
+        width: Int, height: Int,
+        tileOriginX: Int = 0, tileOriginY: Int = 0
     ) async throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
@@ -2319,8 +2335,15 @@ struct EncoderPipeline: Sendable {
                             floatCoefficients: decomposition.coarsestLL), at: 0)
 
                     } else if !use97DoublePrecision && useAcceleratedPath {
+                        // v6-alpha3 step 3: route through the parity-aware
+                        // overload so per-tile image-coordinate origin is
+                        // honoured. When (tileOriginX, tileOriginY) == (0, 0)
+                        // the parity-aware overload routes to the no-origin
+                        // fast path at every level, so single-tile output is
+                        // byte-identical to v5.38 / v5.39 / v6-alpha2.
                         let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
-                            data: compData, width: width, height: height, levels: levels
+                            data: compData, width: width, height: height, levels: levels,
+                            tileOriginX: tileOriginX, tileOriginY: tileOriginY
                         )
                         for (levelIdx, level) in decomposition.levels.enumerated() {
                             let decomLevel = levelIdx + 1
@@ -3934,6 +3957,23 @@ struct EncoderPipeline: Sendable {
     /// the SIMD path off.
     nonisolated(unsafe) private static let _htSIMDClassificationEnabled: Bool = {
         if let v = ProcessInfo.processInfo.environment["J2K_HT_SIMD"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            default: return false
+            }
+        }
+        return false
+    }()
+
+    /// v6-alpha3 step 3: per-tile origin propagation diagnostic.
+    /// Off by default; set `J2K_HT_TILE_DEBUG_ORIGINS=1` to print
+    /// per-tile origin/dim/level/origin-aware lines from
+    /// `EncoderPipeline.encode(...)`. Used to verify that the
+    /// multi-tile encoder is actually passing non-zero origins
+    /// down to the DWT call (vs. the v6-alpha1/2 wrap-and-stitch
+    /// path which always passed (0, 0)).
+    nonisolated(unsafe) static let _htTileDebugOrigins: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_HT_TILE_DEBUG_ORIGINS"] {
             switch v.lowercased() {
             case "1", "true", "yes": return true
             default: return false

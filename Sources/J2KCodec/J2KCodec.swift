@@ -242,6 +242,23 @@ public struct J2KEncoder: Sendable {
         return try await pipeline.encode(image)
     }
 
+    /// v6-alpha3 step 3: origin-aware per-tile entry point used
+    /// by `J2KMultiTileEncoder` so each tile's DWT can apply
+    /// parity-correct lifting at the tile's true image-coordinate
+    /// origin. When (tileOriginX, tileOriginY) == (0, 0) the
+    /// behaviour is byte-identical to `_singleTileEncode(_:)` —
+    /// the parity-aware DWT routes to the no-origin fast path on
+    /// every level. The wrap-and-stitch codestream assembler
+    /// remains in place (v6-alpha3 step 5+ replaces it).
+    func _singleTileEncode(
+        _ image: J2KImage,
+        tileOriginX: Int, tileOriginY: Int
+    ) async throws -> Data {
+        let pipeline = EncoderPipeline(config: encodingConfiguration)
+        return try await pipeline.encode(
+            image, tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+    }
+
     /// Encode with `.constantBitrateViaQstep` and return both the
     /// encoded data and diagnostic stats about the search loop.
     /// Useful for batch workflows to measure cache-hit rate, average

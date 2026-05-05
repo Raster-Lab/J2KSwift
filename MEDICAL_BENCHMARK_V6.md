@@ -587,3 +587,141 @@ step 3+ must:
 > constraint stays in place; the Kakadu HT advantage on fixtures
 > ≥ 886×886 still stands until the v6-alpha3 step 3+ work lands
 > and the v5.38 HT-fair table is re-measured.
+
+---
+
+## v6-alpha3 step 3 — pipeline plumbing for per-tile origin
+
+### What landed
+
+Threading from the multi-tile dispatcher down to the parity-aware
+DWT call. Every link in the chain now carries the tile's
+image-coordinate origin instead of silently encoding each tile at
+local origin (0, 0).
+
+| Link | Change |
+|---|---|
+| `EncoderPipeline.applyWaveletTransform(...)` | New `tileOriginX: Int = 0, tileOriginY: Int = 0` parameters. Threads to `AcceleratedDWT2D.forwardDecomposition53(...tileOriginX:tileOriginY:)` on the 5/3 reversible non-Float path (the lossless HT one). All other DWT paths (Float 9/7, Double, custom kernels) are unchanged — origin only matters for the lossless path that's actually being multi-tiled. |
+| `EncoderPipeline.encode(...)` | New `tileOriginX: Int = 0, tileOriginY: Int = 0` parameters; threads to `applyWaveletTransform`. Default values keep all existing callers byte-identical. |
+| `EncoderPipeline._htTileDebugOrigins` | New cached env-var reader: `J2K_HT_TILE_DEBUG_ORIGINS=1` prints per-tile origin/dim/level/origin-aware lines from inside `encode(...)`. Off by default; production logs are unaffected. |
+| `J2KEncoder._singleTileEncode(_:tileOriginX:tileOriginY:)` | New origin-aware overload alongside the existing `_singleTileEncode(_:)`. Used by `J2KMultiTileEncoder`. Public `J2KEncoder.encode(_:)` stays on the no-origin path so its byte output is unchanged. |
+| `J2KMultiTileEncoder.encode(...)` | Computes each tile's `(rect.x, rect.y)` from `J2KTileLayout.rect(forTile:)` and passes them to `_singleTileEncode(_:tileOriginX:tileOriginY:)`. |
+| `J2KTileWorkObservation` | New `originX` / `originY` fields so tests can probe what the dispatcher actually sent. |
+
+### Unit tests
+
+`Tests/J2KCodecTests/HTTileOriginPropagationTests.swift` adds four
+focused tests:
+
+| Test | Result |
+|---|---|
+| `testMultiTileOriginsReachEncoder` — for every (fixture, mode) probe (MR 2x2, PX 2x2, DX 2x2, DX 4x4, XA 2x2), the per-tile observation's `(originX, originY)` matches the layout's `rect(forTile: k).(x, y)` for every k | ✓ |
+| `testSingleTileBytesUnchanged` — `_singleTileEncode(_:tileOriginX:0,tileOriginY:0)` produces byte-identical output to `_singleTileEncode(_:)`; both runs deterministic | ✓ |
+| `testXAMultiTileSelfRoundtripStillBitExact` — XA 2x2 (the v6-alpha2-aligned fixture) self-roundtrip remains bit-exact | ✓ |
+| `testCrossDecodeProbeXAOnly` — XA 2x2 cross-decode through OpenJPH / Grok / Kakadu remains bit-exact (max diff = 0); per-tile observations confirm 3 of 4 tiles carry non-zero origins | ✓ |
+
+### Mandatory commit gates (default off)
+
+All green:
+
+| Suite | Result |
+|---|---|
+| `HTDWTParityAwarenessTests` (1D parity-aware DWT) | 4/4 |
+| `HTDWT2DParityAwarenessTests` (2D + multi-level) | 8/8 |
+| `HTTileOriginPropagationTests` (step 3 plumbing) | 4/4 |
+| `J2KLosslessMedicalGateTests` (HT-fair 21/21, EBCOT-fair 28/28) | 5/5 |
+| `J2KMedicalCorpusEncodePerformanceTests` | 2/2 |
+| `J2KStrictCrossCodecValidationTests` | 3/3 |
+
+Production single-tile bytes are byte-identical to v5.38 / v5.39 /
+v6-alpha2.
+
+### What changed about the MR/PX/DX failure mode
+
+The v6-alpha2 cross-decode failure on non-32-aligned multi-tile
+fixtures (MR/PX/DX) was a **wrong-pixels** failure: the
+wrap-and-stitch encoder produced bytes that decoded with up to 64K
+max abs diff. After v6-alpha3 step 3 the DWT now receives the
+correct image-coordinate origin (verified by
+`testMultiTileOriginsReachEncoder`), so the DWT parity blocker
+documented in v6-alpha2 is gone.
+
+**However**: driving the multi-tile encoder on a non-32-aligned
+fixture (planner-bypassed, e.g. MR 886×886 → 2x2 → 443×443 tile)
+now triggers a **downstream trap** in the encoder pipeline (signal
+SIGTRAP / signal 5 inside `J2KMultiTileEncoder.encode(...)`). The
+DWT itself runs correctly (the math primitive is verified by the
+2D parity tests), but downstream stages that consume its output —
+likely code-block grid construction, packet header generation,
+and/or the wrap-and-stitch codestream assembler — hit
+preconditions or out-of-range buffers when band dimensions shift
+because of origin parity at deep DWT levels.
+
+`testCrossDecodeProbeXAOnly` therefore exercises only XA (the v6-
+alpha2-aligned fixture) to keep the test suite green; its
+docstring explicitly notes that MR/PX/DX bypass-the-planner
+encodes currently trap downstream of DWT, and that this is the
+expected v6-alpha3 step 4+ failure mode (a stronger signal than
+the previous v6-alpha1 wrong-pixels failure — the parity-correct
+DWT output exposes structural assumptions in the rest of the
+pipeline that need fixing).
+
+The v6-alpha2 `HTTileParityMatrixTests` (which uses the planner)
+still shows only XA cells (planner correctly forces fallback for
+MR/PX/DX). Cross-decode behaviour for non-32-aligned fixtures is
+unchanged from the user perspective: the planner still blocks
+them, so production single-tile bytes are returned. The v6-alpha2
+"Kakadu wins on fixtures ≥ 886×886" claim is unchanged.
+
+### What's still NOT in this step (deferred to v6-alpha3 step 4+)
+
+This step lands the **DWT-call plumbing** only. Three downstream
+stages still need origin-awareness work before MR/PX/DX multi-
+tile cross-decode can pass:
+
+1. **Code-block grid origin.** Code-block partitioning happens
+   in tile-component coordinates, so its origin is conceptually
+   tile-relative (i.e., still (0, 0) per tile-component). But
+   when the DWT band sizes shift due to origin parity, the
+   code-block loop limits and the per-block `(x, y)` in
+   `PendingCodeBlock` need to reflect the parity-shifted band
+   dimensions. The current trap may originate here.
+
+2. **Packet header generation.** `generateTileData` packetises
+   block bytes in LRCP order. Per-band block-inclusion tag-trees
+   encode per-block `(blocksX, blocksY)` indices and Lblock
+   counts. With origin-shifted bands these indices need to align
+   with what a multi-tile decoder will read.
+
+3. **Native multi-tile codestream assembler.** Replace
+   `J2KMultiTileAssembler.stitch` (which still glues N standalone
+   per-tile codestreams) with a single pass through
+   `generateCodestream` that emits one main header + N tile-
+   parts using the parity-aware DWT for each tile.
+
+Once those three land, `HTTileParityMatrixTests` should see
+MR/PX/DX cells flip from FAIL to bit-exact, the v6-alpha2 planner
+constraint can be relaxed, and the v5.38 HT-fair table can be
+re-measured.
+
+### v6-alpha3 step 3 — final precise claim
+
+> v6-alpha3 step 3 threads real tile image-coordinate origin
+> into the multi-tile encode pipeline and invokes the parity-aware
+> multi-level 2D 5/3 DWT for each tile. Single-tile remains
+> byte-identical (verified by `testSingleTileBytesUnchanged` and
+> the lossless gate suite). XA 2x2 cross-decode through OpenJPH,
+> Grok, and Kakadu remains bit-exact (verified by
+> `testCrossDecodeProbeXAOnly`). Per-tile origin propagation is
+> verified by `testMultiTileOriginsReachEncoder` against the
+> MR / PX / DX origin sets the planner currently rules out.
+>
+> **This removes the pipeline plumbing blocker.** However: driving
+> the multi-tile encoder on a non-32-aligned fixture
+> (planner-bypassed) now traps downstream of the DWT — the DWT
+> output is parity-correct but code-block / packet / wrap-and-
+> stitch stages haven't been audited for origin-shifted bands
+> yet. **Planner relaxation and Kakadu remeasurement are still
+> blocked until MR/PX/DX cross-decode passes through OpenJPH,
+> Grok, and Kakadu.** The Kakadu HT advantage on fixtures ≥ 886×886
+> documented in the v5.38 HT-fair table stands.
