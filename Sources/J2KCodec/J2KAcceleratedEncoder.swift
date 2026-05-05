@@ -1366,11 +1366,31 @@ struct AcceleratedDWT2D: Sendable {
             currentData = r.ll
             currentW = r.llW
             currentH = r.llH
-            // Spec F.4.4: at each level, the LL band's origin is
-            // floor(parent_origin / 2). Tile origins in JPEG 2000
-            // are non-negative, so `>> 1` is floor here.
-            currentOX = currentOX >> 1
-            currentOY = currentOY >> 1
+            // ISO/IEC 15444-1 Eq. B-15: the LL band's canvas origin
+            // at level n+1 is **ceil(parent_origin / 2)**, NOT floor.
+            // For non-negative integers `(x + 1) >> 1 == ceil(x / 2)`.
+            //
+            // v6-alpha3 step 6A — phase D fix. Prior code used
+            // `currentOX >> 1` (floor-halving) which silently
+            // corrupted the per-level parity whenever an
+            // intermediate LL canvas origin was odd. Symptoms
+            // surfaced as MR/PX/DX 2x2 + DX 4x4 cross-decode wrong-
+            // pixels under OpenJPH/Grok/Kakadu and 156 band-dim
+            // mismatches in `HTNativeMultiTileBandGeometryTests.
+            // testOddOriginLowHighBandCountsPropagateToPackets`.
+            //
+            // Step 1+2 self-roundtrip tests didn't catch this
+            // because forward + inverse used the same buggy
+            // recursion, so the parity error cancelled within the
+            // J2KSwift round-trip but produced spec-non-conformant
+            // wire bytes for any external decoder.
+            //
+            // Regression-safe: when both starting origins are 0,
+            // every level's origin remains 0 (since (0+1)>>1 == 0),
+            // so single-tile bytes are byte-identical to v5.38 /
+            // v5.39 / v6-alpha2 / v6-alpha3 step 5.
+            currentOX = (currentOX + 1) >> 1
+            currentOY = (currentOY + 1) >> 1
         }
 
         return Int32DecompositionResult(

@@ -509,7 +509,9 @@ struct EncoderPipeline: Sendable {
     /// correct inverse-DWT lifting parity per tile.
     func encodeNativeMultiTile(
         _ image: J2KImage,
-        layout: J2KTileLayout
+        layout: J2KTileLayout,
+        // v6-alpha3 step 6A — geometry trace plumbing.
+        geometryCollector: GeometryCollector? = nil
     ) async throws -> (codestream: Data, partials: [NativeTilePartial]) {
         precondition(layout.isMultiTile, "encodeNativeMultiTile: layout must be multi-tile")
         try image.validate()
@@ -532,7 +534,9 @@ struct EncoderPipeline: Sendable {
             let (tileData, levels, stepSizes) =
                 try await runEncodeStagesForNativeAssembly(
                     subImage,
-                    tileOriginX: r.x, tileOriginY: r.y)
+                    tileOriginX: r.x, tileOriginY: r.y,
+                    tileIndex: k,
+                    geometryCollector: geometryCollector)
             let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
             partials.append(NativeTilePartial(
                 tileData: tileData,
@@ -618,7 +622,10 @@ struct EncoderPipeline: Sendable {
     /// header.
     func runEncodeStagesForNativeAssembly(
         _ tileImage: J2KImage,
-        tileOriginX: Int, tileOriginY: Int
+        tileOriginX: Int, tileOriginY: Int,
+        // v6-alpha3 step 6A — geometry trace plumbing.
+        tileIndex: Int = 0,
+        geometryCollector: GeometryCollector? = nil
     ) async throws -> (tileData: Data, actualLevels: Int, adaptiveStepSizes: [String: Double]) {
         try tileImage.validate()
 
@@ -658,7 +665,11 @@ struct EncoderPipeline: Sendable {
         let codeBlocks = try await applyEntropyCoding(
             decompositions, image: tileImage,
             adaptiveStepSizes: adaptiveStepSizes,
-            totalLevels: actualLevels)
+            totalLevels: actualLevels,
+            tileOriginX: tileOriginX,
+            tileOriginY: tileOriginY,
+            tileIndex: tileIndex,
+            geometryCollector: geometryCollector)
 
         // Stage 6: Rate control (lossless → all passes included).
         let layers = try applyRateControl(
@@ -674,7 +685,9 @@ struct EncoderPipeline: Sendable {
         let (tileData, _) = try generateTileData(
             codeBlocks: codeBlocks, layers: layers,
             decompositionLevels: actualLevels,
-            componentCount: tileImage.components.count)
+            componentCount: tileImage.components.count,
+            tileIndex: tileIndex,
+            geometryCollector: geometryCollector)
 
         return (tileData, actualLevels, adaptiveStepSizes)
     }
@@ -2944,7 +2957,15 @@ struct EncoderPipeline: Sendable {
         _ componentSubbands: [[SubbandInfo]],
         image: J2KImage,
         adaptiveStepSizes: [String: Double],
-        totalLevels: Int
+        totalLevels: Int,
+        // v6-alpha3 step 6A — tile origin for canvas-anchored
+        // code-block partitioning (ISO/IEC 15444-1 B.7). Default
+        // (0, 0) preserves single-tile behaviour byte-for-byte.
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0,
+        // v6-alpha3 step 6A — geometry trace plumbing.
+        tileIndex: Int = 0,
+        geometryCollector: GeometryCollector? = nil
     ) async throws -> [J2KCodeBlock] {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         let entropyStart = CFAbsoluteTimeGetCurrent()
@@ -2979,7 +3000,11 @@ struct EncoderPipeline: Sendable {
                 cbHeight: cbHeight,
                 profiling: profiling,
                 entropyStart: entropyStart,
-                adaptiveStepSizes: adaptiveStepSizes
+                adaptiveStepSizes: adaptiveStepSizes,
+                tileOriginX: tileOriginX,
+                tileOriginY: tileOriginY,
+                tileIndex: tileIndex,
+                geometryCollector: geometryCollector
             )
         }
 
@@ -3284,7 +3309,16 @@ struct EncoderPipeline: Sendable {
         cbHeight: Int,
         profiling: Bool,
         entropyStart: CFAbsoluteTime,
-        adaptiveStepSizes: [String: Double]
+        adaptiveStepSizes: [String: Double],
+        // v6-alpha3 step 6A — tile origin for canvas-anchored
+        // code-block partitioning. Default (0, 0) → tile-relative
+        // partition (production single-tile path), byte-identical to
+        // pre-v6-alpha3 output.
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0,
+        // v6-alpha3 step 6A — geometry trace plumbing.
+        tileIndex: Int = 0,
+        geometryCollector: GeometryCollector? = nil
     ) async throws -> [J2KCodeBlock] {
         // Build lightweight block descriptors (no coefficient copy).
         var deferred: [DeferredCodeBlock] = []
@@ -3339,17 +3373,64 @@ struct EncoderPipeline: Sendable {
                 // the full quantized subband array allocation.
                 let hasFloatCoeffs = info.floatCoefficients != nil && !config.useReversibleFilter
 
-                let blocksX = (info.width + cbWidth - 1) / cbWidth
-                let blocksY = (info.height + cbHeight - 1) / cbHeight
+                // v6-alpha3 step 6A — canvas-anchored code-block
+                // partition per ISO/IEC 15444-1 B.7. The partition
+                // is anchored at the band's canvas origin (0, 0);
+                // each tile's blocks are those canvas-aligned cells
+                // intersecting the tile's band region. For non-zero
+                // tile band canvas origin (`tbx0, tby0` per Eq.
+                // B-15), the first/last blocks may be partial.
+                //
+                // For tile origin (0, 0) the formula reduces to the
+                // legacy `ceil(bandW / cbW)` cell-count, with all
+                // blocks having `originX == bx * cbW` — single-tile
+                // bytes are byte-identical to v5.38 / v5.39 / v6-alpha2.
+                let bandDepth: Int
+                if info.subband == .ll { bandDepth = actualLevels }
+                else { bandDepth = info.level }
+                let div  = 1 << bandDepth
+                let half = bandDepth >= 1 ? (1 << (bandDepth - 1)) : 0
+                let xOff = (info.subband == .hl || info.subband == .hh) ? half : 0
+                let yOff = (info.subband == .lh || info.subband == .hh) ? half : 0
+                let tbx0 = Self.ceilDivIntegerOrigin(tileOriginX - xOff, div)
+                let tby0 = Self.ceilDivIntegerOrigin(tileOriginY - yOff, div)
+
+                // floor(tbx0 / cbW) for non-negative tbx0 (which is
+                // always the case here: spec band canvas origins are
+                // non-negative for non-negative tile origins because
+                // tile origins are J2KSwift-non-negative).
+                let firstCanvasX = tbx0 / cbWidth
+                let firstCanvasY = tby0 / cbHeight
+                let lastCanvasX = (tbx0 + info.width  + cbWidth  - 1) / cbWidth
+                let lastCanvasY = (tby0 + info.height + cbHeight - 1) / cbHeight
+                let blocksX = lastCanvasX - firstCanvasX
+                let blocksY = lastCanvasY - firstCanvasY
 
                 deferred.reserveCapacity(deferred.count + blocksX * blocksY)
+                // v6-alpha3 step 6A — accumulate per-band pending-block
+                // geometry for the trace collector if one was supplied.
+                var traceBlocks: [GeometryPendingBlock] = []
+                if geometryCollector != nil {
+                    traceBlocks.reserveCapacity(blocksX * blocksY)
+                }
                 for by in 0..<blocksY {
+                    let canvasStartY = (firstCanvasY + by) * cbHeight
+                    let canvasEndY   = canvasStartY + cbHeight
+                    let tileStartY   = max(0, canvasStartY - tby0)
+                    let tileEndY     = min(info.height, canvasEndY - tby0)
+                    let blockH       = tileEndY - tileStartY
                     for bx in 0..<blocksX {
-                        let blockW = min(cbWidth, info.width - bx * cbWidth)
-                        let blockH = min(cbHeight, info.height - by * cbHeight)
+                        let canvasStartX = (firstCanvasX + bx) * cbWidth
+                        let canvasEndX   = canvasStartX + cbWidth
+                        let tileStartX   = max(0, canvasStartX - tbx0)
+                        let tileEndX     = min(info.width, canvasEndX - tbx0)
+                        let blockW       = tileEndX - tileStartX
 
                         deferred.append(DeferredCodeBlock(
                             index: blockIndex,
+                            // x/y are tag-tree cell coordinates (so
+                            // `writePacket`'s `block.x / cbW` formula
+                            // gives the right tag-tree dim).
                             x: bx * cbWidth,
                             y: by * cbHeight,
                             width: blockW,
@@ -3360,13 +3441,39 @@ struct EncoderPipeline: Sendable {
                             bitDepth: bandKb,
                             subbandCoefficients: info.coefficients,
                             subbandWidth: info.width,
-                            originX: bx * cbWidth,
-                            originY: by * cbHeight,
+                            // originX/Y are the tile-band-relative
+                            // extraction coordinates (where the
+                            // encoder reads the block's coefficients
+                            // from `info.coefficients`).
+                            originX: tileStartX,
+                            originY: tileStartY,
                             floatSubbandCoefficients: hasFloatCoeffs ? info.floatCoefficients : nil,
                             quantizationStep: subbandStepSize
                         ))
+                        if geometryCollector != nil {
+                            traceBlocks.append(GeometryPendingBlock(
+                                x: bx * cbWidth, y: by * cbHeight,
+                                width: blockW, height: blockH,
+                                originX: tileStartX, originY: tileStartY))
+                        }
                         blockIndex += 1
                     }
+                }
+
+                if let collector = geometryCollector {
+                    collector.addBand(GeometryBand(
+                        tileIndex: tileIndex,
+                        componentIndex: info.componentIndex,
+                        dwtLevel: info.level,
+                        subband: info.subband,
+                        resolutionLevel: resolutionLevel,
+                        bandWidth: info.width,
+                        bandHeight: info.height,
+                        codeBlockWidth: cbWidth,
+                        codeBlockHeight: cbHeight,
+                        blocksX: blocksX,
+                        blocksY: blocksY,
+                        pendingBlocks: traceBlocks))
                 }
             }
         }
@@ -5543,7 +5650,10 @@ struct EncoderPipeline: Sendable {
     /// (premature-EOC) tile.
     private func generateTileData(
         codeBlocks: [J2KCodeBlock], layers: [QualityLayer],
-        decompositionLevels: Int, componentCount: Int
+        decompositionLevels: Int, componentCount: Int,
+        // v6-alpha3 step 6A — geometry trace plumbing.
+        tileIndex: Int = 0,
+        geometryCollector: GeometryCollector? = nil
     ) throws -> (data: Data, packetEnds: [Int]) {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         // Pre-size writer buffer based on total code block data
@@ -5596,7 +5706,11 @@ struct EncoderPipeline: Sendable {
                     into: &tileWriter,
                     bandBlocks: bandBlocksList,
                     codeBlockWidth: cbWidth,
-                    codeBlockHeight: cbHeight
+                    codeBlockHeight: cbHeight,
+                    tileIndex: tileIndex,
+                    resolutionLevel: resLevel,
+                    component: compIdx,
+                    geometryCollector: geometryCollector
                 )
                 packetEnds.append(tileWriter.count)
             }
@@ -5833,7 +5947,14 @@ struct EncoderPipeline: Sendable {
         into writer: inout J2KBitWriter,
         bandBlocks: [[J2KCodeBlock]],
         codeBlockWidth: Int,
-        codeBlockHeight: Int
+        codeBlockHeight: Int,
+        // v6-alpha3 step 6A — geometry trace plumbing. Production
+        // callers leave both nil; the cost is then a single nil-check
+        // per band (negligible).
+        tileIndex: Int = 0,
+        resolutionLevel: Int = 0,
+        component: Int = 0,
+        geometryCollector: GeometryCollector? = nil
     ) throws {
         // Enable JPEG 2000 byte stuffing for packet headers (ISO 15444-1 B.10.1)
         writer.setByteStuffing(true)
@@ -5856,6 +5977,10 @@ struct EncoderPipeline: Sendable {
         // Collect included blocks in band order for appending data later
         var allIncludedBlocks: [J2KCodeBlock] = []
 
+        // v6-alpha3 step 6A — accumulate per-band geometry for the
+        // collector if one was supplied.
+        var traceBands: [GeometryPacketBand] = []
+
         // Process each band completely before moving to next
         for band in bandBlocks {
             guard !band.isEmpty else { continue }
@@ -5876,12 +6001,28 @@ struct EncoderPipeline: Sendable {
                 zbpTree.setValue(leafIndex: idx, value: Int32(block.zeroBitPlanes))
             }
 
+            // v6-alpha3 step 6A — record one entry per block in the
+            // tag-tree iteration order. `bodyOrderIndex` is set after
+            // the loop for included blocks.
+            var traceEntries: [GeometryPacketBlockEntry] = []
+            if geometryCollector != nil {
+                traceEntries.reserveCapacity(band.count)
+            }
+
             // Encode each code-block in raster order
             for (idx, block) in band.enumerated() {
                 let included = !block.data.isEmpty && block.passeCount > 0
 
                 // 1. Inclusion: tag tree encode for layer 0 (threshold = 1)
                 inclusionTree.encode(writer: &writer, leafIndex: idx, threshold: 1)
+
+                if geometryCollector != nil {
+                    traceEntries.append(GeometryPacketBlockEntry(
+                        x: block.x, y: block.y,
+                        width: block.width, height: block.height,
+                        included: included,
+                        bodyOrderIndex: included ? allIncludedBlocks.count : nil))
+                }
 
                 guard included else { continue }
 
@@ -5933,6 +6074,15 @@ struct EncoderPipeline: Sendable {
                 }
                 allIncludedBlocks.append(block)
             }
+
+            if geometryCollector != nil {
+                let subband = band.first!.subband   // band non-empty by guard above
+                traceBands.append(GeometryPacketBand(
+                    subband: subband,
+                    tagTreeWidth: blocksX,
+                    tagTreeHeight: blocksY,
+                    entries: traceEntries))
+            }
         }
 
         // Pad header to byte boundary, then disable stuffing for raw block data
@@ -5942,6 +6092,14 @@ struct EncoderPipeline: Sendable {
         // Append code-block bitstream data in band order directly into shared writer
         for block in allIncludedBlocks {
             writer.appendRawBytes(block.data)
+        }
+
+        if let collector = geometryCollector, !traceBands.isEmpty {
+            collector.addPacket(GeometryPacket(
+                tileIndex: tileIndex,
+                resolutionLevel: resolutionLevel,
+                componentIndex: component,
+                bands: traceBands))
         }
     }
 
@@ -6007,6 +6165,25 @@ struct EncoderPipeline: Sendable {
         }
 
         return (clampedExponent, mantissa)
+    }
+
+    /// Mathematical ceiling division for a possibly-negative numerator
+    /// and positive denominator. Used by the canvas-anchored
+    /// code-block partition (ISO/IEC 15444-1 B.7) to compute the
+    /// band canvas-coord origin per Eq. B-15:
+    ///   `tbx0 = ceil((tcx0 - x_offset_b) / 2^d)`
+    /// where the numerator `tcx0 - x_offset_b` can be negative when
+    /// the tile origin is smaller than the subband's `2^(d-1)` offset
+    /// (e.g. an HL band of a tile at origin (0, …)).
+    ///
+    /// Swift's integer `/` truncates toward zero, so `-5 / 3 == -1`
+    /// rather than the mathematical floor `-2`. The ceiling is:
+    ///   - num ≥ 0: `(num + den - 1) / den`
+    ///   - num < 0: `-((-num) / den)` (since `ceil(num/den) = -floor(-num/den)`).
+    static func ceilDivIntegerOrigin(_ num: Int, _ den: Int) -> Int {
+        precondition(den > 0)
+        if num >= 0 { return (num + den - 1) / den }
+        return -((-num) / den)
     }
 }
 

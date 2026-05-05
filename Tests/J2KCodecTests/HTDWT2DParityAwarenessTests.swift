@@ -167,7 +167,14 @@ final class HTDWT2DParityAwarenessTests: XCTestCase {
             let lowW = ((ox & 1) == 0) ? (w + 1) / 2 : w / 2
             let lowH = ((oy & 1) == 0) ? (h + 1) / 2 : h / 2
             w = lowW; h = lowH
-            ox >>= 1; oy >>= 1
+            // ISO/IEC 15444-1 Eq. B-15: LL canvas origin at level n+1
+            // is ceil(prev/2). v6-alpha3 step 6A phase D matched the
+            // production fix in `forwardDecomposition53`; this
+            // reference inverse must apply the same ceil-recursion
+            // for the multi-level forward+inverse roundtrip to
+            // remain bit-exact.
+            ox = (ox + 1) >> 1
+            oy = (oy + 1) >> 1
         }
         // Now invert level by level, deepest first.
         var ll = decomposition.coarsestLL
