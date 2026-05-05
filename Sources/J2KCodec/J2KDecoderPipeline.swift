@@ -631,7 +631,9 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
         let (decodedBlocks, _) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
-        var spatialDataTile = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: tileMeta)
+        var spatialDataTile = try await applyInverseWaveletTransform(
+            dequantizedSubbands, metadata: tileMeta,
+            tileOriginX: tileX, tileOriginY: tileY)
         try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
 
         for (compIdx, compInfo) in metadata.components.enumerated() {
@@ -2520,7 +2522,13 @@ struct DecoderPipeline: Sendable {
     /// Applies inverse wavelet transform to reconstruct spatial domain.
     private func applyInverseWaveletTransform(
         _ subbands: [SubbandInfo],
-        metadata: CodestreamMetadata
+        metadata: CodestreamMetadata,
+        // v6-alpha3 step 6B slice 3 — tile-component canvas-coord
+        // origin for the parity-aware inverse 5/3 DWT. Default
+        // (0, 0) preserves single-tile and 32-aligned multi-tile
+        // decode byte-for-byte.
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
     ) async throws -> [[Double]] {
         let filter = metadata.configuration.waveletFilter
         let levels = metadata.configuration.decompositionLevels
@@ -2655,13 +2663,28 @@ struct DecoderPipeline: Sendable {
                 return result
             }
 
-            // Compute expected subband dimensions at each decomposition level
+            // Compute expected subband dimensions at each decomposition level.
+            //
+            // v6-alpha3 step 6B slice 3 — for non-zero tile-component
+            // canvas origin, use the spec formula per ISO/IEC 15444-1
+            // Eq. B-15:
+            //   LL_d width  = ceil((tcx0 + compW) / 2^d) - ceil(tcx0 / 2^d)
+            //   LL_d height = ceil((tcy0 + compH) / 2^d) - ceil(tcy0 / 2^d)
+            // For origin (0, 0) this reduces to ceil(compW / 2^d), which
+            // is what the recursive `(pw + 1) / 2` gives — single-tile
+            // and 32-aligned multi-tile decode are byte-identical.
             let compW = metadata.width / metadata.components[compIdx].subsamplingX
             let compH = metadata.height / metadata.components[compIdx].subsamplingY
-            var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
-            for _ in 0..<levels {
-                let (pw, ph) = levelSizes.last!
-                levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
+            let tcx0 = tileOriginX / metadata.components[compIdx].subsamplingX
+            let tcy0 = tileOriginY / metadata.components[compIdx].subsamplingY
+            var levelSizes: [(width: Int, height: Int)] = []
+            for d in 0...levels {
+                let denom = 1 << d
+                let bandX0 = EncoderPipeline.ceilDivIntegerOrigin(tcx0, denom)
+                let bandX1 = EncoderPipeline.ceilDivIntegerOrigin(tcx0 + compW, denom)
+                let bandY0 = EncoderPipeline.ceilDivIntegerOrigin(tcy0, denom)
+                let bandY1 = EncoderPipeline.ceilDivIntegerOrigin(tcy0 + compH, denom)
+                levelSizes.append((bandX1 - bandX0, bandY1 - bandY0))
             }
 
             // Helper: convert 1D Int32 array to 2D padded to standard dimensions.
@@ -3007,9 +3030,16 @@ struct DecoderPipeline: Sendable {
                     return flattened
                 } else {
                     let optimizer = J2KDWT2DOptimizer()
-                    let result = await optimizer.inverseTransformMultiLevel53(
+                    // v6-alpha3 step 6B slice 3 — pass tile-component
+                    // canvas origin into the parity-aware multi-level
+                    // inverse so non-32-aligned multi-tile codestreams
+                    // self-decode correctly. For origin (0, 0) the
+                    // overload routes to the existing optimised
+                    // flat-buffer fast path — byte-identical, zero-cost.
+                    let result = try await optimizer.inverseTransformMultiLevel53(
                         ll: llFlat, llW: expectedLLW, llH: expectedLLH,
-                        subbands: levelSubbands53
+                        subbands: levelSubbands53,
+                        tileOriginX: tcx0, tileOriginY: tcy0
                     )
                     // Convert flat [Int32] → [Double] with vDSP (NEON-vectorised on Apple Silicon)
                     let n = result.data.count
