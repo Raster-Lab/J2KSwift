@@ -628,7 +628,9 @@ struct DecoderPipeline: Sendable {
         tileMeta.height = tileH
         tileMeta.tileSize = (width: tileW, height: tileH)
 
-        let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
+        let codeBlocks = try extractTileData(
+            tileData, metadata: tileMeta,
+            tileOriginX: tileX, tileOriginY: tileY)
         let (decodedBlocks, _) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         var spatialDataTile = try await applyInverseWaveletTransform(
@@ -1259,7 +1261,13 @@ struct DecoderPipeline: Sendable {
     /// Default codestreams (one precinct per band) work as before.
     private func extractTileData(
         _ tileData: Data,
-        metadata: CodestreamMetadata
+        metadata: CodestreamMetadata,
+        // v6-alpha3 step 6B slice 4 — tile-component canvas-coord
+        // origin used to canvas-anchor the code-block partition
+        // per ISO/IEC 15444-1 B.7. Default (0, 0) preserves
+        // single-tile and 32-aligned multi-tile decode bit-for-bit.
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
     ) throws -> [CodeBlockInfo] {
         var blocks: [CodeBlockInfo] = []
 
@@ -1313,6 +1321,7 @@ struct DecoderPipeline: Sendable {
                 let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
                 let (sbWRef, sbHRef) = Self.subbandDimensions(
                     tileWidth: tileWidth, tileHeight: tileHeight,
+                    tileOriginX: tileOriginX, tileOriginY: tileOriginY,
                     levels: levels, resLevel: resLevel, subband: referenceSubband)
                 guard sbWRef > 0 && sbHRef > 0 else { continue }
 
@@ -1334,24 +1343,42 @@ struct DecoderPipeline: Sendable {
                         for subband in subbands {
                             let (sbWidth, sbHeight) = Self.subbandDimensions(
                                 tileWidth: tileWidth, tileHeight: tileHeight,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
                                 levels: levels, resLevel: resLevel, subband: subband)
                             guard sbWidth > 0 && sbHeight > 0 else { continue }
 
-                            // Precinct's region in band-local coordinates,
-                            // clipped to the band's bounds.
+                            // v6-alpha3 step 6B slice 4 — canvas-anchored
+                            // code-block partition per ISO/IEC 15444-1 B.7.
+                            // Mirror of the encoder's step-6A canvas-anchored
+                            // grid in `applyEntropyCodingHTJ2KFused`. For
+                            // tile origin (0, 0) the formulas reduce to the
+                            // legacy tile-relative grid; single-tile and
+                            // 32-aligned multi-tile decode are byte-identical.
+                            let (tbx0, tby0) = Self.subbandCanvasOrigin(
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                                levels: levels, resLevel: resLevel, subband: subband)
+
+                            // Precinct region intersected with the tile band.
+                            // Default precinct (2^15 × 2^15) covers the whole
+                            // band, so px/py are always 0 in that case and
+                            // pStartX/pStartY are 0. For non-default precincts
+                            // this preserves the precinct-anchored sub-region
+                            // while the inner block grid is canvas-anchored.
                             let pStartX = px * pw
                             let pStartY = py * ph
                             let pEndX = min(pStartX + pw, sbWidth)
                             let pEndY = min(pStartY + ph, sbHeight)
                             guard pEndX > pStartX, pEndY > pStartY else { continue }
 
-                            // Block grid within this precinct.
-                            let firstBlockX = pStartX / cbWidth
-                            let firstBlockY = pStartY / cbHeight
-                            let lastBlockX = (pEndX - 1) / cbWidth
-                            let lastBlockY = (pEndY - 1) / cbHeight
-                            let pBlocksX = lastBlockX - firstBlockX + 1
-                            let pBlocksY = lastBlockY - firstBlockY + 1
+                            // Canvas-anchored cell range intersecting this
+                            // precinct's tile-band region [tbx0+pStartX,
+                            // tbx0+pEndX) × [tby0+pStartY, tby0+pEndY).
+                            let firstCanvasX = (tbx0 + pStartX) / cbWidth
+                            let firstCanvasY = (tby0 + pStartY) / cbHeight
+                            let lastCanvasX  = (tbx0 + pEndX + cbWidth  - 1) / cbWidth
+                            let lastCanvasY  = (tby0 + pEndY + cbHeight - 1) / cbHeight
+                            let pBlocksX = lastCanvasX - firstCanvasX
+                            let pBlocksY = lastCanvasY - firstCanvasY
                             let pBlockCount = pBlocksX * pBlocksY
 
                             let bandKey: String
@@ -1386,16 +1413,29 @@ struct DecoderPipeline: Sendable {
 
                                 let localY = localLeafIdx / pBlocksX
                                 let localX = localLeafIdx % pBlocksX
-                                let blockX = (firstBlockX + localX) * cbWidth
-                                let blockY = (firstBlockY + localY) * cbHeight
-                                let actualW = min(cbWidth, sbWidth - blockX)
-                                let actualH = min(cbHeight, sbHeight - blockY)
+
+                                // Canvas position of this block in band-canvas
+                                // coords, then clipped to tile-band-relative
+                                // [pStartX, pEndX) × [pStartY, pEndY).
+                                let canvasStartX = (firstCanvasX + localX) * cbWidth
+                                let canvasEndX   = canvasStartX + cbWidth
+                                let canvasStartY = (firstCanvasY + localY) * cbHeight
+                                let canvasEndY   = canvasStartY + cbHeight
+                                // Tile-band-relative coordinates the dequant /
+                                // IDWT scatter expects (matches encoder's
+                                // PendingCodeBlock.originX/originY).
+                                let tileStartX = max(pStartX, canvasStartX - tbx0)
+                                let tileEndX   = min(pEndX,   canvasEndX   - tbx0)
+                                let tileStartY = max(pStartY, canvasStartY - tby0)
+                                let tileEndY   = min(pEndY,   canvasEndY   - tby0)
+                                let actualW    = tileEndX - tileStartX
+                                let actualH    = tileEndY - tileStartY
 
                                 pendingBlocks.append(PendingBlock(
                                     componentIndex: compIdx,
                                     decomLevel: decomLevel,
                                     subband: subband,
-                                    x: blockX, y: blockY,
+                                    x: tileStartX, y: tileStartY,
                                     width: actualW, height: actualH,
                                     passCount: passes,
                                     zeroBitPlanes: Int(zbp),
@@ -1430,35 +1470,82 @@ struct DecoderPipeline: Sendable {
     }
 
     /// Computes subband dimensions for a given resolution level and subband type.
+    ///
+    /// v6-alpha3 step 6B slice 4 — accepts `tileOriginX/Y` (default
+    /// 0) and computes spec-correct band sizes per ISO/IEC 15444-1
+    /// Eq. B-15 when origin is non-zero. For origin (0, 0) the
+    /// formula reduces to the legacy recursive `(w + 1) / 2`
+    /// outputs — single-tile and 32-aligned multi-tile decode are
+    /// byte-identical.
+    ///
+    /// Eq. B-15:
+    ///   tbx0 = ceil((tcx0 - x_offset_b) / 2^d)
+    ///   tbx1 = ceil((tcx1 - x_offset_b) / 2^d)
+    ///   bandW = tbx1 - tbx0
+    /// where (x_offset_b, y_offset_b) is (0, 0) for LL, (2^(d-1), 0)
+    /// for HL, (0, 2^(d-1)) for LH, (2^(d-1), 2^(d-1)) for HH; and
+    /// d is the decomposition depth (= `levels` for LL, = `levels -
+    /// resLevel + 1` for HL/LH/HH at resolution `resLevel`).
     private static func subbandDimensions(
         tileWidth: Int, tileHeight: Int,
+        tileOriginX: Int = 0, tileOriginY: Int = 0,
         levels: Int, resLevel: Int, subband: J2KSubband
     ) -> (width: Int, height: Int) {
+        let d: Int
         if resLevel == 0 {
-            // LL at deepest decomposition level
-            var w = tileWidth, h = tileHeight
-            for _ in 0..<levels {
-                w = (w + 1) / 2
-                h = (h + 1) / 2
-            }
-            return (w, h)
+            d = levels   // LL at deepest decomposition level
         } else {
-            // Detail subband at decomposition level d = levels - resLevel + 1
-            // Parent LL is at decomposition level (d - 1)
-            let d = levels - resLevel + 1
-            var w = tileWidth, h = tileHeight
-            for _ in 0..<(d - 1) {
-                w = (w + 1) / 2
-                h = (h + 1) / 2
-            }
-            // Parent dimensions are (w, h). DWT splits into:
-            switch subband {
-            case .ll: return ((w + 1) / 2, (h + 1) / 2)
-            case .hl: return (w / 2, (h + 1) / 2)
-            case .lh: return ((w + 1) / 2, h / 2)
-            case .hh: return (w / 2, h / 2)
-            }
+            d = levels - resLevel + 1
         }
+        let denom = 1 << d
+        let half  = d >= 1 ? (1 << (d - 1)) : 0
+        let xOff: Int
+        let yOff: Int
+        switch subband {
+        case .ll: xOff = 0;    yOff = 0
+        case .hl: xOff = half; yOff = 0
+        case .lh: xOff = 0;    yOff = half
+        case .hh: xOff = half; yOff = half
+        }
+        let tcx0 = tileOriginX
+        let tcy0 = tileOriginY
+        let tcx1 = tileOriginX + tileWidth
+        let tcy1 = tileOriginY + tileHeight
+        let tbx0 = EncoderPipeline.ceilDivIntegerOrigin(tcx0 - xOff, denom)
+        let tby0 = EncoderPipeline.ceilDivIntegerOrigin(tcy0 - yOff, denom)
+        let tbx1 = EncoderPipeline.ceilDivIntegerOrigin(tcx1 - xOff, denom)
+        let tby1 = EncoderPipeline.ceilDivIntegerOrigin(tcy1 - yOff, denom)
+        return (tbx1 - tbx0, tby1 - tby0)
+    }
+
+    /// v6-alpha3 step 6B slice 4 — band canvas-coord origin per
+    /// ISO/IEC 15444-1 Eq. B-15. Used by `extractTileData` to
+    /// canvas-anchor the code-block partition (mirror of the
+    /// encoder's step-6A canvas-anchored grid).
+    private static func subbandCanvasOrigin(
+        tileOriginX: Int, tileOriginY: Int,
+        levels: Int, resLevel: Int, subband: J2KSubband
+    ) -> (x: Int, y: Int) {
+        let d: Int
+        if resLevel == 0 {
+            d = levels
+        } else {
+            d = levels - resLevel + 1
+        }
+        let denom = 1 << d
+        let half  = d >= 1 ? (1 << (d - 1)) : 0
+        let xOff: Int
+        let yOff: Int
+        switch subband {
+        case .ll: xOff = 0;    yOff = 0
+        case .hl: xOff = half; yOff = 0
+        case .lh: xOff = 0;    yOff = half
+        case .hh: xOff = half; yOff = half
+        }
+        return (
+            EncoderPipeline.ceilDivIntegerOrigin(tileOriginX - xOff, denom),
+            EncoderPipeline.ceilDivIntegerOrigin(tileOriginY - yOff, denom)
+        )
     }
 
     /// Decodes the number of coding passes per ISO/IEC 15444-1 Table B.4.

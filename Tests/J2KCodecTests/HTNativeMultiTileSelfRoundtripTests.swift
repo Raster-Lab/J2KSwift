@@ -119,43 +119,44 @@ final class HTNativeMultiTileSelfRoundtripTests: XCTestCase {
             label: "XA 1024×1024 2x2")
     }
 
-    // MARK: - Non-32-aligned fixtures — DEFERRED to step 6B slice 4
+    // MARK: - Non-32-aligned fixtures (THE main slice 4 deliverable)
 
-    /// Slice 4 is the entropy-decoder mirror of step 6A: the decoder
-    /// must compute spec-correct band sizes (Eq. B-15) and walk a
-    /// canvas-anchored code-block partition (B.7) so the bit-stream
-    /// alignment matches what the encoder wrote. Without slice 4 the
-    /// MR/PX/DX 2x2 + DX 4x4 self-roundtrip traps in
-    /// `J2KHTConformantMagSgnCoder.read(count:)` ("MagSgn read width
-    /// > 32") because the decoder's tile-relative block grid produces
-    /// a different block count than the encoder's canvas-anchored
-    /// grid. These tests stay XCTSkip until slice 4 lands; flipping
-    /// them to live is part of slice 4's gate.
-
+    /// MR 886×886 2x2. Tile origins include (443, 0), (0, 443),
+    /// (443, 443) — odd at the outermost level. Pre-slice-4 this
+    /// trapped in `J2KHTConformantMagSgnCoder.read(count:)` because
+    /// the decoder's tile-relative block grid disagreed with the
+    /// encoder's canvas-anchored grid (step 6A). Slice 4 mirrored
+    /// step 6A on the decode side so the bit-streams now align.
     func testMR2x2SelfRoundtripBitExact() async throws {
-        throw XCTSkip("v6-alpha3 step 6B slice 4 — entropy decoder " +
-                      "must mirror canvas-anchored block grid before " +
-                      "MR 886×886 2x2 self-roundtrip can succeed.")
-        // try await assertSelfRoundtripBitExact(
-        //     imageW: 886, imageH: 886, cols: 2, rows: 2,
-        //     label: "MR 886×886 2x2")
+        try await assertSelfRoundtripBitExact(
+            imageW: 886, imageH: 886, cols: 2, rows: 2,
+            label: "MR 886×886 2x2")
     }
 
+    /// PX 2459×1316 2x2. Tile origins (0, 0), (1230, 0), (0, 658),
+    /// (1230, 658). Even at level 0 but parity flips at deeper
+    /// levels (1230/4 = 307 odd). Trailing column tile is 1229
+    /// wide, not 1230.
     func testPX2x2SelfRoundtripBitExact() async throws {
-        throw XCTSkip("v6-alpha3 step 6B slice 4 — entropy decoder " +
-                      "must mirror canvas-anchored block grid before " +
-                      "PX 2459×1316 2x2 self-roundtrip can succeed.")
+        try await assertSelfRoundtripBitExact(
+            imageW: 2459, imageH: 1316, cols: 2, rows: 2,
+            label: "PX 2459×1316 2x2")
     }
 
+    /// DX 2800×2288 2x2. Origins (0, 0), (1400, 0), (0, 1144),
+    /// (1400, 1144). Both even at level 0; both flip parity at
+    /// deeper DWT levels (1400/8 = 175 odd; 1144/8 = 143 odd).
     func testDX2x2SelfRoundtripBitExact() async throws {
-        throw XCTSkip("v6-alpha3 step 6B slice 4 — entropy decoder " +
-                      "must mirror canvas-anchored block grid before " +
-                      "DX 2800×2288 2x2 self-roundtrip can succeed.")
+        try await assertSelfRoundtripBitExact(
+            imageW: 2800, imageH: 2288, cols: 2, rows: 2,
+            label: "DX 2800×2288 2x2")
     }
 
+    /// DX 2800×2288 4x4. Sixteen tiles; origins include (700, 572)
+    /// and others. Tile dim 700×572 (smaller than 2x2).
     func testDX4x4SelfRoundtripBitExact() async throws {
-        throw XCTSkip("v6-alpha3 step 6B slice 4 — entropy decoder " +
-                      "must mirror canvas-anchored block grid before " +
-                      "DX 2800×2288 4x4 self-roundtrip can succeed.")
+        try await assertSelfRoundtripBitExact(
+            imageW: 2800, imageH: 2288, cols: 4, rows: 4,
+            label: "DX 2800×2288 4x4")
     }
 }
