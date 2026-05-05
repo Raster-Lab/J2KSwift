@@ -3165,6 +3165,12 @@ struct EncoderPipeline: Sendable {
                         var cMagsgn = HTMagSgnEncoderConformant()
                         var cMel = HTMELEncoderConformant()
                         var cVlc = HTReverseBitEmitterConformant()
+                        // v5.38 M9: reusable [UInt32] buffer for the
+                        // sign-magnitude conversion fed to the
+                        // conformant encoder. Sized to maxBlockSize so
+                        // the inner resize check skips re-allocation
+                        // for full-size blocks (the common case).
+                        var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
 
                         for i in range {
                             let d = capturedDeferred[i]
@@ -3272,7 +3278,8 @@ struct EncoderPipeline: Sendable {
                                 magsgn: &magsgn,
                                 conformantMagsgn: &cMagsgn,
                                 conformantMel: &cMel,
-                                conformantVlc: &cVlc
+                                conformantVlc: &cVlc,
+                                conformantInBuf: &cInBuf
                             )
                             localResults.append((d.index, codeBlock))
                         }
@@ -3307,6 +3314,8 @@ struct EncoderPipeline: Sendable {
             var cMagsgn = HTMagSgnEncoderConformant()
             var cMel = HTMELEncoderConformant()
             var cVlc = HTReverseBitEmitterConformant()
+            // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
+            var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
 
             let isLossless = config.lossless
             for d in deferred {
@@ -3414,7 +3423,8 @@ struct EncoderPipeline: Sendable {
                     magsgn: &magsgn,
                     conformantMagsgn: &cMagsgn,
                     conformantMel: &cMel,
-                    conformantVlc: &cVlc
+                    conformantVlc: &cVlc,
+                    conformantInBuf: &cInBuf
                 )
                 results.append(codeBlock)
             }
@@ -3454,6 +3464,8 @@ struct EncoderPipeline: Sendable {
             var cMagsgn = HTMagSgnEncoderConformant()
             var cMel = HTMELEncoderConformant()
             var cVlc = HTReverseBitEmitterConformant()
+            // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
+            var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
 
             for pending in pendingBlocks {
                 let codeBlock = try encodeCodeBlockHTJ2KFast(
@@ -3467,7 +3479,8 @@ struct EncoderPipeline: Sendable {
                     magsgn: &magsgn,
                     conformantMagsgn: &cMagsgn,
                     conformantMel: &cMel,
-                    conformantVlc: &cVlc
+                    conformantVlc: &cVlc,
+                    conformantInBuf: &cInBuf
                 )
                 results.append(codeBlock)
             }
@@ -3564,6 +3577,8 @@ struct EncoderPipeline: Sendable {
                 var cMagsgn = HTMagSgnEncoderConformant()
                 var cMel = HTMELEncoderConformant()
                 var cVlc = HTReverseBitEmitterConformant()
+                // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
+                var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
 
                 for index in range {
                     let pending = pendingBlocks[index]
@@ -3578,7 +3593,8 @@ struct EncoderPipeline: Sendable {
                         magsgn: &magsgn,
                         conformantMagsgn: &cMagsgn,
                         conformantMel: &cMel,
-                        conformantVlc: &cVlc
+                        conformantVlc: &cVlc,
+                        conformantInBuf: &cInBuf
                     )
                     orderedResults.write(codeBlock, at: pending.index)
                 }
@@ -3891,29 +3907,40 @@ struct EncoderPipeline: Sendable {
     private func encodeCodeBlockConformant(_ pending: PendingCodeBlock) throws
         -> J2KCodeBlock
     {
-        // v5.38 M8 entry: legacy call site without reusable encoders.
-        // Allocates a fresh trio per call. Internal call sites in the
-        // chunk loops use `encodeCodeBlockConformant(_:magsgnEnc:...)`
-        // which threads pre-allocated encoders through to amortise
-        // their internal `[UInt8]` buffer growth across many blocks.
+        // v5.38 M8/M9 entry: legacy call site without reusable buffers.
+        // Allocates a fresh trio of encoders + conformantIn buffer per
+        // call. Internal call sites in the chunk loops use the inout
+        // overload below which threads pre-allocated buffers through
+        // to amortise their growth across many blocks.
         var ms = HTMagSgnEncoderConformant()
         var ml = HTMELEncoderConformant()
         var vl = HTReverseBitEmitterConformant()
+        var cBuf = [UInt32]()
         return try encodeCodeBlockConformant(
-            pending, magsgnEnc: &ms, melEnc: &ml, vlcEnc: &vl)
+            pending,
+            magsgnEnc: &ms, melEnc: &ml, vlcEnc: &vl,
+            conformantInBuf: &cBuf)
     }
 
-    /// v5.38 M8 — same as `encodeCodeBlockConformant(_:)` but accepts
-    /// pre-allocated HT entropy encoders to amortise their internal
-    /// `[UInt8]` buffer allocations across blocks. Each encoder is
-    /// `reset()` inside `HTBlockEncoderConformant.encode` before use,
-    /// so prior block contents do not leak into this output.
-    /// **Bit-exact equivalent** of the no-arg overload.
+    /// v5.38 M8/M9 — same as `encodeCodeBlockConformant(_:)` but
+    /// accepts pre-allocated buffers:
+    /// - HT entropy encoders (`magsgnEnc` / `melEnc` / `vlcEnc`) so
+    ///   their internal `[UInt8]` byte streams reuse capacity (M8).
+    /// - `conformantInBuf: [UInt32]` reusable buffer for the
+    ///   sign-magnitude-converted coefficients fed to the encoder.
+    ///   Resized in place to fit the current block's `count`. Across
+    ///   a 12 MP DX encode this saves ~36 MB of `[UInt32]` allocator
+    ///   churn (16 KB × 2300 blocks) (M9).
+    ///
+    /// Each encoder is `reset()` inside `HTBlockEncoderConformant.encode`
+    /// before use, so prior block contents cannot leak into this
+    /// output. **Bit-exact equivalent** of the no-arg overload.
     private func encodeCodeBlockConformant(
         _ pending: PendingCodeBlock,
         magsgnEnc: inout HTMagSgnEncoderConformant,
         melEnc: inout HTMELEncoderConformant,
-        vlcEnc: inout HTReverseBitEmitterConformant
+        vlcEnc: inout HTReverseBitEmitterConformant,
+        conformantInBuf: inout [UInt32]
     ) throws -> J2KCodeBlock {
         let count = pending.width * pending.height
         precondition(pending.coefficients.count == count,
@@ -3986,19 +4013,39 @@ struct EncoderPipeline: Sendable {
         // Convert pipeline's Int32 2's-complement coefficients to
         // OpenJPH sign-magnitude convention: `sign_bit | |v| << shift`
         // (matches `gen_rev_tx_to_cb32` in OpenJPH 0.26).
-        var conformantIn = [UInt32](repeating: 0, count: count)
-        for i in 0..<count {
-            let v = pending.coefficients[i]
-            let sign: UInt32 = (v < 0) ? 0x8000_0000 : 0
-            let mag = UInt32(v < 0 ? -Int64(v) : Int64(v))
-            conformantIn[i] = sign | (mag << shift)
+        //
+        // v5.38 M9: the converted [UInt32] is written into the
+        // caller-provided `conformantInBuf`, which holds its capacity
+        // across blocks. Most blocks in a chunk share the same
+        // dimensions, so the inner `count == buf.count` check usually
+        // skips re-allocation. The `HTBlockEncoderConformant.encode`
+        // call below uses `withUnsafeBufferPointer` to pass a buffer
+        // pointer + count to the encoder, satisfying its
+        // `coefficients.count == width * height` precondition without
+        // requiring a fresh array per block.
+        if conformantInBuf.count != count {
+            conformantInBuf = [UInt32](repeating: 0, count: count)
+        }
+        conformantInBuf.withUnsafeMutableBufferPointer { dstBuf in
+            let dst = dstBuf.baseAddress!
+            pending.coefficients.withUnsafeBufferPointer { srcBuf in
+                let src = srcBuf.baseAddress!
+                for i in 0..<count {
+                    let v = src[i]
+                    let sign: UInt32 = (v < 0) ? 0x8000_0000 : 0
+                    let mag = UInt32(v < 0 ? -Int64(v) : Int64(v))
+                    dst[i] = sign | (mag << shift)
+                }
+            }
         }
 
-        let (ms, mel, vlc) = HTBlockEncoderConformant.encode(
-            coefficients: conformantIn,
-            width: pending.width, height: pending.height,
-            missingMSBs: missingMSBs,
-            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+        let (ms, mel, vlc) = conformantInBuf.withUnsafeBufferPointer { buf in
+            HTBlockEncoderConformant.encode(
+                coefficients: buf,
+                width: pending.width, height: pending.height,
+                missingMSBs: missingMSBs,
+                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+        }
         let blockBytes = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
 
@@ -4064,14 +4111,19 @@ struct EncoderPipeline: Sendable {
         // a chunk of blocks instead of allocating fresh per call.
         conformantMagsgn: inout HTMagSgnEncoderConformant,
         conformantMel: inout HTMELEncoderConformant,
-        conformantVlc: inout HTReverseBitEmitterConformant
+        conformantVlc: inout HTReverseBitEmitterConformant,
+        // v5.38 M9: pre-allocated `[UInt32]` buffer for the sign-
+        // magnitude conversion of coefficients. Resized in place by
+        // the conformant encoder when block size changes.
+        conformantInBuf: inout [UInt32]
     ) throws -> J2KCodeBlock {
         if config.htj2kBlockFormat == .conformant {
             return try encodeCodeBlockConformant(
                 pending,
                 magsgnEnc: &conformantMagsgn,
                 melEnc: &conformantMel,
-                vlcEnc: &conformantVlc)
+                vlcEnc: &conformantVlc,
+                conformantInBuf: &conformantInBuf)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,

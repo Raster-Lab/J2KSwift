@@ -372,20 +372,68 @@ OpenJPEG, OpenJPH, Grok, Kakadu).
 
 DX 12 MP encode is now exactly **2.00× faster** than v5.37 baseline.
 
-### v5.38 plan — milestones (revised after M8)
+### v5.38 M9 — sign-magnitude buffer reuse + UnsafeBufferPointer encoder → DX 2.06× cumulative
 
-- **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
-- **M2 ✓** — external-codec columns + cross-decode matrix.
-- **M3 + Step-A ✓** — `J2KBitWriter.writeBytes` fast path (DX 1.78×).
-- **M4 ✓** — HT vs EBCOT comparison + trade-off documentation.
-- **M5 ✓** — branchless 5/3 forward lifting (DWT 9-15% faster).
-- **M6 ✓** — M2 cross-codec decode warm-up; clean post-warm-up table.
-- **M7 ✓** — extractComponentData branch hoist (preprocess −66-72%).
-- **M8 ✓** — HT conformant entropy encoder buffer reuse (DX entropy
-  −6.7%, total cumulative 2.00×).
-- **M9 (next)** — possible follow-ups, all higher risk:
-   - Eliminate per-block `conformantIn: [UInt32]` allocation (16 KB
-     × 2300 = 36 MB churn on DX) by threading a reusable buffer.
+The HT conformant encode path allocated a fresh
+`var conformantIn = [UInt32](repeating: 0, count: count)` per block to
+hold the sign-magnitude conversion of the input coefficients. For DX
+12 MP that's 16 KB × ~2300 blocks = ~36 MB of allocator churn per
+encode, on top of the M8 entropy-encoder buffer churn already removed.
+
+Fix:
+1. New `HTBlockEncoderConformant.encode` overload taking
+   `coefficients: UnsafeBufferPointer<UInt32>` instead of `[UInt32]`.
+   Lets callers pass a pointer + count derived from a reusable buffer
+   without forcing the underlying array's `count` to match
+   `width * height`. Body uses pointer-direct `coefficients[idx]`,
+   skipping Swift's `Array` bounds check inside the per-quad hot loop.
+2. New `conformantInBuf: inout [UInt32]` parameter on
+   `encodeCodeBlockConformant`. Re-allocates only when block size
+   changes (most blocks in a chunk share dimensions, so the resize
+   check fast-paths through). The fill loop writes through
+   `withUnsafeMutableBufferPointer` for direct pointer stores. The
+   buffer is then handed to the encoder via `withUnsafeBufferPointer`.
+3. Pre-allocate `cInBuf = [UInt32](repeating: 0, count: maxBlockSize)`
+   at all 4 chunk-loop sites in `applyEntropyCodingHTJ2KFused`.
+
+Bit-exact equivalence verified by the M1 + M2 gates (7/7 fixtures
+MAE = 0; 28/28 cross-decode pairs bit-exact).
+
+#### Encode stage profile, post-M8 vs post-M9 (median of 5 runs, ms)
+
+| Fixture | Stage | Post-M8 | Post-M9 | Δ |
+|---|---|---:|---:|---:|
+| **DX 2800×2288**     | Total   | 78.45 | **76.02** | **−3.1%** |
+|                      | Entropy | 36.96 |  33.16 | **−10.3%** |
+| **PX 2459×1316**     | Total   | 38.94 | **36.93** | **−5.2%** |
+|                      | Entropy | 19.71 |  17.65 | **−10.5%** |
+| **XA 1024×1024**     | Total   | 12.23 | **11.39** | **−6.9%** |
+|                      | Entropy |  6.35 |   4.99 | **−21.4%** |
+| **MR 886×886**       | Total   |  5.52 |   5.28 | −4.3% |
+| **CT 512×512**       | Total   |  3.26 |   3.01 | −7.7% |
+
+#### Cumulative v5.38 encode speedup vs v5.37 baseline
+
+| Fixture | v5.37 | post-A | post-M5 | post-M7 | post-M8 | post-M9 | Cumulative |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| DX 2800×2288  | 156.9 ms | 88.2 | 83.8 | 81.4 | 78.5 | **76.0 ms** | **2.06×** |
+| PX 2459×1316  |  78.3 ms | 44.6 | 42.7 | 39.8 | 38.9 |   36.9 ms | **2.12×** |
+| XA 1024×1024  |  22.4 ms | 13.5 | 13.0 | 12.4 | 12.2 |   11.4 ms | **1.96×** |
+| MR 886×886    |   7.6 ms |  6.5 |  6.1 |  5.7 |  5.5 |    5.3 ms | 1.43× |
+
+DX 12 MP encode is now **2.06× faster** than v5.37 baseline.
+PX 3.2 MP encode is **2.12× faster** — first fixture to cross 2.10×.
+
+The encode performance regression suite likewise picked up the win:
+55.3s (pre-Step-A) → 29.3s (post-M9) for the same workload —
+**1.89× faster end-to-end** on the regression suite.
+
+### v5.38 plan — milestones (revised after M9)
+
+- **M1-M8 ✓** — see prior sections.
+- **M9 ✓** — sign-magnitude buffer reuse + pointer-based encoder
+  (DX entropy −10.3%, total cumulative 2.06×).
+- **M10 (next)** — possible follow-ups, all higher risk:
    - SIMD per-quad sample fetching in `HTBlockEncoderConformant`
      (4-way data parallelism within each quad).
    - vLOAD/vSTORE bulk transpose in 5/3 forward column passes.

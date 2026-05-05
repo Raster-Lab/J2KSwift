@@ -45,35 +45,34 @@ public enum HTBlockEncoderConformant {
         var magsgnEnc = HTMagSgnEncoderConformant()
         var melEnc = HTMELEncoderConformant()
         var vlcEnc = HTReverseBitEmitterConformant()
-        return encode(
-            coefficients: coefficients, width: width, height: height,
-            missingMSBs: missingMSBs,
-            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+        return coefficients.withUnsafeBufferPointer { buf in
+            encode(
+                coefficients: buf, width: width, height: height,
+                missingMSBs: missingMSBs,
+                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+        }
     }
 
-    /// v5.38 M8: in-place encode variant. Uses caller-provided
-    /// encoders so per-block heap allocations of internal byte
-    /// buffers are amortised across an entire chunk of blocks. Each
-    /// encoder is `reset()` before use, so prior contents do not
-    /// leak into this block's output. **Bit-exact equivalent** of
-    /// the non-inout overload — the only difference is that the
-    /// internal `[UInt8]` buffers retain their capacity from the
-    /// previous block.
+    /// v5.38 M8/M9: in-place encode variant.
     ///
-    /// Caller pattern (see `applyEntropyCodingHTJ2KFused`):
-    /// ```swift
-    /// var ms = HTMagSgnEncoderConformant()
-    /// var mel = HTMELEncoderConformant()
-    /// var vlc = HTReverseBitEmitterConformant()
-    /// for block in blocks {
-    ///     let (m, l, v) = HTBlockEncoderConformant.encode(
-    ///         coefficients: ..., width: ..., height: ..., missingMSBs: ...,
-    ///         magsgnEnc: &ms, melEnc: &mel, vlcEnc: &vlc)
-    ///     // use m / l / v before the next iteration's encode resets them.
-    /// }
-    /// ```
+    /// **M8** (caller-provided encoders): the three byte-stream
+    /// encoders are passed `inout` so their internal `[UInt8]` buffers
+    /// can be reused across blocks. Each encoder is `reset()` here
+    /// before use, so prior block contents cannot leak into this
+    /// output.
+    ///
+    /// **M9** (pointer-based coefficients): `coefficients` is now an
+    /// `UnsafeBufferPointer<UInt32>` instead of `[UInt32]`. This lets
+    /// callers pass a pointer + count pair derived from a reusable
+    /// buffer (e.g. a max-block-sized `[UInt32]` shared across an
+    /// entire chunk) without the encoder asserting the underlying
+    /// array's `count` matches `width * height`. The body uses
+    /// pointer-direct `coefficients[idx]` access, which skips Swift's
+    /// `Array` bounds check inside the per-quad hot loop.
+    ///
+    /// **Bit-exact equivalent** of the [UInt32] non-inout overload.
     public static func encode(
-        coefficients: [UInt32],
+        coefficients: UnsafeBufferPointer<UInt32>,
         width: Int,
         height: Int,
         missingMSBs: Int,
