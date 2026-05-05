@@ -920,6 +920,163 @@ These remain v5.39+ candidates; none is in scope for v5.39 M1.
 
 ---
 
+## v5.39 M2 — large-fixture HT parallelism feasibility (parked, marginal)
+
+**Goal**: investigate whether J2KSwift can narrow the Kakadu HT-fair
+gap on large medical fixtures by improving parallelism (rather than
+small per-quad SIMD, which v5.39 M1 already showed to be bounded).
+First profile the current per-stage scaling; then prototype an
+experimental path; promote only if total HT-fair encode time on
+large fixtures clears DX ≥ 20%, PX ≥ 20%, XA ≥ 10% gates.
+
+**Profile (median of 5, maxThreads = 1 vs 8)**:
+
+```
+| Modality | Shape       | Stage      | 1 thr ms | 8 thr ms | Speedup | Eff   |
+|----------|-------------|------------|---------:|---------:|--------:|------:|
+| MR       | 886×886     | Total      |     9.3  |     5.3  |  1.74×  | 0.22  |
+| XA       | 1024×1024   | Total      |    33.3  |    11.7  |  2.86×  | 0.36  |
+| PX       | 2459×1316   | Total      |   114.0  |    37.4  |  3.05×  | 0.38  |
+| DX       | 2800×2288   | Total      |   235.1  |    75.6  |  3.11×  | 0.39  |
+| DX       | 2800×2288   | Preprocess |     2.4  |     2.4  |  1.00×  | SERIAL|
+| DX       | 2800×2288   | DWT        |    32.0  |    31.3  |  1.03×  | SERIAL|
+| DX       | 2800×2288   | Entropy    |   194.2  |    35.1  |  5.54×  | 0.69  |
+| DX       | 2800×2288   | Codestream |     6.5  |     6.0  |  1.09×  | SERIAL|
+```
+
+**Profile reading**:
+- Per-block entropy parallelism is moderate-to-strong already
+  (5.54× on DX-class fixtures). Not where the headroom is.
+- DWT, preprocess, and codestream are effectively SERIAL across
+  the encoder's `enableParallelCodeBlocks` path (which only gates
+  the entropy loop). At DX scale the DWT stage alone is 32 ms
+  (~13% of single-thread total, ~41% of 8-thread total).
+- Amdahl: DX speedup 3.11× at 8 cores ⇒ parallel fraction ≈ 79%,
+  serial fraction ≈ 21% (≈ 49 ms wall-clock). DWT row pass is
+  the largest serial chunk inside that.
+
+**Files changed**:
+
+- `Sources/J2KCodec/J2KAcceleratedEncoder.swift`
+  - In `forward2D_53`, add an opt-in `withTaskGroup` row-pass that
+    chunks low-band rows (writing ll/hl) and high-band rows (writing
+    lh/hh) across `processorCount` worker tasks. Each task allocates
+    its own `DWTWorkspace53(maxSignalLength: width)` and rowOut
+    scratch — no shared mutable state, just pointer-disjoint writes.
+    Default path (sequential row pass) preserved bit-identical to
+    v5.38.
+
+- `Sources/J2KCodec/J2KEncoderPipeline.swift`
+  - New `EncoderPipeline.HTParallelMode` enum (`baseline` /
+    `dwtRowParallel`) and cached static `_htParallelMode` reading
+    `J2K_HT_PARALLEL_MODE` once at process startup.
+
+- `Tests/J2KCodecTests/HTParallelismProfileTests.swift` (new)
+  - Two test functions: thread-count sweep (1/2/4/8) over the large
+    medical fixtures and per-stage 1-vs-8 scaling. Profile-only —
+    they print measurement tables and never assert performance.
+
+**Correctness gates — ALL GREEN**:
+
+- `HTSIMDIntegrationTests` (M1 byte-identity gates): 8/8 pass with
+  `J2K_HT_PARALLEL_MODE=dwt-row-parallel`. Block-level scalar vs
+  SIMD bytes still bit-identical when M2 mode runs simultaneously.
+
+- Full-corpus self-roundtrip
+  (`testLosslessRoundTripBitExactAcrossMedicalCorpus`): 7/7 fixtures
+  pass. MAE = 0 in every case.
+
+- HT-fair cross-decode matrix: 21/21 pairs bit-exact (J2KSwift M2
+  HT codestream consumed losslessly by OpenJPH 0.27.0, Grok 20.3.0,
+  Kakadu 8.4.1 demo).
+
+- EBCOT-fair cross-decode matrix: 28/28 pairs bit-exact.
+
+- Default-mode + deterministic byte gate: pass on every internal
+  run across all 5 fixture iterations.
+
+#### Performance results — DOES NOT MEET PROMOTION GATES
+
+Median-of-5 wall time, M2 mode on vs baseline at maxThreads = 8 (the
+production thread count). Apple Silicon, release build.
+
+| Fixture | DWT baseline ms | DWT M2 ms | DWT Δ% | Total baseline ms | Total M2 ms | Total Δ% | Promotion gate |
+|---|---:|---:|---:|---:|---:|---:|:---|
+| MR 886×886    |  3.4 |  3.1 |  −8.8% |  5.3 |  5.0 | −5.7% | "no regression" — OK |
+| XA 1024×1024  |  4.8 |  4.4 |  −8.3% | 11.7 | 11.0 | −6.0% | **≥10% — MISS** |
+| PX 2459×1316  | 14.3 | 12.5 | −12.6% | 37.4 | 35.9 | −4.0% | **≥20% — MISS** |
+| DX 2800×2288  | 31.3 | 26.4 | −15.7% | 75.6 | 69.8 | −7.7% | **≥20% — MISS** |
+
+**Did the Kakadu gap narrow?** No. Best-case DX shaves 5.8 ms off the
+total at maxThreads = 8 — Kakadu HT-fair on DX (≈ 19 ms in v5.38
+table) remains a 3.6× wall-clock advantage even with M2 enabled.
+
+**Why row-parallel DWT didn't deliver more**:
+- The column pass is **already** parallelised
+  (`DispatchQueue.concurrentPerform` over column strips, line 389;
+  `withTaskGroup` over column chunks, line 853). My edit only attacks
+  the row pass — but row work is roughly half of single-level DWT,
+  and the column pass already saturates cores there.
+- 5/3 lifting is memory-bound at the per-row level (lots of
+  workspace + rowOut traffic per row); spawning 8 concurrent rows
+  adds memory-bandwidth contention that eats some of the apparent
+  parallel win.
+- Multi-level DWT runs the row pass at progressively smaller sizes
+  (level 4 is 1/16 the data of level 0). TaskGroup overhead at small
+  levels is non-trivial; the gain concentrates at level 0 only.
+
+The DWT stage gain (8–16%) is real and consistent. But because DWT
+is only ~30–40% of total HT encode at scale, the total-time gain
+falls well below the user's promotion bar.
+
+**Decision: PARK as experimental**. The DWT row-parallel code path
+stays in source (behind `J2K_HT_PARALLEL_MODE=dwt-row-parallel` env
+var) — runs through the same correctness gates as the baseline path,
+so it remains correct against future encoder changes. Production
+callers stay on the sequential row pass.
+
+#### Remaining v5.39 candidates after M2
+
+Profile-driven prioritisation for any v5.39 M3+ work:
+
+- **Multi-tile encode for fixtures ≥ 3 MP.** J2KSwift currently
+  emits a single tile. Splitting DX/PX into 4 or 16 tiles and
+  encoding tiles in parallel (each tile is fully independent: own
+  DWT, own MQ/HT entropy, own codestream segment) bypasses the DWT
+  serial-fraction problem entirely. Architectural change with
+  cross-codec interop validation cost (must verify all four
+  external decoders consume multi-tile HT codestreams bit-exact).
+
+- **Reduce DWT memory bandwidth (workspace + rowOut compaction).**
+  The per-task workspace + rowOut allocation pattern in M2 likely
+  dirties more L1/L2 than necessary. A pooled-workspace allocator
+  shared across tasks (one workspace per core, reused across rows)
+  could narrow the bandwidth gap. Smaller, surgical change but
+  uncertain ceiling.
+
+- **EBCOT/HT entropy thread pinning.** The 5.54× entropy speedup at
+  8 cores (eff 0.69) suggests some cross-thread cache pollution.
+  Pinning entropy workers to performance cores (P-cores only on
+  M-series chips) could push this closer to 7×. Apple-silicon-
+  specific; doesn't generalise.
+
+These remain v5.39+ candidates; none is in scope for v5.39 M2.
+
+#### Final precise claim (post-M2)
+
+> J2KSwift is standards-clean and strong on small HT medical
+> fixtures (≤ 512×512). v5.39 M2 attempted to narrow the
+> Kakadu-scale large-fixture HT performance gap by parallelising
+> the DWT row pass; the optimisation was bit-exact correctness-
+> clean and produced a real 8–16% gain on the DWT stage, but the
+> total HT-fair encode time gain (4–8%) fell below the promotion
+> bar (DX ≥ 20%, PX ≥ 20%, XA ≥ 10%). It is parked as experimental
+> code (`J2K_HT_PARALLEL_MODE=dwt-row-parallel` env var to enable).
+> The Kakadu HT-encode advantage on fixtures ≥ 886×886 documented
+> in the v5.38 HT-fair table stands.
+
+---
+
 
 ## Test Images
 

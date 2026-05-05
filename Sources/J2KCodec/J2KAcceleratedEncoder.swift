@@ -933,35 +933,120 @@ struct AcceleratedDWT2D: Sendable {
         var lh = [Int32](repeating: 0, count: rowLowW * colHighH)
         var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
 
-        colResult.withUnsafeBufferPointer { srcBuf in
-            let src = srcBuf.baseAddress!
-            var rowOut = [Int32](repeating: 0, count: width)
+        // v5.39 M2: row-pass after the column pass is independent
+        // per row (each row's forward 1D 5/3 only reads its own row of
+        // `colResult` and writes its own row of ll/hl/lh/hh). Default
+        // path stays sequential — bit-identical to v5.38. The
+        // `dwt-row-parallel` opt-in mode dispatches the row work
+        // across `maxConcurrency` worker tasks, each with its own
+        // workspace, halving the wall-clock cost of this stage on
+        // large fixtures (DX DWT ~32 ms → ~16 ms target).
+        let useRowParallel = EncoderPipeline._htParallelMode == .dwtRowParallel
 
-            for row in 0..<colLowH {
-                rowOut.withUnsafeMutableBufferPointer { outBuf in
-                    forward53_1D(src + row * width, outBuf.baseAddress!, count: width, workspace: rowWs)
-                }
-                rowOut.withUnsafeBufferPointer { roBuf in
-                    ll.withUnsafeMutableBufferPointer { llBuf in
-                        memcpy(llBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Int32>.size)
+        if useRowParallel {
+            // Pre-allocate per-task workspaces sized for the row pass
+            // (workspace length = width). Tasks pick a workspace by
+            // chunk index.
+            let maxConcurrency = ProcessInfo.processInfo.processorCount
+            let chunkLow = max(1, (colLowH + maxConcurrency - 1) / maxConcurrency)
+            let chunkHigh = max(1, (colHighH + maxConcurrency - 1) / maxConcurrency)
+            let lowChunks = stride(from: 0, to: colLowH, by: chunkLow).map {
+                $0..<min($0 + chunkLow, colLowH)
+            }
+            let highChunks = stride(from: 0, to: colHighH, by: chunkHigh).map {
+                $0..<min($0 + chunkHigh, colHighH)
+            }
+
+            // Each task needs its own (workspace, rowOut). They are
+            // disjoint outputs (different row ranges) so no
+            // synchronisation is needed beyond the pointer wrappers.
+            let srcBuf = UnsafeMutablePointer<Int32>.allocate(capacity: width * height)
+            let llBuf  = UnsafeMutablePointer<Int32>.allocate(capacity: rowLowW * colLowH)
+            let hlBuf  = UnsafeMutablePointer<Int32>.allocate(capacity: rowHighW * colLowH)
+            let lhBuf  = UnsafeMutablePointer<Int32>.allocate(capacity: rowLowW * colHighH)
+            let hhBuf  = UnsafeMutablePointer<Int32>.allocate(capacity: rowHighW * colHighH)
+            colResult.withUnsafeBufferPointer { src in
+                srcBuf.initialize(from: src.baseAddress!, count: width * height)
+            }
+            defer {
+                srcBuf.deallocate(); llBuf.deallocate(); hlBuf.deallocate()
+                lhBuf.deallocate(); hhBuf.deallocate()
+            }
+            let safeSrc = SendablePointer(srcBuf)
+            let safeLl  = SendablePointer(llBuf)
+            let safeHl  = SendablePointer(hlBuf)
+            let safeLh  = SendablePointer(lhBuf)
+            let safeHh  = SendablePointer(hhBuf)
+
+            await withTaskGroup(of: Void.self) { group in
+                for range in lowChunks {
+                    group.addTask { @Sendable in
+                        let ws = DWTWorkspace53(maxSignalLength: width)
+                        let rowOut = UnsafeMutablePointer<Int32>.allocate(capacity: width)
+                        defer { rowOut.deallocate() }
+                        let s = safeSrc.pointer
+                        let l = safeLl.pointer
+                        let h = safeHl.pointer
+                        for row in range {
+                            forward53_1D(s + row * width, rowOut, count: width, workspace: ws)
+                            memcpy(l + row * rowLowW,  rowOut,             rowLowW * MemoryLayout<Int32>.size)
+                            memcpy(h + row * rowHighW, rowOut + rowLowW,   rowHighW * MemoryLayout<Int32>.size)
+                        }
                     }
-                    hl.withUnsafeMutableBufferPointer { hlBuf in
-                        memcpy(hlBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Int32>.size)
+                }
+                for range in highChunks {
+                    group.addTask { @Sendable in
+                        let ws = DWTWorkspace53(maxSignalLength: width)
+                        let rowOut = UnsafeMutablePointer<Int32>.allocate(capacity: width)
+                        defer { rowOut.deallocate() }
+                        let s = safeSrc.pointer
+                        let lh = safeLh.pointer
+                        let hh = safeHh.pointer
+                        for row in range {
+                            let srcRow = colLowH + row
+                            forward53_1D(s + srcRow * width, rowOut, count: width, workspace: ws)
+                            memcpy(lh + row * rowLowW,  rowOut,             rowLowW * MemoryLayout<Int32>.size)
+                            memcpy(hh + row * rowHighW, rowOut + rowLowW,   rowHighW * MemoryLayout<Int32>.size)
+                        }
                     }
                 }
             }
 
-            for row in 0..<colHighH {
-                let srcRow = colLowH + row
-                rowOut.withUnsafeMutableBufferPointer { outBuf in
-                    forward53_1D(src + srcRow * width, outBuf.baseAddress!, count: width, workspace: rowWs)
-                }
-                rowOut.withUnsafeBufferPointer { roBuf in
-                    lh.withUnsafeMutableBufferPointer { lhBuf in
-                        memcpy(lhBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Int32>.size)
+            ll.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(from: llBuf, count: rowLowW * colLowH) }
+            hl.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(from: hlBuf, count: rowHighW * colLowH) }
+            lh.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(from: lhBuf, count: rowLowW * colHighH) }
+            hh.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(from: hhBuf, count: rowHighW * colHighH) }
+        } else {
+            colResult.withUnsafeBufferPointer { srcBuf in
+                let src = srcBuf.baseAddress!
+                var rowOut = [Int32](repeating: 0, count: width)
+
+                for row in 0..<colLowH {
+                    rowOut.withUnsafeMutableBufferPointer { outBuf in
+                        forward53_1D(src + row * width, outBuf.baseAddress!, count: width, workspace: rowWs)
                     }
-                    hh.withUnsafeMutableBufferPointer { hhBuf in
-                        memcpy(hhBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Int32>.size)
+                    rowOut.withUnsafeBufferPointer { roBuf in
+                        ll.withUnsafeMutableBufferPointer { llBuf in
+                            memcpy(llBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Int32>.size)
+                        }
+                        hl.withUnsafeMutableBufferPointer { hlBuf in
+                            memcpy(hlBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Int32>.size)
+                        }
+                    }
+                }
+
+                for row in 0..<colHighH {
+                    let srcRow = colLowH + row
+                    rowOut.withUnsafeMutableBufferPointer { outBuf in
+                        forward53_1D(src + srcRow * width, outBuf.baseAddress!, count: width, workspace: rowWs)
+                    }
+                    rowOut.withUnsafeBufferPointer { roBuf in
+                        lh.withUnsafeMutableBufferPointer { lhBuf in
+                            memcpy(lhBuf.baseAddress! + row * rowLowW, roBuf.baseAddress!, rowLowW * MemoryLayout<Int32>.size)
+                        }
+                        hh.withUnsafeMutableBufferPointer { hhBuf in
+                            memcpy(hhBuf.baseAddress! + row * rowHighW, roBuf.baseAddress! + rowLowW, rowHighW * MemoryLayout<Int32>.size)
+                        }
                     }
                 }
             }

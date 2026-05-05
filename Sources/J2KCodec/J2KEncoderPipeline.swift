@@ -3942,6 +3942,28 @@ struct EncoderPipeline: Sendable {
         return false
     }()
 
+    /// v5.39 M2: HT parallelism experiment selector. The encoder's
+    /// per-block (`enableParallelCodeBlocks`) path scales the entropy
+    /// stage, but on large fixtures the DWT row pass is still serial
+    /// — Amdahl's law caps speedup at ~3× even with 8 cores. This env
+    /// gate selects the experimental DWT row-parallel path so it can
+    /// be A/B tested without affecting the default code path.
+    /// Values: `dwt-row-parallel` enables; anything else (including
+    /// unset) means baseline.
+    enum HTParallelMode {
+        case baseline
+        case dwtRowParallel
+    }
+    nonisolated(unsafe) static let _htParallelMode: HTParallelMode = {
+        if let v = ProcessInfo.processInfo.environment["J2K_HT_PARALLEL_MODE"] {
+            switch v.lowercased() {
+            case "dwt-row-parallel": return .dwtRowParallel
+            default: return .baseline
+            }
+        }
+        return .baseline
+    }()
+
     /// v5.38 M8/M9 — same as `encodeCodeBlockConformant(_:)` but
     /// accepts pre-allocated buffers:
     /// - HT entropy encoders (`magsgnEnc` / `melEnc` / `vlcEnc`) so
