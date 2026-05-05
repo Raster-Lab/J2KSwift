@@ -37,6 +37,18 @@ public struct HTMagSgnEncoderConformant {
 
     public init() {}
 
+    /// v5.38 M8: reset to the post-`init()` state, **keeping** the
+    /// `bytes` array's existing capacity. Used by the per-chunk
+    /// reusable-buffer path in `applyEntropyCodingHTJ2KFused` so the
+    /// 2300+ blocks of a DX 12 MP encode don't each allocate fresh
+    /// internal buffers. Bit-exact equivalent of `var enc = HTMagSgnEncoderConformant()`.
+    public mutating func reset() {
+        bytes.removeAll(keepingCapacity: true)
+        tmp = 0
+        usedBits = 0
+        maxBits = 8
+    }
+
     /// Emit the low-order `count` bits of `codeword`, LSB-first.
     public mutating func encode(codeword: UInt32, count: Int) {
         var cwd = codeword

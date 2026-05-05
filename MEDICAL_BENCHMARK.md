@@ -318,7 +318,61 @@ The encode performance regression suite also picked up the win:
 55.3 s (pre-Step-A) → 34.6 s (post-Step-A) → 32.8 s (post-M7) for the
 same workload.
 
-### v5.38 plan — milestones (revised after M7)
+### v5.38 M8 — HT conformant entropy encoder buffer reuse → DX 2.00× cumulative
+
+`HTBlockEncoderConformant.encode` allocated three fresh `[UInt8]`
+buffers (magsgn, mel, vlc) inside its body via
+`var enc = HT...EncoderConformant()` per call. For DX 12 MP that's
+2300 blocks × 3 fresh `[UInt8]` allocations per block = 6900 small
+heap allocations per encode. The MagSgn buffer alone averages ~5 KB
+per block → ~12 MB of allocator churn just for that one stream.
+
+Fix:
+1. Added `mutating func reset()` to `HTMagSgnEncoderConformant`,
+   `HTMELEncoderConformant`, `HTReverseBitEmitterConformant`, and
+   `HTForwardBitEmitterConformant`. Each clears its `[UInt8]` storage
+   via `removeAll(keepingCapacity: true)` and resets state to
+   post-`init()` values.
+2. Added a new `HTBlockEncoderConformant.encode` overload that takes
+   the three encoders as `inout` parameters, calling `reset()` on
+   each before encoding. The non-inout overload is preserved as a
+   thin wrapper that allocates fresh encoders per call (legacy
+   callers).
+3. Threaded `inout` encoders through `encodeCodeBlockHTJ2KFast` →
+   `encodeCodeBlockConformant` → `HTBlockEncoderConformant.encode`.
+4. Pre-allocated the three encoders once per chunk (or once per
+   sequential pass) in `applyEntropyCodingHTJ2KFused` alongside the
+   existing reusable buffers.
+
+Bit-exact equivalence verified by the M1 roundtrip gate (7/7 fixtures
+MAE = 0) and the M2 cross-decode matrix (28/28 pairs bit-exact across
+OpenJPEG, OpenJPH, Grok, Kakadu).
+
+#### Encode stage profile, post-M7 vs post-M8 (median of 5 runs, ms)
+
+| Fixture | Stage | Post-M7 | Post-M8 | Δ |
+|---|---|---:|---:|---:|
+| **DX 2800×2288**     | Total   | 81.36 | 78.45 | **−3.6%** |
+|                      | Entropy | 39.60 | 36.96 | **−6.7%** |
+| **PX 2459×1316**     | Total   | 39.77 | 38.94 | **−2.1%** |
+|                      | Entropy | 20.72 | 19.71 | **−4.9%** |
+| **CT 512×512**       | Total   |  3.42 |  3.26 | **−4.7%** |
+|                      | Entropy |  1.82 |  1.64 | **−9.9%** |
+| **MR-small 180×180** | Total   |  0.76 |  0.73 | **−3.9%** |
+|                      | Entropy |  0.43 |  0.39 | **−9.3%** |
+
+#### Cumulative v5.38 encode speedup vs v5.37 baseline
+
+| Fixture | v5.37 | post-Step-A | post-M5 | post-M7 | post-M8 | Cumulative |
+|---|---:|---:|---:|---:|---:|---:|
+| DX 2800×2288       | 156.9 ms | 88.2 | 83.8 | 81.4 | **78.5 ms** | **2.00×** |
+| PX 2459×1316       |  78.3 ms | 44.6 | 42.7 | 39.8 |   38.9 ms | 2.01× |
+| XA 1024×1024       |  22.4 ms | 13.5 | 13.0 | 12.4 |   12.2 ms | 1.83× |
+| MR 886×886         |   7.6 ms |  6.5 |  6.1 |  5.7 |    5.5 ms | 1.38× |
+
+DX 12 MP encode is now exactly **2.00× faster** than v5.37 baseline.
+
+### v5.38 plan — milestones (revised after M8)
 
 - **M1 ✓** — gate scaffolding + bit-exact roundtrip table.
 - **M2 ✓** — external-codec columns + cross-decode matrix.
@@ -327,11 +381,15 @@ same workload.
 - **M5 ✓** — branchless 5/3 forward lifting (DWT 9-15% faster).
 - **M6 ✓** — M2 cross-codec decode warm-up; clean post-warm-up table.
 - **M7 ✓** — extractComponentData branch hoist (preprocess −66-72%).
-- **M8 (next)** — entropy stage is now 49-54% on most fixtures. The
-  HT cleanup-only block encoder's per-quad scanning is the next
-  target. Higher correctness risk; needs careful staging.
-- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred until M8 CPU
-  baseline complete).
+- **M8 ✓** — HT conformant entropy encoder buffer reuse (DX entropy
+  −6.7%, total cumulative 2.00×).
+- **M9 (next)** — possible follow-ups, all higher risk:
+   - Eliminate per-block `conformantIn: [UInt32]` allocation (16 KB
+     × 2300 = 36 MB churn on DX) by threading a reusable buffer.
+   - SIMD per-quad sample fetching in `HTBlockEncoderConformant`
+     (4-way data parallelism within each quad).
+   - vLOAD/vSTORE bulk transpose in 5/3 forward column passes.
+- **Phase 4** — Metal forward INTEGER 5/3 DWT (deferred).
 
 ### v5.38 — post-M5 final lossless headline (full corpus, fresh measurement)
 

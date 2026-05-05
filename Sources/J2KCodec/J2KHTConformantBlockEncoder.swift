@@ -42,13 +42,52 @@ public enum HTBlockEncoderConformant {
         height: Int,
         missingMSBs: Int
     ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
+        var magsgnEnc = HTMagSgnEncoderConformant()
+        var melEnc = HTMELEncoderConformant()
+        var vlcEnc = HTReverseBitEmitterConformant()
+        return encode(
+            coefficients: coefficients, width: width, height: height,
+            missingMSBs: missingMSBs,
+            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+    }
+
+    /// v5.38 M8: in-place encode variant. Uses caller-provided
+    /// encoders so per-block heap allocations of internal byte
+    /// buffers are amortised across an entire chunk of blocks. Each
+    /// encoder is `reset()` before use, so prior contents do not
+    /// leak into this block's output. **Bit-exact equivalent** of
+    /// the non-inout overload — the only difference is that the
+    /// internal `[UInt8]` buffers retain their capacity from the
+    /// previous block.
+    ///
+    /// Caller pattern (see `applyEntropyCodingHTJ2KFused`):
+    /// ```swift
+    /// var ms = HTMagSgnEncoderConformant()
+    /// var mel = HTMELEncoderConformant()
+    /// var vlc = HTReverseBitEmitterConformant()
+    /// for block in blocks {
+    ///     let (m, l, v) = HTBlockEncoderConformant.encode(
+    ///         coefficients: ..., width: ..., height: ..., missingMSBs: ...,
+    ///         magsgnEnc: &ms, melEnc: &mel, vlcEnc: &vlc)
+    ///     // use m / l / v before the next iteration's encode resets them.
+    /// }
+    /// ```
+    public static func encode(
+        coefficients: [UInt32],
+        width: Int,
+        height: Int,
+        missingMSBs: Int,
+        magsgnEnc: inout HTMagSgnEncoderConformant,
+        melEnc: inout HTMELEncoderConformant,
+        vlcEnc: inout HTReverseBitEmitterConformant
+    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
         precondition(coefficients.count == width * height,
                      "coefficient count mismatch")
         precondition(missingMSBs < 30, "missingMSBs must leave room for data")
 
-        var magsgnEnc = HTMagSgnEncoderConformant()
-        var melEnc = HTMELEncoderConformant()
-        var vlcEnc = HTReverseBitEmitterConformant()
+        magsgnEnc.reset()
+        melEnc.reset()
+        vlcEnc.reset()
 
         let p = UInt32(30 - missingMSBs)
 

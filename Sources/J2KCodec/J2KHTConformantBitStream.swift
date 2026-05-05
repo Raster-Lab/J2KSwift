@@ -37,6 +37,14 @@ public struct HTForwardBitEmitterConformant {
 
     public init() {}
 
+    /// v5.38 M8: reset to post-`init()` state, keeping `bytes`'s
+    /// existing capacity for buffer reuse across blocks.
+    public mutating func reset() {
+        bytes.removeAll(keepingCapacity: true)
+        tmp = 0
+        remainingBits = 8
+    }
+
     /// Appends one bit to the stream. Only the LSB of `bit` is used.
     public mutating func emit(bit: Int) {
         tmp = (tmp << 1) | (bit & 1)
@@ -120,6 +128,17 @@ public struct HTReverseBitEmitterConformant {
     private var lastGreaterThan8F: Bool = true
 
     public init() {}
+
+    /// v5.38 M8: reset to post-`init()` state, keeping
+    /// `emittedReversed`'s existing capacity for buffer reuse across
+    /// blocks. The `[0xFF]` sentinel is restored.
+    public mutating func reset() {
+        emittedReversed.removeAll(keepingCapacity: true)
+        emittedReversed.append(0xFF)
+        tmp = 0x0F
+        usedBits = 4
+        lastGreaterThan8F = true
+    }
 
     /// Append a codeword of `count` bits, LSB-first.
     public mutating func encode(codeword: Int, count: Int) {

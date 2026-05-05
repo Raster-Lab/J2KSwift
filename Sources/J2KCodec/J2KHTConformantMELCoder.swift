@@ -38,6 +38,15 @@ public struct HTMELEncoderConformant {
 
     public init() {}
 
+    /// v5.38 M8: reset to post-`init()` state, keeping the inner
+    /// emitter's `bytes` capacity for buffer reuse across blocks.
+    public mutating func reset() {
+        emitter.reset()
+        state = 0
+        run = 0
+        threshold = 1
+    }
+
     /// Encode a single MEL event. `eventIsOne == true` means a `1`
     /// event (the rare case that terminates a zero run).
     public mutating func encode(eventIsOne: Bool) {
