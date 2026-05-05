@@ -110,6 +110,144 @@ public struct J2KDWT1DOptimizer: Sendable {
         )
     }
 
+    /// v6-alpha3 step 6B — parity-aware overload of
+    /// `inverseTransform53Optimized` that honours the tile-component
+    /// image-coordinate origin's parity per ISO/IEC 15444-1 F.4.4 and
+    /// is the dual of `AcceleratedDWT2D.forward53_1D(...uOrigin:)`.
+    ///
+    /// - When `uOrigin` is even (or zero), routes to the existing
+    ///   `inverseTransform53Optimized(lowpass:highpass:boundaryExtension:)`
+    ///   overload — output is byte-identical, single-tile / 32-aligned
+    ///   multi-tile decode paths pay zero cost.
+    /// - When `uOrigin` is odd, applies the parity-flipped inverse:
+    ///     - Forward at u-odd produced `lowCount = floor(n/2)`,
+    ///       `highCount = ceil(n/2)` and gathered L from local-odd /
+    ///       H from local-even input positions. The inverse must
+    ///       interleave the bands the same way: L → output local-odd
+    ///       (positions 1, 3, 5…), H → output local-even (positions
+    ///       0, 2, 4…), and apply the dual lifting boundaries
+    ///       (no left mirror at H[0] because the tile starts at an
+    ///       image-odd canvas position; right mirror at the final
+    ///       sample when `n` is odd).
+    ///
+    /// `lowpass.count` and `highpass.count` MUST equal the
+    /// parity-aware low/high counts the encoder produced for this
+    /// `uOrigin`. The caller (decoder pipeline) is responsible for
+    /// computing these via the ISO/IEC 15444-1 Eq. B-15 spec
+    /// formula; this primitive doesn't validate them beyond the
+    /// `n = lowpass.count + highpass.count` length invariant.
+    ///
+    /// Currently only the symmetric boundary extension is
+    /// supported for the odd-origin path (matching the encoder's
+    /// step 1+2 primitives, which only emit symmetric-extension
+    /// output). Generic boundary extension on odd origins is
+    /// deferred (no production path currently needs it).
+    public func inverseTransform53Optimized(
+        lowpass: [Int32],
+        highpass: [Int32],
+        boundaryExtension: J2KDWT1D.BoundaryExtension,
+        uOrigin u: Int
+    ) throws -> [Int32] {
+        // Even origins (including 0) route to the no-origin fast
+        // path — output byte-identical, no perf regression on
+        // single-tile and 32-aligned multi-tile.
+        if (u & 1) == 0 {
+            return try inverseTransform53Optimized(
+                lowpass: lowpass, highpass: highpass,
+                boundaryExtension: boundaryExtension)
+        }
+
+        let lowpassSize = lowpass.count
+        let highpassSize = highpass.count
+        guard lowpassSize > 0 else {
+            throw J2KError.invalidParameter("Lowpass subband must be non-empty")
+        }
+        if highpassSize == 0 { return lowpass }
+
+        guard boundaryExtension == .symmetric else {
+            // Odd-origin generic path is deferred — no production
+            // call site needs it (HT lossless 5/3 always uses
+            // symmetric per ISO/IEC 15444-1 F.4).
+            throw J2KError.invalidParameter(
+                "inverseTransform53Optimized: odd-origin path requires " +
+                "symmetric boundary extension (got \(boundaryExtension))")
+        }
+
+        return inverseTransform53OddOriginSymmetric(
+            lowpass: lowpass, highpass: highpass)
+    }
+
+    // MARK: - Odd-origin parity-aware inverse (symmetric boundary)
+
+    /// Odd-origin variant of the symmetric-boundary inverse. The
+    /// even-origin case is handled by `inverseTransform53Symmetric`.
+    /// Lifting equations are the dual of the test-reference
+    /// `inverse53_1D` in
+    /// `Tests/J2KCodecTests/HTDWT2DParityAwarenessTests.swift` —
+    /// the reference is the canonical spec implementation that
+    /// step 2's multi-level roundtrip tests pin against.
+    private func inverseTransform53OddOriginSymmetric(
+        lowpass: [Int32],
+        highpass: [Int32]
+    ) -> [Int32] {
+        let lowCount  = lowpass.count
+        let highCount = highpass.count
+        let n = lowCount + highCount
+
+        // Working copies of the bands (mutate before interleaving).
+        var L = lowpass
+        var H = highpass
+
+        L.withUnsafeMutableBufferPointer { lBuf in
+            H.withUnsafeMutableBufferPointer { hBuf in
+                let lp = lBuf.baseAddress!
+                let hp = hBuf.baseAddress!
+
+                // Step 1: undo update on L. For odd origin:
+                //   L[i] -= ((H[i] + H[i+1] + 2) >> 2)
+                // with right mirror H[i+1] → H[highCount-1] when
+                // i+1 >= highCount.
+                for i in 0..<lowCount {
+                    let left  = hp[i]
+                    let right = (i &+ 1 < highCount) ? hp[i &+ 1] : hp[highCount &- 1]
+                    lp[i] = lp[i] &- ((left &+ right &+ 2) >> 2)
+                }
+
+                // Step 2: undo predict on H. For odd origin:
+                //   H[0]   += L[0]                          (left mirror)
+                //   H[i]   += ((L[i-1] + L[i]) >> 1)        for 1 ≤ i < min(highCount, lowCount)
+                //   H[lowCount] += L[lowCount-1]            (right mirror, n odd)
+                if highCount > 0 {
+                    hp[0] = hp[0] &+ lp[0]
+                }
+                let interiorEnd = min(highCount, lowCount)
+                for i in 1..<interiorEnd {
+                    hp[i] = hp[i] &+ ((lp[i &- 1] &+ lp[i]) >> 1)
+                }
+                if highCount > lowCount {
+                    hp[lowCount] = hp[lowCount] &+ lp[lowCount &- 1]
+                }
+            }
+        }
+
+        // Interleave for odd origin:
+        //   x[2i+1] = L[i]    (L band → local-odd output positions)
+        //   x[2i]   = H[i]    (H band → local-even output positions)
+        var result = [Int32](repeating: 0, count: n)
+        result.withUnsafeMutableBufferPointer { rBuf in
+            L.withUnsafeBufferPointer { lBuf in
+                H.withUnsafeBufferPointer { hBuf in
+                    let rp = rBuf.baseAddress!
+                    let lp = lBuf.baseAddress!
+                    let hp = hBuf.baseAddress!
+                    for i in 0..<lowCount  { rp[i &* 2 &+ 1] = lp[i] }
+                    for i in 0..<highCount { rp[i &* 2]      = hp[i] }
+                }
+            }
+        }
+        return result
+    }
+
     // MARK: - Symmetric Boundary Extension (Optimised)
 
     /// Optimised inverse transform with symmetric boundary extension.
