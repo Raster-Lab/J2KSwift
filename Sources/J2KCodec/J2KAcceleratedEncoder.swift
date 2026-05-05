@@ -1158,6 +1158,135 @@ struct AcceleratedDWT2D: Sendable {
                 rowHighW, colLowH, rowHighW, colHighH)
     }
 
+    /// v6-alpha3 step 2 — parity-aware forward 2D 5/3 reversible DWT.
+    ///
+    /// Same column-pass-then-row-pass structure as the no-origin
+    /// overload above, but each 1D pass receives the appropriate
+    /// **image-coordinate origin** for that axis, propagating the
+    /// JPEG 2000 5/3 lifting parity through the column transform
+    /// (uY) and row transform (uX) independently. The four output
+    /// band sizes (LL/HL/LH/HH) are computed per spec F.4.4 with
+    /// origin-aware low/high counts.
+    ///
+    /// **Regression-safe**: when both origins are zero (or both
+    /// are even and the per-axis parity-aware 1D filter routes to
+    /// its no-origin fast path), the output is bit-identical to the
+    /// existing no-origin overload. The single-tile production path
+    /// continues to call the no-origin overload directly; this
+    /// origin-aware overload is only invoked from the (still
+    /// experimental) multi-tile path once threading from the tile
+    /// dispatcher lands in v6-alpha3 step 3+.
+    ///
+    /// SCOPE: this step lands the 2D math primitive only. Code-block
+    /// grid origin, packet header generation, and native multi-tile
+    /// codestream assembly are still pending.
+    static func forward2D_53(
+        data: [Int32], width: Int, height: Int,
+        tileOriginX uX: Int, tileOriginY uY: Int
+    ) async -> (ll: [Int32], lh: [Int32], hl: [Int32], hh: [Int32],
+                llW: Int, llH: Int, lhW: Int, lhH: Int,
+                hlW: Int, hlH: Int, hhW: Int, hhH: Int)
+    {
+        // Both axes even-origin: route to the existing no-origin
+        // overload to guarantee byte-identical output. This is the
+        // regression guard for the production single-tile path
+        // (which always passes origin (0, 0)) and for any
+        // even-aligned recursion levels.
+        if (uX & 1) == 0 && (uY & 1) == 0 {
+            return await forward2D_53(data: data, width: width, height: height)
+        }
+
+        // Parity-aware band counts (spec F.4.4).
+        let colLowH  = ((uY & 1) == 0) ? (height + 1) / 2 : height / 2
+        let colHighH = height - colLowH
+        let rowLowW  = ((uX & 1) == 0) ? (width  + 1) / 2 : width / 2
+        let rowHighW = width - rowLowW
+
+        // Column pass — apply forward53_1D with uOrigin = uY to
+        // each column. Sequential implementation; v6-alpha3 step 2
+        // is correctness-first, so we don't yet replicate the
+        // parallel-strip optimisation from the no-origin overload.
+        // Multi-tile encode currently doesn't fire on non-32-aligned
+        // fixtures, so this path's perf is not yet on the critical
+        // production path.
+        let colWs = DWTWorkspace53(maxSignalLength: height)
+        var colResult = [Int32](repeating: 0, count: width * height)
+        var colIn = [Int32](repeating: 0, count: height)
+        var colOut = [Int32](repeating: 0, count: height)
+
+        data.withUnsafeBufferPointer { srcBuf in
+            colResult.withUnsafeMutableBufferPointer { dstBuf in
+                colIn.withUnsafeMutableBufferPointer { ciBuf in
+                    colOut.withUnsafeMutableBufferPointer { coBuf in
+                        let src = srcBuf.baseAddress!
+                        let dst = dstBuf.baseAddress!
+                        let ci  = ciBuf.baseAddress!
+                        let co  = coBuf.baseAddress!
+                        for c in 0..<width {
+                            for row in 0..<height {
+                                ci[row] = src[row * width + c]
+                            }
+                            forward53_1D(ci, co, count: height,
+                                         uOrigin: uY, workspace: colWs)
+                            for row in 0..<height {
+                                dst[row * width + c] = co[row]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Row pass — apply forward53_1D with uOrigin = uX to each
+        // row of colResult. Rows 0..<colLowH are L-over-Y rows
+        // (produce LL + HL); rows colLowH..<height are H-over-Y
+        // (produce LH + HH).
+        let rowWs = DWTWorkspace53(maxSignalLength: width)
+        var ll = [Int32](repeating: 0, count: rowLowW  * colLowH)
+        var hl = [Int32](repeating: 0, count: rowHighW * colLowH)
+        var lh = [Int32](repeating: 0, count: rowLowW  * colHighH)
+        var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
+        var rowOut = [Int32](repeating: 0, count: width)
+
+        colResult.withUnsafeBufferPointer { src in
+            rowOut.withUnsafeMutableBufferPointer { ro in
+                let srcBase = src.baseAddress!
+                let outBase = ro.baseAddress!
+                for row in 0..<colLowH {
+                    forward53_1D(srcBase + row * width, outBase,
+                                 count: width, uOrigin: uX, workspace: rowWs)
+                    ll.withUnsafeMutableBufferPointer { b in
+                        memcpy(b.baseAddress! + row * rowLowW,
+                               outBase, rowLowW * MemoryLayout<Int32>.size)
+                    }
+                    hl.withUnsafeMutableBufferPointer { b in
+                        memcpy(b.baseAddress! + row * rowHighW,
+                               outBase + rowLowW,
+                               rowHighW * MemoryLayout<Int32>.size)
+                    }
+                }
+                for row in 0..<colHighH {
+                    let srcRow = colLowH + row
+                    forward53_1D(srcBase + srcRow * width, outBase,
+                                 count: width, uOrigin: uX, workspace: rowWs)
+                    lh.withUnsafeMutableBufferPointer { b in
+                        memcpy(b.baseAddress! + row * rowLowW,
+                               outBase, rowLowW * MemoryLayout<Int32>.size)
+                    }
+                    hh.withUnsafeMutableBufferPointer { b in
+                        memcpy(b.baseAddress! + row * rowHighW,
+                               outBase + rowLowW,
+                               rowHighW * MemoryLayout<Int32>.size)
+                    }
+                }
+            }
+        }
+
+        return (ll, lh, hl, hh,
+                rowLowW, colLowH, rowLowW, colHighH,
+                rowHighW, colLowH, rowHighW, colHighH)
+    }
+
     /// Multi-level 5/3 decomposition.
     struct Int32LevelResult {
         let lh: [Int32], hl: [Int32], hh: [Int32]
@@ -1192,6 +1321,56 @@ struct AcceleratedDWT2D: Sendable {
             currentData = r.ll
             currentW = r.llW
             currentH = r.llH
+        }
+
+        return Int32DecompositionResult(
+            levels: levelResults, coarsestLL: currentData,
+            llW: currentW, llH: currentH
+        )
+    }
+
+    /// v6-alpha3 step 2 — parity-aware multi-level 5/3 decomposition.
+    ///
+    /// At each decomposition level the LL band's tile-component
+    /// image-coordinate origin is `floor(parent_origin / 2)` per
+    /// ISO/IEC 15444-1 F.4.4. This recursion tracks origin per level
+    /// and threads it into the parity-aware `forward2D_53` overload.
+    ///
+    /// **Regression-safe**: when both starting origins are zero, the
+    /// recursion stays on the no-origin overload at every level
+    /// (because `0 >> 1 == 0`), so the output is byte-identical to
+    /// the no-origin recursion. Production single-tile callers
+    /// continue to use the no-origin overload directly.
+    static func forwardDecomposition53(
+        data: [Int32], width: Int, height: Int, levels: Int,
+        tileOriginX: Int, tileOriginY: Int
+    ) async -> Int32DecompositionResult {
+        var currentData = data
+        var currentW = width
+        var currentH = height
+        var currentOX = tileOriginX
+        var currentOY = tileOriginY
+        var levelResults: [Int32LevelResult] = []
+
+        for _ in 0..<levels {
+            guard currentW >= 2 && currentH >= 2 else { break }
+            let r = await forward2D_53(
+                data: currentData, width: currentW, height: currentH,
+                tileOriginX: currentOX, tileOriginY: currentOY)
+            levelResults.append(Int32LevelResult(
+                lh: r.lh, hl: r.hl, hh: r.hh,
+                lhW: r.lhW, lhH: r.lhH,
+                hlW: r.hlW, hlH: r.hlH,
+                hhW: r.hhW, hhH: r.hhH
+            ))
+            currentData = r.ll
+            currentW = r.llW
+            currentH = r.llH
+            // Spec F.4.4: at each level, the LL band's origin is
+            // floor(parent_origin / 2). Tile origins in JPEG 2000
+            // are non-negative, so `>> 1` is floor here.
+            currentOX = currentOX >> 1
+            currentOY = currentOY >> 1
         }
 
         return Int32DecompositionResult(

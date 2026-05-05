@@ -478,3 +478,112 @@ requires multi-step work that is **not** part of this commit:
 > that DX/PX/MR multi-tile cross-decode passes — at which point
 > the planner constraint can be relaxed and the v5.38 HT-fair
 > table re-measured.
+
+---
+
+## v6-alpha3 step 2 — parity-aware 2D 5/3 DWT + multi-level recursion
+
+### What landed
+
+Two new origin-aware overloads in
+`Sources/J2KCodec/J2KAcceleratedEncoder.swift`:
+
+- **`AcceleratedDWT2D.forward2D_53(data:width:height:tileOriginX:tileOriginY:)`** —
+  parity-aware 2D forward 5/3 DWT. Column pass calls the parity-
+  aware 1D DWT with `uOrigin = uY`, row pass calls it with
+  `uOrigin = uX`. Output band sizes (LL/HL/LH/HH) are computed
+  per ISO/IEC 15444-1 F.4.4 with origin-aware low/high counts
+  (`lowCount = ⌈n/2⌉` for even origin, `⌊n/2⌋` for odd). When
+  both origins are zero the function routes to the existing
+  no-origin overload — output is byte-identical, no perf
+  regression on single-tile.
+
+- **`AcceleratedDWT2D.forwardDecomposition53(...tileOriginX:tileOriginY:)`** —
+  parity-aware multi-level recursion. At each level, the LL band's
+  origin updates as `floor(parent_origin / 2)` per spec F.4.4.
+  When the starting origin is `(0, 0)`, every level's origin stays
+  at `(0, 0)` and the recursion is byte-identical to the no-origin
+  recursion.
+
+### Unit tests
+
+`Tests/J2KCodecTests/HTDWT2DParityAwarenessTests.swift` covers
+eight invariants:
+
+| Invariant | Test |
+|---|---|
+| Even-origin 2D output byte-identical to no-origin overload (sweep across small sizes × even-origin pairs) | `testEvenOrigin2DByteIdenticalToNoOriginOverload` |
+| Odd-origin 2D forward+inverse roundtrips bit-exactly (every parity combo: even/even, odd/even, even/odd, odd/odd) | `testOdd2DForwardInverseRoundTrip` |
+| 5-level multi-level at MR 2x2 tile1 origin (443, 0) — uX odd, uY even — roundtrips | `testMultiLevelMRTile1OriginRoundTrip` |
+| 5-level at MR 2x2 tile3 (443, 443) — both odd, both flipping every level — roundtrips | `testMultiLevelMRTile3OriginRoundTrip` |
+| 5-level at PX 2x2 tile1 (1230, 0) on 1229×658 trailing tile — non-square — roundtrips | `testMultiLevelPXTile1OriginRoundTrip` |
+| 5-level at DX 2x2 tile3 (1400, 1144) — both even at level 0, both flip parity at deeper levels — roundtrips | `testMultiLevelDXTile3OriginRoundTrip` |
+| 5-level at DX 4x4 (700, 572) — both even at level 0, parity flips at level 2+ — roundtrips | `testMultiLevelDX4x4OriginRoundTrip` |
+| 5-level at origin (0, 0) byte-identical to no-origin recursion | `testMultiLevelEvenOriginByteIdenticalToNoOriginRecursion` |
+
+The reference 2D inverse is built atop the parity-aware 1D inverse
+and exercises the spec-correct origin-trajectory per level. Every
+real-fixture origin pair tested produces a bit-exact roundtrip.
+
+### Mandatory commit gates
+
+All green with the new overloads in source (default path
+unchanged):
+
+- `J2KLosslessMedicalGateTests`: 5/5 passes (HT-fair 21/21,
+  EBCOT-fair 28/28, self-roundtrip 7/7, default-mode 7/7,
+  HT-vs-EBCOT)
+- `J2KMedicalCorpusEncodePerformanceTests`: 2/2 passes
+- `J2KStrictCrossCodecValidationTests`: 3/3 passes
+- `HTDWTParityAwarenessTests` (1D): 4/4 passes
+- `HTDWT2DParityAwarenessTests` (2D + multi-level): 8/8 passes
+
+Production single-tile encode is byte-identical to v5.38 / v5.39 /
+v6-alpha2.
+
+### What's still NOT in this step (deferred to v6-alpha3 step 3+)
+
+This step plumbs **only** the DWT mathematics. The cross-decode
+gap on non-32-aligned multi-tile fixtures (MR / PX / DX) is **not
+yet closed** because the wrap-and-stitch encoder doesn't yet call
+this new origin-aware overload — it still encodes each tile as a
+standalone image at origin (0, 0). To close the gap, v6-alpha3
+step 3+ must:
+
+1. Update `J2KMultiTileEncoder` and the upstream encoder pipeline
+   to thread per-tile `tileOriginX` / `tileOriginY` from the slicer
+   into the DWT call (replacing the implicit zero origin).
+2. Audit the code-block grid: code-block partitioning is already
+   in tile-component coordinates (tile-relative), so it should be
+   correct, but needs a cross-decode validation pass under the
+   parity-corrected DWT output.
+3. Audit the packet header generation: per-band block-inclusion
+   tag-trees and Lblock counts need re-validation when band sizes
+   shift due to origin parity.
+4. Replace the wrap-and-stitch codestream assembler with a single
+   pass through `generateCodestream` that emits one main header +
+   N tile-parts, each tile encoded with the origin-aware DWT.
+5. Cross-decode gates: re-run `HTTileParityMatrixTests` and confirm
+   MR/PX/DX cells now pass through OpenJPH, Grok, and Kakadu.
+6. Once cross-decode passes for non-32-aligned fixtures, relax the
+   v6-alpha2 planner constraint to admit those fixtures into
+   multi-tile mode; re-measure the v5.38 HT-fair table.
+
+### v6-alpha3 step 2 — final precise claim
+
+> v6-alpha3 step 2 plumbs parity-aware origin through multi-level
+> 2D 5/3 forward DWT (`AcceleratedDWT2D.forward2D_53(...tileOriginX:tileOriginY:)`
+> and `forwardDecomposition53(...tileOriginX:tileOriginY:)`).
+> Single-tile output remains byte-identical (verified by sweep
+> across small sizes × multiple even-origin pairs). Multi-level
+> roundtrip is bit-exact at every real-fixture origin tested
+> (MR 443, MR 443×443, PX 1230 on 1229-wide trailing tile, DX
+> 1400×1144, DX 700×572 with deeper-level parity flips).
+>
+> **This removes the DWT parity blocker for native multi-tile, but
+> it is still not the full shipping multi-tile fix until
+> code-block / packet / codestream origin handling is completed
+> and MR/PX/DX cross-decode passes.** The v6-alpha2 planner
+> constraint stays in place; the Kakadu HT advantage on fixtures
+> ≥ 886×886 still stands until the v6-alpha3 step 3+ work lands
+> and the v5.38 HT-fair table is re-measured.
