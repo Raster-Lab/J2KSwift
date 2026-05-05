@@ -828,6 +828,203 @@ public struct J2KDWT2DOptimizer: Sendable {
 
         return (data: result, width: curW, height: curH)
     }
+
+    // MARK: - Parity-Aware 2D Inverse (v6-alpha3 step 6B slice 2)
+
+    /// Mathematical ceiling division for a possibly-negative numerator
+    /// and positive denominator. Used by the parity-aware multi-level
+    /// inverse to compute per-level LL canvas-coord origins per
+    /// ISO/IEC 15444-1 Eq. B-15. Mirrors `EncoderPipeline.ceilDivIntegerOrigin`.
+    @inline(__always)
+    private static func ceilDivIntegerOrigin(_ num: Int, _ den: Int) -> Int {
+        precondition(den > 0)
+        if num >= 0 { return (num + den - 1) / den }
+        return -((-num) / den)
+    }
+
+    /// Parity-aware single-level 2D inverse 5/3 DWT. Mirror of
+    /// `AcceleratedDWT2D.forward2D_53(...tileOriginX:tileOriginY:)`
+    /// (v6-alpha3 step 2). Takes the four bands and reconstructs
+    /// the input tile-component image at the given canvas origin
+    /// `(uX, uY)`.
+    ///
+    /// **Even-origin regression**: when both `uX` and `uY` are even
+    /// (including zero), routes to the existing
+    /// `inverseTransform2DOptimized(ll:lh:hl:hh:boundaryExtension:)`
+    /// fast path — output is byte-identical, single-tile and
+    /// 32-aligned multi-tile decode pay zero cost.
+    ///
+    /// **Odd-origin path**: applies the parity-aware 1D inverse
+    /// (slice 1, `inverseTransform53Optimized(...uOrigin:)`) on
+    /// each row (with `uX`) and each column (with `uY`). Slow
+    /// correctness-first implementation, no parallel-strip
+    /// optimisation yet — multi-tile decode currently doesn't
+    /// fire on non-32-aligned fixtures in production.
+    public func inverseTransform2DOptimized(
+        ll: [[Int32]],
+        lh: [[Int32]],
+        hl: [[Int32]],
+        hh: [[Int32]],
+        boundaryExtension: J2KDWT1D.BoundaryExtension = .symmetric,
+        uX: Int, uY: Int
+    ) async throws -> [[Int32]] {
+        // Even-origin regression guard.
+        if (uX & 1) == 0 && (uY & 1) == 0 {
+            return try await inverseTransform2DOptimized(
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                boundaryExtension: boundaryExtension)
+        }
+
+        // Edge: all empty → return LL untouched.
+        if lh.isEmpty && hl.isEmpty && hh.isEmpty { return ll }
+
+        let llHeight = ll.count
+        let llWidth = ll[0].count
+        let lhHeight = lh.count
+        let lhWidth = lh.isEmpty ? 0 : lh[0].count
+        let hlHeight = hl.count
+        let hlWidth = hl.isEmpty ? 0 : hl[0].count
+        let hhHeight = hh.count
+        let hhWidth = hh.isEmpty ? 0 : hh[0].count
+
+        let rowLowW  = llWidth
+        let rowHighW = max(hlWidth, hhWidth)
+        let colLowH  = max(llHeight, hlHeight)
+        let colHighH = max(lhHeight, hhHeight)
+
+        let _ = lhWidth   // silence unused-warning; lhWidth must equal rowLowW per spec
+        let _ = hhHeight  // silence unused-warning
+
+        let outputW = rowLowW + rowHighW
+        let outputH = colLowH + colHighH
+
+        // Row pass (FIRST): each row combines (LL+HL) or (LH+HH)
+        // and applies the parity-aware 1D inverse with `uOrigin =
+        // uX` to recover the V-low or V-high column-prep row.
+        var colLow = [[Int32]](repeating: [], count: colLowH)
+        var colHigh = [[Int32]](repeating: [], count: colHighH)
+
+        for row in 0..<colLowH {
+            let lpRow = row < llHeight ? ll[row] : [Int32](repeating: 0, count: rowLowW)
+            let hpRow = row < hlHeight ? hl[row] : [Int32](repeating: 0, count: rowHighW)
+            colLow[row] = try optimizer1D.inverseTransform53Optimized(
+                lowpass: lpRow, highpass: hpRow,
+                boundaryExtension: boundaryExtension, uOrigin: uX)
+        }
+        for row in 0..<colHighH {
+            let lpRow = row < lhHeight ? lh[row] : [Int32](repeating: 0, count: rowLowW)
+            let hpRow = row < hhHeight ? hh[row] : [Int32](repeating: 0, count: rowHighW)
+            colHigh[row] = try optimizer1D.inverseTransform53Optimized(
+                lowpass: lpRow, highpass: hpRow,
+                boundaryExtension: boundaryExtension, uOrigin: uX)
+        }
+
+        // Column pass (SECOND): for each column, gather low + high
+        // values into a 1D buffer and apply the parity-aware 1D
+        // inverse with `uOrigin = uY`.
+        var result = [[Int32]](
+            repeating: [Int32](repeating: 0, count: outputW),
+            count: outputH)
+        var lowBuf = [Int32](repeating: 0, count: colLowH)
+        var highBuf = [Int32](repeating: 0, count: colHighH)
+        for col in 0..<outputW {
+            for row in 0..<colLowH {
+                lowBuf[row] = col < colLow[row].count ? colLow[row][col] : 0
+            }
+            for row in 0..<colHighH {
+                highBuf[row] = col < colHigh[row].count ? colHigh[row][col] : 0
+            }
+            let column = try optimizer1D.inverseTransform53Optimized(
+                lowpass: lowBuf, highpass: highBuf,
+                boundaryExtension: boundaryExtension, uOrigin: uY)
+            for row in 0..<min(column.count, outputH) {
+                result[row][col] = column[row]
+            }
+        }
+
+        return result
+    }
+
+    /// Parity-aware multi-level 2D inverse 5/3 DWT. Mirror of
+    /// `AcceleratedDWT2D.forwardDecomposition53(...tileOriginX:tileOriginY:)`
+    /// (v6-alpha3 step 2). Iterates from deepest decomposition
+    /// level to shallowest, applying the parity-aware single-level
+    /// 2D inverse at each step with the spec-correct LL canvas
+    /// origin per ISO/IEC 15444-1 Eq. B-15.
+    ///
+    /// **Regression-safe**: when both starting origins are zero,
+    /// every level's origin stays at (0, 0) (since `ceil(0/n) == 0`),
+    /// so the parity-aware single-level inverse routes to the
+    /// existing optimised fast path at every level — the multi-
+    /// level output is byte-identical to the no-origin overload.
+    /// Single-tile and 32-aligned multi-tile decode are zero-cost.
+    ///
+    /// `subbands` must be ordered DEEPEST-FIRST (matching the
+    /// no-origin overload's input contract). The deepest LL is
+    /// passed separately as `ll`/`llW`/`llH`.
+    public func inverseTransformMultiLevel53(
+        ll: [Int32], llW: Int, llH: Int,
+        subbands: [(lh: [Int32], lhW: Int, lhH: Int,
+                     hl: [Int32], hlW: Int, hlH: Int,
+                     hh: [Int32], hhW: Int, hhH: Int)],
+        tileOriginX tcx0: Int,
+        tileOriginY tcy0: Int
+    ) async throws -> (data: [Int32], width: Int, height: Int) {
+        // Origin (0, 0) → existing fast path. Byte-identical output.
+        if tcx0 == 0 && tcy0 == 0 {
+            let r = await inverseTransformMultiLevel53(
+                ll: ll, llW: llW, llH: llH, subbands: subbands)
+            return r
+        }
+
+        guard !subbands.isEmpty else {
+            return (data: ll, width: llW, height: llH)
+        }
+
+        let totalLevels = subbands.count
+
+        // Convert flat LL → jagged for the slow parity-aware path.
+        func flatToJagged(_ flat: [Int32], w: Int, h: Int) -> [[Int32]] {
+            (0..<h).map { r in
+                Array(flat[(r * w)..<(r * w + w)])
+            }
+        }
+        func jaggedToFlat(_ jagged: [[Int32]]) -> (flat: [Int32], w: Int, h: Int) {
+            let h = jagged.count
+            let w = h > 0 ? jagged[0].count : 0
+            var flat = [Int32](repeating: 0, count: w * h)
+            for (r, row) in jagged.enumerated() {
+                for (c, v) in row.enumerated() where c < w {
+                    flat[r * w + c] = v
+                }
+            }
+            return (flat, w, h)
+        }
+
+        var currentLL: [[Int32]] = flatToJagged(ll, w: llW, h: llH)
+
+        // Iterate deepest first. At iteration k we invert
+        // decomposition level (totalLevels - k); the produced LL
+        // sits at canvas coordinates ceil(tcx0 / 2^(totalLevels - k - 1)).
+        for (k, level) in subbands.enumerated() {
+            let outputDepth = totalLevels - k - 1
+            let denom = 1 << outputDepth
+            let curUX = Self.ceilDivIntegerOrigin(tcx0, denom)
+            let curUY = Self.ceilDivIntegerOrigin(tcy0, denom)
+
+            let lh2D = flatToJagged(level.lh, w: level.lhW, h: level.lhH)
+            let hl2D = flatToJagged(level.hl, w: level.hlW, h: level.hlH)
+            let hh2D = flatToJagged(level.hh, w: level.hhW, h: level.hhH)
+
+            currentLL = try await inverseTransform2DOptimized(
+                ll: currentLL, lh: lh2D, hl: hl2D, hh: hh2D,
+                boundaryExtension: .symmetric,
+                uX: curUX, uY: curUY)
+        }
+
+        let (flat, w, h) = jaggedToFlat(currentLL)
+        return (data: flat, width: w, height: h)
+    }
 }
 
 // MARK: - 2D Optimised Transform (9/7 Irreversible)
