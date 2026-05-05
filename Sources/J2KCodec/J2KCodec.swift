@@ -202,6 +202,42 @@ public struct J2KEncoder: Sendable {
             return data
         }
 
+        // v5.39 M4 / v6-alpha1: experimental multi-tile HT lossless
+        // path. Off by default. When the env-var `J2K_HT_TILE_MODE`
+        // selects a multi-tile mode AND the encode is HT-conformant
+        // lossless (the M4 scope), the planner picks a tile grid
+        // and `J2KMultiTileEncoder` runs N per-tile encodes in
+        // parallel, then stitches the codestreams. Each per-tile
+        // encode uses the existing single-tile pipeline unchanged
+        // so all M5/M7/M8/M9 wins persist inside each tile.
+        if encodingConfiguration.lossless,
+           encodingConfiguration.useHTJ2K,
+           encodingConfiguration.htj2kBlockFormat == .conformant,
+           encodingConfiguration.useReversibleFilter,
+           J2KEncodeTilePlanner.envMode != .single
+        {
+            let layout = J2KEncodeTilePlanner.plan(
+                imageWidth: image.width,
+                imageHeight: image.height,
+                decompositionLevels: encodingConfiguration.decompositionLevels,
+                mode: J2KEncodeTilePlanner.envMode)
+            if layout.isMultiTile {
+                let result = try await J2KMultiTileEncoder.encode(
+                    image: image, layout: layout, configuration: encodingConfiguration)
+                return result.codestream
+            }
+            // Layout fell back to single (small image / decomp floor) — proceed below.
+        }
+
+        return try await _singleTileEncode(image)
+    }
+
+    /// Single-tile pipeline entry point — what `encode(_:)` falls
+    /// through to when the planner doesn't request multi-tile, and
+    /// what `J2KMultiTileEncoder` calls to encode each per-tile
+    /// sub-image. Bypasses the planner so multi-tile recursion is
+    /// impossible.
+    func _singleTileEncode(_ image: J2KImage) async throws -> Data {
         let pipeline = EncoderPipeline(config: encodingConfiguration)
         return try await pipeline.encode(image)
     }

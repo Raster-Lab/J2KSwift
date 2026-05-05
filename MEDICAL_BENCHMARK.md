@@ -1423,6 +1423,270 @@ green:
 
 ---
 
+## v5.39 M4 / v6-alpha1 — multi-tile HT lossless architecture prototype (parked, blocked)
+
+**Why this work exists**: M3 diagnosis (preceding section)
+identified multi-tile parallelism as the highest-leverage
+single-direction intervention with the data-supported chance of
+clearing the user's 20–25% promotion gate on large HT fixtures.
+M1 (SIMD per-quad) and M2 (DWT row-parallel) are parked behind
+env vars — both correctness-clean, both perf-negligible at scale.
+M4's hypothesis: each tile gets its own DWT + entropy + codestream
+segment, runs in parallel, and the per-tile DWT runs on a smaller
+working set so cache effects + filter-setup amortise differently
+than at single-tile.
+
+**Files added** (production default unchanged — multi-tile is
+opt-in via env var only):
+
+- `Sources/J2KCodec/J2KEncodeTilePlanner.swift`
+  - `J2KHTTileMode` enum (`single` / `tiles2x2` / `tiles4x4` /
+    `strips4` / `auto`).
+  - `J2KTileLayout` describing the cols × rows tile grid.
+  - Cached static reader `_envMode` reading `J2K_HT_TILE_MODE`
+    once at process startup. Production default is `single`.
+  - Planner refuses multi-tile when tile dimension would fall
+    below `2 ** decompositionLevels`; auto-mode picks 2×2 only
+    when image ≥ 3 MP.
+- `Sources/J2KCodec/J2KMultiTileCodestream.swift`
+  - `J2KTileImageSlicer.sliceTile(...)`: extract per-tile sub-
+    `J2KImage` from parent (per-component memcpy).
+  - `J2KMultiTileAssembler.stitch(perTile:imageWidth:imageHeight:)`:
+    take N standalone per-tile codestreams (each `SOC + SIZ +
+    … + EOC`), keep tile 0's main header, patch `Xsiz`/`Ysiz` to
+    image dims (XTsiz / YTsiz already correct from per-tile
+    encode), append each tile's `[SOT..EOC)` slice with `Isot`
+    rewritten to k, single EOC at end.
+- `Sources/J2KCodec/J2KMultiTileEncoder.swift`
+  - `J2KMultiTileEncoder.encode(image:layout:configuration:)`:
+    runs N per-tile encodes in parallel via `withTaskGroup`,
+    captures per-tile timing/bytes for diagnostics, calls
+    `stitch`. Each per-tile encode invokes the existing single-
+    tile pipeline through a new internal `_singleTileEncode(_:)`
+    entry point that bypasses the planner (no recursion).
+- `Sources/J2KCodec/J2KCodec.swift`
+  - `J2KEncoder.encode(_:)` dispatch: when env var sets
+    `J2K_HT_TILE_MODE != .single` AND the encode is HT-conformant
+    lossless, route through the planner. The planner may still
+    return single (tile floor); otherwise multi-tile encode.
+  - New `_singleTileEncode(_:)` exposes the inner pipeline path.
+- `Tests/J2KCodecTests/HTMultiTilePerfProbeTests.swift`: per-mode
+  wall-time probe across the large fixtures with deterministic
+  per-tile load-balance reporting.
+
+### Correctness gates — SELF-ROUNDTRIP green, EXTERNAL CROSS-DECODE blocked
+
+**1. Self-roundtrip bit-exact (`testLosslessRoundTripBitExactAcrossMedicalCorpus`)**:
+
+| Mode    | Result                              |
+|---------|-------------------------------------|
+| single  | 7/7 bit-exact (production default)  |
+| 2x2     | 7/7 bit-exact                       |
+| 4x4     | 7/7 bit-exact                       |
+| strips4 | 7/7 bit-exact                       |
+| auto    | 7/7 bit-exact                       |
+
+J2KSwift→J2KSwift roundtrips losslessly on every fixture, every
+mode. The encoder produces bytes that the decoder reconstructs
+exactly (MAE = 0).
+
+**2. External cross-decode (HT-fair) — FAILS on tiles ≥ 1**:
+
+The same multi-tile codestream that J2KSwift decodes correctly
+produces decoder-divergent pixels in OpenJPH 0.27.0, Grok 20.3.0,
+and Kakadu 8.4.1 demo for every tile with index ≥ 1. Pattern
+(MR 886×886, 2×2 layout, 443×443 tiles, kdu_expand):
+
+| Tile index | Image rect           | Diff count | Max abs diff |
+|-----------:|----------------------|-----------:|-------------:|
+| 0          | (0..442, 0..442)     |   0/196,249|   0          |
+| 1          | (443..885, 0..442)   |   8,992    | 60,531       |
+| 2          | (0..442, 443..885)   |  40,821    | 59,622       |
+| 3          | (443..885, 443..885) |  39,652    | 64,371       |
+
+Tile 0 always perfect. Tiles 1, 2, 3 have **spatially-localised
+errors** — for tile 1 (top-right) the diffs concentrate in rows
+401–442, cols 0–300 (bottom-left band of the tile). The standalone
+per-tile codestreams **DO** decode correctly through every external
+decoder (verified: each `MR_tileK.j2k` reproduces tile K's pixels
+exactly via `kdu_expand` and `ojph_expand`). The bug is in the
+**stitcher's interaction with multi-tile decoders** — same per-tile
+bytes embedded in a multi-tile container produce different
+decoded pixels than the same bytes in a standalone container.
+
+**Hypothesis under investigation (not yet confirmed)**: the JPEG
+2000 5/3 reversible DWT lifting-step **parity** depends on the
+tile-component origin's parity in image coordinates. When each
+tile is encoded as a standalone image (origin (0,0), even), the
+DWT uses even-parity lifting. When the same bytes are embedded in
+a multi-tile codestream where tile k's origin is at, e.g., image
+(443, 0) (odd-x parity), the decoder applies odd-parity lifting
+inverse, producing reconstruction errors that propagate ~2^N
+samples inward from the affected boundary (matches the observed
+~42-row-wide error band on the MR fixture, with 5 decomposition
+levels).
+
+This is a known-gotcha in JPEG 2000 multi-tile encoder
+implementations. Fixing it requires either:
+- **Choose tile dimensions with even tile-origin parities** —
+  a planner constraint. The medical corpus has dimensions
+  that produce odd tile origins for several layouts (886/2 =
+  443, etc.).
+- **Refactor to use the encoder's native multi-tile codepath**
+  — `J2KEncoderPipeline` would need a per-tile-with-image-coords
+  entry point that knows about the tile's image origin and applies
+  the correct DWT lifting parity. This is the *encoder + cross-codec
+  refactor* the user warned against doing in one step (a multi-
+  session change touching `applyEntropyCoding`, `generateTileData`,
+  `writeSIZMarker`, etc.).
+
+**3. Deterministic byte gate**: each multi-tile mode produces
+identical bytes across 5 runs (TaskGroup result-collection is
+sorted by tile index before stitching). Verified empirically.
+
+**4. Mandatory commit gates** (CPU + GPU + cross-codec, all run
+with M4 default OFF / single mode):
+- `J2KMedicalCorpusEncodePerformanceTests`: pass.
+- `J2KMedicalCorpusPerformanceTests`: pass.
+- `J2KStrictCrossCodecValidationTests`: pass.
+- `J2KLosslessMedicalGateTests`: 5/5 pass (including HT-fair
+  21/21 on single-tile, EBCOT-fair 28/28).
+
+Production default path is byte-identical to v5.38 / v5.39 M3.
+
+### Performance results — ARCHITECTURAL CEILING (informative only)
+
+These numbers show what the wrap-and-stitch architecture achieves
+on the J2KSwift → J2KSwift path. They are **not a viable
+production result** because the cross-decode validation (above)
+fails for the same codestream. They confirm M3's prediction that
+multi-tile parallelism would clear the user's promotion gate IF
+the cross-decode bug is fixed.
+
+| Modality | Shape       | single ms | 2x2 ms             | 4x4 ms             | strips4 ms        |
+|----------|-------------|----------:|-------------------:|-------------------:|------------------:|
+| MR       | 886×886     |      6.51 |  3.19 (2.04×, +51%)|  3.92 (1.66×, +40%)| 3.48 (1.87×, +47%)|
+| XA       | 1024×1024   |     11.52 |  7.91 (1.46×, +31%)|  8.38 (1.37×, +27%)| 8.47 (1.36×, +26%)|
+| PX       | 2459×1316   |     43.60 | 28.80 (1.51×, +34%)| 26.35 (1.65×, +40%)|28.96 (1.51×, +34%)|
+| DX       | 2800×2288   |     77.11 | 57.25 (1.35×, +26%)| 54.04 (1.43×, +30%)|57.64 (1.34×, +25%)|
+
+(Median of 5 runs, M2 release build, maxThreads = 8.)
+
+**Reading**: every multi-tile mode beats single-tile by 25–51%
+on every large fixture — clearing the user's promotion bar
+(DX ≥ 25%, PX ≥ 25%, XA ≥ 15%) in every cell. **Architectural
+ceiling is real and substantial**; the prototype just doesn't
+ship a valid codestream yet.
+
+### Per-tile load balance (DX 2800×2288, 2x2 mode, single run)
+
+| Tile | Pixels    | Bytes      | Encode ms |
+|-----:|----------:|-----------:|----------:|
+| 0    | 1,601,600 |  3,056,401 |     54.47 |
+| 1    | 1,601,600 |  3,363,578 |     49.52 |
+| 2    | 1,601,600 |  3,000,040 |     50.43 |
+| 3    | 1,601,600 |  3,266,612 |     49.32 |
+
+Slowest / fastest = 54.47 / 49.32 = **1.10×** — tile-content
+load is well-balanced on DX (image content is approximately
+uniform across the 4 quadrants). MR shows more imbalance (1.55×
+slowest/fastest) because the brain is concentrated in the centre
+and the upper-right quadrant has the least content.
+
+### Kakadu HT-fair comparison (informative only — multi-tile cross-decode broken)
+
+> ⚠️ This table is INFORMATIVE. The multi-tile column shows
+> J2KSwift's wall time on the wrap-and-stitch path; the codestream
+> does not currently decode correctly in Kakadu (or any other
+> external HT decoder) for tiles ≥ 1. The comparison shows what
+> J2KSwift's *architectural ceiling* would buy back of the Kakadu
+> gap if (and only if) the stitcher's correctness bug is fixed.
+
+| Fixture | Kakadu HT (v5.38) | J2KSwift single (M4 baseline) | J2KSwift 4x4 (broken) | Gap before | Gap after IF FIXED |
+|---|---:|---:|---:|---:|---:|
+| MR 886×886    |  3.7 ms |  6.5 ms |  3.9 ms | 1.76× behind | 1.06× behind |
+| XA 1024×1024  |  5.1 ms | 11.5 ms |  8.4 ms | 2.25× behind | 1.65× behind |
+| PX 2459×1316  | 11.2 ms | 43.6 ms | 26.4 ms | 3.89× behind | 2.36× behind |
+| DX 2800×2288  | 18.9 ms | 77.1 ms | 54.0 ms | 4.08× behind | 2.86× behind |
+
+Multi-tile architecture (if correct) closes ~30–50% of the Kakadu
+gap on every large fixture. Combined with M2 (DWT row-parallel)
+and a future entropy-stage tightening, J2KSwift would approach
+Kakadu HT-fair within the 1.5–2× band. **Kakadu HT advantage on
+fixtures ≥ 886×886 still stands.**
+
+### Final decision: PARK as experimental, do NOT promote
+
+- ✓ Architecture compiles and runs (planner + slicer + scheduler
+  + stitcher + entry-point all in place).
+- ✓ Self-roundtrip bit-exact on every mode.
+- ✓ Performance ceiling cleared the user's promotion gate
+  decisively (25–51% on large fixtures).
+- ✓ Production default path unchanged; mandatory commit gates
+  pass with M4 OFF.
+- ✗ External cross-decode bit-exact failure (decoder-divergent
+  pixels in tiles ≥ 1) — the prototype is not deployable.
+- ✗ No promotion of the env-var to opt-in default; behind
+  `J2K_HT_TILE_MODE=…` only, with a docstring warning that this
+  path produces multi-tile codestreams that fail cross-decode
+  validation.
+
+**Why this is the right call**: the user's M4 charter explicitly
+prohibits promoting an experimental path that breaks
+correctness gates. Cross-decode failure on tiles ≥ 1 is a hard
+correctness regression vs single-tile (where 21/21 HT-fair
+cross-decode passes). The architecture is in place and the perf
+hypothesis is validated; the next step is the deeper refactor
+discussed below.
+
+### Recommended v6-alpha2 follow-up
+
+**Choose one of two paths**:
+
+A. **Even-tile-parity planner constraint** (smaller scope). Refuse
+   multi-tile when any tile's image-coordinate origin would have
+   odd parity in either axis. This rules out 2x2 for fixtures with
+   odd halves (MR 886/2 = 443 → odd) but allows 2x2 for fixtures
+   with even halves (DX 2800/2 = 1400 → even) and most 4x4 cases.
+   Likely simpler to ship but reduces applicability — cuts the
+   set of fixtures that benefit.
+
+B. **Native multi-tile encoder refactor** (larger scope, proper
+   fix). Refactor `EncoderPipeline.encode` and
+   `applyEntropyCoding` to accept a tile descriptor with
+   image-coordinate origin, propagate that through DWT (parity-
+   correct lifting starts), through code-block grid origin, into
+   `generateTileData`'s packet layout, and finally into a single
+   pass through `generateCodestream` that emits N tile-parts.
+   Larger surface area but produces properly correct multi-tile
+   codestreams that decode in every Part-1 decoder.
+
+**Recommendation for v6-alpha2**: ship A first as a quick perf
+probe on the subset of fixtures it covers (DX 2x2, DX 4x4, PX
+4x4 — all with even tile origins). If perf gain is real on those
+cases, schedule B as the proper fix in v6-beta. If A's perf gain
+is undermined by the planner-constraint reducing applicability
+too much, go straight to B.
+
+### Final precise claim (post-M4 prototype)
+
+> J2KSwift HT lossless multi-tile architecture is in place behind
+> `J2K_HT_TILE_MODE` (planner + slicer + scheduler + stitcher).
+> Self-roundtrip is bit-exact on every mode (7/7 fixtures, MAE = 0).
+> The prototype's wall-time on the J2KSwift→J2KSwift path clears
+> the user's 25% promotion gate on large fixtures decisively
+> (DX −30%, PX −40%, XA −31%, MR −51% via 4x4). However the
+> wrap-and-stitch approach produces multi-tile codestreams that
+> fail external cross-decode for tiles ≥ 1 — likely the JPEG 2000
+> tile-component-origin lifting-parity gotcha. **No promotion**.
+> The architecture is parked behind the env var; v6-alpha2 work
+> picks between an even-parity planner constraint or a deeper
+> encoder refactor that propagates tile coordinates correctly.
+> **The Kakadu HT advantage on fixtures ≥ 886×886 documented in
+> the v5.38 HT-fair table stands.**
+
+---
+
 
 ## Test Images
 
