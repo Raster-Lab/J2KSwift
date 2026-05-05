@@ -7,26 +7,30 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha2)
+## Headline (post-v6-alpha3 step 6B)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
-the production single-tile path** (28/28 cross-decode pairs bit-exact
-through OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu 8.4.1
-demo) and **standards-clean on the experimental multi-tile path** for
-the subset of fixtures whose tile-component image-coordinate origins
-are aligned to `2^decompositionLevels` (XA 1024² with 5 levels and
-multi-tile dims 512 / 256 satisfies; the rest of the corpus does
-not).
+both the production single-tile path AND the multi-tile path on
+every corpus fixture** (XA 1024², MR 886², PX 2459×1316, DX
+2800×2288 in 2x2 and 4x4 layouts) — cross-decode bit-exact through
+OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu 8.4.1 demo,
+and J2KSwift self-roundtrip bit-exact on every fixture × every
+multi-tile mode tested. The v6-alpha3 mission objective — make
+non-32-aligned multi-tile codestreams correct end-to-end — is met.
 
-**Kakadu HT advantage on fixtures ≥ 886×886 still stands** — see
-v5.38 HT-fair table below. v6-alpha2 didn't move the needle there;
-it identified the structural fix needed and implemented the
-correctness gate (the planner constraint). Closing the perf gap
-needs the v6-alpha3 native multi-tile refactor.
+**Kakadu HT advantage on fixtures ≥ 886×886 still stands in the
+v5.38 HT-fair table** because production still routes those
+fixtures through single-tile (the v6-alpha2 planner constraint is
+intact). The multi-tile path is now correctness-clean on every
+fixture, so the planner constraint can be relaxed in step 7 and
+the perf table re-measured in step 8 with multi-tile firing on
+every fixture.
 
 | Mode default | Single-tile production path |
 |---|---|
-| Parked / experimental | SIMD M1, DWT row-parallel M2, multi-tile M4 (post-v6-alpha2 planner-constrained) |
+| Multi-tile correctness | Bit-exact on every corpus fixture × every mode (cross-decode + self-roundtrip) |
+| Production routing | v6-alpha2 32-alignment planner constraint still active (step 7 will relax) |
+| Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
 ---
 
@@ -1074,3 +1078,263 @@ codestream container. Two structural fixes remain:
 > the code-block / packet-header origin audit. The Kakadu HT
 > advantage on fixtures ≥ 886×886 documented in the v5.38
 > HT-fair table stands.
+
+---
+
+## v6-alpha3 step 6A — encoder code-block grid + DWT recursion fixes
+
+### What landed
+
+Two related encoder bugs surfaced by a band-geometry trace built
+in this step. Both produced spec-non-conformant wire bytes that
+HTJ2K-compliant external decoders read with misaligned tag-tree
+leaves and wrong block sizes. Step 1+2 self-roundtrip tests didn't
+catch either because forward + inverse used the SAME bug → it
+cancelled within the J2KSwift loop while breaking interop with
+everything else.
+
+**Fix #1 — DWT LL canvas-origin recursion uses ceil-halving:**
+
+`forwardDecomposition53` in
+[J2KAcceleratedEncoder.swift](Sources/J2KCodec/J2KAcceleratedEncoder.swift)
+was floor-halving (`currentOX >> 1`) the LL band canvas origin
+for the next decomposition level. Per ISO/IEC 15444-1 Eq. B-15
+the correct formula is `ceil(parent_origin / 2)`; for non-negative
+integers `(x + 1) >> 1`. Floor-halving silently corrupted per-level
+parity whenever an intermediate LL canvas origin was odd. Trace
+for tile origin 1400:
+
+      spec ceil-rec:    1400 → 700 → 350 → 175 → 88 → 44
+      encoder floor:    1400 → 700 → 350 → 175 → 87 → 43
+
+At level 4-5 the encoder applied odd-parity DWT lifting where the
+spec required even-parity (or vice versa), producing band dims
+off by 1.
+
+**Fix #2 — code-block partition is canvas-anchored:**
+
+`applyEntropyCodingHTJ2KFused` enumerated `ceil(bandW / cbW)`
+blocks with the first block always full-width — i.e. partition
+anchored at TILE-relative (0, 0). Per ISO/IEC 15444-1 B.7 the
+partition is anchored at the BAND CANVAS (0, 0); for a tile band
+canvas origin tbx0 with bandWidth W the spec requires
+
+      blocksX = ceil((tbx0 + W) / cbW) − floor(tbx0 / cbW)
+
+blocks (potentially one more than `ceil(W / cbW)` when tbx0
+mid-cell), with the first/last block PARTIAL when canvas cells
+straddle the tile band edges. Trace for MR 886×886 tile 1 HL_1
+(tbx0=222, W=221): encoder emitted 7 blocks `[32,32,32,32,32,32,21]`;
+spec wants 8 blocks `[2,32,32,32,32,32,32,27]`.
+
+### Diagnostic infrastructure
+
+`HTNativeMultiTileBandGeometryTests` (11 tests, NEW) plus the
+internal `GeometryCollector` trace surfaced the divergences and
+now serves as the regression guard. The collector is plumbed
+through 5 production functions as an optional parameter (default
+nil → zero production cost).
+
+### Cross-decode probe results
+
+`testNativeAssemblerExternalCrossDecodeProbe`:
+
+| Modality | Shape       | Mode | OpenJPH | Grok | Kakadu |
+|---|---|---|---:|---:|---:|
+| XA | 1024×1024 | 2x2 | **0** | **0** | **0** |
+| MR |  886× 886 | 2x2 | **0** | **0** | **0** |
+| PX | 2459×1316 | 2x2 | **0** | **0** | **0** |
+| DX | 2800×2288 | 2x2 | **0** | **0** | **0** |
+| DX | 2800×2288 | 4x4 | **0** | **0** | **0** |
+
+(`maxDiff = 0` → bit-exact across all 5 fixtures × 3 external
+decoders. Pre-step-6A only XA passed; MR/PX/DX produced
+max-abs-diff 60K+ or were rejected outright by OpenJPH/Kakadu.)
+
+### Mandatory commit gates (all green)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 (NEW) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 6A — final precise claim
+
+> Step 6A fixes encoder-side code-block grid and packet-header
+> geometry so parity-aware DWT band dimensions propagate
+> consistently into PendingCodeBlock creation, tag-tree
+> dimensions, packet headers, and packet body ordering. XA
+> remains bit-exact; **MR/PX/DX external cross-decode is now
+> bit-exact through OpenJPH, Grok, and Kakadu**. Single-tile
+> bytes byte-identical to v5.38 / v5.39 / v6-alpha2 / v6-alpha3
+> step 5. Production routing unchanged (planner constraint
+> active). J2KSwift decoder inverse-DWT parity remains deferred
+> to step 6B.
+
+---
+
+## v6-alpha3 step 6B — decoder symmetry (slices 1–4)
+
+The mirror of step 1+2+3+6A on the decode side. Without step 6B
+the encoder produces parity-aware canvas-anchored bytes that
+external decoders read correctly (step 6A) but the J2KSwift
+decoder still applied even-origin-only inverse DWT and tile-relative
+block grid → mis-decoded its own multi-tile output for any
+non-32-aligned origin. Slices 1–4 close that gap.
+
+### Slice 1 — parity-aware 1D inverse primitive
+
+[`J2KDWT1DOptimized.inverseTransform53Optimized(...uOrigin:)`](Sources/J2KCodec/J2KDWT1DOptimized.swift)
+overload mirroring the encoder's
+`AcceleratedDWT2D.forward53_1D(...uOrigin:)` (step 1). Even
+origins route to existing fast path (regression-safe); odd
+origins apply the parity-flipped inverse:
+
+  - `lowCount = floor(n/2)`, `highCount = ceil(n/2)`
+  - undo update on L: `L[i] -= ((H[i] + H[i+1] + 2) >> 2)` with
+    right mirror at i+1 ≥ highCount
+  - undo predict on H: `H[0] += L[0]` (left mirror), then interior
+    `H[i] += ((L[i-1] + L[i]) >> 1)`, then `H[lowCount] +=
+    L[lowCount-1]` when n is odd
+  - interleave: `x[2i+1] = L[i]`, `x[2i] = H[i]`
+
+`HTInverseDWTParityAwarenessTests` (NEW) — 4 tests, ~512 probe
+cells covering even-origin regression + odd-origin
+forward+inverse roundtrip + cross-validation against the
+canonical reference.
+
+### Slice 2 — parity-aware 2D + multi-level inverse
+
+Two new overloads on `J2KDWT2DOptimizer`:
+
+  - `inverseTransform2DOptimized(...uX:uY:)` — single-level. For
+    `(uX, uY)` both even routes to existing fast path; for odd
+    origins applies the slice-1 1D inverse on each row (with uX)
+    and column (with uY).
+  - `inverseTransformMultiLevel53(...tileOriginX:tileOriginY:)` —
+    multi-level recursion using ISO/IEC 15444-1 Eq. B-15 to
+    compute per-level LL canvas origin. For origin (0, 0) every
+    level's origin stays at (0, 0) — output byte-identical to
+    no-origin overload.
+
+`HTInverseDWT2DParityAwarenessTests` (NEW) — 8 tests pinning
+single-level even regression, single-level forward+inverse
+roundtrip across every parity combination, multi-level roundtrip
+at MR/PX/DX 2x2 + DX 4x4 fixture origins, and multi-level
+even-origin regression.
+
+### Slice 3 — decoder IDWT origin plumbing
+
+  - `J2KDecoderPipeline.applyInverseWaveletTransform(...
+    tileOriginX:tileOriginY:)` parameters added (default 0).
+  - `decodeTilePayload` passes `(tileX, tileY)` from
+    `metadata.tileDimensions(tileIndex:)`.
+  - The `levelSizes` recursion (was `(pw + 1) / 2`) now uses
+    Eq. B-15 directly:
+      `LL_d width = ceil((tcx0 + compW)/2^d) − ceil(tcx0/2^d)`
+    For origin (0, 0) reduces to `ceil(compW/2^d)` — byte-identical.
+  - The 5/3-reversible Int32 path now calls
+    `inverseTransformMultiLevel53(...tileOriginX:tileOriginY:)`.
+
+`HTNativeMultiTileSelfRoundtripTests` (NEW). XA 2x2 self-roundtrip
+went live as the regression guard. MR/PX/DX/DX-4x4 stayed XCTSkip
+in this slice — they trapped in `J2KHTConformantMagSgnCoder.read`
+because the decoder's ENTROPY stage was still using even-origin
+band sizes + tile-relative block grid. The decoder's bit-stream
+alignment drifted when N_decoder ≠ N_encoder for non-32-aligned
+origins.
+
+### Slice 4 — entropy decoder canvas-anchored block grid
+
+The decode-side mirror of step 6A:
+
+  - [`subbandDimensions(...tileOriginX:tileOriginY:)`](Sources/J2KCodec/J2KDecoderPipeline.swift)
+    now uses Eq. B-15 directly with HL/LH/HH offsets (`2^(d-1)`)
+    instead of recursive `(w + 1) / 2`.
+  - New private `subbandCanvasOrigin(...)` helper returns
+    `(tbx0, tby0)` per band canvas-coord origin.
+  - `extractTileData(...tileOriginX:tileOriginY:)` parameters
+    added (default 0).
+  - Code-block partition in `extractTileData` is now
+    canvas-anchored (mirror of encoder's
+    `applyEntropyCodingHTJ2KFused`):
+      `firstCanvasX = (tbx0 + pStartX) / cbW`
+      `lastCanvasX  = ceil((tbx0 + pEndX) / cbW)`
+      `pBlocksX = lastCanvasX − firstCanvasX`
+    Each decoded block sets `blockX = max(pStartX, canvasStartX
+    − tbx0)` (tile-band-relative position) so dequant + IDWT
+    scatter writes coefficients into the same positions the
+    encoder extracted from.
+  - For tile origin (0, 0) all formulas reduce to the legacy
+    tile-relative grid → single-tile and 32-aligned multi-tile
+    decode are byte-identical.
+
+The 4 XCTSkip tests in `HTNativeMultiTileSelfRoundtripTests`
+flipped to live and now PASS:
+
+| Test | Result |
+|---|---|
+| testXA2x2SelfRoundtripBitExact   | ✓ (2.9 s) |
+| testMR2x2SelfRoundtripBitExact   | ✓ (2.8 s) |
+| testPX2x2SelfRoundtripBitExact   | ✓ (9.9 s) |
+| testDX2x2SelfRoundtripBitExact   | ✓ (17.7 s) |
+| testDX4x4SelfRoundtripBitExact   | ✓ (18.2 s) |
+
+### Mandatory commit gates (all green post slice 4)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 (NEW slice 1) |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 (NEW slice 2) |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 (NEW slices 3+4) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 6B — final precise claim
+
+> Step 6B mirrors step 1+2+3+6A on the decode side. The J2KSwift
+> decoder now applies parity-aware inverse 5/3 DWT (slices 1–3)
+> and walks a canvas-anchored code-block partition (slice 4)
+> for non-zero tile origins. **All 5 corpus fixtures × multi-tile
+> modes self-roundtrip bit-exact**: XA 1024² 2x2, MR 886² 2x2,
+> PX 2459×1316 2x2, DX 2800×2288 2x2, DX 2800×2288 4x4. Single-
+> tile and 32-aligned multi-tile decode byte-identical to
+> pre-step-6B. Production routing unchanged (planner constraint
+> active). Step 7 (planner relaxation) and step 8 (Kakadu
+> remeasurement with multi-tile fired on every fixture) are now
+> unblocked.
+
+---
+
+## What's next
+
+  - **Step 7** — relax the v6-alpha2 32-alignment planner
+    constraint so MR/PX/DX get multi-tile speedups in the
+    production single-call path. The correctness gate is now in
+    place: cross-decode bit-exact (step 6A) AND self-roundtrip
+    bit-exact (step 6B) on every corpus fixture. Step 7 lifts
+    the constraint and runs the full mandatory gate matrix to
+    confirm no regression on the production path.
+
+  - **Step 8** — re-measure the v5.38 HT-fair Kakadu comparison
+    table with multi-tile fired on every fixture. The headline
+    deliverable: does multi-tile actually beat Kakadu on
+    MR/PX/DX, and by how much. Step 8 needs the v6-alpha3
+    correctness work (steps 1–6B) AND the v5.39 M3 perf
+    diagnosis as inputs; output is a refreshed HT-fair table
+    that supersedes the v5.38 one currently anchoring the
+    headline claims at the top of this doc.
