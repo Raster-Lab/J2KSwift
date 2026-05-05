@@ -65,14 +65,19 @@ final class HTTileOriginPropagationTests: XCTestCase {
     /// must NOT silently encode at (0, 0); it must encode at its
     /// real image-coordinate origin.
     ///
-    /// **v6-alpha3 step 4 update**: the multi-tile encoder now
-    /// validates the layout's parity alignment up front
-    /// (`J2KError.invalidTileConfiguration` if any tile origin is not
-    /// a multiple of `2^decompositionLevels`). This test now covers
-    /// only the 32-aligned XA case where the encoder accepts the
-    /// layout and we can observe origin propagation. The
-    /// non-32-aligned MR/PX/DX layouts are exercised in
-    /// `HTMultiTileTrapReproducer` which asserts the clean throw.
+    /// **v6-alpha3 step 5 update — coverage expanded.** The step-4
+    /// `J2KError.invalidTileConfiguration` guard for non-32-aligned
+    /// layouts was removed in step 5 (the native multi-tile
+    /// codestream assembler structurally handles any tile origin).
+    /// This test now covers all corpus shapes whose
+    /// non-zero-origin tiles are the v6-alpha3 step 6A audit
+    /// target — XA (32-aligned baseline), MR 2x2 (origins include
+    /// 443), PX 2x2 (origins include 1230, 658), DX 2x2 (origins
+    /// include 1400, 1144), and DX 4x4 (origins include 700, 572).
+    /// The assertion is purely "did the layout's origin reach the
+    /// encoder/DWT origin diagnostic hook?". External cross-decode
+    /// correctness is **not** asserted here — that's step 6A+ scope
+    /// (code-block grid + packet header geometry).
     func testMultiTileOriginsReachEncoder() async throws {
         struct Probe {
             let label: String
@@ -81,18 +86,61 @@ final class HTTileOriginPropagationTests: XCTestCase {
             let mode: J2KHTTileMode
             let expectedOrigins: [(Int, Int)]   // row-major
         }
+        // Helper: build expected row-major origins for a uniform
+        // grid where each tile is (tileW × tileH) starting at
+        // (col*tileW, row*tileH).
+        func gridOrigins(cols: Int, rows: Int, tileW: Int, tileH: Int)
+            -> [(Int, Int)]
+        {
+            (0..<(cols * rows)).map { k in
+                let col = k % cols, row = k / cols
+                return (col * tileW, row * tileH)
+            }
+        }
         let probes: [Probe] = [
-            // XA 1024×1024 2x2 — 32-aligned, multi-tile fires
+            // XA 1024×1024 2x2 — 32-aligned, the regression baseline.
+            // Multi-tile fires under the production planner.
             Probe(label: "XA 1024×1024 2x2", imageW: 1024, imageH: 1024,
                   mode: .tiles2x2,
-                  expectedOrigins: [(0, 0), (512, 0), (0, 512), (512, 512)]),
-            // XA 1024×1024 4x4 — 32-aligned, multi-tile fires
+                  expectedOrigins: gridOrigins(cols: 2, rows: 2,
+                                               tileW: 512, tileH: 512)),
+            // XA 1024×1024 4x4 — 32-aligned.
             Probe(label: "XA 1024×1024 4x4", imageW: 1024, imageH: 1024,
                   mode: .tiles4x4,
-                  expectedOrigins: (0..<16).map { k in
-                      let col = k % 4, row = k / 4
-                      return (col * 256, row * 256)
-                  }),
+                  expectedOrigins: gridOrigins(cols: 4, rows: 4,
+                                               tileW: 256, tileH: 256)),
+            // MR 886×886 2x2 — non-32-aligned. Tile origins include
+            // (443, 0), (0, 443), (443, 443) — odd-parity at the
+            // outermost decomposition level. Step 5 native assembler
+            // admits this layout; step 6A still owes the code-block
+            // grid + packet-header origin awareness for the resulting
+            // wire bytes to cross-decode.
+            Probe(label: "MR 886×886 2x2", imageW: 886, imageH: 886,
+                  mode: .tiles2x2,
+                  expectedOrigins: gridOrigins(cols: 2, rows: 2,
+                                               tileW: 443, tileH: 443)),
+            // PX 2459×1316 2x2 — non-32-aligned, anisotropic.
+            // Tile width 1230 (2459 + 1)/2; tile height 658 (1316/2).
+            // Origins include (1230, 0), (0, 658), (1230, 658).
+            Probe(label: "PX 2459×1316 2x2", imageW: 2459, imageH: 1316,
+                  mode: .tiles2x2,
+                  expectedOrigins: gridOrigins(cols: 2, rows: 2,
+                                               tileW: 1230, tileH: 658)),
+            // DX 2800×2288 2x2 — non-32-aligned, even at level 0
+            // but parity flips at deeper DWT levels (step 2 deep-
+            // level parity coverage). Tile width 1400, height 1144.
+            // Origins include (1400, 0), (0, 1144), (1400, 1144).
+            Probe(label: "DX 2800×2288 2x2", imageW: 2800, imageH: 2288,
+                  mode: .tiles2x2,
+                  expectedOrigins: gridOrigins(cols: 2, rows: 2,
+                                               tileW: 1400, tileH: 1144)),
+            // DX 2800×2288 4x4 — non-32-aligned. Tile width 700,
+            // height 572. Sixteen tiles; origins include the
+            // representative (700, 572) (= tile index 5, row 1 col 1).
+            Probe(label: "DX 2800×2288 4x4", imageW: 2800, imageH: 2288,
+                  mode: .tiles4x4,
+                  expectedOrigins: gridOrigins(cols: 4, rows: 4,
+                                               tileW: 700, tileH: 572)),
         ]
 
         for probe in probes {
