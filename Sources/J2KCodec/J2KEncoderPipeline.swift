@@ -3279,7 +3279,8 @@ struct EncoderPipeline: Sendable {
                                 conformantMagsgn: &cMagsgn,
                                 conformantMel: &cMel,
                                 conformantVlc: &cVlc,
-                                conformantInBuf: &cInBuf
+                                conformantInBuf: &cInBuf,
+                                useSIMDClassification: Self._htSIMDClassificationEnabled
                             )
                             localResults.append((d.index, codeBlock))
                         }
@@ -3424,7 +3425,8 @@ struct EncoderPipeline: Sendable {
                     conformantMagsgn: &cMagsgn,
                     conformantMel: &cMel,
                     conformantVlc: &cVlc,
-                    conformantInBuf: &cInBuf
+                    conformantInBuf: &cInBuf,
+                    useSIMDClassification: Self._htSIMDClassificationEnabled
                 )
                 results.append(codeBlock)
             }
@@ -3480,7 +3482,8 @@ struct EncoderPipeline: Sendable {
                     conformantMagsgn: &cMagsgn,
                     conformantMel: &cMel,
                     conformantVlc: &cVlc,
-                    conformantInBuf: &cInBuf
+                    conformantInBuf: &cInBuf,
+                    useSIMDClassification: Self._htSIMDClassificationEnabled
                 )
                 results.append(codeBlock)
             }
@@ -3594,7 +3597,8 @@ struct EncoderPipeline: Sendable {
                         conformantMagsgn: &cMagsgn,
                         conformantMel: &cMel,
                         conformantVlc: &cVlc,
-                        conformantInBuf: &cInBuf
+                        conformantInBuf: &cInBuf,
+                        useSIMDClassification: Self._htSIMDClassificationEnabled
                     )
                     orderedResults.write(codeBlock, at: pending.index)
                 }
@@ -3919,8 +3923,24 @@ struct EncoderPipeline: Sendable {
         return try encodeCodeBlockConformant(
             pending,
             magsgnEnc: &ms, melEnc: &ml, vlcEnc: &vl,
-            conformantInBuf: &cBuf)
+            conformantInBuf: &cBuf,
+            useSIMDClassification: false)
     }
+
+    /// v5.39 M1: cached env-var read for SIMD-classification opt-in.
+    /// Reading `ProcessInfo.processInfo.environment` per chunk is not
+    /// free, so we cache it once at process startup. Values: `1`,
+    /// `true`, `yes` enable; anything else (including unset) leaves
+    /// the SIMD path off.
+    nonisolated(unsafe) private static let _htSIMDClassificationEnabled: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_HT_SIMD"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            default: return false
+            }
+        }
+        return false
+    }()
 
     /// v5.38 M8/M9 — same as `encodeCodeBlockConformant(_:)` but
     /// accepts pre-allocated buffers:
@@ -3940,7 +3960,8 @@ struct EncoderPipeline: Sendable {
         magsgnEnc: inout HTMagSgnEncoderConformant,
         melEnc: inout HTMELEncoderConformant,
         vlcEnc: inout HTReverseBitEmitterConformant,
-        conformantInBuf: inout [UInt32]
+        conformantInBuf: inout [UInt32],
+        useSIMDClassification: Bool
     ) throws -> J2KCodeBlock {
         let count = pending.width * pending.height
         precondition(pending.coefficients.count == count,
@@ -4044,7 +4065,8 @@ struct EncoderPipeline: Sendable {
                 coefficients: buf,
                 width: pending.width, height: pending.height,
                 missingMSBs: missingMSBs,
-                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc)
+                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+                useSIMDClassification: useSIMDClassification)
         }
         let blockBytes = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
@@ -4115,7 +4137,15 @@ struct EncoderPipeline: Sendable {
         // v5.38 M9: pre-allocated `[UInt32]` buffer for the sign-
         // magnitude conversion of coefficients. Resized in place by
         // the conformant encoder when block size changes.
-        conformantInBuf: inout [UInt32]
+        conformantInBuf: inout [UInt32],
+        // v5.39 M1: opt-in SIMD per-quad classification. When false
+        // (production default), the encoder runs the proven scalar
+        // path. When true (env J2K_HT_SIMD=1 or test override), the
+        // SIMD classifier replaces 4 per-quad sampleInfo calls with
+        // one SIMD4<UInt32> pass; output bytes are identical to the
+        // scalar path (verified by HTSIMDIntegrationTests over a
+        // 25K random-block sweep).
+        useSIMDClassification: Bool = false
     ) throws -> J2KCodeBlock {
         if config.htj2kBlockFormat == .conformant {
             return try encodeCodeBlockConformant(
@@ -4123,7 +4153,8 @@ struct EncoderPipeline: Sendable {
                 magsgnEnc: &conformantMagsgn,
                 melEnc: &conformantMel,
                 vlcEnc: &conformantVlc,
-                conformantInBuf: &conformantInBuf)
+                conformantInBuf: &conformantInBuf,
+                useSIMDClassification: useSIMDClassification)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,

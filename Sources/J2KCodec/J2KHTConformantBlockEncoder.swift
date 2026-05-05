@@ -80,6 +80,49 @@ public enum HTBlockEncoderConformant {
         melEnc: inout HTMELEncoderConformant,
         vlcEnc: inout HTReverseBitEmitterConformant
     ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
+        return encode(
+            coefficients: coefficients,
+            width: width, height: height,
+            missingMSBs: missingMSBs,
+            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+            useSIMDClassification: false)
+    }
+
+    /// v5.39 M1: same as the inout encode overload above, but with an
+    /// explicit `useSIMDClassification` toggle controlling the per-quad
+    /// `sampleInfo` path.
+    ///
+    /// - When `false` (production default until v5.39 ships proven):
+    ///   the existing scalar `sampleInfo` runs four times per quad.
+    ///
+    /// - When `true`: a SIMD4<UInt32> classifier processes all four
+    ///   samples of the quad in one pass. Math validated against the
+    ///   scalar reference in `HTSampleInfoSIMDPrototypeTests` over a
+    ///   180K random-input sweep (p ∈ {3, 5, 10, 15, 20, 25, 28, 29,
+    ///   30}) and a hand-picked edge-case set; the classifier
+    ///   produces lane-identical `(sig, eQ, payload)` tuples to the
+    ///   scalar function for every input.
+    ///
+    /// **Correctness invariant**: the encoded
+    /// `(magsgn, mel, vlc)` byte tuple is bit-identical between the
+    /// two paths on every input, because:
+    ///   1. SIMD only replaces the per-sample classification, not
+    ///      the rho / eQMax accumulation or the MEL/VLC/MagSgn
+    ///      emission.
+    ///   2. The classification has been proven lane-identical at
+    ///      the prototype level; downstream bookkeeping is the same
+    ///      scalar code on the same inputs.
+    /// Verified end-to-end by `HTSIMDIntegrationTests.testSIMDvsScalarBlockBytesIdentical`.
+    public static func encode(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int,
+        height: Int,
+        missingMSBs: Int,
+        magsgnEnc: inout HTMagSgnEncoderConformant,
+        melEnc: inout HTMELEncoderConformant,
+        vlcEnc: inout HTReverseBitEmitterConformant,
+        useSIMDClassification: Bool
+    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
         precondition(coefficients.count == width * height,
                      "coefficient count mismatch")
         precondition(missingMSBs < 30, "missingMSBs must leave room for data")
@@ -137,12 +180,93 @@ public enum HTBlockEncoderConformant {
         // [(0,0), (0,1), (1,0), (1,1)] — OpenJPH walks the
         // (col, row) positions as index = 2*col + row (column-major
         // within the quad).
+        // v5.39 M1: SIMD per-quad classification. Loads the four
+        // sample t-values into a SIMD4<UInt32>, computes
+        // val/sig/eQ/payload lane-parallel, then assembles the same
+        // scalar return tuple as the scalar processQuad. The clz
+        // (`leadingZeroBitCount`) is per-lane scalar because Swift's
+        // `SIMD4<UInt32>` does not expose a lane-wise clz primitive
+        // (NEON `vclz` is not surfaced through the public `simd`
+        // module); the scalar clz still maps to a single NEON
+        // instruction per lane on Apple Silicon. Bit-identical to
+        // the scalar path — verified by per-sample 180K random sweep
+        // (HTSampleInfoSIMDPrototypeTests) and per-block byte sweep
+        // (HTSIMDIntegrationTests).
+        @inline(__always)
+        func processQuadSIMD(baseX: Int, baseY: Int)
+            -> (rho: Int, eQMax: Int,
+                eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
+                s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
+        {
+            // Load 4 samples (still through fetch for boundary safety).
+            let t = SIMD4<UInt32>(
+                fetch(baseX,     baseY),
+                fetch(baseX,     baseY + 1),
+                fetch(baseX + 1, baseY),
+                fetch(baseX + 1, baseY + 1))
+
+            // val = (2*t >> p) & ~1  —  SIMD lane-parallel.
+            var val = (t &<< 1) &>> SIMD4<UInt32>(repeating: p)
+            val &= SIMD4<UInt32>(repeating: ~UInt32(1))
+
+            // Per-lane significance.
+            let sig0 = val[0] != 0
+            let sig1 = val[1] != 0
+            let sig2 = val[2] != 0
+            let sig3 = val[3] != 0
+
+            // For non-significant lanes, sub `safeVal = 1` so
+            // `valMinus1 = 0` and clz = 32 (eQ = 0); the per-lane
+            // mask below zeros these regardless, but keeping the
+            // intermediate values sane lets LLVM emit straight-line
+            // SIMD without lane-conditional branches.
+            let safeVal = SIMD4<UInt32>(
+                sig0 ? val[0] : 1,
+                sig1 ? val[1] : 1,
+                sig2 ? val[2] : 1,
+                sig3 ? val[3] : 1)
+            let valMinus1 = safeVal &- SIMD4<UInt32>(repeating: 1)
+
+            // eQ = 32 - clz(val - 1), per lane.
+            let lz = SIMD4<Int32>(
+                Int32(valMinus1[0].leadingZeroBitCount),
+                Int32(valMinus1[1].leadingZeroBitCount),
+                Int32(valMinus1[2].leadingZeroBitCount),
+                Int32(valMinus1[3].leadingZeroBitCount))
+            let eQv = SIMD4<Int32>(repeating: 32) &- lz
+
+            // sign = (t >> 31) & 1; payload = (val - 2) + sign.
+            let sign = (t &>> SIMD4<UInt32>(repeating: 31))
+                     & SIMD4<UInt32>(repeating: 1)
+            let payload = (valMinus1 &- SIMD4<UInt32>(repeating: 1)) &+ sign
+
+            // Reduce SIMD lanes back to scalar tuple — same shape
+            // and same conditional logic as the scalar processQuad.
+            var rho = 0
+            var eQMax = 0
+            var eQ0 = 0, eQ1 = 0, eQ2 = 0, eQ3 = 0
+            var s0: UInt32 = 0, s1: UInt32 = 0
+            var s2: UInt32 = 0, s3: UInt32 = 0
+            if sig0 { rho |= 1; eQ0 = Int(eQv[0]); s0 = payload[0]; if eQ0 > eQMax { eQMax = eQ0 } }
+            if sig1 { rho |= 2; eQ1 = Int(eQv[1]); s1 = payload[1]; if eQ1 > eQMax { eQMax = eQ1 } }
+            if sig2 { rho |= 4; eQ2 = Int(eQv[2]); s2 = payload[2]; if eQ2 > eQMax { eQMax = eQ2 } }
+            if sig3 { rho |= 8; eQ3 = Int(eQv[3]); s3 = payload[3]; if eQ3 > eQMax { eQMax = eQ3 } }
+            return (rho, eQMax, eQ0, eQ1, eQ2, eQ3, s0, s1, s2, s3)
+        }
+
         @inline(__always)
         func processQuad(baseX: Int, baseY: Int)
             -> (rho: Int, eQMax: Int,
                 eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
                 s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
         {
+            // v5.39 M1: dispatch to SIMD path if the caller opted in.
+            // The branch is loop-invariant (same value for the entire
+            // encode call), so the optimiser hoists it; per-quad cost
+            // is zero.
+            if useSIMDClassification {
+                return processQuadSIMD(baseX: baseX, baseY: baseY)
+            }
             var rho = 0
             var eQMax = 0
             var eQ0 = 0, eQ1 = 0, eQ2 = 0, eQ3 = 0

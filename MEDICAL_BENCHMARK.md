@@ -755,6 +755,171 @@ them, surface the conflict before proceeding.
 
 ---
 
+## v5.39 M1 — SIMD per-quad HT classification (parked, negative)
+
+**Goal**: integrate the SIMD per-quad classification proven by the
+v5.38 prototype tests (180K-sample lane-identity sweep) into the HT
+conformant lossless encoder, behind a feature flag, and check whether
+it narrows the Kakadu gap on large HT-fair fixtures (the v5.38 finding
+that started this work).
+
+**Files changed**:
+
+- `Sources/J2KCodec/J2KHTConformantBlockEncoder.swift`
+  - New `processQuadSIMD(baseX:baseY:)` nested function inside
+    `HTBlockEncoderConformant.encode`. Loads four sample t-values
+    into a `SIMD4<UInt32>`, computes val / sig / eQ / payload via
+    lane-parallel SIMD operators, then assembles the same scalar
+    return tuple as scalar `processQuad`. Per-lane `clz` is scalar
+    because Swift's `SIMD4<UInt32>` doesn't surface a lane-wise
+    `leadingZeroBitCount`.
+  - New `useSIMDClassification: Bool` parameter on the inout encode
+    overload. Existing 6-arg overload is preserved as a thin wrapper
+    that passes `false`. The original scalar `processQuad` body is
+    unchanged; the new function dispatches based on the flag at the
+    top — the branch is loop-invariant for a single encode call so
+    the optimiser hoists it.
+
+- `Sources/J2KCodec/J2KEncoderPipeline.swift`
+  - Cached static `_htSIMDClassificationEnabled` reads `J2K_HT_SIMD`
+    environment variable once at process startup (`1`, `true`, `yes`
+    enable; anything else leaves the flag off — the production
+    default).
+  - New `useSIMDClassification: Bool` parameter on
+    `encodeCodeBlockConformant` (inout overload) and
+    `encodeCodeBlockHTJ2KFast`. Threaded through to
+    `HTBlockEncoderConformant.encode`. Default `false` everywhere
+    except the four chunk-loop call sites, which read
+    `Self._htSIMDClassificationEnabled`.
+
+- `Tests/J2KCodecTests/HTSIMDIntegrationTests.swift` (new)
+  - 8 test functions, all bit-identical gates between scalar and
+    SIMD paths on the encoded `(magsgn, mel, vlc)` byte tuples:
+    all-zero, all-max, alternating-sign, sparse, dense-random,
+    boundary sizes (1×1 → 64×64 with non-multiple-of-4 widths and
+    non-multiple-of-2 heights), varying `missingMSBs` (3, 5, 10, 14,
+    18, 22, 25, 28, 29), and a 25K-random-block sweep across 5 sizes
+    × 5 missingMSBs × 200 iterations.
+
+**What SIMD does**: replaces the 4 per-quad scalar `sampleInfo`
+calls with one `SIMD4<UInt32>` lane-parallel computation of val /
+sig / eQ / payload. Output of the function (the `(rho, eQMax, eQ0,
+…, s0, …, s3)` tuple) is bit-identical to the scalar version.
+
+**What SIMD does not do**: it does NOT change anything downstream of
+`processQuad`. MEL, VLC, MagSgn bit emission stays scalar and
+unchanged. eVal / cxVal / kappa / c_q / maxE state propagation is
+identical. EBCOT path is untouched.
+
+**Correctness gates — ALL GREEN**:
+
+- Block-level byte-identity (`HTSIMDIntegrationTests`): 8/8 tests
+  pass, including 25,000-block random sweep across 5 block sizes
+  × 5 missingMSBs values. Scalar `(magsgn, mel, vlc)` ≡ SIMD
+  `(magsgn, mel, vlc)` byte-for-byte on every input.
+
+- Full-corpus self-roundtrip (`testLosslessRoundTripBitExactAcrossMedicalCorpus`):
+  7/7 fixtures pass with `J2K_HT_SIMD=1`. MAE = 0 in every case.
+
+- HT-fair cross-decode matrix (`testLosslessCrossCodecMatrixAcrossMedicalCorpus_HTFair`):
+  21/21 pairs (7 fixtures × 3 HT-capable external codecs) bit-exact
+  with `J2K_HT_SIMD=1`. J2KSwift SIMD HT codestream consumed
+  losslessly by OpenJPH 0.27.0, Grok 20.3.0, Kakadu 8.4.1 demo.
+
+- Default-mode cross-decode: 7/7 J2KSwift→OpenJPH bit-exact.
+
+- Deterministic byte gate: encoded bytes deterministic across all 5
+  internal runs in every fixture, in every test mode. No drift.
+
+#### Performance results — DOES NOT MEET PROMOTION GATES
+
+Each cell below is a median of **5 outer test invocations**, where
+each test invocation itself takes a median of 5 internal samples —
+i.e., 25 timing samples per (fixture, configuration) cell. HT-fair
+encode time (J2KSwift HT lossless), measured on Apple Silicon with
+a release build.
+
+| Fixture | SIMD OFF | SIMD ON | Δ ms | Δ % | ≥5% improvement gate |
+|---|---:|---:|---:|---:|:---:|
+| MR-small 180×180   |  0.7 |  0.7 |  0.0 |   0% | n/a (small) |
+| CT 512×512 (1)     |  3.3 |  3.2 | −0.1 |  −3% | n/a (small) |
+| CT 512×512 (2)     |  2.9 |  3.0 | +0.1 |  +3% | n/a (small) |
+| MR 886×886         |  5.3 |  5.4 | +0.1 |  +2% | **must not regress** — within noise, OK |
+| XA 1024×1024       | 11.7 | 11.5 | −0.2 | −1.7% | **fails ≥5%** |
+| PX 2459×1316       | 38.5 | 38.7 | +0.2 | +0.5% | **fails ≥5%** |
+| DX 2800×2288       | 75.5 | 77.2 | +1.7 | +2.3% | **fails ≥5% (slight regression within noise)** |
+
+**Did the Kakadu gap narrow?** No. Kakadu HT-fair on large fixtures
+remains 1.6–2.6× faster than J2KSwift HT (DX 18.9 ms vs 77.2 ms;
+PX 11.2 ms vs 38.7 ms — both within noise of the SIMD-OFF baseline).
+
+**Why SIMD didn't help**: the per-lane work that SIMD parallelises
+is a small fraction of per-quad cost. Specifically:
+- Swift's `SIMD4<UInt32>` doesn't expose a lane-wise `clz`, so the
+  4 `leadingZeroBitCount` calls remain scalar (each maps to a single
+  NEON instruction, but the per-lane dispatch cost is still there).
+- The per-lane `if sigN { rho |= …; eQN = …; sN = … }` block at the
+  end is scalar — same as before SIMD.
+- The val / sign / payload arithmetic (which IS SIMDified) is small
+  — maybe 4–6 ALU ops saved per quad, on the order of a few ns.
+- The dominant per-quad cost is downstream (rho/eQMax accumulation
+  + MEL/VLC/MagSgn bit emission), all of which remain unchanged.
+
+This matches the v5.38 M10 finding: the M9 scalar baseline is
+already heavily optimised, and small per-quad scalar tweaks don't
+beat noise.
+
+**Decision: PARK as experimental**. SIMD code path stays in source
+(behind `J2K_HT_SIMD=1` env var) so it remains correct against any
+future encoder changes (the integration tests run on every commit
+gate). It does NOT become the default. Production callers continue
+to get the proven scalar path.
+
+#### Remaining v5.39 candidates for narrowing the Kakadu gap
+
+Per the user-defined scope ("v5.39 targets Kakadu-scale large-fixture
+HT performance"), other approaches to investigate, all higher-risk
+or larger-scope than v5.39 M1:
+
+- **Tile-level parallelism for very large fixtures.** Kakadu's
+  large-fixture wins on DX / PX appear to come from heavier
+  parallelism than J2KSwift's per-block-only model gives at scale.
+  J2KSwift currently uses single-tile encoding; multi-tile encode
+  with per-tile parallelism could match Kakadu's 8-thread
+  saturation on > 3 MP fixtures. This is an architectural change
+  with cross-codec interop implications.
+
+- **Bigger SIMD: pair-of-quads (8 samples) classifier.** The
+  current SIMD path does one quad (4 samples) per call. Two
+  adjacent quads in a row can be loaded as 8 samples with stride-1
+  access patterns; that doubles the lane-parallel work and has the
+  potential to actually saturate the SIMD register width. Higher
+  correctness risk because cross-quad state (lep / lcxp / kappa)
+  feeds into the second quad's classification.
+
+- **Forward 5/3 column transpose via NEON `vld4q` / `vst4q`.** The
+  M5 branchless lifting work measured DWT at 32 ms on DX (40% of
+  total). The forward strip-transpose between row and column passes
+  is per-byte memory rearrangement — `vld4q_s32` / `vst4q_s32` are
+  NEON's 4-way deinterleave/interleave intrinsics designed exactly
+  for this case. Not exposed in the public Swift `simd` module
+  but accessible via `Builtin` or C interop.
+
+These remain v5.39+ candidates; none is in scope for v5.39 M1.
+
+#### Final precise claim (unchanged from v5.38 format-fair section)
+
+> J2KSwift is standards-clean and strong on small HT medical
+> fixtures (≤ 512×512). v5.39 M1 attempted to narrow the
+> Kakadu-scale large-fixture HT performance gap via SIMD per-quad
+> classification; the optimisation was bit-exact correctness-clean
+> but did not produce a measurable speedup at scale, so it is
+> parked as experimental code (`J2K_HT_SIMD=1` env var to enable).
+> The Kakadu HT-encode advantage on fixtures ≥ 886×886 documented
+> in the v5.38 HT-fair table stands.
+
+---
+
 
 ## Test Images
 
