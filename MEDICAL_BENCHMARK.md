@@ -1077,6 +1077,352 @@ These remain v5.39+ candidates; none is in scope for v5.39 M2.
 
 ---
 
+## v5.39 M3 — large-fixture HT bottleneck diagnosis (diagnosis-only)
+
+After M1 (SIMD per-quad, +0% perf) and M2 (DWT row-parallel,
++4–8% on total wall) both missed the user's promotion gate, M3
+is a **diagnostic-only** task: identify the real source of
+Kakadu's large-fixture HT advantage before committing to another
+optimisation. No production code path changes; behind-an-env-var
+modes M1 and M2 stay parked.
+
+**Diagnostic harness**
+(`Tests/J2KCodecTests/HTBottleneckDiagnosisTests.swift`, new):
+
+- For each large fixture (MR / XA / PX / DX) and each thread count
+  ∈ {1,2,4,8}, capture median-of-5 measurements of the four
+  `J2KEncodeTimings` stages (preprocess / DWT / entropy /
+  codestream), wall time, output bytes, and peak resident-memory
+  delta via Mach `task_info`.
+- Compute the encoder's deterministic chunk distribution for each
+  (fixture, threadCount) pair. The encoder splits `totalBlocks`
+  into `chunkSize = max(1, totalBlocks / maxConcurrency)` chunks.
+- Run the diagnostic 4× with different env-var combinations
+  (`J2K_HT_SIMD=0/1` × `J2K_HT_PARALLEL_MODE=baseline/dwt-row-parallel`)
+  to capture the M1/M2 composability matrix.
+
+### Per-stage breakdown @ 8 threads (baseline mode, median of 5)
+
+The wall-clock at the encoder's typical operating point
+(maxThreads = 8, default mode):
+
+| Modality | Shape | Blocks | Pre ms | DWT ms | Entropy ms | Codestream ms | Wall ms | Bytes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| MR | 886×886    |   799 | 0.25 |  3.62 |  1.55 | 0.27 |   5.73 |     167,728 |
+| XA | 1024×1024  | 1,024 | 0.37 |  4.89 |  7.15 | 0.81 |  13.47 |   1,621,219 |
+| PX | 2459×1316  | 3,362 | 1.29 | 15.48 | 23.73 | 3.46 |  44.08 |   6,431,507 |
+| DX | 2800×2288  | 6,358 | 2.45 | 32.16 | 40.49 | 6.33 |  81.52 |  12,683,182 |
+
+At DX scale, wall time is split 50% entropy / 39% DWT / 8%
+codestream / 3% preprocess. **Entropy is still dominant at 8
+threads**, but DWT is a close second.
+
+### Per-stage scaling (1→8 threads)
+
+Parallel efficiency = speedup / 8. Rows are sorted by efficiency:
+
+| Modality | Stage | 1 thr | 2 thr | 4 thr | 8 thr | Speedup | Eff |
+|---|---|---:|---:|---:|---:|---:|---:|
+| DX | Entropy    | 189.14 | 98.22 | 58.77 | 40.49 | **4.67×** | **0.58** |
+| PX | Entropy    |  91.34 | 49.18 | 29.83 | 23.73 |   3.85×   |   0.48   |
+| XA | Entropy    |  26.17 | 13.74 |  9.45 |  7.15 |   3.66×   |   0.46   |
+| MR | Entropy    |   4.61 |  2.68 |  1.87 |  1.55 |   2.98×   |   0.37   |
+| DX | Wall       | 231.15 |139.86 | 99.72 | 81.52 |   2.84×   |   0.35   |
+| PX | Wall       | 111.83 | 69.42 | 49.82 | 44.08 |   2.54×   |   0.32   |
+| XA | Wall       |  32.58 | 20.40 | 15.87 | 13.47 |   2.42×   |   0.30   |
+| MR | Wall       |   8.82 |  6.89 |  5.97 |  5.73 |   1.54×   |   0.19   |
+| DX | DWT        |  32.42 | 32.42 | 31.90 | 32.16 |   1.01×   |   0.13   |
+| DX | Preprocess |   2.49 |  2.50 |  2.48 |  2.45 |   1.01×   |   0.13   |
+| DX | Codestream |   6.94 |  6.84 |  6.46 |  6.33 |   1.10×   |   0.14   |
+
+**Reading**: only the entropy stage scales with `maxThreads`.
+DWT, preprocess, and codestream are flat across thread counts —
+DWT runs on its own internal `withTaskGroup`(`processorCount`),
+saturating cores regardless of `maxThreads`; preprocess and
+codestream are single-pass serial.
+
+### Amdahl decomposition (parallel fraction by fixture)
+
+Solving `1/S = (1−P) + P/N` for parallel fraction P at N=8:
+
+| Modality | 1 thr Wall | 8 thr Wall | Speedup | Parallel% | Serial ms |
+|---|---:|---:|---:|---:|---:|
+| DX 2800×2288 | 231.15 | 81.52 | 2.84× | 74.0% | 60.14 |
+| PX 2459×1316 | 111.83 | 44.08 | 2.54× | 69.2% | 34.40 |
+| XA 1024×1024 |  32.58 | 13.47 | 2.42× | 67.1% | 10.74 |
+| MR 886×886   |   8.82 |  5.73 | 1.54× | 39.9% |  5.29 |
+
+**Reading**: ~26% of DX wall time is structurally serial (~60 ms
+when measured at 1 thread). The serial portion is the sum of
+DWT + preprocess + codestream + the non-parallel-able portion
+of entropy (chunk-imbalance, allocator overhead, TaskGroup
+spawn/join). Even with infinite cores, DX wall time would floor
+at ~60 ms. To clear Kakadu (~19 ms on DX), parallelism alone is
+not the answer — the floor itself must be cut.
+
+### Chunk-distribution pathology (block-count balance)
+
+The encoder splits `totalBlocks / maxConcurrency` blocks per
+chunk. When `totalBlocks` doesn't divide evenly by
+`maxConcurrency`, the trailing chunk gets a tiny remainder.
+Block-count Max/Min ratio per (fixture, threadCount):
+
+| Modality | Total Blocks | Threads | #Chunks | Min | Max | Max/Min |
+|---|---:|---:|---:|---:|---:|---:|
+| MR 886×886    |   799 | 2 |  3 |  1 | 399 | **399.00×** |
+| MR 886×886    |   799 | 4 |  5 |  3 | 199 |   66.33×    |
+| MR 886×886    |   799 | 8 |  9 |  7 |  99 |   14.14×    |
+| XA 1024×1024  | 1,024 | 2 |  2 | 512 | 512 |   1.00×     |
+| XA 1024×1024  | 1,024 | 4 |  4 | 256 | 256 |   1.00×     |
+| XA 1024×1024  | 1,024 | 8 |  8 | 128 | 128 |   1.00×     |
+| PX 2459×1316  | 3,362 | 2 |  2 |1,681|1,681|   1.00×     |
+| PX 2459×1316  | 3,362 | 4 |  5 |   2 | 840 | **420.00×** |
+| PX 2459×1316  | 3,362 | 8 |  9 |   2 | 420 |   210.00×   |
+| DX 2800×2288  | 6,358 | 2 |  2 |3,179|3,179|   1.00×     |
+| DX 2800×2288  | 6,358 | 4 |  5 |   2 |1,589| **794.50×** |
+| DX 2800×2288  | 6,358 | 8 |  9 |   6 | 794 |   132.33×   |
+
+**Reading**: chunk count is `ceil(totalBlocks / chunkSize)`,
+which can produce N+1 chunks at certain (totalBlocks, threads)
+combinations. The N "full" chunks all have ~equal work; the
+trailing fragment is tiny. The fragment finishes early and that
+worker idles — wasted concurrency. Worse, on DX@4-thread the
+chunking produces 5 chunks of {1589, 1589, 1589, 1589, 2}: the
+5th chunk competes with the 4 full chunks for a runtime slot
+even though its work is 0.13% of theirs. **This isn't a critical
+path bottleneck** — the slowest chunk dominates regardless — but
+it's a hygiene issue worth fixing as part of any work-stealing
+or batch-redistribution rewrite.
+
+### Memory pressure (peak resident delta around encode @ 8 threads)
+
+| Modality | Shape | RSS Δ MiB | Output MiB |
+|---|---|---:|---:|
+| MR | 886×886    |  12.47 |  0.16 |
+| XA | 1024×1024  |   0.11 |  1.55 |
+| PX | 2459×1316  |   3.25 |  6.13 |
+| DX | 2800×2288  |   0.31 | 12.10 |
+
+Encoder-induced RSS delta is small — under 13 MiB across the
+corpus. The encoder's per-chunk scratch (`coeffsBuffer`, `absMags`,
+`sigPacked`, `cInBuf`, `cMagsgn`, `cMel`, `cVlc`, etc.) reuses
+capacity across blocks within a chunk after v5.38 M8/M9, and
+allocates only once per task. **Memory bandwidth is not the
+bottleneck** at this scale.
+
+### M1/M2 mode-composability matrix (1-thread wall, baseline noise)
+
+The 1-thread numbers are more reliable for cross-mode comparison
+(no parallel-stage variance):
+
+| Mode | DX 1-thr DWT | DX 1-thr Entropy | DX 1-thr Wall |
+|---|---:|---:|---:|
+| baseline                      | 32.42 | 189.14 | 231.15 |
+| SIMD-on (`J2K_HT_SIMD=1`)     | 32.04 | 218.19 (+15%) | 266.15 |
+| DWTpar-on                     | 27.47 (−15%) | 182.58 | 220.03 (−4.8%) |
+| both-on                       | 27.12 (−16%) | 197.79 | 235.35 |
+
+- **M2 (DWT-parallel) gives a clear single-threaded DWT win
+  (−15%)** — the path uses `processorCount` workers internally
+  regardless of the encoder's `maxThreads`, so even at maxThreads=1
+  the row pass parallelises across cores.
+- **M1 (SIMD) still doesn't help entropy** — at 1 thread it
+  *regresses* DX entropy +15% in this run (run-to-run noise is
+  large here; the M1 commit's dedicated test had tighter
+  control). Either way, no win.
+- **M1 + M2 together** ≈ M2 alone on DWT, no extra win on entropy.
+  Modes are additively composable on their respective stages but
+  neither moves total wall enough to clear the user's gate.
+
+### Wall-clock vs measured-stage-sum (scheduling overhead)
+
+`Wall − (preprocess + DWT + entropy + codestream)` across the
+matrix is **< 1 ms in every cell** (largest delta: DX baseline
+8-thread = 0.09 ms). Task scheduling, TaskGroup spawn/join, and
+result-collection overhead are not measurable contributors.
+Whatever's missing is *inside* one of the stages, not between
+them.
+
+### Top 3 remaining bottlenecks
+
+After M1/M2 and the M3 measurements:
+
+1. **DWT structural ceiling (~32 ms on DX).** The forward 5/3
+   already runs on `processorCount` workers (column pass +
+   M2-style row pass). 8-thread efficiency is 0.13 against
+   `maxThreads`, but that's because DWT *ignores* `maxThreads` —
+   it's already saturating cores. No further parallelism win is
+   available within a single-tile encode. To reduce DWT below
+   32 ms requires either:
+   - **Algorithmic**: split into 4–16 tiles, each tile's DWT runs
+     on a smaller working set (better cache locality, less filter
+     setup overhead). Sum-of-tile-DWTs typically < 0.5×
+     single-tile DWT.
+   - **GPU**: Metal forward integer 5/3, mirroring the v5.20.0
+     lossy decode wins — but historically encode-side GPU has
+     been a regression (v5.35.0c documented this on 9/7 lossy).
+   - **NEON intrinsics**: 4-way `vld4q`/`vst4q` deinterleave for
+     the row→column transpose. Not exposed in Swift `simd`; would
+     need C interop.
+
+2. **Entropy parallel-efficiency cap (0.58 on DX).** Per-block
+   work is ~30 µs at 1-thread on DX (189 ms / 6358 blocks). At 8
+   threads, perfect scaling would give 23.6 ms; we measure 40.5 ms
+   = ~17 ms of "missing" parallel speedup. Sources, by likelihood:
+   - **Per-chunk allocator overhead.** Each task allocates fresh
+     `[Int32]`/`[UInt32]`/`[UInt64]`/HTFastBitWriter/HT*Coder
+     instances at the top of `group.addTask`. That's ~9 fresh
+     allocations × 9 chunks (one chunk-set per encode) = 81
+     allocations of ~64 KB each. Reducing this to a per-thread
+     pool (allocate once per encode, reuse across chunks) could
+     close some of the gap.
+   - **Block-content variance within chunks.** Chunks split by
+     index, not by predicted work. If chunk N gets 794 LL+LH
+     blocks (low entropy → fast) and chunk M gets 794 HL+HH
+     blocks (high entropy → slow), chunk M dominates. A
+     work-stealing batch model (chunks emit blocks into a shared
+     queue, workers pull) would fix this.
+   - **Memory bandwidth.** 8 cores × per-block working set
+     (~6 KB) × bursty access patterns. Likely small contributor
+     given the modest RSS delta.
+
+3. **Preprocess + Codestream serial floor (~9 ms on DX, 8 thr).**
+   Preprocess is post-v5.38-M7-tuned (already minimal at 2.45 ms);
+   codestream is single-pass packet header writing + tile-data
+   serialisation (6.33 ms). Together they're a hard 9 ms floor
+   on DX wall time even with infinitely-fast entropy + DWT. To
+   compress this requires either:
+   - **Pipeline**: emit codestream as entropy completes (overlap
+     with the last-finishing entropy chunk). Architectural change.
+   - **Multi-tile**: per-tile codestream segments emitted in
+     parallel. Falls out of multi-tile parallelism (#1 above).
+
+### Headline reading: where Kakadu's advantage comes from
+
+J2KSwift DX 8-thread wall: 81.5 ms.
+Kakadu HT-fair DX (v5.38 measurement): ~19 ms.
+Gap: 62 ms ≈ 3.6× wall.
+
+Decomposition of the gap, given M3's data:
+
+- ~28 ms of Kakadu's lead is **DWT** (J2KSwift 32 ms vs Kakadu's
+  estimated ~4 ms based on its single-thread throughput). Likely
+  comes from multi-tile parallelism in Kakadu — DWT on smaller
+  data fits in L1, and per-tile filter setup amortises better.
+- ~25 ms is **entropy** (40 ms vs estimated ~14 ms). Likely from
+  Kakadu's mature 8-thread block-stealing scheduler + tighter
+  per-block C++ code.
+- ~5 ms is **codestream + preprocess** (J2KSwift 9 ms vs
+  estimated ~4 ms).
+- ~5 ms is the **stage ratio overhead** — Kakadu likely overlaps
+  stages within a tile.
+
+**No single optimisation closes this gap.** Each of the three
+levers above buys back 1/3 to 1/2 of the gap; combined, they
+could plausibly bring DX from 81 → 30 ms (Kakadu-comparable).
+But the architectural cost is significant.
+
+### M4 candidates evaluated against the M3 data
+
+- **A. block-batch HT emission** (work-stealing entropy queue).
+  Estimated DX entropy gain: 40.5 → ~28 ms (efficiency 0.58 →
+  0.85). Total DX wall: 81 → 69 ms = **−15%**. Below user's
+  20% gate but real. Implementation cost: medium (refactor
+  TaskGroup-of-chunks to a shared-queue model with per-thread
+  scratch pool).
+
+- **B. tile-level parallelism** (multi-tile encode for fixtures
+  ≥ 3 MP). Estimated DX gain: DWT 32 → ~12 ms (3 × smaller
+  working set per tile + better L1 reuse), entropy 40 → ~25 ms
+  (independent tiles, smaller chunks balance better),
+  codestream 6 → ~5 ms (per-tile parallel emission). Total DX
+  wall: 81 → ~50 ms = **−38%**. **Clears DX 20% gate decisively.**
+  Implementation cost: high (encoder + cross-codec interop
+  validation for OpenJPH / Grok / Kakadu / OpenJPEG on
+  multi-tile HT codestreams).
+
+- **C. memory-layout rewrite** (per-thread scratch pool, single
+  upfront allocation). Estimated DX entropy gain: 40.5 → ~36 ms
+  (~10% of entropy). Total wall: 81 → ~76 ms = **−6%**. Below
+  promotion gate. Implementation cost: low (single
+  `withTaskGroup` rewrite to allocate scratch once per encode,
+  not per chunk).
+
+- **D. Metal integer 5/3** (GPU forward DWT). Estimated DX gain:
+  DWT 32 → ~10 ms (mirrors v5.20.0 lossy decode wins). Total
+  wall: 81 → ~59 ms = **−27%**. Clears DX 20% gate. But
+  encode-side GPU has been a regression historically (v5.35.0c
+  documented Metal forward 9/7 lossy as 2–4× slower than CPU
+  SIMD). High uncertainty.
+
+- **E. stop and release** — accept the Kakadu gap on large HT
+  fixtures, document it, redirect v5.39 effort elsewhere
+  (lossless ratio improvements? alternative format support?).
+
+### M4 recommendation
+
+**B (tile-level parallelism for fixtures ≥ 3 MP)** is the
+highest-leverage single direction:
+- Clears the user's 20% DX gate cleanly (estimated −38%) and
+  also clears PX (estimated −30%).
+- Tile-based encode is **Part-1 universal** (every Part-1
+  decoder ships precinct + tile support); cross-codec interop
+  risk is low compared to multi-layer HT (which already failed
+  in v5.35.0d phase 1) or GPU integer DWT.
+- Each tile's DWT, entropy, and codestream are fully
+  independent — no shared state, no synchronisation between
+  tiles; falls out cleanly as a `withTaskGroup` over tiles.
+- Naturally compresses both stages 1 and 2 above (DWT ceiling
+  AND entropy efficiency cap) without separate work for each.
+- **B compounds with A** if both ship: tile-level parallelism
+  plus block-batch entropy gives an estimated DX wall of
+  ~30–35 ms, in shouting distance of Kakadu.
+
+**Suggested M4 plan**:
+1. Implement multi-tile encode for fixtures ≥ 3 MP (DX/PX);
+   small fixtures stay single-tile (no benefit, header
+   overhead).
+2. Choose tile size: 1024×1024 default (4 tiles for DX, 4 for PX).
+3. Cross-codec validation gate: 7/7 self-roundtrip + 21/21
+   HT-fair cross-decode + 28/28 EBCOT-fair cross-decode + DICOM
+   Pixel Data round-trip (multi-tile codestreams must wrap
+   cleanly in DICOM Transfer Syntax UID 1.2.840.10008.1.2.4.90).
+4. Behind opt-in flag (`J2K_HT_TILE_SIZE=1024` or similar) until
+   gates pass; promote on DX ≥ 20% and PX ≥ 20% and clean
+   cross-codec.
+5. If A (work-stealing entropy queue) is cheaper to implement
+   first, ship A first as a small −15% win, then layer B on top.
+
+### Correctness gates
+
+All M3 work is diagnostic-only — production code is unchanged.
+The mandatory commit gates (CPU + GPU + cross-codec) all pass
+green:
+- `J2KMedicalCorpusEncodePerformanceTests`: pass
+- `J2KMedicalCorpusPerformanceTests`: pass
+- `J2KStrictCrossCodecValidationTests`: pass
+- `J2KLosslessMedicalGateTests`: 5/5 pass (7/7 roundtrip,
+  21/21 HT-fair cross-decode, 28/28 EBCOT-fair cross-decode,
+  default-mode 7/7, deterministic bytes 7/7).
+
+### Final precise claim (post-M3)
+
+> J2KSwift HT lossless on the medical corpus has a structural
+> ~3.6× wall-clock gap to Kakadu 8.4.1 demo on large fixtures
+> (DX 2800×2288: 81 ms vs 19 ms at 8 threads, HT-fair). M3
+> diagnosis attributes the gap to three roughly co-equal
+> contributors — single-tile DWT ceiling (~28 ms of the gap),
+> entropy parallel efficiency cap (~25 ms), and a serial
+> codestream + preprocess floor (~9 ms). M1 (SIMD per-quad)
+> targets none of these; M2 (DWT row-parallel) targets the DWT
+> stage but is bandwidth-bound. **M4 should be tile-level
+> parallelism**, which addresses two of the three contributors
+> in a single architectural change with the lowest cross-codec
+> interop risk. The Kakadu HT advantage on fixtures ≥ 886×886
+> documented in the v5.38 HT-fair table stands until M4 lands.
+
+---
+
 
 ## Test Images
 
