@@ -32,6 +32,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtForward53HorizontalInt = "j2k_dwt_forward_53_horizontal_int"
     /// Forward 5/3 reversible wavelet transform (vertical, integer / bit-exact).
     case dwtForward53VerticalInt = "j2k_dwt_forward_53_vertical_int"
+    /// Forward 5/3 reversible wavelet transform (horizontal, integer / odd origin).
+    /// v6-alpha5 phase 4 — parity-aware variant for tile-component image-coord
+    /// origin parity == 1 in this axis. Bit-exact match for the CPU reference
+    /// `forward53_1D(...uOrigin: <odd>)`.
+    case dwtForward53HorizontalIntOdd = "j2k_dwt_forward_53_horizontal_int_odd"
+    /// Forward 5/3 reversible wavelet transform (vertical, integer / odd origin).
+    case dwtForward53VerticalIntOdd = "j2k_dwt_forward_53_vertical_int_odd"
     /// Inverse 5/3 reversible wavelet transform (horizontal).
     case dwtInverse53Horizontal = "j2k_dwt_inverse_53_horizontal"
     /// Inverse 5/3 reversible wavelet transform (vertical).
@@ -962,6 +969,108 @@ enum J2KMetalShaderSource {
                 : highpass[(halfHeightH - 1) * width + col];
             lowpass[i * width + col] =
                 input[(2 * i) * width + col] + ((dTop + dBot + 2) >> 2);
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Horizontal, integer / odd origin)
+    //
+    // v6-alpha5 phase 4 — bit-exact match for the CPU reference
+    // `AcceleratedDWT2D.forward53_1D(...uOrigin: odd)`.
+
+    kernel void j2k_dwt_forward_53_horizontal_int_odd(
+        device const int* input [[buffer(0)]],
+        device int* lowpass [[buffer(1)]],
+        device int* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint lowCount  = width / 2;
+        uint highCount = width - lowCount;
+
+        uint idx   = row * width;
+        uint lBase = row * lowCount;
+        uint hBase = row * highCount;
+
+        if (lowCount == 0) {
+            if (highCount > 0) {
+                highpass[hBase] = input[idx];
+            }
+            return;
+        }
+
+        if (highCount > 0) {
+            highpass[hBase] = input[idx] - input[idx + 1];
+        }
+        uint predictInteriorEnd = min(highCount, lowCount);
+        for (uint i = 1; i < predictInteriorEnd; i++) {
+            int lLeft  = input[idx + 2 * (i - 1) + 1];
+            int lRight = input[idx + 2 * i + 1];
+            highpass[hBase + i] = input[idx + 2 * i] - ((lLeft + lRight) >> 1);
+        }
+        if (highCount > lowCount) {
+            int lLast = input[idx + 2 * (lowCount - 1) + 1];
+            highpass[hBase + lowCount] = input[idx + 2 * lowCount] - lLast;
+        }
+
+        for (uint i = 0; i < lowCount; i++) {
+            int hLeft  = highpass[hBase + i];
+            int hRight = (i + 1 < highCount)
+                ? highpass[hBase + i + 1]
+                : highpass[hBase + highCount - 1];
+            lowpass[lBase + i] = input[idx + 2 * i + 1] + ((hLeft + hRight + 2) >> 2);
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Vertical, integer / odd origin)
+
+    kernel void j2k_dwt_forward_53_vertical_int_odd(
+        device const int* input [[buffer(0)]],
+        device int* lowpass [[buffer(1)]],
+        device int* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint lowCount  = height / 2;
+        uint highCount = height - lowCount;
+
+        if (lowCount == 0) {
+            if (highCount > 0) {
+                highpass[col] = input[col];
+            }
+            return;
+        }
+
+        if (highCount > 0) {
+            highpass[col] = input[col] - input[width + col];
+        }
+        uint predictInteriorEnd = min(highCount, lowCount);
+        for (uint i = 1; i < predictInteriorEnd; i++) {
+            int lTop = input[(2 * (i - 1) + 1) * width + col];
+            int lBot = input[(2 * i + 1) * width + col];
+            highpass[i * width + col] =
+                input[(2 * i) * width + col] - ((lTop + lBot) >> 1);
+        }
+        if (highCount > lowCount) {
+            int lLast = input[(2 * (lowCount - 1) + 1) * width + col];
+            highpass[lowCount * width + col] =
+                input[(2 * lowCount) * width + col] - lLast;
+        }
+
+        for (uint i = 0; i < lowCount; i++) {
+            int hTop = highpass[i * width + col];
+            int hBot = (i + 1 < highCount)
+                ? highpass[(i + 1) * width + col]
+                : highpass[(highCount - 1) * width + col];
+            lowpass[i * width + col] =
+                input[(2 * i + 1) * width + col] + ((hTop + hBot + 2) >> 2);
         }
     }
 

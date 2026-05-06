@@ -493,6 +493,145 @@ kernel void j2k_dwt_forward_53_vertical_int(
     }
 }
 
+// MARK: - Forward 5/3 Reversible DWT (Horizontal, integer / odd origin)
+//
+// v6-alpha5 phase 4 — odd-origin parity-aware forward 5/3 INT.
+// Bit-exact match for the CPU reference
+// `AcceleratedDWT2D.forward53_1D(...uOrigin:workspace:)` when uOrigin
+// is odd. Image-coord parity flips local-vs-band mapping:
+//   local even index → image-odd position → H band source
+//   local odd index  → image-even position → L band source
+// and the band counts swap:
+//   lowCount  = floor(n/2)   (was ceil(n/2) for even origin)
+//   highCount = ceil(n/2)    (was floor(n/2))
+// The predict pass has a left-mirror at H[0] (= L[0] for both
+// neighbours, so H[0] -= L[0]). The update pass has *no* left
+// mirror — for odd origin, L[0] is at image position u+1 and its
+// left H neighbour is H[0], its right is H[1].
+//
+// Forward kernel has no read-after-write across the split: predict
+// only reads input + writes highpass; update only reads input +
+// highpass + writes lowpass. Single-thread per row, sequential.
+
+kernel void j2k_dwt_forward_53_horizontal_int_odd(
+    device const int* input [[buffer(0)]],
+    device int* lowpass [[buffer(1)]],
+    device int* highpass [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.y >= height) return;
+
+    uint row = gid.y;
+    uint lowCount  = width / 2;            // floor(n/2)
+    uint highCount = width - lowCount;     // ceil(n/2)
+
+    uint idx   = row * width;
+    uint lBase = row * lowCount;
+    uint hBase = row * highCount;
+
+    // Edge tile (width = 1 → only one image-even sample, no L band).
+    if (lowCount == 0) {
+        if (highCount > 0) {
+            highpass[hBase] = input[idx];
+        }
+        return;
+    }
+
+    // Predict: H[i] is computed from local-even input X[2i] minus
+    // (L_left + L_right) >> 1 where L_left, L_right are the two
+    // image-even neighbours bracketing the image-odd position.
+    // For odd origin the gather flips: L stores input[2i+1] etc.
+    //
+    // H[0]: left mirror — both neighbours collapse to L[0].
+    // Interior 1 ≤ i < min(highCount, lowCount): H[i] uses L[i-1] and L[i].
+    // H[lowCount] when n odd (highCount > lowCount): right mirror,
+    //   both neighbours collapse to L[lowCount-1].
+    if (highCount > 0) {
+        // H[0] = input[0] - ((L[0] + L[0]) >> 1) = input[0] - L[0]
+        // L[0] = input[1] (local-odd gather).
+        highpass[hBase] = input[idx] - input[idx + 1];
+    }
+    uint predictInteriorEnd = min(highCount, lowCount);
+    for (uint i = 1; i < predictInteriorEnd; i++) {
+        // L[i-1] = input[idx + 2*(i-1) + 1], L[i] = input[idx + 2*i + 1]
+        int lLeft  = input[idx + 2 * (i - 1) + 1];
+        int lRight = input[idx + 2 * i + 1];
+        highpass[hBase + i] = input[idx + 2 * i] - ((lLeft + lRight) >> 1);
+    }
+    if (highCount > lowCount) {
+        // H[lowCount]: right mirror at tile edge (n odd).
+        // Both neighbours collapse to L[lowCount-1] = input[2*(lowCount-1) + 1].
+        int lLast = input[idx + 2 * (lowCount - 1) + 1];
+        highpass[hBase + lowCount] = input[idx + 2 * lowCount] - lLast;
+    }
+
+    // Update: L[i] is computed from input[2i+1] (the local-odd
+    // gather, image-even position) plus (H_left + H_right + 2) >> 2.
+    // No left mirror for odd origin — L[0]'s left H is H[0].
+    // Right mirror when i+1 >= highCount.
+    for (uint i = 0; i < lowCount; i++) {
+        int hLeft  = highpass[hBase + i];
+        int hRight = (i + 1 < highCount)
+            ? highpass[hBase + i + 1]
+            : highpass[hBase + highCount - 1];
+        lowpass[lBase + i] = input[idx + 2 * i + 1] + ((hLeft + hRight + 2) >> 2);
+    }
+}
+
+// MARK: - Forward 5/3 Reversible DWT (Vertical, integer / odd origin)
+
+kernel void j2k_dwt_forward_53_vertical_int_odd(
+    device const int* input [[buffer(0)]],
+    device int* lowpass [[buffer(1)]],
+    device int* highpass [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= width) return;
+
+    uint col = gid.x;
+    uint lowCount  = height / 2;
+    uint highCount = height - lowCount;
+
+    if (lowCount == 0) {
+        if (highCount > 0) {
+            highpass[col] = input[col];
+        }
+        return;
+    }
+
+    // Predict (column): H[i] = X[2i] - ((L[i-1] + L[i]) >> 1)
+    // where L[i] = X[2i+1] (image-odd gather flips for odd uY).
+    if (highCount > 0) {
+        highpass[col] = input[col] - input[width + col];
+    }
+    uint predictInteriorEnd = min(highCount, lowCount);
+    for (uint i = 1; i < predictInteriorEnd; i++) {
+        int lTop = input[(2 * (i - 1) + 1) * width + col];
+        int lBot = input[(2 * i + 1) * width + col];
+        highpass[i * width + col] =
+            input[(2 * i) * width + col] - ((lTop + lBot) >> 1);
+    }
+    if (highCount > lowCount) {
+        int lLast = input[(2 * (lowCount - 1) + 1) * width + col];
+        highpass[lowCount * width + col] =
+            input[(2 * lowCount) * width + col] - lLast;
+    }
+
+    // Update (column): L[i] = X[2i+1] + ((H[i] + H[i+1 or mirror] + 2) >> 2)
+    for (uint i = 0; i < lowCount; i++) {
+        int hTop = highpass[i * width + col];
+        int hBot = (i + 1 < highCount)
+            ? highpass[(i + 1) * width + col]
+            : highpass[(highCount - 1) * width + col];
+        lowpass[i * width + col] =
+            input[(2 * i + 1) * width + col] + ((hTop + hBot + 2) >> 2);
+    }
+}
+
 // MARK: - Inverse 5/3 Reversible DWT (Horizontal, integer / bit-exact)
 //
 // Bit-exact match for J2KDWT1D.inverseTransform53 (symmetric extension):
