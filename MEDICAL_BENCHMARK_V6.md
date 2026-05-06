@@ -7,7 +7,41 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha4 step 11)
+## Headline (post-v6-alpha5 Phase 8)
+
+### v6-alpha5 — GPU forward 5/3 INT lands as opt-in (8-phase pivot)
+
+After v6-alpha4 step 12 closed the CPU-side Kakadu-gap lever set
+on diminishing returns, **v6-alpha5 pivots to Metal forward
+INTEGER 5/3 DWT** per the lossless-only roadmap. Eight commits
+(`0dc9d2a` → `44ab73b`) ship a production-correct, opt-in GPU
+forward path:
+
+  - **Wall-time win**: +17–18 % at DX 6.4 MP / MG 16.8 MP
+    single-tile lossless encode (release, Apple M2, median of 5).
+  - **Byte-identical** CPU ↔ GPU at every fixture × every parity
+    combination; verified by 30+ correctness tests.
+  - **External-decoder bit-exact** through OpenJPH 0.27.0,
+    Grok 20.3.0, Kakadu 8.4.1 demo: 21/21 corpus cells, max-abs-
+    pixel-diff = 0.
+  - **Opt-in via `J2K_GPU_FORWARD_53=1`** with a 4 MP pixel-
+    count threshold that gates GPU out of every regression case
+    (sub-DX single-tile + every multi-tile per-tile dispatch).
+  - Production default unchanged — `J2K_GPU_FORWARD_53` unset →
+    v6-alpha4 CPU encode bytes verbatim.
+
+See the **v6-alpha5** section at the bottom of this doc for the
+phase ledger, final wall-time tables, cross-codec validation,
+and the production-policy summary.
+
+The pre-v6-alpha5 state described below remains the reference
+for everything that runs without the env var set, including all
+multi-tile work (the GPU forward is single-tile-only on the
+production gate).
+
+---
+
+## Pre-v6-alpha5 headline (post-v6-alpha4 step 11)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
 both the production single-tile path AND the multi-tile path on
@@ -2274,3 +2308,133 @@ levers C + D produced negative results that we now have measured
 data for. Future work on closing the Kakadu gap should not retry
 these four lever-tier interventions on this hardware / toolchain
 combination without changing one of the underlying assumptions.
+
+---
+
+## v6-alpha5 — GPU forward 5/3 INT pivot (8 phases)
+
+Step 12's closure named the pivot direction:
+**lift the lossless-only roadmap item per `feedback_lossless_only_v5_38`
+("CPU 5/3 lossless encode hot-path first, then Metal forward
+INTEGER 5/3 DWT")**. v6-alpha5 lands the GPU forward 5/3 INT path
+across eight commits (`0dc9d2a` → `44ab73b`), reaching the same
+correctness bar as the v6-alpha3 step-7 multi-tile work
+(byte-identical CPU↔GPU, plus external-decoder bit-exact through
+OpenJPH / Grok / Kakadu) and producing the **first GPU-encode
+wall-time win in the codebase**: +17–18 % at DX / MG single-tile
+lossless.
+
+### v6-alpha5 phase ledger
+
+| Phase | Commit    | Headline outcome |
+|---|---|---|
+| 0  | `0dc9d2a` | New `j2k_dwt_forward_53_horizontal_int` / `_vertical_int` Metal kernels, bit-exact match for `AcceleratedDWT2D.forward53_1D(...)`. Public `J2KMetalDWT.forward2DInt32(...)`. 4 unit tests inc. GPU forward → GPU inverse roundtrip closure on a 320×240 16-bit fixture. |
+| 1  | `09cc7ba` | Multi-level fused dispatch — 5 levels chained into one MTLCommandBuffer; intermediate LL stays GPU-resident, only LH/HL/HH bands + final coarsest LL read back. GPU-vs-CPU-scalar bench shows 2.49× at 1.6 MP per-tile. |
+| 2  | `008189a` | Encoder pipeline wire-in via env-var-cached gate `J2K_GPU_FORWARD_53` and `_gpuForward53Enabled` mutable static. Byte-identical codestream proven at 1024² and 800². **End-to-end measurement reveals 33–151 % regression** on the medical corpus — pinned to per-encode `J2KMetalDWT.init() + initialize()` cost (≈ 13–15 ms). |
+| 3  | `37356e0` | Process-wide `J2KMetalSession.processShared` lazy static — first-encode pays the device init / shader compile / pool warmup, every subsequent encode short-circuits via existing `isLoaded` guards. **First GPU-encode wall-time win**: DX +18.8 %, MG +17.4 %; smaller fixtures still lose. |
+| 4a | `75444a9` | Odd-origin parity-aware Metal kernels (`_horizontal_int_odd`, `_vertical_int_odd`) — single-level forward INT now produces bit-exact output at every (uX, uY) parity combination per ISO/IEC 15444-1 F.4.4. 6 unit tests covering the four (even/odd × even/odd) cells. |
+| 4b | `5e91f3c` | Parity-aware multi-level fused — Eq. B-15 origin trajectory (`(x + 1) >> 1`) tracked per axis per level so the right kernel fires on every recursion step. 3 unit tests, including 5-level MR (443, 443) where parity flips at every level. |
+| 4c | `ed53cac` | Encoder gate relaxation — drops `tileOriginX == 0 && tileOriginY == 0` filter; multi-tile encodes now route every tile through GPU forward. **Caught + fixed `halfWH` bug** (was `originalWidth / 2` floor; correct formula is `originalWidth - llWidth`, parity-correct in both cases). 3 multi-tile byte-identical tests at MR / DX / PX 2×2. |
+| 5  | `0e1309c` | Multi-tile wall-time A/B sweep + 4 MP gate threshold. **Multi-tile is a strict GPU regression below 16 MP** — 16 concurrent tile tasks all serialise through the shared `MTLCommandQueue` (Apple's queue model), killing the cross-tile parallelism CPU multi-tile gets for free. Threshold blocks every multi-tile per-tile dispatch + sub-DX single-tile. |
+| 6  | `13b9de4` | Per-call `MTLCommandQueue` via new `J2KMetalDevice.makeFreshCommandQueue()` — concurrent tile tasks now get dedicated queues, CB execution interleaves on the GPU scheduler. **PX 3.24 MP single-tile flips from −17 % regression to break-even**; DX 4×4 multi-tile narrows from −34 % to −10 %. |
+| 7  | `a3a3e40` | UMA readback skip-bzero (`unsafeUninitializedCapacity`) + scope assessment. Modest win within noise, but documents the diminishing-returns frontier: further UMA work needs pipeline-level refactor of `SubbandInfo` and upstream stages, not localised tweaks inside J2KMetal. |
+| 8  | `44ab73b` | **External-decoder cross-codec validation**: 21/21 cells bit-exact through OpenJPH 0.27.0, Grok 20.3.0, Kakadu 8.4.1 demo on the medical corpus (7 fixtures × 3 decoders). Same correctness bar as v6-alpha3 step 7 for multi-tile codestreams. |
+
+### v6-alpha5 final wall-time table — single-tile encode (release, Apple M2, median of 5)
+
+End-to-end encode wall time vs the production CPU forward 5/3
+path. Measurements taken with `J2K_GPU_FORWARD_53=1` and the test
+helper lowering `_gpuForward53PixelThreshold` to 1 so every
+fixture exercises the GPU code path (production threshold 4 MP
+would otherwise route MR / XA / PX to CPU):
+
+| Fixture       | px        | CPU fwd ms | GPU fwd ms | Δ vs CPU      | Phase 8 production routing  |
+|---|---:|---:|---:|---:|---|
+| MR  886× 886  |   784 996 |    8.27    |   10.86    | **−31.5 %**   | gated → CPU (sub-4 MP)      |
+| XA 1024×1024  | 1 048 576 |   11.26    |   12.93    | **−14.8 %**   | gated → CPU                 |
+| PX 2459×1316  | 3 236 044 |   32.23    |   34.91    |  **−8.3 %**   | gated → CPU                 |
+| **DX** 2800×2288 | **6 406 400** | **65.03** | **53.07** | **+18.4 %** | **GPU fires** ✓             |
+| **MG** 3520×4784 |**16 839 680** |**172.73** |**142.51** | **+17.5 %** | **GPU fires** ✓             |
+
+Crossover sits at ~4 MP single-tile. The 4 MP production
+threshold (`_gpuForward53PixelThreshold = 4_000_000`)
+simultaneously admits DX / MG single-tile (where GPU wins) and
+excludes every regression case (sub-DX single-tile + every
+multi-tile per-tile dispatch, since multi-tile per-tile dim is
+≪ 4 MP for the production `.auto` layouts).
+
+### v6-alpha5 final wall-time table — multi-tile encode (diagnostic only)
+
+Multi-tile is the production fast path post v6-alpha3 step 9. The
+table below documents why GPU forward is **not** appropriate for
+this workload class and why the threshold gates it out:
+
+| Fixture              | px        | tiles | CPU fwd ms | GPU fwd ms |   Δ vs CPU    |
+|---|---:|---:|---:|---:|---:|
+| MR  886× 886 / 2×2   |   784 996 |   4   |    5.31    |    7.28    |  **−37.0 %**  |
+| XA 1024×1024 / 2×2   | 1 048 576 |   4   |    7.89    |   11.17    |  **−41.5 %**  |
+| PX 2459×1316 / 4×4   | 3 236 044 |  16   |   21.85    |   35.46    |  **−62.3 %**  |
+| DX 2800×2288 / 4×4   | 6 406 400 |  16   |   46.33    |   50.91    |   **−9.9 %**  |
+| MG 3520×4784 / 4×4   |16 839 680 |  16   |  125.80    |  120.82    |   **+4.0 %**  |
+
+Even with Phase 6's per-tile fresh `MTLCommandQueue`s, GPU
+multi-tile loses up to MG-class fixtures. Root cause: per-tile
+GPU dispatches still serialise at the SOC scheduler level when
+the per-tile compute is small (tile size ≪ 1 MP), and the CPU
+multi-tile path's thread-level parallelism across 8–12 cores
+beats one-CB-at-a-time GPU execution.
+
+### v6-alpha5 cross-codec validation (Phase 8)
+
+`HTGPUForward53CrossCodecTests` runs the medical corpus through
+GPU forward and decodes every codestream via every external HT
+decoder. Result:
+
+| Modality | Shape       |     Bytes  | OpenJPH | Grok | Kakadu |
+|---|---|---:|---:|---:|---:|
+| MR-small |  180× 180   |    45 224  |    0    |  0   |   0    |
+| CT       |  512× 512   |   436 460  |    0    |  0   |   0    |
+| CT       |  512× 512   |   406 187  |    0    |  0   |   0    |
+| MR       |  886× 886   |   167 728  |    0    |  0   |   0    |
+| XA       | 1024×1024   | 1 621 219  |    0    |  0   |   0    |
+| PX       | 2459×1316   | 6 431 507  |    0    |  0   |   0    |
+| DX       | 2800×2288   |12 683 182  |    0    |  0   |   0    |
+
+7 fixtures × 3 decoders = **21 / 21 cells max-abs-pixel-diff = 0**.
+GPU-forward output is independently verified by every mainstream
+HT-capable external decoder.
+
+### v6-alpha5 production policy
+
+| Aspect | State |
+|---|---|
+| Production default | **Off** (`J2K_GPU_FORWARD_53` unset) |
+| Opt-in mechanism | `J2K_GPU_FORWARD_53=1` env var, or `EncoderPipeline._gpuForward53Enabled = true` |
+| Pixel threshold | 4 MP (`_gpuForward53PixelThreshold = 4_000_000`) — only fires GPU when per-encode ≥ 4 MP |
+| Origin support | Every tile-component image-coord origin parity (Eq. B-15 trajectory tracked per axis per level) |
+| Concurrency | Per-tile fresh `MTLCommandQueue` so tile-level concurrency interleaves on GPU |
+| Resource sharing | `J2KMetalSession.processShared` lazy singleton — device + shader library + buffer pool reused across encodes |
+| Correctness bar | Byte-identical CPU↔GPU + external-decoder bit-exact (21/21 OpenJPH/Grok/Kakadu) |
+| Wall-time delta on production-routing fixtures | +17–18 % at DX 6.4 MP / MG 16.8 MP single-tile lossless; gated to CPU on every regression case |
+
+### v6-alpha5 — final precise claim
+
+> v6-alpha5 lands a production-correct, opt-in **GPU forward 5/3
+> INT** path that wins +17–18 % wall time on DX / MG single-tile
+> lossless encodes vs the production CPU forward, while staying
+> byte-identical to CPU and externally verified bit-exact through
+> OpenJPH / Grok / Kakadu. The work spans 8 commits — kernels
+> (Phase 0), multi-level fusion (Phase 1), shared session
+> (Phase 3), parity-aware origin support (Phase 4), per-call
+> queues (Phase 6), and cross-codec validation (Phase 8) — and
+> intentionally stops at the diminishing-returns frontier (Phase 7
+> documents what zero-copy UMA / vDSP integer / GCD fan-out
+> work would *not* move the needle on this codebase). Production
+> default unchanged: users who don't opt in get exactly the
+> v6-alpha4 CPU encode bytes; users who do get a measured 17–18 %
+> wall-time win on the largest medical fixtures (DX, MG) with no
+> risk of producing bytes that fail external decode. Multi-tile
+> remains a CPU-only domain on Apple M2 + Swift toolchain — the
+> 4 MP threshold gates GPU forward out of every multi-tile
+> per-tile dispatch and every sub-DX single-tile encode where
+> measurement showed regression.
