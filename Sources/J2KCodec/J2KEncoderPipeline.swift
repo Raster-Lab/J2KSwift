@@ -4554,6 +4554,50 @@ struct EncoderPipeline: Sendable {
     /// though wall time regresses).
     nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 4_000_000
 
+    // MARK: - v6-alpha6 phase 1.2: GPU forward HT entropy gate
+    //
+    // Symmetric to the forward 5/3 INT gate above but for the
+    // **encode-side HT entropy** stage (the ~45 % of DX wall that
+    // v6.0.0 didn't accelerate). Off by default; opt in via env var
+    // `J2K_GPU_FORWARD_HT_ENTROPY=1` or programmatic
+    // `_gpuForwardHTEntropyEnabled = true`. See
+    // `docs/V6_ALPHA6_GPU_FORWARD_HT_ENTROPY_PLAN.md` for the
+    // background and `J2KGPUForwardHTEntropyTelemetry` for the
+    // observability surface.
+    //
+    // Phase 1.2 ships the gate + the standalone batched API
+    // (`encodeBlockBatchWithGPUClassifier(...)` below). Phase 1.3
+    // wires the API through `applyEntropyCodingHTJ2KFused`.
+
+    /// v6-alpha6 phase 1.2 — gate flag for the GPU forward HT entropy
+    /// path. Off by default (production unchanged). Set to true via
+    /// the env var or programmatically to exercise the GPU classify
+    /// + CPU emit path.
+    nonisolated(unsafe) static var _gpuForwardHTEntropyEnabled: Bool = _readGPUForwardHTEntropyEnv()
+
+    private static func _readGPUForwardHTEntropyEnv() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_FORWARD_HT_ENTROPY"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    /// v6-alpha6 phase 1.2 — codeblock-count threshold for the GPU
+    /// forward HT entropy path. Phase 0.5 dispatch-probe data on
+    /// Apple M2 showed dispatch overhead amortises sharply with
+    /// block count (137 µs/block at 9 blocks → 2.3 µs/block at 1584
+    /// blocks). 256 blocks is the smallest batch where per-block
+    /// dispatch cost is plausibly below the CPU emit cost; below
+    /// that, CPU-only wins.
+    ///
+    /// Per-device tuning re-runs the dispatch probe and re-derives;
+    /// see `docs/V6_ALPHA6_GPU_FORWARD_HT_ENTROPY_PLAN.md` §5
+    /// (Phase 5 column when filled).
+    nonisolated(unsafe) static var _gpuForwardHTEntropyBlockThreshold: Int = 256
+
     /// v6-alpha3 step 3: per-tile origin propagation diagnostic.
     /// Off by default; set `J2K_HT_TILE_DEBUG_ORIGINS=1` to print
     /// per-tile origin/dim/level/origin-aware lines from
