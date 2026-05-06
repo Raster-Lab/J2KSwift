@@ -663,6 +663,19 @@ struct EncoderPipeline: Sendable {
     ) async throws -> (tileData: Data, actualLevels: Int, adaptiveStepSizes: [String: Double]) {
         try tileImage.validate()
 
+        // v6-alpha4 step 11 — per-stage timing for the multi-tile
+        // path. The lock-protected `J2KEncodeTimings` accumulator
+        // sums durations across concurrent tile tasks (step 9's
+        // `withTaskGroup`), giving us total CPU time per stage
+        // across all tiles. Diagnostic harnesses snapshot before
+        // and after to derive per-stage CPU sums; comparing to
+        // wall time identifies parallelism efficiency per stage.
+        // The single-tile path has equivalent instrumentation in
+        // `EncoderPipeline.encode(...)` since the original M3
+        // diagnosis. Call cost is one NSLock acquire per stage
+        // per tile (~µs); negligible vs encode wall.
+        var stageStart = CFAbsoluteTimeGetCurrent()
+
         // Stage 1: Preprocessing — extract component data + DC shift.
         var componentData = try extractComponentData(from: tileImage)
         for (compIdx, component) in tileImage.components.enumerated() {
@@ -673,12 +686,22 @@ struct EncoderPipeline: Sendable {
                 }
             }
         }
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordPreprocessing(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 2: Colour transform (no-op for single-component
         // medical greyscale — the medical corpus the v6 work
         // targets — but call it for correctness).
         let (transformedData, transformedFloatData) =
             try applyColorTransform(componentData, image: tileImage)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordColorTransform(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 3: Parity-aware forward 5/3 DWT — uses the per-tile
         // image-coordinate origin so band layouts match what an
@@ -688,12 +711,22 @@ struct EncoderPipeline: Sendable {
             transformedData, floatComponents: transformedFloatData,
             width: tileImage.width, height: tileImage.height,
             tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordWaveletTransform(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 4: Build adaptive step sizes (lossless reversible →
         // content-independent epsilons; same value per band across
         // all tiles).
         let adaptiveStepSizes = buildAdaptiveLossyStepSizes(
             decompositions, image: tileImage, totalLevels: actualLevels)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordQuantization(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 5: Entropy coding (HT or EBCOT depending on config).
         let codeBlocks = try await applyEntropyCoding(
@@ -704,12 +737,22 @@ struct EncoderPipeline: Sendable {
             tileOriginY: tileOriginY,
             tileIndex: tileIndex,
             geometryCollector: geometryCollector)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordEntropyCoding(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 6: Rate control (lossless → all passes included).
         let layers = try applyRateControl(
             codeBlocks: codeBlocks,
             totalPixels: tileImage.width * tileImage.height,
             componentCount: tileImage.components.count)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordRateControl(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 7: Tile-data generation — produces the bytes that
         // sit between SOD and the next SOT/EOC. Note: we do NOT
@@ -722,6 +765,10 @@ struct EncoderPipeline: Sendable {
             componentCount: tileImage.components.count,
             tileIndex: tileIndex,
             geometryCollector: geometryCollector)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordCodestreamGeneration(t - stageStart)
+        }
 
         return (tileData, actualLevels, adaptiveStepSizes)
     }

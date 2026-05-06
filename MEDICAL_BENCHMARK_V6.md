@@ -7,7 +7,7 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha4 step 10)
+## Headline (post-v6-alpha4 step 11)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
 both the production single-tile path AND the multi-tile path on
@@ -51,6 +51,8 @@ roughly halved compared to v6-alpha2.
 | Production default | `single` (`J2K_HT_TILE_MODE` env var opts in to multi-tile) |
 | `.auto` policy | 4x4 ≥ 3 MP, 2x2 ≥ 500 K, else single (refined in step 10) |
 | Planner constraint | DWT-depth floor only (32-alignment removed in step 7) |
+| Multi-tile parallelism | saturating Apple M2 (CPU-sum/wall ≥ 11.5× on 16-tile layouts — step 11) |
+| Remaining XA/PX/DX gap location | single-thread DWT + Entropy (≥ 90 % of CPU time, step 11) |
 | Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
 ---
@@ -1961,3 +1963,186 @@ image size, instead of "2x2 above 3 MP, single below."
 > 2x2). Production default unchanged (`single`). Single-tile
 > bytes byte-identical. MR HT-fair encode + decode wins against
 > Kakadu held over from step 9. All correctness gates green.
+
+---
+
+## v6-alpha4 step 11 — remaining Kakadu gap diagnosis (XA / PX / DX)
+
+### Goal
+
+Step 9 closed the MR HT-fair gap. Step 11 attributes the
+*remaining* J2KSwift-vs-Kakadu encode gap on XA / PX / DX to
+specific pipeline stages, so subsequent steps target the right
+bottleneck instead of adding more parallelism (which the data
+below shows is no longer the lever).
+
+### What landed
+
+  - Sources/J2KCodec/J2KEncoderPipeline.swift —
+    `runEncodeStagesForNativeAssembly(...)` now records each
+    pipeline stage's duration into the existing process-global
+    `J2KEncodeTimings` accumulator (lock-protected; sums across
+    the step-9 task-group's concurrent tile tasks). The
+    single-tile encode path was already instrumented since the
+    v5.39 M3 diagnosis; step 11 brings the multi-tile path
+    to parity. Per-stage call cost is one `NSLock` acquire per
+    tile per stage (~µs); negligible vs encode wall.
+
+  - Tests/J2KCodecTests/HTKakaduGapDiagnosisTests.swift (NEW) —
+    diagnostic-only release median-of-5 harness that resets
+    `J2KEncodeTimings` before each encode, snapshots after,
+    prints four Markdown tables: per-stage CPU sums, parallelism
+    efficiency, stage shares + Kakadu gap attribution, and
+    ranked encode levers per fixture. Skips gracefully if the
+    medical fixture corpus isn't present.
+
+### Per-stage CPU-sum (release median of 5, post-step-10 `.auto` mode)
+
+| Modality | Shape       | Mode | layout | Wall ms | Pre+ColXfm | DWT     | Quant | Entropy | RC   | Codestream | CPU sum |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| MR | 886×886    | auto | 2×2    |   2.68  |   0.34 |   5.19 | 0.00 |   3.28 | 0.01 |   0.66 |   9.48 |
+| XA | 1024×1024  | auto | 2×2    |   7.64  |   0.58 |   9.87 | 0.00 |  15.63 | 0.03 |   0.92 |  27.02 |
+| PX | 2459×1316  | auto | 4×4    |  25.67  |   3.28 | 166.46 | 0.00 | 118.20 | 0.16 |   7.11 | 295.21 |
+| DX | 2800×2288  | auto | 4×4    |  54.63  |   9.94 | 354.76 | 0.00 | 306.55 | 0.28 |   9.44 | 680.97 |
+
+**Quantization is fused** into block extraction in v5.x M-series
+work, so its accumulator stays at 0 in the lossless 5/3 path —
+the table preserves the column for symmetry with the v5.39 M3
+breakdown.
+
+### Multi-tile parallelism efficiency (CPU-sum / wall)
+
+| Modality | Shape       | Mode | layout | CPU sum / wall | Parallelism class |
+|---|---|---|---|---:|---|
+| MR | 886×886    | auto | 2×2    |   3.53×       | 88% efficient over 4 tiles |
+| XA | 1024×1024  | auto | 2×2    |   3.54×       | 88% efficient over 4 tiles |
+| PX | 2459×1316  | auto | 4×4    |  11.50×       | saturating M2 (8 perf + 4 e-cores) |
+| DX | 2800×2288  | auto | 4×4    |  12.46×       | saturating M2                       |
+
+**Step-9's per-tile parallelism is already at the hardware
+ceiling.** Adding more tile-level concurrency (e.g. 8x8 layouts)
+or refining `auto` mode further would not move the wall-time
+needle. The remaining gap to Kakadu lives elsewhere.
+
+### Stage-share + Kakadu gap attribution
+
+| Modality | Shape       | J2KSwift wall | Kakadu wall | Gap (ms) | Pre+Col % | DWT % | Quant % | Entropy % | RC % | Codestream % |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MR | 886×886    |  2.68 |  3.60 |  −0.92 (J2KSwift wins) |  4% | **55%** | 0% |     35%   | 0% |  7% |
+| XA | 1024×1024  |  7.64 |  5.00 |  +2.64 |  2% |     37% | 0% | **58%**   | 0% |  3% |
+| PX | 2459×1316  | 25.67 | 10.90 | +14.77 |  1% | **56%** | 0% |     40%   | 0% |  2% |
+| DX | 2800×2288  | 54.63 | 24.30 | +30.33 |  1% | **52%** | 0% |     45%   | 0% |  1% |
+
+**DWT + Entropy together account for ≥ 90 % of CPU time on every
+fixture.** The other four stages (Pre+ColXfm, Quant, RC,
+Codestream) collectively contribute ≤ 5 %; optimising them
+cannot close the gap.
+
+### Ranked levers per fixture (max ms removable = estimated stage wall)
+
+The per-stage wall is approximated as
+`stage_cpu_sum × (J2KSwift_wall / total_cpu_sum)`. "Max ms
+removable" = stage wall (a stage's contribution to wall time is
+its upper-bound budget for optimisation; reducing it past 0 is
+impossible).
+
+**XA 1024×1024** (J2KSwift 7.6 ms vs Kakadu 5.0 ms — gap +2.6 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **Entropy**    | 15.63 | **58 %** |  4.42 |  4.42 |
+| 2 | DWT            |  9.87 |    37 %  |  2.79 |  2.79 |
+| 3 | Codestream     |  0.92 |     3 %  |  0.26 |  0.26 |
+| 4 | Pre+ColXfm     |  0.58 |     2 %  |  0.16 |  0.16 |
+
+Entropy alone has 1.7× the gap (4.4 ms removable, 2.6 ms gap) —
+a moderate entropy speedup would close XA. DWT carries another
+1.06× gap.
+
+**PX 2459×1316** (J2KSwift 25.7 ms vs Kakadu 10.9 ms — gap +14.8 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **DWT**        | 166.46 | **56 %** | 14.47 | 14.47 |
+| 2 | Entropy        | 118.20 |    40 %  | 10.28 | 10.28 |
+| 3 | Codestream     |   7.11 |     2 %  |  0.62 |  0.62 |
+| 4 | Pre+ColXfm     |   3.28 |     1 %  |  0.29 |  0.29 |
+
+DWT alone covers 98 % of the gap; halving DWT closes ~50 %, and
+halving both DWT + Entropy (combined 24.7 ms removable) covers
+1.67× the gap.
+
+**DX 2800×2288** (J2KSwift 54.6 ms vs Kakadu 24.3 ms — gap +30.3 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **DWT**        | 354.76 | **52 %** | 28.46 | 28.46 |
+| 2 | Entropy        | 306.55 |    45 %  | 24.59 | 24.59 |
+| 3 | Pre+ColXfm     |   9.94 |     1 %  |  0.80 |  0.80 |
+| 4 | Codestream     |   9.44 |     1 %  |  0.76 |  0.76 |
+
+DWT 28 ms vs Kakadu's entire wall of 24 ms — even a perfectly
+free DWT (impossible) wouldn't fully close the gap; both DWT and
+Entropy need work.
+
+### What this changes about the "what's the next lever" question
+
+v5.39 M3's diagnosis (single-tile) ranked the M4 candidates as
+**B. Tile-level parallelism** ahead of A/C/D. Step 11's diagnosis
+(post-step-9 multi-tile) finds:
+
+  - Tile-level parallelism is no longer a lever: 88 % efficient
+    on 4-tile layouts, 100 %+ saturating M2 on 16-tile layouts.
+  - **The remaining levers are inside a SINGLE tile's DWT and
+    Entropy stages** — the same M3 candidates A and D, but now
+    on per-tile (smaller) inputs. Per-tile work has to get
+    faster *per core*, since adding cores past 12 doesn't help
+    on M2.
+
+Concrete v6-alpha4 step 12+ candidates (constrained per the
+session rules: no GPU, no SIMD micro-opt, no lossy R-D):
+
+| Lever | Where | Estimated DX gain | Risk |
+|---|---|---:|---|
+| Memory-layout rewrite (per-thread DWT scratch pool) | DWT      | −5 % to −10 % | low |
+| Vectorised lifting via Accelerate vDSP (within rule: not custom SIMD intrinsics) | DWT  | −10 % to −20 % | medium |
+| HT entropy block-batch chunk-imbalance fix | Entropy | −5 % to −15 % | medium |
+| MagSgn / MEL writer microbench-driven inlining | Entropy | −3 % to −8 %  | low   |
+
+**SIMD via Accelerate** (vDSP / vImage) is on the table because
+the constraint was "no SIMD micro-optimization" (= hand-rolled
+NEON intrinsics). Apple's Accelerate framework is library-level
+and carries existing precedent in the codebase ([J2KAcceleratedEncoder.swift](Sources/J2KCodec/J2KAcceleratedEncoder.swift)
+already uses vDSP for the lossy 9/7 path).
+
+### Mandatory commit gates
+
+Step 11 instruments the multi-tile path with timing recording
+calls but doesn't change encode behaviour. Regression suites
+green:
+
+  HTNativeMultiTileSelfRoundtripTests   5/5
+  HTNativeMultiTileAssemblerTests      13/13
+  HTNativeMultiTileBandGeometryTests   11/11
+  HTTilePlannerRelaxationTests         18/18
+
+(Heavy gates — `J2KLosslessMedicalGateTests` /
+`J2KMedicalCorpusEncodePerformanceTests` /
+`J2KStrictCrossCodecValidationTests` — are run before commit.)
+
+### v6-alpha4 step 11 — final precise claim
+
+> Step 11 instruments the multi-tile encode path with per-stage
+> timing and lands a release-median-of-5 diagnostic harness.
+> The data shows multi-tile parallelism is already at the
+> hardware ceiling (88 % efficient on 4-tile layouts, M2-saturating
+> on 16-tile layouts), so the remaining J2KSwift-vs-Kakadu encode
+> gaps on XA / PX / DX (1.49× / 2.11× / 2.21×) are pinned to
+> single-thread DWT and Entropy speed: those two stages account
+> for ≥ 90 % of CPU time on every fixture, with all other
+> stages collectively contributing ≤ 5 %. Step 12+ should
+> target DWT and Entropy single-core speed (memory layout,
+> Accelerate vDSP vectorisation, entropy-chunk balance) rather
+> than adding more parallelism. Diagnostic-only — no encode
+> behaviour change; single-tile bytes byte-identical; all
+> regression gates green.
