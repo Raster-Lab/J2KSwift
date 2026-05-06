@@ -3505,6 +3505,179 @@ struct EncoderPipeline: Sendable {
     /// - Sequential per-block coefficient array allocations (~4MB for 1024×1024)
     /// - The `pendingBlocks` array holding all coefficient arrays simultaneously
     /// - A full sequential pass over all subbands
+
+    /// v6-alpha6 phase 1.3 — GPU-routed entropy stage. Called when the
+    /// gate predicates in `applyEntropyCodingHTJ2KFused` fire. Walks
+    /// `deferred` once to extract coefficients + sign-magnitude
+    /// convert per block, batches the non-zero blocks through
+    /// `J2KGPUForwardHTEntropyBatch.encodeBlockBatch` (one GPU
+    /// classifier dispatch + per-block CPU emit), assembles the
+    /// resulting `(magsgn, mel, vlc)` tuples into HT block bytes,
+    /// and returns `J2KCodeBlock` array in the same order as
+    /// `deferred`.
+    ///
+    /// Lossless-only — the gate ensures `config.useReversibleFilter`
+    /// is true. The Float-coefficient extraction branch from the CPU
+    /// path isn't replicated here.
+    ///
+    /// Bit-exact equivalent of the CPU path: bytes returned for each
+    /// block equal what `encodeCodeBlockConformant(_:)` would produce
+    /// for the same block. Validated by `HTGPUForwardHTEntropyOrchestrator*Tests`.
+    private func encodeAllViaGPUForwardHTEntropy(
+        deferred: [DeferredCodeBlock],
+        image: J2KImage,
+        cbWidth: Int,
+        cbHeight: Int
+    ) async throws -> [J2KCodeBlock] {
+        let quantExt = J2KPart2QuantizationExtensions(configuration: config)
+        let guardBits = Int(quantExt.extendedGuardBits)
+
+        // Per-block: extract Int32 coefficients, detect zero-blocks,
+        // sign-magnitude convert, accumulate distortion stats. Build
+        // `pendingBlocks` (one entry per non-zero block) and a parallel
+        // `[BlockOutcome]` keyed by deferred-array position so the
+        // batched API output can be reassembled in deferred order.
+        struct BlockOutcome {
+            let zero: Bool
+            let kMax: Int
+            let missingMSBs: Int
+            let coefficientSquaredSum: Double
+            let bitPlanePopulation: [Int]
+            // Index into `pendingBlocks` if non-zero; -1 if zero.
+            let pendingIndex: Int
+        }
+
+        var pendingBlocks: [J2KGPUForwardHTEntropyBatch.PendingBlock] = []
+        pendingBlocks.reserveCapacity(deferred.count)
+        var outcomes: [BlockOutcome] = []
+        outcomes.reserveCapacity(deferred.count)
+
+        let maxBlockSize = cbWidth * cbHeight
+        var coeffsBuffer = [Int32](repeating: 0, count: maxBlockSize)
+
+        for d in deferred {
+            let blockSize = d.width * d.height
+
+            // Extract coefficients (Int32 reversible path only).
+            d.subbandCoefficients.withUnsafeBufferPointer { src in
+                coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                    for row in 0..<d.height {
+                        let srcStart = (d.originY + row) * d.subbandWidth + d.originX
+                        memcpy(
+                            dst.baseAddress! + row * d.width,
+                            src.baseAddress! + srcStart,
+                            d.width * MemoryLayout<Int32>.size)
+                    }
+                }
+            }
+
+            // K_max (matches `encodeCodeBlockConformant`'s lossless
+            // branch: `bitDepth - guardBits + 1`). Shift maps Int32
+            // 2's complement to OpenJPH sign-magnitude format.
+            let kMax = d.bitDepth - guardBits + 1
+            let shift = 31 - kMax
+            let missingMSBs = kMax - 1
+
+            // Zero-block detect (mirrors the CPU path's `maxAbs > 0`
+            // guard). Distortion stats stay zero on zero blocks —
+            // matches the existing helper's zero-return shape.
+            var maxAbs: Int32 = 0
+            for j in 0..<blockSize {
+                let v = coeffsBuffer[j]
+                let a = v < 0 ? -v : v
+                if a > maxAbs { maxAbs = a }
+            }
+            guard maxAbs > 0 else {
+                outcomes.append(BlockOutcome(
+                    zero: true, kMax: kMax, missingMSBs: missingMSBs,
+                    coefficientSquaredSum: 0,
+                    bitPlanePopulation: [],
+                    pendingIndex: -1))
+                continue
+            }
+
+            // Sign-magnitude convert (matches `gen_rev_tx_to_cb32`
+            // in OpenJPH 0.26).
+            var signMag = [UInt32](repeating: 0, count: blockSize)
+            signMag.withUnsafeMutableBufferPointer { dst in
+                coeffsBuffer.withUnsafeBufferPointer { src in
+                    for j in 0..<blockSize {
+                        let v = src[j]
+                        let sign: UInt32 = (v < 0) ? 0x8000_0000 : 0
+                        let mag = UInt32(v < 0 ? -Int64(v) : Int64(v))
+                        dst[j] = sign | (mag << shift)
+                    }
+                }
+            }
+
+            // Note: bit-plane stats and distortion are lossless-only
+            // dead code on this path (PCRD doesn't run); leave them
+            // empty / zero. The CPU path passes them through too on
+            // lossless, but they are not consulted downstream.
+            outcomes.append(BlockOutcome(
+                zero: false, kMax: kMax, missingMSBs: missingMSBs,
+                coefficientSquaredSum: 0,
+                bitPlanePopulation: [],
+                pendingIndex: pendingBlocks.count))
+            pendingBlocks.append(J2KGPUForwardHTEntropyBatch.PendingBlock(
+                coefficients: signMag,
+                width: d.width, height: d.height,
+                missingMSBs: missingMSBs))
+        }
+
+        // Batched GPU classify + per-block CPU emit. Telemetry is
+        // recorded inside the batch (one `gpuFireCount += 1` per
+        // call); we do not double-count here.
+        let encoded: [J2KGPUForwardHTEntropyBatch.EncodedBlock]
+        if pendingBlocks.isEmpty {
+            encoded = []
+        } else {
+            encoded = try await J2KGPUForwardHTEntropyBatch.encodeBlockBatch(
+                pendingBlocks)
+        }
+
+        // Reassemble J2KCodeBlock array in deferred order.
+        var results: [J2KCodeBlock] = []
+        results.reserveCapacity(deferred.count)
+        for (i, d) in deferred.enumerated() {
+            let outcome = outcomes[i]
+            if outcome.zero {
+                results.append(J2KCodeBlock(
+                    index: d.index, x: d.x, y: d.y,
+                    width: d.width, height: d.height,
+                    subband: d.subband,
+                    componentIndex: d.componentIndex,
+                    resolutionLevel: d.resolutionLevel,
+                    data: Data(),
+                    passeCount: 0,
+                    zeroBitPlanes: d.bitDepth,
+                    passSegmentLengths: [],
+                    cumulativePassBytes: [],
+                    coefficientSquaredSum: outcome.coefficientSquaredSum,
+                    bitPlanePopulation: outcome.bitPlanePopulation))
+                continue
+            }
+            let enc = encoded[outcome.pendingIndex]
+            let blockBytes = try HTBlockLayoutConformant.assemble(
+                magsgn: enc.magsgn, mel: enc.mel, vlc: enc.vlc)
+            results.append(J2KCodeBlock(
+                index: d.index, x: d.x, y: d.y,
+                width: d.width, height: d.height,
+                subband: d.subband,
+                componentIndex: d.componentIndex,
+                resolutionLevel: d.resolutionLevel,
+                data: Data(blockBytes),
+                passeCount: 1,
+                zeroBitPlanes: outcome.missingMSBs,
+                passSegmentLengths: [blockBytes.count],
+                cumulativePassBytes: [blockBytes.count],
+                coefficientSquaredSum: outcome.coefficientSquaredSum,
+                bitPlanePopulation: outcome.bitPlanePopulation,
+                cumulativePassDistortion: [outcome.coefficientSquaredSum]))
+        }
+        return results
+    }
+
     private func applyEntropyCodingHTJ2KFused(
         _ componentSubbands: [[SubbandInfo]],
         image: J2KImage,
@@ -3691,6 +3864,43 @@ struct EncoderPipeline: Sendable {
         // Parallel encode with fused coefficient extraction.
         let totalBlocks = deferred.count
         guard totalBlocks > 0 else { return [] }
+
+        // v6-alpha6 phase 1.3 — GPU forward HT entropy gate.
+        // Routes the entire entropy stage to a batched GPU classify
+        // + CPU emit path when:
+        //   - opt-in flag is set (env var or programmatic)
+        //   - block format is conformant (the only format the GPU
+        //     classifier targets)
+        //   - lossless reversible path (Phase 0 plan §8 non-goal: lossy parked)
+        //   - block count ≥ threshold (256 default — see Phase 0.5
+        //     dispatch-probe data; below this dispatch overhead
+        //     dominates)
+        //   - Metal is available
+        //
+        // When any predicate is false, falls through to the existing
+        // CPU path (telemetry records the skip reason). Production
+        // default is unchanged (`_gpuForwardHTEntropyEnabled = false`).
+        if config.htj2kBlockFormat == .conformant && config.useReversibleFilter {
+            if !Self._gpuForwardHTEntropyEnabled {
+                J2KGPUForwardHTEntropyTelemetry.recordCPUFire(
+                    reason: .envDisabled, blockCount: totalBlocks)
+            } else if !J2KMetalHTForwardClassifier.isAvailable {
+                J2KGPUForwardHTEntropyTelemetry.recordCPUFire(
+                    reason: .metalUnavailable, blockCount: totalBlocks)
+            } else if totalBlocks < Self._gpuForwardHTEntropyBlockThreshold {
+                J2KGPUForwardHTEntropyTelemetry.recordCPUFire(
+                    reason: .belowBlockThreshold, blockCount: totalBlocks)
+            } else {
+                return try await encodeAllViaGPUForwardHTEntropy(
+                    deferred: deferred, image: image,
+                    cbWidth: cbWidth, cbHeight: cbHeight)
+            }
+        } else if Self._gpuForwardHTEntropyEnabled {
+            // Gate would have fired but the format/lossy predicate
+            // ruled it out — record so policy tests can see it.
+            J2KGPUForwardHTEntropyTelemetry.recordCPUFire(
+                reason: .nonConformantFormat, blockCount: totalBlocks)
+        }
 
         let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
         // Only use parallel dispatch when there are enough blocks to amortize
