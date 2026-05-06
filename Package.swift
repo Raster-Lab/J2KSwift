@@ -118,7 +118,7 @@ let package = Package(
         .testTarget(
             name: "J2KCodecTests",
             dependencies: [
-                "J2KCodec", "J2KFileFormat", "J2KAccelerate",
+                "J2KCodec", "J2KFileFormat", "J2KAccelerate", "J2KMetal",
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
             ]),
         .testTarget(
