@@ -991,7 +991,16 @@ struct AcceleratedDWT2D: Sendable {
         // the row pass begins).
         let rowWs = pool.workspaces[0]
 
-        var colResult = [Int32](repeating: 0, count: width * height)
+        // v6-alpha4 step 12 Lever B — `colResult` is fully overwritten
+        // by the column pass (every (row, col) cell is written before
+        // the row pass reads it), so skip the `repeating: 0` bzero.
+        // For DX 4×4 multi-tile, this saves ≈ 5 × 700×572×4 B = 8 MB
+        // of bzero per tile (40 MB across the 5-level recursion), or
+        // ≈ 130 MB CPU time across the 16 tiles.
+        let colResultCount = width * height
+        var colResult = [Int32](unsafeUninitializedCapacity: colResultCount) {
+            _, count in count = colResultCount
+        }
         let colStripWidth = DWT53ScratchPool.stripWidth
         let numStrips = (width + colStripWidth - 1) / colStripWidth
         // Use parallel column pass only when there is enough work to amortise
@@ -1098,10 +1107,20 @@ struct AcceleratedDWT2D: Sendable {
             }
         }
 
-        var ll = [Int32](repeating: 0, count: rowLowW * colLowH)
-        var hl = [Int32](repeating: 0, count: rowHighW * colLowH)
-        var lh = [Int32](repeating: 0, count: rowLowW * colHighH)
-        var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
+        // v6-alpha4 step 12 Lever B — band arrays (ll, hl, lh, hh)
+        // are fully written by the row pass (every (row, col) cell of
+        // each band gets a memcpy from `rowOut` before any reader sees
+        // them), so skip the `repeating: 0` bzero. Largest single
+        // contributor on DX 4×4: ≈ 4 × 350×286×4 B per level × 5
+        // levels × 16 tiles ≈ 130 MB of CPU bzero eliminated.
+        let llCount = rowLowW  * colLowH
+        let hlCount = rowHighW * colLowH
+        let lhCount = rowLowW  * colHighH
+        let hhCount = rowHighW * colHighH
+        var ll = [Int32](unsafeUninitializedCapacity: llCount) { _, c in c = llCount }
+        var hl = [Int32](unsafeUninitializedCapacity: hlCount) { _, c in c = hlCount }
+        var lh = [Int32](unsafeUninitializedCapacity: lhCount) { _, c in c = lhCount }
+        var hh = [Int32](unsafeUninitializedCapacity: hhCount) { _, c in c = hhCount }
 
         // v5.39 M2: row-pass after the column pass is independent
         // per row (each row's forward 1D 5/3 only reads its own row of
@@ -1189,7 +1208,11 @@ struct AcceleratedDWT2D: Sendable {
         } else {
             colResult.withUnsafeBufferPointer { srcBuf in
                 let src = srcBuf.baseAddress!
-                var rowOut = [Int32](repeating: 0, count: width)
+                // Reused per row; `forward53_1D` writes all `width`
+                // entries before any reader sees them, so skip bzero.
+                var rowOut = [Int32](unsafeUninitializedCapacity: width) {
+                    _, c in c = width
+                }
 
                 for row in 0..<colLowH {
                     rowOut.withUnsafeMutableBufferPointer { outBuf in
@@ -1278,10 +1301,18 @@ struct AcceleratedDWT2D: Sendable {
         // Multi-tile encode currently doesn't fire on non-32-aligned
         // fixtures, so this path's perf is not yet on the critical
         // production path.
+        // v6-alpha4 step 12 Lever B — colResult is fully overwritten
+        // by the column pass; colIn / colOut are scratch buffers
+        // re-filled at the top of each column iteration. Skipping the
+        // bzero on these saves ≈ width × height × 4 + 2 × height × 4
+        // bytes per call (15 MB on a 1400×1144 DX 2×2 tile).
         let colWs = DWTWorkspace53(maxSignalLength: height)
-        var colResult = [Int32](repeating: 0, count: width * height)
-        var colIn = [Int32](repeating: 0, count: height)
-        var colOut = [Int32](repeating: 0, count: height)
+        let colResultCount = width * height
+        var colResult = [Int32](unsafeUninitializedCapacity: colResultCount) {
+            _, c in c = colResultCount
+        }
+        var colIn  = [Int32](unsafeUninitializedCapacity: height) { _, c in c = height }
+        var colOut = [Int32](unsafeUninitializedCapacity: height) { _, c in c = height }
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
@@ -1311,11 +1342,18 @@ struct AcceleratedDWT2D: Sendable {
         // (produce LL + HL); rows colLowH..<height are H-over-Y
         // (produce LH + HH).
         let rowWs = DWTWorkspace53(maxSignalLength: width)
-        var ll = [Int32](repeating: 0, count: rowLowW  * colLowH)
-        var hl = [Int32](repeating: 0, count: rowHighW * colLowH)
-        var lh = [Int32](repeating: 0, count: rowLowW  * colHighH)
-        var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
-        var rowOut = [Int32](repeating: 0, count: width)
+        // v6-alpha4 step 12 Lever B — band arrays are fully written
+        // by the row pass via memcpy from `rowOut`; rowOut itself is
+        // fully written each row by `forward53_1D`. Skip the bzero.
+        let llCount = rowLowW  * colLowH
+        let hlCount = rowHighW * colLowH
+        let lhCount = rowLowW  * colHighH
+        let hhCount = rowHighW * colHighH
+        var ll = [Int32](unsafeUninitializedCapacity: llCount) { _, c in c = llCount }
+        var hl = [Int32](unsafeUninitializedCapacity: hlCount) { _, c in c = hlCount }
+        var lh = [Int32](unsafeUninitializedCapacity: lhCount) { _, c in c = lhCount }
+        var hh = [Int32](unsafeUninitializedCapacity: hhCount) { _, c in c = hhCount }
+        var rowOut = [Int32](unsafeUninitializedCapacity: width) { _, c in c = width }
 
         colResult.withUnsafeBufferPointer { src in
             rowOut.withUnsafeMutableBufferPointer { ro in
