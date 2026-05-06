@@ -21,6 +21,7 @@
 import XCTest
 @testable import J2KMetal
 @testable import J2KCore
+@testable import J2KCodec
 
 final class J2KMetalDWTForward53IntParityAwareTests: XCTestCase {
 
@@ -248,6 +249,119 @@ final class J2KMetalDWTForward53IntParityAwareTests: XCTestCase {
         XCTAssertEqual(gpu.lh, cpu.lh)
         XCTAssertEqual(gpu.hl, cpu.hl)
         XCTAssertEqual(gpu.hh, cpu.hh)
+    }
+
+    // MARK: - Phase 4 slice 2 — multi-level fused parity-aware
+
+    /// Multi-level forward at MR 2x2 tile-3 origin (443, 443) — every
+    /// level alternates parity per Eq. B-15 (`(x + 1) >> 1`):
+    ///   L0: 443 odd → odd kernels
+    ///   L1: 222 even → even kernels
+    ///   L2: 111 odd → odd
+    ///   L3:  56 even → even
+    ///   L4:  28 even → even
+    /// Output bit-exact match against the production CPU reference
+    /// `AcceleratedDWT2D.forwardDecomposition53(...tileOriginX:
+    /// tileOriginY:)` — which the encoder pipeline already calls
+    /// for multi-tile encodes per v6-alpha3 step 3.
+    func testForward2DInt32MultiLevelFused_MR2x2Tile3Origin_BitExactGPUMatchesCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        // Use 444×444 (even-trimmed for clean MR 2×2 tile shape) with
+        // origins 443, 443 → every recursion level has shifted parity.
+        let width = 444, height = 444
+        let levels = 5
+        let image = Self.deterministic16BitImage(
+            width: width, height: height, seed: 0xC0FE_BABE)
+
+        // CPU reference via the production parity-aware multi-level
+        // path used by the encoder.
+        let cpu = await AcceleratedDWT2D.forwardDecomposition53(
+            data: image, width: width, height: height, levels: levels,
+            tileOriginX: 443, tileOriginY: 443)
+
+        let dwt = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: .reversible53, decompositionLevels: levels, gpuThreshold: 1))
+        try await dwt.initialize()
+
+        let gpu = try await dwt.forward2DInt32MultiLevelFused(
+            image: image, width: width, height: height, levels: levels,
+            tileOriginX: 443, tileOriginY: 443)
+
+        XCTAssertEqual(gpu.count, cpu.levels.count,
+            "Number of levels must match")
+        for (i, (gpuL, cpuL)) in zip(gpu, cpu.levels).enumerated() {
+            XCTAssertEqual(gpuL.lh, cpuL.lh, "Level \(i) LH must equal CPU reference")
+            XCTAssertEqual(gpuL.hl, cpuL.hl, "Level \(i) HL must equal CPU reference")
+            XCTAssertEqual(gpuL.hh, cpuL.hh, "Level \(i) HH must equal CPU reference")
+        }
+        XCTAssertEqual(gpu.last?.ll, cpu.coarsestLL,
+            "Coarsest LL must equal CPU reference")
+        XCTAssertEqual(gpu.last?.llWidth,  cpu.llW)
+        XCTAssertEqual(gpu.last?.llHeight, cpu.llH)
+    }
+
+    /// Multi-level forward at PX 4x4 tile-5 origin (615, 329).
+    /// Mixes axis parities differently than MR — exercises the
+    /// asymmetric kernel selection per axis per level.
+    func testForward2DInt32MultiLevelFused_PX4x4Tile5Origin_BitExactGPUMatchesCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let width = 614, height = 329   // PX-style sub-tile
+        let levels = 5
+        let image = Self.deterministic16BitImage(
+            width: width, height: height, seed: 0xCAFE_F00D)
+        let uX = 615, uY = 329  // both odd at L0
+
+        let cpu = await AcceleratedDWT2D.forwardDecomposition53(
+            data: image, width: width, height: height, levels: levels,
+            tileOriginX: uX, tileOriginY: uY)
+
+        let dwt = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: .reversible53, decompositionLevels: levels, gpuThreshold: 1))
+        try await dwt.initialize()
+
+        let gpu = try await dwt.forward2DInt32MultiLevelFused(
+            image: image, width: width, height: height, levels: levels,
+            tileOriginX: uX, tileOriginY: uY)
+
+        XCTAssertEqual(gpu.count, cpu.levels.count)
+        for (i, (gpuL, cpuL)) in zip(gpu, cpu.levels).enumerated() {
+            XCTAssertEqual(gpuL.lh, cpuL.lh, "L\(i) LH")
+            XCTAssertEqual(gpuL.hl, cpuL.hl, "L\(i) HL")
+            XCTAssertEqual(gpuL.hh, cpuL.hh, "L\(i) HH")
+        }
+        XCTAssertEqual(gpu.last?.ll, cpu.coarsestLL)
+    }
+
+    /// Origin (0, 0) → must equal the no-origin multi-level fused
+    /// output (regression guard). Every level stays at (0, 0) per
+    /// Eq. B-15, every kernel stays the even variant.
+    func testForward2DInt32MultiLevelFused_ZeroOrigin_MatchesNoOriginVariant() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let width = 700, height = 572
+        let levels = 5
+        let image = Self.deterministic16BitImage(
+            width: width, height: height, seed: 0xAA00_BB00)
+
+        let dwt = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: .reversible53, decompositionLevels: levels, gpuThreshold: 1))
+        try await dwt.initialize()
+
+        let noOrigin = try await dwt.forward2DInt32MultiLevelFused(
+            image: image, width: width, height: height, levels: levels)
+        let zeroOrigin = try await dwt.forward2DInt32MultiLevelFused(
+            image: image, width: width, height: height, levels: levels,
+            tileOriginX: 0, tileOriginY: 0)
+
+        XCTAssertEqual(zeroOrigin.count, noOrigin.count)
+        for (a, b) in zip(zeroOrigin, noOrigin) {
+            XCTAssertEqual(a.ll, b.ll)
+            XCTAssertEqual(a.lh, b.lh)
+            XCTAssertEqual(a.hl, b.hl)
+            XCTAssertEqual(a.hh, b.hh)
+        }
     }
 
     /// Origin parity matters per-bit only — origin 1 and origin
