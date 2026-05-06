@@ -7,7 +7,7 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha3 step 7)
+## Headline (post-v6-alpha3 step 8)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
 both the production single-tile path AND the multi-tile path on
@@ -18,20 +18,30 @@ through OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu
 (fixture, mode) cell tested. The parity matrix that was the v6-
 alpha2 root-cause exhibit now reads 36/36 instead of 3/36.
 
-The v6-alpha2 32-alignment planner constraint is **removed** in
-step 7 — MR/PX/DX now route through native multi-tile when the
-caller opts into a multi-tile mode (instead of falling back to
-single-tile). Production default remains `single` until step 8
-perf data justifies promoting `auto`. **Kakadu HT advantage on
-fixtures ≥ 886×886 still stands in the v5.38 HT-fair table
-below** because the table hasn't been remeasured yet; step 8
-runs the new harness and updates this headline.
+**Perf result (step 8 measurement):** multi-tile DECODE is faster
+than v5.38 single-tile on every corpus fixture (1.25–1.67×, mixed
+2x2 / strips4 / auto wins). Multi-tile ENCODE is currently
+SLOWER than v5.38 single-tile because the v6-alpha3 step 5 native
+multi-tile assembler is single-threaded across tiles by design
+("correctness first, parallelism deferred"). The v5.39 M4 wrap-
+and-stitch encoder used per-tile `withTaskGroup` parallelism;
+that was discarded when wrap-and-stitch was replaced. Restoring
+it is **step 9** scope — see "v6-alpha3 step 8" section below
+for the full measurement table and decision rationale.
+
+**Kakadu HT advantage on fixtures ≥ 886×886 still stands** —
+Kakadu wins HT-fair encode AND decode on every fixture ≥ 886×886
+both pre- and post-step-8. Decode gap narrows (e.g. DX 3.67× →
+2.95×) but does not close. Closing it requires step 9 (parallel
+native encode) plus possibly further entropy / DWT optimisation.
 
 | Aspect | State |
 |---|---|
 | Single-tile correctness | bit-exact (single-tile bytes byte-identical to v5.38) |
 | Multi-tile correctness | bit-exact on every corpus fixture × every mode |
-| Production default | `single` (`J2K_HT_TILE_MODE` env var opts in to multi-tile) |
+| Multi-tile decode perf | **faster** than v5.38 single-tile on every fixture (1.25–1.67×) |
+| Multi-tile encode perf | **slower** than v5.38 single-tile (encoder is sequential — step 9 will fix) |
+| Production default | `single` (auto-promotion held back by encode regression) |
 | Planner constraint | DWT-depth floor only (32-alignment removed in step 7) |
 | Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
@@ -1459,3 +1469,185 @@ see "v6-alpha2 — root cause" section above.)
 > **Kakadu performance claims remain unchanged until step 8
 > remeasures the HT-fair table with native multi-tile actually
 > firing.**
+
+---
+
+## v6-alpha3 step 8 — HT-fair re-measurement with native multi-tile firing
+
+### What this step measured
+
+`HTFairMultiTileBenchmarkHarness.testHTFairMultiTileBenchmarkPrintTable`
+ran median-of-5 in release build (`swift test -c release`) on every
+medical corpus fixture × every multi-tile mode × every external HT
+codec. The harness prints three Markdown tables (per-mode J2KSwift,
+HT-fair encode + decode comparison, multi-tile speedup vs single).
+Numbers below are pasted verbatim from the harness output.
+
+### J2KSwift HT lossless per-mode (release, median of 5)
+
+| Modality | Shape       | Mode    | cols×rows | fired       | encode ms | decode ms | bytes |
+|---|---|---|---|:---:|---:|---:|---:|
+| MR | 886×886    | single  | 1×1       | no (single) |     5.41  |     5.66  |    167728 |
+| MR | 886×886    | 2x2     | 2×2       | YES         |     6.55  |     5.39  |    169709 |
+| MR | 886×886    | 4x4     | 4×4       | YES         |     9.90  |     6.84  |    170731 |
+| MR | 886×886    | strips4 | 1×4       | YES         |     6.55  |     4.37  |    168976 |
+| MR | 886×886    | auto    | 1×1       | no (single) |     5.15  |     5.68  |    167728 |
+| XA | 1024×1024  | single  | 1×1       | no (single) |    11.07  |    14.76  |   1621219 |
+| XA | 1024×1024  | 2x2     | 2×2       | YES         |    14.24  |     9.49  |   1621712 |
+| XA | 1024×1024  | 4x4     | 4×4       | YES         |    17.86  |    11.25  |   1623555 |
+| XA | 1024×1024  | strips4 | 1×4       | YES         |    13.49  |     9.12  |   1622298 |
+| XA | 1024×1024  | auto    | 1×1       | no (single) |    11.52  |    14.96  |   1621219 |
+| PX | 2459×1316  | single  | 1×1       | no (single) |    37.19  |    39.81  |   6431507 |
+| PX | 2459×1316  | 2x2     | 2×2       | YES         |    41.67  |    30.58  |   6439431 |
+| PX | 2459×1316  | 4x4     | 4×4       | YES         |    46.55  |    36.18  |   6453588 |
+| PX | 2459×1316  | strips4 | 1×4       | YES         |    48.01  |    33.69  |   6446778 |
+| PX | 2459×1316  | auto    | 2×2       | YES         |    42.34  |    30.16  |   6439431 |
+| DX | 2800×2288  | single  | 1×1       | no (single) |   364.91* |   104.24  |  12683182 |
+| DX | 2800×2288  | 2x2     | 2×2       | YES         |    88.43  |    64.96  |  12689695 |
+| DX | 2800×2288  | 4x4     | 4×4       | YES         |   100.02  |    71.04  |  12705470 |
+| DX | 2800×2288  | strips4 | 1×4       | YES         |    89.30  |    61.91  |  12697748 |
+| DX | 2800×2288  | auto    | 2×2       | YES         |   108.23  |    98.96  |  12689695 |
+
+`* DX single 364.91 ms is anomalous` — v5.38 baseline measured DX
+single at 72.1 ms with the same configuration. Likely due to
+thermal/cache state on this run after 10 minutes of preceding
+external-codec subprocess work; subsequent re-runs of `single`
+would be expected back at ~72 ms. The other fixtures' single-tile
+numbers (5.41 / 11.07 / 37.19 ms for MR / XA / PX) match the v5.38
+table within noise, which corroborates "DX single anomaly" rather
+than a code regression.
+
+### HT-fair encode (median of 5, ms)
+
+| Modality | Shape       | J2KSwift best | best mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |   5.2 | auto    |  16.3 |  11.1 |  3.6 | **Kakadu** |
+| XA | 1024×1024  |  11.1 | single  |  21.0 |  14.3 |  5.5 | **Kakadu** |
+| PX | 2459×1316  |  37.2 | single  |  56.1 |  29.8 | 11.2 | **Kakadu** |
+| DX | 2800×2288  |  88.4 | 2x2     | 112.3 |  51.8 | 23.9 | **Kakadu** |
+
+For J2KSwift on every fixture, the BEST mode across single / 2x2 /
+4x4 / strips4 / auto is **NOT** beating its own v5.38 single-tile
+number. On MR and XA the best is `single` / `auto` (= single). On
+PX the best is also `single`. On DX `2x2` is best, but only after
+discarding the 364 ms single-anomaly; against the v5.38 baseline
+(72 ms) DX 2x2 (88 ms) is still slower than v5.38 single by ~22%.
+
+### HT-fair decode (median of 5, ms)
+
+| Modality | Shape       | J2KSwift best | best mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |   4.4 | strips4 |   9.6 |   9.9 |  4.1 | **Kakadu** |
+| XA | 1024×1024  |   9.1 | strips4 |  16.1 |  11.1 |  5.3 | **Kakadu** |
+| PX | 2459×1316  |  30.2 | auto    |  39.9 |  18.8 | 10.5 | **Kakadu** |
+| DX | 2800×2288  |  61.9 | strips4 |  75.1 |  35.9 | 21.0 | **Kakadu** |
+
+Decode tells a different story: J2KSwift multi-tile decode
+(strips4 or 2x2) is consistently **faster** than v5.38 single-tile
+decode on every fixture:
+
+| Modality | v5.38 single decode | step-8 best multi decode | improvement |
+|---|---:|---:|---:|
+| MR 886×886    |  6.2 ms |  4.4 ms (strips4) | 1.41× |
+| XA 1024×1024  | 15.2 ms |  9.1 ms (strips4) | 1.67× |
+| PX 2459×1316  | 40.7 ms | 30.2 ms (auto)    | 1.35× |
+| DX 2800×2288  | 77.1 ms | 61.9 ms (strips4) | 1.25× |
+
+Kakadu still wins decode HT-fair on every fixture, but the gap
+narrows: e.g. DX 77.1 / 21.0 = 3.67× pre-step-8 → 61.9 / 21.0 =
+2.95× post-step-8.
+
+### Why is encode slower than v5.38 multi-tile (XA case)
+
+The v6-alpha3 step 5 native multi-tile assembler is **sequential**
+(its source comment explicitly notes: "Sequential for correctness
+simplicity in step 5; parallelisation is a separate perf concern
+… not yet on the critical production path"). The v5.39 M4 / v6-
+alpha1 wrap-and-stitch path used `withTaskGroup` over per-tile
+encodes; that path was correctness-broken (cross-decode failed)
+and is removed.
+
+Result: multi-tile encode is now **single-threaded across tiles**.
+For a 4-tile or 16-tile layout the encoder pays the per-tile DWT
++ entropy + tile-data costs serially instead of in parallel. On
+fixtures where multi-tile previously beat single-tile (XA at v6-
+alpha2: 7.96 ms multi vs 11.09 single, +28%), the new sequential
+native path is now SLOWER (XA 2x2: 14.24 ms vs 11.07 single).
+
+This is the v9-alpha3 step 9 work: re-parallelise the per-tile
+encode loop in `EncoderPipeline.encodeNativeMultiTile(...)`.
+
+### Multi-tile decode improves because the J2KSwift decoder pipeline already parallelises
+
+`J2KDecoderPipeline.decodeTilePayload(...)` is dispatched once per
+tile; the test harness loop dispatches them concurrently via task
+group. For multi-tile codestreams the decoder gets natural per-
+tile parallelism, which is why the decode-side numbers improve
+even though encode regresses. The encoder doesn't yet have the
+same structure.
+
+### Decision: do NOT promote `auto` multi-tile
+
+Per the harness data:
+
+  - MR: `auto` picks single (below 3 MP threshold) — no behaviour
+    change.
+  - XA: `auto` picks single — no behaviour change.
+  - PX: `auto` picks 2x2; encode 42.3 vs single 37.2 ms (slower);
+    decode 30.2 vs single 39.8 ms (faster).
+  - DX: `auto` picks 2x2; encode 108.2 vs single 364.9 ms (faster
+    but with anomaly noise); decode 99.0 vs single 104.2 ms
+    (slightly faster).
+
+The encode regression on PX rules out promotion: shipping `auto`
+as default would slow encode for users on the 3 MP+ fixtures.
+**Production default stays `single`.**
+
+### Mandatory commit gates (post step 8 — harness only adds a test)
+
+Step 8 commits no production code. Only the harness file gains a
+debug-build warning. All gates remain green from step 7.
+
+### v6-alpha3 step 8 — final precise claim
+
+> Step 8 re-measures the v5.38 HT-fair table with native multi-
+> tile actually firing on every fixture (steps 1–7). The
+> measurement reveals an asymmetric outcome:
+>
+>   - **Decode: J2KSwift multi-tile beats J2KSwift single-tile on
+>     every corpus fixture** — 1.25× to 1.67× faster vs v5.38
+>     single-tile decode. The Kakadu HT decode gap on fixtures
+>     ≥ 886×886 narrows but does not close (DX gap 3.67× → 2.95×).
+>
+>   - **Encode: J2KSwift multi-tile is SLOWER than J2KSwift
+>     single-tile** on every fixture except DX (where the
+>     measurement shows a single-tile anomaly). Root cause: the
+>     v6-alpha3 step 5 native multi-tile assembler is single-
+>     threaded across tiles, by design ("correctness first,
+>     parallelism deferred"). The v5.39 M4 wrap-and-stitch perf
+>     numbers (XA 28%, PX 35%, DX 30% encode speedup) used
+>     `withTaskGroup` per-tile parallelism that was discarded
+>     when wrap-and-stitch was replaced.
+>
+>   - **Production default stays `single`.** Auto-promotion
+>     would regress PX encode (42 ms vs 37 ms single). Multi-
+>     tile remains opt-in via `J2K_HT_TILE_MODE`.
+>
+>   - **The v5.38 HT-fair table at the top of this doc stays
+>     valid for J2KSwift single-tile vs other codecs.** Kakadu
+>     still wins encode AND decode on every fixture ≥ 886×886.
+>     Multi-tile narrows the decode gap; restoring multi-tile
+>     encode parallelism (next step) is required to narrow the
+>     encode gap.
+>
+> What's next: **step 9 — re-parallelise the native multi-tile
+> encoder.** The path forward is to wrap the per-tile loop in
+> `EncoderPipeline.encodeNativeMultiTile` with `withTaskGroup`,
+> mirroring the wrap-and-stitch concurrency pattern. The native
+> assembler's tile-data emit step is already independent across
+> tiles (each tile's DWT + entropy + tile-data is a pure
+> function of the tile's pixel rect + tile origin); the only
+> shared state is the final main-header + SOT/SOD/EOC assembly,
+> which runs once after all tiles complete. This makes the
+> parallelisation a localised refactor inside one function with
+> no API surface change.

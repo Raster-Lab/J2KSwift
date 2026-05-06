@@ -81,6 +81,21 @@ final class HTFairMultiTileBenchmarkHarness: XCTestCase {
             throw XCTSkip("medical corpus not present — step 8 harness skipped")
         }
 
+        // Debug-build sanity check. J2KSwift in `swift test` (no
+        // `-c release`) is roughly 50–100× slower on the encode hot
+        // path because Swift's debug build disables most
+        // optimisations. Numbers from a debug run will look
+        // alarming and have no meaning vs the external codec CLIs
+        // (which are always release-built); they must NOT be
+        // pasted into the doc.
+        #if DEBUG
+        print("\n  ⚠️  WARNING ⚠️")
+        print("  HTFairMultiTileBenchmarkHarness is running in DEBUG build.")
+        print("  J2KSwift numbers below are NOT meaningful for HT-fair comparison.")
+        print("  Re-run with: swift test -c release --filter HTFairMultiTileBenchmarkHarness")
+        print()
+        #endif
+
         let modes: [(label: String, mode: J2KHTTileMode)] = [
             ("single",  .single),
             ("2x2",     .tiles2x2),
