@@ -2669,24 +2669,42 @@ struct EncoderPipeline: Sendable {
                             floatCoefficients: decomposition.coarsestLL), at: 0)
 
                     } else if !use97DoublePrecision && useAcceleratedPath {
-                        // v6-alpha5 phase 4 slice 3 — gated GPU forward 5/3
-                        // INT path with parity-aware origin support. Falls
+                        // v6-alpha5 phase 5 — gated GPU forward 5/3 INT
+                        // path with parity-aware origin support. Falls
                         // back to CPU when the env var is off, Metal is
-                        // unavailable, or the image is too small for GPU
-                        // dispatch overhead to amortise. Origin no longer
-                        // required to be (0, 0) — multi-tile encodes can
-                        // now route through GPU at every tile, with the
-                        // parity-aware multi-level fused dispatch picking
-                        // the right kernel per-axis-per-level via Eq. B-15.
-                        // CPU output remains byte-identical to v5.38 →
-                        // v6-alpha4 when the gate is off. When the gate is
-                        // on, GPU produces bit-exact-equivalent subband
-                        // coefficients (verified by phase 0/1/2/4 tests),
-                        // so the resulting codestream stays byte-identical
-                        // regardless of origin.
+                        // unavailable, or the per-encode pixel count is
+                        // below the empirical break-even point.
+                        //
+                        // **Pixel threshold = 4 MP**. Phase 3 / 5 measured
+                        // (release, Apple M2, median of 5):
+                        //
+                        //   single-tile (this DWT call IS the whole encode):
+                        //     MR  0.78 MP : GPU −29 %  (CPU wins)
+                        //     XA  1.05 MP : GPU −10 %  (CPU wins)
+                        //     PX  3.24 MP : GPU −17 %  (CPU wins)
+                        //     DX  6.41 MP : GPU +19 %  (GPU wins)
+                        //     MG 16.84 MP : GPU +17 %  (GPU wins)
+                        //
+                        //   multi-tile per-tile (encodeNativeMultiTile fans
+                        //   out 4–16 tiles concurrently — they serialise
+                        //   through one MTLCommandQueue, killing the
+                        //   intra-dispatch GPU parallelism that won
+                        //   single-tile):
+                        //     all sizes ≤ 6 MP per encode : GPU −34 % to −44 %
+                        //     MG / 16-tile (≈1 MP / tile) : GPU +7 %
+                        //
+                        // The 4 MP threshold simultaneously:
+                        //   - admits DX / MG single-tile (full image
+                        //     ≥ 4 MP) where GPU wins,
+                        //   - excludes PX / XA / MR single-tile (full
+                        //     image < 4 MP) where GPU loses,
+                        //   - excludes multi-tile per-tile dispatches
+                        //     (per-tile dim is always ≪ 4 MP for the
+                        //     production .auto layouts), letting CPU
+                        //     keep the multi-tile fast path it owns.
                         let useGPUForward = Self._gpuForward53Enabled
                             && J2KMetalDWT.isAvailable
-                            && (width * height) >= 256 * 256
+                            && (width * height) >= Self._gpuForward53PixelThreshold
 
                         if useGPUForward {
                             // v6-alpha5 phase 3 — share the
@@ -4495,6 +4513,15 @@ struct EncoderPipeline: Sendable {
         }
         return false
     }
+
+    /// v6-alpha5 phase 5 — pixel-count threshold for the GPU forward
+    /// 5/3 INT path. Defaults to 4 000 000 (4 MP) which routes to
+    /// GPU only when the per-encode pixel count is large enough that
+    /// Phase 3 / 5 measurements showed a wall-time win. Tests can
+    /// lower it temporarily to exercise the GPU code path on smaller
+    /// fixtures (where the bytes are still byte-identical even
+    /// though wall time regresses).
+    nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 4_000_000
 
     /// v6-alpha3 step 3: per-tile origin propagation diagnostic.
     /// Off by default; set `J2K_HT_TILE_DEBUG_ORIGINS=1` to print
