@@ -517,35 +517,69 @@ struct EncoderPipeline: Sendable {
         try image.validate()
 
         // 1) Run preprocess + DWT(parity-aware) + entropy + rate
-        // control + generateTileData per tile. These stages are
-        // independent across tiles (each tile is its own JPEG 2000
-        // tile-component). Sequential for correctness simplicity in
-        // step 5; parallelisation is a separate perf concern (the
-        // wrap-and-stitch path used `withTaskGroup` and we can do
-        // the same here in a future step once correctness is
-        // established).
-        var partials: [NativeTilePartial] = []
-        partials.reserveCapacity(layout.tileCount)
-        for k in 0..<layout.tileCount {
-            let r = layout.rect(forTile: k)
-            let subImage = try J2KTileImageSlicer.sliceTile(
-                from: image, layout: layout, tileIndex: k)
-            let t0 = CFAbsoluteTimeGetCurrent()
-            let (tileData, levels, stepSizes) =
-                try await runEncodeStagesForNativeAssembly(
-                    subImage,
-                    tileOriginX: r.x, tileOriginY: r.y,
-                    tileIndex: k,
-                    geometryCollector: geometryCollector)
-            let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
-            partials.append(NativeTilePartial(
-                tileData: tileData,
-                actualLevels: levels,
-                adaptiveStepSizes: stepSizes,
-                originX: r.x, originY: r.y,
-                pixels: r.w * r.h,
-                encodeMs: dt))
+        // control + generateTileData per tile, in parallel across
+        // tiles. Each tile is its own JPEG 2000 tile-component:
+        // pixels, DWT, entropy, and tile-data emit are all
+        // independent of every other tile. Only the final main-
+        // header + SOT/SOD/EOC assembly serialises (after all tiles
+        // complete).
+        //
+        // v6-alpha3 step 9: restored the per-tile parallelism that
+        // the v5.39 M4 wrap-and-stitch path had. Step 5 introduced
+        // the native assembler with a sequential loop ("correctness
+        // first"); the step-8 measurement showed multi-tile encode
+        // was therefore single-threaded across tiles and SLOWER
+        // than v5.38 single-tile encode. Step 9 uses
+        // `withThrowingTaskGroup` to dispatch all tile encodes
+        // concurrently. The block-level parallelism inside
+        // `applyEntropyCodingHTJ2KFused` runs nested within each
+        // tile task — Swift's cooperative thread pool absorbs the
+        // oversubscription.
+        let pipelineCopy = self
+        let imageRef = image
+        let layoutRef = layout
+        let collectorRef = geometryCollector
+        let unordered = try await withThrowingTaskGroup(
+            of: (Int, NativeTilePartial).self
+        ) { group in
+            for k in 0..<layout.tileCount {
+                let r = layoutRef.rect(forTile: k)
+                group.addTask {
+                    let subImage = try J2KTileImageSlicer.sliceTile(
+                        from: imageRef, layout: layoutRef, tileIndex: k)
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    let (tileData, levels, stepSizes) =
+                        try await pipelineCopy.runEncodeStagesForNativeAssembly(
+                            subImage,
+                            tileOriginX: r.x, tileOriginY: r.y,
+                            tileIndex: k,
+                            geometryCollector: collectorRef)
+                    let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
+                    return (k, NativeTilePartial(
+                        tileData: tileData,
+                        actualLevels: levels,
+                        adaptiveStepSizes: stepSizes,
+                        originX: r.x, originY: r.y,
+                        pixels: r.w * r.h,
+                        encodeMs: dt))
+                }
+            }
+            var collected: [(Int, NativeTilePartial)] = []
+            collected.reserveCapacity(layout.tileCount)
+            for try await result in group {
+                collected.append(result)
+            }
+            return collected
         }
+        // Re-order by tile index so `partials[k]` is for tile k.
+        // Tile order matters for the SOT/SOD assembly below and
+        // for downstream callers that index into `partials`.
+        var partialsBuf: [NativeTilePartial?] =
+            Array(repeating: nil, count: layout.tileCount)
+        for (k, p) in unordered { partialsBuf[k] = p }
+        let partials: [NativeTilePartial] = partialsBuf.compactMap { $0 }
+        precondition(partials.count == layout.tileCount,
+                     "encodeNativeMultiTile: partials count mismatch")
 
         // 2) All tiles in an HTJ2K lossless 5/3 codestream share the
         // same COD/QCD because epsilons depend only on bit-depth +
@@ -629,6 +663,19 @@ struct EncoderPipeline: Sendable {
     ) async throws -> (tileData: Data, actualLevels: Int, adaptiveStepSizes: [String: Double]) {
         try tileImage.validate()
 
+        // v6-alpha4 step 11 — per-stage timing for the multi-tile
+        // path. The lock-protected `J2KEncodeTimings` accumulator
+        // sums durations across concurrent tile tasks (step 9's
+        // `withTaskGroup`), giving us total CPU time per stage
+        // across all tiles. Diagnostic harnesses snapshot before
+        // and after to derive per-stage CPU sums; comparing to
+        // wall time identifies parallelism efficiency per stage.
+        // The single-tile path has equivalent instrumentation in
+        // `EncoderPipeline.encode(...)` since the original M3
+        // diagnosis. Call cost is one NSLock acquire per stage
+        // per tile (~µs); negligible vs encode wall.
+        var stageStart = CFAbsoluteTimeGetCurrent()
+
         // Stage 1: Preprocessing — extract component data + DC shift.
         var componentData = try extractComponentData(from: tileImage)
         for (compIdx, component) in tileImage.components.enumerated() {
@@ -639,12 +686,22 @@ struct EncoderPipeline: Sendable {
                 }
             }
         }
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordPreprocessing(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 2: Colour transform (no-op for single-component
         // medical greyscale — the medical corpus the v6 work
         // targets — but call it for correctness).
         let (transformedData, transformedFloatData) =
             try applyColorTransform(componentData, image: tileImage)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordColorTransform(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 3: Parity-aware forward 5/3 DWT — uses the per-tile
         // image-coordinate origin so band layouts match what an
@@ -654,12 +711,22 @@ struct EncoderPipeline: Sendable {
             transformedData, floatComponents: transformedFloatData,
             width: tileImage.width, height: tileImage.height,
             tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordWaveletTransform(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 4: Build adaptive step sizes (lossless reversible →
         // content-independent epsilons; same value per band across
         // all tiles).
         let adaptiveStepSizes = buildAdaptiveLossyStepSizes(
             decompositions, image: tileImage, totalLevels: actualLevels)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordQuantization(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 5: Entropy coding (HT or EBCOT depending on config).
         let codeBlocks = try await applyEntropyCoding(
@@ -670,12 +737,22 @@ struct EncoderPipeline: Sendable {
             tileOriginY: tileOriginY,
             tileIndex: tileIndex,
             geometryCollector: geometryCollector)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordEntropyCoding(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 6: Rate control (lossless → all passes included).
         let layers = try applyRateControl(
             codeBlocks: codeBlocks,
             totalPixels: tileImage.width * tileImage.height,
             componentCount: tileImage.components.count)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordRateControl(t - stageStart)
+            stageStart = t
+        }
 
         // Stage 7: Tile-data generation — produces the bytes that
         // sit between SOD and the next SOT/EOC. Note: we do NOT
@@ -688,6 +765,10 @@ struct EncoderPipeline: Sendable {
             componentCount: tileImage.components.count,
             tileIndex: tileIndex,
             geometryCollector: geometryCollector)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordCodestreamGeneration(t - stageStart)
+        }
 
         return (tileData, actualLevels, adaptiveStepSizes)
     }
@@ -2588,31 +2669,155 @@ struct EncoderPipeline: Sendable {
                             floatCoefficients: decomposition.coarsestLL), at: 0)
 
                     } else if !use97DoublePrecision && useAcceleratedPath {
-                        // v6-alpha3 step 3: route through the parity-aware
-                        // overload so per-tile image-coordinate origin is
-                        // honoured. When (tileOriginX, tileOriginY) == (0, 0)
-                        // the parity-aware overload routes to the no-origin
-                        // fast path at every level, so single-tile output is
-                        // byte-identical to v5.38 / v5.39 / v6-alpha2.
-                        let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
-                            data: compData, width: width, height: height, levels: levels,
-                            tileOriginX: tileOriginX, tileOriginY: tileOriginY
-                        )
-                        for (levelIdx, level) in decomposition.levels.enumerated() {
-                            let decomLevel = levelIdx + 1
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
-                                coefficients: level.hl, doubleCoefficients: nil,
-                                width: level.hlW, height: level.hlH))
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
-                                coefficients: level.lh, doubleCoefficients: nil,
-                                width: level.lhW, height: level.lhH))
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
-                                coefficients: level.hh, doubleCoefficients: nil,
-                                width: level.hhW, height: level.hhH))
+                        // v6-alpha5 phase 5 — gated GPU forward 5/3 INT
+                        // path with parity-aware origin support. Falls
+                        // back to CPU when the env var is off, Metal is
+                        // unavailable, or the per-encode pixel count is
+                        // below the empirical break-even point.
+                        //
+                        // **Pixel threshold = 4 MP**. Phase 3 / 5 measured
+                        // (release, Apple M2, median of 5):
+                        //
+                        //   single-tile (this DWT call IS the whole encode):
+                        //     MR  0.78 MP : GPU −29 %  (CPU wins)
+                        //     XA  1.05 MP : GPU −10 %  (CPU wins)
+                        //     PX  3.24 MP : GPU −17 %  (CPU wins)
+                        //     DX  6.41 MP : GPU +19 %  (GPU wins)
+                        //     MG 16.84 MP : GPU +17 %  (GPU wins)
+                        //
+                        //   multi-tile per-tile (encodeNativeMultiTile fans
+                        //   out 4–16 tiles concurrently — they serialise
+                        //   through one MTLCommandQueue, killing the
+                        //   intra-dispatch GPU parallelism that won
+                        //   single-tile):
+                        //     all sizes ≤ 6 MP per encode : GPU −34 % to −44 %
+                        //     MG / 16-tile (≈1 MP / tile) : GPU +7 %
+                        //
+                        // The 4 MP threshold simultaneously:
+                        //   - admits DX / MG single-tile (full image
+                        //     ≥ 4 MP) where GPU wins,
+                        //   - excludes PX / XA / MR single-tile (full
+                        //     image < 4 MP) where GPU loses,
+                        //   - excludes multi-tile per-tile dispatches
+                        //     (per-tile dim is always ≪ 4 MP for the
+                        //     production .auto layouts), letting CPU
+                        //     keep the multi-tile fast path it owns.
+                        // v6-alpha5 phase 9 — record the gate decision +
+                        // the reason for any non-fire so policy tests
+                        // can assert routing behaviour without races
+                        // on the static flag.
+                        let metalAvailable = J2KMetalDWT.isAvailable
+                        let pixels = width * height
+                        let pixelOK = pixels >= Self._gpuForward53PixelThreshold
+                        let useGPUForward = Self._gpuForward53Enabled
+                            && metalAvailable
+                            && pixelOK
+
+                        if useGPUForward {
+                            // v6-alpha5 phase 3 — share the
+                            // process-wide Metal session so the
+                            // device init / shader compile / buffer
+                            // pool setup is paid once per process,
+                            // not once per encode. Phase 2 measured
+                            // a 13–15 ms init cost per encode that
+                            // ate the GPU's compute advantage; phase
+                            // 3 reduces that to a fast no-op after
+                            // the first call (the underlying
+                            // `J2KMetalDevice.initialize` /
+                            // `J2KMetalShaderLibrary.loadShaders`
+                            // both have `isLoaded`-style guards).
+                            let session = J2KMetalSession.processShared
+                            let metalDWT = J2KMetalDWT(
+                                configuration: J2KMetalDWTConfiguration(
+                                    filter: .reversible53, decompositionLevels: levels),
+                                device: session.device,
+                                bufferPool: session.bufferPool,
+                                shaderLibrary: session.shaderLibrary)
+                            let setupT0 = Date().timeIntervalSinceReferenceDate
+                            try await metalDWT.initialize()
+                            let setupMs = (Date().timeIntervalSinceReferenceDate - setupT0) * 1000.0
+
+                            let dispatchT0 = Date().timeIntervalSinceReferenceDate
+                            let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
+                                image: compData, width: width, height: height,
+                                levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+                            let dispatchMs = (Date().timeIntervalSinceReferenceDate - dispatchT0) * 1000.0
+                            J2KGPUForward53Telemetry.recordGPUFire(
+                                setupMs: setupMs, dispatchMs: dispatchMs,
+                                width: width, height: height, levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+
+                            for (levelIdx, level) in gpuLevels.enumerated() {
+                                let decomLevel = levelIdx + 1
+                                // Phase 4 fix: parity-aware band counts.
+                                // halfWH = ceil for odd uX, floor for even —
+                                // equivalent to (originalWidth - llWidth) in
+                                // both cases. Using `originalWidth / 2`
+                                // (floor) silently corrupted multi-tile bytes
+                                // at odd-uX tiles in the slice 3 wire-in.
+                                let llW = level.llWidth
+                                let llH = level.llHeight
+                                let halfWH = level.originalWidth  - llW
+                                let halfHH = level.originalHeight - llH
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                    coefficients: level.hl, doubleCoefficients: nil,
+                                    width: halfWH, height: llH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                    coefficients: level.lh, doubleCoefficients: nil,
+                                    width: llW, height: halfHH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                    coefficients: level.hh, doubleCoefficients: nil,
+                                    width: halfWH, height: halfHH))
+                            }
+                            if let last = gpuLevels.last {
+                                subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                                    coefficients: last.ll, doubleCoefficients: nil,
+                                    width: last.llWidth, height: last.llHeight), at: 0)
+                            }
+                        } else {
+                            // Record skip reason for Phase 9 policy
+                            // tests / cross-device tuning telemetry.
+                            // Order matters: env-disabled wins over
+                            // metal-unavailable wins over below-
+                            // threshold (most-actionable to least).
+                            let reason: J2KGPUForward53Telemetry.SkipReason
+                            if !Self._gpuForward53Enabled {
+                                reason = .envDisabled
+                            } else if !metalAvailable {
+                                reason = .metalUnavailable
+                            } else {
+                                reason = .belowThreshold
+                            }
+                            J2KGPUForward53Telemetry.recordCPUFire(
+                                reason: reason, width: width, height: height,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+                            // v6-alpha3 step 3: route through the parity-aware
+                            // overload so per-tile image-coordinate origin is
+                            // honoured. When (tileOriginX, tileOriginY) == (0, 0)
+                            // the parity-aware overload routes to the no-origin
+                            // fast path at every level, so single-tile output is
+                            // byte-identical to v5.38 / v5.39 / v6-alpha2.
+                            let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
+                                data: compData, width: width, height: height, levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY
+                            )
+                            for (levelIdx, level) in decomposition.levels.enumerated() {
+                                let decomLevel = levelIdx + 1
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                    coefficients: level.hl, doubleCoefficients: nil,
+                                    width: level.hlW, height: level.hlH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                    coefficients: level.lh, doubleCoefficients: nil,
+                                    width: level.lhW, height: level.lhH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                    coefficients: level.hh, doubleCoefficients: nil,
+                                    width: level.hhW, height: level.hhH))
+                            }
+                            subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                                coefficients: decomposition.coarsestLL, doubleCoefficients: nil,
+                                width: decomposition.llW, height: decomposition.llH), at: 0)
                         }
-                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
-                            coefficients: decomposition.coarsestLL, doubleCoefficients: nil,
-                            width: decomposition.llW, height: decomposition.llH), at: 0)
 
                     } else if use97DoublePrecision {
                         var img2D: [[Double]] = []
@@ -4311,6 +4516,43 @@ struct EncoderPipeline: Sendable {
         }
         return false
     }()
+
+    /// v6-alpha5 phase 2 — opt-in GPU forward 5/3 INT DWT for the
+    /// lossless reversible encode path. Off by default; set
+    /// `J2K_GPU_FORWARD_53=1` to route the (origin-(0,0), Metal-
+    /// available, ≥ 256² pixels) lossless cases through
+    /// `J2KMetalDWT.forward2DInt32MultiLevelFused(...)` instead of
+    /// the CPU `AcceleratedDWT2D.forwardDecomposition53` path.
+    /// Bytes produced are bit-exact-equivalent (verified by the
+    /// phase-0/1 GPU/CPU bit-exactness suite); the encoded
+    /// codestream is byte-identical regardless of which DWT backend
+    /// runs. The flag exists to make wall-time A/B comparison easy
+    /// and to keep production default unchanged through phase 2.
+    ///
+    /// `var` rather than `let` so tests can A/B without spawning a
+    /// subprocess. The initial value is read from the env var once
+    /// per process; subsequent test mutations take effect on the
+    /// next encode call. Production code never writes to it.
+    nonisolated(unsafe) static var _gpuForward53Enabled: Bool = _readGPUForward53Env()
+
+    private static func _readGPUForward53Env() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_FORWARD_53"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    /// v6-alpha5 phase 5 — pixel-count threshold for the GPU forward
+    /// 5/3 INT path. Defaults to 4 000 000 (4 MP) which routes to
+    /// GPU only when the per-encode pixel count is large enough that
+    /// Phase 3 / 5 measurements showed a wall-time win. Tests can
+    /// lower it temporarily to exercise the GPU code path on smaller
+    /// fixtures (where the bytes are still byte-identical even
+    /// though wall time regresses).
+    nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 4_000_000
 
     /// v6-alpha3 step 3: per-tile origin propagation diagnostic.
     /// Off by default; set `J2K_HT_TILE_DEBUG_ORIGINS=1` to print

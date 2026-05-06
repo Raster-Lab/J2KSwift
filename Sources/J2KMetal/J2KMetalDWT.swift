@@ -658,7 +658,452 @@ public actor J2KMetalDWT {
     /// - Throws: ``J2KError`` on Metal failures or dimension
     ///   mismatch (each level's parent dimensions must match the
     ///   previous level's `originalWidth × originalHeight`).
+    /// Bit-exact reversible 5/3 multi-level forward 2D DWT on Int32,
+    /// chained into a **single Metal command buffer**.
+    ///
+    /// **Lossless-only pivot — Phase 1.** Symmetric counterpart of
+    /// `inverse2DInt32MultiLevelFused`. The first level uploads the
+    /// image data once; intermediate LL bands stay GPU-resident
+    /// across levels so only the per-level detail bands (LH / HL /
+    /// HH) and the final coarsest LL are read back to host. This
+    /// amortises the per-call command-buffer commit / wait latency
+    /// (~1 ms on Apple M2) across all N decomposition levels — the
+    /// step-11 diagnosis showed that single-tile GPU-forward needs
+    /// fusion to beat per-tile CPU DWT.
+    ///
+    /// Returns the levels deepest-last (finest at `[0]`, coarsest at
+    /// `[N-1]`), matching the order the decode side already uses.
+    /// Each returned `J2KMetalDWTSubbandsInt32`'s `ll` field contains
+    /// that level's LL — the next-coarser level's input. The final
+    /// element's LL is the coarsest approximation (also accessible
+    /// via the helper extension this same phase ships).
+    ///
+    /// - Parameters:
+    ///   - image: Row-major Int32 image of length `width × height`.
+    ///   - width: Image width in samples (≥ 2).
+    ///   - height: Image height in samples (≥ 2).
+    ///   - levels: Decomposition depth (≥ 1). Clamped to the maximum
+    ///     possible for the dimensions.
+    /// - Returns: `[J2KMetalDWTSubbandsInt32]` with one entry per
+    ///   decomposed level, finest first.
+    /// - Throws: `J2KError.invalidParameter` on dimension issues,
+    ///   `J2KError.internalError` on Metal failures.
     #if canImport(Metal)
+    public func forward2DInt32MultiLevelFused(
+        image: [Int32],
+        width: Int,
+        height: Int,
+        levels: Int
+    ) async throws -> [J2KMetalDWTSubbandsInt32] {
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Image dimensions must be at least 2×2, got \(width)×\(height)")
+        }
+        guard image.count == width * height else {
+            throw J2KError.invalidParameter(
+                "Image size \(image.count) doesn't match dimensions \(width)×\(height)")
+        }
+        let maxLevels = maxDecompositionLevels(width: width, height: height)
+        let effectiveLevels = max(1, min(levels, maxLevels))
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let stride32 = MemoryLayout<Int32>.stride
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create multi-level forward cb")
+        }
+
+        // Buffers in flight — each must outlive cb.completed().
+        var inFlight: [any MTLBuffer] = []
+
+        // Track per-level output buffers so we can read back after commit.
+        struct LevelDispatch {
+            let llBuf: any MTLBuffer
+            let lhBuf: any MTLBuffer
+            let hlBuf: any MTLBuffer
+            let hhBuf: any MTLBuffer
+            let llWidth: Int
+            let llHeight: Int
+            let halfWH: Int
+            let halfHH: Int
+            let originalWidth: Int
+            let originalHeight: Int
+        }
+        var dispatched: [LevelDispatch] = []
+
+        // First level reads from a CPU upload; subsequent levels
+        // read from the previous level's LL output buffer
+        // (GPU-resident, no readback in between).
+        var currentInput: any MTLBuffer = try await {
+            let buf = try await bufferPool.acquireBuffer(
+                device: device, size: image.count * stride32)
+            image.withUnsafeBytes { src in
+                buf.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: src.count)
+            }
+            return buf
+        }()
+        inFlight.append(currentInput)
+        var curW = width
+        var curH = height
+
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalInt)
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalInt)
+
+        for _ in 0..<effectiveLevels {
+            guard curW >= 2, curH >= 2 else { break }
+            let llW = (curW  + 1) / 2
+            let llH = (curH  + 1) / 2
+            let halfWH = curW  / 2
+            let halfHH = curH  / 2
+
+            let vLowBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: curW * llH * stride32)
+            inFlight.append(vLowBuf)
+            let vHighBuf = try await bufferPool.acquireBuffer(
+                device: device, size: max(curW * halfHH, 1) * stride32)
+            inFlight.append(vHighBuf)
+            let llBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: llW * llH * stride32)
+            inFlight.append(llBuf)
+            let hlBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * llH, 1) * stride32)
+            inFlight.append(hlBuf)
+            let lhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(llW * halfHH, 1) * stride32)
+            inFlight.append(lhBuf)
+            let hhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * halfHH, 1) * stride32)
+            inFlight.append(hhBuf)
+
+            // Pass 1: vertical forward — currentInput → vLow + vHigh.
+            guard let enc1 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create vertical forward encoder")
+            }
+            enc1.setComputePipelineState(vPipeline)
+            enc1.setBuffer(currentInput, offset: 0, index: 0)
+            enc1.setBuffer(vLowBuf,      offset: 0, index: 1)
+            enc1.setBuffer(vHighBuf,     offset: 0, index: 2)
+            var widthVal  = UInt32(curW)
+            var heightVal = UInt32(curH)
+            enc1.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&heightVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            enc1.dispatchThreads(
+                MTLSize(width: curW, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: min(curW, 64), height: 1, depth: 1))
+            enc1.endEncoding()
+
+            // Pass 2: horizontal forward — two dispatches into one
+            // encoder. New encoder ⇒ implicit memory barrier from
+            // pass 1.
+            guard let enc2 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create horizontal forward encoder")
+            }
+            enc2.setComputePipelineState(hPipeline)
+            // 2a: vLow rows → LL + HL.
+            enc2.setBuffer(vLowBuf, offset: 0, index: 0)
+            enc2.setBuffer(llBuf,   offset: 0, index: 1)
+            enc2.setBuffer(hlBuf,   offset: 0, index: 2)
+            var llHVal = UInt32(llH)
+            enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&llHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+            enc2.dispatchThreads(
+                MTLSize(width: 1, height: llH, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: 1, height: min(llH, 64), depth: 1))
+            // 2b: vHigh rows → LH + HH.
+            if halfHH > 0 {
+                enc2.setBuffer(vHighBuf, offset: 0, index: 0)
+                enc2.setBuffer(lhBuf,    offset: 0, index: 1)
+                enc2.setBuffer(hhBuf,    offset: 0, index: 2)
+                var halfHHVal = UInt32(halfHH)
+                enc2.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+                enc2.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+                enc2.dispatchThreads(
+                    MTLSize(width: 1, height: halfHH, depth: 1),
+                    threadsPerThreadgroup: MTLSize(
+                        width: 1, height: min(halfHH, 64), depth: 1))
+            }
+            enc2.endEncoding()
+
+            dispatched.append(LevelDispatch(
+                llBuf: llBuf, lhBuf: lhBuf, hlBuf: hlBuf, hhBuf: hhBuf,
+                llWidth: llW, llHeight: llH,
+                halfWH: halfWH, halfHH: halfHH,
+                originalWidth: curW, originalHeight: curH))
+
+            // Next level's input is this level's LL, GPU-resident.
+            currentInput = llBuf
+            curW = llW
+            curH = llH
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Multi-level fused forward 5/3 GPU dispatch failed: " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        // Read back per-level outputs. Each returned subbands struct
+        // carries the LL of that level too — the same convention as
+        // the existing forwardMultiLevel (Float) result.
+        var out: [J2KMetalDWTSubbandsInt32] = []
+        out.reserveCapacity(dispatched.count)
+        for d in dispatched {
+            let ll = readInt32Array(from: d.llBuf, elementCount: d.llWidth * d.llHeight)
+            let lh = readInt32Array(from: d.lhBuf, elementCount: d.llWidth * d.halfHH)
+            let hl = readInt32Array(from: d.hlBuf, elementCount: d.halfWH * d.llHeight)
+            let hh = readInt32Array(from: d.hhBuf, elementCount: d.halfWH * d.halfHH)
+            out.append(J2KMetalDWTSubbandsInt32(
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                llWidth: d.llWidth, llHeight: d.llHeight,
+                originalWidth: d.originalWidth, originalHeight: d.originalHeight))
+        }
+
+        // Return all in-flight buffers to the pool now that cb has completed.
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return out
+    }
+
+    /// Bit-exact reversible 5/3 multi-level forward 2D DWT on Int32
+    /// with **tile-component image-coordinate origin awareness**,
+    /// chained into a single Metal command buffer.
+    ///
+    /// **Lossless-only pivot — Phase 4 slice 2.** Builds on phase 1
+    /// (multi-level fusion) and phase 4 slice 1 (single-level
+    /// odd-origin kernels). Per ISO/IEC 15444-1 Eq. B-15, the LL
+    /// band's canvas origin at level n+1 is `ceil(parent_origin / 2)`
+    /// — for non-negative integers `(x + 1) >> 1`. The recursion
+    /// tracks origin per axis per level and dispatches the right
+    /// kernel (even or odd) per axis based on `origin & 1`.
+    ///
+    /// When both starting origins are zero, every level's origin
+    /// stays at (0, 0), so this routes through the same kernels as
+    /// the no-origin fused entry point — bit-identical output, no
+    /// regression.
+    ///
+    /// - Parameters:
+    ///   - image: Row-major Int32 image.
+    ///   - width: ≥ 2.
+    ///   - height: ≥ 2.
+    ///   - levels: Decomposition depth, clamped to maximum.
+    ///   - tileOriginX: Image-coord origin in the X axis.
+    ///   - tileOriginY: Image-coord origin in the Y axis.
+    /// - Returns: `[J2KMetalDWTSubbandsInt32]` finest-first, each
+    ///   with parity-aware band sizes.
+    public func forward2DInt32MultiLevelFused(
+        image: [Int32],
+        width: Int,
+        height: Int,
+        levels: Int,
+        tileOriginX: Int,
+        tileOriginY: Int
+    ) async throws -> [J2KMetalDWTSubbandsInt32] {
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Image dimensions must be at least 2×2, got \(width)×\(height)")
+        }
+        guard image.count == width * height else {
+            throw J2KError.invalidParameter(
+                "Image size \(image.count) doesn't match dimensions \(width)×\(height)")
+        }
+        let maxLevels = maxDecompositionLevels(width: width, height: height)
+        let effectiveLevels = max(1, min(levels, maxLevels))
+
+        try await ensureInitialized()
+        // v6-alpha5 phase 6 — fresh per-call command queue so
+        // concurrent multi-tile dispatches don't serialise on a
+        // shared MTLCommandQueue. Phase 5 measured 33–43 %
+        // multi-tile regression rooted in the shared-queue serial
+        // execution; allocating a per-tile queue lets the GPU
+        // scheduler interleave CB execution across tile tasks.
+        let queue = try await metalDevice.makeFreshCommandQueue()
+        let device = queue.device
+        let stride32 = MemoryLayout<Int32>.stride
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create multi-level forward cb")
+        }
+
+        var inFlight: [any MTLBuffer] = []
+        struct LevelDispatch {
+            let llBuf: any MTLBuffer
+            let lhBuf: any MTLBuffer
+            let hlBuf: any MTLBuffer
+            let hhBuf: any MTLBuffer
+            let llWidth: Int
+            let llHeight: Int
+            let halfWH: Int
+            let halfHH: Int
+            let originalWidth: Int
+            let originalHeight: Int
+        }
+        var dispatched: [LevelDispatch] = []
+
+        var currentInput: any MTLBuffer = try await {
+            let buf = try await bufferPool.acquireBuffer(
+                device: device, size: image.count * stride32)
+            image.withUnsafeBytes { src in
+                buf.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: src.count)
+            }
+            return buf
+        }()
+        inFlight.append(currentInput)
+        var curW = width
+        var curH = height
+        var curOX = tileOriginX
+        var curOY = tileOriginY
+
+        // Pre-fetch all four kernel pipelines so per-level kernel
+        // selection is a no-op cache hit.
+        let vEvenPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalInt)
+        let vOddPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalIntOdd)
+        let hEvenPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalInt)
+        let hOddPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalIntOdd)
+
+        for _ in 0..<effectiveLevels {
+            guard curW >= 2, curH >= 2 else { break }
+
+            // Parity-aware band counts per F.4.4: low-pass count is
+            // ceil for even origin, floor for odd; high = total - low.
+            let llW = ((curOX & 1) == 0) ? (curW + 1) / 2 : curW / 2
+            let llH = ((curOY & 1) == 0) ? (curH + 1) / 2 : curH / 2
+            let halfWH = curW - llW
+            let halfHH = curH - llH
+
+            let vLowBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: curW * llH * stride32)
+            inFlight.append(vLowBuf)
+            let vHighBuf = try await bufferPool.acquireBuffer(
+                device: device, size: max(curW * halfHH, 1) * stride32)
+            inFlight.append(vHighBuf)
+            let llBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: llW * llH * stride32)
+            inFlight.append(llBuf)
+            let hlBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * llH, 1) * stride32)
+            inFlight.append(hlBuf)
+            let lhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(llW * halfHH, 1) * stride32)
+            inFlight.append(lhBuf)
+            let hhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * halfHH, 1) * stride32)
+            inFlight.append(hhBuf)
+
+            let vPipeline = ((curOY & 1) == 0) ? vEvenPipeline : vOddPipeline
+            let hPipeline = ((curOX & 1) == 0) ? hEvenPipeline : hOddPipeline
+
+            // Pass 1: vertical forward — currentInput → vLow + vHigh.
+            guard let enc1 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create vertical forward encoder")
+            }
+            enc1.setComputePipelineState(vPipeline)
+            enc1.setBuffer(currentInput, offset: 0, index: 0)
+            enc1.setBuffer(vLowBuf,      offset: 0, index: 1)
+            enc1.setBuffer(vHighBuf,     offset: 0, index: 2)
+            var widthVal  = UInt32(curW)
+            var heightVal = UInt32(curH)
+            enc1.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&heightVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            enc1.dispatchThreads(
+                MTLSize(width: curW, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: min(curW, 64), height: 1, depth: 1))
+            enc1.endEncoding()
+
+            // Pass 2: horizontal forward — vLow → LL+HL, vHigh → LH+HH.
+            guard let enc2 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create horizontal forward encoder")
+            }
+            enc2.setComputePipelineState(hPipeline)
+            enc2.setBuffer(vLowBuf, offset: 0, index: 0)
+            enc2.setBuffer(llBuf,   offset: 0, index: 1)
+            enc2.setBuffer(hlBuf,   offset: 0, index: 2)
+            var llHVal = UInt32(llH)
+            enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&llHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+            enc2.dispatchThreads(
+                MTLSize(width: 1, height: llH, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: 1, height: min(llH, 64), depth: 1))
+            if halfHH > 0 {
+                enc2.setBuffer(vHighBuf, offset: 0, index: 0)
+                enc2.setBuffer(lhBuf,    offset: 0, index: 1)
+                enc2.setBuffer(hhBuf,    offset: 0, index: 2)
+                var halfHHVal = UInt32(halfHH)
+                enc2.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+                enc2.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+                enc2.dispatchThreads(
+                    MTLSize(width: 1, height: halfHH, depth: 1),
+                    threadsPerThreadgroup: MTLSize(
+                        width: 1, height: min(halfHH, 64), depth: 1))
+            }
+            enc2.endEncoding()
+
+            dispatched.append(LevelDispatch(
+                llBuf: llBuf, lhBuf: lhBuf, hlBuf: hlBuf, hhBuf: hhBuf,
+                llWidth: llW, llHeight: llH,
+                halfWH: halfWH, halfHH: halfHH,
+                originalWidth: curW, originalHeight: curH))
+
+            // Next-level input = this level's LL, GPU-resident.
+            currentInput = llBuf
+            curW = llW
+            curH = llH
+            // Eq. B-15 origin trajectory: ceil-halving, never floor.
+            curOX = (curOX + 1) >> 1
+            curOY = (curOY + 1) >> 1
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Multi-level fused parity-aware forward 5/3 GPU dispatch failed: " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        var out: [J2KMetalDWTSubbandsInt32] = []
+        out.reserveCapacity(dispatched.count)
+        for d in dispatched {
+            let ll = readInt32Array(from: d.llBuf, elementCount: d.llWidth * d.llHeight)
+            let lh = readInt32Array(from: d.lhBuf, elementCount: d.llWidth * d.halfHH)
+            let hl = readInt32Array(from: d.hlBuf, elementCount: d.halfWH * d.llHeight)
+            let hh = readInt32Array(from: d.hhBuf, elementCount: d.halfWH * d.halfHH)
+            out.append(J2KMetalDWTSubbandsInt32(
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                llWidth: d.llWidth, llHeight: d.llHeight,
+                originalWidth: d.originalWidth, originalHeight: d.originalHeight))
+        }
+
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return out
+    }
+
     public func inverse2DInt32MultiLevelFused(
         subbandsPerLevel: [J2KMetalDWTSubbandsInt32]
     ) async throws -> [Int32] {
@@ -795,6 +1240,17 @@ public actor J2KMetalDWT {
         return result
     }
     #else
+    public func forward2DInt32MultiLevelFused(
+        image: [Int32], width: Int, height: Int, levels: Int
+    ) async throws -> [J2KMetalDWTSubbandsInt32] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+    public func forward2DInt32MultiLevelFused(
+        image: [Int32], width: Int, height: Int, levels: Int,
+        tileOriginX: Int, tileOriginY: Int
+    ) async throws -> [J2KMetalDWTSubbandsInt32] {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
     public func inverse2DInt32MultiLevelFused(
         subbandsPerLevel: [J2KMetalDWTSubbandsInt32]
     ) async throws -> [Int32] {
@@ -1564,6 +2020,94 @@ public actor J2KMetalDWT {
         throw J2KError.unsupportedFeature("Metal is not available on this platform")
     }
     #endif
+
+    /// Bit-exact reversible 5/3 single-level forward 2D DWT on `[Int32]`.
+    ///
+    /// **Lossless-only pivot — Phase 0.** Symmetric counterpart of
+    /// `inverse2DInt32(subbands:backend:)`. The GPU path dispatches the
+    /// `j2k_dwt_forward_53_*_int` kernels added in this phase; the CPU
+    /// path delegates to the same reference forward 5/3 used elsewhere
+    /// in the codebase. Both paths are bit-exact against each other and
+    /// against the CPU encoder's `AcceleratedDWT2D.forward53_1D(...)`
+    /// (verified by `J2KMetalDWTForward53IntBitExactTests`).
+    ///
+    /// This entry point intentionally does **NOT** wire into the
+    /// production encoder pipeline yet — phase 1 work will add the
+    /// dispatch from `J2KEncoderPipeline.applyWaveletTransform(...)`.
+    /// Phase 0 only ships the verified building block.
+    ///
+    /// - Parameters:
+    ///   - image: Row-major Int32 image buffer of length `width × height`.
+    ///   - width: Image width in samples (≥ 2).
+    ///   - height: Image height in samples (≥ 2).
+    ///   - backend: GPU / CPU / auto. `.auto` routes by the same
+    ///     `effectiveBackend(...)` heuristic used by every other DWT
+    ///     entry point on this struct.
+    /// - Returns: The four single-level Int32 subbands (LL/LH/HL/HH)
+    ///   plus their dimensions.
+    public func forward2DInt32(
+        image: [Int32],
+        width: Int,
+        height: Int,
+        backend: J2KMetalDWTBackend = .auto
+    ) async throws -> J2KMetalDWTSubbandsInt32 {
+        try await forward2DInt32(
+            image: image, width: width, height: height,
+            tileOriginX: 0, tileOriginY: 0, backend: backend)
+    }
+
+    /// Bit-exact reversible 5/3 single-level forward 2D DWT on Int32
+    /// with **tile-component image-coordinate origin awareness**.
+    ///
+    /// **Lossless-only pivot — Phase 4 slice 1.** Symmetric counterpart
+    /// of the parity-aware decoder path landed in v6-alpha3 step 6B.
+    /// When both origins are even, output is byte-identical to the
+    /// no-origin overload (which routes through the existing Phase 0
+    /// even-origin kernels). When either axis has an odd origin, the
+    /// new `j2k_dwt_forward_53_*_int_odd` kernels are dispatched on
+    /// that axis; band counts swap per ISO/IEC 15444-1 F.4.4.
+    ///
+    /// The CPU fallback delegates to `forward2DCPUInt32WithOrigin` which
+    /// runs the locally-duplicated parity-aware reference. Both paths
+    /// are bit-exact-equivalent and bit-exact against the production
+    /// CPU reference `AcceleratedDWT2D.forward2D_53(...tileOriginX:
+    /// tileOriginY:)`.
+    public func forward2DInt32(
+        image: [Int32],
+        width: Int, height: Int,
+        tileOriginX uX: Int, tileOriginY uY: Int,
+        backend: J2KMetalDWTBackend = .auto
+    ) async throws -> J2KMetalDWTSubbandsInt32 {
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Image dimensions must be at least 2×2, got \(width)×\(height)"
+            )
+        }
+        guard image.count == width * height else {
+            throw J2KError.invalidParameter(
+                "Image size \(image.count) doesn't match dimensions \(width)×\(height)"
+            )
+        }
+
+        let startTime = currentTime()
+        _statistics.totalOperations += 1
+
+        let effective = effectiveBackend(width: width, height: height, backend: backend)
+
+        let result: J2KMetalDWTSubbandsInt32
+        if effective == .gpu {
+            result = try await forward2DGPUInt32WithOrigin(
+                image: image, width: width, height: height, uX: uX, uY: uY)
+            _statistics.gpuOperations += 1
+        } else {
+            result = forward2DCPUInt32WithOrigin(
+                image: image, width: width, height: height, uX: uX, uY: uY)
+            _statistics.cpuOperations += 1
+        }
+
+        _statistics.totalProcessingTime += currentTime() - startTime
+        return result
+    }
 
     public func inverse2DInt32(
         subbands: J2KMetalDWTSubbandsInt32,
@@ -2862,17 +3406,22 @@ public actor J2KMetalDWT {
 
     private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {
         guard elementCount > 0 else { return [] }
-        var result = [Int32](repeating: 0, count: elementCount)
         let ptr = buffer.contents()
         J2KMetalUMACounters.incrementContents()
         J2KMetalUMACounters.incrementMemcpy()
-        result.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: ptr,
-                count: elementCount * MemoryLayout<Int32>.stride
-            ))
+        // v6-alpha5 phase 7 — skip the implicit zero-init in
+        // `Array(repeating: 0, count:)` since the next operation
+        // overwrites every element via `update(from:count:)`.
+        // For DX 6.4 MP single-tile encode, the cumulative readback
+        // across 5 levels × 4 bands ≈ 6.4 M Int32 = 25 MB; the
+        // wasted bzero is ~1–2 ms of pure CPU time on Apple M2's
+        // ~12 GB/s memory bandwidth.
+        return [Int32](unsafeUninitializedCapacity: elementCount) { buf, count in
+            buf.baseAddress!.update(
+                from: ptr.assumingMemoryBound(to: Int32.self),
+                count: elementCount)
+            count = elementCount
         }
-        return result
     }
 
     /// Bit-exact 1D inverse 5/3 reversible transform on `Int32` subbands with
@@ -2977,6 +3526,405 @@ public actor J2KMetalDWT {
         }
 
         return result
+    }
+
+    // MARK: - v6-alpha5 Phase 0 — forward 5/3 INT (GPU + CPU)
+
+    /// Bit-exact 1D forward 5/3 reversible transform on Int32 with
+    /// JPEG 2000 symmetric extension. Locally duplicated here so
+    /// J2KMetal stays free of any J2KCodec dependency. Exact match
+    /// for `AcceleratedDWT2D.forward53_1D(...)` in J2KAcceleratedEncoder.
+    private func forward1D53Int(signal: [Int32]) -> (lowpass: [Int32], highpass: [Int32]) {
+        let n = signal.count
+        let lpSize = (n + 1) / 2
+        let hpSize = n / 2
+        var lp = [Int32](repeating: 0, count: lpSize)
+        var hp = [Int32](repeating: 0, count: hpSize)
+        // Predict: hp[i] = signal[2i+1] - ((signal[2i] + signal[2i+2]) >> 1)
+        for i in 0..<hpSize {
+            let left = signal[2 * i]
+            let right = (2 * i + 2 < n) ? signal[2 * i + 2] : signal[2 * i]
+            hp[i] = signal[2 * i + 1] &- ((left &+ right) >> 1)
+        }
+        // Update: lp[i] = signal[2i] + ((hp[i-1] + hp[i] + 2) >> 2)
+        for i in 0..<lpSize {
+            let left  = (i > 0) ? hp[i - 1] : (hpSize > 0 ? hp[0] : 0)
+            let right = (i < hpSize) ? hp[i] : (hpSize > 0 ? hp[hpSize - 1] : 0)
+            lp[i] = signal[2 * i] &+ ((left &+ right &+ 2) >> 2)
+        }
+        return (lp, hp)
+    }
+
+    /// CPU reference forward 2D 5/3 INT — vertical first, then
+    /// horizontal, matching the encoder's spec order. Sequencing is
+    /// the inverse (mirror) of `inverse2DCPUInt32`.
+    private func forward2DCPUInt32(image: [Int32], width: Int, height: Int) -> J2KMetalDWTSubbandsInt32 {
+        let llW = (width  + 1) / 2
+        let llH = (height + 1) / 2
+        let halfWH = width  / 2
+        let halfHH = height / 2
+
+        // Step 1 (vertical forward on columns): each column → low + high rows.
+        var vLow  = [Int32](repeating: 0, count: width * llH)
+        var vHigh = [Int32](repeating: 0, count: max(width, 1) * halfHH)
+        for x in 0..<width {
+            var col = [Int32](repeating: 0, count: height)
+            for y in 0..<height { col[y] = image[y * width + x] }
+            let (lp, hp) = forward1D53Int(signal: col)
+            for y in 0..<llH    { vLow[y * width + x] = lp[y] }
+            for y in 0..<halfHH { vHigh[y * width + x] = hp[y] }
+        }
+
+        // Step 2 (horizontal forward on rows of vLow / vHigh).
+        var ll = [Int32](repeating: 0, count: llW * llH)
+        var hl = [Int32](repeating: 0, count: max(halfWH, 1) * llH)
+        var lh = [Int32](repeating: 0, count: llW * halfHH)
+        var hh = [Int32](repeating: 0, count: max(halfWH, 1) * halfHH)
+        for y in 0..<llH {
+            let row = Array(vLow[(y * width)..<(y * width + width)])
+            let (lp, hp) = forward1D53Int(signal: row)
+            for x in 0..<llW    { ll[y * llW    + x] = lp[x] }
+            for x in 0..<halfWH { hl[y * halfWH + x] = hp[x] }
+        }
+        for y in 0..<halfHH {
+            let row = Array(vHigh[(y * width)..<(y * width + width)])
+            let (lp, hp) = forward1D53Int(signal: row)
+            for x in 0..<llW    { lh[y * llW    + x] = lp[x] }
+            for x in 0..<halfWH { hh[y * halfWH + x] = hp[x] }
+        }
+
+        return J2KMetalDWTSubbandsInt32(
+            ll: ll, lh: lh, hl: hl, hh: hh,
+            llWidth: llW, llHeight: llH,
+            originalWidth: width, originalHeight: height)
+    }
+
+    /// GPU forward 2D 5/3 INT — dispatches the new
+    /// `j2k_dwt_forward_53_*_int` kernels. Single command buffer,
+    /// vertical then horizontal (mirror of `inverse2DGPUInt32`'s
+    /// horizontal-then-vertical schedule).
+    private func forward2DGPUInt32(
+        image: [Int32], width: Int, height: Int
+    ) async throws -> J2KMetalDWTSubbandsInt32 {
+        try await ensureInitialized()
+
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+
+        let llW = (width  + 1) / 2
+        let llH = (height + 1) / 2
+        let halfWH = width  / 2
+        let halfHH = height / 2
+
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1),
+                options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let stride32 = MemoryLayout<Int32>.stride
+        let inputBuffer  = try makeBuffer(size: image.count * stride32)
+        let vLowBuffer   = try makeBuffer(size: width * llH * stride32)
+        let vHighBuffer  = try makeBuffer(size: max(width * halfHH, 1) * stride32)
+        let llBuffer     = try makeBuffer(size: llW * llH * stride32)
+        let hlBuffer     = try makeBuffer(size: max(halfWH * llH, 1) * stride32)
+        let lhBuffer     = try makeBuffer(size: max(llW * halfHH, 1) * stride32)
+        let hhBuffer     = try makeBuffer(size: max(halfWH * halfHH, 1) * stride32)
+
+        image.withUnsafeBytes { src in
+            inputBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalInt)
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalInt)
+
+        // Pass 1: vertical forward — input → vLow + vHigh.
+        guard let enc1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create vertical compute encoder")
+        }
+        enc1.setComputePipelineState(vPipeline)
+        enc1.setBuffer(inputBuffer, offset: 0, index: 0)
+        enc1.setBuffer(vLowBuffer,  offset: 0, index: 1)
+        enc1.setBuffer(vHighBuffer, offset: 0, index: 2)
+        var widthVal  = UInt32(width)
+        var heightVal = UInt32(height)
+        enc1.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+        enc1.setBytes(&heightVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        enc1.dispatchThreads(
+            MTLSize(width: width, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: min(width, 64), height: 1, depth: 1))
+        enc1.endEncoding()
+
+        // Pass 2: horizontal forward — vLow rows → LL + HL,
+        // vHigh rows → LH + HH. New encoder ⇒ implicit memory barrier.
+        guard let enc2 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create horizontal compute encoder")
+        }
+        enc2.setComputePipelineState(hPipeline)
+
+        // 2a: vLow rows → LL (low cols) + HL (high cols).
+        enc2.setBuffer(vLowBuffer, offset: 0, index: 0)
+        enc2.setBuffer(llBuffer,   offset: 0, index: 1)
+        enc2.setBuffer(hlBuffer,   offset: 0, index: 2)
+        var llHVal = UInt32(llH)
+        enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc2.setBytes(&llHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+        enc2.dispatchThreads(
+            MTLSize(width: 1, height: llH, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 1, height: min(llH, 64), depth: 1))
+
+        // 2b: vHigh rows → LH (low cols) + HH (high cols).
+        if halfHH > 0 {
+            enc2.setBuffer(vHighBuffer, offset: 0, index: 0)
+            enc2.setBuffer(lhBuffer,    offset: 0, index: 1)
+            enc2.setBuffer(hhBuffer,    offset: 0, index: 2)
+            var halfHHVal = UInt32(halfHH)
+            enc2.setBytes(&widthVal,    length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&halfHHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+            enc2.dispatchThreads(
+                MTLSize(width: 1, height: halfHH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 1, height: min(halfHH, 64), depth: 1))
+        }
+        enc2.endEncoding()
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Forward 5/3 INT GPU dispatch failed: \(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let ll = readInt32Array(from: llBuffer, elementCount: llW * llH)
+        let hl = readInt32Array(from: hlBuffer, elementCount: halfWH * llH)
+        let lh = readInt32Array(from: lhBuffer, elementCount: llW * halfHH)
+        let hh = readInt32Array(from: hhBuffer, elementCount: halfWH * halfHH)
+
+        return J2KMetalDWTSubbandsInt32(
+            ll: ll, lh: lh, hl: hl, hh: hh,
+            llWidth: llW, llHeight: llH,
+            originalWidth: width, originalHeight: height)
+    }
+
+    // MARK: - v6-alpha5 Phase 4 — parity-aware forward 5/3 INT
+
+    /// Bit-exact 1D forward 5/3 with `uOrigin` for odd-origin parity.
+    /// Mirrors the CPU `forward53_1D(...uOrigin:workspace:)` reference.
+    private func forward1D53IntOddOrigin(signal: [Int32]) -> (lowpass: [Int32], highpass: [Int32]) {
+        let n = signal.count
+        let lowCount  = n / 2          // floor(n/2) — swap vs even-origin
+        let highCount = n - lowCount   // ceil(n/2)
+        var lp = [Int32](repeating: 0, count: lowCount)
+        var hp = [Int32](repeating: 0, count: highCount)
+
+        // Gather: L from local-odd, H from local-even.
+        for i in 0..<lowCount  { lp[i] = signal[i &* 2 &+ 1] }
+        for i in 0..<highCount { hp[i] = signal[i &* 2] }
+
+        // Predict: H[0] left mirror, interior, H[lowCount] right mirror (n odd).
+        if highCount > 0 {
+            hp[0] = hp[0] &- lp[0]
+        }
+        let predictInteriorEnd = min(highCount, lowCount)
+        for i in 1..<predictInteriorEnd {
+            hp[i] = hp[i] &- ((lp[i &- 1] &+ lp[i]) >> 1)
+        }
+        if highCount > lowCount {
+            hp[lowCount] = hp[lowCount] &- lp[lowCount - 1]
+        }
+
+        // Update: no left mirror, right mirror at i+1 >= highCount.
+        for i in 0..<lowCount {
+            let leftH  = hp[i]
+            let rightH = (i &+ 1 < highCount) ? hp[i &+ 1] : hp[highCount &- 1]
+            lp[i] = lp[i] &+ ((leftH &+ rightH &+ 2) >> 2)
+        }
+        return (lp, hp)
+    }
+
+    /// CPU reference parity-aware forward 2D 5/3 INT — vertical first
+    /// then horizontal, picking the even/odd 1D variant per axis.
+    private func forward2DCPUInt32WithOrigin(
+        image: [Int32], width: Int, height: Int, uX: Int, uY: Int
+    ) -> J2KMetalDWTSubbandsInt32 {
+        // Both even → existing fast path. Bit-identical.
+        if (uX & 1) == 0 && (uY & 1) == 0 {
+            return forward2DCPUInt32(image: image, width: width, height: height)
+        }
+
+        let llW = ((uX & 1) == 0) ? (width  + 1) / 2 : width  / 2
+        let llH = ((uY & 1) == 0) ? (height + 1) / 2 : height / 2
+        let halfWH = width  - llW   // hl / hh band width
+        let halfHH = height - llH   // lh / hh band height
+
+        // Step 1 (vertical forward) — pick parity per uY.
+        let yOdd = (uY & 1) == 1
+        var vLow  = [Int32](repeating: 0, count: width * llH)
+        var vHigh = [Int32](repeating: 0, count: max(width, 1) * halfHH)
+        for x in 0..<width {
+            var col = [Int32](repeating: 0, count: height)
+            for y in 0..<height { col[y] = image[y * width + x] }
+            let (lp, hp): ([Int32], [Int32]) = yOdd
+                ? forward1D53IntOddOrigin(signal: col)
+                : forward1D53Int(signal: col)
+            for y in 0..<llH    { vLow[y * width + x]  = lp[y] }
+            for y in 0..<halfHH { vHigh[y * width + x] = hp[y] }
+        }
+
+        // Step 2 (horizontal forward) — pick parity per uX.
+        let xOdd = (uX & 1) == 1
+        var ll = [Int32](repeating: 0, count: llW * llH)
+        var hl = [Int32](repeating: 0, count: max(halfWH, 1) * llH)
+        var lh = [Int32](repeating: 0, count: llW * halfHH)
+        var hh = [Int32](repeating: 0, count: max(halfWH, 1) * halfHH)
+        for y in 0..<llH {
+            let row = Array(vLow[(y * width)..<(y * width + width)])
+            let (lp, hp): ([Int32], [Int32]) = xOdd
+                ? forward1D53IntOddOrigin(signal: row)
+                : forward1D53Int(signal: row)
+            for x in 0..<llW    { ll[y * llW    + x] = lp[x] }
+            for x in 0..<halfWH { hl[y * halfWH + x] = hp[x] }
+        }
+        for y in 0..<halfHH {
+            let row = Array(vHigh[(y * width)..<(y * width + width)])
+            let (lp, hp): ([Int32], [Int32]) = xOdd
+                ? forward1D53IntOddOrigin(signal: row)
+                : forward1D53Int(signal: row)
+            for x in 0..<llW    { lh[y * llW    + x] = lp[x] }
+            for x in 0..<halfWH { hh[y * halfWH + x] = hp[x] }
+        }
+
+        return J2KMetalDWTSubbandsInt32(
+            ll: ll, lh: lh, hl: hl, hh: hh,
+            llWidth: llW, llHeight: llH,
+            originalWidth: width, originalHeight: height)
+    }
+
+    /// GPU parity-aware forward 2D 5/3 INT. Picks even or odd kernel
+    /// per axis, sizes intermediate buffers per parity-aware band
+    /// counts.
+    private func forward2DGPUInt32WithOrigin(
+        image: [Int32], width: Int, height: Int, uX: Int, uY: Int
+    ) async throws -> J2KMetalDWTSubbandsInt32 {
+        // Both even → existing fast path. Bit-identical.
+        if (uX & 1) == 0 && (uY & 1) == 0 {
+            return try await forward2DGPUInt32(image: image, width: width, height: height)
+        }
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let stride32 = MemoryLayout<Int32>.stride
+
+        let llW = ((uX & 1) == 0) ? (width  + 1) / 2 : width  / 2
+        let llH = ((uY & 1) == 0) ? (height + 1) / 2 : height / 2
+        let halfWH = width  - llW
+        let halfHH = height - llH
+
+        func makeBuffer(size: Int) throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(size, 1), options: .storageModeShared
+            ) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
+            }
+            return buffer
+        }
+
+        let inputBuffer = try makeBuffer(size: image.count * stride32)
+        let vLowBuffer  = try makeBuffer(size: width * llH * stride32)
+        let vHighBuffer = try makeBuffer(size: max(width * halfHH, 1) * stride32)
+        let llBuffer    = try makeBuffer(size: llW * llH * stride32)
+        let hlBuffer    = try makeBuffer(size: max(halfWH * llH, 1) * stride32)
+        let lhBuffer    = try makeBuffer(size: max(llW * halfHH, 1) * stride32)
+        let hhBuffer    = try makeBuffer(size: max(halfWH * halfHH, 1) * stride32)
+
+        image.withUnsafeBytes { src in
+            inputBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        }
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create command buffer")
+        }
+
+        let yOdd = (uY & 1) == 1
+        let xOdd = (uX & 1) == 1
+        let vPipeline = try await shaderLibrary.computePipeline(
+            for: yOdd ? .dwtForward53VerticalIntOdd : .dwtForward53VerticalInt)
+        let hPipeline = try await shaderLibrary.computePipeline(
+            for: xOdd ? .dwtForward53HorizontalIntOdd : .dwtForward53HorizontalInt)
+
+        // Pass 1: vertical forward.
+        guard let enc1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create vertical compute encoder")
+        }
+        enc1.setComputePipelineState(vPipeline)
+        enc1.setBuffer(inputBuffer, offset: 0, index: 0)
+        enc1.setBuffer(vLowBuffer,  offset: 0, index: 1)
+        enc1.setBuffer(vHighBuffer, offset: 0, index: 2)
+        var widthVal  = UInt32(width)
+        var heightVal = UInt32(height)
+        enc1.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+        enc1.setBytes(&heightVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        enc1.dispatchThreads(
+            MTLSize(width: width, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: min(width, 64), height: 1, depth: 1))
+        enc1.endEncoding()
+
+        // Pass 2: horizontal forward — vLow → LL + HL, vHigh → LH + HH.
+        guard let enc2 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create horizontal compute encoder")
+        }
+        enc2.setComputePipelineState(hPipeline)
+        enc2.setBuffer(vLowBuffer, offset: 0, index: 0)
+        enc2.setBuffer(llBuffer,   offset: 0, index: 1)
+        enc2.setBuffer(hlBuffer,   offset: 0, index: 2)
+        var llHVal = UInt32(llH)
+        enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        enc2.setBytes(&llHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+        enc2.dispatchThreads(
+            MTLSize(width: 1, height: llH, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 1, height: min(llH, 64), depth: 1))
+
+        if halfHH > 0 {
+            enc2.setBuffer(vHighBuffer, offset: 0, index: 0)
+            enc2.setBuffer(lhBuffer,    offset: 0, index: 1)
+            enc2.setBuffer(hhBuffer,    offset: 0, index: 2)
+            var halfHHVal = UInt32(halfHH)
+            enc2.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            enc2.dispatchThreads(
+                MTLSize(width: 1, height: halfHH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 1, height: min(halfHH, 64), depth: 1))
+        }
+        enc2.endEncoding()
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Forward 5/3 INT GPU (parity-aware) dispatch failed: \(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let ll = readInt32Array(from: llBuffer, elementCount: llW * llH)
+        let hl = readInt32Array(from: hlBuffer, elementCount: halfWH * llH)
+        let lh = readInt32Array(from: lhBuffer, elementCount: llW * halfHH)
+        let hh = readInt32Array(from: hhBuffer, elementCount: halfWH * halfHH)
+
+        return J2KMetalDWTSubbandsInt32(
+            ll: ll, lh: lh, hl: hl, hh: hh,
+            llWidth: llW, llHeight: llH,
+            originalWidth: width, originalHeight: height)
     }
 
     private func ensureInitialized() async throws {

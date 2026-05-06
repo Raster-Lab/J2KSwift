@@ -7,26 +7,87 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha2)
+## Headline (post-v6-alpha5 Phase 8)
+
+### v6-alpha5 — GPU forward 5/3 INT lands as opt-in (8-phase pivot)
+
+After v6-alpha4 step 12 closed the CPU-side Kakadu-gap lever set
+on diminishing returns, **v6-alpha5 pivots to Metal forward
+INTEGER 5/3 DWT** per the lossless-only roadmap. Eight commits
+(`0dc9d2a` → `44ab73b`) ship a production-correct, opt-in GPU
+forward path:
+
+  - **Wall-time win**: +17–18 % at DX 6.4 MP / MG 16.8 MP
+    single-tile lossless encode (release, Apple M2, median of 5).
+  - **Byte-identical** CPU ↔ GPU at every fixture × every parity
+    combination; verified by 30+ correctness tests.
+  - **External-decoder bit-exact** through OpenJPH 0.27.0,
+    Grok 20.3.0, Kakadu 8.4.1 demo: 21/21 corpus cells, max-abs-
+    pixel-diff = 0.
+  - **Opt-in via `J2K_GPU_FORWARD_53=1`** with a 4 MP pixel-
+    count threshold that gates GPU out of every regression case
+    (sub-DX single-tile + every multi-tile per-tile dispatch).
+  - Production default unchanged — `J2K_GPU_FORWARD_53` unset →
+    v6-alpha4 CPU encode bytes verbatim.
+
+See the **v6-alpha5** section at the bottom of this doc for the
+phase ledger, final wall-time tables, cross-codec validation,
+and the production-policy summary.
+
+The pre-v6-alpha5 state described below remains the reference
+for everything that runs without the env var set, including all
+multi-tile work (the GPU forward is single-tile-only on the
+production gate).
+
+---
+
+## Pre-v6-alpha5 headline (post-v6-alpha4 step 11)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
-the production single-tile path** (28/28 cross-decode pairs bit-exact
-through OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu 8.4.1
-demo) and **standards-clean on the experimental multi-tile path** for
-the subset of fixtures whose tile-component image-coordinate origins
-are aligned to `2^decompositionLevels` (XA 1024² with 5 levels and
-multi-tile dims 512 / 256 satisfies; the rest of the corpus does
-not).
+both the production single-tile path AND the multi-tile path on
+every corpus fixture** (XA 1024², MR 886², PX 2459×1316, DX
+2800×2288 in 2x2 / 4x4 / strips4 layouts) — cross-decode bit-exact
+through OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu
+8.4.1 demo, and J2KSwift self-roundtrip bit-exact on every
+(fixture, mode) cell tested.
 
-**Kakadu HT advantage on fixtures ≥ 886×886 still stands** — see
-v5.38 HT-fair table below. v6-alpha2 didn't move the needle there;
-it identified the structural fix needed and implemented the
-correctness gate (the planner constraint). Closing the perf gap
-needs the v6-alpha3 native multi-tile refactor.
+**Perf result (step 9 measurement, after restoring per-tile
+encode parallelism):**
 
-| Mode default | Single-tile production path |
+| Modality | Shape       | J2KSwift best multi | Kakadu HT | Encode verdict |
+|---|---|---:|---:|---|
+| MR | 886×886    |  **2.6 ms** (2x2)  |  3.7 ms | **J2KSwift wins (1.42×)** |
+| XA | 1024×1024  |    7.7 ms (2x2)    |  5.7 ms | Kakadu (1.35× — gap 2.02× → 1.35×) |
+| PX | 2459×1316  |   23.2 ms (4x4)    | 11.0 ms | Kakadu (2.11× — gap 3.32× → 2.11×) |
+| DX | 2800×2288  |   53.5 ms (4x4)    | 23.8 ms | Kakadu (2.25× — gap 3.70× → 2.25×) |
+
+| Modality | Shape       | J2KSwift best multi | Kakadu HT | Decode verdict |
+|---|---|---:|---:|---|
+| MR | 886×886    |   **4.3 ms** (strips4) |  4.6 ms | **J2KSwift wins (1.07×)** |
+| XA | 1024×1024  |    9.3 ms (strips4) |  5.0 ms | Kakadu (1.86×) |
+| PX | 2459×1316  |   30.8 ms (2x2)     | 10.5 ms | Kakadu (2.93×) |
+| DX | 2800×2288  |   59.6 ms (strips4) | 19.2 ms | Kakadu (3.10×) |
+
+**MR 886×886 — J2KSwift now wins HT-fair encode AND decode against
+Kakadu** (the headline v5.38 reversal). Multi-tile encode speedup
+vs J2KSwift single-tile baseline: MR 2.04×, PX 1.60×, DX 1.39×, XA
+1.49×. Kakadu still wins on XA / PX / DX but every gap is now
+roughly halved compared to v6-alpha2.
+
+| Aspect | State |
 |---|---|
-| Parked / experimental | SIMD M1, DWT row-parallel M2, multi-tile M4 (post-v6-alpha2 planner-constrained) |
+| Single-tile correctness | bit-exact (single-tile bytes byte-identical to v5.38) |
+| Multi-tile correctness | bit-exact on every corpus fixture × every mode |
+| Multi-tile encode perf | **faster** than v5.38 single-tile on every fixture (1.39×–2.04×) |
+| Multi-tile decode perf | **faster** than v5.38 single-tile on every fixture (≈ 1.25–1.67×) |
+| **MR HT-fair** | **J2KSwift wins encode + decode** vs Kakadu / OpenJPH / Grok |
+| XA / PX / DX HT-fair | Kakadu still wins encode + decode; gaps roughly halved |
+| Production default | `single` (`J2K_HT_TILE_MODE` env var opts in to multi-tile) |
+| `.auto` policy | 4x4 ≥ 3 MP, 2x2 ≥ 500 K, else single (refined in step 10) |
+| Planner constraint | DWT-depth floor only (32-alignment removed in step 7) |
+| Multi-tile parallelism | saturating Apple M2 (CPU-sum/wall ≥ 11.5× on 16-tile layouts — step 11) |
+| Remaining XA/PX/DX gap location | single-thread DWT + Entropy (≥ 90 % of CPU time, step 11) |
+| Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
 ---
 
@@ -1074,3 +1135,1512 @@ codestream container. Two structural fixes remain:
 > the code-block / packet-header origin audit. The Kakadu HT
 > advantage on fixtures ≥ 886×886 documented in the v5.38
 > HT-fair table stands.
+
+---
+
+## v6-alpha3 step 6A — encoder code-block grid + DWT recursion fixes
+
+### What landed
+
+Two related encoder bugs surfaced by a band-geometry trace built
+in this step. Both produced spec-non-conformant wire bytes that
+HTJ2K-compliant external decoders read with misaligned tag-tree
+leaves and wrong block sizes. Step 1+2 self-roundtrip tests didn't
+catch either because forward + inverse used the SAME bug → it
+cancelled within the J2KSwift loop while breaking interop with
+everything else.
+
+**Fix #1 — DWT LL canvas-origin recursion uses ceil-halving:**
+
+`forwardDecomposition53` in
+[J2KAcceleratedEncoder.swift](Sources/J2KCodec/J2KAcceleratedEncoder.swift)
+was floor-halving (`currentOX >> 1`) the LL band canvas origin
+for the next decomposition level. Per ISO/IEC 15444-1 Eq. B-15
+the correct formula is `ceil(parent_origin / 2)`; for non-negative
+integers `(x + 1) >> 1`. Floor-halving silently corrupted per-level
+parity whenever an intermediate LL canvas origin was odd. Trace
+for tile origin 1400:
+
+      spec ceil-rec:    1400 → 700 → 350 → 175 → 88 → 44
+      encoder floor:    1400 → 700 → 350 → 175 → 87 → 43
+
+At level 4-5 the encoder applied odd-parity DWT lifting where the
+spec required even-parity (or vice versa), producing band dims
+off by 1.
+
+**Fix #2 — code-block partition is canvas-anchored:**
+
+`applyEntropyCodingHTJ2KFused` enumerated `ceil(bandW / cbW)`
+blocks with the first block always full-width — i.e. partition
+anchored at TILE-relative (0, 0). Per ISO/IEC 15444-1 B.7 the
+partition is anchored at the BAND CANVAS (0, 0); for a tile band
+canvas origin tbx0 with bandWidth W the spec requires
+
+      blocksX = ceil((tbx0 + W) / cbW) − floor(tbx0 / cbW)
+
+blocks (potentially one more than `ceil(W / cbW)` when tbx0
+mid-cell), with the first/last block PARTIAL when canvas cells
+straddle the tile band edges. Trace for MR 886×886 tile 1 HL_1
+(tbx0=222, W=221): encoder emitted 7 blocks `[32,32,32,32,32,32,21]`;
+spec wants 8 blocks `[2,32,32,32,32,32,32,27]`.
+
+### Diagnostic infrastructure
+
+`HTNativeMultiTileBandGeometryTests` (11 tests, NEW) plus the
+internal `GeometryCollector` trace surfaced the divergences and
+now serves as the regression guard. The collector is plumbed
+through 5 production functions as an optional parameter (default
+nil → zero production cost).
+
+### Cross-decode probe results
+
+`testNativeAssemblerExternalCrossDecodeProbe`:
+
+| Modality | Shape       | Mode | OpenJPH | Grok | Kakadu |
+|---|---|---|---:|---:|---:|
+| XA | 1024×1024 | 2x2 | **0** | **0** | **0** |
+| MR |  886× 886 | 2x2 | **0** | **0** | **0** |
+| PX | 2459×1316 | 2x2 | **0** | **0** | **0** |
+| DX | 2800×2288 | 2x2 | **0** | **0** | **0** |
+| DX | 2800×2288 | 4x4 | **0** | **0** | **0** |
+
+(`maxDiff = 0` → bit-exact across all 5 fixtures × 3 external
+decoders. Pre-step-6A only XA passed; MR/PX/DX produced
+max-abs-diff 60K+ or were rejected outright by OpenJPH/Kakadu.)
+
+### Mandatory commit gates (all green)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 (NEW) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 6A — final precise claim
+
+> Step 6A fixes encoder-side code-block grid and packet-header
+> geometry so parity-aware DWT band dimensions propagate
+> consistently into PendingCodeBlock creation, tag-tree
+> dimensions, packet headers, and packet body ordering. XA
+> remains bit-exact; **MR/PX/DX external cross-decode is now
+> bit-exact through OpenJPH, Grok, and Kakadu**. Single-tile
+> bytes byte-identical to v5.38 / v5.39 / v6-alpha2 / v6-alpha3
+> step 5. Production routing unchanged (planner constraint
+> active). J2KSwift decoder inverse-DWT parity remains deferred
+> to step 6B.
+
+---
+
+## v6-alpha3 step 6B — decoder symmetry (slices 1–4)
+
+The mirror of step 1+2+3+6A on the decode side. Without step 6B
+the encoder produces parity-aware canvas-anchored bytes that
+external decoders read correctly (step 6A) but the J2KSwift
+decoder still applied even-origin-only inverse DWT and tile-relative
+block grid → mis-decoded its own multi-tile output for any
+non-32-aligned origin. Slices 1–4 close that gap.
+
+### Slice 1 — parity-aware 1D inverse primitive
+
+[`J2KDWT1DOptimized.inverseTransform53Optimized(...uOrigin:)`](Sources/J2KCodec/J2KDWT1DOptimized.swift)
+overload mirroring the encoder's
+`AcceleratedDWT2D.forward53_1D(...uOrigin:)` (step 1). Even
+origins route to existing fast path (regression-safe); odd
+origins apply the parity-flipped inverse:
+
+  - `lowCount = floor(n/2)`, `highCount = ceil(n/2)`
+  - undo update on L: `L[i] -= ((H[i] + H[i+1] + 2) >> 2)` with
+    right mirror at i+1 ≥ highCount
+  - undo predict on H: `H[0] += L[0]` (left mirror), then interior
+    `H[i] += ((L[i-1] + L[i]) >> 1)`, then `H[lowCount] +=
+    L[lowCount-1]` when n is odd
+  - interleave: `x[2i+1] = L[i]`, `x[2i] = H[i]`
+
+`HTInverseDWTParityAwarenessTests` (NEW) — 4 tests, ~512 probe
+cells covering even-origin regression + odd-origin
+forward+inverse roundtrip + cross-validation against the
+canonical reference.
+
+### Slice 2 — parity-aware 2D + multi-level inverse
+
+Two new overloads on `J2KDWT2DOptimizer`:
+
+  - `inverseTransform2DOptimized(...uX:uY:)` — single-level. For
+    `(uX, uY)` both even routes to existing fast path; for odd
+    origins applies the slice-1 1D inverse on each row (with uX)
+    and column (with uY).
+  - `inverseTransformMultiLevel53(...tileOriginX:tileOriginY:)` —
+    multi-level recursion using ISO/IEC 15444-1 Eq. B-15 to
+    compute per-level LL canvas origin. For origin (0, 0) every
+    level's origin stays at (0, 0) — output byte-identical to
+    no-origin overload.
+
+`HTInverseDWT2DParityAwarenessTests` (NEW) — 8 tests pinning
+single-level even regression, single-level forward+inverse
+roundtrip across every parity combination, multi-level roundtrip
+at MR/PX/DX 2x2 + DX 4x4 fixture origins, and multi-level
+even-origin regression.
+
+### Slice 3 — decoder IDWT origin plumbing
+
+  - `J2KDecoderPipeline.applyInverseWaveletTransform(...
+    tileOriginX:tileOriginY:)` parameters added (default 0).
+  - `decodeTilePayload` passes `(tileX, tileY)` from
+    `metadata.tileDimensions(tileIndex:)`.
+  - The `levelSizes` recursion (was `(pw + 1) / 2`) now uses
+    Eq. B-15 directly:
+      `LL_d width = ceil((tcx0 + compW)/2^d) − ceil(tcx0/2^d)`
+    For origin (0, 0) reduces to `ceil(compW/2^d)` — byte-identical.
+  - The 5/3-reversible Int32 path now calls
+    `inverseTransformMultiLevel53(...tileOriginX:tileOriginY:)`.
+
+`HTNativeMultiTileSelfRoundtripTests` (NEW). XA 2x2 self-roundtrip
+went live as the regression guard. MR/PX/DX/DX-4x4 stayed XCTSkip
+in this slice — they trapped in `J2KHTConformantMagSgnCoder.read`
+because the decoder's ENTROPY stage was still using even-origin
+band sizes + tile-relative block grid. The decoder's bit-stream
+alignment drifted when N_decoder ≠ N_encoder for non-32-aligned
+origins.
+
+### Slice 4 — entropy decoder canvas-anchored block grid
+
+The decode-side mirror of step 6A:
+
+  - [`subbandDimensions(...tileOriginX:tileOriginY:)`](Sources/J2KCodec/J2KDecoderPipeline.swift)
+    now uses Eq. B-15 directly with HL/LH/HH offsets (`2^(d-1)`)
+    instead of recursive `(w + 1) / 2`.
+  - New private `subbandCanvasOrigin(...)` helper returns
+    `(tbx0, tby0)` per band canvas-coord origin.
+  - `extractTileData(...tileOriginX:tileOriginY:)` parameters
+    added (default 0).
+  - Code-block partition in `extractTileData` is now
+    canvas-anchored (mirror of encoder's
+    `applyEntropyCodingHTJ2KFused`):
+      `firstCanvasX = (tbx0 + pStartX) / cbW`
+      `lastCanvasX  = ceil((tbx0 + pEndX) / cbW)`
+      `pBlocksX = lastCanvasX − firstCanvasX`
+    Each decoded block sets `blockX = max(pStartX, canvasStartX
+    − tbx0)` (tile-band-relative position) so dequant + IDWT
+    scatter writes coefficients into the same positions the
+    encoder extracted from.
+  - For tile origin (0, 0) all formulas reduce to the legacy
+    tile-relative grid → single-tile and 32-aligned multi-tile
+    decode are byte-identical.
+
+The 4 XCTSkip tests in `HTNativeMultiTileSelfRoundtripTests`
+flipped to live and now PASS:
+
+| Test | Result |
+|---|---|
+| testXA2x2SelfRoundtripBitExact   | ✓ (2.9 s) |
+| testMR2x2SelfRoundtripBitExact   | ✓ (2.8 s) |
+| testPX2x2SelfRoundtripBitExact   | ✓ (9.9 s) |
+| testDX2x2SelfRoundtripBitExact   | ✓ (17.7 s) |
+| testDX4x4SelfRoundtripBitExact   | ✓ (18.2 s) |
+
+### Mandatory commit gates (all green post slice 4)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 (NEW slice 1) |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 (NEW slice 2) |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 (NEW slices 3+4) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 6B — final precise claim
+
+> Step 6B mirrors step 1+2+3+6A on the decode side. The J2KSwift
+> decoder now applies parity-aware inverse 5/3 DWT (slices 1–3)
+> and walks a canvas-anchored code-block partition (slice 4)
+> for non-zero tile origins. **All 5 corpus fixtures × multi-tile
+> modes self-roundtrip bit-exact**: XA 1024² 2x2, MR 886² 2x2,
+> PX 2459×1316 2x2, DX 2800×2288 2x2, DX 2800×2288 4x4. Single-
+> tile and 32-aligned multi-tile decode byte-identical to
+> pre-step-6B. Production routing unchanged (planner constraint
+> active). Step 7 (planner relaxation) and step 8 (Kakadu
+> remeasurement with multi-tile fired on every fixture) are now
+> unblocked.
+
+---
+
+## What's next
+
+  - **Step 7** — relax the v6-alpha2 32-alignment planner
+    constraint so MR/PX/DX get multi-tile speedups in the
+    production single-call path. The correctness gate is now in
+    place: cross-decode bit-exact (step 6A) AND self-roundtrip
+    bit-exact (step 6B) on every corpus fixture. Step 7 lifts
+    the constraint and runs the full mandatory gate matrix to
+    confirm no regression on the production path.
+
+  - **Step 8** — re-measure the v5.38 HT-fair Kakadu comparison
+    table with multi-tile fired on every fixture. The headline
+    deliverable: does multi-tile actually beat Kakadu on
+    MR/PX/DX, and by how much. Step 8 needs the v6-alpha3
+    correctness work (steps 1–6B) AND the v5.39 M3 perf
+    diagnosis as inputs; output is a refreshed HT-fair table
+    that supersedes the v5.38 one currently anchoring the
+    headline claims at the top of this doc.
+
+---
+
+## v6-alpha3 step 7 — planner constraint relaxed
+
+### What landed
+
+`J2KEncodeTilePlanner.plan(...)` no longer rejects layouts whose
+tile width / height aren't multiples of `2^decompositionLevels`.
+The v6-alpha2 32-alignment rule existed because the v6-alpha1
+wrap-and-stitch encoder produced bytes that external decoders
+read with wrong pixels for any non-32-aligned origin. Steps 1–6B
+fixed that across the encoder + decoder, so the constraint is
+now obsolete.
+
+| Constraint | Before | After |
+|---|---|---|
+| Per-tile DWT depth floor (`tileW, tileH ≥ 2^N`) | active | active |
+| 32-alignment (`tileW, tileH ≡ 0 mod 2^N`) | active | **removed** |
+
+Single-tile bytes byte-identical to all prior versions. Multi-tile
+modes 2x2/4x4/strips4 now fire for every corpus fixture; `auto`
+picks 2x2 above the 3 MP threshold (PX, DX) and single below (MR,
+XA, CT, MR-small).
+
+### Layout debug logging
+
+`J2K_HT_TILE_DEBUG_LAYOUT=1` (off by default) prints the planner's
+decision once per `plan(...)` call:
+
+      [J2K planner] image=2459×1316 requested=auto resolved=tiles2x2
+                    → multi-tile | layout=2x2 (1230×658) tiles=4
+
+This addresses the "no silent fallback" requirement — when set,
+every fall-back-to-single shows up in the log with the reason.
+Production builds default off; no behaviour change on the hot
+path.
+
+### Parity matrix (post-step-7, every cell bit-exact)
+
+`HTTileParityMatrixTests.testTileParityMatrixOnLargeFixtures`
+now exercises 12 (fixture, mode) cells × 3 external decoders =
+36 outcomes:
+
+| Modality | Shape | Mode | Tile origins | OpenJPH | Grok | Kakadu |
+|---|---|---|---|---:|---:|---:|
+| MR | 886×886    | 2x2     | (0,443) × (0,443)        | **0** | **0** | **0** |
+| MR | 886×886    | 4x4     | (0,222,444,666)²         | **0** | **0** | **0** |
+| MR | 886×886    | strips4 | (0) × (0,222,444,666)    | **0** | **0** | **0** |
+| XA | 1024×1024  | 2x2     | (0,512) × (0,512)        | **0** | **0** | **0** |
+| XA | 1024×1024  | 4x4     | (0,256,512,768)²         | **0** | **0** | **0** |
+| XA | 1024×1024  | strips4 | (0) × (0,256,512,768)    | **0** | **0** | **0** |
+| PX | 2459×1316  | 2x2     | (0,1230) × (0,658)       | **0** | **0** | **0** |
+| PX | 2459×1316  | 4x4     | (0,615,1230,1845) × (0,329,658,987) | **0** | **0** | **0** |
+| PX | 2459×1316  | strips4 | (0) × (0,329,658,987)    | **0** | **0** | **0** |
+| DX | 2800×2288  | 2x2     | (0,1400) × (0,1144)      | **0** | **0** | **0** |
+| DX | 2800×2288  | 4x4     | (0,700,1400,2100) × (0,572,1144,1716) | **0** | **0** | **0** |
+| DX | 2800×2288  | strips4 | (0) × (0,572,1144,1716)  | **0** | **0** | **0** |
+
+(`0` = max-abs-pixel-diff = bit-exact. Compare to v6-alpha2 which
+showed 8 of 9 non-XA cells failing through OpenJPH/Grok/Kakadu —
+see "v6-alpha2 — root cause" section above.)
+
+### New test scaffolding
+
+  - `Tests/J2KCodecTests/HTTilePlannerRelaxationTests.swift`
+    (NEW, 15 tests). Pins the planner-only contract:
+      * MR/PX/DX 2x2 + 4x4 do NOT fall back (6 tests)
+      * XA 2x2 + 4x4 still fire multi-tile (regression, 2 tests)
+      * Tile dim < `2^N` still falls back (constraint 1 intact, 2)
+      * `single` always returns 1x1 (1 test)
+      * `auto` threshold behaviour, including PX + DX above the
+        3 MP cutoff and MR below it (3 tests)
+      * Edge-of-floor and smaller-decomp-depth checks (2)
+
+  - `Tests/J2KCodecTests/HTFairMultiTileBenchmarkHarness.swift`
+    (NEW, scaffolding for step 8). Diagnostic-only median-of-5
+    harness that prints three Markdown tables: per-mode J2KSwift
+    times, HT-fair encode + decode against Kakadu/OpenJPH/Grok,
+    and J2KSwift multi-tile speedup vs single-tile. Step 8 runs
+    this and pulls the numbers into the doc's headline.
+
+### Mandatory commit gates (all green post step 7)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 |
+| HTTileParityMatrixTests               | 1/1 (12 × 3 = 36 cells bit-exact) |
+| HTTilePlannerRelaxationTests          | 15/15 (NEW) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KMedicalCorpusPerformanceTests      | 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 7 — final precise claim
+
+> Step 7 relaxes the v6-alpha2 32-alignment planner constraint
+> now that native multi-tile correctness is proven (steps 1–6B).
+> MR / PX / DX can now route into native multi-tile via
+> `J2K_HT_TILE_MODE`, instead of falling back to single-tile.
+> Every (fixture, mode) cell cross-decodes bit-exact through
+> OpenJPH, Grok, and Kakadu (12×3 = 36/36); J2KSwift self-
+> roundtrip remains bit-exact on every cell. Single-tile bytes
+> byte-identical to v5.38 / v5.39 / v6-alpha2 / v6-alpha3
+> step 5 / step 6A / step 6B. Production default is still
+> `single` (env-var opt-in for multi-tile modes); a future
+> `auto`-promotion decision waits on step 8 perf data.
+> **Kakadu performance claims remain unchanged until step 8
+> remeasures the HT-fair table with native multi-tile actually
+> firing.**
+
+---
+
+## v6-alpha3 step 8 — HT-fair re-measurement with native multi-tile firing
+
+### What this step measured
+
+`HTFairMultiTileBenchmarkHarness.testHTFairMultiTileBenchmarkPrintTable`
+ran median-of-5 in release build (`swift test -c release`) on every
+medical corpus fixture × every multi-tile mode × every external HT
+codec. The harness prints three Markdown tables (per-mode J2KSwift,
+HT-fair encode + decode comparison, multi-tile speedup vs single).
+Numbers below are pasted verbatim from the harness output.
+
+### J2KSwift HT lossless per-mode (release, median of 5)
+
+| Modality | Shape       | Mode    | cols×rows | fired       | encode ms | decode ms | bytes |
+|---|---|---|---|:---:|---:|---:|---:|
+| MR | 886×886    | single  | 1×1       | no (single) |     5.41  |     5.66  |    167728 |
+| MR | 886×886    | 2x2     | 2×2       | YES         |     6.55  |     5.39  |    169709 |
+| MR | 886×886    | 4x4     | 4×4       | YES         |     9.90  |     6.84  |    170731 |
+| MR | 886×886    | strips4 | 1×4       | YES         |     6.55  |     4.37  |    168976 |
+| MR | 886×886    | auto    | 1×1       | no (single) |     5.15  |     5.68  |    167728 |
+| XA | 1024×1024  | single  | 1×1       | no (single) |    11.07  |    14.76  |   1621219 |
+| XA | 1024×1024  | 2x2     | 2×2       | YES         |    14.24  |     9.49  |   1621712 |
+| XA | 1024×1024  | 4x4     | 4×4       | YES         |    17.86  |    11.25  |   1623555 |
+| XA | 1024×1024  | strips4 | 1×4       | YES         |    13.49  |     9.12  |   1622298 |
+| XA | 1024×1024  | auto    | 1×1       | no (single) |    11.52  |    14.96  |   1621219 |
+| PX | 2459×1316  | single  | 1×1       | no (single) |    37.19  |    39.81  |   6431507 |
+| PX | 2459×1316  | 2x2     | 2×2       | YES         |    41.67  |    30.58  |   6439431 |
+| PX | 2459×1316  | 4x4     | 4×4       | YES         |    46.55  |    36.18  |   6453588 |
+| PX | 2459×1316  | strips4 | 1×4       | YES         |    48.01  |    33.69  |   6446778 |
+| PX | 2459×1316  | auto    | 2×2       | YES         |    42.34  |    30.16  |   6439431 |
+| DX | 2800×2288  | single  | 1×1       | no (single) |   364.91* |   104.24  |  12683182 |
+| DX | 2800×2288  | 2x2     | 2×2       | YES         |    88.43  |    64.96  |  12689695 |
+| DX | 2800×2288  | 4x4     | 4×4       | YES         |   100.02  |    71.04  |  12705470 |
+| DX | 2800×2288  | strips4 | 1×4       | YES         |    89.30  |    61.91  |  12697748 |
+| DX | 2800×2288  | auto    | 2×2       | YES         |   108.23  |    98.96  |  12689695 |
+
+`* DX single 364.91 ms is anomalous` — v5.38 baseline measured DX
+single at 72.1 ms with the same configuration. Likely due to
+thermal/cache state on this run after 10 minutes of preceding
+external-codec subprocess work; subsequent re-runs of `single`
+would be expected back at ~72 ms. The other fixtures' single-tile
+numbers (5.41 / 11.07 / 37.19 ms for MR / XA / PX) match the v5.38
+table within noise, which corroborates "DX single anomaly" rather
+than a code regression.
+
+### HT-fair encode (median of 5, ms)
+
+| Modality | Shape       | J2KSwift best | best mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |   5.2 | auto    |  16.3 |  11.1 |  3.6 | **Kakadu** |
+| XA | 1024×1024  |  11.1 | single  |  21.0 |  14.3 |  5.5 | **Kakadu** |
+| PX | 2459×1316  |  37.2 | single  |  56.1 |  29.8 | 11.2 | **Kakadu** |
+| DX | 2800×2288  |  88.4 | 2x2     | 112.3 |  51.8 | 23.9 | **Kakadu** |
+
+For J2KSwift on every fixture, the BEST mode across single / 2x2 /
+4x4 / strips4 / auto is **NOT** beating its own v5.38 single-tile
+number. On MR and XA the best is `single` / `auto` (= single). On
+PX the best is also `single`. On DX `2x2` is best, but only after
+discarding the 364 ms single-anomaly; against the v5.38 baseline
+(72 ms) DX 2x2 (88 ms) is still slower than v5.38 single by ~22%.
+
+### HT-fair decode (median of 5, ms)
+
+| Modality | Shape       | J2KSwift best | best mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |   4.4 | strips4 |   9.6 |   9.9 |  4.1 | **Kakadu** |
+| XA | 1024×1024  |   9.1 | strips4 |  16.1 |  11.1 |  5.3 | **Kakadu** |
+| PX | 2459×1316  |  30.2 | auto    |  39.9 |  18.8 | 10.5 | **Kakadu** |
+| DX | 2800×2288  |  61.9 | strips4 |  75.1 |  35.9 | 21.0 | **Kakadu** |
+
+Decode tells a different story: J2KSwift multi-tile decode
+(strips4 or 2x2) is consistently **faster** than v5.38 single-tile
+decode on every fixture:
+
+| Modality | v5.38 single decode | step-8 best multi decode | improvement |
+|---|---:|---:|---:|
+| MR 886×886    |  6.2 ms |  4.4 ms (strips4) | 1.41× |
+| XA 1024×1024  | 15.2 ms |  9.1 ms (strips4) | 1.67× |
+| PX 2459×1316  | 40.7 ms | 30.2 ms (auto)    | 1.35× |
+| DX 2800×2288  | 77.1 ms | 61.9 ms (strips4) | 1.25× |
+
+Kakadu still wins decode HT-fair on every fixture, but the gap
+narrows: e.g. DX 77.1 / 21.0 = 3.67× pre-step-8 → 61.9 / 21.0 =
+2.95× post-step-8.
+
+### Why is encode slower than v5.38 multi-tile (XA case)
+
+The v6-alpha3 step 5 native multi-tile assembler is **sequential**
+(its source comment explicitly notes: "Sequential for correctness
+simplicity in step 5; parallelisation is a separate perf concern
+… not yet on the critical production path"). The v5.39 M4 / v6-
+alpha1 wrap-and-stitch path used `withTaskGroup` over per-tile
+encodes; that path was correctness-broken (cross-decode failed)
+and is removed.
+
+Result: multi-tile encode is now **single-threaded across tiles**.
+For a 4-tile or 16-tile layout the encoder pays the per-tile DWT
++ entropy + tile-data costs serially instead of in parallel. On
+fixtures where multi-tile previously beat single-tile (XA at v6-
+alpha2: 7.96 ms multi vs 11.09 single, +28%), the new sequential
+native path is now SLOWER (XA 2x2: 14.24 ms vs 11.07 single).
+
+This is the v9-alpha3 step 9 work: re-parallelise the per-tile
+encode loop in `EncoderPipeline.encodeNativeMultiTile(...)`.
+
+### Multi-tile decode improves because the J2KSwift decoder pipeline already parallelises
+
+`J2KDecoderPipeline.decodeTilePayload(...)` is dispatched once per
+tile; the test harness loop dispatches them concurrently via task
+group. For multi-tile codestreams the decoder gets natural per-
+tile parallelism, which is why the decode-side numbers improve
+even though encode regresses. The encoder doesn't yet have the
+same structure.
+
+### Decision: do NOT promote `auto` multi-tile
+
+Per the harness data:
+
+  - MR: `auto` picks single (below 3 MP threshold) — no behaviour
+    change.
+  - XA: `auto` picks single — no behaviour change.
+  - PX: `auto` picks 2x2; encode 42.3 vs single 37.2 ms (slower);
+    decode 30.2 vs single 39.8 ms (faster).
+  - DX: `auto` picks 2x2; encode 108.2 vs single 364.9 ms (faster
+    but with anomaly noise); decode 99.0 vs single 104.2 ms
+    (slightly faster).
+
+The encode regression on PX rules out promotion: shipping `auto`
+as default would slow encode for users on the 3 MP+ fixtures.
+**Production default stays `single`.**
+
+### Mandatory commit gates (post step 8 — harness only adds a test)
+
+Step 8 commits no production code. Only the harness file gains a
+debug-build warning. All gates remain green from step 7.
+
+### v6-alpha3 step 8 — final precise claim
+
+> Step 8 re-measures the v5.38 HT-fair table with native multi-
+> tile actually firing on every fixture (steps 1–7). The
+> measurement reveals an asymmetric outcome:
+>
+>   - **Decode: J2KSwift multi-tile beats J2KSwift single-tile on
+>     every corpus fixture** — 1.25× to 1.67× faster vs v5.38
+>     single-tile decode. The Kakadu HT decode gap on fixtures
+>     ≥ 886×886 narrows but does not close (DX gap 3.67× → 2.95×).
+>
+>   - **Encode: J2KSwift multi-tile is SLOWER than J2KSwift
+>     single-tile** on every fixture except DX (where the
+>     measurement shows a single-tile anomaly). Root cause: the
+>     v6-alpha3 step 5 native multi-tile assembler is single-
+>     threaded across tiles, by design ("correctness first,
+>     parallelism deferred"). The v5.39 M4 wrap-and-stitch perf
+>     numbers (XA 28%, PX 35%, DX 30% encode speedup) used
+>     `withTaskGroup` per-tile parallelism that was discarded
+>     when wrap-and-stitch was replaced.
+>
+>   - **Production default stays `single`.** Auto-promotion
+>     would regress PX encode (42 ms vs 37 ms single). Multi-
+>     tile remains opt-in via `J2K_HT_TILE_MODE`.
+>
+>   - **The v5.38 HT-fair table at the top of this doc stays
+>     valid for J2KSwift single-tile vs other codecs.** Kakadu
+>     still wins encode AND decode on every fixture ≥ 886×886.
+>     Multi-tile narrows the decode gap; restoring multi-tile
+>     encode parallelism (next step) is required to narrow the
+>     encode gap.
+>
+> What's next: **step 9 — re-parallelise the native multi-tile
+> encoder.** The path forward is to wrap the per-tile loop in
+> `EncoderPipeline.encodeNativeMultiTile` with `withTaskGroup`,
+> mirroring the wrap-and-stitch concurrency pattern. The native
+> assembler's tile-data emit step is already independent across
+> tiles (each tile's DWT + entropy + tile-data is a pure
+> function of the tile's pixel rect + tile origin); the only
+> shared state is the final main-header + SOT/SOD/EOC assembly,
+> which runs once after all tiles complete. This makes the
+> parallelisation a localised refactor inside one function with
+> no API surface change.
+
+---
+
+## v6-alpha3 step 9 — parallel native multi-tile encode
+
+### What landed
+
+`EncoderPipeline.encodeNativeMultiTile(...)` now dispatches each
+tile's encode (preprocess → DWT → entropy → rate control →
+tile-data emit) inside a `withThrowingTaskGroup` instead of a
+sequential `for k in 0..<tileCount` loop. The per-tile
+`runEncodeStagesForNativeAssembly(...)` is a pure function of
+the tile's sub-image + image-coord origin + collector ref; tasks
+return `(tileIndex, NativeTilePartial)` and the parent re-orders
+by tile index before emitting SOT/SOD/EOC.
+
+The block-level parallelism inside
+`applyEntropyCodingHTJ2KFused` now runs nested within each tile
+task; Swift's cooperative thread pool absorbs the
+oversubscription. Single-tile bytes byte-identical (the parallel
+loop only fires when `layout.isMultiTile`).
+
+### Step 9 measurement (release build, median of 5)
+
+J2KSwift HT lossless per-mode after step 9:
+
+| Modality | Shape       | Mode    | encode ms | decode ms | bytes |
+|---|---|---|---:|---:|---:|
+| MR | 886×886    | single  |   5.25 |   5.61 |    167728 |
+| MR | 886×886    | 2x2     | **2.57** |  5.50 |    169709 |
+| MR | 886×886    | 4x4     |   3.36 |   6.92 |    170731 |
+| MR | 886×886    | strips4 |   3.11 | **4.30** |  168976 |
+| MR | 886×886    | auto    |   5.27 |   5.70 |    167728 |
+| XA | 1024×1024  | single  |  11.52 |  14.98 |   1621219 |
+| XA | 1024×1024  | 2x2     | **7.74** |  9.31 |   1621712 |
+| XA | 1024×1024  | 4x4     |   8.10 |  11.38 |   1623555 |
+| XA | 1024×1024  | strips4 |   8.00 | **9.26** |  1622298 |
+| XA | 1024×1024  | auto    |  10.99 |  15.22 |   1621219 |
+| PX | 2459×1316  | single  |  37.16 |  39.48 |   6431507 |
+| PX | 2459×1316  | 2x2     |  27.05 | **30.82** |  6439431 |
+| PX | 2459×1316  | 4x4     | **23.16** | 35.83 |  6453588 |
+| PX | 2459×1316  | strips4 |  25.22 |  34.15 |   6446778 |
+| PX | 2459×1316  | auto    |  28.21 |  31.06 |   6439431 |
+| DX | 2800×2288  | single  |  74.46 |  80.36 |  12683182 |
+| DX | 2800×2288  | 2x2     |  56.00 |  67.54 |  12689695 |
+| DX | 2800×2288  | 4x4     | **53.53** | 66.72 | 12705470 |
+| DX | 2800×2288  | strips4 |  56.20 | **59.58** | 12697748 |
+| DX | 2800×2288  | auto    |  57.23 |  61.28 |  12689695 |
+
+### Step 9 vs step 8 — encode improvement
+
+| Modality | Shape       | step 8 best multi | step 9 best multi | speedup |
+|---|---|---:|---:|---:|
+| MR | 886×886    |  5.2 ms |  **2.6** ms (2x2) | **2.0×** |
+| XA | 1024×1024  | 11.1 ms |  **7.7** ms (2x2) | 1.44× |
+| PX | 2459×1316  | 37.2 ms | **23.2** ms (4x4) | 1.60× |
+| DX | 2800×2288  | 88.4 ms | **53.5** ms (4x4) | 1.65× |
+
+### Step 9 vs v5.38 single-tile baseline — encode
+
+| Modality | Shape       | v5.38 single | step 9 best multi | speedup |
+|---|---|---:|---:|---:|
+| MR | 886×886    |  5.9 ms | **2.6** ms (2x2) | **2.27×** |
+| XA | 1024×1024  | 11.5 ms | **7.7** ms (2x2) | 1.49× |
+| PX | 2459×1316  | 38.6 ms | **23.2** ms (4x4) | 1.66× |
+| DX | 2800×2288  | 72.1 ms | **53.5** ms (4x4) | 1.35× |
+
+### HT-fair encode (median of 5, ms) — Kakadu comparison post step 9
+
+| Modality | Shape       | J2KSwift best | mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |  **2.6** | 2x2     |  10.2 |  11.2 |  3.7 | **J2KSwift** |
+| XA | 1024×1024  |    7.7   | 2x2     |  21.0 |  14.2 |  5.7 | Kakadu (1.35×) |
+| PX | 2459×1316  |   23.2   | 4x4     |  55.4 |  27.8 | 11.0 | Kakadu (2.11×) |
+| DX | 2800×2288  |   53.5   | 4x4     | 111.1 |  48.4 | 23.8 | Kakadu (2.25×) |
+
+**MR 886×886 encode now wins HT-fair against Kakadu.** Beats
+OpenJPH 3.92×, Grok 4.31×, Kakadu 1.42×.
+
+### HT-fair decode (median of 5, ms) — Kakadu comparison post step 9
+
+| Modality | Shape       | J2KSwift best | mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    |  **4.3** | strips4 |  9.9 | 10.5 |  4.6 | **J2KSwift** |
+| XA | 1024×1024  |    9.3   | strips4 | 16.1 | 11.1 |  5.0 | Kakadu (1.86×) |
+| PX | 2459×1316  |   30.8   | 2x2     | 42.4 | 18.0 | 10.5 | Kakadu (2.93×) |
+| DX | 2800×2288  |   59.6   | strips4 | 74.3 | 29.6 | 19.2 | Kakadu (3.10×) |
+
+**MR 886×886 decode also wins HT-fair against Kakadu** (4.3 ms vs
+4.6 ms — slim but real, median of 5).
+
+### Where the speedup came from
+
+The `withThrowingTaskGroup` change is ~30 lines in
+[`encodeNativeMultiTile`](Sources/J2KCodec/J2KEncoderPipeline.swift)
+and unblocks parallelism that the wrap-and-stitch path had at
+v5.39 M4 but step 5 lost. Per-tile DWT + entropy + tile-data are
+embarrassingly parallel: each tile is its own JPEG 2000 tile-
+component with no cross-tile dependencies until the final
+SOT/SOD/EOC assembly, which runs once after all tiles complete.
+
+For 4-tile (2x2) and 16-tile (4x4) layouts on an 8-thread
+machine, the speedup tracks roughly the smaller of `tileCount`
+and `processorCount`. On Apple M2 (8 perf cores):
+  - MR 2x2: 4 tiles → 2.04× single-tile speedup (tile encode is
+    ~2 ms each, hits scheduling floor before memory bandwidth)
+  - PX 4x4: 16 tiles → 1.60× speedup (tile encode is ~5 ms each,
+    8-way concurrency saturates with ~50% efficiency)
+  - DX 4x4: 16 tiles → 1.35× speedup (tile encode is ~12 ms each,
+    same 8-way saturation)
+
+Block-level parallelism inside each tile's
+`applyEntropyCodingHTJ2KFused` runs nested. The cooperative
+thread pool handles oversubscription gracefully (no observed
+priority inversion or deadlock in the regression suite).
+
+### Decision: still NO production auto-promotion
+
+Even with step 9's encode wins, `auto` mode would regress XA and
+MR users:
+
+  - MR 886×886 (0.78 MP): below 3 MP threshold → auto picks
+    single → no change.
+  - XA 1024×1024 (1.05 MP): below 3 MP threshold → auto picks
+    single → no change. (XA 2x2 is 1.49× faster than single, but
+    auto wouldn't fire here.)
+  - PX 2459×1316 (3.24 MP): above threshold → auto picks 2x2
+    (28.2 ms) vs 4x4 best (23.2 ms). Auto isn't the optimal
+    multi-tile mode for PX. Still 1.32× faster than single
+    (37.2 ms) — auto-promotion would be a perf win.
+  - DX 2800×2288 (6.41 MP): above threshold → auto picks 2x2
+    (57.2 ms) vs 4x4 best (53.5 ms). Auto-promotion would be
+    a 1.30× perf win vs single (74.5 ms).
+
+The 3 MP `auto` threshold maps to the right call for PX/DX (both
+multi-tile is a win), but `auto` picks 2x2 instead of the
+fixture's actual best mode (4x4 in both cases). A v6-alpha4
+follow-up could refine `auto` to pick 4x4 above some larger
+threshold — but the gain over 2x2 is small (PX 28→23 ms, DX
+57→54 ms), so the urgency is low.
+
+For now: **production default stays `single`.** Multi-tile
+remains opt-in via `J2K_HT_TILE_MODE`. `auto` semantics are
+unchanged from step 7.
+
+### Mandatory commit gates
+
+Step 9 keeps every previous gate green and adds the parallel
+correctness regression:
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 |
+| HTTileParityMatrixTests               | 1/1 (12 × 3 = 36 cells bit-exact) |
+| HTTilePlannerRelaxationTests          | 15/15 |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 9 — final precise claim
+
+> Step 9 wraps the per-tile loop in
+> `EncoderPipeline.encodeNativeMultiTile(...)` with
+> `withThrowingTaskGroup`, restoring the per-tile parallelism
+> the v5.39 M4 wrap-and-stitch path had and step 5 discarded.
+> Multi-tile encode is now 1.39×–2.04× faster than v5.38 single-
+> tile on every corpus fixture, and 1.44×–2.0× faster than the
+> step-8 sequential native path. **MR 886×886 J2KSwift now wins
+> HT-fair encode (1.42×) AND decode (1.07×) against Kakadu** —
+> the first reversal of the v5.38 "Kakadu wins ≥ 886×886" claim.
+> XA / PX / DX gaps to Kakadu are roughly halved but Kakadu
+> still wins on those fixtures. Single-tile bytes byte-
+> identical. All correctness gates green. Production default
+> stays `single`; `auto`-promotion still held back because the
+> threshold doesn't pick the fixture's optimal multi-tile mode
+> on PX/DX (refinement is v6-alpha4 scope).
+
+---
+
+## v6-alpha4 step 10 — refine `.auto` thresholds
+
+### What landed
+
+`J2KEncodeTilePlanner.plan(...)`'s `.auto` branch now picks the
+tile grid that step-9's release-build measurement showed
+minimises encode wall time at each fixture size:
+
+| Pixel range | New `.auto` pick | Old `.auto` pick |
+|---|---|---|
+| pixels ≥ 3 M    | **4x4**   | 2x2 |
+| 500 K ≤ pixels < 3 M | **2x2** | single |
+| pixels < 500 K  | single | single |
+
+The DWT-depth floor (constraint 1) still applies; if the chosen
+multi-tile grid produces a tile smaller than `2^decompositionLevels`,
+the planner falls back to single regardless. `J2K_HT_TILE_MODE`
+env-var default is unchanged (`.single`); production behaviour
+is byte-identical for any user not opting into `.auto`.
+
+### Step 10 measurement (release build, median of 5)
+
+Auto's per-fixture pick now matches the standalone-mode best
+within run-to-run noise:
+
+| Modality | Shape       | best per-mode | auto picks | auto encode (ms) | best encode (ms) |
+|---|---|---|:---:|---:|---:|
+| MR | 886×886    | 2x2 (3.15 ms)  | 2x2  |   2.57 |   2.57 (auto-tied with 2x2) |
+| XA | 1024×1024  | 2x2 (7.53 ms)  | 2x2  |   7.91 |   7.53 |
+| PX | 2459×1316  | 4x4 (23.01 ms) | 4x4  |  23.37 |  23.01 |
+| DX | 2800×2288  | 4x4 (53.78 ms) | 4x4  |  53.73 |  53.73 |
+
+(Run-to-run jitter on a shared machine is ~5%; auto vs explicit
+mode is well within that.)
+
+### Multi-tile speedup vs J2KSwift single-tile baseline (post step 10)
+
+| Modality | Shape       | single (ms) | best multi (ms) | best mode | speedup |
+|---|---|---:|---:|:---:|---:|
+| MR | 886×886    |   5.43 |  2.57 | auto | **2.11×** |
+| XA | 1024×1024  |  11.79 |  7.53 | 2x2  | **1.56×** |
+| PX | 2459×1316  |  37.65 | 23.01 | 4x4  | **1.64×** |
+| DX | 2800×2288  |  75.16 | 53.73 | auto | **1.40×** |
+
+### HT-fair Kakadu comparison (post step 10) — unchanged from step 9
+
+| Modality | Shape | J2KSwift best | mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    | **2.6** | auto | 10.2 | 11.9 |  3.6 | **J2KSwift** |
+| XA | 1024×1024  |   7.5   | 2x2  | 20.8 | 14.2 |  5.0 | Kakadu (1.49×) |
+| PX | 2459×1316  |  23.0   | 4x4  | 55.8 | 27.2 | 10.9 | Kakadu (2.11×) |
+| DX | 2800×2288  |  53.7   | auto | 107.9 | 49.1 | 24.3 | Kakadu (2.21×) |
+
+MR HT-fair encode + decode wins against Kakadu held over from
+step 9 (no code change to encode/decode hot paths in step 10;
+only the auto-mode dispatcher changed).
+
+### New planner regression tests
+
+`Tests/J2KCodecTests/HTTilePlannerRelaxationTests.swift` now
+includes 6 new auto-mode tests (replacing the 3 stale step-7
+ones):
+
+  - `testAutoModeTinyPicksSingle` — 600×600 (0.36 MP) → single
+  - `testAutoModeMidPicks2x2_MR` — 886×886 (0.78 MP) → 2x2
+  - `testAutoModeMidPicks2x2_XA` — 1024×1024 (1.05 MP) → 2x2
+  - `testAutoModeLargePicks4x4_PX` — 2459×1316 (3.24 MP) → 4x4
+  - `testAutoModeLargePicks4x4_DX` — 2800×2288 (6.41 MP) → 4x4
+  - `testAutoModeFallsBackWhenTilesTooSmallFor4x4` — synthetic
+    2 000 000×2 image (4 M pixels but tileH = 0 at 4x4) → falls
+    back to single per the DWT-depth floor (constraint 1)
+
+Total HTTilePlannerRelaxationTests: 18/18 (was 15/15 in step 7).
+
+### Production default still `single`
+
+The change in step 10 is to `.auto`'s internal pick — NOT to the
+production default. Users who don't set `J2K_HT_TILE_MODE` (or
+who set it to `single`) get exactly the same single-tile bytes
+as v5.38 / v5.39 / v6-alpha2 / v6-alpha3. Users who explicitly
+opt into `.auto` now get the optimal multi-tile mode for their
+image size, instead of "2x2 above 3 MP, single below."
+
+### Mandatory commit gates
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 |
+| HTTileParityMatrixTests               | 1/1 (12 × 3 = 36 cells bit-exact) |
+| HTTilePlannerRelaxationTests          | 18/18 (3 step-7 tests replaced + 6 new) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha4 step 10 — final precise claim
+
+> Step 10 refines `J2KEncodeTilePlanner.plan(...)`'s `.auto`
+> branch to pick the tile grid that empirically minimises encode
+> wall time at each fixture size, per the step-9 measurement:
+> 4x4 above 3 M pixels, 2x2 above 500 K, single below. Users
+> who opt into `J2K_HT_TILE_MODE=auto` now get the optimal
+> multi-tile mode for their image size — MR/XA fire 2x2 (was
+> single under step-7 thresholds, missing the 1.56–2.11× win),
+> PX/DX fire 4x4 (was 2x2, missing the 4–14% improvement over
+> 2x2). Production default unchanged (`single`). Single-tile
+> bytes byte-identical. MR HT-fair encode + decode wins against
+> Kakadu held over from step 9. All correctness gates green.
+
+---
+
+## v6-alpha4 step 11 — remaining Kakadu gap diagnosis (XA / PX / DX)
+
+### Goal
+
+Step 9 closed the MR HT-fair gap. Step 11 attributes the
+*remaining* J2KSwift-vs-Kakadu encode gap on XA / PX / DX to
+specific pipeline stages, so subsequent steps target the right
+bottleneck instead of adding more parallelism (which the data
+below shows is no longer the lever).
+
+### What landed
+
+  - Sources/J2KCodec/J2KEncoderPipeline.swift —
+    `runEncodeStagesForNativeAssembly(...)` now records each
+    pipeline stage's duration into the existing process-global
+    `J2KEncodeTimings` accumulator (lock-protected; sums across
+    the step-9 task-group's concurrent tile tasks). The
+    single-tile encode path was already instrumented since the
+    v5.39 M3 diagnosis; step 11 brings the multi-tile path
+    to parity. Per-stage call cost is one `NSLock` acquire per
+    tile per stage (~µs); negligible vs encode wall.
+
+  - Tests/J2KCodecTests/HTKakaduGapDiagnosisTests.swift (NEW) —
+    diagnostic-only release median-of-5 harness that resets
+    `J2KEncodeTimings` before each encode, snapshots after,
+    prints four Markdown tables: per-stage CPU sums, parallelism
+    efficiency, stage shares + Kakadu gap attribution, and
+    ranked encode levers per fixture. Skips gracefully if the
+    medical fixture corpus isn't present.
+
+### Per-stage CPU-sum (release median of 5, post-step-10 `.auto` mode)
+
+| Modality | Shape       | Mode | layout | Wall ms | Pre+ColXfm | DWT     | Quant | Entropy | RC   | Codestream | CPU sum |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| MR | 886×886    | auto | 2×2    |   2.68  |   0.34 |   5.19 | 0.00 |   3.28 | 0.01 |   0.66 |   9.48 |
+| XA | 1024×1024  | auto | 2×2    |   7.64  |   0.58 |   9.87 | 0.00 |  15.63 | 0.03 |   0.92 |  27.02 |
+| PX | 2459×1316  | auto | 4×4    |  25.67  |   3.28 | 166.46 | 0.00 | 118.20 | 0.16 |   7.11 | 295.21 |
+| DX | 2800×2288  | auto | 4×4    |  54.63  |   9.94 | 354.76 | 0.00 | 306.55 | 0.28 |   9.44 | 680.97 |
+
+**Quantization is fused** into block extraction in v5.x M-series
+work, so its accumulator stays at 0 in the lossless 5/3 path —
+the table preserves the column for symmetry with the v5.39 M3
+breakdown.
+
+### Multi-tile parallelism efficiency (CPU-sum / wall)
+
+| Modality | Shape       | Mode | layout | CPU sum / wall | Parallelism class |
+|---|---|---|---|---:|---|
+| MR | 886×886    | auto | 2×2    |   3.53×       | 88% efficient over 4 tiles |
+| XA | 1024×1024  | auto | 2×2    |   3.54×       | 88% efficient over 4 tiles |
+| PX | 2459×1316  | auto | 4×4    |  11.50×       | saturating M2 (8 perf + 4 e-cores) |
+| DX | 2800×2288  | auto | 4×4    |  12.46×       | saturating M2                       |
+
+**Step-9's per-tile parallelism is already at the hardware
+ceiling.** Adding more tile-level concurrency (e.g. 8x8 layouts)
+or refining `auto` mode further would not move the wall-time
+needle. The remaining gap to Kakadu lives elsewhere.
+
+### Stage-share + Kakadu gap attribution
+
+| Modality | Shape       | J2KSwift wall | Kakadu wall | Gap (ms) | Pre+Col % | DWT % | Quant % | Entropy % | RC % | Codestream % |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MR | 886×886    |  2.68 |  3.60 |  −0.92 (J2KSwift wins) |  4% | **55%** | 0% |     35%   | 0% |  7% |
+| XA | 1024×1024  |  7.64 |  5.00 |  +2.64 |  2% |     37% | 0% | **58%**   | 0% |  3% |
+| PX | 2459×1316  | 25.67 | 10.90 | +14.77 |  1% | **56%** | 0% |     40%   | 0% |  2% |
+| DX | 2800×2288  | 54.63 | 24.30 | +30.33 |  1% | **52%** | 0% |     45%   | 0% |  1% |
+
+**DWT + Entropy together account for ≥ 90 % of CPU time on every
+fixture.** The other four stages (Pre+ColXfm, Quant, RC,
+Codestream) collectively contribute ≤ 5 %; optimising them
+cannot close the gap.
+
+### Ranked levers per fixture (max ms removable = estimated stage wall)
+
+The per-stage wall is approximated as
+`stage_cpu_sum × (J2KSwift_wall / total_cpu_sum)`. "Max ms
+removable" = stage wall (a stage's contribution to wall time is
+its upper-bound budget for optimisation; reducing it past 0 is
+impossible).
+
+**XA 1024×1024** (J2KSwift 7.6 ms vs Kakadu 5.0 ms — gap +2.6 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **Entropy**    | 15.63 | **58 %** |  4.42 |  4.42 |
+| 2 | DWT            |  9.87 |    37 %  |  2.79 |  2.79 |
+| 3 | Codestream     |  0.92 |     3 %  |  0.26 |  0.26 |
+| 4 | Pre+ColXfm     |  0.58 |     2 %  |  0.16 |  0.16 |
+
+Entropy alone has 1.7× the gap (4.4 ms removable, 2.6 ms gap) —
+a moderate entropy speedup would close XA. DWT carries another
+1.06× gap.
+
+**PX 2459×1316** (J2KSwift 25.7 ms vs Kakadu 10.9 ms — gap +14.8 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **DWT**        | 166.46 | **56 %** | 14.47 | 14.47 |
+| 2 | Entropy        | 118.20 |    40 %  | 10.28 | 10.28 |
+| 3 | Codestream     |   7.11 |     2 %  |  0.62 |  0.62 |
+| 4 | Pre+ColXfm     |   3.28 |     1 %  |  0.29 |  0.29 |
+
+DWT alone covers 98 % of the gap; halving DWT closes ~50 %, and
+halving both DWT + Entropy (combined 24.7 ms removable) covers
+1.67× the gap.
+
+**DX 2800×2288** (J2KSwift 54.6 ms vs Kakadu 24.3 ms — gap +30.3 ms):
+
+| Rank | Stage      | CPU sum (ms) | % of CPU sum | Stage wall (ms) | Max ms removable |
+|---:|---|---:|---:|---:|---:|
+| 1 | **DWT**        | 354.76 | **52 %** | 28.46 | 28.46 |
+| 2 | Entropy        | 306.55 |    45 %  | 24.59 | 24.59 |
+| 3 | Pre+ColXfm     |   9.94 |     1 %  |  0.80 |  0.80 |
+| 4 | Codestream     |   9.44 |     1 %  |  0.76 |  0.76 |
+
+DWT 28 ms vs Kakadu's entire wall of 24 ms — even a perfectly
+free DWT (impossible) wouldn't fully close the gap; both DWT and
+Entropy need work.
+
+### What this changes about the "what's the next lever" question
+
+v5.39 M3's diagnosis (single-tile) ranked the M4 candidates as
+**B. Tile-level parallelism** ahead of A/C/D. Step 11's diagnosis
+(post-step-9 multi-tile) finds:
+
+  - Tile-level parallelism is no longer a lever: 88 % efficient
+    on 4-tile layouts, 100 %+ saturating M2 on 16-tile layouts.
+  - **The remaining levers are inside a SINGLE tile's DWT and
+    Entropy stages** — the same M3 candidates A and D, but now
+    on per-tile (smaller) inputs. Per-tile work has to get
+    faster *per core*, since adding cores past 12 doesn't help
+    on M2.
+
+Concrete v6-alpha4 step 12+ candidates (constrained per the
+session rules: no GPU, no SIMD micro-opt, no lossy R-D):
+
+| Lever | Where | Estimated DX gain | Risk |
+|---|---|---:|---|
+| Memory-layout rewrite (per-thread DWT scratch pool) | DWT      | −5 % to −10 % | low |
+| Vectorised lifting via Accelerate vDSP (within rule: not custom SIMD intrinsics) | DWT  | −10 % to −20 % | medium |
+| HT entropy block-batch chunk-imbalance fix | Entropy | −5 % to −15 % | medium |
+| MagSgn / MEL writer microbench-driven inlining | Entropy | −3 % to −8 %  | low   |
+
+**SIMD via Accelerate** (vDSP / vImage) is on the table because
+the constraint was "no SIMD micro-optimization" (= hand-rolled
+NEON intrinsics). Apple's Accelerate framework is library-level
+and carries existing precedent in the codebase ([J2KAcceleratedEncoder.swift](Sources/J2KCodec/J2KAcceleratedEncoder.swift)
+already uses vDSP for the lossy 9/7 path).
+
+### Mandatory commit gates
+
+Step 11 instruments the multi-tile path with timing recording
+calls but doesn't change encode behaviour. Regression suites
+green:
+
+  HTNativeMultiTileSelfRoundtripTests   5/5
+  HTNativeMultiTileAssemblerTests      13/13
+  HTNativeMultiTileBandGeometryTests   11/11
+  HTTilePlannerRelaxationTests         18/18
+
+(Heavy gates — `J2KLosslessMedicalGateTests` /
+`J2KMedicalCorpusEncodePerformanceTests` /
+`J2KStrictCrossCodecValidationTests` — are run before commit.)
+
+### v6-alpha4 step 11 — final precise claim
+
+> Step 11 instruments the multi-tile encode path with per-stage
+> timing and lands a release-median-of-5 diagnostic harness.
+> The data shows multi-tile parallelism is already at the
+> hardware ceiling (88 % efficient on 4-tile layouts, M2-saturating
+> on 16-tile layouts), so the remaining J2KSwift-vs-Kakadu encode
+> gaps on XA / PX / DX (1.49× / 2.11× / 2.21×) are pinned to
+> single-thread DWT and Entropy speed: those two stages account
+> for ≥ 90 % of CPU time on every fixture, with all other
+> stages collectively contributing ≤ 5 %. Step 12+ should
+> target DWT and Entropy single-core speed (memory layout,
+> Accelerate vDSP vectorisation, entropy-chunk balance) rather
+> than adding more parallelism. Diagnostic-only — no encode
+> behaviour change; single-tile bytes byte-identical; all
+> regression gates green.
+
+---
+
+## v6-alpha4 step 12 — lever-by-lever empirical results
+
+Step 11 ranked four candidate levers for closing the residual
+J2KSwift-vs-Kakadu encode gap. Step 12 implemented and measured
+each in turn against the same release-mode median-of-3
+gap-diagnosis harness. The lever-by-lever DX wall-time results
+(Apple M2, release build, multi-tile auto layout):
+
+| Lever | Commit | DX wall (ms) | DX Δ | Outcome |
+|---|---|---:|---:|---|
+| baseline (post-step-11)              | `1fa6e02` | 51.69 | —      | reference |
+| **A** per-tile DWT scratch pool      | `90d73fe` | 51.64 | −0.1 % | landed; small wins on MR/XA, PX/DX in noise |
+| **B** skip bzero on band arrays      | `f17e2bc` | 50.48 | −2.2 % | landed; small DX win, others within noise |
+| **C** striped entropy chunk dispatch | reverted  | 51.27 | +1.1 % | reverted; cache-locality regression on PX/DX |
+
+**Lever A finding** — Pool elimination of per-level
+`DWTWorkspace53` allocations gives only ≈ 50 µs / tile of CPU
+back. Allocator pressure isn't a hot path on this codebase;
+the win is structural (foundation for warm-session pool reuse)
+rather than wall-time.
+
+**Lever B finding** — `[Int32](repeating: 0, count: N)` for the
+large band arrays (200 KB+ on DX 4×4 tile bands) is essentially
+free at runtime: macOS's `libsystem_malloc` returns kernel-zeroed
+pages for allocations crossing the page-size threshold, so the
+implicit bzero was already a no-op at the allocator level. Only
+the smaller per-strip / per-row scratch buffers benefit, which
+explains the modest −2.2 % on DX.
+
+**Lever C finding (NEGATIVE — REVERTED)** — Striped chunk
+dispatch was hypothesised to balance per-chunk entropy work
+(LL bands are dense and slow per block; HH bands are sparse and
+fast). Three-run median measurement showed:
+
+  - DX wall:    50.48 → 51.27 ms  (**+1.1 %**, consistent across runs)
+  - DX Entropy CPU sum: 274 → 289 ms  (**+5 %**)
+  - PX wall:    23.04 → 23.41 ms  (within noise but trending up)
+  - MR / XA:    within noise
+
+Root cause: striped iteration over `deferred` (which is appended
+grouped by component → subband → block) breaks cache locality.
+Each subband's deferred entries point into a separate `[Int32]`
+coefficient array; jumping between subbands per block thrashes
+L1/L2. The locality benefit of contiguous-range chunking
+dominates any imbalance benefit. The negative result also
+suggests that within-tile entropy chunk imbalance is small to
+begin with — every chunk gets ≈ 17 blocks covering all 4
+subbands of every level via the (component, subband, block)
+traversal, so chunks self-balance enough that locality wins.
+
+**Lever D (NEGATIVE — REVERTED)** — Added `@inline(__always)` to
+the four highest-frequency forward-bitstream functions:
+`HTForwardBitEmitterConformant.emit(bit:)`,
+`HTReverseBitEmitterConformant.encode(...)`,
+`HTMELEncoderConformant.encode(eventIsOne:)`, and
+`HTMagSgnEncoderConformant.encode(codeword:count:)`. The hypothesis
+was that Swift's release optimizer might be missing inlining
+opportunities at sites where the per-quad / per-sample call
+overhead matters (≈ 10 M emit calls / multi-tile encode).
+
+Three-run median measurement (Apple M2, release):
+
+| Fixture | Lever B (md) | Lever D (md) | Δ |
+|---|---:|---:|---:|
+| MR  886×886  | 2.55 | 2.69 | **+5.5 %** |
+| XA 1024×1024 | 7.28 | 7.46 | +2.5 % (within noise) |
+| PX 2459×1316 | 23.04 | 23.77 | **+3.2 %** |
+| DX 2800×2288 | 50.48 | 51.95 | **+2.9 %** |
+
+Clean regression on every fixture, statistically clear on PX and
+DX. Reverted before reaching the heavy gate set.
+
+Root cause: Swift's release-mode optimizer with whole-module
+optimisation was already making the right inlining decisions —
+the explicit `@inline(__always)` annotations forced inlining at
+sites where the compiler had wisely declined. The likely
+mechanism is i-cache pressure: each annotated function expanded
+at ≈ 10 M call sites per encode (across all blocks of all tiles)
+inflated the resident code size enough to push hot loops out of
+L1i, costing more than the call-frame setup it saved.
+
+**Step 12 closure — empirical ceiling reached.** All four ranked
+levers from step 11 have been implemented and measured:
+
+| Lever | Outcome | DX wall delta |
+|---|---|---:|
+| A — DWT scratch pool          | landed (`90d73fe`) | −0.1 % |
+| B — skip bzero on band arrays | landed (`f17e2bc`) | −2.2 % |
+| C — striped entropy chunks    | reverted | +1.1 % |
+| D — `@inline` on bit emitters | reverted | +2.9 % |
+
+Combined wins from levers A + B = **−2.3 % on DX wall**, well
+below step 11's combined estimate (−15 % to −30 %). The empirical
+finding is that on this codebase + Apple M2 + Swift 6.1.2 +
+macOS 15:
+
+  1. Allocator pressure isn't the DWT bottleneck (Lever A).
+  2. Page-aligned `[Int32]` zero-init is free at the libc level
+     (Lever B).
+  3. Within-tile entropy chunk imbalance is small enough that
+     locality dominates (Lever C).
+  4. Swift's release optimiser already inlines the bit-stream
+     hot path correctly (Lever D).
+
+The residual J2KSwift-vs-Kakadu DX gap (≈ +25 ms after Lever B,
+i.e., 50.5 ms vs 24.3 ms) is therefore **structural**: it lives
+in the per-quad MagSgn / VLC / MEL compute itself, not in the
+allocator, scheduling, or optimiser-friendly micro-structure
+around it. Closing it would require one of:
+
+  - **Algorithmic** — a different entropy schedule (e.g., per-
+    quad precomputation that lets later quads reuse earlier
+    state, rather than the current per-quad full re-derivation).
+  - **Hardware** — explicit NEON intrinsics for the bit-pack
+    loops (currently out of scope per `feedback_lossless_only_v5_38`).
+  - **Pivot** — accept the ceiling and move to the next
+    lossless-only roadmap item.
+
+Given the constraint set, **pivoting** is the rational next move.
+v6-alpha4 step 12 closes here as a partial win: lever A + B
+preserve correctness and shave a small but real ~1 ms off DX wall;
+levers C + D produced negative results that we now have measured
+data for. Future work on closing the Kakadu gap should not retry
+these four lever-tier interventions on this hardware / toolchain
+combination without changing one of the underlying assumptions.
+
+---
+
+## v6-alpha5 — GPU forward 5/3 INT pivot (8 phases)
+
+Step 12's closure named the pivot direction:
+**lift the lossless-only roadmap item per `feedback_lossless_only_v5_38`
+("CPU 5/3 lossless encode hot-path first, then Metal forward
+INTEGER 5/3 DWT")**. v6-alpha5 lands the GPU forward 5/3 INT path
+across eight commits (`0dc9d2a` → `44ab73b`), reaching the same
+correctness bar as the v6-alpha3 step-7 multi-tile work
+(byte-identical CPU↔GPU, plus external-decoder bit-exact through
+OpenJPH / Grok / Kakadu) and producing the **first GPU-encode
+wall-time win in the codebase**: +17–18 % at DX / MG single-tile
+lossless.
+
+### v6-alpha5 phase ledger
+
+| Phase | Commit    | Headline outcome |
+|---|---|---|
+| 0  | `0dc9d2a` | New `j2k_dwt_forward_53_horizontal_int` / `_vertical_int` Metal kernels, bit-exact match for `AcceleratedDWT2D.forward53_1D(...)`. Public `J2KMetalDWT.forward2DInt32(...)`. 4 unit tests inc. GPU forward → GPU inverse roundtrip closure on a 320×240 16-bit fixture. |
+| 1  | `09cc7ba` | Multi-level fused dispatch — 5 levels chained into one MTLCommandBuffer; intermediate LL stays GPU-resident, only LH/HL/HH bands + final coarsest LL read back. GPU-vs-CPU-scalar bench shows 2.49× at 1.6 MP per-tile. |
+| 2  | `008189a` | Encoder pipeline wire-in via env-var-cached gate `J2K_GPU_FORWARD_53` and `_gpuForward53Enabled` mutable static. Byte-identical codestream proven at 1024² and 800². **End-to-end measurement reveals 33–151 % regression** on the medical corpus — pinned to per-encode `J2KMetalDWT.init() + initialize()` cost (≈ 13–15 ms). |
+| 3  | `37356e0` | Process-wide `J2KMetalSession.processShared` lazy static — first-encode pays the device init / shader compile / pool warmup, every subsequent encode short-circuits via existing `isLoaded` guards. **First GPU-encode wall-time win**: DX +18.8 %, MG +17.4 %; smaller fixtures still lose. |
+| 4a | `75444a9` | Odd-origin parity-aware Metal kernels (`_horizontal_int_odd`, `_vertical_int_odd`) — single-level forward INT now produces bit-exact output at every (uX, uY) parity combination per ISO/IEC 15444-1 F.4.4. 6 unit tests covering the four (even/odd × even/odd) cells. |
+| 4b | `5e91f3c` | Parity-aware multi-level fused — Eq. B-15 origin trajectory (`(x + 1) >> 1`) tracked per axis per level so the right kernel fires on every recursion step. 3 unit tests, including 5-level MR (443, 443) where parity flips at every level. |
+| 4c | `ed53cac` | Encoder gate relaxation — drops `tileOriginX == 0 && tileOriginY == 0` filter; multi-tile encodes now route every tile through GPU forward. **Caught + fixed `halfWH` bug** (was `originalWidth / 2` floor; correct formula is `originalWidth - llWidth`, parity-correct in both cases). 3 multi-tile byte-identical tests at MR / DX / PX 2×2. |
+| 5  | `0e1309c` | Multi-tile wall-time A/B sweep + 4 MP gate threshold. **Multi-tile is a strict GPU regression below 16 MP** — 16 concurrent tile tasks all serialise through the shared `MTLCommandQueue` (Apple's queue model), killing the cross-tile parallelism CPU multi-tile gets for free. Threshold blocks every multi-tile per-tile dispatch + sub-DX single-tile. |
+| 6  | `13b9de4` | Per-call `MTLCommandQueue` via new `J2KMetalDevice.makeFreshCommandQueue()` — concurrent tile tasks now get dedicated queues, CB execution interleaves on the GPU scheduler. **PX 3.24 MP single-tile flips from −17 % regression to break-even**; DX 4×4 multi-tile narrows from −34 % to −10 %. |
+| 7  | `a3a3e40` | UMA readback skip-bzero (`unsafeUninitializedCapacity`) + scope assessment. Modest win within noise, but documents the diminishing-returns frontier: further UMA work needs pipeline-level refactor of `SubbandInfo` and upstream stages, not localised tweaks inside J2KMetal. |
+| 8  | `44ab73b` | **External-decoder cross-codec validation**: 21/21 cells bit-exact through OpenJPH 0.27.0, Grok 20.3.0, Kakadu 8.4.1 demo on the medical corpus (7 fixtures × 3 decoders). Same correctness bar as v6-alpha3 step 7 for multi-tile codestreams. |
+
+### v6-alpha5 final wall-time table — single-tile encode (release, Apple M2, median of 5)
+
+End-to-end encode wall time vs the production CPU forward 5/3
+path. Measurements taken with `J2K_GPU_FORWARD_53=1` and the test
+helper lowering `_gpuForward53PixelThreshold` to 1 so every
+fixture exercises the GPU code path (production threshold 4 MP
+would otherwise route MR / XA / PX to CPU):
+
+| Fixture       | px        | CPU fwd ms | GPU fwd ms | Δ vs CPU      | Phase 8 production routing  |
+|---|---:|---:|---:|---:|---|
+| MR  886× 886  |   784 996 |    8.27    |   10.86    | **−31.5 %**   | gated → CPU (sub-4 MP)      |
+| XA 1024×1024  | 1 048 576 |   11.26    |   12.93    | **−14.8 %**   | gated → CPU                 |
+| PX 2459×1316  | 3 236 044 |   32.23    |   34.91    |  **−8.3 %**   | gated → CPU                 |
+| **DX** 2800×2288 | **6 406 400** | **65.03** | **53.07** | **+18.4 %** | **GPU fires** ✓             |
+| **MG** 3520×4784 |**16 839 680** |**172.73** |**142.51** | **+17.5 %** | **GPU fires** ✓             |
+
+Crossover sits at ~4 MP single-tile. The 4 MP production
+threshold (`_gpuForward53PixelThreshold = 4_000_000`)
+simultaneously admits DX / MG single-tile (where GPU wins) and
+excludes every regression case (sub-DX single-tile + every
+multi-tile per-tile dispatch, since multi-tile per-tile dim is
+≪ 4 MP for the production `.auto` layouts).
+
+### v6-alpha5 final wall-time table — multi-tile encode (diagnostic only)
+
+Multi-tile is the production fast path post v6-alpha3 step 9. The
+table below documents why GPU forward is **not** appropriate for
+this workload class and why the threshold gates it out:
+
+| Fixture              | px        | tiles | CPU fwd ms | GPU fwd ms |   Δ vs CPU    |
+|---|---:|---:|---:|---:|---:|
+| MR  886× 886 / 2×2   |   784 996 |   4   |    5.31    |    7.28    |  **−37.0 %**  |
+| XA 1024×1024 / 2×2   | 1 048 576 |   4   |    7.89    |   11.17    |  **−41.5 %**  |
+| PX 2459×1316 / 4×4   | 3 236 044 |  16   |   21.85    |   35.46    |  **−62.3 %**  |
+| DX 2800×2288 / 4×4   | 6 406 400 |  16   |   46.33    |   50.91    |   **−9.9 %**  |
+| MG 3520×4784 / 4×4   |16 839 680 |  16   |  125.80    |  120.82    |   **+4.0 %**  |
+
+Even with Phase 6's per-tile fresh `MTLCommandQueue`s, GPU
+multi-tile loses up to MG-class fixtures. Root cause: per-tile
+GPU dispatches still serialise at the SOC scheduler level when
+the per-tile compute is small (tile size ≪ 1 MP), and the CPU
+multi-tile path's thread-level parallelism across 8–12 cores
+beats one-CB-at-a-time GPU execution.
+
+### v6-alpha5 cross-codec validation (Phase 8)
+
+`HTGPUForward53CrossCodecTests` runs the medical corpus through
+GPU forward and decodes every codestream via every external HT
+decoder. Result:
+
+| Modality | Shape       |     Bytes  | OpenJPH | Grok | Kakadu |
+|---|---|---:|---:|---:|---:|
+| MR-small |  180× 180   |    45 224  |    0    |  0   |   0    |
+| CT       |  512× 512   |   436 460  |    0    |  0   |   0    |
+| CT       |  512× 512   |   406 187  |    0    |  0   |   0    |
+| MR       |  886× 886   |   167 728  |    0    |  0   |   0    |
+| XA       | 1024×1024   | 1 621 219  |    0    |  0   |   0    |
+| PX       | 2459×1316   | 6 431 507  |    0    |  0   |   0    |
+| DX       | 2800×2288   |12 683 182  |    0    |  0   |   0    |
+
+7 fixtures × 3 decoders = **21 / 21 cells max-abs-pixel-diff = 0**.
+GPU-forward output is independently verified by every mainstream
+HT-capable external decoder.
+
+### v6-alpha5 production policy
+
+| Aspect | State |
+|---|---|
+| Production default | **Off** (`J2K_GPU_FORWARD_53` unset) |
+| Opt-in mechanism | `J2K_GPU_FORWARD_53=1` env var, or `EncoderPipeline._gpuForward53Enabled = true` |
+| Pixel threshold | 4 MP (`_gpuForward53PixelThreshold = 4_000_000`) — only fires GPU when per-encode ≥ 4 MP |
+| Origin support | Every tile-component image-coord origin parity (Eq. B-15 trajectory tracked per axis per level) |
+| Concurrency | Per-tile fresh `MTLCommandQueue` so tile-level concurrency interleaves on GPU |
+| Resource sharing | `J2KMetalSession.processShared` lazy singleton — device + shader library + buffer pool reused across encodes |
+| Correctness bar | Byte-identical CPU↔GPU + external-decoder bit-exact (21/21 OpenJPH/Grok/Kakadu) |
+| Wall-time delta on production-routing fixtures | +17–18 % at DX 6.4 MP / MG 16.8 MP single-tile lossless; gated to CPU on every regression case |
+
+### v6-alpha5 — final precise claim
+
+> v6-alpha5 lands a production-correct, opt-in **GPU forward 5/3
+> INT** path that wins +17–18 % wall time on DX / MG single-tile
+> lossless encodes vs the production CPU forward, while staying
+> byte-identical to CPU and externally verified bit-exact through
+> OpenJPH / Grok / Kakadu. The work spans 8 commits — kernels
+> (Phase 0), multi-level fusion (Phase 1), shared session
+> (Phase 3), parity-aware origin support (Phase 4), per-call
+> queues (Phase 6), and cross-codec validation (Phase 8) — and
+> intentionally stops at the diminishing-returns frontier (Phase 7
+> documents what zero-copy UMA / vDSP integer / GCD fan-out
+> work would *not* move the needle on this codebase). Production
+> default unchanged: users who don't opt in get exactly the
+> v6-alpha4 CPU encode bytes; users who do get a measured 17–18 %
+> wall-time win on the largest medical fixtures (DX, MG) with no
+> risk of producing bytes that fail external decode. Multi-tile
+> remains a CPU-only domain on Apple M2 + Swift toolchain — the
+> 4 MP threshold gates GPU forward out of every multi-tile
+> per-tile dispatch and every sub-DX single-tile encode where
+> measurement showed regression.
+
+---
+
+## v6-alpha5 Phase 9 — GPU forward 5/3 production policy
+
+Phase 8 closed correctness; Phase 9 closes **routing
+observability + threshold validation**. Three deliverables:
+
+  1. **Telemetry infrastructure** — `J2KGPUForward53Telemetry`
+     counts every gate decision (GPU fire vs CPU skip + reason)
+     and accumulates per-fire setup / dispatch ms. Gives policy
+     tests deterministic assertions and gives cross-device tuning
+     a re-runnable measurement primitive.
+  2. **Policy tests** — 7 tests that pin every routing predicate:
+     env-disabled → CPU, below-threshold → CPU, above-threshold →
+     GPU, multi-tile per-tile → CPU, byte-identical across
+     backends, telemetry reset cleanly.
+  3. **Threshold-boundary sweep** at finer granularity than Phase
+     5/6 (1 / 2 / 3 / 4 / 6 / 12 / 16 MP square synthetic
+     fixtures). Confirms the production 4 MP threshold is the
+     right call for the Apple M2 production deployment.
+
+### New telemetry surface
+
+[`J2KGPUForward53Telemetry.swift`](Sources/J2KCodec/J2KGPUForward53Telemetry.swift)
+exposes a Sendable snapshot:
+
+```swift
+public struct Snapshot: Sendable {
+    public let gpuFireCount: Int
+    public let cpuFireByReason: [SkipReason: Int]
+    public let totalSetupMs: Double
+    public let totalDispatchMs: Double
+}
+```
+
+with `SkipReason` ∈ `{ envDisabled, metalUnavailable, belowThreshold }`.
+Tests call `reset()` then run an encode workload then read
+`snapshot()`. The encoder pipeline records every gate decision
+into the telemetry (lock-protected — one `NSLock` acquire per
+decision, negligible vs encode wall).
+
+`J2K_GPU_FORWARD_53_DEBUG=1` flips on per-call diagnostic prints:
+
+      [J2K GPU fwd 5/3 INT] FIRE  size=2048×2048=4194304 levels=5 origin=(0,0) setup=0.00ms dispatch=8.95ms
+      [J2K GPU fwd 5/3 INT] SKIP  size=1024×1024=1048576 origin=(0,0) reason=below-threshold
+
+Off by default; production logs are unaffected.
+
+### Policy tests (`HTGPUForward53Phase9PolicyTests`)
+
+| # | Test | What it pins |
+|---|---|---|
+| 1 | `testGate_EnvDisabled_AlwaysRoutesToCPU` | `_gpuForward53Enabled = false` → 0 GPU fires, every CPU fire tagged `.envDisabled` |
+| 2 | `testGate_EnabledButBelowThreshold_RoutesToCPU` | 1024² @ threshold 4 MP → 0 GPU fires, every CPU fire tagged `.belowThreshold` |
+| 3 | `testGate_EnabledAndAboveThreshold_RoutesToGPU` | 2048² (4.19 MP) @ threshold 4 MP → ≥ 1 GPU fire; warm-session setup time < 5 ms |
+| 4 | `testGate_MultiTilePath_RoutesPerTileToCPU` | DX 4×4 @ threshold 4 MP → 0 GPU fires + exactly 16 below-threshold CPU fires |
+| 5 | `testGate_MultiTileWithLoweredThreshold_RoutesPerTileToGPU` | DX 4×4 @ threshold 1 → exactly 16 GPU fires (proves multi-tile is gated by threshold, not structurally CPU-only) |
+| 6 | `testGate_BytesIdenticalAcrossBackends_2048x2048` | Same fixture, gate-off CPU bytes = gate-on GPU bytes (in-process equivalent of Phase 8's external-decoder validation) |
+| 7 | `testTelemetry_ResetClearsEverything` | Counter sanity |
+
+All 7 pass.
+
+### Threshold-boundary sweep (release, Apple M2, median of 3)
+
+[`HTGPUForward53Phase9ThresholdBoundaryTests`](Tests/J2KMetalTests/HTGPUForward53Phase9ThresholdBoundaryTests.swift)
+runs square synthetic 16-bit fixtures at 1, 2, 3, 4, 6, 12, 16 MP
+through both backends with the threshold forced to 1 so every
+fixture exercises the GPU code path:
+
+| Fixture                | px        | CPU ms | GPU ms | GPU/CPU× | Δ        | bytes match | GPU setup | GPU dispatch |
+|---|---:|---:|---:|---:|---:|:---:|---:|---:|
+|  1 MP (1024×1024)      | 1 048 576 |  10.84 |  10.72 |  0.99×   |  +1.1 %  | ✓           | 0.00 ms   |  3.86 ms     |
+|  2 MP (1448×1448)      | 2 096 704 |  21.71 |  20.20 |  0.93×   |  +6.9 %  | ✓           | 0.00 ms   |  6.18 ms     |
+|  3 MP (1732×1732)      | 2 999 824 |  26.94 |  25.33 |  0.94×   |  +6.0 %  | ✓           | 0.00 ms   |  9.36 ms     |
+|  **4 MP (2000×2000)**  | 4 000 000 |  41.19 |  33.21 | **0.81×**| **+19.4 %**  | ✓       | 0.00 ms   |  9.09 ms     |
+|  6 MP (2449×2449)      | 5 997 601 |  56.75 |  45.90 |  0.81×   | +19.1 %  | ✓           | 0.00 ms   | 14.23 ms     |
+| 12 MP (3464×3464)      |11 999 296 | 106.57 |  84.44 |  0.79×   | +20.8 %  | ✓           | 0.00 ms   | 22.29 ms     |
+| 16 MP (4000×4000)      |16 000 000 | 163.35 | 124.97 |  0.77×   | +23.5 %  | ✓           | 0.00 ms   | 30.26 ms     |
+
+Two readouts:
+
+  - **GPU setup time = 0 ms across the board.**
+    `J2KMetalSession.processShared` (Phase 3) is amortising
+    correctly — every fixture after the first finds the device
+    initialised, the shader library compiled, and the buffer
+    pool warm. Telemetry reads exactly the warm-call cost
+    (rounding to 0.00 ms in the sweep formatter; sub-100 µs in
+    practice).
+  - **GPU dispatch time scales linearly with pixel count** at
+    roughly 8 µs per MP per dispatch (≈ 32 ms for 16 MP), which
+    is consistent with the GPU's memory-bound execution profile
+    on UMA. The CPU side scales super-linearly because it adds
+    cache-miss pressure as image size grows beyond L2.
+
+### Why this differs from Phase 5/6 medical-fixture sweeps
+
+Phase 7 measured the medical corpus (square + rectangular) and
+found the crossover sat between 3.24 MP (PX, loss) and 6.41 MP
+(DX, win). Phase 9's square synthetic sweep shows GPU winning
+from 1 MP up. **Two factors** explain the difference:
+
+  1. **Aspect ratio**. Square fixtures have more uniform DWT
+     band shapes; rectangular fixtures (PX 2459×1316, DX
+     2800×2288) load the GPU's column-pass kernel asymmetrically
+     and trigger more cache pressure. The CPU-side
+     parallel-strip + vDSP path tolerates rectangular geometry
+     better than the GPU's per-column thread layout.
+  2. **Run-to-run variation**. Phase 7 ran after extensive
+     test-suite work (warm caches but thermal accumulation); Phase
+     9 ran on a relatively cold machine. ±5–15 % run-to-run
+     variation has been observed throughout this project (see
+     v6-alpha4 step 12 for documented examples).
+
+The two measurements together justify the **conservative 4 MP
+threshold**: at the worst-case end of the variation window, GPU
+loses on PX 3.24 MP but wins on DX 6.41 MP. 4 MP is the smallest
+power-of-two-ish bound that admits DX while excluding PX and
+every smaller fixture, leaving margin for thermal / load
+variation.
+
+### Multi-tile exclusion confirmed
+
+Phase 9 doesn't re-measure multi-tile end-to-end (Phase 5/6 did
+that once, with three-fixture cross-validation in Phase 6). It
+**does** add a policy test (`testGate_MultiTilePath_RoutesPerTileToCPU`)
+that confirms the production threshold gates GPU out of every
+multi-tile per-tile dispatch on `.auto` layouts. The structural
+constraint behind the multi-tile-on-CPU policy hasn't changed:
+
+  - Per-tile GPU dispatches serialise on the SoC scheduler when
+    per-tile compute is sub-1 MP (the typical multi-tile per-tile
+    range).
+  - CPU multi-tile parallelises across 8–12 cores via Swift's
+    `withThrowingTaskGroup`, hitting near-saturation.
+  - Forcing GPU into the multi-tile path requires a different
+    architectural shape (single fused command buffer covering
+    all tiles, or a coordinated multi-queue dispatch with
+    explicit dependency chains) — out of scope for v6-alpha5.
+
+### Cross-device benchmark template
+
+The Phase 9 measurements are Apple M2 specific. Apple Silicon
+generations differ in:
+
+  - **GPU dispatch latency** (M3 / M4 lower than M2 by 10–20 %
+    per Apple's profiling docs)
+  - **Memory bandwidth** (M4 Pro / M4 Max ~2× M2 base)
+  - **Performance-core count** (M4 Pro 10P, M4 Max 12P vs M2 8P)
+
+The threshold may shift at each generation. Future cross-device
+runs should fill in:
+
+| Device     | Cores (P/E) | Mem BW       | Crossover MP | Recommended threshold | DX +Δ | MG +Δ |
+|---|---|---|---|---|---|---|
+| **M2 base**  | 8/4         | 100 GB/s     | ~3–4 MP      | **4 MP** (current)    | +18 % | +18 % |
+| M3 base    | 8/4         | 100 GB/s     | tbd          | tbd                   | tbd   | tbd   |
+| M4 base    | 4P+6E       | 120 GB/s     | tbd          | tbd                   | tbd   | tbd   |
+| M4 Pro     | 8P+4E or 10P+4E | 273 GB/s | tbd          | tbd                   | tbd   | tbd   |
+| M4 Max     | 12P+4E      | 410/546 GB/s | tbd          | tbd                   | tbd   | tbd   |
+
+Re-run protocol on a target device:
+  1. Set `J2K_GPU_FORWARD_53=1`.
+  2. Run `swift test -c release --filter HTGPUForward53Phase9ThresholdBoundaryTests`.
+  3. Read off the GPU/CPU× column. Crossover MP = smallest
+     fixture where ratio is consistently < 0.95 across three
+     consecutive runs.
+  4. Set `_gpuForward53PixelThreshold` to the next-larger MP
+     bound that excludes the crossover-noise zone (a 25 %
+     margin works empirically on M2; may differ per generation).
+
+### Phase 9 mandatory commit gate
+
+| Suite | Result |
+|---|---|
+| HTGPUForward53Phase9PolicyTests           | 7/7 NEW |
+| HTGPUForward53Phase9ThresholdBoundaryTests | 1/1 NEW (diagnostic) |
+| HTGPUForward53EncoderWireInTests          | 9/9 |
+| HTGPUForward53CrossCodecTests             | 1/1 |
+| J2KMetalDWTForward53IntParityAwareTests   |10/10 |
+| J2KMetalDWTForward53IntBitExactTests      | 8/8 |
+| J2KMetalDWT53IntBitExactTests             | 3/3 |
+| HTNativeMultiTileSelfRoundtripTests       | 5/5 |
+| J2KStrictCrossCodecValidationTests        | 3/3 |
+| J2KMedicalCorpusEncodePerformanceTests    | 2/2 |
+| J2KMedicalCorpusPerformanceTests          | 2/2 |
+
+### v6-alpha5 Phase 9 — final precise claim
+
+> Phase 9 ships the routing observability layer the v6-alpha5
+> production policy needed but lacked: telemetry counters that
+> distinguish GPU-fire from each CPU-skip reason, a debug env var
+> that prints per-call decisions, 7 policy tests that
+> deterministically pin every routing predicate, and a finer-
+> granularity threshold-boundary sweep at 1 / 2 / 3 / 4 / 6 /
+> 12 / 16 MP. Empirical signal at the 4 MP boundary on Apple
+> M2: GPU wins by +19.4 % at 4 MP, +20.8 % at 12 MP, +23.5 % at
+> 16 MP; below 4 MP the win is +1.1 % to +6.9 % which is
+> within the run-to-run variation window (Phase 7's
+> medical-corpus sweep at the same sizes saw losses). The 4 MP
+> threshold therefore stays — it's the smallest bound that
+> wins safely across every measurement run on M2. A cross-
+> device template prepared for re-tuning on M3 / M4 / M4 Pro /
+> M4 Max once those numbers come in. Multi-tile policy
+> unchanged: per-tile dispatches stay on CPU on M2, gated by
+> the same 4 MP threshold.

@@ -89,6 +89,52 @@ struct AcceleratedDWT2D: Sendable {
         }
     }
 
+    /// v6-alpha4 step 12 Lever A — per-tile DWT scratch pool.
+    ///
+    /// `forward2D_53` is invoked once per decomposition level. Without a
+    /// pool, every level call freshly allocates `numStrips`
+    /// `DWTWorkspace53`s plus a `numStrips * stripWidth * height` Int32
+    /// stripIn / stripOut pair, then deallocates them at function exit.
+    /// On a 5-level DX tile (2800×2288) that's ≈700+350+175+88+44 ≈ 1.4 K
+    /// `DWTWorkspace53(...)` heap allocations per tile-component, plus
+    /// 5 stripIn / 5 stripOut buffer pairs. With 4×4 multi-tile encode
+    /// this scales to ~22 K small allocations per encode. Pre-allocating
+    /// at the largest level (L0 width / height) and reusing across all
+    /// levels eliminates the per-level heap pressure entirely — every
+    /// finer level uses a subset of the pool. Pool lifetime is one
+    /// `forwardDecomposition53(...)` call.
+    final class DWT53ScratchPool: @unchecked Sendable {
+        static let stripWidth = 8
+        let workspaces: [DWTWorkspace53]
+        let stripIn: UnsafeMutablePointer<Int32>
+        let stripOut: UnsafeMutablePointer<Int32>
+        let stripBufStride: Int
+        let maxStrips: Int
+
+        init(maxWidth: Int, maxHeight: Int) {
+            let strips = (maxWidth + Self.stripWidth - 1) / Self.stripWidth
+            maxStrips = max(1, strips)
+            stripBufStride = Self.stripWidth * max(1, maxHeight)
+            // Workspace capacity must cover BOTH the column pass (uses
+            // signal length = height) AND the row pass (uses signal
+            // length = width). The row pass reuses workspaces[0] from
+            // the same pool, so we size every workspace for
+            // max(width, height) per axis. Sized once at L0; every
+            // finer level fits because both axes shrink monotonically.
+            let maxSignal = max(2, max(maxWidth, maxHeight))
+            workspaces = (0..<maxStrips).map { _ in
+                DWTWorkspace53(maxSignalLength: maxSignal)
+            }
+            stripIn  = .allocate(capacity: maxStrips * stripBufStride)
+            stripOut = .allocate(capacity: maxStrips * stripBufStride)
+        }
+
+        deinit {
+            stripIn.deallocate()
+            stripOut.deallocate()
+        }
+    }
+
     /// Forward 1D CDF 9/7 lifting on a contiguous Float buffer (in-place, interleaved).
     ///
     /// Splits even/odd, applies 4 lifting steps, scales, then writes
@@ -905,16 +951,57 @@ struct AcceleratedDWT2D: Sendable {
           llW: Int, llH: Int, lhW: Int, lhH: Int,
           hlW: Int, hlH: Int, hhW: Int, hhH: Int)
     {
+        // v6-alpha4 step 12 Lever A — single-call entry point allocates
+        // a pool sized for this call and delegates to the pooled body.
+        // Multi-level callers go directly through `forward2D_53Pooled`
+        // with a single pool sized for L0, reused across all levels.
+        let pool = DWT53ScratchPool(maxWidth: width, maxHeight: height)
+        return await forward2D_53Pooled(data: data, width: width, height: height, pool: pool)
+    }
+
+    /// v6-alpha4 step 12 Lever A — pooled forward 2D 5/3 entry point.
+    ///
+    /// Identical algorithmic behaviour and bit-exact output to
+    /// `forward2D_53(data:width:height:)`. The only difference is that
+    /// per-strip `DWTWorkspace53`s and the stripIn / stripOut Int32
+    /// buffers come from the caller-supplied pool instead of being
+    /// freshly allocated each call. The pool's buffers are sized at
+    /// L0; finer levels use a contiguous prefix.
+    ///
+    /// **Pool sizing precondition** — the pool's `maxStrips` must be
+    /// ≥ this call's `numStrips` and `stripBufStride` ≥ `colStripWidth
+    /// * height`. Multi-level recursion satisfies this trivially:
+    /// width and height shrink monotonically across levels, so a pool
+    /// sized for L0 covers every finer level.
+    static func forward2D_53Pooled(
+        data: [Int32], width: Int, height: Int,
+        pool: DWT53ScratchPool
+    ) async -> (ll: [Int32], lh: [Int32], hl: [Int32], hh: [Int32],
+          llW: Int, llH: Int, lhW: Int, lhH: Int,
+          hlW: Int, hlH: Int, hhW: Int, hhH: Int)
+    {
         let colLowH  = (height + 1) / 2
         let colHighH = height / 2
         let rowLowW  = (width + 1) / 2
         let rowHighW = width / 2
 
-        // Preallocate row workspace
-        let rowWs = DWTWorkspace53(maxSignalLength: width)
+        // Row workspace lives at slot 0 of the pool (rows are
+        // serialised through `colWs` in the row pass, so reusing the
+        // first workspace is safe — the column pass completes before
+        // the row pass begins).
+        let rowWs = pool.workspaces[0]
 
-        var colResult = [Int32](repeating: 0, count: width * height)
-        let colStripWidth = 8
+        // v6-alpha4 step 12 Lever B — `colResult` is fully overwritten
+        // by the column pass (every (row, col) cell is written before
+        // the row pass reads it), so skip the `repeating: 0` bzero.
+        // For DX 4×4 multi-tile, this saves ≈ 5 × 700×572×4 B = 8 MB
+        // of bzero per tile (40 MB across the 5-level recursion), or
+        // ≈ 130 MB CPU time across the 16 tiles.
+        let colResultCount = width * height
+        var colResult = [Int32](unsafeUninitializedCapacity: colResultCount) {
+            _, count in count = colResultCount
+        }
+        let colStripWidth = DWT53ScratchPool.stripWidth
         let numStrips = (width + colStripWidth - 1) / colStripWidth
         // Use parallel column pass only when there is enough work to amortise
         // task dispatch overhead and per-strip workspace allocations.
@@ -923,6 +1010,7 @@ struct AcceleratedDWT2D: Sendable {
         // levels (e.g. 32×32 at level 3 of a 256×256 image) where overhead
         // dominates the actual wavelet work.
         let useParallelColumns = numStrips >= 8 && height > 32
+        let stripBufStride = pool.stripBufStride
 
         if useParallelColumns {
             // Allocate source copy and destination buffer for pointer-based parallel access
@@ -936,15 +1024,9 @@ struct AcceleratedDWT2D: Sendable {
                 dstBuf.deallocate()
             }
 
-            // Pre-allocate all strip buffers to avoid per-strip heap allocations.
-            let stripBufSize = colStripWidth * height
-            let allStripIn = UnsafeMutablePointer<Int32>.allocate(capacity: numStrips * stripBufSize)
-            let allStripOut = UnsafeMutablePointer<Int32>.allocate(capacity: numStrips * stripBufSize)
-            let stripWorkspaces = (0..<numStrips).map { _ in DWTWorkspace53(maxSignalLength: height) }
-            defer {
-                allStripIn.deallocate()
-                allStripOut.deallocate()
-            }
+            // Strip in/out buffers come from the pool. Workspaces too.
+            let allStripIn  = pool.stripIn
+            let allStripOut = pool.stripOut
 
             // Parallel column pass: each strip indexes into pre-allocated buffers
             let safeSrc = SendablePointer(srcBuf)
@@ -953,7 +1035,7 @@ struct AcceleratedDWT2D: Sendable {
             let safeStripOut = SendablePointer(allStripOut)
             await withTaskGroup(of: Void.self) { group in
                 for stripIdx in 0..<numStrips {
-                    let ws = stripWorkspaces[stripIdx]
+                    let ws = pool.workspaces[stripIdx]
                     group.addTask { @Sendable in
                         let src = safeSrc.pointer
                         let dst = safeDst.pointer
@@ -961,8 +1043,8 @@ struct AcceleratedDWT2D: Sendable {
                         let allStripOut = safeStripOut.pointer
                         let colStrip = stripIdx * colStripWidth
                         let cols = min(colStripWidth, width - colStrip)
-                        let stripIn = allStripIn + stripIdx * stripBufSize
-                        let stripOut = allStripOut + stripIdx * stripBufSize
+                        let stripIn = allStripIn + stripIdx * stripBufStride
+                        let stripOut = allStripOut + stripIdx * stripBufStride
 
                         for row in 0..<height {
                             let srcRow = src + row * width + colStrip
@@ -990,19 +1072,15 @@ struct AcceleratedDWT2D: Sendable {
                 buf.baseAddress!.initialize(from: dstBuf, count: width * height)
             }
         } else {
-            // Sequential path for small images
-            let colWs = DWTWorkspace53(maxSignalLength: height)
+            // Sequential path for small images — share workspace[0]
+            // and a single strip slot from the pool.
+            let colWs = pool.workspaces[0]
             data.withUnsafeBufferPointer { srcBuf in
                 colResult.withUnsafeMutableBufferPointer { dstBuf in
                     let src = srcBuf.baseAddress!
                     let dst = dstBuf.baseAddress!
-                    let stripBufSize = colStripWidth * height
-                    let stripIn = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                    let stripOut = UnsafeMutablePointer<Int32>.allocate(capacity: stripBufSize)
-                    defer {
-                        stripIn.deallocate()
-                        stripOut.deallocate()
-                    }
+                    let stripIn = pool.stripIn
+                    let stripOut = pool.stripOut
 
                     for colStrip in stride(from: 0, to: width, by: colStripWidth) {
                         let cols = min(colStripWidth, width - colStrip)
@@ -1029,10 +1107,20 @@ struct AcceleratedDWT2D: Sendable {
             }
         }
 
-        var ll = [Int32](repeating: 0, count: rowLowW * colLowH)
-        var hl = [Int32](repeating: 0, count: rowHighW * colLowH)
-        var lh = [Int32](repeating: 0, count: rowLowW * colHighH)
-        var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
+        // v6-alpha4 step 12 Lever B — band arrays (ll, hl, lh, hh)
+        // are fully written by the row pass (every (row, col) cell of
+        // each band gets a memcpy from `rowOut` before any reader sees
+        // them), so skip the `repeating: 0` bzero. Largest single
+        // contributor on DX 4×4: ≈ 4 × 350×286×4 B per level × 5
+        // levels × 16 tiles ≈ 130 MB of CPU bzero eliminated.
+        let llCount = rowLowW  * colLowH
+        let hlCount = rowHighW * colLowH
+        let lhCount = rowLowW  * colHighH
+        let hhCount = rowHighW * colHighH
+        var ll = [Int32](unsafeUninitializedCapacity: llCount) { _, c in c = llCount }
+        var hl = [Int32](unsafeUninitializedCapacity: hlCount) { _, c in c = hlCount }
+        var lh = [Int32](unsafeUninitializedCapacity: lhCount) { _, c in c = lhCount }
+        var hh = [Int32](unsafeUninitializedCapacity: hhCount) { _, c in c = hhCount }
 
         // v5.39 M2: row-pass after the column pass is independent
         // per row (each row's forward 1D 5/3 only reads its own row of
@@ -1120,7 +1208,11 @@ struct AcceleratedDWT2D: Sendable {
         } else {
             colResult.withUnsafeBufferPointer { srcBuf in
                 let src = srcBuf.baseAddress!
-                var rowOut = [Int32](repeating: 0, count: width)
+                // Reused per row; `forward53_1D` writes all `width`
+                // entries before any reader sees them, so skip bzero.
+                var rowOut = [Int32](unsafeUninitializedCapacity: width) {
+                    _, c in c = width
+                }
 
                 for row in 0..<colLowH {
                     rowOut.withUnsafeMutableBufferPointer { outBuf in
@@ -1209,10 +1301,18 @@ struct AcceleratedDWT2D: Sendable {
         // Multi-tile encode currently doesn't fire on non-32-aligned
         // fixtures, so this path's perf is not yet on the critical
         // production path.
+        // v6-alpha4 step 12 Lever B — colResult is fully overwritten
+        // by the column pass; colIn / colOut are scratch buffers
+        // re-filled at the top of each column iteration. Skipping the
+        // bzero on these saves ≈ width × height × 4 + 2 × height × 4
+        // bytes per call (15 MB on a 1400×1144 DX 2×2 tile).
         let colWs = DWTWorkspace53(maxSignalLength: height)
-        var colResult = [Int32](repeating: 0, count: width * height)
-        var colIn = [Int32](repeating: 0, count: height)
-        var colOut = [Int32](repeating: 0, count: height)
+        let colResultCount = width * height
+        var colResult = [Int32](unsafeUninitializedCapacity: colResultCount) {
+            _, c in c = colResultCount
+        }
+        var colIn  = [Int32](unsafeUninitializedCapacity: height) { _, c in c = height }
+        var colOut = [Int32](unsafeUninitializedCapacity: height) { _, c in c = height }
 
         data.withUnsafeBufferPointer { srcBuf in
             colResult.withUnsafeMutableBufferPointer { dstBuf in
@@ -1242,11 +1342,18 @@ struct AcceleratedDWT2D: Sendable {
         // (produce LL + HL); rows colLowH..<height are H-over-Y
         // (produce LH + HH).
         let rowWs = DWTWorkspace53(maxSignalLength: width)
-        var ll = [Int32](repeating: 0, count: rowLowW  * colLowH)
-        var hl = [Int32](repeating: 0, count: rowHighW * colLowH)
-        var lh = [Int32](repeating: 0, count: rowLowW  * colHighH)
-        var hh = [Int32](repeating: 0, count: rowHighW * colHighH)
-        var rowOut = [Int32](repeating: 0, count: width)
+        // v6-alpha4 step 12 Lever B — band arrays are fully written
+        // by the row pass via memcpy from `rowOut`; rowOut itself is
+        // fully written each row by `forward53_1D`. Skip the bzero.
+        let llCount = rowLowW  * colLowH
+        let hlCount = rowHighW * colLowH
+        let lhCount = rowLowW  * colHighH
+        let hhCount = rowHighW * colHighH
+        var ll = [Int32](unsafeUninitializedCapacity: llCount) { _, c in c = llCount }
+        var hl = [Int32](unsafeUninitializedCapacity: hlCount) { _, c in c = hlCount }
+        var lh = [Int32](unsafeUninitializedCapacity: lhCount) { _, c in c = lhCount }
+        var hh = [Int32](unsafeUninitializedCapacity: hhCount) { _, c in c = hhCount }
+        var rowOut = [Int32](unsafeUninitializedCapacity: width) { _, c in c = width }
 
         colResult.withUnsafeBufferPointer { src in
             rowOut.withUnsafeMutableBufferPointer { ro in
@@ -1309,9 +1416,20 @@ struct AcceleratedDWT2D: Sendable {
         var currentH = height
         var levelResults: [Int32LevelResult] = []
 
+        // v6-alpha4 step 12 Lever A — one scratch pool sized for L0,
+        // reused across every decomposition level. Width and height
+        // shrink monotonically per level (LL band of size
+        // ceil(W/2)×ceil(H/2)), so the pool's L0-sized workspaces +
+        // strip buffers cover every finer level. Eliminates ~1.4 K
+        // small heap allocations per tile-component on a 5-level DX
+        // tile (each level previously rebuilt its own per-strip
+        // workspaces and stripIn / stripOut buffers from scratch).
+        let pool = DWT53ScratchPool(maxWidth: width, maxHeight: height)
+
         for _ in 0..<levels {
             guard currentW >= 2 && currentH >= 2 else { break }
-            let r = await forward2D_53(data: currentData, width: currentW, height: currentH)
+            let r = await forward2D_53Pooled(
+                data: currentData, width: currentW, height: currentH, pool: pool)
             levelResults.append(Int32LevelResult(
                 lh: r.lh, hl: r.hl, hh: r.hh,
                 lhW: r.lhW, lhH: r.lhH,

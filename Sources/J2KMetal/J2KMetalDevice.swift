@@ -208,6 +208,43 @@ public actor J2KMetalDevice {
         try validateReady()
         return _commandQueue!
     }
+
+    /// Returns a **fresh, non-cached** Metal command queue suitable
+    /// for concurrent dispatch from multiple tasks against the same
+    /// device.
+    ///
+    /// `commandQueue()` returns a single shared MTLCommandQueue per
+    /// device. Apple's queues serialise CB execution by default —
+    /// CBs committed in order run in order — so 16 concurrent tile
+    /// tasks all hitting the shared queue execute their per-tile
+    /// dispatches sequentially. Phase 5 measured this as a 33–43 %
+    /// multi-tile regression vs the parallel-CPU forward path.
+    ///
+    /// `makeFreshCommandQueue()` lets each tile task allocate its
+    /// own queue, so concurrent CBs run interleaved on the GPU's
+    /// scheduler. Apple GPUs allow up to ~64 queues per device on
+    /// the M-series; well above the 16-tile worst case for
+    /// multi-tile encode.
+    ///
+    /// Queue creation cost on Apple Silicon is ~50 µs once the
+    /// MTLDevice is already initialised (which `processShared`
+    /// guarantees after the first dispatch). The total per-encode
+    /// queue-creation overhead at 16 tiles is ~800 µs vs. the
+    /// ~28 ms saved by reclaiming cross-tile parallelism on DX 4×4.
+    ///
+    /// - Returns: A new MTLCommandQueue, owned by the caller.
+    /// - Throws: `J2KError.internalError` if device init failed or
+    ///   the OS refuses to allocate a queue (typically out of
+    ///   resources).
+    public func makeFreshCommandQueue() throws -> any MTLCommandQueue {
+        try validateReady()
+        guard let queue = device?.makeCommandQueue() else {
+            throw J2KError.internalError(
+                "Failed to allocate fresh Metal command queue " +
+                "(check device hasn't hit the per-process queue limit)")
+        }
+        return queue
+    }
     #endif
 
     /// Returns the feature tier of the current GPU.

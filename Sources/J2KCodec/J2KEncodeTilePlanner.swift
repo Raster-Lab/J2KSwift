@@ -1,5 +1,10 @@
 // J2KEncodeTilePlanner.swift
 // v5.39 M4 / v6-alpha1 — multi-tile HT lossless architecture prototype.
+// v6-alpha3 step 7 — planner constraint relaxed. Multi-tile is now
+// correctness-clean on every corpus fixture × every mode (cross-decode
+// + self-roundtrip), so the v6-alpha2 32-alignment rule is removed.
+// Only the DWT-depth floor remains; tile dim must be ≥ 2^N for the
+// per-tile DWT to run.
 //
 // The single-tile encoder hits a structural ceiling on large fixtures
 // (M3 diagnosis: DX 81 ms vs Kakadu 19 ms). The most-likely-to-clear-
@@ -20,6 +25,10 @@
 // smaller than `2 ** decompositionLevels` in either dimension —
 // without that floor the per-tile DWT can't run with the encoder's
 // configured decomposition depth.
+//
+// Setting `J2K_HT_TILE_DEBUG_LAYOUT=1` prints the planner's
+// requested-mode → resolved-layout decision once per encode call.
+// Off by default; production logs are unaffected.
 
 import Foundation
 
@@ -103,32 +112,39 @@ public enum J2KEncodeTilePlanner {
 
     /// Compute a tile layout for the given image.
     ///
-    /// **Two correctness constraints (v6-alpha2)** — both required for
-    /// the wrap-and-stitch multi-tile path to produce externally
-    /// decodable codestreams:
-    ///   1. **Decomposition floor**: each tile must be ≥
-    ///      `2^decompositionLevels` along each axis or the per-tile
-    ///      DWT cannot run with that depth.
-    ///   2. **DWT-parity alignment**: every tile's image-coordinate
-    ///      origin (in either axis) must be a multiple of
-    ///      `2^decompositionLevels`. The wrap-and-stitch encoder
-    ///      treats each tile as a standalone image (origin (0,0)) so
-    ///      the DWT lifting starts at even parity at every level. A
-    ///      multi-tile decoder, however, applies the inverse DWT
-    ///      using image-coordinate parity at each level
-    ///      (`origin / 2^level`). If the origin isn't a multiple of
-    ///      `2^N`, parity diverges at sub-levels and the decoded
-    ///      pixels mismatch (M4 root cause: 7/8 large-fixture/mode
-    ///      cells failed external cross-decode for this reason; only
-    ///      XA 1024² — origin always 32-aligned — passed).
+    /// **Single correctness constraint (post-v6-alpha3 step 7)** —
+    /// the per-tile DWT depth floor:
     ///
-    /// When constraint 2 is violated, the planner falls back to
-    /// single-tile rather than producing an unsuitable codestream.
-    /// Even-mode multi-tile is therefore only available on fixtures
-    /// whose tile-origin grid lands on `2^N` boundaries (XA 1024²
-    /// cleanly; DX/PX/MR/CT need a native multi-tile encoder
-    /// refactor that propagates per-tile origin into the DWT lifting
-    /// — v6-alpha3+ scope).
+    ///   - **Decomposition floor**: each tile must be ≥
+    ///     `2^decompositionLevels` along each axis or the per-tile
+    ///     DWT cannot run with that depth. Below this size the
+    ///     planner falls back to single-tile.
+    ///
+    /// **History — v6-alpha2 32-alignment constraint REMOVED:**
+    ///
+    /// v6-alpha2 added a second constraint requiring tile width and
+    /// height to each be multiples of `2^decompositionLevels`. That
+    /// constraint existed because the v6-alpha1 wrap-and-stitch
+    /// encoder treated each tile as a standalone image (origin
+    /// (0, 0)) so DWT lifting started at even parity at every level;
+    /// a multi-tile decoder applies the inverse DWT using image-
+    /// coordinate parity at each level (`origin / 2^level`), so
+    /// non-32-aligned origins produced wrong pixels (M4 root cause:
+    /// 7/8 large-fixture/mode cells failed external cross-decode;
+    /// only XA 1024² — origin always 32-aligned — passed).
+    ///
+    /// v6-alpha3 step 1+2+3 made the encoder DWT origin-aware;
+    /// step 5 replaced wrap-and-stitch with a native multi-tile
+    /// codestream assembler; step 6A canvas-anchored the encoder
+    /// code-block partition; step 6B mirrored everything on the
+    /// decode side. After step 6B, every (fixture, mode) cell
+    /// cross-decodes bit-exact through OpenJPH/Grok/Kakadu AND
+    /// J2KSwift self-roundtrips bit-exact. The 32-alignment
+    /// constraint is therefore obsolete and removed in step 7.
+    ///
+    /// The decomposition floor (constraint 1) stays — it's a
+    /// per-tile DWT depth precondition, not a multi-tile parity
+    /// concern.
     public static func plan(
         imageWidth: Int,
         imageHeight: Int,
@@ -139,7 +155,41 @@ public enum J2KEncodeTilePlanner {
         let chosen: J2KHTTileMode
         switch mode {
         case .auto:
-            chosen = pixels >= 3_000_000 ? .tiles2x2 : .single
+            // v6-alpha4 step 10 — auto mode picks the tile grid that
+            // empirically minimises encode wall time at each fixture
+            // size, per the step-9 release-build median-of-5
+            // measurement (see MEDICAL_BENCHMARK_V6.md "step 9"
+            // section):
+            //
+            //   pixels ≥ 3 M  → 4x4
+            //     PX 2459×1316 (3.24 M): 4x4 23.2 ms vs 2x2 27.0 ms
+            //                            (single 37.2 ms — 1.66× win)
+            //     DX 2800×2288 (6.41 M): 4x4 53.5 ms vs 2x2 56.0 ms
+            //                            (single 74.5 ms — 1.39× win)
+            //
+            //   500 K ≤ pixels < 3 M  → 2x2
+            //     XA 1024×1024 (1.05 M): 2x2 7.7 ms (single 11.5 ms
+            //                            — 1.49× win); 4x4 8.1 ms
+            //                            (4x4 not better at this size)
+            //     MR  886× 886 (0.78 M): 2x2 2.6 ms (single 5.3 ms —
+            //                            2.04× win); 4x4 3.4 ms
+            //
+            //   pixels < 500 K  → single
+            //     MR-small / CT etc.: per-tile encode time is below
+            //     the task-group dispatch + scheduler floor, so
+            //     multi-tile would be net slower.
+            //
+            // The per-tile DWT depth floor (constraint 1 below) is
+            // a separate hard limit; if the chosen multi-tile grid
+            // would produce a tile smaller than `2^decompositionLevels`,
+            // the planner falls back to single regardless.
+            if pixels >= 3_000_000 {
+                chosen = .tiles4x4
+            } else if pixels >= 500_000 {
+                chosen = .tiles2x2
+            } else {
+                chosen = .single
+            }
         default:
             chosen = mode
         }
@@ -160,23 +210,49 @@ public enum J2KEncodeTilePlanner {
             tileWidth: imageWidth, tileHeight: imageHeight,
             imageWidth: imageWidth, imageHeight: imageHeight)
 
-        // Constraint 1: per-tile DWT depth floor.
+        // Constraint 1: per-tile DWT depth floor. Below `2^N` the
+        // per-tile DWT cannot run with the encoder's configured
+        // decomposition depth.
         let minDim = 1 << decompositionLevels
-        if tileW < minDim || tileH < minDim { return single }
+        if tileW < minDim || tileH < minDim {
+            debugLogLayout(requested: mode, resolved: chosen,
+                           outcome: "fallback (tile dim < 2^\(decompositionLevels))",
+                           layout: single, image: (imageWidth, imageHeight))
+            return single
+        }
 
-        // Constraint 2: DWT-parity alignment. Every interior tile
-        // origin must be a multiple of `minDim` (which equals
-        // `2^decompositionLevels`). Origin for tile (col, row) is
-        // (col * tileW, row * tileH). Tile 0's origin (0, 0) is
-        // always aligned. For multi-tile to be safe end-to-end,
-        // every tile origin must align — i.e., tileW and tileH
-        // must each be multiples of minDim.
-        if cols > 1 && (tileW % minDim != 0) { return single }
-        if rows > 1 && (tileH % minDim != 0) { return single }
-
-        return J2KTileLayout(
+        let layout = J2KTileLayout(
             cols: cols, rows: rows,
             tileWidth: tileW, tileHeight: tileH,
             imageWidth: imageWidth, imageHeight: imageHeight)
+        debugLogLayout(requested: mode, resolved: chosen,
+                       outcome: layout.isMultiTile ? "multi-tile" : "single",
+                       layout: layout, image: (imageWidth, imageHeight))
+        return layout
+    }
+
+    /// Cached env-var read at process startup. When set to `"1"`
+    /// (or `"true"` / `"yes"`), the planner prints its decision
+    /// once per `plan(...)` call. Off by default; production
+    /// behaviour unchanged.
+    nonisolated(unsafe) private static let debugLayoutEnabled: Bool = {
+        switch ProcessInfo.processInfo.environment["J2K_HT_TILE_DEBUG_LAYOUT"]?.lowercased() {
+        case "1", "true", "yes", "on": return true
+        default:                       return false
+        }
+    }()
+
+    private static func debugLogLayout(
+        requested: J2KHTTileMode,
+        resolved: J2KHTTileMode,
+        outcome: String,
+        layout: J2KTileLayout,
+        image: (w: Int, h: Int)
+    ) {
+        guard debugLayoutEnabled else { return }
+        print("[J2K planner] image=\(image.w)×\(image.h) " +
+              "requested=\(requested) resolved=\(resolved) " +
+              "→ \(outcome) | layout=\(layout) " +
+              "tiles=\(layout.tileCount)")
     }
 }
