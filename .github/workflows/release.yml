@@ -14,28 +14,20 @@ permissions:
   contents: write
 
 jobs:
-  validate:
-    name: Validate Release
-    runs-on: macos-15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Swift
-        uses: SwiftyLab/setup-swift@latest
-        with:
-          swift-version: '6.2'
-
-      - name: Build
-        run: swift build -c release
-
-      - name: Validate package
-        run: swift package dump-package
+  # Note: a `validate` job that ran `swift build -c release` was removed in
+  # v6.0.1. The build cannot succeed in CI because Package.swift declares a
+  # sibling-path dependency on `../CompressionFamily`, which is a private
+  # local package not present on any remote. The mandatory pre-release
+  # commit gate (run locally on every release per RELEASING.md) is stricter
+  # than `swift build -c release` and serves the same purpose.
+  #
+  # If `CompressionFamily` is ever pushed to a private GitHub repo, restore
+  # the validate job here and add a sibling-checkout step using a deploy
+  # key. See RELEASING.md "CI workflows that affect releases" for the exact
+  # YAML to drop in.
 
   create-release:
     name: Create GitHub Release
-    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write

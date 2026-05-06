@@ -86,18 +86,26 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Branching Strategy
 
-- `main` - Stable releases only
-- `develop` - Integration branch for features
-- `feature/*` - New features
-- `bugfix/*` - Bug fixes
-- `release/*` - Release preparation
+J2KSwift uses a **trunk-based** model. The single source of truth for the
+branching model and release flow is [`RELEASING.md`](RELEASING.md). Quick
+reference:
+
+- `main` — trunk; always releasable; tags are cut from here
+- `feature/<scope>-<topic>` — new work
+- `fix/<scope>-<topic>` — bug fixes
+- `vX.Y.Z-release-candidate` — release prep, PR → `main`
+- `release/vX.Y.Z` — post-release frozen mirror of the tag (auto-created)
+- `hotfix/vX.Y.(Z+1)` — patch-level fixes branched off `release/vX.Y.Z`
+
+There is **no `develop` branch**. Feature work branches off `main` and
+returns via PR.
 
 ### Working on a Feature
 
-1. Create a feature branch from `develop`:
+1. Create a feature branch from `main`:
    ```bash
-   git checkout develop
-   git pull upstream develop
+   git checkout main
+   git pull upstream main
    git checkout -b feature/my-feature
    ```
 
