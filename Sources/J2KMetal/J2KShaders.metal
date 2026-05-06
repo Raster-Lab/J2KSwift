@@ -2024,6 +2024,80 @@ kernel void j2k_ht_forward_dispatch_probe(
     }
 }
 
+// MARK: - HTJ2K Forward Encode: per-sample classifier (v6-alpha6 phase 1)
+//
+// Per-sample classification kernel — the parallelizable half of
+// HT-conformant forward entropy. Mirrors the CPU `sampleInfo`
+// function in `J2KHTConformantBlockEncoder.swift` line by line:
+//
+//   val = (t * 2) >> p & ~1;
+//   if val == 0  -> (sig=false, eQ=0, payload=0)
+//   val -= 1
+//   eQ = 32 - clz(val)
+//   sign = (t >> 31) & 1
+//   payload = (val - 1) + sign
+//   return (sig=true, eQ, payload)
+//
+// Output tuple — one UInt64 per sample:
+//   bit  63    : sig
+//   bits 56-62 : eQ    (7 bits — 0..32 fits)
+//   bits  0-31 : payload (32 bits, full precision)
+//   bits 32-55 : reserved (zero)
+//
+// Each thread handles one codeblock, looping over its W*H samples
+// serially within the thread. The Phase 0.5 dispatch probe showed
+// per-block threads scale well (2300 ns/block on M2 for the DX
+// fixture); the per-sample compute is simpler than the probe's
+// synthetic work, so steady-state should be similar or better.
+
+struct GPUHTForwardClassifyDescriptor {
+    uint coeffOffset;     // sample offset into coefficient pool
+    uint tupleOffset;     // tuple offset into output pool (UInt64s)
+    uint sampleCount;     // width * height
+    uint p;               // bit-depth shift parameter (Kmsbs-style)
+};
+
+kernel void j2k_ht_forward_classify_samples(
+    device const GPUHTForwardClassifyDescriptor* blocks       [[buffer(0)]],
+    device const uint*                           coefficients [[buffer(1)]],
+    device ulong*                                tuples       [[buffer(2)]],
+    constant uint&                               blockCount   [[buffer(3)]],
+    uint tid [[thread_position_in_grid]]
+) {
+    if (tid >= blockCount) return;
+    GPUHTForwardClassifyDescriptor desc = blocks[tid];
+
+    device const uint*  myCoeffs = coefficients + desc.coeffOffset;
+    device ulong*       myTuples = tuples       + desc.tupleOffset;
+    uint p = desc.p;
+
+    for (uint i = 0; i < desc.sampleCount; i++) {
+        uint t = myCoeffs[i];
+
+        // val = (t * 2) >> p & ~1;
+        uint val = ((t << 1) >> p) & ~1u;
+
+        ulong tuple;
+        if (val == 0u) {
+            tuple = 0;  // sig=0, eQ=0, payload=0
+        } else {
+            // val -= 1; eQ = 32 - clz(val); sign = (t >> 31) & 1;
+            // payload = (val - 1) + sign;
+            uint valM1 = val - 1u;
+            // clz on a non-zero uint always returns 0..31, so eQ ∈ [1, 32].
+            uint eQ = 32u - clz(valM1);
+            uint sign = (t >> 31) & 1u;
+            uint payload = (valM1 - 1u) + sign;
+
+            // Pack: bit 63 = sig, bits 56-62 = eQ, bits 0-31 = payload.
+            tuple = (1uL << 63)
+                  | ((ulong(eQ) & 0x7Fu) << 56)
+                  | ulong(payload);
+        }
+        myTuples[i] = tuple;
+    }
+}
+
 // MARK: - HTJ2K MagSgn forward bit reader (Phase 1)
 //
 // Per-codeblock MagSgn descriptor: layout matches the Swift

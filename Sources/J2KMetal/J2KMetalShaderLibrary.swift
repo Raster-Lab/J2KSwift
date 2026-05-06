@@ -143,6 +143,12 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// writes ~half the sample count's worth of bytes. Empirical
     /// gate to v6-alpha6 phase 1 (approach B vs E pivot).
     case htForwardDispatchProbe = "j2k_ht_forward_dispatch_probe"
+    /// Per-sample classifier (v6-alpha6 phase 1, approach B).
+    /// Per-sample work mirrors `sampleInfo` in HTBlockEncoderConformant —
+    /// emits a UInt64 tuple `(sig:1, eQ:7, payload:32)` per sample.
+    /// CPU-side encoder consumes the tuple stream and emits the
+    /// inherently-serial MagSgn / MEL / VLC byte streams.
+    case htForwardClassifySamples = "j2k_ht_forward_classify_samples"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -2435,6 +2441,54 @@ enum J2KMetalShaderSource {
         uchar payload = uchar(accumulator & 0xFFu);
         for (uint i = 0; i < outBytes; i++) {
             myOut[i] = payload;
+        }
+    }
+
+    // MARK: - HTJ2K Forward Encode: per-sample classifier (v6-alpha6 phase 1)
+    //
+    // See J2KShaders.metal for the canonical documentation; this
+    // inline copy stays bit-identical for the source-compile fallback
+    // path (no `default.metallib`).
+
+    struct GPUHTForwardClassifyDescriptor {
+        uint coeffOffset;
+        uint tupleOffset;
+        uint sampleCount;
+        uint p;
+    };
+
+    kernel void j2k_ht_forward_classify_samples(
+        device const GPUHTForwardClassifyDescriptor* blocks       [[buffer(0)]],
+        device const uint*                           coefficients [[buffer(1)]],
+        device ulong*                                tuples       [[buffer(2)]],
+        constant uint&                               blockCount   [[buffer(3)]],
+        uint tid [[thread_position_in_grid]]
+    ) {
+        if (tid >= blockCount) return;
+        GPUHTForwardClassifyDescriptor desc = blocks[tid];
+
+        device const uint*  myCoeffs = coefficients + desc.coeffOffset;
+        device ulong*       myTuples = tuples       + desc.tupleOffset;
+        uint p = desc.p;
+
+        for (uint i = 0; i < desc.sampleCount; i++) {
+            uint t = myCoeffs[i];
+
+            uint val = ((t << 1) >> p) & ~1u;
+
+            ulong tuple;
+            if (val == 0u) {
+                tuple = 0;
+            } else {
+                uint valM1 = val - 1u;
+                uint eQ = 32u - clz(valM1);
+                uint sign = (t >> 31) & 1u;
+                uint payload = (valM1 - 1u) + sign;
+                tuple = (1uL << 63)
+                      | ((ulong(eQ) & 0x7Fu) << 56)
+                      | ulong(payload);
+            }
+            myTuples[i] = tuple;
         }
     }
 
