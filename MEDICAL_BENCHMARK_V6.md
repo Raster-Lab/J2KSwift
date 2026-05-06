@@ -7,29 +7,32 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha3 step 6B)
+## Headline (post-v6-alpha3 step 7)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
 both the production single-tile path AND the multi-tile path on
 every corpus fixture** (XA 1024², MR 886², PX 2459×1316, DX
-2800×2288 in 2x2 and 4x4 layouts) — cross-decode bit-exact through
-OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu 8.4.1 demo,
-and J2KSwift self-roundtrip bit-exact on every fixture × every
-multi-tile mode tested. The v6-alpha3 mission objective — make
-non-32-aligned multi-tile codestreams correct end-to-end — is met.
+2800×2288 in 2x2 / 4x4 / strips4 layouts) — cross-decode bit-exact
+through OpenJPEG 2.5.4, OpenJPH 0.27.0, Grok 20.3.0, and Kakadu
+8.4.1 demo, and J2KSwift self-roundtrip bit-exact on every
+(fixture, mode) cell tested. The parity matrix that was the v6-
+alpha2 root-cause exhibit now reads 36/36 instead of 3/36.
 
-**Kakadu HT advantage on fixtures ≥ 886×886 still stands in the
-v5.38 HT-fair table** because production still routes those
-fixtures through single-tile (the v6-alpha2 planner constraint is
-intact). The multi-tile path is now correctness-clean on every
-fixture, so the planner constraint can be relaxed in step 7 and
-the perf table re-measured in step 8 with multi-tile firing on
-every fixture.
+The v6-alpha2 32-alignment planner constraint is **removed** in
+step 7 — MR/PX/DX now route through native multi-tile when the
+caller opts into a multi-tile mode (instead of falling back to
+single-tile). Production default remains `single` until step 8
+perf data justifies promoting `auto`. **Kakadu HT advantage on
+fixtures ≥ 886×886 still stands in the v5.38 HT-fair table
+below** because the table hasn't been remeasured yet; step 8
+runs the new harness and updates this headline.
 
-| Mode default | Single-tile production path |
+| Aspect | State |
 |---|---|
-| Multi-tile correctness | Bit-exact on every corpus fixture × every mode (cross-decode + self-roundtrip) |
-| Production routing | v6-alpha2 32-alignment planner constraint still active (step 7 will relax) |
+| Single-tile correctness | bit-exact (single-tile bytes byte-identical to v5.38) |
+| Multi-tile correctness | bit-exact on every corpus fixture × every mode |
+| Production default | `single` (`J2K_HT_TILE_MODE` env var opts in to multi-tile) |
+| Planner constraint | DWT-depth floor only (32-alignment removed in step 7) |
 | Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
 ---
@@ -1338,3 +1341,121 @@ flipped to live and now PASS:
     diagnosis as inputs; output is a refreshed HT-fair table
     that supersedes the v5.38 one currently anchoring the
     headline claims at the top of this doc.
+
+---
+
+## v6-alpha3 step 7 — planner constraint relaxed
+
+### What landed
+
+`J2KEncodeTilePlanner.plan(...)` no longer rejects layouts whose
+tile width / height aren't multiples of `2^decompositionLevels`.
+The v6-alpha2 32-alignment rule existed because the v6-alpha1
+wrap-and-stitch encoder produced bytes that external decoders
+read with wrong pixels for any non-32-aligned origin. Steps 1–6B
+fixed that across the encoder + decoder, so the constraint is
+now obsolete.
+
+| Constraint | Before | After |
+|---|---|---|
+| Per-tile DWT depth floor (`tileW, tileH ≥ 2^N`) | active | active |
+| 32-alignment (`tileW, tileH ≡ 0 mod 2^N`) | active | **removed** |
+
+Single-tile bytes byte-identical to all prior versions. Multi-tile
+modes 2x2/4x4/strips4 now fire for every corpus fixture; `auto`
+picks 2x2 above the 3 MP threshold (PX, DX) and single below (MR,
+XA, CT, MR-small).
+
+### Layout debug logging
+
+`J2K_HT_TILE_DEBUG_LAYOUT=1` (off by default) prints the planner's
+decision once per `plan(...)` call:
+
+      [J2K planner] image=2459×1316 requested=auto resolved=tiles2x2
+                    → multi-tile | layout=2x2 (1230×658) tiles=4
+
+This addresses the "no silent fallback" requirement — when set,
+every fall-back-to-single shows up in the log with the reason.
+Production builds default off; no behaviour change on the hot
+path.
+
+### Parity matrix (post-step-7, every cell bit-exact)
+
+`HTTileParityMatrixTests.testTileParityMatrixOnLargeFixtures`
+now exercises 12 (fixture, mode) cells × 3 external decoders =
+36 outcomes:
+
+| Modality | Shape | Mode | Tile origins | OpenJPH | Grok | Kakadu |
+|---|---|---|---|---:|---:|---:|
+| MR | 886×886    | 2x2     | (0,443) × (0,443)        | **0** | **0** | **0** |
+| MR | 886×886    | 4x4     | (0,222,444,666)²         | **0** | **0** | **0** |
+| MR | 886×886    | strips4 | (0) × (0,222,444,666)    | **0** | **0** | **0** |
+| XA | 1024×1024  | 2x2     | (0,512) × (0,512)        | **0** | **0** | **0** |
+| XA | 1024×1024  | 4x4     | (0,256,512,768)²         | **0** | **0** | **0** |
+| XA | 1024×1024  | strips4 | (0) × (0,256,512,768)    | **0** | **0** | **0** |
+| PX | 2459×1316  | 2x2     | (0,1230) × (0,658)       | **0** | **0** | **0** |
+| PX | 2459×1316  | 4x4     | (0,615,1230,1845) × (0,329,658,987) | **0** | **0** | **0** |
+| PX | 2459×1316  | strips4 | (0) × (0,329,658,987)    | **0** | **0** | **0** |
+| DX | 2800×2288  | 2x2     | (0,1400) × (0,1144)      | **0** | **0** | **0** |
+| DX | 2800×2288  | 4x4     | (0,700,1400,2100) × (0,572,1144,1716) | **0** | **0** | **0** |
+| DX | 2800×2288  | strips4 | (0) × (0,572,1144,1716)  | **0** | **0** | **0** |
+
+(`0` = max-abs-pixel-diff = bit-exact. Compare to v6-alpha2 which
+showed 8 of 9 non-XA cells failing through OpenJPH/Grok/Kakadu —
+see "v6-alpha2 — root cause" section above.)
+
+### New test scaffolding
+
+  - `Tests/J2KCodecTests/HTTilePlannerRelaxationTests.swift`
+    (NEW, 15 tests). Pins the planner-only contract:
+      * MR/PX/DX 2x2 + 4x4 do NOT fall back (6 tests)
+      * XA 2x2 + 4x4 still fire multi-tile (regression, 2 tests)
+      * Tile dim < `2^N` still falls back (constraint 1 intact, 2)
+      * `single` always returns 1x1 (1 test)
+      * `auto` threshold behaviour, including PX + DX above the
+        3 MP cutoff and MR below it (3 tests)
+      * Edge-of-floor and smaller-decomp-depth checks (2)
+
+  - `Tests/J2KCodecTests/HTFairMultiTileBenchmarkHarness.swift`
+    (NEW, scaffolding for step 8). Diagnostic-only median-of-5
+    harness that prints three Markdown tables: per-mode J2KSwift
+    times, HT-fair encode + decode against Kakadu/OpenJPH/Grok,
+    and J2KSwift multi-tile speedup vs single-tile. Step 8 runs
+    this and pulls the numbers into the doc's headline.
+
+### Mandatory commit gates (all green post step 7)
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 |
+| HTTileParityMatrixTests               | 1/1 (12 × 3 = 36 cells bit-exact) |
+| HTTilePlannerRelaxationTests          | 15/15 (NEW) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KMedicalCorpusPerformanceTests      | 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha3 step 7 — final precise claim
+
+> Step 7 relaxes the v6-alpha2 32-alignment planner constraint
+> now that native multi-tile correctness is proven (steps 1–6B).
+> MR / PX / DX can now route into native multi-tile via
+> `J2K_HT_TILE_MODE`, instead of falling back to single-tile.
+> Every (fixture, mode) cell cross-decodes bit-exact through
+> OpenJPH, Grok, and Kakadu (12×3 = 36/36); J2KSwift self-
+> roundtrip remains bit-exact on every cell. Single-tile bytes
+> byte-identical to v5.38 / v5.39 / v6-alpha2 / v6-alpha3
+> step 5 / step 6A / step 6B. Production default is still
+> `single` (env-var opt-in for multi-tile modes); a future
+> `auto`-promotion decision waits on step 8 perf data.
+> **Kakadu performance claims remain unchanged until step 8
+> remeasures the HT-fair table with native multi-tile actually
+> firing.**
