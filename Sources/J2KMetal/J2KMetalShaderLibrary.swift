@@ -136,6 +136,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// overhead vs CPU work for a 1-thread-per-codeblock layout.
     /// Not a real decoder; first-light prototype only.
     case htDispatchProbe = "j2k_ht_dispatch_probe"
+    /// Symmetric encode-side dispatch-cost probe (v6-alpha6 phase 0.5).
+    /// Models the read+write traffic shape of an eventual GPU HT
+    /// forward entropy encoder: walks per-block coefficients once
+    /// (per-sample classification + payload extraction synthetic),
+    /// writes ~half the sample count's worth of bytes. Empirical
+    /// gate to v6-alpha6 phase 1 (approach B vs E pivot).
+    case htForwardDispatchProbe = "j2k_ht_forward_dispatch_probe"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -2380,6 +2387,54 @@ enum J2KMetalShaderSource {
         int v = int(checksum & 0x0FFFu);   // bounded magnitude
         for (uint i = 0; i < sampleCount; i++) {
             myOut[i] = ((i & 1u) == 0u) ? v : -v;
+        }
+    }
+
+    // MARK: - HTJ2K Forward Encode Prototype: dispatch-cost probe (v6-alpha6 phase 0.5)
+    //
+    // Symmetric to `j2k_ht_dispatch_probe` (decoder side) but for the
+    // **encode** direction. See J2KShaders.metal for the canonical
+    // documentation; this inline copy stays bit-identical for the
+    // source-compile fallback path (no `default.metallib`).
+
+    struct GPUHTForwardBlockDescriptor {
+        uint coeffOffset;
+        uint outputOffset;
+        uint outputCapacity;
+        ushort width;
+        ushort height;
+    };
+
+    kernel void j2k_ht_forward_dispatch_probe(
+        device const GPUHTForwardBlockDescriptor* blocks       [[buffer(0)]],
+        device const uint*                        coefficients [[buffer(1)]],
+        device uchar*                             output       [[buffer(2)]],
+        constant uint&                            blockCount   [[buffer(3)]],
+        uint tid [[thread_position_in_grid]]
+    ) {
+        if (tid >= blockCount) return;
+        GPUHTForwardBlockDescriptor desc = blocks[tid];
+
+        uint sampleCount = uint(desc.width) * uint(desc.height);
+
+        uint accumulator = 0u;
+        device const uint* myCoeffs = coefficients + desc.coeffOffset;
+        for (uint i = 0; i < sampleCount; i++) {
+            uint v = myCoeffs[i];
+            uint mag = v & 0x7FFFFFFFu;
+            uint isSig = (mag != 0u) ? 1u : 0u;
+            uint leadingZeros = (mag == 0u) ? 32u : clz(mag);
+            accumulator = accumulator * 31u + isSig + (leadingZeros << 1);
+        }
+
+        uint outBytes = sampleCount >> 1;
+        if (outBytes > desc.outputCapacity) {
+            outBytes = desc.outputCapacity;
+        }
+        device uchar* myOut = output + desc.outputOffset;
+        uchar payload = uchar(accumulator & 0xFFu);
+        for (uint i = 0; i < outBytes; i++) {
+            myOut[i] = payload;
         }
     }
 

@@ -1941,6 +1941,89 @@ kernel void j2k_ht_dispatch_probe(
     }
 }
 
+// MARK: - HTJ2K Forward Encode Prototype: dispatch-cost probe (v6-alpha6 phase 0.5)
+//
+// Symmetric to `j2k_ht_dispatch_probe` (decoder side) but for the
+// **encode** direction. Models the traffic shape an eventual GPU
+// HT-conformant forward entropy encoder will see:
+//
+//   reads:  W*H UInt32 coefficients (sign-magnitude, same convention
+//           as HTBlockEncoderConformant.encode input)
+//   writes: ~half the coefficient count's worth of bytes (rough
+//           steady-state ratio for lossless 16-bit medical inputs)
+//
+// Per-thread work mimics the per-sample classification cost of
+// HTBlockEncoderConformant.sampleInfo: significance test + leading-
+// zero count + sign extraction. Light enough that the dispatch
+// overhead dominates, heavy enough that the optimizer cannot skip
+// the loop — the same balance the decoder dispatch probe strikes.
+//
+// Inputs:
+//   blocks       — array of GPUHTForwardBlockDescriptor, one per block
+//   coefficients — concatenated UInt32 coefficient pool (sign-magnitude)
+//   output       — concatenated UInt8 byte pool for synthetic writes
+//   blockCount   — number of codeblocks to process
+//
+// NOT a real encoder. Used to answer the v6-alpha6 Phase 0.5 question:
+// "does the per-block GPU dispatch + memory-traffic floor leave room
+// for the actual entropy work to win against CPU's parallel
+// codeblock encode?" If the floor exceeds CPU's per-block wall time,
+// the v6-alpha6 plan pivots to approach E (CPU-SIMD only).
+
+struct GPUHTForwardBlockDescriptor {
+    uint coeffOffset;     // sample offset into coefficient pool
+    uint outputOffset;    // byte offset into output byte pool
+    uint outputCapacity;  // upper bound on bytes this block may write
+    ushort width;
+    ushort height;
+};
+
+kernel void j2k_ht_forward_dispatch_probe(
+    device const GPUHTForwardBlockDescriptor* blocks       [[buffer(0)]],
+    device const uint*                        coefficients [[buffer(1)]],
+    device uchar*                             output       [[buffer(2)]],
+    constant uint&                            blockCount   [[buffer(3)]],
+    uint tid [[thread_position_in_grid]]
+) {
+    if (tid >= blockCount) return;
+    GPUHTForwardBlockDescriptor desc = blocks[tid];
+
+    uint sampleCount = uint(desc.width) * uint(desc.height);
+
+    // Walk every coefficient once — models per-sample classification
+    // + payload extraction cost. The accumulator stays in a register
+    // so the optimizer cannot eliminate the loop.
+    uint accumulator = 0u;
+    device const uint* myCoeffs = coefficients + desc.coeffOffset;
+    for (uint i = 0; i < sampleCount; i++) {
+        uint v = myCoeffs[i];
+        // Light synthetic work matching sampleInfo shape:
+        //   - significance test (top-bit == 0 means insignificant)
+        //   - magnitude extraction (low 31 bits)
+        //   - leading-zero count = bit-width (used for VLC/MagSgn
+        //     codeword length in the real encoder)
+        uint mag = v & 0x7FFFFFFFu;
+        uint isSig = (mag != 0u) ? 1u : 0u;
+        uint leadingZeros = (mag == 0u) ? 32u : clz(mag);
+        accumulator = accumulator * 31u + isSig + (leadingZeros << 1);
+    }
+
+    // Write output bytes proportional to coefficient count — models
+    // per-block byte-stream emission cost. Real codeblocks emit
+    // closer to 0.5–1.5 bytes per significant sample on lossless;
+    // half the sample count is a defensible synthetic upper bound
+    // that fits within outputCapacity.
+    uint outBytes = sampleCount >> 1;
+    if (outBytes > desc.outputCapacity) {
+        outBytes = desc.outputCapacity;
+    }
+    device uchar* myOut = output + desc.outputOffset;
+    uchar payload = uchar(accumulator & 0xFFu);
+    for (uint i = 0; i < outBytes; i++) {
+        myOut[i] = payload;
+    }
+}
+
 // MARK: - HTJ2K MagSgn forward bit reader (Phase 1)
 //
 // Per-codeblock MagSgn descriptor: layout matches the Swift
