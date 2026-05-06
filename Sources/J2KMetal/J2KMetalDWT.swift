@@ -924,7 +924,13 @@ public actor J2KMetalDWT {
         let effectiveLevels = max(1, min(levels, maxLevels))
 
         try await ensureInitialized()
-        let queue = try await metalDevice.commandQueue()
+        // v6-alpha5 phase 6 — fresh per-call command queue so
+        // concurrent multi-tile dispatches don't serialise on a
+        // shared MTLCommandQueue. Phase 5 measured 33–43 %
+        // multi-tile regression rooted in the shared-queue serial
+        // execution; allocating a per-tile queue lets the GPU
+        // scheduler interleave CB execution across tile tasks.
+        let queue = try await metalDevice.makeFreshCommandQueue()
         let device = queue.device
         let stride32 = MemoryLayout<Int32>.stride
 
