@@ -2199,15 +2199,78 @@ begin with — every chunk gets ≈ 17 blocks covering all 4
 subbands of every level via the (component, subband, block)
 traversal, so chunks self-balance enough that locality wins.
 
-**Implication** — the only remaining ranked lever is **Lever D
-(MagSgn / MEL writer microbench-driven inlining)**. The +20 ms
-residual DX gap above Kakadu after Lever B looks **structural**
-rather than addressable by lever-tier work: it lives inside the
-per-block conformant encoder's MagSgn / MEL / VLC bit-emission
-loops. Closing it would require either (a) microbenchmark-driven
-inlining of those writers (Lever D, est. −3 % to −8 %, low risk),
-or (b) algorithmic redesign of the entropy stage (out of
-v6-alpha4 scope). After Lever D, additional gap-closing work
-should pivot from incremental levers to either profiling the
-HT block encoder's hot loops directly or accepting the
-structural ceiling and moving to the next lossless milestone.
+**Lever D (NEGATIVE — REVERTED)** — Added `@inline(__always)` to
+the four highest-frequency forward-bitstream functions:
+`HTForwardBitEmitterConformant.emit(bit:)`,
+`HTReverseBitEmitterConformant.encode(...)`,
+`HTMELEncoderConformant.encode(eventIsOne:)`, and
+`HTMagSgnEncoderConformant.encode(codeword:count:)`. The hypothesis
+was that Swift's release optimizer might be missing inlining
+opportunities at sites where the per-quad / per-sample call
+overhead matters (≈ 10 M emit calls / multi-tile encode).
+
+Three-run median measurement (Apple M2, release):
+
+| Fixture | Lever B (md) | Lever D (md) | Δ |
+|---|---:|---:|---:|
+| MR  886×886  | 2.55 | 2.69 | **+5.5 %** |
+| XA 1024×1024 | 7.28 | 7.46 | +2.5 % (within noise) |
+| PX 2459×1316 | 23.04 | 23.77 | **+3.2 %** |
+| DX 2800×2288 | 50.48 | 51.95 | **+2.9 %** |
+
+Clean regression on every fixture, statistically clear on PX and
+DX. Reverted before reaching the heavy gate set.
+
+Root cause: Swift's release-mode optimizer with whole-module
+optimisation was already making the right inlining decisions —
+the explicit `@inline(__always)` annotations forced inlining at
+sites where the compiler had wisely declined. The likely
+mechanism is i-cache pressure: each annotated function expanded
+at ≈ 10 M call sites per encode (across all blocks of all tiles)
+inflated the resident code size enough to push hot loops out of
+L1i, costing more than the call-frame setup it saved.
+
+**Step 12 closure — empirical ceiling reached.** All four ranked
+levers from step 11 have been implemented and measured:
+
+| Lever | Outcome | DX wall delta |
+|---|---|---:|
+| A — DWT scratch pool          | landed (`90d73fe`) | −0.1 % |
+| B — skip bzero on band arrays | landed (`f17e2bc`) | −2.2 % |
+| C — striped entropy chunks    | reverted | +1.1 % |
+| D — `@inline` on bit emitters | reverted | +2.9 % |
+
+Combined wins from levers A + B = **−2.3 % on DX wall**, well
+below step 11's combined estimate (−15 % to −30 %). The empirical
+finding is that on this codebase + Apple M2 + Swift 6.1.2 +
+macOS 15:
+
+  1. Allocator pressure isn't the DWT bottleneck (Lever A).
+  2. Page-aligned `[Int32]` zero-init is free at the libc level
+     (Lever B).
+  3. Within-tile entropy chunk imbalance is small enough that
+     locality dominates (Lever C).
+  4. Swift's release optimiser already inlines the bit-stream
+     hot path correctly (Lever D).
+
+The residual J2KSwift-vs-Kakadu DX gap (≈ +25 ms after Lever B,
+i.e., 50.5 ms vs 24.3 ms) is therefore **structural**: it lives
+in the per-quad MagSgn / VLC / MEL compute itself, not in the
+allocator, scheduling, or optimiser-friendly micro-structure
+around it. Closing it would require one of:
+
+  - **Algorithmic** — a different entropy schedule (e.g., per-
+    quad precomputation that lets later quads reuse earlier
+    state, rather than the current per-quad full re-derivation).
+  - **Hardware** — explicit NEON intrinsics for the bit-pack
+    loops (currently out of scope per `feedback_lossless_only_v5_38`).
+  - **Pivot** — accept the ceiling and move to the next
+    lossless-only roadmap item.
+
+Given the constraint set, **pivoting** is the rational next move.
+v6-alpha4 step 12 closes here as a partial win: lever A + B
+preserve correctness and shave a small but real ~1 ms off DX wall;
+levers C + D produced negative results that we now have measured
+data for. Future work on closing the Kakadu gap should not retry
+these four lever-tier interventions on this hardware / toolchain
+combination without changing one of the underlying assumptions.
