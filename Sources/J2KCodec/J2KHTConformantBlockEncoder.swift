@@ -123,9 +123,60 @@ public enum HTBlockEncoderConformant {
         vlcEnc: inout HTReverseBitEmitterConformant,
         useSIMDClassification: Bool
     ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
+        return encode(
+            coefficients: coefficients,
+            width: width, height: height, missingMSBs: missingMSBs,
+            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+            useSIMDClassification: useSIMDClassification,
+            preClassifiedTuples: nil)
+    }
+
+    /// v6-alpha6 phase 1.1: encode-from-pre-classified-tuples variant.
+    ///
+    /// When `preClassifiedTuples` is non-nil, the per-sample
+    /// `(sig, eQ, payload)` tuples that `sampleInfo` would compute are
+    /// instead read from the supplied UInt64 buffer (one tuple per
+    /// sample, indexed `[y * width + x]`, layout matching what
+    /// `J2KMetalHTForwardClassifier` emits — `sig:1 | eQ:7 | payload:32`).
+    /// The CPU still walks the codeblock as quads and emits MagSgn /
+    /// MEL / VLC bytes serially per block (unchanged from the scalar
+    /// path); only the per-sample classification step is replaced.
+    ///
+    /// **Bit-exact correctness invariant** vs the scalar / SIMD paths:
+    /// the (rho / eQMax / payload) shape that `processQuad` returns
+    /// is byte-identical regardless of where the per-sample tuples
+    /// come from, because:
+    ///   1. The tuple layout is the same `(sig, eQ, payload)` triple.
+    ///   2. The downstream emit logic (rho accumulation, MEL/VLC/
+    ///      MagSgn emission) is the same scalar code on the same
+    ///      inputs.
+    ///   3. `J2KMetalHTForwardClassifier` is bit-exact validated
+    ///      against the production `sampleInfo` reference over
+    ///      73,728 random samples plus the SIMD prototype's
+    ///      hand-picked edge-case set (`HTGPUForwardClassifierBitExactTests`).
+    ///
+    /// When `preClassifiedTuples` is nil, this overload behaves
+    /// identically to the SIMD-toggle overload above. Callers that
+    /// don't need the tuple path can keep using the existing 3-emitter
+    /// overload — both forward to this implementation.
+    public static func encode(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int,
+        height: Int,
+        missingMSBs: Int,
+        magsgnEnc: inout HTMagSgnEncoderConformant,
+        melEnc: inout HTMELEncoderConformant,
+        vlcEnc: inout HTReverseBitEmitterConformant,
+        useSIMDClassification: Bool,
+        preClassifiedTuples: UnsafeBufferPointer<UInt64>?
+    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
         precondition(coefficients.count == width * height,
                      "coefficient count mismatch")
         precondition(missingMSBs < 30, "missingMSBs must leave room for data")
+        if let tuples = preClassifiedTuples {
+            precondition(tuples.count == width * height,
+                         "preClassifiedTuples count mismatch")
+        }
 
         magsgnEnc.reset()
         melEnc.reset()
@@ -254,12 +305,61 @@ public enum HTBlockEncoderConformant {
             return (rho, eQMax, eQ0, eQ1, eQ2, eQ3, s0, s1, s2, s3)
         }
 
+        // v6-alpha6 phase 1.1: per-sample tuple unpacker. Reads the
+        // GPU-classifier output format (`sig:1 | eQ:7 | payload:32`).
+        // Out-of-bounds samples return the zero tuple, matching the
+        // existing `fetch` semantics for the scalar / SIMD paths.
+        @inline(__always)
+        func sampleInfoFromTuple(_ x: Int, _ y: Int) -> (Bool, Int, UInt32) {
+            guard let tuples = preClassifiedTuples,
+                  x < width, y < height else {
+                return (false, 0, 0)
+            }
+            let raw = tuples[y * width + x]
+            let sig = (raw >> 63) & 1 != 0
+            let eQ = Int((raw >> 56) & 0x7F)
+            let payload = UInt32(raw & 0xFFFF_FFFF)
+            return (sig, eQ, payload)
+        }
+
+        @inline(__always)
+        func processQuadFromTuples(baseX: Int, baseY: Int)
+            -> (rho: Int, eQMax: Int,
+                eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
+                s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
+        {
+            var rho = 0
+            var eQMax = 0
+            var eQ0 = 0, eQ1 = 0, eQ2 = 0, eQ3 = 0
+            var s0: UInt32 = 0, s1: UInt32 = 0
+            var s2: UInt32 = 0, s3: UInt32 = 0
+
+            let (sig0, e0, p0) = sampleInfoFromTuple(baseX,     baseY)
+            if sig0 { rho |= 1; eQ0 = e0; s0 = p0; if e0 > eQMax { eQMax = e0 } }
+
+            let (sig1, e1, p1) = sampleInfoFromTuple(baseX,     baseY + 1)
+            if sig1 { rho |= 2; eQ1 = e1; s1 = p1; if e1 > eQMax { eQMax = e1 } }
+
+            let (sig2, e2, p2) = sampleInfoFromTuple(baseX + 1, baseY)
+            if sig2 { rho |= 4; eQ2 = e2; s2 = p2; if e2 > eQMax { eQMax = e2 } }
+
+            let (sig3, e3, p3) = sampleInfoFromTuple(baseX + 1, baseY + 1)
+            if sig3 { rho |= 8; eQ3 = e3; s3 = p3; if e3 > eQMax { eQMax = e3 } }
+
+            return (rho, eQMax, eQ0, eQ1, eQ2, eQ3, s0, s1, s2, s3)
+        }
+
         @inline(__always)
         func processQuad(baseX: Int, baseY: Int)
             -> (rho: Int, eQMax: Int,
                 eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
                 s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
         {
+            // v6-alpha6 phase 1.1: GPU-pre-classified tuple stream.
+            // Loop-invariant — optimiser hoists this branch.
+            if preClassifiedTuples != nil {
+                return processQuadFromTuples(baseX: baseX, baseY: baseY)
+            }
             // v5.39 M1: dispatch to SIMD path if the caller opted in.
             // The branch is loop-invariant (same value for the entire
             // encode call), so the optimiser hoists it; per-quad cost
