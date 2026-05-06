@@ -168,6 +168,27 @@ public struct J2KMetalSession: Sendable {
         #endif
     }
 
+    /// v6-alpha5 Phase 3 — process-wide shared session for the
+    /// encoder's GPU forward 5/3 INT path (and any future encode-
+    /// side GPU work that needs the same bundle). The session is
+    /// constructed lazily on first access; its underlying device,
+    /// shader library, and buffer pool stay zero-cost until the
+    /// first GPU dispatch actually touches them.
+    ///
+    /// Phase 2 measured an end-to-end encode regression of 33–151%
+    /// at 0.78–6.4 MP because the encoder was re-instantiating
+    /// `J2KMetalDWT` per encode, paying the device-init + shader-
+    /// compile + buffer-pool-warmup cost (≈ 13–15 ms) every call.
+    /// Routing the per-encode `J2KMetalDWT(...)` through this shared
+    /// session amortises that cost across every encode in the
+    /// process.
+    ///
+    /// Callers that want explicit lifecycle control can construct
+    /// their own session and pass it in via the (forthcoming)
+    /// `J2KEncoder.encode(_:session:)` API; the shared session is a
+    /// sensible default for tools that don't carry session state.
+    nonisolated(unsafe) public static let processShared: J2KMetalSession = J2KMetalSession()
+
     /// Build a small synthetic 16-bit image used by `preWarm`'s
     /// warmup-dispatch step. LCG-derived noise; small enough that
     /// encode + decode add up to a few milliseconds.

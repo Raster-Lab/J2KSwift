@@ -2686,8 +2686,25 @@ struct EncoderPipeline: Sendable {
                             && (width * height) >= 256 * 256
 
                         if useGPUForward {
-                            let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
-                                filter: .reversible53, decompositionLevels: levels))
+                            // v6-alpha5 phase 3 — share the
+                            // process-wide Metal session so the
+                            // device init / shader compile / buffer
+                            // pool setup is paid once per process,
+                            // not once per encode. Phase 2 measured
+                            // a 13–15 ms init cost per encode that
+                            // ate the GPU's compute advantage; phase
+                            // 3 reduces that to a fast no-op after
+                            // the first call (the underlying
+                            // `J2KMetalDevice.initialize` /
+                            // `J2KMetalShaderLibrary.loadShaders`
+                            // both have `isLoaded`-style guards).
+                            let session = J2KMetalSession.processShared
+                            let metalDWT = J2KMetalDWT(
+                                configuration: J2KMetalDWTConfiguration(
+                                    filter: .reversible53, decompositionLevels: levels),
+                                device: session.device,
+                                bufferPool: session.bufferPool,
+                                shaderLibrary: session.shaderLibrary)
                             try await metalDWT.initialize()
 
                             let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
