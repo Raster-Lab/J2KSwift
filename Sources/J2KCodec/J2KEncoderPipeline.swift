@@ -2702,9 +2702,16 @@ struct EncoderPipeline: Sendable {
                         //     (per-tile dim is always ≪ 4 MP for the
                         //     production .auto layouts), letting CPU
                         //     keep the multi-tile fast path it owns.
+                        // v6-alpha5 phase 9 — record the gate decision +
+                        // the reason for any non-fire so policy tests
+                        // can assert routing behaviour without races
+                        // on the static flag.
+                        let metalAvailable = J2KMetalDWT.isAvailable
+                        let pixels = width * height
+                        let pixelOK = pixels >= Self._gpuForward53PixelThreshold
                         let useGPUForward = Self._gpuForward53Enabled
-                            && J2KMetalDWT.isAvailable
-                            && (width * height) >= Self._gpuForward53PixelThreshold
+                            && metalAvailable
+                            && pixelOK
 
                         if useGPUForward {
                             // v6-alpha5 phase 3 — share the
@@ -2726,11 +2733,19 @@ struct EncoderPipeline: Sendable {
                                 device: session.device,
                                 bufferPool: session.bufferPool,
                                 shaderLibrary: session.shaderLibrary)
+                            let setupT0 = Date().timeIntervalSinceReferenceDate
                             try await metalDWT.initialize()
+                            let setupMs = (Date().timeIntervalSinceReferenceDate - setupT0) * 1000.0
 
+                            let dispatchT0 = Date().timeIntervalSinceReferenceDate
                             let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
                                 image: compData, width: width, height: height,
                                 levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+                            let dispatchMs = (Date().timeIntervalSinceReferenceDate - dispatchT0) * 1000.0
+                            J2KGPUForward53Telemetry.recordGPUFire(
+                                setupMs: setupMs, dispatchMs: dispatchMs,
+                                width: width, height: height, levels: levels,
                                 tileOriginX: tileOriginX, tileOriginY: tileOriginY)
 
                             for (levelIdx, level) in gpuLevels.enumerated() {
@@ -2761,6 +2776,22 @@ struct EncoderPipeline: Sendable {
                                     width: last.llWidth, height: last.llHeight), at: 0)
                             }
                         } else {
+                            // Record skip reason for Phase 9 policy
+                            // tests / cross-device tuning telemetry.
+                            // Order matters: env-disabled wins over
+                            // metal-unavailable wins over below-
+                            // threshold (most-actionable to least).
+                            let reason: J2KGPUForward53Telemetry.SkipReason
+                            if !Self._gpuForward53Enabled {
+                                reason = .envDisabled
+                            } else if !metalAvailable {
+                                reason = .metalUnavailable
+                            } else {
+                                reason = .belowThreshold
+                            }
+                            J2KGPUForward53Telemetry.recordCPUFire(
+                                reason: reason, width: width, height: height,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
                             // v6-alpha3 step 3: route through the parity-aware
                             // overload so per-tile image-coordinate origin is
                             // honoured. When (tileOriginX, tileOriginY) == (0, 0)
