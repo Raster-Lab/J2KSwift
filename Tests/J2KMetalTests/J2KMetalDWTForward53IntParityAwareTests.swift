@@ -334,6 +334,41 @@ final class J2KMetalDWTForward53IntParityAwareTests: XCTestCase {
         XCTAssertEqual(gpu.last?.ll, cpu.coarsestLL)
     }
 
+    /// MR 886×886 / 2×2 tile-1 EXACT shape — width=443, height=443,
+    /// uX=443, uY=0 — mirrors what `runEncodeStagesForNativeAssembly`
+    /// passes into `applyWaveletTransform` when encoding the right-
+    /// edge tile of MR 2×2 multi-tile. Slice 3's encoder gate
+    /// relaxation depends on this exact shape behaving bit-exact.
+    func testForward2DInt32MultiLevelFused_MR2x2Tile1ExactShape_BitExactGPUMatchesCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let width = 443, height = 443
+        let levels = 5
+        let image = Self.deterministic16BitImage(
+            width: width, height: height, seed: 0xC0FE_FACE)
+        let uX = 443, uY = 0
+
+        let cpu = await AcceleratedDWT2D.forwardDecomposition53(
+            data: image, width: width, height: height, levels: levels,
+            tileOriginX: uX, tileOriginY: uY)
+
+        let dwt = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+            filter: .reversible53, decompositionLevels: levels, gpuThreshold: 1))
+        try await dwt.initialize()
+
+        let gpu = try await dwt.forward2DInt32MultiLevelFused(
+            image: image, width: width, height: height, levels: levels,
+            tileOriginX: uX, tileOriginY: uY)
+
+        XCTAssertEqual(gpu.count, cpu.levels.count)
+        for (i, (gpuL, cpuL)) in zip(gpu, cpu.levels).enumerated() {
+            XCTAssertEqual(gpuL.lh, cpuL.lh, "L\(i) LH dim=\(cpuL.lhW)×\(cpuL.lhH)")
+            XCTAssertEqual(gpuL.hl, cpuL.hl, "L\(i) HL dim=\(cpuL.hlW)×\(cpuL.hlH)")
+            XCTAssertEqual(gpuL.hh, cpuL.hh, "L\(i) HH dim=\(cpuL.hhW)×\(cpuL.hhH)")
+        }
+        XCTAssertEqual(gpu.last?.ll, cpu.coarsestLL)
+    }
+
     /// Origin (0, 0) → must equal the no-origin multi-level fused
     /// output (regression guard). Every level stays at (0, 0) per
     /// Eq. B-15, every kernel stays the even variant.

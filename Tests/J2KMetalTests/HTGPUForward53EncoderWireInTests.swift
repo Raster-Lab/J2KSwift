@@ -143,6 +143,95 @@ final class HTGPUForward53EncoderWireInTests: XCTestCase {
         // default code path's semantics.
     }
 
+    // MARK: - Phase 4 slice 3 — multi-tile byte-identical
+
+    /// Multi-tile A/B encode helper: encodes via
+    /// `EncoderPipeline.encodeNativeMultiTile` so per-tile origins
+    /// other than (0, 0) actually fire. Returns codestream bytes.
+    private func encodeMultiTile(
+        _ image: J2KImage,
+        config: J2KEncodingConfiguration,
+        cols: Int, rows: Int,
+        gpuForward: Bool
+    ) async throws -> Data {
+        let prev = EncoderPipeline._gpuForward53Enabled
+        defer { EncoderPipeline._gpuForward53Enabled = prev }
+        EncoderPipeline._gpuForward53Enabled = gpuForward
+
+        let pipeline = EncoderPipeline(config: config)
+        let tw = (image.width  + cols - 1) / cols
+        let th = (image.height + rows - 1) / rows
+        let layout = J2KTileLayout(
+            cols: cols, rows: rows, tileWidth: tw, tileHeight: th,
+            imageWidth: image.width, imageHeight: image.height)
+        let (bytes, _) = try await pipeline.encodeNativeMultiTile(
+            image, layout: layout)
+        return bytes
+    }
+
+    /// MR 886×886 2x2 multi-tile encode — origins (0, 0), (443, 0),
+    /// (0, 443), (443, 443) span every parity combination. Phase 4
+    /// slice 3 is the first commit where these tiles route through
+    /// GPU forward (slices 1+2 lifted the kernel coverage; slice 3
+    /// drops the gate's `tileOriginX == 0 && tileOriginY == 0`
+    /// filter). Bytes must remain byte-identical.
+    func testGPUForward53MultiTile_MR886_2x2_BytesIdenticalToCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let image = syntheticImage(width: 886, height: 886, seed: 0xC0FE_FACE)
+        let cfg = htConfig()
+
+        let cpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: false)
+        let gpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: true)
+
+        XCTAssertEqual(cpuBytes.count, gpuBytes.count,
+            "MR 886×886 2x2 multi-tile: GPU and CPU must produce same-length bytes " +
+            "(cpu=\(cpuBytes.count) gpu=\(gpuBytes.count))")
+        XCTAssertEqual(cpuBytes, gpuBytes,
+            "MR 886×886 2x2 multi-tile: GPU forward 5/3 INT must be byte-identical " +
+            "to CPU forward — every odd-parity tile routes through the new " +
+            "parity-aware GPU path landed in phase 4 slices 1+2.")
+    }
+
+    /// DX 2800×2288 2x2 multi-tile — origins all even at level 0
+    /// but parity flips at deeper DWT levels (1400/8 = 175 odd).
+    /// Exercises the per-level Eq. B-15 origin trajectory inside
+    /// the multi-level fused dispatch.
+    func testGPUForward53MultiTile_DX2800_2x2_BytesIdenticalToCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let image = syntheticImage(width: 2800, height: 2288, seed: 0xC0FE_FACE)
+        let cfg = htConfig()
+
+        let cpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: false)
+        let gpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: true)
+
+        XCTAssertEqual(cpuBytes, gpuBytes,
+            "DX 2800×2288 2x2 multi-tile: GPU and CPU forward must produce byte-identical bytes")
+    }
+
+    /// PX 2459×1316 2x2 — irregular tile dims (1230×658 + a
+    /// 1229-wide trailing column). Tile origins (0, 0), (1230, 0),
+    /// (0, 658), (1230, 658) — even at L0, odd at deeper levels.
+    func testGPUForward53MultiTile_PX2459_2x2_BytesIdenticalToCPU() async throws {
+        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
+
+        let image = syntheticImage(width: 2459, height: 1316, seed: 0xC0FE_FACE)
+        let cfg = htConfig()
+
+        let cpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: false)
+        let gpuBytes = try await encodeMultiTile(
+            image, config: cfg, cols: 2, rows: 2, gpuForward: true)
+
+        XCTAssertEqual(cpuBytes, gpuBytes,
+            "PX 2459×1316 2x2 multi-tile: byte-identical")
+    }
+
     // MARK: - Phase 2 wall-time A/B (diagnostic)
 
     /// Diagnostic only — single-tile end-to-end encode wall time

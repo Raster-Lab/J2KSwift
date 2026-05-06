@@ -2669,19 +2669,22 @@ struct EncoderPipeline: Sendable {
                             floatCoefficients: decomposition.coarsestLL), at: 0)
 
                     } else if !use97DoublePrecision && useAcceleratedPath {
-                        // v6-alpha5 phase 2 — gated GPU forward 5/3 INT path.
-                        // Falls back to CPU when any of the conditions isn't
-                        // met (env var off, non-zero origin, Metal unavailable,
-                        // or image too small for GPU dispatch overhead to
-                        // amortise). The CPU path below is unchanged from
-                        // v6-alpha3 step 3 so single-tile bytes stay
-                        // byte-identical to v5.38 → v6-alpha4 when the gate
-                        // is off. When the gate is on AND origin is (0,0),
-                        // the GPU produces bit-exact-equivalent subband
-                        // coefficients (verified by phase 0/1 tests), so
-                        // the resulting codestream remains byte-identical.
+                        // v6-alpha5 phase 4 slice 3 — gated GPU forward 5/3
+                        // INT path with parity-aware origin support. Falls
+                        // back to CPU when the env var is off, Metal is
+                        // unavailable, or the image is too small for GPU
+                        // dispatch overhead to amortise. Origin no longer
+                        // required to be (0, 0) — multi-tile encodes can
+                        // now route through GPU at every tile, with the
+                        // parity-aware multi-level fused dispatch picking
+                        // the right kernel per-axis-per-level via Eq. B-15.
+                        // CPU output remains byte-identical to v5.38 →
+                        // v6-alpha4 when the gate is off. When the gate is
+                        // on, GPU produces bit-exact-equivalent subband
+                        // coefficients (verified by phase 0/1/2/4 tests),
+                        // so the resulting codestream stays byte-identical
+                        // regardless of origin.
                         let useGPUForward = Self._gpuForward53Enabled
-                            && tileOriginX == 0 && tileOriginY == 0
                             && J2KMetalDWT.isAvailable
                             && (width * height) >= 256 * 256
 
@@ -2709,14 +2712,21 @@ struct EncoderPipeline: Sendable {
 
                             let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
                                 image: compData, width: width, height: height,
-                                levels: levels)
+                                levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
 
                             for (levelIdx, level) in gpuLevels.enumerated() {
                                 let decomLevel = levelIdx + 1
-                                let halfWH = level.originalWidth  / 2
-                                let halfHH = level.originalHeight / 2
+                                // Phase 4 fix: parity-aware band counts.
+                                // halfWH = ceil for odd uX, floor for even —
+                                // equivalent to (originalWidth - llWidth) in
+                                // both cases. Using `originalWidth / 2`
+                                // (floor) silently corrupted multi-tile bytes
+                                // at odd-uX tiles in the slice 3 wire-in.
                                 let llW = level.llWidth
                                 let llH = level.llHeight
+                                let halfWH = level.originalWidth  - llW
+                                let halfHH = level.originalHeight - llH
                                 subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
                                     coefficients: level.hl, doubleCoefficients: nil,
                                     width: halfWH, height: llH))
