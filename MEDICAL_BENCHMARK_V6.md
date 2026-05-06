@@ -2146,3 +2146,68 @@ green:
 > than adding more parallelism. Diagnostic-only — no encode
 > behaviour change; single-tile bytes byte-identical; all
 > regression gates green.
+
+---
+
+## v6-alpha4 step 12 — lever-by-lever empirical results
+
+Step 11 ranked four candidate levers for closing the residual
+J2KSwift-vs-Kakadu encode gap. Step 12 implemented and measured
+each in turn against the same release-mode median-of-3
+gap-diagnosis harness. The lever-by-lever DX wall-time results
+(Apple M2, release build, multi-tile auto layout):
+
+| Lever | Commit | DX wall (ms) | DX Δ | Outcome |
+|---|---|---:|---:|---|
+| baseline (post-step-11)              | `1fa6e02` | 51.69 | —      | reference |
+| **A** per-tile DWT scratch pool      | `90d73fe` | 51.64 | −0.1 % | landed; small wins on MR/XA, PX/DX in noise |
+| **B** skip bzero on band arrays      | `f17e2bc` | 50.48 | −2.2 % | landed; small DX win, others within noise |
+| **C** striped entropy chunk dispatch | reverted  | 51.27 | +1.1 % | reverted; cache-locality regression on PX/DX |
+
+**Lever A finding** — Pool elimination of per-level
+`DWTWorkspace53` allocations gives only ≈ 50 µs / tile of CPU
+back. Allocator pressure isn't a hot path on this codebase;
+the win is structural (foundation for warm-session pool reuse)
+rather than wall-time.
+
+**Lever B finding** — `[Int32](repeating: 0, count: N)` for the
+large band arrays (200 KB+ on DX 4×4 tile bands) is essentially
+free at runtime: macOS's `libsystem_malloc` returns kernel-zeroed
+pages for allocations crossing the page-size threshold, so the
+implicit bzero was already a no-op at the allocator level. Only
+the smaller per-strip / per-row scratch buffers benefit, which
+explains the modest −2.2 % on DX.
+
+**Lever C finding (NEGATIVE — REVERTED)** — Striped chunk
+dispatch was hypothesised to balance per-chunk entropy work
+(LL bands are dense and slow per block; HH bands are sparse and
+fast). Three-run median measurement showed:
+
+  - DX wall:    50.48 → 51.27 ms  (**+1.1 %**, consistent across runs)
+  - DX Entropy CPU sum: 274 → 289 ms  (**+5 %**)
+  - PX wall:    23.04 → 23.41 ms  (within noise but trending up)
+  - MR / XA:    within noise
+
+Root cause: striped iteration over `deferred` (which is appended
+grouped by component → subband → block) breaks cache locality.
+Each subband's deferred entries point into a separate `[Int32]`
+coefficient array; jumping between subbands per block thrashes
+L1/L2. The locality benefit of contiguous-range chunking
+dominates any imbalance benefit. The negative result also
+suggests that within-tile entropy chunk imbalance is small to
+begin with — every chunk gets ≈ 17 blocks covering all 4
+subbands of every level via the (component, subband, block)
+traversal, so chunks self-balance enough that locality wins.
+
+**Implication** — the only remaining ranked lever is **Lever D
+(MagSgn / MEL writer microbench-driven inlining)**. The +20 ms
+residual DX gap above Kakadu after Lever B looks **structural**
+rather than addressable by lever-tier work: it lives inside the
+per-block conformant encoder's MagSgn / MEL / VLC bit-emission
+loops. Closing it would require either (a) microbenchmark-driven
+inlining of those writers (Lever D, est. −3 % to −8 %, low risk),
+or (b) algorithmic redesign of the entropy stage (out of
+v6-alpha4 scope). After Lever D, additional gap-closing work
+should pivot from incremental levers to either profiling the
+HT block encoder's hot loops directly or accepting the
+structural ceiling and moving to the next lossless milestone.
