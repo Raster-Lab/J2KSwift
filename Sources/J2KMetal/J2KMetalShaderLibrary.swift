@@ -26,6 +26,12 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtForward53Horizontal = "j2k_dwt_forward_53_horizontal"
     /// Forward 5/3 reversible wavelet transform (vertical).
     case dwtForward53Vertical = "j2k_dwt_forward_53_vertical"
+    /// Forward 5/3 reversible wavelet transform (horizontal, integer / bit-exact).
+    /// Lossless-only pivot — phase 0. Mirrors the existing inverse-INT kernel
+    /// and produces bit-exact output against the CPU `forward53_1D` reference.
+    case dwtForward53HorizontalInt = "j2k_dwt_forward_53_horizontal_int"
+    /// Forward 5/3 reversible wavelet transform (vertical, integer / bit-exact).
+    case dwtForward53VerticalInt = "j2k_dwt_forward_53_vertical_int"
     /// Inverse 5/3 reversible wavelet transform (horizontal).
     case dwtInverse53Horizontal = "j2k_dwt_inverse_53_horizontal"
     /// Inverse 5/3 reversible wavelet transform (vertical).
@@ -860,6 +866,102 @@ enum J2KMetalShaderSource {
             float top = output[(2 * i) * width + col];
             float bottom = (2 * i + 2 < height) ? output[(2 * i + 2) * width + col] : output[(2 * i) * width + col];
             output[(2 * i + 1) * width + col] = highpass[i * width + col] + (top + bottom) / 2.0f;
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Horizontal, integer / bit-exact)
+    //
+    // Lossless-only pivot — Phase 0. Bit-exact match for the CPU reference
+    // `AcceleratedDWT2D.forward53_1D(_:_:count:workspace:)`:
+    //   highpass[i] = X[2i+1] - ((X[2i] + X[2i+2]) >> 1)        // predict
+    //   lowpass[i]  = X[2i]  + ((H[i-1] + H[i] + 2) >> 2)       // update
+    // Whole-sample symmetric mirror at both boundaries.
+
+    kernel void j2k_dwt_forward_53_horizontal_int(
+        device const int* input [[buffer(0)]],
+        device int* lowpass [[buffer(1)]],
+        device int* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.y >= height) return;
+
+        uint row = gid.y;
+        uint halfWidth  = (width + 1) / 2;
+        uint halfWidthH = width / 2;
+
+        uint idx   = row * width;
+        uint lBase = row * halfWidth;
+        uint hBase = row * halfWidthH;
+
+        if (halfWidthH == 0) {
+            if (halfWidth > 0) {
+                lowpass[lBase] = input[idx];
+            }
+            return;
+        }
+
+        for (uint i = 0; i < halfWidthH; i++) {
+            int xLeft  = input[idx + 2 * i];
+            int xRight = (2 * i + 2 < width)
+                ? input[idx + 2 * i + 2]
+                : input[idx + 2 * i];
+            highpass[hBase + i] =
+                input[idx + 2 * i + 1] - ((xLeft + xRight) >> 1);
+        }
+
+        for (uint i = 0; i < halfWidth; i++) {
+            int dLeft  = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            lowpass[lBase + i] =
+                input[idx + 2 * i] + ((dLeft + dRight + 2) >> 2);
+        }
+    }
+
+    // MARK: - Forward 5/3 Reversible DWT (Vertical, integer / bit-exact)
+
+    kernel void j2k_dwt_forward_53_vertical_int(
+        device const int* input [[buffer(0)]],
+        device int* lowpass [[buffer(1)]],
+        device int* highpass [[buffer(2)]],
+        constant uint& width [[buffer(3)]],
+        constant uint& height [[buffer(4)]],
+        uint2 gid [[thread_position_in_grid]]
+    ) {
+        if (gid.x >= width) return;
+
+        uint col = gid.x;
+        uint halfHeight  = (height + 1) / 2;
+        uint halfHeightH = height / 2;
+
+        if (halfHeightH == 0) {
+            if (halfHeight > 0) {
+                lowpass[col] = input[col];
+            }
+            return;
+        }
+
+        for (uint i = 0; i < halfHeightH; i++) {
+            int xTop = input[(2 * i) * width + col];
+            int xBot = (2 * i + 2 < height)
+                ? input[(2 * i + 2) * width + col]
+                : input[(2 * i) * width + col];
+            highpass[i * width + col] =
+                input[(2 * i + 1) * width + col] - ((xTop + xBot) >> 1);
+        }
+
+        for (uint i = 0; i < halfHeight; i++) {
+            int dTop = (i > 0)
+                ? highpass[(i - 1) * width + col]
+                : highpass[col];
+            int dBot = (i < halfHeightH)
+                ? highpass[i * width + col]
+                : highpass[(halfHeightH - 1) * width + col];
+            lowpass[i * width + col] =
+                input[(2 * i) * width + col] + ((dTop + dBot + 2) >> 2);
         }
     }
 
