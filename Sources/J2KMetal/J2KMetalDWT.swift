@@ -3406,17 +3406,22 @@ public actor J2KMetalDWT {
 
     private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {
         guard elementCount > 0 else { return [] }
-        var result = [Int32](repeating: 0, count: elementCount)
         let ptr = buffer.contents()
         J2KMetalUMACounters.incrementContents()
         J2KMetalUMACounters.incrementMemcpy()
-        result.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: ptr,
-                count: elementCount * MemoryLayout<Int32>.stride
-            ))
+        // v6-alpha5 phase 7 — skip the implicit zero-init in
+        // `Array(repeating: 0, count:)` since the next operation
+        // overwrites every element via `update(from:count:)`.
+        // For DX 6.4 MP single-tile encode, the cumulative readback
+        // across 5 levels × 4 bands ≈ 6.4 M Int32 = 25 MB; the
+        // wasted bzero is ~1–2 ms of pure CPU time on Apple M2's
+        // ~12 GB/s memory bandwidth.
+        return [Int32](unsafeUninitializedCapacity: elementCount) { buf, count in
+            buf.baseAddress!.update(
+                from: ptr.assumingMemoryBound(to: Int32.self),
+                count: elementCount)
+            count = elementCount
         }
-        return result
     }
 
     /// Bit-exact 1D inverse 5/3 reversible transform on `Int32` subbands with
