@@ -155,7 +155,41 @@ public enum J2KEncodeTilePlanner {
         let chosen: J2KHTTileMode
         switch mode {
         case .auto:
-            chosen = pixels >= 3_000_000 ? .tiles2x2 : .single
+            // v6-alpha4 step 10 — auto mode picks the tile grid that
+            // empirically minimises encode wall time at each fixture
+            // size, per the step-9 release-build median-of-5
+            // measurement (see MEDICAL_BENCHMARK_V6.md "step 9"
+            // section):
+            //
+            //   pixels ≥ 3 M  → 4x4
+            //     PX 2459×1316 (3.24 M): 4x4 23.2 ms vs 2x2 27.0 ms
+            //                            (single 37.2 ms — 1.66× win)
+            //     DX 2800×2288 (6.41 M): 4x4 53.5 ms vs 2x2 56.0 ms
+            //                            (single 74.5 ms — 1.39× win)
+            //
+            //   500 K ≤ pixels < 3 M  → 2x2
+            //     XA 1024×1024 (1.05 M): 2x2 7.7 ms (single 11.5 ms
+            //                            — 1.49× win); 4x4 8.1 ms
+            //                            (4x4 not better at this size)
+            //     MR  886× 886 (0.78 M): 2x2 2.6 ms (single 5.3 ms —
+            //                            2.04× win); 4x4 3.4 ms
+            //
+            //   pixels < 500 K  → single
+            //     MR-small / CT etc.: per-tile encode time is below
+            //     the task-group dispatch + scheduler floor, so
+            //     multi-tile would be net slower.
+            //
+            // The per-tile DWT depth floor (constraint 1 below) is
+            // a separate hard limit; if the chosen multi-tile grid
+            // would produce a tile smaller than `2^decompositionLevels`,
+            // the planner falls back to single regardless.
+            if pixels >= 3_000_000 {
+                chosen = .tiles4x4
+            } else if pixels >= 500_000 {
+                chosen = .tiles2x2
+            } else {
+                chosen = .single
+            }
         default:
             chosen = mode
         }

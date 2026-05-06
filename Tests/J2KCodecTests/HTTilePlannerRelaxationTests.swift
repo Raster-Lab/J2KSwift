@@ -199,36 +199,88 @@ final class HTTilePlannerRelaxationTests: XCTestCase {
         XCTAssertFalse(layout.isMultiTile)
     }
 
-    /// `.auto` chooses 2x2 for images ≥ 3 MP, single otherwise.
-    /// MR 886×886 (= 0.78 MP) → auto picks single.
-    func testAutoModeBelowThresholdPicksSingle() {
+    /// `.auto` (post v6-alpha4 step 10) picks the tile grid that
+    /// the step-9 release-build measurement showed minimises encode
+    /// wall time at each fixture size:
+    ///   - pixels ≥ 3 M  → 4x4
+    ///   - 500 K ≤ pixels < 3 M → 2x2
+    ///   - pixels < 500 K → single
+
+    /// Tiny image (< 500 K pixels) → auto picks single.
+    /// 600×600 = 360 K pixels → below the 500 K threshold.
+    func testAutoModeTinyPicksSingle() {
+        let layout = J2KEncodeTilePlanner.plan(
+            imageWidth: 600, imageHeight: 600,
+            decompositionLevels: 5, mode: .auto)
+        XCTAssertFalse(layout.isMultiTile,
+            "600×600 (0.36 MP) is below auto's 500 K threshold")
+    }
+
+    /// MR 886×886 (= 0.78 MP) → auto picks 2x2 (above 500 K, below
+    /// 3 M). Pre v6-alpha4 step 10 auto picked single (3 MP threshold);
+    /// step 10 raised auto's tile count for sub-3-MP images that
+    /// step-9 measured win at 2x2 (MR 2x2 = 2.04× faster than single).
+    func testAutoModeMidPicks2x2_MR() {
         let layout = J2KEncodeTilePlanner.plan(
             imageWidth: 886, imageHeight: 886,
             decompositionLevels: 5, mode: .auto)
-        XCTAssertFalse(layout.isMultiTile,
-            "MR 886×886 (0.78 MP) is below the auto threshold (3 MP)")
-    }
-
-    /// PX 2459×1316 (= 3.24 MP) → auto picks 2x2. Pre-step-7 this
-    /// would have fallen back to single because 1230 isn't 32-
-    /// aligned. Post-step-7 it fires multi-tile.
-    func testAutoModeAboveThresholdPicks2x2_PX() {
-        let layout = J2KEncodeTilePlanner.plan(
-            imageWidth: 2459, imageHeight: 1316,
-            decompositionLevels: 5, mode: .auto)
         XCTAssertEqual(layout.cols, 2,
-            "PX 2459×1316 (3.24 MP) is above auto threshold; auto picks 2x2")
+            "MR 886×886 (0.78 MP) → auto picks 2x2 (step-9 measured 2.04× win)")
         XCTAssertEqual(layout.rows, 2)
         XCTAssertTrue(layout.isMultiTile)
     }
 
-    /// DX 2800×2288 (= 6.41 MP) → auto picks 2x2.
-    func testAutoModeAboveThresholdPicks2x2_DX() {
+    /// XA 1024×1024 (= 1.05 MP) → auto picks 2x2. Step-9 measured
+    /// 2x2 = 1.49× faster than single on this fixture.
+    func testAutoModeMidPicks2x2_XA() {
         let layout = J2KEncodeTilePlanner.plan(
-            imageWidth: 2800, imageHeight: 2288,
+            imageWidth: 1024, imageHeight: 1024,
             decompositionLevels: 5, mode: .auto)
         XCTAssertEqual(layout.cols, 2)
         XCTAssertEqual(layout.rows, 2)
         XCTAssertTrue(layout.isMultiTile)
+    }
+
+    /// PX 2459×1316 (= 3.24 MP) → auto picks 4x4 (above 3 M).
+    /// Pre v6-alpha4 step 10 auto picked 2x2; step 10 promotes 4x4
+    /// because step-9 measured 4x4 = 1.60× vs single (vs 2x2's 1.37×).
+    func testAutoModeLargePicks4x4_PX() {
+        let layout = J2KEncodeTilePlanner.plan(
+            imageWidth: 2459, imageHeight: 1316,
+            decompositionLevels: 5, mode: .auto)
+        XCTAssertEqual(layout.cols, 4,
+            "PX 2459×1316 (3.24 MP) → auto picks 4x4 (step-9 measured " +
+            "4x4 = 1.60× vs 2x2 = 1.37× vs single)")
+        XCTAssertEqual(layout.rows, 4)
+        XCTAssertTrue(layout.isMultiTile)
+    }
+
+    /// DX 2800×2288 (= 6.41 MP) → auto picks 4x4.
+    func testAutoModeLargePicks4x4_DX() {
+        let layout = J2KEncodeTilePlanner.plan(
+            imageWidth: 2800, imageHeight: 2288,
+            decompositionLevels: 5, mode: .auto)
+        XCTAssertEqual(layout.cols, 4)
+        XCTAssertEqual(layout.rows, 4)
+        XCTAssertTrue(layout.isMultiTile)
+    }
+
+    /// Edge case: when auto picks 4x4 but the image is too small
+    /// for a 4x4 grid (e.g. tile dim < 2^decompositionLevels), the
+    /// per-tile DWT depth floor (constraint 1) kicks in and falls
+    /// back to single. Synthetic case: a 3 MP image whose 4x4 tile
+    /// would be smaller than 32. None of the corpus fixtures hit
+    /// this — PX 4x4 tiles are 615×329, DX 4x4 tiles are 700×572,
+    /// both >> 32. Synthetic narrow image: 2_000_000 × 2 → tileH at
+    /// 4x4 = 0 → falls back to single.
+    func testAutoModeFallsBackWhenTilesTooSmallFor4x4() {
+        let layout = J2KEncodeTilePlanner.plan(
+            imageWidth: 2_000_000, imageHeight: 2,
+            decompositionLevels: 5, mode: .auto)
+        // pixels = 4 M → auto wants 4x4, but 4x4 tile height = 1 (< 32).
+        // Constraint 1 forces fallback to single.
+        XCTAssertEqual(layout.cols, 1)
+        XCTAssertEqual(layout.rows, 1)
+        XCTAssertFalse(layout.isMultiTile)
     }
 }

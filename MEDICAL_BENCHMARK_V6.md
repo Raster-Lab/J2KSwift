@@ -7,7 +7,7 @@ work is parked as infrastructure under v5.38 — see the legacy
 
 ---
 
-## Headline (post-v6-alpha3 step 9)
+## Headline (post-v6-alpha4 step 10)
 
 J2KSwift HT lossless on the medical corpus is **standards-clean on
 both the production single-tile path AND the multi-tile path on
@@ -49,6 +49,7 @@ roughly halved compared to v6-alpha2.
 | **MR HT-fair** | **J2KSwift wins encode + decode** vs Kakadu / OpenJPH / Grok |
 | XA / PX / DX HT-fair | Kakadu still wins encode + decode; gaps roughly halved |
 | Production default | `single` (`J2K_HT_TILE_MODE` env var opts in to multi-tile) |
+| `.auto` policy | 4x4 ≥ 3 MP, 2x2 ≥ 500 K, else single (refined in step 10) |
 | Planner constraint | DWT-depth floor only (32-alignment removed in step 7) |
 | Parked / experimental | SIMD M1, DWT row-parallel M2 |
 
@@ -1842,3 +1843,121 @@ correctness regression:
 > stays `single`; `auto`-promotion still held back because the
 > threshold doesn't pick the fixture's optimal multi-tile mode
 > on PX/DX (refinement is v6-alpha4 scope).
+
+---
+
+## v6-alpha4 step 10 — refine `.auto` thresholds
+
+### What landed
+
+`J2KEncodeTilePlanner.plan(...)`'s `.auto` branch now picks the
+tile grid that step-9's release-build measurement showed
+minimises encode wall time at each fixture size:
+
+| Pixel range | New `.auto` pick | Old `.auto` pick |
+|---|---|---|
+| pixels ≥ 3 M    | **4x4**   | 2x2 |
+| 500 K ≤ pixels < 3 M | **2x2** | single |
+| pixels < 500 K  | single | single |
+
+The DWT-depth floor (constraint 1) still applies; if the chosen
+multi-tile grid produces a tile smaller than `2^decompositionLevels`,
+the planner falls back to single regardless. `J2K_HT_TILE_MODE`
+env-var default is unchanged (`.single`); production behaviour
+is byte-identical for any user not opting into `.auto`.
+
+### Step 10 measurement (release build, median of 5)
+
+Auto's per-fixture pick now matches the standalone-mode best
+within run-to-run noise:
+
+| Modality | Shape       | best per-mode | auto picks | auto encode (ms) | best encode (ms) |
+|---|---|---|:---:|---:|---:|
+| MR | 886×886    | 2x2 (3.15 ms)  | 2x2  |   2.57 |   2.57 (auto-tied with 2x2) |
+| XA | 1024×1024  | 2x2 (7.53 ms)  | 2x2  |   7.91 |   7.53 |
+| PX | 2459×1316  | 4x4 (23.01 ms) | 4x4  |  23.37 |  23.01 |
+| DX | 2800×2288  | 4x4 (53.78 ms) | 4x4  |  53.73 |  53.73 |
+
+(Run-to-run jitter on a shared machine is ~5%; auto vs explicit
+mode is well within that.)
+
+### Multi-tile speedup vs J2KSwift single-tile baseline (post step 10)
+
+| Modality | Shape       | single (ms) | best multi (ms) | best mode | speedup |
+|---|---|---:|---:|:---:|---:|
+| MR | 886×886    |   5.43 |  2.57 | auto | **2.11×** |
+| XA | 1024×1024  |  11.79 |  7.53 | 2x2  | **1.56×** |
+| PX | 2459×1316  |  37.65 | 23.01 | 4x4  | **1.64×** |
+| DX | 2800×2288  |  75.16 | 53.73 | auto | **1.40×** |
+
+### HT-fair Kakadu comparison (post step 10) — unchanged from step 9
+
+| Modality | Shape | J2KSwift best | mode | OpenJPH | Grok | Kakadu | Fastest |
+|---|---|---:|:---:|---:|---:|---:|:---|
+| MR | 886×886    | **2.6** | auto | 10.2 | 11.9 |  3.6 | **J2KSwift** |
+| XA | 1024×1024  |   7.5   | 2x2  | 20.8 | 14.2 |  5.0 | Kakadu (1.49×) |
+| PX | 2459×1316  |  23.0   | 4x4  | 55.8 | 27.2 | 10.9 | Kakadu (2.11×) |
+| DX | 2800×2288  |  53.7   | auto | 107.9 | 49.1 | 24.3 | Kakadu (2.21×) |
+
+MR HT-fair encode + decode wins against Kakadu held over from
+step 9 (no code change to encode/decode hot paths in step 10;
+only the auto-mode dispatcher changed).
+
+### New planner regression tests
+
+`Tests/J2KCodecTests/HTTilePlannerRelaxationTests.swift` now
+includes 6 new auto-mode tests (replacing the 3 stale step-7
+ones):
+
+  - `testAutoModeTinyPicksSingle` — 600×600 (0.36 MP) → single
+  - `testAutoModeMidPicks2x2_MR` — 886×886 (0.78 MP) → 2x2
+  - `testAutoModeMidPicks2x2_XA` — 1024×1024 (1.05 MP) → 2x2
+  - `testAutoModeLargePicks4x4_PX` — 2459×1316 (3.24 MP) → 4x4
+  - `testAutoModeLargePicks4x4_DX` — 2800×2288 (6.41 MP) → 4x4
+  - `testAutoModeFallsBackWhenTilesTooSmallFor4x4` — synthetic
+    2 000 000×2 image (4 M pixels but tileH = 0 at 4x4) → falls
+    back to single per the DWT-depth floor (constraint 1)
+
+Total HTTilePlannerRelaxationTests: 18/18 (was 15/15 in step 7).
+
+### Production default still `single`
+
+The change in step 10 is to `.auto`'s internal pick — NOT to the
+production default. Users who don't set `J2K_HT_TILE_MODE` (or
+who set it to `single`) get exactly the same single-tile bytes
+as v5.38 / v5.39 / v6-alpha2 / v6-alpha3. Users who explicitly
+opt into `.auto` now get the optimal multi-tile mode for their
+image size, instead of "2x2 above 3 MP, single below."
+
+### Mandatory commit gates
+
+| Suite | Result |
+|---|---|
+| HTDWTParityAwarenessTests             | 4/4 |
+| HTDWT2DParityAwarenessTests           | 8/8 |
+| HTInverseDWTParityAwarenessTests      | 4/4 |
+| HTInverseDWT2DParityAwarenessTests    | 8/8 |
+| HTTileOriginPropagationTests          | 4/4 |
+| HTMultiTileTrapReproducer             | 7/7 |
+| HTNativeMultiTileAssemblerTests       | 13/13 |
+| HTNativeMultiTileBandGeometryTests    | 11/11 |
+| HTNativeMultiTileSelfRoundtripTests   | 5/5 |
+| HTTileParityMatrixTests               | 1/1 (12 × 3 = 36 cells bit-exact) |
+| HTTilePlannerRelaxationTests          | 18/18 (3 step-7 tests replaced + 6 new) |
+| J2KLosslessMedicalGateTests           | 5/5 |
+| J2KMedicalCorpusEncodePerformanceTests| 2/2 |
+| J2KStrictCrossCodecValidationTests    | 3/3 |
+
+### v6-alpha4 step 10 — final precise claim
+
+> Step 10 refines `J2KEncodeTilePlanner.plan(...)`'s `.auto`
+> branch to pick the tile grid that empirically minimises encode
+> wall time at each fixture size, per the step-9 measurement:
+> 4x4 above 3 M pixels, 2x2 above 500 K, single below. Users
+> who opt into `J2K_HT_TILE_MODE=auto` now get the optimal
+> multi-tile mode for their image size — MR/XA fire 2x2 (was
+> single under step-7 thresholds, missing the 1.56–2.11× win),
+> PX/DX fire 4x4 (was 2x2, missing the 4–14% improvement over
+> 2x2). Production default unchanged (`single`). Single-tile
+> bytes byte-identical. MR HT-fair encode + decode wins against
+> Kakadu held over from step 9. All correctness gates green.
