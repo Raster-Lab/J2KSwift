@@ -517,35 +517,69 @@ struct EncoderPipeline: Sendable {
         try image.validate()
 
         // 1) Run preprocess + DWT(parity-aware) + entropy + rate
-        // control + generateTileData per tile. These stages are
-        // independent across tiles (each tile is its own JPEG 2000
-        // tile-component). Sequential for correctness simplicity in
-        // step 5; parallelisation is a separate perf concern (the
-        // wrap-and-stitch path used `withTaskGroup` and we can do
-        // the same here in a future step once correctness is
-        // established).
-        var partials: [NativeTilePartial] = []
-        partials.reserveCapacity(layout.tileCount)
-        for k in 0..<layout.tileCount {
-            let r = layout.rect(forTile: k)
-            let subImage = try J2KTileImageSlicer.sliceTile(
-                from: image, layout: layout, tileIndex: k)
-            let t0 = CFAbsoluteTimeGetCurrent()
-            let (tileData, levels, stepSizes) =
-                try await runEncodeStagesForNativeAssembly(
-                    subImage,
-                    tileOriginX: r.x, tileOriginY: r.y,
-                    tileIndex: k,
-                    geometryCollector: geometryCollector)
-            let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
-            partials.append(NativeTilePartial(
-                tileData: tileData,
-                actualLevels: levels,
-                adaptiveStepSizes: stepSizes,
-                originX: r.x, originY: r.y,
-                pixels: r.w * r.h,
-                encodeMs: dt))
+        // control + generateTileData per tile, in parallel across
+        // tiles. Each tile is its own JPEG 2000 tile-component:
+        // pixels, DWT, entropy, and tile-data emit are all
+        // independent of every other tile. Only the final main-
+        // header + SOT/SOD/EOC assembly serialises (after all tiles
+        // complete).
+        //
+        // v6-alpha3 step 9: restored the per-tile parallelism that
+        // the v5.39 M4 wrap-and-stitch path had. Step 5 introduced
+        // the native assembler with a sequential loop ("correctness
+        // first"); the step-8 measurement showed multi-tile encode
+        // was therefore single-threaded across tiles and SLOWER
+        // than v5.38 single-tile encode. Step 9 uses
+        // `withThrowingTaskGroup` to dispatch all tile encodes
+        // concurrently. The block-level parallelism inside
+        // `applyEntropyCodingHTJ2KFused` runs nested within each
+        // tile task — Swift's cooperative thread pool absorbs the
+        // oversubscription.
+        let pipelineCopy = self
+        let imageRef = image
+        let layoutRef = layout
+        let collectorRef = geometryCollector
+        let unordered = try await withThrowingTaskGroup(
+            of: (Int, NativeTilePartial).self
+        ) { group in
+            for k in 0..<layout.tileCount {
+                let r = layoutRef.rect(forTile: k)
+                group.addTask {
+                    let subImage = try J2KTileImageSlicer.sliceTile(
+                        from: imageRef, layout: layoutRef, tileIndex: k)
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    let (tileData, levels, stepSizes) =
+                        try await pipelineCopy.runEncodeStagesForNativeAssembly(
+                            subImage,
+                            tileOriginX: r.x, tileOriginY: r.y,
+                            tileIndex: k,
+                            geometryCollector: collectorRef)
+                    let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
+                    return (k, NativeTilePartial(
+                        tileData: tileData,
+                        actualLevels: levels,
+                        adaptiveStepSizes: stepSizes,
+                        originX: r.x, originY: r.y,
+                        pixels: r.w * r.h,
+                        encodeMs: dt))
+                }
+            }
+            var collected: [(Int, NativeTilePartial)] = []
+            collected.reserveCapacity(layout.tileCount)
+            for try await result in group {
+                collected.append(result)
+            }
+            return collected
         }
+        // Re-order by tile index so `partials[k]` is for tile k.
+        // Tile order matters for the SOT/SOD assembly below and
+        // for downstream callers that index into `partials`.
+        var partialsBuf: [NativeTilePartial?] =
+            Array(repeating: nil, count: layout.tileCount)
+        for (k, p) in unordered { partialsBuf[k] = p }
+        let partials: [NativeTilePartial] = partialsBuf.compactMap { $0 }
+        precondition(partials.count == layout.tileCount,
+                     "encodeNativeMultiTile: partials count mismatch")
 
         // 2) All tiles in an HTJ2K lossless 5/3 codestream share the
         // same COD/QCD because epsilons depend only on bit-depth +
