@@ -2669,31 +2669,79 @@ struct EncoderPipeline: Sendable {
                             floatCoefficients: decomposition.coarsestLL), at: 0)
 
                     } else if !use97DoublePrecision && useAcceleratedPath {
-                        // v6-alpha3 step 3: route through the parity-aware
-                        // overload so per-tile image-coordinate origin is
-                        // honoured. When (tileOriginX, tileOriginY) == (0, 0)
-                        // the parity-aware overload routes to the no-origin
-                        // fast path at every level, so single-tile output is
-                        // byte-identical to v5.38 / v5.39 / v6-alpha2.
-                        let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
-                            data: compData, width: width, height: height, levels: levels,
-                            tileOriginX: tileOriginX, tileOriginY: tileOriginY
-                        )
-                        for (levelIdx, level) in decomposition.levels.enumerated() {
-                            let decomLevel = levelIdx + 1
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
-                                coefficients: level.hl, doubleCoefficients: nil,
-                                width: level.hlW, height: level.hlH))
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
-                                coefficients: level.lh, doubleCoefficients: nil,
-                                width: level.lhW, height: level.lhH))
-                            subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
-                                coefficients: level.hh, doubleCoefficients: nil,
-                                width: level.hhW, height: level.hhH))
+                        // v6-alpha5 phase 2 — gated GPU forward 5/3 INT path.
+                        // Falls back to CPU when any of the conditions isn't
+                        // met (env var off, non-zero origin, Metal unavailable,
+                        // or image too small for GPU dispatch overhead to
+                        // amortise). The CPU path below is unchanged from
+                        // v6-alpha3 step 3 so single-tile bytes stay
+                        // byte-identical to v5.38 → v6-alpha4 when the gate
+                        // is off. When the gate is on AND origin is (0,0),
+                        // the GPU produces bit-exact-equivalent subband
+                        // coefficients (verified by phase 0/1 tests), so
+                        // the resulting codestream remains byte-identical.
+                        let useGPUForward = Self._gpuForward53Enabled
+                            && tileOriginX == 0 && tileOriginY == 0
+                            && J2KMetalDWT.isAvailable
+                            && (width * height) >= 256 * 256
+
+                        if useGPUForward {
+                            let metalDWT = J2KMetalDWT(configuration: J2KMetalDWTConfiguration(
+                                filter: .reversible53, decompositionLevels: levels))
+                            try await metalDWT.initialize()
+
+                            let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
+                                image: compData, width: width, height: height,
+                                levels: levels)
+
+                            for (levelIdx, level) in gpuLevels.enumerated() {
+                                let decomLevel = levelIdx + 1
+                                let halfWH = level.originalWidth  / 2
+                                let halfHH = level.originalHeight / 2
+                                let llW = level.llWidth
+                                let llH = level.llHeight
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                    coefficients: level.hl, doubleCoefficients: nil,
+                                    width: halfWH, height: llH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                    coefficients: level.lh, doubleCoefficients: nil,
+                                    width: llW, height: halfHH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                    coefficients: level.hh, doubleCoefficients: nil,
+                                    width: halfWH, height: halfHH))
+                            }
+                            if let last = gpuLevels.last {
+                                subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                                    coefficients: last.ll, doubleCoefficients: nil,
+                                    width: last.llWidth, height: last.llHeight), at: 0)
+                            }
+                        } else {
+                            // v6-alpha3 step 3: route through the parity-aware
+                            // overload so per-tile image-coordinate origin is
+                            // honoured. When (tileOriginX, tileOriginY) == (0, 0)
+                            // the parity-aware overload routes to the no-origin
+                            // fast path at every level, so single-tile output is
+                            // byte-identical to v5.38 / v5.39 / v6-alpha2.
+                            let decomposition = await AcceleratedDWT2D.forwardDecomposition53(
+                                data: compData, width: width, height: height, levels: levels,
+                                tileOriginX: tileOriginX, tileOriginY: tileOriginY
+                            )
+                            for (levelIdx, level) in decomposition.levels.enumerated() {
+                                let decomLevel = levelIdx + 1
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                    coefficients: level.hl, doubleCoefficients: nil,
+                                    width: level.hlW, height: level.hlH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                    coefficients: level.lh, doubleCoefficients: nil,
+                                    width: level.lhW, height: level.lhH))
+                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                    coefficients: level.hh, doubleCoefficients: nil,
+                                    width: level.hhW, height: level.hhH))
+                            }
+                            subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
+                                coefficients: decomposition.coarsestLL, doubleCoefficients: nil,
+                                width: decomposition.llW, height: decomposition.llH), at: 0)
                         }
-                        subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
-                            coefficients: decomposition.coarsestLL, doubleCoefficients: nil,
-                            width: decomposition.llW, height: decomposition.llH), at: 0)
 
                     } else if use97DoublePrecision {
                         var img2D: [[Double]] = []
@@ -4392,6 +4440,34 @@ struct EncoderPipeline: Sendable {
         }
         return false
     }()
+
+    /// v6-alpha5 phase 2 — opt-in GPU forward 5/3 INT DWT for the
+    /// lossless reversible encode path. Off by default; set
+    /// `J2K_GPU_FORWARD_53=1` to route the (origin-(0,0), Metal-
+    /// available, ≥ 256² pixels) lossless cases through
+    /// `J2KMetalDWT.forward2DInt32MultiLevelFused(...)` instead of
+    /// the CPU `AcceleratedDWT2D.forwardDecomposition53` path.
+    /// Bytes produced are bit-exact-equivalent (verified by the
+    /// phase-0/1 GPU/CPU bit-exactness suite); the encoded
+    /// codestream is byte-identical regardless of which DWT backend
+    /// runs. The flag exists to make wall-time A/B comparison easy
+    /// and to keep production default unchanged through phase 2.
+    ///
+    /// `var` rather than `let` so tests can A/B without spawning a
+    /// subprocess. The initial value is read from the env var once
+    /// per process; subsequent test mutations take effect on the
+    /// next encode call. Production code never writes to it.
+    nonisolated(unsafe) static var _gpuForward53Enabled: Bool = _readGPUForward53Env()
+
+    private static func _readGPUForward53Env() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_FORWARD_53"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            default: return false
+            }
+        }
+        return false
+    }
 
     /// v6-alpha3 step 3: per-tile origin propagation diagnostic.
     /// Off by default; set `J2K_HT_TILE_DEBUG_ORIGINS=1` to print
