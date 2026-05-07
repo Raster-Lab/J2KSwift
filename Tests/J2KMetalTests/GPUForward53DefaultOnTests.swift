@@ -11,7 +11,7 @@
 //      stays the same.
 //
 //   2. **Telemetry confirms expected routing on default config**:
-//      ≥4 MP fixtures see GPU fire by default; <4 MP fixtures stay
+//      ≥3 MP fixtures see GPU fire by default; <3 MP fixtures stay
 //      on CPU (gated out by the threshold predicate).
 //
 // Plus a wall-time A/B printed for each fixture so the PR has the
@@ -64,11 +64,12 @@ final class GPUForward53DefaultOnTests: XCTestCase {
         let label: String
         let filename: String
         let pixels: Int
-        let isAboveThreshold: Bool   // ≥ 4 MP — should hit GPU on default
+        let isAboveThreshold: Bool   // ≥ 3 MP (v6.3.0 E2) — should hit GPU on default
     }
 
     private static let corpus: [CorpusFixture] = [
-        // pixels = w*h; threshold default = 4_000_000
+        // pixels = w*h; threshold default = 3_000_000 (v6.3.0 E2;
+        // was 4_000_000 in v6.0.0 / v6-alpha5 phase 5).
         CorpusFixture(label: "MR-small 180²",   filename: "mr_study_002_instance_000100.pgm",
                       pixels: 32_400,    isAboveThreshold: false),
         CorpusFixture(label: "CT 512²",         filename: "ct_study_001_instance_000001.pgm",
@@ -78,7 +79,7 @@ final class GPUForward53DefaultOnTests: XCTestCase {
         CorpusFixture(label: "XA 1024²",        filename: "xa_study_001_instance_000001.pgm",
                       pixels: 1_048_576, isAboveThreshold: false),
         CorpusFixture(label: "PX 2459×1316",    filename: "px_study_001_instance_000001.pgm",
-                      pixels: 3_236_044, isAboveThreshold: false),
+                      pixels: 3_236_044, isAboveThreshold: true),  // v6.3.0 E2: now ≥ 3 MP threshold
         CorpusFixture(label: "DX 2800×2288",    filename: "dx_study_002_instance_000001.pgm",
                       pixels: 6_406_400, isAboveThreshold: true),
     ]
@@ -130,9 +131,10 @@ final class GPUForward53DefaultOnTests: XCTestCase {
     // MARK: - Default routing telemetry
 
     /// On default config (`_gpuForward53Enabled = true`,
-    /// `_gpuForward53PixelThreshold = 4_000_000`), DX 2800×2288
-    /// should fire GPU and the 5 sub-4-MP fixtures should stay on
-    /// CPU (gated out by the threshold predicate).
+    /// `_gpuForward53PixelThreshold = 3_000_000` after v6.3.0 E2),
+    /// PX 2459×1316 + DX 2800×2288 should fire GPU and the 4 sub-
+    /// 3 MP fixtures should stay on CPU (gated out by the threshold
+    /// predicate).
     func testDefaultOn_TelemetryFiresGPUOnDX_StaysOnCPUForSubThreshold() async throws {
         try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
 
@@ -148,20 +150,20 @@ final class GPUForward53DefaultOnTests: XCTestCase {
             let snap = J2KGPUForward53Telemetry.snapshot()
             if fix.isAboveThreshold {
                 XCTAssertGreaterThan(snap.gpuFireCount, 0,
-                    "[\(fix.label) ≥4 MP] expected GPU fire on default config")
+                    "[\(fix.label) ≥3 MP] expected GPU fire on default config")
             } else {
                 XCTAssertEqual(snap.gpuFireCount, 0,
-                    "[\(fix.label) <4 MP] expected NO GPU fire — gated by threshold")
+                    "[\(fix.label) <3 MP] expected NO GPU fire — gated by threshold")
                 XCTAssertGreaterThan(
                     snap.cpuFireByReason[.belowThreshold] ?? 0, 0,
-                    "[\(fix.label) <4 MP] expected below-threshold skip reason")
+                    "[\(fix.label) <3 MP] expected below-threshold skip reason")
             }
         }
     }
 
     /// `J2K_GPU_FORWARD_53=0` opt-out — when the flag is forced off
     /// programmatically (mirroring what the env var would do at
-    /// startup), even ≥4 MP fixtures must skip GPU and record an
+    /// startup), even ≥3 MP fixtures must skip GPU and record an
     /// envDisabled telemetry event. Documents the opt-out path for
     /// users who need to force the legacy CPU path.
     func testDefaultOn_OptOut_RoutesToCPU() async throws {
@@ -196,8 +198,8 @@ final class GPUForward53DefaultOnTests: XCTestCase {
         #endif
 
         print("=== v6.1.0 default-on GPU forward 5/3 INT — wall-time A/B ===")
-        print("(Threshold default = 4 MP. ≥4 MP fixtures route to GPU on default;")
-        print(" sub-4 MP fixtures route to CPU regardless of flag — gated by threshold.)")
+        print("(Threshold default = 3 MP after v6.3.0 E2. ≥3 MP fixtures route to GPU on default;")
+        print(" sub-3 MP fixtures route to CPU regardless of flag — gated by threshold.)")
         print()
         print("| fixture | px | bytes | CPU ms | GPU(default) ms | Δ % | route |")
         print("|---|---:|---:|---:|---:|---:|:---|")
@@ -238,9 +240,9 @@ final class GPUForward53DefaultOnTests: XCTestCase {
 
         print()
         print("Reading the table:")
-        print("  - For ≥4 MP fixtures (route=GPU): Δ% > 0 means default-on is faster")
+        print("  - For ≥3 MP fixtures (route=GPU): Δ% > 0 means default-on is faster")
         print("    (the win this PR ships).")
-        print("  - For <4 MP fixtures (route=CPU): Δ% should be near zero — the")
+        print("  - For <3 MP fixtures (route=CPU): Δ% should be near zero — the")
         print("    threshold gate routes both paths to CPU regardless of flag.")
         print("    Any non-noise delta there indicates the threshold predicate")
         print("    isn't doing its job.")

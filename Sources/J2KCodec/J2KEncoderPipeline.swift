@@ -4804,13 +4804,32 @@ struct EncoderPipeline: Sendable {
     }
 
     /// v6-alpha5 phase 5 — pixel-count threshold for the GPU forward
-    /// 5/3 INT path. Defaults to 4 000 000 (4 MP) which routes to
-    /// GPU only when the per-encode pixel count is large enough that
-    /// Phase 3 / 5 measurements showed a wall-time win. Tests can
-    /// lower it temporarily to exercise the GPU code path on smaller
-    /// fixtures (where the bytes are still byte-identical even
-    /// though wall time regresses).
-    nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 4_000_000
+    /// 5/3 INT path. Defaults to 3 000 000 (3 MP).
+    ///
+    /// v6.3.0 E2 lowered the threshold from 4 MP → 3 MP after re-
+    /// running `HTGPUForward53Phase9ThresholdBoundaryTests` against
+    /// the post-v6.2.0 baseline (median of 3, release mode, M2):
+    ///
+    ///   | px       | CPU ms | GPU ms | Δ (GPU vs CPU) |
+    ///   |  1 MP   |  10.52 |  12.72 |  -20.9 %       |
+    ///   |  2 MP   |  21.18 |  22.30 |   -5.3 %       |
+    ///   |  3 MP   |  25.83 |  24.59 |   +4.8 %       | ← break-even
+    ///   |  4 MP   |  40.02 |  34.05 |  +14.9 %       |
+    ///   |  6 MP   |  55.03 |  42.33 |  +23.1 %       |
+    ///   | 12 MP   | 105.22 |  77.27 |  +26.6 %       |
+    ///   | 16 MP   | 162.43 | 117.85 |  +27.4 %       |
+    ///
+    /// 3 MP is the empirical break-even on M2; below it, CPU wins
+    /// outside the ±5 % noise band. PX 2459×1316 (3.24 MP) is the
+    /// medical-corpus fixture that benefits — v6.1.0 #310 measured
+    /// PX at +12 % with the GPU path forced, vs the +4.8 % synthetic
+    /// 3 MP shows here (real medical content has better cache
+    /// locality than synthetic LCG noise).
+    ///
+    /// Tests can lower it further to exercise the GPU code path on
+    /// smaller fixtures (where the bytes are still byte-identical
+    /// even though wall time regresses).
+    nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 3_000_000
 
     // MARK: - v6-alpha6 phase 1.2: GPU forward HT entropy gate
     //
