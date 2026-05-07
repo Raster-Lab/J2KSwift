@@ -33,7 +33,9 @@
 import Foundation
 
 /// Selector for the multi-tile encode path. Read once at process
-/// startup from `J2K_HT_TILE_MODE`; production default is `.single`.
+/// startup from `J2K_HT_TILE_MODE`; production default is `.auto`
+/// after v7.0.0 (was `.single` through v6.x). Set
+/// `J2K_HT_TILE_MODE=single` to restore v6.x single-tile bytes.
 public enum J2KHTTileMode: Sendable, CustomStringConvertible {
     case single
     case tiles2x2
@@ -52,14 +54,26 @@ public enum J2KHTTileMode: Sendable, CustomStringConvertible {
     }
 
     public static func from(envValue: String?) -> J2KHTTileMode {
-        guard let v = envValue?.lowercased() else { return .single }
+        // v7.0.0 default flip — production default changed from
+        // `.single` to `.auto` per docs/V6_4_0_G1_2_INVESTIGATION.md
+        // SemVer Path 2 decision. The empirical encode-wall wins
+        // measured at +30-50 % on MR/XA/PX (HT-conformant lossless
+        // 5/3) reach default-config consumers without env-var twiddling.
+        // Codestream bytes change vs v6.x for users with no
+        // J2K_HT_TILE_MODE set; pixels remain bit-exact (HTTileParity-
+        // MatrixTests 48/48 self-RT + cross-decode through OpenJPH /
+        // Grok / Kakadu). See CROSS_VERSION_DELTA_REPORT.md.
+        //
+        // Opt-out path: set `J2K_HT_TILE_MODE=single` to restore v6.x
+        // bytes-equality for backward-compatible byte-stream consumers.
+        guard let v = envValue?.lowercased() else { return .auto }
         switch v {
         case "single", "1x1":          return .single
         case "2x2", "tiles2x2":        return .tiles2x2
         case "4x4", "tiles4x4":        return .tiles4x4
         case "strips4", "1x4":         return .strips4
         case "auto":                   return .auto
-        default:                       return .single
+        default:                       return .auto    // v7.0.0: unrecognised → auto (was .single)
         }
     }
 }

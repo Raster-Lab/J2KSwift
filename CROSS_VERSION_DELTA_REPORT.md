@@ -197,3 +197,74 @@ done
 ```
 
 The harness file is committed at [`Tests/J2KCodecTests/CrossVersionDeltaBenchmark.swift`](Tests/J2KCodecTests/CrossVersionDeltaBenchmark.swift); it uses only API present in both v5.38.0 and current and writes outputs to `${J2K_DELTA_OUT:-/tmp/j2k_delta_${LABEL:-current}}/`.
+
+---
+
+## v6.3.0 → v7.0.0 — multi-tile encoding production-default flip
+
+**Release date**: TBD (release-candidate in progress)
+**Tag baseline**: `v6.3.0` (`28d251d` — *release: v6.3.0 — multi-tile decode correctness + PX encode +10.9 %*)
+**Branch HEAD**: `feature/v7.0.0-multi-tile-default-on`
+**SemVer rationale**: MAJOR — `J2KEncoder.encode(_:)` default tile mode changes from `.single` to `.auto` per [`docs/V6_4_0_G1_2_INVESTIGATION.md`](docs/V6_4_0_G1_2_INVESTIGATION.md) Path 2. RELEASING.md "Special rules for J2KSwift" — codestream bytes are part of the public contract.
+
+### What changes
+
+| Path | v6.3.0 default | v7.0.0 default |
+|---|---|---|
+| `J2KEncoder.encode(_:)` with HT-conformant lossless 5/3 + no `J2K_HT_TILE_MODE` env var | single-tile codestream | `.auto` planner picks the best tile grid per fixture pixel count |
+| `J2KEncoder.encode(_:)` with `.lossless = false` (lossy 9/7) | single-tile (unchanged) | **single-tile (unchanged)** — lossy is out of scope per `feedback_lossless_only_v5_38.md` |
+| `J2KEncoder.encode(_:)` with explicit `J2K_HT_TILE_MODE=single` | single-tile | **single-tile (unchanged)** — opt-out path preserves v6.x bytes-equality |
+| `J2KEncoder.encode(_:)` with explicit `J2K_HT_TILE_MODE=auto` | already opt-in via env var | **unchanged** — was already auto |
+
+### What does NOT change
+
+- **Decoded pixel data**: byte-identical to v6.3.0 across the medical corpus. Verified by `HTTileParityMatrixTests` (12/12 cells × OpenJPH/Grok/Kakadu/self-RT = 48 bit-exact pixel-diff cells) and `HTGPUForward53CrossCodecTests` (7/7 cells bit-exact). DICOM consumers reading our codestreams see different bytes but get **identical images**.
+- **Lossy 9/7 encoding**: out of scope per the lossless-only product target; routing unchanged.
+- **Decoding behaviour**: unchanged from v6.3.0. v6.x consumers can decode v7.0.0 codestreams; v7.0.0 can decode v6.x codestreams.
+- **Public Swift API surface**: no removals, no signature changes. Default fallback value of `J2KHTTileMode.from(envValue: nil)` changed (now `.auto` was `.single`).
+
+### Per-fixture byte deltas (HT-conformant lossless 5/3, M2 release)
+
+Source: `HTGPUForward53CrossCodecTests.testGPUForward53_MedicalCorpus_CrossDecodesBitExactExternalDecoders` run on the v7.0.0 default-flipped commit.
+
+| Modality | Shape | px | v6.3.0 bytes (single) | v7.0.0 bytes (auto) | Δ bytes | Δ % | mode picked |
+|---|---|---:|---:|---:|---:|---:|---|
+| MR-small | 180×180 | 32,400 | 45,224 | 45,224 | 0 | 0.000 % | single (gated) |
+| CT | 512×512 | 262,144 | 436,460 | 436,460 | 0 | 0.000 % | single (gated) |
+| CT | 512×512 | 262,144 | 406,187 | 406,187 | 0 | 0.000 % | single (gated) |
+| **MR** | 886×886 | 784,996 | 167,728 | **169,709** | **+1,981** | **+1.18 %** | **2x2** |
+| **XA** | 1024×1024 | 1,048,576 | 1,621,219 | **1,621,712** | **+493** | **+0.03 %** | **2x2** |
+| **PX** | 2459×1316 | 3,236,044 | 6,431,507 | **6,453,588** | **+22,081** | **+0.34 %** | **4x4** |
+| **DX** | 2800×2288 | 6,406,400 | 12,683,182 | **12,705,470** | **+22,288** | **+0.18 %** | **4x4** |
+
+**Storage overhead is negligible** (≤1.18 % per fixture) — the byte deltas come from per-tile SOT/SOD markers (~10 bytes per tile) plus per-tile codestream-header artefacts; each tile is itself a self-contained sub-codestream with its own packet headers.
+
+### What v6.x consumers should do
+
+Three options:
+
+1. **Accept the new bytes** — the decoded image is byte-identical, which is what 99 % of consumers care about. Storage size grows by ≤1.18 %. Most consumers should pick this.
+2. **Pin v6.x bytes** — set `J2K_HT_TILE_MODE=single` env var. Restores v6.3.0 codestream bytes verbatim.
+3. **Hash on decoded pixels, not codestream bytes** — the recommended long-term pattern for hash-stability across J2KSwift versions (and across J2K codecs in general; OpenJPEG / Kakadu produce different bytes for the same image).
+
+### Encode wall-time impact (the v7.0.0 headline)
+
+The v7.0.0 default flip captures the +30-50 % production-default encode wall-time wins on MR/XA/PX measured in [`docs/V6_4_0_G1_0_INVESTIGATION.md`](docs/V6_4_0_G1_0_INVESTIGATION.md) and [`docs/V6_4_0_G1_2_INVESTIGATION.md`](docs/V6_4_0_G1_2_INVESTIGATION.md):
+
+| Modality | Shape | v6.3.0 wall (single) | v7.0.0 wall (auto) | Δ |
+|---|---|---:|---:|---:|
+| MR | 886×886 | 6.07 ms | 3.05 ms | **+50 %** |
+| XA | 1024×1024 | 12.09 ms | 7.86 ms | **+35 %** |
+| PX | 2459×1316 | 34.80 ms | 24.26 ms | **+30 %** |
+| DX | 2800×2288 | 56.42 ms | 52.79 ms | +6 % |
+
+**Kakadu encode-wall gap closure on M2** (post-v7.0.0 default flip):
+
+| Modality | v6.3.0 J2KSwift | v7.0.0 J2KSwift | Kakadu | v6.3 gap | v7.0 gap |
+|---|---:|---:|---:|---:|---:|
+| MR 886² | 6.07 ms | 3.05 ms | 3.7 ms | +1.6× behind | **we win 1.21×** |
+| XA 1024² | 12.09 ms | 7.86 ms | 5.1 ms | +2.4× behind | +1.5× behind |
+| PX 2459×1316 | 34.80 ms | 24.26 ms | 11.2 ms | +3.1× behind | +2.2× behind |
+| DX 2800×2288 | 56.42 ms | 52.79 ms | 18.9 ms | +3.0× behind | +2.8× behind |
+
+**MR 886² flips from being 1.6× behind Kakadu to 1.21× ahead.** XA / PX gaps narrow materially. DX gap remains the big lever for v7.x — the deferred E1.3 GPU multi-tile compute correctness + I-series GPU forward HT entropy approach C/D from the v6.4.0 plan are still actionable in v7.x for further narrowing.
