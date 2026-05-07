@@ -182,11 +182,13 @@ final class MultiTileDecodeGPUInvestigationTests: XCTestCase {
                 }
 
                 // (C) decodeGPU() — GPU IDWT only.
-                // Skipped: pre-existing process-killing crash (signal 5,
-                // Swift runtime trap) on multi-tile fixtures. Documented
-                // separately in docs/V6_3_0_E1_0_INVESTIGATION.md.
-                // Re-enable once the crash is root-caused in E1.1.
-                let resultC = "💥 SKIPPED (crashes process — see V6_3_0_E1_0_INVESTIGATION.md)"
+                // v6.3.0 E1.1 re-enabled: the pre-existing process
+                // crash was a downstream effect of the corrupt
+                // codeblock layout in decodeTilePayloadGPU (now fixed
+                // by passing tileOriginX/Y to extractTileData).
+                let resultC = await tryDecode {
+                    try await J2KDecoder().decodeGPU(codestream)
+                }
 
                 results.append(CellResult(
                     fixture: fix.label, mode: modeLabel,
