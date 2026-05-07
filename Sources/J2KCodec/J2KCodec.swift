@@ -1126,7 +1126,14 @@ public struct J2KDecoder: Sendable {
     /// - Returns: The decoded image.
     /// - Throws: ``J2KError`` if decoding fails.
     public func decodeGPU(_ data: Data) async throws -> J2KImage {
-        let pipeline = DecoderPipeline()
+        // v6.3.0 F2 — pre-set the process-shared Metal session,
+        // mirroring v6.2.0 D3 (#316) on the default `decode()`. The
+        // no-session overload's previous fresh-pipeline-per-call
+        // pattern paid ~25-30 ms Metal init every call. With the
+        // shared session, every decode after the first reuses the
+        // cached MSL library + compute pipelines + buffer pool.
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decodeGPU(data)
     }
 
@@ -1141,7 +1148,9 @@ public struct J2KDecoder: Sendable {
         _ data: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
     ) async throws -> J2KImage {
-        let pipeline = DecoderPipeline()
+        // v6.3.0 F2 — see no-progress overload above.
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decodeGPU(data, progress: progress)
     }
 
@@ -1181,8 +1190,16 @@ public struct J2KDecoder: Sendable {
     /// - Returns: The decoded image.
     /// - Throws: ``J2KError`` if decoding fails.
     public func decodeWithGPUHT(_ data: Data) async throws -> J2KImage {
+        // v6.3.0 F2 — pre-set the process-shared Metal session,
+        // mirroring v6.2.0 D3 (#316) on the default `decode()`. The
+        // GPU HT entropy + GPU IDWT pipeline that this entry point
+        // selects depends on a warm session to amortise the ~25-30 ms
+        // Metal init across decodes. Without this, every fresh
+        // `J2KDecoder().decodeWithGPUHT()` paid the cold-start cost
+        // that the v5.28.0 preWarm finding measured.
         var pipeline = DecoderPipeline()
         pipeline.useGPUHT = true
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decodeGPU(data)
     }
 
@@ -1192,8 +1209,10 @@ public struct J2KDecoder: Sendable {
         _ data: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
     ) async throws -> J2KImage {
+        // v6.3.0 F2 — see no-progress overload above.
         var pipeline = DecoderPipeline()
         pipeline.useGPUHT = true
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decodeGPU(data, progress: progress)
     }
 
