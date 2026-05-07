@@ -283,7 +283,14 @@ struct DecoderPipeline: Sendable {
             default: break
             }
         }
-        // v6.2.0 default OFF — see docstring above for empirical rationale.
+        // v6.2.0 D3 attempt: defaults were flipped to ON to test the
+        // hypothesis that warm session (processShared, plumbed in this
+        // PR) would fix D1's regression. Wall-time A/B confirmed the
+        // fix (+43 % on DX) BUT bit-exact tests revealed a pixel-
+        // correctness regression on the CPU path too — the OR-with-
+        // static-flag pattern from D2 (#315) exposes a code path
+        // where unrelated CPU decodes pick up the static flag. Root-
+        // cause and fix is D4 work; defaults reverted to OFF here.
         return false
     }
 
@@ -325,6 +332,12 @@ struct DecoderPipeline: Sendable {
             default: break
             }
         }
+        // v6.2.0 D3 attempt: defaults were flipped to ON to test the
+        // warm-session hypothesis. Wall-time A/B confirmed +43 % DX
+        // win, but pixel-correctness regression discovered (see
+        // _readGPUInverse53Env note above). Defaults reverted to OFF
+        // here; D4 will fix the root-cause OR-pattern bug then re-
+        // attempt the default-on flip.
         return false
     }
 
