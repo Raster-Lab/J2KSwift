@@ -45,6 +45,20 @@ J2KSwift follows [SemVer 2.0](https://semver.org/spec/v2.0.0.html). The project 
 
 ---
 
+## Release scope expectations
+
+**Every minor / major release should include performance work spanning both HTJ2K (Part-15 high-throughput) and general J2K (Part-1 / codestream / tier-2 / file format) where actionable.** The codec library's product target is bit-exact lossless medical archive performance; sustained measurable wins are the user-visible value of each release. Planning a release that ships only one side (e.g., HTJ2K-only or codestream-only) is allowed when no actionable lever exists on the other side, but the release notes must say so explicitly.
+
+Concretely, when planning a release:
+
+- Open with the **stage breakdown** from the previous release's hot path (`EncodeStageProfileLosslessCorpusTests` for the lossless 5/3 path; the equivalent decode breakdown when relevant). The biggest unaccelerated stage is the natural HTJ2K target.
+- Identify at least one **non-HTJ2K J2K** lever per release — sub-stage profiling of preprocess / colour / codestream marker writes / tier-2 algorithmic batch writes / decoder-side hot paths / etc. Even a "we measured this stage and it's not the lever" finding (cf. PRs #307, #308) counts as J2K perf work because it informs the next release's planning.
+- A release with no measurable wall-time win (perf wash, like the v6-alpha6 entropy arc) is acceptable when the empirical data is the deliverable. Document the wash in the release notes; don't pretend a wash is a win.
+
+Patch releases (hotfixes off `release/vX.Y.(Z-1)`) are exempt from this expectation — they ship targeted bug fixes only.
+
+---
+
 ## Standard release flow
 
 Every step below has a command. None of them are interactive.
