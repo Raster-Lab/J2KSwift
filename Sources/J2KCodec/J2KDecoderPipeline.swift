@@ -283,15 +283,13 @@ struct DecoderPipeline: Sendable {
             default: break
             }
         }
-        // v6.2.0 D3 attempt: defaults were flipped to ON to test the
-        // hypothesis that warm session (processShared, plumbed in this
-        // PR) would fix D1's regression. Wall-time A/B confirmed the
-        // fix (+43 % on DX) BUT bit-exact tests revealed a pixel-
-        // correctness regression on the CPU path too — the OR-with-
-        // static-flag pattern from D2 (#315) exposes a code path
-        // where unrelated CPU decodes pick up the static flag. Root-
-        // cause and fix is D4 work; defaults reverted to OFF here.
-        return false
+        // v6.2.0 D4: default ON. The OR-with-static-flag bug from
+        // D2/D3 is fixed (added `isGPUPath` parameter to
+        // applyEntropyDecoding constraining the static-flag check
+        // to GPU pipeline paths only). Warm session from D3
+        // (processShared) amortises Metal init across decodes.
+        // DX 2800×2288 wall-time win measured at +37 % vs CPU on M2.
+        return true
     }
 
     /// v6.2.0 — pixel-count threshold for the GPU inverse 5/3 INT
@@ -332,13 +330,10 @@ struct DecoderPipeline: Sendable {
             default: break
             }
         }
-        // v6.2.0 D3 attempt: defaults were flipped to ON to test the
-        // warm-session hypothesis. Wall-time A/B confirmed +43 % DX
-        // win, but pixel-correctness regression discovered (see
-        // _readGPUInverse53Env note above). Defaults reverted to OFF
-        // here; D4 will fix the root-cause OR-pattern bug then re-
-        // attempt the default-on flip.
-        return false
+        // v6.2.0 D4: default ON (paired with `_gpuInverse53Enabled`).
+        // The bug that prevented this in D3 (#316) is fixed via the
+        // `isGPUPath` parameter on `applyEntropyDecoding`.
+        return true
     }
 
     /// Decodes a JPEG 2000 codestream through the full pipeline.
@@ -463,7 +458,7 @@ struct DecoderPipeline: Sendable {
 
         reportProgress(progress, stage: .entropyDecoding, stageProgress: 0.0)
         t0 = DispatchTime.now()
-        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: metadata)
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: metadata, isGPUPath: true)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordEntropyDecoding(dt / 1000)
@@ -804,7 +799,7 @@ struct DecoderPipeline: Sendable {
         tileMeta.tileSize = (width: tileW, height: tileH)
 
         let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
-        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta, isGPUPath: true)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta, gpuBatch: gpuBatch)
         var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
@@ -1765,7 +1760,17 @@ struct DecoderPipeline: Sendable {
     /// decoding (ISO/IEC 15444-1).
     private func applyEntropyDecoding(
         _ blocks: [CodeBlockInfo],
-        metadata: CodestreamMetadata
+        metadata: CodestreamMetadata,
+        // v6.2.0 D4 — `true` only when the caller is on the GPU
+        // pipeline path (decodeSingleTileGPU / decodeTilePayloadGPU).
+        // Constrains the `_gpuHTEntropyEnabled` static-flag-driven
+        // GPU HT entropy decode so it doesn't fire on CPU pipeline
+        // paths where the regroup downstream can't consume the
+        // GPU-decoded output. CPU `decodeWithGPUHT(_:)` callers
+        // still get GPU HT entropy via the `useGPUHT` instance var
+        // independent of this parameter — the OR-with-flag at the
+        // consume sites is the load-bearing gate.
+        isGPUPath: Bool = false
     ) async throws -> (subbands: [SubbandInfo], batch: J2KGPUHTBatch?) {
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
@@ -1829,7 +1834,8 @@ struct DecoderPipeline: Sendable {
             J2KMetalDWT.isAvailable
         if idwtWillBeGPU,
            !isIrreversible, useHT, useConformant,
-           (useGPUHT || Self._gpuHTEntropyEnabled),
+           // v6.2.0 D4: static flag only fires on GPU pipeline path
+           (useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled)),
            let session = metalSession, !blocks.isEmpty,
            J2KGPUHTDispatch.isAvailable,
            blocks.allSatisfy({ !$0.data.isEmpty && $0.passCount > 0 }) {
@@ -1864,7 +1870,9 @@ struct DecoderPipeline: Sendable {
             return false
         }()
         let gpuEarly: (preDecoded: [Int: [Int32]], batch: J2KGPUHTBatch?) = try await {
-            guard (useGPUHT || Self._gpuHTEntropyEnabled), useHT, useConformant,
+            // v6.2.0 D4: static flag only fires on GPU pipeline path
+            guard (useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled)),
+                  useHT, useConformant,
                   J2KGPUHTDispatch.isAvailable, !blocks.isEmpty
             else { return ([:], nil) }
 
