@@ -294,6 +294,40 @@ struct DecoderPipeline: Sendable {
     /// temporarily to exercise the GPU code path on smaller fixtures.
     nonisolated(unsafe) static var _gpuInverse53PixelThreshold: Int = 4_000_000
 
+    /// v6.2.0 work item D2 — gate flag for routing decode through
+    /// the **GPU HT entropy** decode path (the `useGPUHT = true`
+    /// behaviour from `decodeWithGPUHT`). When this flag is true
+    /// AND `_gpuInverse53Enabled` is true AND the iDWT threshold
+    /// is met, `decode(_:)` will set `useGPUHT = true` and route
+    /// to the GPU paths — the same code path
+    /// `J2KDecoder.decodeWithGPUHT` already exposes.
+    ///
+    /// **Default OFF.** D1 (#314) found iDWT-only routing regresses
+    /// on every M2 corpus fixture; per memory `project_gpu97_warm_session_ceiling.md`
+    /// the win at decode lives at ≥3 MP via `decodeWithGPUHT`
+    /// (which the iDWT-only routing missed). D2 tests whether
+    /// pairing iDWT routing with GPU HT entropy flips the
+    /// regression to a win at corpus scale on M2.
+    ///
+    /// Bytes byte-identical to the legacy CPU path (HT entropy
+    /// GPU decode has been bit-exact via the `J2KGPUHTDispatch`
+    /// path since v5.5.0). Set true via env var
+    /// `J2K_GPU_HT_ENTROPY_DECODE` or programmatically for
+    /// diagnostic A/B; production default unchanged from D1
+    /// (CPU on the default `decode(_:)` entry point).
+    nonisolated(unsafe) static var _gpuHTEntropyEnabled: Bool = _readGPUHTEntropyEnv()
+
+    private static func _readGPUHTEntropyEnv() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_HT_ENTROPY_DECODE"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            case "0", "false", "no": return false
+            default: break
+            }
+        }
+        return false
+    }
+
     /// Decodes a JPEG 2000 codestream through the full pipeline.
     ///
     /// - Parameters:
@@ -310,16 +344,34 @@ struct DecoderPipeline: Sendable {
         let (metadata, tiles) = try parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
 
-        // v6.2.0 — auto-route to the GPU inverse 5/3 INT DWT path
-        // when the gate predicates fire (≥4 MP, Metal available,
-        // flag enabled). PR #313 measured iDWT as 36.3 % of DX wall;
-        // routing here closes that band by default, mirroring the
-        // v6.1.0 encode-side flip (#310). Bytes byte-identical with
-        // the legacy CPU path on the lossless reversible code path.
+        // v6.2.0 — gated routing to the GPU decode paths.
+        //
+        // D1 (#314) added `_gpuInverse53Enabled` for routing to the
+        // GPU iDWT path. Default OFF after empirical regression on
+        // every M2 corpus fixture (CPU 5/3 INT iDWT is already very
+        // fast; the iDWT-only GPU win lives at ≥17 MP per memory).
+        //
+        // D2 (this PR) adds `_gpuHTEntropyEnabled` for ALSO setting
+        // `useGPUHT = true` on the GPU path — mirror of
+        // `decodeWithGPUHT(_:)`. When BOTH flags fire (and Metal
+        // is available + threshold met), the GPU path additionally
+        // batches eligible HT codeblocks through the Metal HT
+        // cleanup kernel, targeting the 45 % of DX wall that the
+        // iDWT-only routing missed.
+        //
+        // Bytes byte-identical with the legacy CPU path on the
+        // lossless reversible code path (cross-codec gate + 6/6
+        // corpus pixel-identical from D1's GPUInverse53DefaultOnTests).
         if Self._gpuInverse53Enabled
             && J2KMetalDWT.isAvailable
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
         {
+            // D2: when `_gpuHTEntropyEnabled` is true, the consume
+            // sites (lines 1816/1851/3464) read `(useGPUHT || Self._gpuHTEntropyEnabled)`
+            // so HT entropy goes to GPU on this routing too — no
+            // mutation of `self.useGPUHT` needed (which would
+            // require `mutating func` and ripple to every existing
+            // `let pipeline = DecoderPipeline()` test call site).
             if metadata.isMultiTile {
                 return try await decodeMultiTileGPU(metadata: metadata, tiles: tiles, progress: progress)
             } else {
@@ -1763,7 +1815,8 @@ struct DecoderPipeline: Sendable {
             metadata.configuration.waveletKernelConfiguration == nil &&
             J2KMetalDWT.isAvailable
         if idwtWillBeGPU,
-           !isIrreversible, useHT, useConformant, useGPUHT,
+           !isIrreversible, useHT, useConformant,
+           (useGPUHT || Self._gpuHTEntropyEnabled),
            let session = metalSession, !blocks.isEmpty,
            J2KGPUHTDispatch.isAvailable,
            blocks.allSatisfy({ !$0.data.isEmpty && $0.passCount > 0 }) {
@@ -1798,7 +1851,7 @@ struct DecoderPipeline: Sendable {
             return false
         }()
         let gpuEarly: (preDecoded: [Int: [Int32]], batch: J2KGPUHTBatch?) = try await {
-            guard useGPUHT, useHT, useConformant,
+            guard (useGPUHT || Self._gpuHTEntropyEnabled), useHT, useConformant,
                   J2KGPUHTDispatch.isAvailable, !blocks.isEmpty
             else { return ([:], nil) }
 
@@ -3411,7 +3464,7 @@ struct DecoderPipeline: Sendable {
                         codeblockBuffer: batch.codeblockBuffer,
                         levelsPlan: plansForComp,
                         initialLL: nil)
-                } else if useGPUHT, metalSession != nil {
+                } else if (useGPUHT || Self._gpuHTEntropyEnabled), metalSession != nil {
                     var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
                     for level in (1...levels).reversed() {
                         let parentW = levelSizes[level - 1].width
