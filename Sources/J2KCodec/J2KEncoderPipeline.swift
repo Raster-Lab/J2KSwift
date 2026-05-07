@@ -324,7 +324,16 @@ struct EncoderPipeline: Sendable {
         let profiling = ProcessInfo.processInfo.environment["J2K_PROFILE"] != nil
         var stageStart = CFAbsoluteTimeGetCurrent()
 
+        // v6.3.0 F3 — preprocess sub-stage timing instrumentation.
+        // Cost: ~4 NSLock acquires per encode. Always-on; data feeds
+        // the F3 preprocess profile diagnostic.
+        J2KPreprocessSubstageTimings.recordEncodeCall(
+            pixels: image.width * image.height)
+
+        let _validateT0 = CFAbsoluteTimeGetCurrent()
         try image.validate()
+        J2KPreprocessSubstageTimings.recordImageValidate(
+            CFAbsoluteTimeGetCurrent() - _validateT0)
 
         // v6-alpha3 step 3: optional diagnostic for multi-tile
         // origin propagation. Off by default; opt-in via env var
@@ -346,6 +355,8 @@ struct EncoderPipeline: Sendable {
 
         // DC level shift: for unsigned components, subtract 2^(bitDepth-1) to
         // center values around zero, as required by ISO 15444-1 Annex F.
+        // v6.3.0 F3 — sub-stage timing.
+        let _dcShiftT0 = CFAbsoluteTimeGetCurrent()
         for (compIdx, component) in image.components.enumerated() {
             if !component.signed {
                 let dcOffset = Int32(1 << (component.bitDepth - 1))
@@ -356,6 +367,8 @@ struct EncoderPipeline: Sendable {
                 }
             }
         }
+        J2KPreprocessSubstageTimings.recordDCLevelShift(
+            CFAbsoluteTimeGetCurrent() - _dcShiftT0)
 
         do {
             let t = CFAbsoluteTimeGetCurrent()
@@ -2041,6 +2054,8 @@ struct EncoderPipeline: Sendable {
 
             let data = component.data
             if component.bitDepth <= 8 {
+                // v6.3.0 F3 — sub-stage timing instrumentation.
+                let _t0 = CFAbsoluteTimeGetCurrent()
                 let byteCount = min(data.count, pixelCount)
                 data.withUnsafeBytes { buffer in
                     guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
@@ -2054,7 +2069,11 @@ struct EncoderPipeline: Sendable {
                         }
                     }
                 }
+                J2KPreprocessSubstageTimings.recordExtractComponentData8(
+                    CFAbsoluteTimeGetCurrent() - _t0)
             } else if component.bitDepth <= 16 {
+                // v6.3.0 F3 — sub-stage timing instrumentation.
+                let _t0 = CFAbsoluteTimeGetCurrent()
                 let sampleCount = min(data.count / 2, pixelCount)
                 // Prefer the caller's explicit byte-order hint when available.
                 // Auto-inference via `j2kInfer16BitByteOrder` is reliable for
@@ -2110,6 +2129,8 @@ struct EncoderPipeline: Sendable {
                         }
                     }
                 }
+                J2KPreprocessSubstageTimings.recordExtractComponentData16(
+                    CFAbsoluteTimeGetCurrent() - _t0)
             }
 
             result.append(pixels)
