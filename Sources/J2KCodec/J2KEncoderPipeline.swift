@@ -5512,58 +5512,90 @@ struct EncoderPipeline: Sendable {
         let totalBytes = codeBlocks.reduce(0) { $0 + $1.data.count }
         var writer = J2KBitWriter(capacity: totalBytes + totalBytes / 8 + 2048)
 
+        // v6.3.0 F1 — sub-stage timing instrumentation (mirror of #308's
+        // J2KTier2Timings pattern). Cost: ~10 NSLock acquires per encode.
+        // Always-on; data feeds the F1 codestream-stage profile diagnostic.
+        J2KCodestreamMarkerTimings.recordEncodeCall()
+
         // SOC — Start of Codestream
+        var t = CFAbsoluteTimeGetCurrent()
         writer.writeMarker(J2KMarker.soc.rawValue)
+        J2KCodestreamMarkerTimings.recordSOC(CFAbsoluteTimeGetCurrent() - t)
 
         // SIZ — Image and Tile Size
+        t = CFAbsoluteTimeGetCurrent()
         try writeSIZMarker(&writer, image: image)
+        J2KCodestreamMarkerTimings.recordSIZ(CFAbsoluteTimeGetCurrent() - t)
 
         // CAP — Extended Capabilities (HTJ2K Part 15)
         // CPF — Corresponding Profile (HTJ2K Part 15)
         // These markers must appear before COD when HTJ2K is enabled
         if config.useHTJ2K {
+            t = CFAbsoluteTimeGetCurrent()
             try writeCAPMarker(&writer)
+            J2KCodestreamMarkerTimings.recordCAP(CFAbsoluteTimeGetCurrent() - t)
+
+            t = CFAbsoluteTimeGetCurrent()
             try writeCPFMarker(&writer)
+            J2KCodestreamMarkerTimings.recordCPF(CFAbsoluteTimeGetCurrent() - t)
         }
 
         // COD — Coding Style Default
+        t = CFAbsoluteTimeGetCurrent()
         try writeCODMarker(&writer, image: image, decompositionLevels: actualDecompositionLevels)
+        J2KCodestreamMarkerTimings.recordCOD(CFAbsoluteTimeGetCurrent() - t)
 
         // QCD — Quantization Default
+        t = CFAbsoluteTimeGetCurrent()
         try writeQCDMarker(
             &writer,
             image: image,
             decompositionLevels: actualDecompositionLevels,
             adaptiveStepSizes: adaptiveStepSizes
         )
+        J2KCodestreamMarkerTimings.recordQCD(CFAbsoluteTimeGetCurrent() - t)
 
         // COM — J2KSwift-private block-format signal. Emitted only when
         // HTJ2K + .conformant so the decoder can dispatch to the Part-15
         // block decoder. Standards-compliant decoders (OpenJPH, Kakadu)
         // treat unrecognized COM payloads as comments and ignore them.
         if config.useHTJ2K && config.htj2kBlockFormat == .conformant {
+            t = CFAbsoluteTimeGetCurrent()
             try writeHTBlockFormatCOM(&writer)
+            J2KCodestreamMarkerTimings.recordCOM(CFAbsoluteTimeGetCurrent() - t)
         }
 
         // SOT — Start of Tile-part (single tile for now)
         // Collect all tile data first so we know the length
+        // (Note: generateTileData is the tier-2 stage from PR #308 —
+        // its sub-stages are accumulated separately via J2KTier2Timings.
+        // Not double-counted here.)
         let (tileData, packetEndsInTile) = try generateTileData(
             codeBlocks: codeBlocks, layers: layers,
             decompositionLevels: actualDecompositionLevels,
             componentCount: image.components.count
         )
         let sotMarkerOffset = writer.count
+        t = CFAbsoluteTimeGetCurrent()
         try writeSOTMarker(&writer, tileIndex: 0, tilePartLength: tileData.count)
+        J2KCodestreamMarkerTimings.recordSOT(CFAbsoluteTimeGetCurrent() - t)
 
         // SOD — Start of Data
+        t = CFAbsoluteTimeGetCurrent()
         writer.writeMarker(J2KMarker.sod.rawValue)
+        J2KCodestreamMarkerTimings.recordSOD(CFAbsoluteTimeGetCurrent() - t)
 
         // Tile bitstream data
         let tileDataOffset = writer.count
+        t = CFAbsoluteTimeGetCurrent()
         writer.writeBytes(tileData)
+        J2KCodestreamMarkerTimings.recordTileDataAppend(
+            CFAbsoluteTimeGetCurrent() - t, bytes: tileData.count)
 
         // EOC — End of Codestream
+        t = CFAbsoluteTimeGetCurrent()
         writer.writeMarker(J2KMarker.eoc.rawValue)
+        J2KCodestreamMarkerTimings.recordEOC(CFAbsoluteTimeGetCurrent() - t)
 
         let packetEndsInCodestream = packetEndsInTile.map { $0 + tileDataOffset }
         return EncodedCodestreamWithIndex(
