@@ -6513,6 +6513,10 @@ struct EncoderPipeline: Sendable {
             let blocksX = band.map { $0.x / codeBlockWidth }.max()! + 1
             let blocksY = band.map { $0.y / codeBlockHeight }.max()! + 1
 
+            // v6-alpha7 phase 1 — sub-stage timing: tag tree build
+            // (construction + setValue per block).
+            let tBuild0 = CFAbsoluteTimeGetCurrent()
+
             // Create inclusion tag tree: value = 0 (included at layer 0), 999 (not included)
             var inclusionTree = J2KTagTree(width: blocksX, height: blocksY)
             // Create zero bit-plane tag tree
@@ -6524,6 +6528,7 @@ struct EncoderPipeline: Sendable {
                 inclusionTree.setValue(leafIndex: idx, value: included ? 0 : 999)
                 zbpTree.setValue(leafIndex: idx, value: Int32(block.zeroBitPlanes))
             }
+            J2KTier2Timings.recordTagTreeBuild(CFAbsoluteTimeGetCurrent() - tBuild0)
 
             // v6-alpha3 step 6A — record one entry per block in the
             // tag-tree iteration order. `bodyOrderIndex` is set after
@@ -6538,7 +6543,10 @@ struct EncoderPipeline: Sendable {
                 let included = !block.data.isEmpty && block.passeCount > 0
 
                 // 1. Inclusion: tag tree encode for layer 0 (threshold = 1)
+                let tInc0 = CFAbsoluteTimeGetCurrent()
                 inclusionTree.encode(writer: &writer, leafIndex: idx, threshold: 1)
+                J2KTier2Timings.recordTagTreeInclusionEncode(
+                    CFAbsoluteTimeGetCurrent() - tInc0)
 
                 if geometryCollector != nil {
                     traceEntries.append(GeometryPacketBlockEntry(
@@ -6551,9 +6559,13 @@ struct EncoderPipeline: Sendable {
                 guard included else { continue }
 
                 // 2. Zero bit-planes: tag tree encode (encode exact value P)
+                let tZBP0 = CFAbsoluteTimeGetCurrent()
                 zbpTree.encode(writer: &writer, leafIndex: idx, threshold: Int32(block.zeroBitPlanes) + 1)
+                J2KTier2Timings.recordTagTreeZBPEncode(
+                    CFAbsoluteTimeGetCurrent() - tZBP0)
 
                 // 3. Number of coding passes per ISO 15444-1 Table B.4
+                let tPasses0 = CFAbsoluteTimeGetCurrent()
                 let passes = block.passeCount
                 if passes == 1 {
                     // 0
@@ -6579,9 +6591,12 @@ struct EncoderPipeline: Sendable {
                     try writer.writeBits(31, count: 5)
                     try writer.writeBits(UInt32(passes - 37), count: 7)
                 }
+                J2KTier2Timings.recordPassesEncoding(
+                    CFAbsoluteTimeGetCurrent() - tPasses0)
 
                 // 4. Data length per ISO 15444-1 B.10.7
                 // Total bits = Lblock + floor(log2(numpasses))
+                let tLen0 = CFAbsoluteTimeGetCurrent()
                 let length = block.data.count
                 let passLog = passes > 1 ? (Int.bitWidth - passes.leadingZeroBitCount - 1) : 0
                 var lblock = 3
@@ -6596,6 +6611,8 @@ struct EncoderPipeline: Sendable {
                 if totalBits > 0 {
                     try writer.writeBits(UInt32(length), count: totalBits)
                 }
+                J2KTier2Timings.recordLengthSignaling(
+                    CFAbsoluteTimeGetCurrent() - tLen0)
                 allIncludedBlocks.append(block)
             }
 
@@ -6614,9 +6631,12 @@ struct EncoderPipeline: Sendable {
         writer.setByteStuffing(false)
 
         // Append code-block bitstream data in band order directly into shared writer
+        let tRaw0 = CFAbsoluteTimeGetCurrent()
         for block in allIncludedBlocks {
             writer.appendRawBytes(block.data)
         }
+        J2KTier2Timings.recordRawDataAppend(CFAbsoluteTimeGetCurrent() - tRaw0)
+        J2KTier2Timings.recordWritePacketCall(includedBlocks: allIncludedBlocks.count)
 
         if let collector = geometryCollector, !traceBands.isEmpty {
             collector.addPacket(GeometryPacket(
