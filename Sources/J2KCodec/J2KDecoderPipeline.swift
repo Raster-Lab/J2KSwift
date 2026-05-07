@@ -805,7 +805,16 @@ struct DecoderPipeline: Sendable {
         tileMeta.height = tileH
         tileMeta.tileSize = (width: tileW, height: tileH)
 
-        let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
+        // v6.3.0 E1.1: pass tile-component canvas origin so the
+        // canvas-anchored code-block partition (ISO 15444-1 B.7)
+        // matches the encoder's grid for non-32-aligned tiles.
+        // Pre-fix this defaulted to (0, 0) which silently broke
+        // multi-tile decode whenever the tile origin's modulo-32 was
+        // non-zero (XA 1024² survived because every tile was 32-
+        // aligned; MR/PX/DX failed). Mirrors `decodeTilePayload`.
+        let codeBlocks = try extractTileData(
+            tileData, metadata: tileMeta,
+            tileOriginX: tileX, tileOriginY: tileY)
         let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta, isGPUPath: true)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta, gpuBatch: gpuBatch)

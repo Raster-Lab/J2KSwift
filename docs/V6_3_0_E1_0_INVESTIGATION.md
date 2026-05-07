@@ -141,3 +141,40 @@ E1.2 (the phase after E1.1) drops the `!metadata.isMultiTile` guard and re-runs 
 [`Tests/J2KMetalTests/MultiTileDecodeGPUInvestigationTests.swift`](../Tests/J2KMetalTests/MultiTileDecodeGPUInvestigationTests.swift) — `testMultiTileGPUDecode_TriangulationMatrix_FullCorpus`.
 
 Diagnostic test, does not assert. Prints the matrix above so any future phase (E1.1, E1.2) can re-run it and observe deltas as fixes land. Skips entry point (C) inline because the process crash interferes with `swift test` runs; the (C) row in the matrix above was captured from a hand-modified single-cell variant.
+
+---
+
+## E1.1 closure (resolved)
+
+**Root cause** (none of A/B/C hypotheses above). [`Sources/J2KCodec/J2KDecoderPipeline.swift:808`](../Sources/J2KCodec/J2KDecoderPipeline.swift) called `extractTileData(tileData, metadata: tileMeta)` for the GPU multi-tile path. The CPU multi-tile path passes `tileOriginX: tileX, tileOriginY: tileY` — the GPU path defaulted to `(0, 0)`.
+
+`extractTileData`'s tile-component canvas-coord origin governs the canvas-anchored code-block partition per ISO/IEC 15444-1 B.7. The encoder writes a canvas-anchored grid; the decoder must read with the same anchor. With the default `(0, 0)`, the decoder uses a tile-relative grid — which **only matches the encoder when the tile origin is 32-aligned** (and the comment at `extractTileData` line ~1497 even says: "For tile origin (0, 0) the formulas reduce to the legacy tile-relative grid; single-tile and 32-aligned multi-tile decode are byte-identical.").
+
+That explains the empirical pattern exactly:
+
+| Fixture | Tile origins | 32-aligned? | (B) result before fix |
+|---|---|---|---|
+| XA 1024² (2×2) | (0,0), (512,0), (0,512), (512,512) | ✅ all aligned | ✅ pass |
+| MR 886² (2×2)  | (0,0), (443,0), (0,443), (443,443) | ❌ 443 mod 32 ≠ 0 | ❌ malformedBlock |
+| PX 2459×1316 (2×2) | (0,0), (1230,0), (0,658), (1230,658) | ❌ neither aligned | ❌ malformedBlock |
+| DX 2800×2288 (2×2) | (0,0), (1400,0), (0,1144), (1400,1144) | ❌ 1144 mod 32 ≠ 0 | ❌ malformedBlock |
+
+The (C) `decodeGPU` signal-5 crash was a **downstream** effect of the same defect: garbage codeblock byte slices fed into the IDWT scatter kernel produced out-of-range coefficient values that tripped a Metal argument-buffer validation, and the runtime trapped.
+
+**Fix** ([`Sources/J2KCodec/J2KDecoderPipeline.swift`](../Sources/J2KCodec/J2KDecoderPipeline.swift) `decodeTilePayloadGPU`):
+
+```swift
+// Before:
+let codeBlocks = try extractTileData(tileData, metadata: tileMeta)
+
+// After:
+let codeBlocks = try extractTileData(
+    tileData, metadata: tileMeta,
+    tileOriginX: tileX, tileOriginY: tileY)
+```
+
+One line. Mirrors `decodeTilePayload` (CPU multi-tile, line ~773-775) which has always been correct.
+
+**Validation**: triangulation matrix re-runs at 36/36 ✅ (was 0+9+12 failures across A/B/C). The (C) entry point in the test is now re-enabled — no more process crash.
+
+E1.1 ships the fix. E1.2 (next phase) drops the v6.2.0 narrow `!metadata.isMultiTile` routing guard so production-default routes multi-tile through GPU, plus adds the perf A/B measurement vs the v6.2.0 CPU baseline for multi-tile fixtures.
