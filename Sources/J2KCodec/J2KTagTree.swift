@@ -29,6 +29,16 @@ struct J2KTagTree: Sendable {
     private let leafWidth: Int
     private let leafHeight: Int
 
+    /// Reusable scratch buffer for the root-to-leaf path traversed
+    /// per `encode` / `decode` call. Tree depth is bounded by
+    /// `ceil(log2(numLeaves))` (≤ ~12 for any practical precinct);
+    /// pre-reserving avoids the per-call `[Int]` allocation that
+    /// `rootToLeafPath` previously incurred. Capacity grows once on
+    /// the first call and is held across all subsequent calls on
+    /// this tree (one tree per band per packet → many encode calls
+    /// per tree on production fixtures).
+    private var pathScratch: [Int] = []
+
     /// Creates a tag tree for a grid of code blocks.
     ///
     /// - Parameters:
@@ -127,10 +137,19 @@ struct J2KTagTree: Sendable {
         guard leafIndex >= 0 && leafIndex < leafWidth * leafHeight,
               !nodes.isEmpty else { return }
 
-        let path = rootToLeafPath(leafIndex)
+        // Build root-to-leaf path into the reusable scratch buffer.
+        // Equivalent to `let path = rootToLeafPath(leafIndex)` but
+        // without the per-call `[Int]` allocation.
+        pathScratch.removeAll(keepingCapacity: true)
+        var pIdx = leafIndex
+        while pIdx >= 0 {
+            pathScratch.append(pIdx)
+            pIdx = nodes[pIdx].parentIndex
+        }
+        pathScratch.reverse()
         var low: Int32 = 0
 
-        for nodeIdx in path {
+        for nodeIdx in pathScratch {
             if low > nodes[nodeIdx].low {
                 nodes[nodeIdx].low = low
             } else {
@@ -169,11 +188,19 @@ struct J2KTagTree: Sendable {
         guard leafIndex >= 0 && leafIndex < leafWidth * leafHeight,
               !nodes.isEmpty else { return false }
 
-        let path = rootToLeafPath(leafIndex)
+        // Build root-to-leaf path into the reusable scratch buffer
+        // (same allocation-free pattern as `encode`).
+        pathScratch.removeAll(keepingCapacity: true)
+        var pIdx = leafIndex
+        while pIdx >= 0 {
+            pathScratch.append(pIdx)
+            pIdx = nodes[pIdx].parentIndex
+        }
+        pathScratch.reverse()
 
         var low: Int32 = 0
 
-        for nodeIdx in path {
+        for nodeIdx in pathScratch {
             if low > nodes[nodeIdx].low {
                 nodes[nodeIdx].low = low
             } else {
@@ -191,20 +218,6 @@ struct J2KTagTree: Sendable {
             nodes[nodeIdx].low = low
         }
 
-        return nodes[path.last!].value < threshold
-    }
-
-    // MARK: - Private
-
-    /// Returns the path from root to the given leaf as an array of node indices.
-    private func rootToLeafPath(_ leafIndex: Int) -> [Int] {
-        var path: [Int] = []
-        var idx = leafIndex
-        while idx >= 0 {
-            path.append(idx)
-            idx = nodes[idx].parentIndex
-        }
-        path.reverse()
-        return path
+        return nodes[pathScratch.last!].value < threshold
     }
 }
