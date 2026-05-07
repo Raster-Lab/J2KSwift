@@ -823,21 +823,32 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY)
-        // v6.3.0 E1.2 — multi-tile per-tile entropy on CPU. The GPU
-        // HT entropy decoder produces incorrect coefficients in the
-        // per-tile multi-tile context (validated empirically on DX
-        // 2800×2288: max abs pixel diff = 32768 with isGPUPath: true,
-        // 0 with isGPUPath: false). E1.1 (#321) fixed the codeblock
-        // partition so the dispatch stops throwing `malformedBlock`,
-        // but the resulting coefficients diverge from CPU-decoded
-        // coefficients by an exact DC offset — pointing to a per-
-        // tile GPU HT batch / output-offset bug that's hidden in
-        // single-tile because all blocks share one canvas. Detailed
-        // root-cause is deferred to a follow-up phase; for E1.2 the
-        // safe correctness ship is CPU entropy in the per-tile path.
-        // Single-tile decode goes via `decodeSingleTileGPU` (not this
-        // function) and keeps GPU HT entropy unchanged.
-        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta, isGPUPath: false)
+        // v7.1.0 H1.1 — multi-tile per-tile entropy on GPU.
+        //
+        // E1.2 (#322) was wrong about the root cause. H1.0 (#334)
+        // proved per-block GPU HT entropy is bit-exact in every
+        // multi-tile per-tile context (1881 blocks, 0 drift). H1.1
+        // located the actual bug: the v5.9 zero-copy fast-lane
+        // (line ~1902 in `applyEntropyDecoding`) returns
+        // ([], batch) and assumes the IDWT will consume `batch`
+        // via the GPU fused path. E1.2 forced CPU IDWT for multi-
+        // tile per-tile, which then received empty `[SubbandInfo]`
+        // → all zeros → DC unshift adds +32768 = exactly the
+        // observed Defect A pixel diff.
+        //
+        // The fix: pass `isMultiTilePerTile: true` to suppress the
+        // fast-lane. The slow-lane regroup runs and populates
+        // `[SubbandInfo]` with the correct GPU-decoded coefficients
+        // (gpuPreDecoded[i]) for downstream CPU IDWT consumption.
+        //
+        // Net result: GPU HT entropy is restored on the multi-tile
+        // per-tile path (gain back the +37-46 % entropy stage win
+        // single-tile decode already enjoys); CPU IDWT remains as
+        // the safety net against Defect B (still pending H2 — GPU
+        // 5/3 IDWT parity-aware boundary lifting).
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(
+            codeBlocks, metadata: tileMeta,
+            isGPUPath: true, isMultiTilePerTile: true)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         // v6.3.0 E1.2 — multi-tile per-tile IDWT routes to CPU. The
         // GPU IDWT kernels were designed for single-tile (canvas
@@ -1814,7 +1825,23 @@ struct DecoderPipeline: Sendable {
     /// When `metadata.configuration.useHTJ2K` is true, uses HTJ2K FBCOT block
     /// decoding (ISO/IEC 15444-15). Otherwise uses legacy EBCOT bit-plane
     /// decoding (ISO/IEC 15444-1).
-    private func applyEntropyDecoding(
+    /// Internal (was private through v7.0.0); promoted to allow
+    /// v7.1.0 H1.1 Defect A diagnostic test to compare per-tile
+    /// `[SubbandInfo]` output between GPU-entropy and CPU-entropy
+    /// paths. Not part of the public API surface.
+    ///
+    /// v7.1.0 H1.1 — `isMultiTilePerTile` parameter added to suppress
+    /// the v5.9 zero-copy fast-lane (line ~1902) when the caller is
+    /// `decodeTilePayloadGPU` and the downstream IDWT is forced to
+    /// CPU per E1.2 (`isMultiTilePerTile: true`). The fast-lane
+    /// returns `([], batch)` assuming a downstream GPU IDWT will
+    /// consume `batch` via `inverse2DInt32FullFusedFromCodeblocks`;
+    /// when CPU IDWT runs instead, the empty `[SubbandInfo]`
+    /// produces zero coefficients → zero spatial output → DC
+    /// unshift adds +32 768 = exactly the Defect A pixel diff.
+    /// Suppressing the fast-lane forces the slow-lane regroup,
+    /// which populates `[SubbandInfo]` correctly for CPU IDWT.
+    func applyEntropyDecoding(
         _ blocks: [CodeBlockInfo],
         metadata: CodestreamMetadata,
         // v6.2.0 D4 — `true` only when the caller is on the GPU
@@ -1826,7 +1853,20 @@ struct DecoderPipeline: Sendable {
         // still get GPU HT entropy via the `useGPUHT` instance var
         // independent of this parameter — the OR-with-flag at the
         // consume sites is the load-bearing gate.
-        isGPUPath: Bool = false
+        isGPUPath: Bool = false,
+        // v7.1.0 H1.1 — set true by `decodeTilePayloadGPU` for every
+        // tile in a multi-tile decode. Suppresses the v5.9 zero-copy
+        // fast-lane (line ~1902) which assumes a downstream GPU IDWT
+        // will consume `batch` via `inverse2DInt32FullFusedFromCodeblocks`.
+        // For multi-tile per-tile decode, E1.2 forces CPU IDWT
+        // (`applyInverseWaveletTransformGPU` falls back when
+        // `isMultiTilePerTile: true`); the fast-lane's empty
+        // `[SubbandInfo]` would produce zero coefficients → DC
+        // unshift adds +32 768 to all pixels = exactly the Defect A
+        // observed diff. Suppressing the fast-lane forces the slow-
+        // lane regroup, which populates `[SubbandInfo]` correctly
+        // for CPU IDWT consumption.
+        isMultiTilePerTile: Bool = false
     ) async throws -> (subbands: [SubbandInfo], batch: J2KGPUHTBatch?) {
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
@@ -1889,6 +1929,13 @@ struct DecoderPipeline: Sendable {
             metadata.configuration.waveletKernelConfiguration == nil &&
             J2KMetalDWT.isAvailable
         if idwtWillBeGPU,
+           // v7.1.0 H1.1 — must be false for multi-tile per-tile.
+           // The fast-lane returns ([], batch) and assumes the IDWT
+           // will consume batch via the GPU fused path. E1.2 forces
+           // CPU IDWT for multi-tile per-tile, which then receives
+           // empty subbands → 32 768 pixel diff (Defect A). See
+           // applyEntropyDecoding signature comment + #335 H1.0/H1.1.
+           !isMultiTilePerTile,
            !isIrreversible, useHT, useConformant,
            // v6.2.0 D4: static flag only fires on GPU pipeline path
            (useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled)),
