@@ -237,6 +237,63 @@ struct DecoderPipeline: Sendable {
     /// behaviour (per-decode Metal init).
     var metalSession: J2KMetalSession? = nil
 
+    // MARK: - v6.2.0 — GPU inverse 5/3 INT DWT routing gate
+    //
+    // Originally proposed as a default-on flip mirroring v6.1.0's
+    // encode-side `_gpuForward53Enabled` (#310). PR #313 had measured
+    // that default `decode(_:)` runs entirely on CPU at DX 6.4 MP
+    // (gpuHT = 0 across the corpus) and iDWT was 36.3 % of DX wall,
+    // so default-on looked like a free 30 %+ win.
+    //
+    // **Empirical reality (this PR's wall-time A/B): a regression on
+    // every corpus fixture including DX (−8.3 %).** Routing through
+    // `decodeGPU` for lossless 5/3 INT pays dispatch + per-decode
+    // pipeline init cost without enough savings — the CPU 5/3 INT
+    // iDWT (Accelerate-vectorised) is already very fast on M2, and
+    // the GPU iDWT path was tuned for lossy 9/7 Float where it has
+    // bigger relative gains. Per memory `project_gpu97_warm_session_ceiling.md`
+    // the real win is at ≥3 MP via `decodeWithGPUHT` (which ALSO
+    // sets `useGPUHT = true` for HT entropy on GPU); just routing to
+    // `decodeGPU` (iDWT only) doesn't move the needle.
+    //
+    // **Default left OFF** in this PR. Gate infrastructure ships
+    // for future work that pursues the right routing target (likely
+    // `useGPUHT = true` together with the iDWT routing — Phase D2).
+    //
+    // Decoded J2KImage pixel data IS byte-identical between gate-on
+    // and forced-off paths (lossless contract preserved when this
+    // flag is flipped manually) — the regression is wall-time only,
+    // not correctness.
+
+    /// v6.2.0 — gate flag for routing decode through the GPU inverse
+    /// 5/3 INT DWT path. **Default OFF after this PR's measurement
+    /// showed a wall-time regression on every M2 corpus fixture.**
+    /// Set to true via the env var or programmatically to opt in for
+    /// diagnostic A/B or for hosts where the GPU dispatch curve may
+    /// have shifted (M3 / M4 / M4 Pro / M4 Max — re-run
+    /// `GPUInverse53DefaultOnTests.testDefaultOn_WallTimeAB_AcrossCorpus`
+    /// to see if the curve flips on your hardware).
+    nonisolated(unsafe) static var _gpuInverse53Enabled: Bool = _readGPUInverse53Env()
+
+    private static func _readGPUInverse53Env() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_INVERSE_53"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            case "0", "false", "no": return false
+            default: break
+            }
+        }
+        // v6.2.0 default OFF — see docstring above for empirical rationale.
+        return false
+    }
+
+    /// v6.2.0 — pixel-count threshold for the GPU inverse 5/3 INT
+    /// path. Defaults to 4 000 000 (4 MP), mirroring the encode-side
+    /// `_gpuForward53PixelThreshold`. Even with the flag flipped on,
+    /// sub-threshold fixtures stay on CPU. Tests can lower it
+    /// temporarily to exercise the GPU code path on smaller fixtures.
+    nonisolated(unsafe) static var _gpuInverse53PixelThreshold: Int = 4_000_000
+
     /// Decodes a JPEG 2000 codestream through the full pipeline.
     ///
     /// - Parameters:
@@ -252,6 +309,24 @@ struct DecoderPipeline: Sendable {
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 0.0)
         let (metadata, tiles) = try parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
+
+        // v6.2.0 — auto-route to the GPU inverse 5/3 INT DWT path
+        // when the gate predicates fire (≥4 MP, Metal available,
+        // flag enabled). PR #313 measured iDWT as 36.3 % of DX wall;
+        // routing here closes that band by default, mirroring the
+        // v6.1.0 encode-side flip (#310). Bytes byte-identical with
+        // the legacy CPU path on the lossless reversible code path.
+        if Self._gpuInverse53Enabled
+            && J2KMetalDWT.isAvailable
+            && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
+        {
+            if metadata.isMultiTile {
+                return try await decodeMultiTileGPU(metadata: metadata, tiles: tiles, progress: progress)
+            } else {
+                let tileData = tiles.first?.tileData ?? Data()
+                return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
+            }
+        }
 
         if metadata.isMultiTile {
             return try await decodeMultiTile(metadata: metadata, tiles: tiles, progress: progress)
