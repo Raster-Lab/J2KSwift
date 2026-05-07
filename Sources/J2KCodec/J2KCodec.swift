@@ -1079,7 +1079,17 @@ public struct J2KDecoder: Sendable {
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if the codestream is malformed.
     public func decode(_ data: Data) async throws -> J2KImage {
-        let pipeline = DecoderPipeline()
+        // v6.2.0 D3 — pre-set the process-shared Metal session so the
+        // GPU paths gated by `DecoderPipeline._gpuInverse53Enabled` /
+        // `_gpuHTEntropyEnabled` (D1 #314 / D2 #315) actually
+        // amortise their cold-start cost across decodes. Without
+        // this, every fresh `J2KDecoder().decode()` paid ~25-30 ms
+        // Metal init per call (the v5.28.0 preWarm finding) which
+        // dominated the GPU paths' wall time. Setting it here is
+        // safe even when the gates are off — CPU paths don't
+        // consult `metalSession`.
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decode(data)
     }
 
@@ -1094,7 +1104,9 @@ public struct J2KDecoder: Sendable {
         _ data: Data,
         progress: ((DecoderProgressUpdate) -> Void)?
     ) async throws -> J2KImage {
-        let pipeline = DecoderPipeline()
+        // v6.2.0 D3 — see no-progress overload above.
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.decode(data, progress: progress)
     }
 
