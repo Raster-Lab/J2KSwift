@@ -373,19 +373,26 @@ struct DecoderPipeline: Sendable {
         if Self._gpuInverse53Enabled
             && J2KMetalDWT.isAvailable
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
+            // v6.2.0 — single-tile only. HTTileParityMatrixTests
+            // failure during the v6.2.0 release-candidate validation
+            // surfaced a malformedBlock error in the multi-tile GPU
+            // decode path with the new defaults. Multi-tile decode
+            // stays on the unchanged CPU path for v6.2.0; single-tile
+            // (the medical corpus default and the headline +45 % DX
+            // win) routes through the GPU path. Multi-tile GPU
+            // routing is deferred to v6.3.0 once the per-tile
+            // entropy decode path is investigated.
+            && !metadata.isMultiTile
         {
             // D2: when `_gpuHTEntropyEnabled` is true, the consume
-            // sites (lines 1816/1851/3464) read `(useGPUHT || Self._gpuHTEntropyEnabled)`
-            // so HT entropy goes to GPU on this routing too — no
-            // mutation of `self.useGPUHT` needed (which would
-            // require `mutating func` and ripple to every existing
-            // `let pipeline = DecoderPipeline()` test call site).
-            if metadata.isMultiTile {
-                return try await decodeMultiTileGPU(metadata: metadata, tiles: tiles, progress: progress)
-            } else {
-                let tileData = tiles.first?.tileData ?? Data()
-                return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
-            }
+            // sites (lines 1816/1851/3464) read `(useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled))`
+            // so HT entropy goes to GPU on this routing too. The
+            // `isGPUPath: true` parameter passed at the per-tile call
+            // sites (lines 466, 807) tightens the check so CPU
+            // pipeline calls don't accidentally trigger the GPU HT
+            // entropy decode (the D4 #317 bug fix).
+            let tileData = tiles.first?.tileData ?? Data()
+            return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
         }
 
         if metadata.isMultiTile {
