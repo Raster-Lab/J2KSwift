@@ -77,6 +77,17 @@ Mirror `RELEASE_NOTES_v6.0.0.md` structure. Mandatory sections:
 - What's New — production-default
 - What's New — opt-in (if any)
 - Backward compatibility (codestream byte equality vs prior tag)
+- **Cross-codec parity matrix** — fresh measurement on the medical
+  corpus across at least three external decoders (OpenJPH 0.27.0,
+  Grok 20.3.0, Kakadu 8.4.1 demo); cell count and bit-exactness
+  must be in the release notes, not just cited from a companion
+  doc. Re-run `HTTileParityMatrixTests.testTileParityMatrixOnLargeFixtures`
+  + `HTGPUForward53CrossCodecTests` for the data.
+- **Medical-corpus benchmarks** — fresh wall-time table for
+  encode + decode across the 6 corpus fixtures (MR-small, CT,
+  MR 886², XA, PX, DX). Re-run `J2KMedicalCorpusEncodePerformanceTests`
+  + `EncodeStageProfileLosslessCorpusTests` (or equivalents) for
+  the data; the release-mode median should be inline in the notes.
 - Test Suite Results (gate + new validation suites + cell counts)
 - API surface (additions only, no breaks)
 - Known limitations
@@ -249,6 +260,8 @@ Before pushing the tag, every release should have on `main`:
 - [ ] All work in the release explicitly tested by the mandatory commit gate (release mode, 0 failures)
 - [ ] If codestream bytes change vs previous tag, a `CROSS_VERSION_DELTA_REPORT.md` updated and committed (or a section appended) showing what's the same and what's not
 - [ ] If a new validation suite was added, listed in the Test Suite Results table of the release notes with cell count
+- [ ] **Cross-codec parity matrix** measured fresh and inline in the release notes — at minimum 7 medical fixtures × {OpenJPH, Grok, Kakadu} = 21 cells, with the bit-exactness count visible in the notes
+- [ ] **Medical-corpus benchmarks** measured fresh and inline — encode + decode wall time (median of 5, release mode) for the 6 corpus fixtures, and a stage breakdown when relevant to the release's headline (e.g., when a stage's contribution shifted)
 
 After pushing the tag, every release should have on `origin`:
 
