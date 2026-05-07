@@ -4755,32 +4755,52 @@ struct EncoderPipeline: Sendable {
         return false
     }()
 
-    /// v6-alpha5 phase 2 — opt-in GPU forward 5/3 INT DWT for the
-    /// lossless reversible encode path. Off by default; set
-    /// `J2K_GPU_FORWARD_53=1` to route the (origin-(0,0), Metal-
-    /// available, ≥ 256² pixels) lossless cases through
-    /// `J2KMetalDWT.forward2DInt32MultiLevelFused(...)` instead of
-    /// the CPU `AcceleratedDWT2D.forwardDecomposition53` path.
-    /// Bytes produced are bit-exact-equivalent (verified by the
-    /// phase-0/1 GPU/CPU bit-exactness suite); the encoded
-    /// codestream is byte-identical regardless of which DWT backend
-    /// runs. The flag exists to make wall-time A/B comparison easy
-    /// and to keep production default unchanged through phase 2.
+    /// v6-alpha5 phase 2 — GPU forward 5/3 INT DWT for the lossless
+    /// reversible encode path.
+    ///
+    /// **v6.1.0 (this commit) — production default flipped to ON.**
+    /// PR #309 measured DWT as 39.7 % of DX 2800×2288 lossless wall
+    /// (and ~30-60 % at smaller fixtures). v6-alpha5 Phase 9 already
+    /// proved the GPU path is byte-identical (21/21 cross-codec
+    /// cells: 7 fixtures × {OpenJPH, Grok, Kakadu}) and wins
+    /// 19.4 %–23.5 % of total wall on 4-16 MP fixtures. The
+    /// `_gpuForward53PixelThreshold` (4 MP default) gates small
+    /// fixtures out where dispatch overhead dominates and CPU wins.
+    ///
+    /// Routing on default: GPU fires when all of:
+    ///   - this flag is true (default)
+    ///   - `J2KMetalDWT.isAvailable` (platform predicate)
+    ///   - `width * height >= _gpuForward53PixelThreshold`
+    ///   - origin is (0, 0) — single-tile path
+    ///
+    /// Codestream bytes are byte-identical to v6.0.0 / v5.38 /
+    /// v5.39 on every input (no API change, no on-wire format
+    /// change). Per RELEASING.md, this is MINOR-eligible — the
+    /// only observable difference is wall time on opt-in users
+    /// becoming wall time on default users.
+    ///
+    /// **Opt out** via env var `J2K_GPU_FORWARD_53=0` (or `false` /
+    /// `no`) for diagnostic A/B or to force the legacy CPU path on
+    /// hosts where the GPU dispatch curve hasn't been re-validated
+    /// (e.g., x86 / Linux with Metal-via-MoltenVK, future Apple
+    /// Silicon generations where the threshold may need tuning).
     ///
     /// `var` rather than `let` so tests can A/B without spawning a
-    /// subprocess. The initial value is read from the env var once
-    /// per process; subsequent test mutations take effect on the
-    /// next encode call. Production code never writes to it.
+    /// subprocess. Initial value is read from the env var once per
+    /// process; subsequent test mutations take effect on the next
+    /// encode call. Production code never writes to it.
     nonisolated(unsafe) static var _gpuForward53Enabled: Bool = _readGPUForward53Env()
 
     private static func _readGPUForward53Env() -> Bool {
         if let v = ProcessInfo.processInfo.environment["J2K_GPU_FORWARD_53"] {
             switch v.lowercased() {
             case "1", "true", "yes": return true
-            default: return false
+            case "0", "false", "no": return false
+            default: break
             }
         }
-        return false
+        // v6.1.0 default-on (was off-by-default through v6.0.x).
+        return true
     }
 
     /// v6-alpha5 phase 5 — pixel-count threshold for the GPU forward
