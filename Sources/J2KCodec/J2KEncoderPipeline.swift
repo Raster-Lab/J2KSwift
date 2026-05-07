@@ -4701,6 +4701,9 @@ struct EncoderPipeline: Sendable {
         // call. Internal call sites in the chunk loops use the inout
         // overload below which threads pre-allocated buffers through
         // to amortise their growth across many blocks.
+        // v6-alpha6 phase 1.4 — forward the production SIMD toggle so
+        // single-block test/diagnostic call sites see the same path
+        // production hot loops do.
         var ms = HTMagSgnEncoderConformant()
         var ml = HTMELEncoderConformant()
         var vl = HTReverseBitEmitterConformant()
@@ -4709,19 +4712,44 @@ struct EncoderPipeline: Sendable {
             pending,
             magsgnEnc: &ms, melEnc: &ml, vlcEnc: &vl,
             conformantInBuf: &cBuf,
-            useSIMDClassification: false)
+            useSIMDClassification: Self._htSIMDClassificationEnabled)
     }
 
     /// v5.39 M1: cached env-var read for SIMD-classification opt-in.
     /// Reading `ProcessInfo.processInfo.environment` per chunk is not
     /// free, so we cache it once at process startup. Values: `1`,
     /// `true`, `yes` enable; anything else (including unset) leaves
-    /// the SIMD path off.
-    nonisolated(unsafe) private static let _htSIMDClassificationEnabled: Bool = {
+    /// the SIMD path off (production default).
+    ///
+    /// **v6-alpha6 phase 1.4 (approach E) measurement — left default
+    /// OFF.** Phase 1.3 measured GPU approach B regressing at every
+    /// medical-corpus scale on Apple M2. Phase 1.4 proposed approach
+    /// E (CPU-SIMD only) as the production pivot. The empirical
+    /// wall-time A/B (`HTApproachECPUSIMDTests.testApproachE_WallTimeAB_AcrossCorpus`)
+    /// across the 6-fixture corpus was a **wash**: 4/6 fixtures
+    /// within ±3% noise, 1 fixture +10%, 1 fixture −7% in opposite
+    /// directions at the same block count. Default left OFF because
+    /// no consistent population-level win was demonstrated; the env
+    /// var + programmatic flag remain available for per-call A/B and
+    /// future cross-device retesting (M3 / M4 / M4 Pro / M4 Max may
+    /// shift the SIMD/scalar curve enough to flip the decision).
+    ///
+    /// Bytes byte-identical to the scalar path (verified by
+    /// `HTSIMDIntegrationTests` over a 25K random-block sweep +
+    /// `HTSampleInfoSIMDPrototypeTests` over 180K (sample, p)
+    /// pairs + `HTApproachECPUSIMDTests.testApproachE_BytesIdentical_AllCorpus`
+    /// over the full medical corpus).
+    ///
+    /// `var` (was `let` before phase 1.4) so tests can A/B without
+    /// spawning a subprocess. Initial value is read from the env var
+    /// once per process; subsequent test mutations take effect on the
+    /// next encode call. Production code never writes to it.
+    nonisolated(unsafe) static var _htSIMDClassificationEnabled: Bool = {
         if let v = ProcessInfo.processInfo.environment["J2K_HT_SIMD"] {
             switch v.lowercased() {
             case "1", "true", "yes": return true
-            default: return false
+            case "0", "false", "no": return false
+            default: break
             }
         }
         return false
