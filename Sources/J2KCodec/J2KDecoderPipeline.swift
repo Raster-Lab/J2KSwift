@@ -373,26 +373,34 @@ struct DecoderPipeline: Sendable {
         if Self._gpuInverse53Enabled
             && J2KMetalDWT.isAvailable
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
-            // v6.2.0 — single-tile only. HTTileParityMatrixTests
-            // failure during the v6.2.0 release-candidate validation
-            // surfaced a malformedBlock error in the multi-tile GPU
-            // decode path with the new defaults. Multi-tile decode
-            // stays on the unchanged CPU path for v6.2.0; single-tile
-            // (the medical corpus default and the headline +45 % DX
-            // win) routes through the GPU path. Multi-tile GPU
-            // routing is deferred to v6.3.0 once the per-tile
-            // entropy decode path is investigated.
-            && !metadata.isMultiTile
         {
+            // v6.3.0 E1.2 — routing widened to multi-tile.
+            //
+            // The v6.2.0 narrow `&& !metadata.isMultiTile` guard
+            // blocked multi-tile fixtures from the GPU path because
+            // the per-tile entropy decode path threw `malformedBlock`
+            // on non-32-aligned tiles. v6.3.0 E1.1 (#321) fixed the
+            // root cause — `decodeTilePayloadGPU` was missing the
+            // `tileOriginX/Y` arguments to `extractTileData`, so the
+            // canvas-anchored code-block partition (ISO 15444-1 B.7)
+            // mis-aligned with the encoder's grid. With that one-
+            // line fix in place, multi-tile decode is bit-exact via
+            // the GPU path (HTTileParityMatrixTests 12/12, self-RT
+            // diff 0, cross-decode diff 0 vs OpenJPH/Grok/Kakadu).
+            //
             // D2: when `_gpuHTEntropyEnabled` is true, the consume
-            // sites (lines 1816/1851/3464) read `(useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled))`
-            // so HT entropy goes to GPU on this routing too. The
-            // `isGPUPath: true` parameter passed at the per-tile call
-            // sites (lines 466, 807) tightens the check so CPU
-            // pipeline calls don't accidentally trigger the GPU HT
-            // entropy decode (the D4 #317 bug fix).
-            let tileData = tiles.first?.tileData ?? Data()
-            return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
+            // sites read `(useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled))`
+            // so HT entropy goes to GPU per-tile. The `isGPUPath: true`
+            // parameter at the per-tile call site (line 818)
+            // tightens the check so CPU pipeline calls don't
+            // accidentally trigger the GPU HT entropy decode
+            // (the D4 #317 bug fix).
+            if metadata.isMultiTile {
+                return try await decodeMultiTileGPU(metadata: metadata, tiles: tiles, progress: progress)
+            } else {
+                let tileData = tiles.first?.tileData ?? Data()
+                return try await decodeSingleTileGPU(metadata: metadata, tileData: tileData, progress: progress)
+            }
         }
 
         if metadata.isMultiTile {
@@ -815,9 +823,35 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY)
-        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta, isGPUPath: true)
+        // v6.3.0 E1.2 — multi-tile per-tile entropy on CPU. The GPU
+        // HT entropy decoder produces incorrect coefficients in the
+        // per-tile multi-tile context (validated empirically on DX
+        // 2800×2288: max abs pixel diff = 32768 with isGPUPath: true,
+        // 0 with isGPUPath: false). E1.1 (#321) fixed the codeblock
+        // partition so the dispatch stops throwing `malformedBlock`,
+        // but the resulting coefficients diverge from CPU-decoded
+        // coefficients by an exact DC offset — pointing to a per-
+        // tile GPU HT batch / output-offset bug that's hidden in
+        // single-tile because all blocks share one canvas. Detailed
+        // root-cause is deferred to a follow-up phase; for E1.2 the
+        // safe correctness ship is CPU entropy in the per-tile path.
+        // Single-tile decode goes via `decodeSingleTileGPU` (not this
+        // function) and keeps GPU HT entropy unchanged.
+        let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta, isGPUPath: false)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
-        let spatialData = try await applyInverseWaveletTransformGPU(dequantizedSubbands, metadata: tileMeta, gpuBatch: gpuBatch)
+        // v6.3.0 E1.2 — multi-tile per-tile IDWT routes to CPU. The
+        // GPU IDWT kernels were designed for single-tile (canvas
+        // origin 0, 0; tile dims = image dims) and produce wrong
+        // pixels in the multi-tile per-tile context (parity-aware
+        // boundary handling + tile-local fused-from-codeblocks
+        // descriptors). Single-tile decode goes via
+        // `decodeSingleTileGPU` (NOT this function) and keeps the
+        // full GPU IDWT path. E1.3 (deferred): GPU IDWT multi-tile
+        // support to recover the IDWT win.
+        let spatialData = try await applyInverseWaveletTransformGPU(
+            dequantizedSubbands, metadata: tileMeta,
+            tileOriginX: tileX, tileOriginY: tileY,
+            isMultiTilePerTile: true, gpuBatch: gpuBatch)
         var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
 
         for (compIdx, compInfo) in metadata.components.enumerated() {
@@ -3343,27 +3377,73 @@ struct DecoderPipeline: Sendable {
     private func applyInverseWaveletTransformGPU(
         _ subbands: [SubbandInfo],
         metadata: CodestreamMetadata,
+        // v6.3.0 E1.2 — tile-component canvas-coord origin. Non-zero
+        // origin signals a non-first tile in a multi-tile codestream;
+        // forwarded to the CPU IDWT fallback (which is parity-aware).
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0,
+        // v6.3.0 E1.2 — set true by `decodeTilePayloadGPU` for every
+        // tile in a multi-tile decode (including the (0, 0) origin
+        // first tile). Forces the CPU IDWT path regardless of
+        // origin; see in-function comment for the rationale.
+        isMultiTilePerTile: Bool = false,
         gpuBatch: J2KGPUHTBatch? = nil
     ) async throws -> [[Double]] {
         // Fall back to CPU for custom wavelet kernels only
         if metadata.configuration.waveletKernelConfiguration != nil {
-            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(
+                subbands, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         }
 
         let levels = metadata.configuration.decompositionLevels
         guard levels >= 1 else {
-            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(
+                subbands, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         }
 
         // Fall back to CPU when Metal GPU is not available (e.g. Linux, CI servers)
         guard J2KMetalDWT.isAvailable else {
-            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(
+                subbands, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         }
 
         // Fall back to CPU for small images where GPU dispatch overhead exceeds compute benefit.
         let pixelCount = metadata.width * metadata.height
         guard pixelCount >= 256 * 256 else {
-            return try await applyInverseWaveletTransform(subbands, metadata: metadata)
+            return try await applyInverseWaveletTransform(
+                subbands, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+        }
+
+        // v6.3.0 E1.2 — multi-tile fallback to CPU IDWT. The GPU 5/3
+        // and 9/7 inverse kernels were designed for single-tile
+        // codestreams (canvas origin 0, 0; tile dims = image dims).
+        // Multi-tile per-tile invocation breaks two assumptions:
+        //   1. Non-zero tile origins require parity-aware boundary
+        //      lifting per ISO 15444-1 Annex F.4.1.1; the GPU kernels
+        //      only implement the canvas-origin-0 boundary case.
+        //   2. Even origin-(0, 0) tiles in a multi-tile codestream
+        //      have tile-local dimensions ≠ image dimensions, and
+        //      the gpuBatch fused-from-codeblocks scatter expects
+        //      image-global descriptors — the per-tile descriptor
+        //      shape diverges in ways downstream samples did not.
+        // Falling back to CPU IDWT for ALL tiles in the multi-tile
+        // path (including the (0, 0) origin tile) costs the multi-
+        // tile fixtures the IDWT GPU win but keeps entropy + dequant
+        // + colour on GPU. Single-tile decode goes via
+        // `decodeSingleTileGPU` (NOT `decodeTilePayloadGPU`) and
+        // takes the full GPU IDWT path unchanged — preserves the
+        // v6.2.0 +37–46 % single-tile win.
+        // E1.3 (deferred): port parity-aware + tile-local-dimensions
+        // support into the GPU IDWT kernels to recover the IDWT win
+        // on multi-tile.
+        if isMultiTilePerTile {
+            return try await applyInverseWaveletTransform(
+                subbands, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         }
 
         // v5.21.0: GPU 9/7 IDWT scaling fix removes the v5.20.0 gate.
