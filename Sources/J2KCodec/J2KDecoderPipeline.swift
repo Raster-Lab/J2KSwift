@@ -978,7 +978,10 @@ struct DecoderPipeline: Sendable {
     // MARK: - Stage 1: Codestream Parsing
 
     /// Parses the JPEG 2000 codestream and extracts metadata and tile data.
-    private func parseCodestream(_ data: Data) throws -> (CodestreamMetadata, [(tileIndex: Int, tileData: Data)]) {
+    /// Internal (was private through v7.0.0); promoted to allow
+    /// v7.1.0 H1.0 Defect A diagnostic test to extract per-tile
+    /// codeblock data. Not part of the public API surface.
+    func parseCodestream(_ data: Data) throws -> (CodestreamMetadata, [(tileIndex: Int, tileData: Data)]) {
         var reader = J2KBitReader(data: data)
 
         // Verify SOC marker
@@ -1444,7 +1447,10 @@ struct DecoderPipeline: Sendable {
     /// grid in raster order; for each precinct, reads ONE packet whose
     /// tag trees cover only the blocks within that precinct's region.
     /// Default codestreams (one precinct per band) work as before.
-    private func extractTileData(
+    /// Internal (was private through v7.0.0); promoted to allow
+    /// v7.1.0 H1.0 Defect A diagnostic test to inspect per-tile
+    /// codeblock layout. Not part of the public API surface.
+    func extractTileData(
         _ tileData: Data,
         metadata: CodestreamMetadata,
         // v6-alpha3 step 6B slice 4 — tile-component canvas-coord
