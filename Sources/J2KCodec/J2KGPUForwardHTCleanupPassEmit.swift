@@ -82,19 +82,34 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         public let perBlockVlc: [[UInt8]]
     }
 
-    /// Per-stream upper-bound capacity per block. The kernel emits
-    /// up to ≤ this many bytes for each of the three streams; if a
-    /// block hits the cap a precondition fires. 8 KB per stream is
-    /// generous: even a 64×64 block with fully-significant high-
-    /// magnitude samples typically produces a few KB, and FF-stuff
-    /// overhead doesn't push it past 8 KB.
-    public static let perStreamCapPerBlock: Int = 8192
-
-    /// 4-byte alignment overhead (Apple Silicon RMW byte-store rule
-    /// from I1.2b). Each block's per-stream region must start on a
-    /// 4-byte boundary; the per-stream cap is already a multiple of 4.
+    /// Per-stream upper-bound capacity for a block of size
+    /// `width × height`. Worst-case bound:
+    ///   - MagSgn: each significant sample emits up to ~32 bits;
+    ///     with FF-stuff (overhead 8/7) → ~5 bytes per sample.
+    ///   - MEL: bounded by quad count × few bits → ≤ 1 byte per sample.
+    ///   - VLC: per-quad codeword ≤ 12 bits + UVLC ≤ 32 bits per pair
+    ///     → ≤ 1 byte per sample.
+    /// Take `5 * width * height` plus a small fixed slack as the
+    /// per-stream cap; ensures the kernel never overruns the per-
+    /// block region. The cap is rounded up to a multiple of 4 to
+    /// preserve the I1.2b byte-store RMW alignment requirement.
     @inline(__always)
-    private static func roundUpTo4(_ x: Int) -> Int { (x + 3) & ~3 }
+    public static func perStreamCap(forBlockWidth w: Int, height h: Int) -> Int {
+        let raw = max(64, 5 * w * h + 16)
+        return (raw + 3) & ~3   // 4-byte aligned
+    }
+
+    /// Largest per-stream cap across a batch — used to size the
+    /// shared output buffer. Each block's region starts at
+    /// `i * cap` (cap-aligned, so already 4-byte aligned).
+    @inline(__always)
+    private static func perStreamCap(for blocks: [BlockDescriptor]) -> Int {
+        var cap = 0
+        for b in blocks {
+            cap = max(cap, perStreamCap(forBlockWidth: b.width, height: b.height))
+        }
+        return cap
+    }
 
     #if canImport(Metal)
     /// Run the unified cleanup-pass kernel on a single codeblock's
@@ -128,7 +143,10 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         try await shaderLibrary.loadShaders(device: device)
 
         let blockCount = blocks.count
-        let cap = Self.perStreamCapPerBlock         // already a multiple of 4
+        // Per-stream cap is the max worst-case-bound across the batch
+        // (heterogeneous block sizes are supported). Already 4-byte
+        // aligned per `perStreamCap(forBlockWidth:height:)`'s contract.
+        let cap = Self.perStreamCap(for: blocks)
         let perStreamRegion = blockCount * cap      // entire shared output buffer per stream
 
         // Concatenate tuples + build per-block descriptors.
