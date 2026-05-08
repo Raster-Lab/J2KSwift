@@ -238,10 +238,23 @@ public struct J2KMetalDWTSubbandsInt32: Sendable {
     public let originalWidth: Int
     public let originalHeight: Int
 
+    /// **v7.1.0 H2.2** — band canvas origin on x. When odd, the
+    /// horizontal inverse 5/3 pass uses parity-aware lifting per
+    /// ISO 15444-1 Annex F.4.1.1. Default 0 (single-tile, even-origin
+    /// — the historical case). Multi-tile per-tile decode populates
+    /// this from the tile-component origin at the active decomposition
+    /// level.
+    public let tileOriginX: Int
+    /// Band canvas origin on y. Same semantics as `tileOriginX` for
+    /// the vertical inverse 5/3 pass.
+    public let tileOriginY: Int
+
     public init(
         ll: [Int32], lh: [Int32], hl: [Int32], hh: [Int32],
         llWidth: Int, llHeight: Int,
-        originalWidth: Int, originalHeight: Int
+        originalWidth: Int, originalHeight: Int,
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
     ) {
         self.ll = ll
         self.lh = lh
@@ -251,6 +264,8 @@ public struct J2KMetalDWTSubbandsInt32: Sendable {
         self.llHeight = llHeight
         self.originalWidth = originalWidth
         self.originalHeight = originalHeight
+        self.tileOriginX = tileOriginX
+        self.tileOriginY = tileOriginY
     }
 }
 
@@ -3311,7 +3326,9 @@ public actor J2KMetalDWT {
             colLow: colLowBuffer, colHigh: colHighBuffer,
             output: outputBuffer,
             originalWidth: width, originalHeight: height,
-            llHeight: llH)
+            llHeight: llH,
+            tileOriginX: subbands.tileOriginX,
+            tileOriginY: subbands.tileOriginY)
         cb.commit()
         await cb.completed()
 
@@ -3346,14 +3363,25 @@ public actor J2KMetalDWT {
         output: any MTLBuffer,
         originalWidth: Int,
         originalHeight: Int,
-        llHeight: Int
+        llHeight: Int,
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
     ) async throws {
         let halfHH = originalHeight / 2
 
+        // v7.1.0 H2.2 — select even-vs-odd kernel based on band
+        // canvas origin parity per pass. Even origin (the historical
+        // default) keeps the existing kernels. Odd origin selects
+        // the parity-aware kernel from PR #346 (ISO 15444-1 Annex
+        // F.4.1.1 — different boundary mirror, flipped interleave).
+        let hOddOrigin = (tileOriginX & 1) == 1
+        let vOddOrigin = (tileOriginY & 1) == 1
         let hPipeline = try await shaderLibrary.computePipeline(
-            for: .dwtInverse53HorizontalInt)
+            for: hOddOrigin ? .dwtInverse53HorizontalIntOdd
+                            : .dwtInverse53HorizontalInt)
         let vPipeline = try await shaderLibrary.computePipeline(
-            for: .dwtInverse53VerticalInt)
+            for: vOddOrigin ? .dwtInverse53VerticalIntOdd
+                            : .dwtInverse53VerticalInt)
 
         // Pass 1: horizontal inverse. Two dispatches (LL+HL → colLow,
         // LH+HH → colHigh) into one encoder.
@@ -3456,18 +3484,80 @@ public actor J2KMetalDWT {
         return result
     }
 
+    /// **v7.1.0 H2.2** — odd-origin parity-aware 1D inverse 5/3.
+    /// Mirrors `J2KDWT1DOptimized.inverseTransform53OddOriginSymmetric`
+    /// (J2KCodec) — replicated here because J2KMetal can't import
+    /// J2KCodec. Three differences vs even-origin:
+    ///   - Step 1 (undo update on L): right mirror only
+    ///   - Step 2 (undo predict on H): three regions (left, interior,
+    ///     right tail when n odd)
+    ///   - Interleave is flipped: x[2i] = H, x[2i+1] = L
+    private func inverse1D53IntOddOrigin(lowpass: [Int32], highpass: [Int32]) -> [Int32] {
+        let lowCount = lowpass.count
+        let highCount = highpass.count
+        let n = lowCount + highCount
+        if lowCount == 0 { return highpass }
+
+        var L = lowpass
+        var H = highpass
+
+        // Step 1: undo update on L. L[i] -= ((H[i] + H[i+1] + 2) >> 2)
+        // with right mirror H[i+1] → H[highCount - 1] when i+1 ≥ highCount.
+        for i in 0..<lowCount {
+            let left = H[i]
+            let right = (i + 1 < highCount) ? H[i + 1] : H[highCount - 1]
+            L[i] = L[i] &- ((left &+ right &+ 2) >> 2)
+        }
+
+        // Step 2: undo predict on H.
+        if highCount > 0 {
+            H[0] = H[0] &+ L[0]
+        }
+        let interiorEnd = min(highCount, lowCount)
+        for i in 1..<interiorEnd {
+            H[i] = H[i] &+ ((L[i - 1] &+ L[i]) >> 1)
+        }
+        if highCount > lowCount {
+            H[lowCount] = H[lowCount] &+ L[lowCount - 1]
+        }
+
+        // Interleave (odd-origin): x[2i] = H[i], x[2i+1] = L[i]
+        var result = [Int32](repeating: 0, count: n)
+        for i in 0..<lowCount { result[2 * i + 1] = L[i] }
+        for i in 0..<highCount { result[2 * i] = H[i] }
+        return result
+    }
+
     private func inverse2DCPUInt32(subbands: J2KMetalDWTSubbandsInt32) -> [Int32] {
         // Per JPEG 2000 spec (ISO 15444-1 Annex F): inverse 2D applies
         // horizontal pass first (per row: LL+HL → colLow, LH+HH → colHigh),
         // then vertical pass (per column: colLow+colHigh → final output).
         // Identical sequencing to `inverse2DGPUInt32` above and to the CPU
         // optimiser at `J2KDWT2DOptimizer.inverseTransform2DOptimized`.
+        //
+        // **v7.1.0 H2.2** — selects even-vs-odd 1D inverse per axis
+        // based on band canvas origin parity.
         let width = subbands.originalWidth
         let height = subbands.originalHeight
         let llW = subbands.llWidth
         let llH = subbands.llHeight
         let halfHH = height / 2
         let halfWH = width / 2
+        let hOddOrigin = (subbands.tileOriginX & 1) == 1
+        let vOddOrigin = (subbands.tileOriginY & 1) == 1
+
+        @inline(__always)
+        func inverse1DH(lowpass: [Int32], highpass: [Int32]) -> [Int32] {
+            return hOddOrigin
+                ? inverse1D53IntOddOrigin(lowpass: lowpass, highpass: highpass)
+                : inverse1D53Int(lowpass: lowpass, highpass: highpass)
+        }
+        @inline(__always)
+        func inverse1DV(lowpass: [Int32], highpass: [Int32]) -> [Int32] {
+            return vOddOrigin
+                ? inverse1D53IntOddOrigin(lowpass: lowpass, highpass: highpass)
+                : inverse1D53Int(lowpass: lowpass, highpass: highpass)
+        }
 
         // Step 1: horizontal pass
         var colLow  = [Int32](repeating: 0, count: width * llH)
@@ -3481,7 +3571,7 @@ public actor J2KMetalDWT {
             } else {
                 hpRow = Array(subbands.hl[(y * halfWH)..<(y * halfWH + halfWH)])
             }
-            let merged = inverse1D53Int(lowpass: lpRow, highpass: hpRow)
+            let merged = inverse1DH(lowpass: lpRow, highpass: hpRow)
             for x in 0..<min(width, merged.count) {
                 colLow[y * width + x] = merged[x]
             }
@@ -3501,7 +3591,7 @@ public actor J2KMetalDWT {
                 } else {
                     hpRow = Array(subbands.hh[(y * halfWH)..<(y * halfWH + halfWH)])
                 }
-                let merged = inverse1D53Int(lowpass: lpRow, highpass: hpRow)
+                let merged = inverse1DH(lowpass: lpRow, highpass: hpRow)
                 for x in 0..<min(width, merged.count) {
                     colHigh[y * width + x] = merged[x]
                 }
@@ -3519,7 +3609,7 @@ public actor J2KMetalDWT {
                 hpCol = [Int32](repeating: 0, count: halfHH)
                 for y in 0..<halfHH { hpCol[y] = colHigh[y * width + x] }
             }
-            let merged = inverse1D53Int(lowpass: lpCol, highpass: hpCol)
+            let merged = inverse1DV(lowpass: lpCol, highpass: hpCol)
             for y in 0..<min(height, merged.count) {
                 result[y * width + x] = merged[y]
             }
