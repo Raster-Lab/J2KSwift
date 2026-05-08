@@ -124,31 +124,27 @@ public enum J2KGPUForwardHTEntropyBatch {
         let dispatchMs = (Date().timeIntervalSinceReferenceDate - dispatchT0) * 1000.0
 
         // 3. **Approach C** — dispatch the unified Pass 3 cleanup-pass
-        //    kernel for the whole batch. Per-block tuple slices feed
-        //    the GPU; per-block (magsgn, mel, vlc) byte streams come
-        //    back. No CPU emit; the entire encoder runs on GPU at
-        //    this point modulo the per-block tuple-slice copy.
+        //    kernel for the whole batch. Uses the flat-buffer API so
+        //    the classifier's already-flat tuples buffer feeds the
+        //    emit kernel directly — **no per-block array allocation**.
+        //    Saves O(N × samplesPerBlock) Swift allocs that the legacy
+        //    `BlockDescriptor` API forced. For DX 2x2 (~2,300 blocks
+        //    × 32×32 = ~2.4 M samples) that's a ~18 MB allocation
+        //    elided per encode call.
         let emitT0 = Date().timeIntervalSinceReferenceDate
 
-        var emitInputs: [J2KGPUForwardHTCleanupPassEmit.BlockDescriptor] = []
+        var emitInputs: [J2KGPUForwardHTCleanupPassEmit.FlatBlockDescriptor] = []
         emitInputs.reserveCapacity(blocks.count)
         for (i, b) in blocks.enumerated() {
             let desc = descriptors[i]
-            let tupleStart = Int(desc.tupleOffset)
-            let tupleEnd = tupleStart + b.coefficients.count
-            // Per-block tuple slice → Array. The wrapper internally
-            // re-concatenates these into a flat buffer for upload;
-            // the per-block array allocation is the CPU-side overhead
-            // of approach C. For DX 2x2 tiles that's ~2,300 × 32×32 ×
-            // 8 bytes ≈ 18 MB total per tile, dominated by the
-            // upstream classifier dispatch wall.
-            let perBlockTuples = Array(tuples[tupleStart..<tupleEnd])
-            emitInputs.append(.init(width: b.width, height: b.height,
-                                    missingMSBs: b.missingMSBs,
-                                    tuples: perBlockTuples))
+            emitInputs.append(.init(
+                width: b.width, height: b.height,
+                missingMSBs: b.missingMSBs,
+                tupleStart: Int(desc.tupleOffset)))
         }
 
-        let batched = try await J2KGPUForwardHTCleanupPassEmit().emitBlocks(emitInputs)
+        let batched = try await J2KGPUForwardHTCleanupPassEmit().emitBlocksFlat(
+            tuples: tuples, blocks: emitInputs)
         var out: [EncodedBlock] = []
         out.reserveCapacity(blocks.count)
         for i in 0..<blocks.count {

@@ -82,6 +82,29 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         public let perBlockVlc: [[UInt8]]
     }
 
+    /// **v7.1.0 perf** — per-block descriptor for the *flat* API,
+    /// where the caller already has a single concatenated UInt64
+    /// tuples buffer (typical when the GPU classifier just produced
+    /// it). Skips the per-block array slice + re-concat round-trip
+    /// that the original `BlockDescriptor` API forces. Saves O(n)
+    /// per-block CPU time for large batches.
+    public struct FlatBlockDescriptor: Sendable {
+        public let width: Int
+        public let height: Int
+        public let missingMSBs: Int
+        /// Index into the flat tuples buffer where this block's
+        /// tuples start.
+        public let tupleStart: Int
+        public init(width: Int, height: Int, missingMSBs: Int, tupleStart: Int) {
+            precondition(width <= 64 && height <= 64,
+                         "J2KGPUForwardHTCleanupPassEmit: I1.3 supports up to 64×64 blocks")
+            self.width = width
+            self.height = height
+            self.missingMSBs = missingMSBs
+            self.tupleStart = tupleStart
+        }
+    }
+
     /// Per-stream upper-bound capacity for a block of size
     /// `width × height`. Worst-case bound:
     ///   - MagSgn: each significant sample emits up to ~32 bits;
@@ -111,6 +134,15 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         return cap
     }
 
+    @inline(__always)
+    private static func perStreamCap(for blocks: [FlatBlockDescriptor]) -> Int {
+        var cap = 0
+        for b in blocks {
+            cap = max(cap, perStreamCap(forBlockWidth: b.width, height: b.height))
+        }
+        return cap
+    }
+
     #if canImport(Metal)
     /// Run the unified cleanup-pass kernel on a single codeblock's
     /// pre-classified tuple stream. Convenience wrapper over
@@ -132,7 +164,49 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
     /// parallel. Bit-exact with running
     /// `HTBlockEncoderConformant.encode(preClassifiedTuples:)` on
     /// each block in isolation.
+    ///
+    /// **Performance**: this overload allocates per-block tuple
+    /// arrays inside each `BlockDescriptor`. For callers that
+    /// already have a flat tuples buffer (e.g. directly from the
+    /// GPU classifier output), prefer `emitBlocksFlat(tuples:blocks:)`
+    /// which skips the per-block array allocation + re-concatenation.
     public func emitBlocks(_ blocks: [BlockDescriptor]) async throws -> BatchedResult {
+        if blocks.isEmpty {
+            return BatchedResult(perBlockMagsgn: [], perBlockMel: [], perBlockVlc: [])
+        }
+
+        // Build a flat tuples buffer + flat descriptors, then delegate
+        // to the canonical implementation.
+        var totalCount = 0
+        var flat = [FlatBlockDescriptor]()
+        flat.reserveCapacity(blocks.count)
+        for b in blocks {
+            flat.append(FlatBlockDescriptor(
+                width: b.width, height: b.height,
+                missingMSBs: b.missingMSBs, tupleStart: totalCount))
+            totalCount += b.tuples.count
+        }
+        var tuples = [UInt64](); tuples.reserveCapacity(totalCount)
+        for b in blocks { tuples.append(contentsOf: b.tuples) }
+        return try await emitBlocksFlat(tuples: tuples, blocks: flat)
+    }
+
+    /// **v7.1.0 perf** — canonical batched emit. Takes a single flat
+    /// tuples buffer and per-block descriptors that index into it.
+    /// Saves the per-block array allocation + re-concatenation that
+    /// the original `emitBlocks([BlockDescriptor])` path forces.
+    ///
+    /// - Parameters:
+    ///   - tuples: concatenated UInt64 tuple stream across all blocks,
+    ///     in the order indicated by `blocks[i].tupleStart`. Same
+    ///     format as the GPU classifier's output buffer.
+    ///   - blocks: per-block descriptors with width/height/missingMSBs
+    ///     + tupleStart offset into `tuples`.
+    /// - Returns: per-block (magsgn, mel, vlc) byte streams.
+    public func emitBlocksFlat(
+        tuples: [UInt64],
+        blocks: [FlatBlockDescriptor]
+    ) async throws -> BatchedResult {
         if blocks.isEmpty {
             return BatchedResult(perBlockMagsgn: [], perBlockMel: [], perBlockVlc: [])
         }
@@ -143,27 +217,19 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         try await shaderLibrary.loadShaders(device: device)
 
         let blockCount = blocks.count
-        // Per-stream cap is the max worst-case-bound across the batch
-        // (heterogeneous block sizes are supported). Already 4-byte
-        // aligned per `perStreamCap(forBlockWidth:height:)`'s contract.
         let cap = Self.perStreamCap(for: blocks)
-        let perStreamRegion = blockCount * cap      // entire shared output buffer per stream
+        let perStreamRegion = blockCount * cap
 
-        // Concatenate tuples + build per-block descriptors.
-        var totalTupleCount = 0
-        var tupleStarts = [UInt32](repeating: 0, count: blockCount)
-        for (i, b) in blocks.enumerated() {
-            tupleStarts[i] = UInt32(totalTupleCount)
-            totalTupleCount += b.tuples.count
-        }
-
+        let totalTupleCount = tuples.count
         let tuplesBytes = max(MemoryLayout<UInt64>.stride,
                               totalTupleCount * MemoryLayout<UInt64>.stride)
         let dimsBytes = blockCount * MemoryLayout<SIMD4<UInt32>>.stride
         let offsetBytes = blockCount * MemoryLayout<UInt32>.stride
         let countsBytes = blockCount * MemoryLayout<SIMD3<UInt32>>.stride
 
-        let (vlc0Buf, vlc1Buf, uvlcBuf, melExpBytes) = try makeTableBuffers(device: device)
+        // Cached lookup tables (uploaded once per device, reused
+        // across all subsequent dispatches in the same process).
+        let cached = try Self.cachedTableBuffers(device: device)
 
         guard let tuplesBuf = device.makeBuffer(length: tuplesBytes, options: .storageModeShared),
               let dimsBuf = device.makeBuffer(length: dimsBytes, options: .storageModeShared),
@@ -178,24 +244,24 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
             throw J2KError.internalError("J2KGPUForwardHTCleanupPassEmit: failed to allocate Metal buffers")
         }
 
-        // Pack inputs.
-        let tuplesPtr = tuplesBuf.contents().bindMemory(to: UInt64.self, capacity: totalTupleCount)
+        // Single bulk memcpy of the flat tuples buffer (vs N per-block
+        // copy loops in the legacy path).
+        if totalTupleCount > 0 {
+            tuples.withUnsafeBufferPointer { src in
+                tuplesBuf.contents().copyMemory(
+                    from: src.baseAddress!,
+                    byteCount: totalTupleCount * MemoryLayout<UInt64>.stride)
+            }
+        }
+
         let dimsPtr = dimsBuf.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: blockCount)
         let msOffPtr = magsgnOffBuf.contents().bindMemory(to: UInt32.self, capacity: blockCount)
         let melOffPtr = melOffBuf.contents().bindMemory(to: UInt32.self, capacity: blockCount)
         let vlcOffPtr = vlcOffBuf.contents().bindMemory(to: UInt32.self, capacity: blockCount)
-
         for (i, b) in blocks.enumerated() {
-            // Copy this block's tuples into the flat buffer at its start.
-            let start = Int(tupleStarts[i])
-            for (j, t) in b.tuples.enumerated() {
-                tuplesPtr[start + j] = t
-            }
             dimsPtr[i] = SIMD4<UInt32>(
                 UInt32(b.width), UInt32(b.height),
-                UInt32(b.missingMSBs), tupleStarts[i])
-            // Per-block-i region in the per-stream output buffer:
-            // start = i × cap (cap is already a multiple of 4 → alignment OK)
+                UInt32(b.missingMSBs), UInt32(b.tupleStart))
             msOffPtr[i] = UInt32(i * cap)
             melOffPtr[i] = UInt32(i * cap)
             vlcOffPtr[i] = UInt32(i * cap)
@@ -212,10 +278,10 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         encoder.setComputePipelineState(pipeline)
         encoder.setBuffer(tuplesBuf, offset: 0, index: 0)
         encoder.setBuffer(dimsBuf, offset: 0, index: 1)
-        encoder.setBuffer(vlc0Buf, offset: 0, index: 2)
-        encoder.setBuffer(vlc1Buf, offset: 0, index: 3)
-        encoder.setBuffer(uvlcBuf, offset: 0, index: 4)
-        melExpBytes.withUnsafeBytes { raw in
+        encoder.setBuffer(cached.vlc0, offset: 0, index: 2)
+        encoder.setBuffer(cached.vlc1, offset: 0, index: 3)
+        encoder.setBuffer(cached.uvlc, offset: 0, index: 4)
+        cached.melExp.withUnsafeBytes { raw in
             encoder.setBytes(raw.baseAddress!, length: raw.count, index: 5)
         }
         encoder.setBuffer(magsgnBuf, offset: 0, index: 6)
@@ -228,7 +294,6 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
         var blockCountU32 = UInt32(blockCount)
         encoder.setBytes(&blockCountU32, length: MemoryLayout<UInt32>.stride, index: 13)
 
-        // One threadgroup per block; 32 threads each (thread 0 active).
         let tg = MTLSize(width: 32, height: 1, depth: 1)
         let groupCount = MTLSize(width: blockCount, height: 1, depth: 1)
         encoder.dispatchThreadgroups(groupCount, threadsPerThreadgroup: tg)
@@ -256,8 +321,6 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
             precondition(msLen <= cap && melLen <= cap && vlcLen <= cap,
                          "J2KGPUForwardHTCleanupPassEmit: block \(i) exceeded per-stream cap")
             let off = i * cap
-            // Per `feedback_metal_readback.md`: do NOT use
-            // `Array.withUnsafeMutableBytes { copyBytes(from: ...) }`.
             let ms: [UInt8] = [UInt8](unsafeUninitializedCapacity: msLen) { dst, init_ in
                 if msLen > 0 { memcpy(dst.baseAddress!, magsgnBase + off, msLen) }
                 init_ = msLen
@@ -279,48 +342,77 @@ public struct J2KGPUForwardHTCleanupPassEmit: Sendable {
                              perBlockVlc: perBlockVlc)
     }
 
-    /// Build the four lookup tables the kernel needs (VLC0, VLC1,
-    /// UVLC, MEL-exponent) into Metal buffers + Swift bytes. Re-uses
-    /// J2KCodec's CPU table builders to guarantee CPU-GPU parity.
-    private func makeTableBuffers(device: any MTLDevice) throws
-        -> (vlc0: any MTLBuffer, vlc1: any MTLBuffer,
-            uvlc: any MTLBuffer, melExp: [UInt8])
-    {
-        let vlc0 = vlcTable0Conformant
-        let vlc1 = vlcTable1Conformant
-        let uvlcSrc = uvlcTableConformant
-        let melExp = melExpConformant.map { UInt8($0) }
+    /// Cached lookup-table buffers — built lazily on first use,
+    /// reused across all subsequent dispatches. The tables are
+    /// read-only after upload; once a device-keyed slot exists,
+    /// every encode pays only the buffer-binding cost (no allocation,
+    /// no Swift→Metal copy).
+    fileprivate final class CachedTables: @unchecked Sendable {
+        let vlc0: any MTLBuffer
+        let vlc1: any MTLBuffer
+        let uvlc: any MTLBuffer
+        let melExp: [UInt8]
+        let device: any MTLDevice
 
-        let vlc0Bytes = vlc0.count * MemoryLayout<UInt16>.stride
-        let vlc1Bytes = vlc1.count * MemoryLayout<UInt16>.stride
-        let uvlcBytes = uvlcSrc.count * MemoryLayout<SIMD2<UInt32>>.stride
+        init(device: any MTLDevice) throws {
+            self.device = device
 
-        guard let vlc0Buf = device.makeBuffer(length: vlc0Bytes, options: .storageModeShared),
-              let vlc1Buf = device.makeBuffer(length: vlc1Bytes, options: .storageModeShared),
-              let uvlcBuf = device.makeBuffer(length: uvlcBytes, options: .storageModeShared)
-        else {
-            throw J2KError.internalError("J2KGPUForwardHTCleanupPassEmit: failed to allocate table buffers")
+            let vlc0Src = vlcTable0Conformant
+            let vlc1Src = vlcTable1Conformant
+            let uvlcSrc = uvlcTableConformant
+            self.melExp = melExpConformant.map { UInt8($0) }
+
+            let vlc0Bytes = vlc0Src.count * MemoryLayout<UInt16>.stride
+            let vlc1Bytes = vlc1Src.count * MemoryLayout<UInt16>.stride
+            let uvlcBytes = uvlcSrc.count * MemoryLayout<SIMD2<UInt32>>.stride
+
+            guard let vlc0Buf = device.makeBuffer(length: vlc0Bytes, options: .storageModeShared),
+                  let vlc1Buf = device.makeBuffer(length: vlc1Bytes, options: .storageModeShared),
+                  let uvlcBuf = device.makeBuffer(length: uvlcBytes, options: .storageModeShared)
+            else {
+                throw J2KError.internalError(
+                    "J2KGPUForwardHTCleanupPassEmit: failed to allocate table buffers")
+            }
+            let vlc0Ptr = vlc0Buf.contents().bindMemory(to: UInt16.self, capacity: vlc0Src.count)
+            for (i, v) in vlc0Src.enumerated() { vlc0Ptr[i] = v }
+            let vlc1Ptr = vlc1Buf.contents().bindMemory(to: UInt16.self, capacity: vlc1Src.count)
+            for (i, v) in vlc1Src.enumerated() { vlc1Ptr[i] = v }
+
+            // UVLC packed as `uint2` per entry:
+            //   .x = pre | (preLen<<8) | (suf<<16) | (sufLen<<24)
+            //   .y = ext | (extLen<<8)
+            let uvlcPtr = uvlcBuf.contents().bindMemory(
+                to: SIMD2<UInt32>.self, capacity: uvlcSrc.count)
+            for (i, e) in uvlcSrc.enumerated() {
+                let x = UInt32(e.pre)
+                    | (UInt32(e.preLen) << 8)
+                    | (UInt32(e.suf) << 16)
+                    | (UInt32(e.sufLen) << 24)
+                let y = UInt32(e.ext) | (UInt32(e.extLen) << 8)
+                uvlcPtr[i] = SIMD2<UInt32>(x, y)
+            }
+            self.vlc0 = vlc0Buf
+            self.vlc1 = vlc1Buf
+            self.uvlc = uvlcBuf
         }
+    }
 
-        let vlc0Ptr = vlc0Buf.contents().bindMemory(to: UInt16.self, capacity: vlc0.count)
-        for (i, v) in vlc0.enumerated() { vlc0Ptr[i] = v }
-        let vlc1Ptr = vlc1Buf.contents().bindMemory(to: UInt16.self, capacity: vlc1.count)
-        for (i, v) in vlc1.enumerated() { vlc1Ptr[i] = v }
+    nonisolated(unsafe) private static var _cachedTables: CachedTables?
+    private static let _cacheLock = NSLock()
 
-        // UVLC is packed as `uint2` per entry:
-        //   .x = (pre << 0) | (preLen << 8) | (suf << 16) | (sufLen << 24)
-        //   .y = (ext << 0) | (extLen << 8)
-        let uvlcPtr = uvlcBuf.contents().bindMemory(to: SIMD2<UInt32>.self, capacity: uvlcSrc.count)
-        for (i, e) in uvlcSrc.enumerated() {
-            let x = UInt32(e.pre)
-                | (UInt32(e.preLen) << 8)
-                | (UInt32(e.suf) << 16)
-                | (UInt32(e.sufLen) << 24)
-            let y = UInt32(e.ext) | (UInt32(e.extLen) << 8)
-            uvlcPtr[i] = SIMD2<UInt32>(x, y)
+    fileprivate static func cachedTableBuffers(
+        device: any MTLDevice
+    ) throws -> CachedTables {
+        _cacheLock.lock()
+        defer { _cacheLock.unlock() }
+        // Same-device fast path — the typical case (one device per
+        // process). Reset the cache if the device changed.
+        if let cached = _cachedTables, cached.device === device {
+            return cached
         }
-
-        return (vlc0Buf, vlc1Buf, uvlcBuf, melExp)
+        let fresh = try CachedTables(device: device)
+        _cachedTables = fresh
+        return fresh
     }
     #else
     public func emitBlock(tuples: [UInt64],
