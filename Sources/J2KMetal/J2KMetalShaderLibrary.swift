@@ -156,6 +156,11 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// per-block byte counts → per-block byte offsets for the GPU
     /// byte-write pass.
     case prefixSumInclusiveUInt32 = "j2k_prefix_sum_inclusive_uint32"
+    /// v7.1.0 I1.2 — Pass 3 MagSgn-only byte-write spike. One
+    /// threadgroup per block; one thread does the inherently-serial
+    /// bit-emit (with inline FF-stuffing) into a `device` byte buffer
+    /// at a per-block offset. Bit-exact with `HTMagSgnEncoderConformant`.
+    case htMagSgnEmitBlock = "j2k_ht_magsgn_emit_block"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -3326,6 +3331,63 @@ enum J2KMetalShaderSource {
         threadgroup_barrier(mem_flags::mem_threadgroup);
         psum += sg_totals[sg_id];
         if (tid < n) output[tid] = psum;
+    }
+
+    // MARK: - v7.1.0 I1.2 — Pass 3 MagSgn byte-write (single-block spike)
+    //
+    // Per-block serial bit-emitter. One threadgroup per block; thread 0
+    // does the inherently-serial work, the rest of the warp idles.
+    // Inline FF-stuffing matches HTMagSgnEncoderConformant byte-for-byte.
+    //
+    // Mirrors the source kept in Sources/J2KMetal/J2KShaders.metal —
+    // duplicated here for the inline source-compile fallback path.
+
+    kernel void j2k_ht_magsgn_emit_block(
+        device const uint2* items         [[buffer(0)]],
+        constant     uint&  itemCount     [[buffer(1)]],
+        device       uchar* output        [[buffer(2)]],
+        constant     uint&  outputOffset  [[buffer(3)]],
+        device       uint*  byteCountOut  [[buffer(4)]],
+        uint tid                          [[thread_position_in_threadgroup]]
+    ) {
+        if (tid != 0u) return;
+        uint tmp = 0u;
+        uint usedBits = 0u;
+        uint maxBits = 8u;
+        uint byteIdx = 0u;
+        for (uint i = 0u; i < itemCount; ++i) {
+            uint cwd = items[i].x;
+            uint len = items[i].y;
+            while (len > 0u) {
+                uint take = min(maxBits - usedBits, len);
+                uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+                tmp |= (cwd & mask) << usedBits;
+                usedBits += take;
+                cwd >>= take;
+                len -= take;
+                if (usedBits >= maxBits) {
+                    uint b = tmp & 0xFFu;
+                    output[outputOffset + byteIdx] = (uchar)b;
+                    byteIdx += 1u;
+                    maxBits = (b == 0xFFu) ? 7u : 8u;
+                    tmp = 0u;
+                    usedBits = 0u;
+                }
+            }
+        }
+        if (usedBits != 0u) {
+            uint padBits = maxBits - usedBits;
+            uint padMask = (padBits >= 32u) ? 0xFFFFFFFFu : ((1u << padBits) - 1u);
+            tmp |= padMask << usedBits;
+            uint b = tmp & 0xFFu;
+            if (b != 0xFFu) {
+                output[outputOffset + byteIdx] = (uchar)b;
+                byteIdx += 1u;
+            }
+        } else if (maxBits == 7u) {
+            byteIdx -= 1u;
+        }
+        *byteCountOut = byteIdx;
     }
     """
 }
