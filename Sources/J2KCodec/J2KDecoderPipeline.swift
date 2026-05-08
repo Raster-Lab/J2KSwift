@@ -802,16 +802,43 @@ struct DecoderPipeline: Sendable {
         tileMeta.height = tileH
         tileMeta.tileSize = (width: tileW, height: tileH)
 
+        // v7.2.0 Phase 0 — per-tile stage instrumentation. Mirrors the
+        // `decodeSingleTile` pattern. Stage times are accumulated into
+        // process-global `J2KDecodeTimings` counters; on multi-tile
+        // decodes invoked from `withThrowingTaskGroup`, each parallel
+        // tile contributes its CPU-time to the same accumulator, so a
+        // sum across stages can exceed the decode wall (semantics
+        // identical to the encode-side stage profile).
+        var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY)
+        J2KDecodeTimings.recordExtractTileData(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         let (decodedBlocks, _) = try await applyEntropyDecoding(codeBlocks, metadata: tileMeta)
+        J2KDecodeTimings.recordEntropyDecoding(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
+        J2KDecodeTimings.recordDequantization(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         var spatialDataTile = try await applyInverseWaveletTransform(
             dequantizedSubbands, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY)
-        try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
+        J2KDecodeTimings.recordInverseWaveletTransform(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
+        t0 = DispatchTime.now()
+        try applyInverseColorTransformInPlace(&spatialDataTile, metadata: tileMeta)
+        J2KDecodeTimings.recordInverseColorTransform(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         for (compIdx, compInfo) in metadata.components.enumerated() {
             guard compIdx < spatialDataTile.count else { break }
             if !compInfo.signed {
@@ -821,6 +848,9 @@ struct DecoderPipeline: Sendable {
                 }
             }
         }
+        J2KDecodeTimings.recordDcLevelUnshift(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
         return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: spatialDataTile)
     }
 
@@ -844,9 +874,15 @@ struct DecoderPipeline: Sendable {
         // multi-tile decode whenever the tile origin's modulo-32 was
         // non-zero (XA 1024² survived because every tile was 32-
         // aligned; MR/PX/DX failed). Mirrors `decodeTilePayload`.
+        // v7.2.0 Phase 0 — per-tile stage instrumentation; same
+        // semantics as `decodeTilePayload` (process-global accumulator,
+        // CPU-time across parallel tiles).
+        var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY)
+        J2KDecodeTimings.recordExtractTileData(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
         // v7.1.0 H1.1 — multi-tile per-tile entropy on GPU.
         //
         // E1.2 (#322) was wrong about the root cause. H1.0 (#334)
@@ -881,10 +917,17 @@ struct DecoderPipeline: Sendable {
         let perTilePixels = tileMeta.width * tileMeta.height
         let useGPUEntropy =
             perTilePixels >= Self._gpuHTEntropyMultiTilePerTilePixelThreshold
+        t0 = DispatchTime.now()
         let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(
             codeBlocks, metadata: tileMeta,
             isGPUPath: useGPUEntropy, isMultiTilePerTile: true)
+        J2KDecodeTimings.recordEntropyDecoding(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
+        J2KDecodeTimings.recordDequantization(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
         // v6.3.0 E1.2 — multi-tile per-tile IDWT routes to CPU. The
         // GPU IDWT kernels were designed for single-tile (canvas
         // origin 0, 0; tile dims = image dims) and produce wrong
@@ -894,12 +937,20 @@ struct DecoderPipeline: Sendable {
         // `decodeSingleTileGPU` (NOT this function) and keeps the
         // full GPU IDWT path. E1.3 (deferred): GPU IDWT multi-tile
         // support to recover the IDWT win.
+        t0 = DispatchTime.now()
         let spatialData = try await applyInverseWaveletTransformGPU(
             dequantizedSubbands, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY,
             isMultiTilePerTile: true, gpuBatch: gpuBatch)
-        var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
+        J2KDecodeTimings.recordInverseWaveletTransform(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
+        t0 = DispatchTime.now()
+        var tileRGB = try await applyInverseColorTransformGPU(spatialData, metadata: tileMeta)
+        J2KDecodeTimings.recordInverseColorTransform(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
+        t0 = DispatchTime.now()
         for (compIdx, compInfo) in metadata.components.enumerated() {
             guard compIdx < tileRGB.count else { break }
             if !compInfo.signed {
@@ -909,6 +960,9 @@ struct DecoderPipeline: Sendable {
                 }
             }
         }
+        J2KDecodeTimings.recordDcLevelUnshift(
+            Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
+
         return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: tileRGB)
     }
 
