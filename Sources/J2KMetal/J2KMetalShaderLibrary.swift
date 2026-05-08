@@ -161,6 +161,11 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// bit-emit (with inline FF-stuffing) into a `device` byte buffer
     /// at a per-block offset. Bit-exact with `HTMagSgnEncoderConformant`.
     case htMagSgnEmitBlock = "j2k_ht_magsgn_emit_block"
+    /// v7.1.0 I1.2b — Pass 3 MagSgn batched byte-write. Same per-
+    /// block bit-emit as `htMagSgnEmitBlock` but dispatched as one
+    /// threadgroup per block; the GPU schedules many block-emits
+    /// concurrently. This is the production shape of Pass 3.
+    case htMagSgnEmitBlocksBatched = "j2k_ht_magsgn_emit_blocks_batched"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -3388,6 +3393,67 @@ enum J2KMetalShaderSource {
             byteIdx -= 1u;
         }
         *byteCountOut = byteIdx;
+    }
+
+    // MARK: - v7.1.0 I1.2b — Pass 3 MagSgn batched byte-write (multi-block dispatch)
+    //
+    // Inline source-compile fallback duplicate of the kernel kept in
+    // Sources/J2KMetal/J2KShaders.metal. One threadgroup per block;
+    // ~2,300 blocks per DX 2x2 tile run concurrently on Apple M2.
+
+    kernel void j2k_ht_magsgn_emit_blocks_batched(
+        device const uint2* items                [[buffer(0)]],
+        device const uint2* blockDescriptors     [[buffer(1)]],
+        device const uint*  outputOffsets        [[buffer(2)]],
+        device       uchar* output               [[buffer(3)]],
+        device       uint*  byteCountsOut        [[buffer(4)]],
+        constant     uint&  blockCount           [[buffer(5)]],
+        uint tid                                 [[thread_position_in_threadgroup]],
+        uint tgIdx                               [[threadgroup_position_in_grid]]
+    ) {
+        if (tgIdx >= blockCount) return;
+        if (tid != 0u) return;
+        const uint2 desc = blockDescriptors[tgIdx];
+        const uint itemStart = desc.x;
+        const uint itemCount = desc.y;
+        const uint outputOffset = outputOffsets[tgIdx];
+        uint tmp = 0u;
+        uint usedBits = 0u;
+        uint maxBits = 8u;
+        uint byteIdx = 0u;
+        for (uint i = 0u; i < itemCount; ++i) {
+            uint cwd = items[itemStart + i].x;
+            uint len = items[itemStart + i].y;
+            while (len > 0u) {
+                uint take = min(maxBits - usedBits, len);
+                uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+                tmp |= (cwd & mask) << usedBits;
+                usedBits += take;
+                cwd >>= take;
+                len -= take;
+                if (usedBits >= maxBits) {
+                    uint b = tmp & 0xFFu;
+                    output[outputOffset + byteIdx] = (uchar)b;
+                    byteIdx += 1u;
+                    maxBits = (b == 0xFFu) ? 7u : 8u;
+                    tmp = 0u;
+                    usedBits = 0u;
+                }
+            }
+        }
+        if (usedBits != 0u) {
+            uint padBits = maxBits - usedBits;
+            uint padMask = (padBits >= 32u) ? 0xFFFFFFFFu : ((1u << padBits) - 1u);
+            tmp |= padMask << usedBits;
+            uint b = tmp & 0xFFu;
+            if (b != 0xFFu) {
+                output[outputOffset + byteIdx] = (uchar)b;
+                byteIdx += 1u;
+            }
+        } else if (maxBits == 7u) {
+            byteIdx -= 1u;
+        }
+        byteCountsOut[tgIdx] = byteIdx;
     }
     """
 }
