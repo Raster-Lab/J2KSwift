@@ -1,24 +1,23 @@
 // J2KGPUForwardHTEntropyBatch.swift
 //
-// v6-alpha6 phase 1.2 — standalone batched API for the GPU forward
-// HT entropy path. Production wire-in (Phase 1.3) calls into this
-// from `applyEntropyCodingHTJ2KFused`; the API is exposed as public
-// so dedicated bit-exact tests can drive it without standing up the
+// v6-alpha6 phase 1.2 / v7.1.0 I1.3d — batched GPU forward HT
+// entropy. Production wire-in calls into this from
+// `applyEntropyCodingHTJ2KFused`; the API is exposed as public so
+// dedicated bit-exact tests can drive it without standing up the
 // full encoder pipeline.
 //
-// The contract:
+// The contract (post-I1.3d, **approach C**):
 //   1. Build a per-block descriptor array (coeffOffset, tupleOffset,
 //      sampleCount, p) from the input `PendingBlock` list.
 //   2. Concatenate all blocks' sign-magnitude UInt32 coefficients
 //      into a single pool sized for one GPU upload.
 //   3. Dispatch the GPU classifier ONCE — Phase 0.5 demonstrated
 //      this layout amortises the dispatch overhead across all
-//      blocks of a tile (DX 1584 blocks → 2.3 µs/block ≈ 11 % of
-//      CPU entropy budget).
-//   4. Per-block emit: walk each block's slice of the tuple stream
-//      and call `HTBlockEncoderConformant.encode(..., preClassifiedTuples:)`
-//      on CPU. The MagSgn / MEL / VLC streams stay on CPU due to
-//      the `0xFF` byte-stuffing rule (plan doc §3).
+//      blocks of a tile.
+//   4. Dispatch the **unified Pass 3 cleanup-pass kernel** once
+//      across all blocks (one threadgroup per block). Produces all
+//      three streams (MagSgn, MEL, VLC) entirely on GPU. See I1.3b
+//      / I1.3c (`J2KGPUForwardHTCleanupPassEmit`).
 //   5. Return per-block `(magsgn, mel, vlc)` byte tuples in the
 //      same order as input.
 //
@@ -26,7 +25,14 @@
 // tuple this returns for any block is byte-identical to what
 // `HTBlockEncoderConformant.encode(...)` returns for the same
 // block on the CPU-only path. Validated by
-// `HTGPUForwardHTEntropyBatchBitExactTests`.
+// `HTGPUForwardHTEntropyBatchBitExactTests` and the I1.3b/c tests.
+//
+// **History**: v6-alpha6 phase 1 wired this via approach B (GPU
+// classifier + CPU emit), which regressed −200 % at every corpus
+// scale on M2 because the dispatch overhead exceeded CPU emit
+// cost. v7.1.0 I1.3d swaps step 4 to approach C (full GPU emit)
+// per the user's "approach C is definite, even if we compromise
+// speed" directive.
 
 import Foundation
 import J2KCore
@@ -117,44 +123,39 @@ public enum J2KGPUForwardHTEntropyBatch {
             tupleCount: Int(tupleOffset))
         let dispatchMs = (Date().timeIntervalSinceReferenceDate - dispatchT0) * 1000.0
 
-        // 3. Per-block CPU emit. Reuses one set of stream encoders
-        //    across all blocks in this batch (matches the v5.38 M8
-        //    pattern in the production CPU path).
+        // 3. **Approach C** — dispatch the unified Pass 3 cleanup-pass
+        //    kernel for the whole batch. Per-block tuple slices feed
+        //    the GPU; per-block (magsgn, mel, vlc) byte streams come
+        //    back. No CPU emit; the entire encoder runs on GPU at
+        //    this point modulo the per-block tuple-slice copy.
         let emitT0 = Date().timeIntervalSinceReferenceDate
-        var out: [EncodedBlock] = []
-        out.reserveCapacity(blocks.count)
-        var magsgnEnc = HTMagSgnEncoderConformant()
-        var melEnc = HTMELEncoderConformant()
-        var vlcEnc = HTReverseBitEmitterConformant()
 
+        var emitInputs: [J2KGPUForwardHTCleanupPassEmit.BlockDescriptor] = []
+        emitInputs.reserveCapacity(blocks.count)
         for (i, b) in blocks.enumerated() {
             let desc = descriptors[i]
-            let coeffStart = Int(desc.coeffOffset)
-            let coeffEnd   = coeffStart + b.coefficients.count
             let tupleStart = Int(desc.tupleOffset)
-            let tupleEnd   = tupleStart + b.coefficients.count
-            let result = coefficients.withUnsafeBufferPointer { coeffBuf in
-                tuples.withUnsafeBufferPointer { tupleBuf in
-                    // Construct slices via baseAddress arithmetic to
-                    // avoid array copies.
-                    let coeffSlice = UnsafeBufferPointer(
-                        start: coeffBuf.baseAddress! + coeffStart,
-                        count: coeffEnd - coeffStart)
-                    let tupleSlice = UnsafeBufferPointer(
-                        start: tupleBuf.baseAddress! + tupleStart,
-                        count: tupleEnd - tupleStart)
-                    return HTBlockEncoderConformant.encode(
-                        coefficients: coeffSlice,
-                        width: b.width, height: b.height,
-                        missingMSBs: b.missingMSBs,
-                        magsgnEnc: &magsgnEnc, melEnc: &melEnc,
-                        vlcEnc: &vlcEnc,
-                        useSIMDClassification: false,
-                        preClassifiedTuples: tupleSlice)
-                }
-            }
+            let tupleEnd = tupleStart + b.coefficients.count
+            // Per-block tuple slice → Array. The wrapper internally
+            // re-concatenates these into a flat buffer for upload;
+            // the per-block array allocation is the CPU-side overhead
+            // of approach C. For DX 2x2 tiles that's ~2,300 × 32×32 ×
+            // 8 bytes ≈ 18 MB total per tile, dominated by the
+            // upstream classifier dispatch wall.
+            let perBlockTuples = Array(tuples[tupleStart..<tupleEnd])
+            emitInputs.append(.init(width: b.width, height: b.height,
+                                    missingMSBs: b.missingMSBs,
+                                    tuples: perBlockTuples))
+        }
+
+        let batched = try await J2KGPUForwardHTCleanupPassEmit().emitBlocks(emitInputs)
+        var out: [EncodedBlock] = []
+        out.reserveCapacity(blocks.count)
+        for i in 0..<blocks.count {
             out.append(EncodedBlock(
-                magsgn: result.magsgn, mel: result.mel, vlc: result.vlc))
+                magsgn: batched.perBlockMagsgn[i],
+                mel: batched.perBlockMel[i],
+                vlc: batched.perBlockVlc[i]))
         }
         let emitMs = (Date().timeIntervalSinceReferenceDate - emitT0) * 1000.0
 

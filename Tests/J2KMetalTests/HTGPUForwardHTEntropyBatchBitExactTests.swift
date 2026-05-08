@@ -148,7 +148,10 @@ final class HTGPUForwardHTEntropyBatchBitExactTests: XCTestCase {
         XCTAssertEqual(snap.gpuBlocksClassified, plan.count,
             "telemetry blocks-classified should equal plan size")
         XCTAssertGreaterThan(snap.totalDispatchMs, 0, "non-zero dispatch ms")
-        XCTAssertGreaterThan(snap.totalEmitMs, 0, "non-zero CPU emit ms")
+        // v7.1.0 I1.3d: post-approach-C wiring, this measures GPU
+        // cleanup-pass dispatch + readback wall, not CPU emit. The
+        // > 0 invariant holds either way.
+        XCTAssertGreaterThan(snap.totalEmitMs, 0, "non-zero emit ms")
     }
 
     /// 256-block batch — at-or-just-above the production
