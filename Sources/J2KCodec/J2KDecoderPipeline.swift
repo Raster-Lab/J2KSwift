@@ -299,6 +299,30 @@ struct DecoderPipeline: Sendable {
     /// temporarily to exercise the GPU code path on smaller fixtures.
     nonisolated(unsafe) static var _gpuInverse53PixelThreshold: Int = 4_000_000
 
+    /// v7.1.1 hotfix — per-tile pixel threshold for the GPU inverse
+    /// 5/3 path **on the multi-tile per-tile decode** route opened
+    /// by H3 (#349). Defaults to 1 048 576 (1024×1024 = 1 MP). Below
+    /// this, the multi-tile per-tile decode falls back to CPU IDWT
+    /// for that tile — small per-tile sizes pay too much GPU
+    /// dispatch overhead × N tiles to amortise (DX 4x4 with 16 ×
+    /// 400 K-pixel tiles regressed 2.14× vs CPU IDWT in v7.1.0;
+    /// recovers to ~CPU wall once falling back below 1 MP/tile).
+    /// Tests can lower this to exercise the GPU code path on
+    /// smaller per-tile sizes.
+    nonisolated(unsafe) static var _gpuInverse53MultiTilePerTilePixelThreshold: Int = 1_048_576
+
+    /// v7.1.1 hotfix — per-tile pixel threshold for the GPU **HT
+    /// entropy** path on the multi-tile per-tile decode route opened
+    /// by H1.1 (#335). Defaults to 1 048 576 (1024×1024 = 1 MP).
+    /// Below this, the multi-tile per-tile decode falls back to CPU
+    /// entropy (the v7.0.0 behaviour) for that tile — small per-tile
+    /// sizes pay too much GPU dispatch overhead × N tiles to amortise.
+    /// DX 4x4 with 16 × 400 K-pixel tiles regressed 60 ms → 128 ms
+    /// (2.14×) in v7.1.0 vs v7.0.0; the hotfix restores the v7.0.0
+    /// behaviour on those tiles. Tests can lower this var to exercise
+    /// the GPU entropy code path on smaller per-tile sizes.
+    nonisolated(unsafe) static var _gpuHTEntropyMultiTilePerTilePixelThreshold: Int = 1_048_576
+
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
     /// behaviour from `decodeWithGPUHT`). When this flag is true
@@ -846,9 +870,20 @@ struct DecoderPipeline: Sendable {
         // single-tile decode already enjoys); CPU IDWT remains as
         // the safety net against Defect B (still pending H2 — GPU
         // 5/3 IDWT parity-aware boundary lifting).
+        // v7.1.1 hotfix — per-tile pixel threshold on H1.1's GPU
+        // entropy routing. v7.1.0 unconditionally took `isGPUPath:
+        // true` on multi-tile per-tile decode, which won on big-per-
+        // tile fixtures (DX 2x2 = 1.6 M px/tile gained +44–60 %) but
+        // regressed on small-per-tile fixtures (DX 4x4 = 16 × 400 K
+        // px/tile lost 2.14× because per-tile GPU dispatch overhead
+        // dominates). Below ~1 MP per tile fall back to CPU entropy
+        // (the v7.0.0 behaviour) — recovers DX 4x4 to ~60 ms.
+        let perTilePixels = tileMeta.width * tileMeta.height
+        let useGPUEntropy =
+            perTilePixels >= Self._gpuHTEntropyMultiTilePerTilePixelThreshold
         let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(
             codeBlocks, metadata: tileMeta,
-            isGPUPath: true, isMultiTilePerTile: true)
+            isGPUPath: useGPUEntropy, isMultiTilePerTile: true)
         let dequantizedSubbands = try await applyDequantization(decodedBlocks, metadata: tileMeta)
         // v6.3.0 E1.2 — multi-tile per-tile IDWT routes to CPU. The
         // GPU IDWT kernels were designed for single-tile (canvas
@@ -3501,14 +3536,23 @@ struct DecoderPipeline: Sendable {
             // this to CPU IDWT until that path gains origin awareness.
             let hasFusedFromCodeblocksPlan = gpuBatch?.plansByComponent.isEmpty == false
                 || (gpuBatch?.floatPlansByComponent?.isEmpty == false)
-            if !isReversible || hasFusedFromCodeblocksPlan {
+            // v7.1.1 hotfix — per-tile pixel threshold. v7.1.0 H3
+            // shipped without this gate; DX 4x4 (16 tiles × 400 K
+            // px each) regressed 2.14× vs v7.0.0 CPU IDWT because
+            // the per-tile GPU dispatch overhead × 16 tiles
+            // dominated. Below ~1 MP per tile, fall back to CPU.
+            let perTilePixelCount = metadata.width * metadata.height
+            let belowPerTileThreshold =
+                perTilePixelCount < Self._gpuInverse53MultiTilePerTilePixelThreshold
+            if !isReversible || hasFusedFromCodeblocksPlan || belowPerTileThreshold {
                 return try await applyInverseWaveletTransform(
                     subbands, metadata: metadata,
                     tileOriginX: tileOriginX, tileOriginY: tileOriginY)
             }
-            // Fall through: the 5/3 reversible non-fused path runs
-            // through the GPU multi-level-fused / per-level dispatch
-            // with origin awareness via subbands.tileOriginX/Y.
+            // Fall through: the 5/3 reversible non-fused path with
+            // ≥ 1 MP/tile runs through the GPU multi-level-fused /
+            // per-level dispatch with origin awareness via
+            // subbands.tileOriginX/Y.
         }
 
         // v5.21.0: GPU 9/7 IDWT scaling fix removes the v5.20.0 gate.
