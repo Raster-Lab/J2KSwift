@@ -99,6 +99,7 @@ fileprivate struct DecodeState {
     }
 
     mutating func nextMELEvent() -> Bool {
+        J2KHTEntropyProfile.bumpMel()
         melRun -= 2
         let isOne = (melRun == -1)
         if melRun < 0 {
@@ -114,6 +115,7 @@ fileprivate struct DecodeState {
     func lookupVLC(
         c_q: Int, bits: Int, initialLine: Bool
     ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
+        J2KHTEntropyProfile.bumpVlcLookup()
         let tbl = initialLine
             ? vlcDecoderTable0Conformant
             : vlcDecoderTable1Conformant
@@ -169,6 +171,7 @@ fileprivate struct DecodeState {
     mutating func decodeUVLCPairInitial(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
+        J2KHTEntropyProfile.bumpUvlc()
         if u_off0 == 0 && u_off1 == 0 { return (0, 0) }
         if u_off0 == 1 && u_off1 == 1 {
             let melEvent = nextMELEvent()
@@ -210,6 +213,7 @@ fileprivate struct DecodeState {
     mutating func decodeUVLCPairSubsequent(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
+        J2KHTEntropyProfile.bumpUvlc()
         let len0 = (u_off0 != 0) ? readPrefix() : 0
         let len1 = (u_off1 != 0) ? readPrefix() : 0
         let u0 = (u_off0 != 0) ? decodeFromPrefix(len0) : 0
@@ -220,6 +224,11 @@ fileprivate struct DecodeState {
     // MARK: - Row decoding
 
     mutating func decodeInitialRow() {
+        let _profileT0 = DispatchTime.now()
+        defer {
+            let dt = DispatchTime.now().uptimeNanoseconds &- _profileT0.uptimeNanoseconds
+            J2KHTEntropyProfile.recordInitialRowNs(dt)
+        }
         var lep = 0
         var lcxp = 0
         var c_q0 = 0
@@ -308,6 +317,11 @@ fileprivate struct DecodeState {
     }
 
     mutating func decodeSubsequentRow(y: Int) {
+        let _profileT0 = DispatchTime.now()
+        defer {
+            let dt = DispatchTime.now().uptimeNanoseconds &- _profileT0.uptimeNanoseconds
+            J2KHTEntropyProfile.recordSubsequentRowNs(dt)
+        }
         var lep = 0
         var lcxp = 0
         var maxE = max(Int(eVal[0]), Int(eVal[1])) - 1
@@ -426,6 +440,7 @@ fileprivate struct DecodeState {
         rho: Int, Uq: Int,
         e_k: Int, e_1: Int
     ) {
+        J2KHTEntropyProfile.bumpQuadSamples()
         let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
         for i in 0..<4 {
             let bit = (rho >> i) & 1
@@ -433,6 +448,7 @@ fileprivate struct DecodeState {
             let eBit = (e_k >> i) & 1
             let e1Bit = (e_1 >> i) & 1
             let m = Uq - eBit
+            J2KHTEntropyProfile.bumpMagsgnReadBits(m)
             let payload = magsgnDec.read(count: m)
             let sign = UInt32(payload & 1)
             let mask: UInt32 = (m >= 32) ? ~UInt32(0)
