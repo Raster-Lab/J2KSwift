@@ -166,6 +166,12 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// threadgroup per block; the GPU schedules many block-emits
     /// concurrently. This is the production shape of Pass 3.
     case htMagSgnEmitBlocksBatched = "j2k_ht_magsgn_emit_blocks_batched"
+    /// v7.1.0 I1.2c — Pass 3 MEL batched byte-write. MSB-first bit
+    /// packing with the same FF-stuffing rule as MagSgn but **no
+    /// terminate rollback or pad-drops-FF** semantics. One thread-
+    /// group per block; same 4-byte-alignment requirement as I1.2b.
+    /// Bit-exact with `HTForwardBitEmitterConformant`.
+    case htMelEmitBlocksBatched = "j2k_ht_mel_emit_blocks_batched"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -3452,6 +3458,56 @@ enum J2KMetalShaderSource {
             }
         } else if (maxBits == 7u) {
             byteIdx -= 1u;
+        }
+        byteCountsOut[tgIdx] = byteIdx;
+    }
+
+    // MARK: - v7.1.0 I1.2c — Pass 3 MEL batched byte-write
+    //
+    // MSB-first bit packer with FF-stuff but no rollback / no FF-drop
+    // on terminate (vs MagSgn's LSB-first packer with both). Inline
+    // source-compile fallback duplicate.
+
+    kernel void j2k_ht_mel_emit_blocks_batched(
+        device const uint2* items                [[buffer(0)]],
+        device const uint2* blockDescriptors     [[buffer(1)]],
+        device const uint*  outputOffsets        [[buffer(2)]],
+        device       uchar* output               [[buffer(3)]],
+        device       uint*  byteCountsOut        [[buffer(4)]],
+        constant     uint&  blockCount           [[buffer(5)]],
+        uint tid                                 [[thread_position_in_threadgroup]],
+        uint tgIdx                               [[threadgroup_position_in_grid]]
+    ) {
+        if (tgIdx >= blockCount) return;
+        if (tid != 0u) return;
+        const uint2 desc = blockDescriptors[tgIdx];
+        const uint itemStart = desc.x;
+        const uint itemCount = desc.y;
+        const uint outputOffset = outputOffsets[tgIdx];
+        uint tmp = 0u;
+        uint remainingBits = 8u;
+        uint byteIdx = 0u;
+        for (uint i = 0u; i < itemCount; ++i) {
+            uint cwd = items[itemStart + i].x;
+            uint c   = items[itemStart + i].y;
+            while (c > 0u) {
+                c -= 1u;
+                uint bit = (cwd >> c) & 1u;
+                tmp = (tmp << 1) | bit;
+                remainingBits -= 1u;
+                if (remainingBits == 0u) {
+                    uint b = tmp & 0xFFu;
+                    output[outputOffset + byteIdx] = (uchar)b;
+                    byteIdx += 1u;
+                    remainingBits = (b == 0xFFu) ? 7u : 8u;
+                    tmp = 0u;
+                }
+            }
+        }
+        if (remainingBits != 8u) {
+            tmp <<= remainingBits;
+            output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+            byteIdx += 1u;
         }
         byteCountsOut[tgIdx] = byteIdx;
     }

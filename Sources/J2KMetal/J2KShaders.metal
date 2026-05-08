@@ -3118,3 +3118,83 @@ kernel void j2k_ht_magsgn_emit_blocks_batched(
 
     byteCountsOut[tgIdx] = byteIdx;
 }
+
+// ---------------------------------------------------------------------------
+// v7.1.0 I1.2c — Pass 3 MEL batched byte-write (multi-block dispatch)
+// ---------------------------------------------------------------------------
+//
+// Direct port of `HTForwardBitEmitterConformant.emit(bits:count:) +
+// finish()` from `Sources/J2KCodec/J2KHTConformantBitStream.swift`.
+//
+// Differences vs the I1.2b MagSgn kernel:
+//   - **MSB-first** bit packing (each emitted bit shifts tmp left by 1
+//     and ORs the bit into the LSB; finish() left-shifts the partial
+//     byte by `remainingBits` to position bits in the high half).
+//     MagSgn is LSB-first.
+//   - **No rollback** on terminate. If a 0xFF byte was just emitted
+//     (so remainingBits == 7), finish() pads the next byte's low 7
+//     bits with zeros and appends — even though the byte is just
+//     stuff-bit padding. MagSgn rolls back the over-committed byte.
+//   - **No pad-drops-FF** terminate rule. The padded byte is always
+//     appended even if it's 0xFF (which can't happen here since
+//     padding is zeros and high bits are real data).
+//
+// FF-stuffing rule is identical to MagSgn: after a 0xFF byte is
+// emitted, the next byte's high bit is reserved as a 0 stuff bit
+// (so `remainingBits` goes to 7 instead of 8).
+//
+// Same alignment requirement as I1.2b: per-block output regions
+// must be 4-byte aligned to avoid Apple Silicon byte-store RMW
+// races between concurrent threadgroups.
+
+kernel void j2k_ht_mel_emit_blocks_batched(
+    device const uint2* items                [[buffer(0)]],   // (codeword, count) per emit
+    device const uint2* blockDescriptors     [[buffer(1)]],   // (itemStart, itemCount) per block
+    device const uint*  outputOffsets        [[buffer(2)]],   // 4-byte-aligned per-block start
+    device       uchar* output               [[buffer(3)]],
+    device       uint*  byteCountsOut        [[buffer(4)]],
+    constant     uint&  blockCount           [[buffer(5)]],
+    uint tid                                 [[thread_position_in_threadgroup]],
+    uint tgIdx                               [[threadgroup_position_in_grid]]
+) {
+    if (tgIdx >= blockCount) return;
+    if (tid != 0u) return;
+
+    const uint2 desc = blockDescriptors[tgIdx];
+    const uint  itemStart    = desc.x;
+    const uint  itemCount    = desc.y;
+    const uint  outputOffset = outputOffsets[tgIdx];
+
+    uint tmp = 0u;
+    uint remainingBits = 8u;
+    uint byteIdx = 0u;
+
+    for (uint i = 0u; i < itemCount; ++i) {
+        uint cwd = items[itemStart + i].x;
+        uint c   = items[itemStart + i].y;
+        // emit(bits: cwd, count: c) — MSB-first, one bit at a time.
+        while (c > 0u) {
+            c -= 1u;
+            uint bit = (cwd >> c) & 1u;
+            tmp = (tmp << 1) | bit;
+            remainingBits -= 1u;
+            if (remainingBits == 0u) {
+                uint b = tmp & 0xFFu;
+                output[outputOffset + byteIdx] = (uchar)b;
+                byteIdx += 1u;
+                remainingBits = (b == 0xFFu) ? 7u : 8u;
+                tmp = 0u;
+            }
+        }
+    }
+
+    // finish(): if anything is in tmp, left-shift to position bits in
+    // the high half of the byte (zero-pad the LSB side) and emit.
+    if (remainingBits != 8u) {
+        tmp <<= remainingBits;
+        output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+        byteIdx += 1u;
+    }
+
+    byteCountsOut[tgIdx] = byteIdx;
+}
