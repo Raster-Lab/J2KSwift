@@ -1,5 +1,13 @@
 # Cross-Codec Benchmark — J2KSwift v7.1.0 vs OpenJPH 0.27 / Grok 20.3 / Kakadu 8.4.1
 
+> **⚠ Withdrawn — see [CROSS_CODEC_BENCHMARK_v7.1.1.md](CROSS_CODEC_BENCHMARK_v7.1.1.md) for corrected data.**
+>
+> This report contained two material errors:
+> 1. The "subtract ~67 ms startup from CLI rows" caveat is **false** — measured pure CLI startup is 14–17 ms across all four codecs (median of 10). The ~50 ms gap between J2KSwift CLI and the C codecs comes from per-invocation overhead **inside `j2k`'s CLI binary** (image loader / config parsing / encoder construction), not Swift runtime startup. The "in-process numbers" table that subtracted 67 ms therefore over-credited J2KSwift by ~50 ms per cell and produced spurious "wins" against Kakadu/Grok.
+> 2. The "ties or wins" framing in the bottom-line is wrong: with the corrected numbers, J2KSwift's library is **2.6× behind Kakadu on DX encode and 2.7× behind on DX decode**. The honest position is "wins vs OpenJPH library-to-library; loses to Kakadu / Grok on PX and DX."
+>
+> The v7.1.1 file rewrites every table with the corrected measurements + adds a GPU-vs-CPU comparison so callers can confirm the optimal setting (`--gpu` default is fine; within ±5 % of `--no-gpu` on single-tile).
+
 **Measured**: 2026-05-08, Apple M2, release builds, median of 5 runs per cell, **CLI launches** (each timing includes process startup)
 **Mode**: HT-conformant lossless 5/3 (Part-15)
 **Fixtures**: 6 real medical 16-bit PGMs from `Tests/Fixtures/CrossCodec/`
