@@ -3471,32 +3471,44 @@ struct DecoderPipeline: Sendable {
                 tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         }
 
-        // v6.3.0 E1.2 — multi-tile fallback to CPU IDWT. The GPU 5/3
-        // and 9/7 inverse kernels were designed for single-tile
-        // codestreams (canvas origin 0, 0; tile dims = image dims).
-        // Multi-tile per-tile invocation breaks two assumptions:
-        //   1. Non-zero tile origins require parity-aware boundary
-        //      lifting per ISO 15444-1 Annex F.4.1.1; the GPU kernels
-        //      only implement the canvas-origin-0 boundary case.
-        //   2. Even origin-(0, 0) tiles in a multi-tile codestream
-        //      have tile-local dimensions ≠ image dimensions, and
-        //      the gpuBatch fused-from-codeblocks scatter expects
-        //      image-global descriptors — the per-tile descriptor
-        //      shape diverges in ways downstream samples did not.
-        // Falling back to CPU IDWT for ALL tiles in the multi-tile
-        // path (including the (0, 0) origin tile) costs the multi-
-        // tile fixtures the IDWT GPU win but keeps entropy + dequant
-        // + colour on GPU. Single-tile decode goes via
-        // `decodeSingleTileGPU` (NOT `decodeTilePayloadGPU`) and
-        // takes the full GPU IDWT path unchanged — preserves the
-        // v6.2.0 +37–46 % single-tile win.
-        // E1.3 (deferred): port parity-aware + tile-local-dimensions
-        // support into the GPU IDWT kernels to recover the IDWT win
-        // on multi-tile.
+        // v6.3.0 E1.2 → v7.1.0 H3: multi-tile per-tile fallback.
+        // The original gate (E1.2) forced CPU IDWT for ALL tiles in
+        // multi-tile decode because the GPU 5/3 kernels lacked
+        // parity-aware boundary lifting (Defect B). H2 (#346) shipped
+        // parity-aware odd-origin kernels; H2.2 (#348) wired them
+        // into `J2KMetalDWT.inverse2DInt32`. H3 (this PR) flows the
+        // tile origin through to the multi-level dispatch so the
+        // GPU IDWT can handle non-zero origin tiles.
+        //
+        // The fall-back to CPU still fires for paths that don't yet
+        // have origin awareness:
+        //   - 9/7 irreversible (no parity-aware Float kernels yet)
+        //   - The fused-from-codeblocks path when a `gpuBatch` is
+        //     present (the scatter expects image-global descriptors;
+        //     covering this needs separate work)
+        // Single-tile decode goes via `decodeSingleTileGPU` (not
+        // `decodeTilePayloadGPU`) and takes the full GPU IDWT path
+        // unchanged — preserves the v6.2.0 +37–46 % single-tile win.
         if isMultiTilePerTile {
-            return try await applyInverseWaveletTransform(
-                subbands, metadata: metadata,
-                tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+            let isReversible: Bool
+            if case .irreversible97 = metadata.configuration.waveletFilter {
+                isReversible = false
+            } else {
+                isReversible = true
+            }
+            // Path that runs `inverse2DInt32FullFusedFromCodeblocks`
+            // — the GPU scatter has image-global assumptions. Routing
+            // this to CPU IDWT until that path gains origin awareness.
+            let hasFusedFromCodeblocksPlan = gpuBatch?.plansByComponent.isEmpty == false
+                || (gpuBatch?.floatPlansByComponent?.isEmpty == false)
+            if !isReversible || hasFusedFromCodeblocksPlan {
+                return try await applyInverseWaveletTransform(
+                    subbands, metadata: metadata,
+                    tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+            }
+            // Fall through: the 5/3 reversible non-fused path runs
+            // through the GPU multi-level-fused / per-level dispatch
+            // with origin awareness via subbands.tileOriginX/Y.
         }
 
         // v5.21.0: GPU 9/7 IDWT scaling fix removes the v5.20.0 gate.
@@ -3635,6 +3647,14 @@ struct DecoderPipeline: Sendable {
                         levelsPlan: plansForComp,
                         initialLL: nil)
                 } else if (useGPUHT || Self._gpuHTEntropyEnabled), metalSession != nil {
+                    // v7.1.0 H3: per-level OUTPUT canvas origin —
+                    // determines parity for the inverse 5/3 lifting
+                    // at each decomposition level. tcx0/tcy0 are the
+                    // tile-component canvas origins; output of level
+                    // `k` lives at depth (k-1) where origin is
+                    // ceil(tcx0 / 2^(k-1)) per ISO 15444-1 Eq. B-15.
+                    let tcx0 = tileOriginX / metadata.components[compIdx].subsamplingX
+                    let tcy0 = tileOriginY / metadata.components[compIdx].subsamplingY
                     var subbandsPerLevel: [J2KMetalDWTSubbandsInt32] = []
                     for level in (1...levels).reversed() {
                         let parentW = levelSizes[level - 1].width
@@ -3659,14 +3679,26 @@ struct DecoderPipeline: Sendable {
                         // levels after the first.
                         let llForThisLevel: [Int32] =
                             subbandsPerLevel.isEmpty ? initialLL : []
+                        // Output of inverse at level `k` lives at
+                        // depth (k-1) on the canvas.
+                        let outputDepth = level - 1
+                        let denom = 1 << outputDepth
+                        let outOriginX = EncoderPipeline.ceilDivIntegerOrigin(tcx0, denom)
+                        let outOriginY = EncoderPipeline.ceilDivIntegerOrigin(tcy0, denom)
                         subbandsPerLevel.append(J2KMetalDWTSubbandsInt32(
                             ll: llForThisLevel, lh: lhInt, hl: hlInt, hh: hhInt,
                             llWidth: llW, llHeight: llH,
-                            originalWidth: parentW, originalHeight: parentH))
+                            originalWidth: parentW, originalHeight: parentH,
+                            tileOriginX: outOriginX, tileOriginY: outOriginY))
                     }
                     currentLL = try await metalDWT.inverse2DInt32MultiLevelFused(
                         subbandsPerLevel: subbandsPerLevel)
                 } else {
+                    // v7.1.0 H3: per-level path also threads
+                    // tile-component origin → output origin via
+                    // ceilDiv for parity-aware lifting selection.
+                    let tcx0 = tileOriginX / metadata.components[compIdx].subsamplingX
+                    let tcy0 = tileOriginY / metadata.components[compIdx].subsamplingY
                     for level in (1...levels).reversed() {
                         let parentW = levelSizes[level - 1].width
                         let parentH = levelSizes[level - 1].height
@@ -3682,10 +3714,15 @@ struct DecoderPipeline: Sendable {
                         let hhInt = getSubbandAsInt32(compSubbands, level: level, subband: .hh,
                                                        dstW: hlW, dstH: lhH)
 
+                        let outputDepth = level - 1
+                        let denom = 1 << outputDepth
+                        let outOriginX = EncoderPipeline.ceilDivIntegerOrigin(tcx0, denom)
+                        let outOriginY = EncoderPipeline.ceilDivIntegerOrigin(tcy0, denom)
                         let subbandData = J2KMetalDWTSubbandsInt32(
                             ll: currentLL, lh: lhInt, hl: hlInt, hh: hhInt,
                             llWidth: llW, llHeight: llH,
-                            originalWidth: parentW, originalHeight: parentH
+                            originalWidth: parentW, originalHeight: parentH,
+                            tileOriginX: outOriginX, tileOriginY: outOriginY
                         )
 
                         currentLL = try await metalDWT.inverse2DInt32(subbands: subbandData, backend: .auto)

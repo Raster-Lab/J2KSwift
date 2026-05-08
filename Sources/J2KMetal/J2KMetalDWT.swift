@@ -1226,7 +1226,9 @@ public actor J2KMetalDWT {
                 colLow: colLowBuffer, colHigh: colHighBuffer,
                 output: outputBuffer,
                 originalWidth: width, originalHeight: height,
-                llHeight: llH)
+                llHeight: llH,
+                tileOriginX: subbands.tileOriginX,
+                tileOriginY: subbands.tileOriginY)
 
             currentLLBuffer = outputBuffer
             finalOutputBuffer = outputBuffer
