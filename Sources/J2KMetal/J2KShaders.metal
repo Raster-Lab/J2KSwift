@@ -3548,22 +3548,47 @@ inline void htclnp_vlc_emit_bits(
 // whole serial cleanup-pass. blockIdx (threadgroup_position_in_grid)
 // is unused for now (single-block) — I1.3c will add multi-block.
 
-kernel void j2k_ht_cleanup_pass_emit_block(
+// v7.1.0 I1.3c — batched (multi-block) cleanup-pass kernel. One
+// threadgroup per block; per-block dimensions, tuple-stream offset,
+// and per-stream output offsets come from arrays indexed by
+// `threadgroup_position_in_grid`. blockCount=1 collapses this to
+// the I1.3b single-block path; the canonical kernel for both cases.
+//
+// **Output offset alignment**: per-stream output offsets MUST be
+// 4-byte aligned (Apple Silicon `device uchar*` stores RMW on the
+// containing 32-bit word; concurrent threadgroups sharing a word
+// race — see I1.2b). Use the Swift wrapper's helpers to compute
+// aligned offsets from per-block byte budgets.
+kernel void j2k_ht_cleanup_pass_emit_blocks_batched(
     device const ulong*  tuples              [[buffer(0)]],
-    constant     uint&   width               [[buffer(1)]],
-    constant     uint&   height              [[buffer(2)]],
-    constant     uint&   missingMSBs         [[buffer(3)]],
-    device const ushort* vlcTable0           [[buffer(4)]],
-    device const ushort* vlcTable1           [[buffer(5)]],
-    device const uint2*  uvlcTable           [[buffer(6)]],   // (.x = pre|preLen|suf|sufLen, .y = ext|extLen)
-    constant     uchar*  melExp              [[buffer(7)]],   // 13 entries
-    device       uchar*  magsgnOut           [[buffer(8)]],
-    device       uchar*  melOut              [[buffer(9)]],
+    device const uint4*  blockDims           [[buffer(1)]],   // (width, height, missingMSBs, tupleStart) per block
+    device const ushort* vlcTable0           [[buffer(2)]],
+    device const ushort* vlcTable1           [[buffer(3)]],
+    device const uint2*  uvlcTable           [[buffer(4)]],   // (.x = pre|preLen|suf|sufLen, .y = ext|extLen)
+    constant     uchar*  melExp              [[buffer(5)]],   // 13 entries
+    device       uchar*  magsgnOut           [[buffer(6)]],
+    device const uint*   magsgnOffsets       [[buffer(7)]],   // 4-byte-aligned per-block start
+    device       uchar*  melOut              [[buffer(8)]],
+    device const uint*   melOffsets          [[buffer(9)]],
     device       uchar*  vlcOut              [[buffer(10)]],
-    device       uint*   byteCountsOut       [[buffer(11)]],  // [magsgn, mel, vlc]
-    uint tid                                 [[thread_position_in_threadgroup]]
+    device const uint*   vlcOffsets          [[buffer(11)]],
+    device       uint3*  byteCountsOut       [[buffer(12)]],  // (magsgn, mel, vlc) per block
+    constant     uint&   blockCount          [[buffer(13)]],
+    uint tid                                 [[thread_position_in_threadgroup]],
+    uint tgIdx                               [[threadgroup_position_in_grid]]
 ) {
+    if (tgIdx >= blockCount) return;
     if (tid != 0u) return;
+
+    // Per-block descriptor + per-stream output bases.
+    const uint4 dims = blockDims[tgIdx];
+    const uint  width        = dims.x;
+    const uint  height       = dims.y;
+    // dims.z is missingMSBs; not needed (p is implicit in tuple payloads).
+    const uint  tupleStart   = dims.w;
+    const uint  magsgnBase   = magsgnOffsets[tgIdx];
+    const uint  melBase      = melOffsets[tgIdx];
+    const uint  vlcBase      = vlcOffsets[tgIdx];
 
     // Block-level state: per-stream emit accumulators + cleanup-pass
     // bookkeeping. All in registers (or LLVM's spill if too many).
@@ -3587,12 +3612,13 @@ kernel void j2k_ht_cleanup_pass_emit_block(
     uint vlc_usedBits = 4u;
     bool vlc_lastGreaterThan8F = true;
     uint vlc_byteIdx = 1u;
-    vlcOut[0] = (uchar)0xFFu;   // sentinel at emit-order index 0
+    vlcOut[vlcBase + 0u] = (uchar)0xFFu;   // sentinel at emit-order index 0
 
-    // p (= 30 - missingMSBs) is implicit in pre-classified tuple
-    // payloads, so this kernel doesn't need it directly. The argument
-    // stays for parity with the CPU `encode` signature.
-    (void)missingMSBs;
+    // dims.z (missingMSBs) is implicit in pre-classified tuple payloads,
+    // so the kernel doesn't need to read it. We retain it in the
+    // descriptor for parity with the CPU `encode(preClassifiedTuples:)`
+    // signature so the wrapper can pass through any future tuple format
+    // changes without breaking the layout.
 
     // Per-row context state. Sized to support up to 64-wide blocks
     // (J2K HT codeblock max). guardedWidth ≤ ((64+3)/4)*2 + 2 = 34.
@@ -3622,7 +3648,7 @@ kernel void j2k_ht_cleanup_pass_emit_block(
             // out-of-bounds → zero tuple
             #define UNPACK_TUPLE(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
                 if ((_X) < width && (_Y) < height) { \
-                    ulong raw = tuples[((_Y) * width) + (_X)]; \
+                    ulong raw = tuples[tupleStart + ((_Y) * width) + (_X)]; \
                     bool sig = ((raw >> 63) & 1ul) != 0ul; \
                     int eQ = int((raw >> 56) & 0x7Ful); \
                     uint payload = uint(raw & 0xFFFFFFFFul); \
@@ -3652,13 +3678,13 @@ kernel void j2k_ht_cleanup_pass_emit_block(
             uint t0idx = (uint(c_q0) << 8) | (uint(rho0) << 4) | uint(eps0);
             uint tuple0 = uint(vlcTable0[t0idx]);
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  tuple0 >> 8u, (tuple0 >> 4u) & 0x7u);
 
             if (c_q0 == 0) {
                 htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
                                         mel_tmp, mel_remainingBits, mel_byteIdx,
-                                        melOut, 0u, melExp, rho0 != 0);
+                                        melOut, melBase, melExp, rho0 != 0);
             }
 
             // emitQuadMagSgn for q0
@@ -3668,7 +3694,7 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                     int m = Uq0 - (_EBIT); \
                     uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
                     htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
-                                            ms_byteIdx, magsgnOut, 0u, \
+                                            ms_byteIdx, magsgnOut, magsgnBase, \
                                             (_SAMPLE) & mask, uint(m)); \
                 }
             MS_EMIT(1, s0_0, int(tuple0) & 1)
@@ -3688,7 +3714,7 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                 int eQ1_0 = 0, eQ1_1 = 0, eQ1_2 = 0, eQ1_3 = 0;
                 #define UNPACK_TUPLE1(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
                     if ((_X) < width && (_Y) < height) { \
-                        ulong raw = tuples[((_Y) * width) + (_X)]; \
+                        ulong raw = tuples[tupleStart + ((_Y) * width) + (_X)]; \
                         bool sig = ((raw >> 63) & 1ul) != 0ul; \
                         int eQ = int((raw >> 56) & 0x7Ful); \
                         uint payload = uint(raw & 0xFFFFFFFFul); \
@@ -3718,19 +3744,19 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                 uint t1idx = (uint(c_q1) << 8) | (uint(rho1) << 4) | uint(eps1);
                 tuple1 = uint(vlcTable0[t1idx]);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      tuple1 >> 8u, (tuple1 >> 4u) & 0x7u);
                 if (c_q1 == 0) {
                     htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
                                             mel_tmp, mel_remainingBits, mel_byteIdx,
-                                            melOut, 0u, melExp, rho1 != 0);
+                                            melOut, melBase, melExp, rho1 != 0);
                 }
                 #define MS_EMIT1(_BIT, _SAMPLE, _EBIT) \
                     if ((rho1 & _BIT) != 0) { \
                         int m = Uq1 - (_EBIT); \
                         uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
                         htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
-                                                ms_byteIdx, magsgnOut, 0u, \
+                                                ms_byteIdx, magsgnOut, magsgnBase, \
                                                 (_SAMPLE) & mask, uint(m)); \
                     }
                 MS_EMIT1(1, s1_0, int(tuple1) & 1)
@@ -3748,56 +3774,56 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                 uint suf = (e.x >> 16u) & 0xFFu; \
                 uint sufLen = (e.x >> 24u) & 0xFFu; \
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F, \
-                                     vlc_byteIdx, vlcOut, 0u, pre, preLen); \
+                                     vlc_byteIdx, vlcOut, vlcBase, pre, preLen); \
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F, \
-                                     vlc_byteIdx, vlcOut, 0u, suf, sufLen); \
+                                     vlc_byteIdx, vlcOut, vlcBase, suf, sufLen); \
             }
             // Initial row uses 4 different code paths depending on u_q0/u_q1.
             if (u_q0 > 0 && u_q1 > 0) {
                 htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
                                         mel_tmp, mel_remainingBits, mel_byteIdx,
-                                        melOut, 0u, melExp, min(u_q0, u_q1) > 2);
+                                        melOut, melBase, melExp, min(u_q0, u_q1) > 2);
             }
             if (u_q0 > 2 && u_q1 > 2) {
                 uint2 e0 = uvlcTable[u_q0 - 2];
                 uint2 e1 = uvlcTable[u_q1 - 2];
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      e1.x & 0xFFu, (e1.x >> 8u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      (e1.x >> 16u) & 0xFFu, (e1.x >> 24u) & 0xFFu);
             } else if (u_q0 > 2 && u_q1 > 0) {
                 uint2 e0 = uvlcTable[u_q0];
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      uint(u_q1 - 1), 1u);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
             } else {
                 uint2 e0 = uvlcTable[u_q0];
                 uint2 e1 = uvlcTable[u_q1];
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      e1.x & 0xFFu, (e1.x >> 8u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      (e1.x >> 16u) & 0xFFu, (e1.x >> 24u) & 0xFFu);
             }
             #undef UVLC_EMIT
@@ -3825,7 +3851,7 @@ kernel void j2k_ht_cleanup_pass_emit_block(
             uint s0_0 = 0, s0_1 = 0, s0_2 = 0, s0_3 = 0;
             #define UNPACK_TUPLE_R(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
                 if ((_X) < width && (_Y) < height) { \
-                    ulong raw = tuples[((_Y) * width) + (_X)]; \
+                    ulong raw = tuples[tupleStart + ((_Y) * width) + (_X)]; \
                     bool sig = ((raw >> 63) & 1ul) != 0ul; \
                     int eQ = int((raw >> 56) & 0x7Ful); \
                     uint payload = uint(raw & 0xFFFFFFFFul); \
@@ -3857,19 +3883,19 @@ kernel void j2k_ht_cleanup_pass_emit_block(
             uint t0idx = (uint(c_q0) << 8) | (uint(rho0) << 4) | uint(eps0);
             uint tuple0 = uint(vlcTable1[t0idx]);
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  tuple0 >> 8u, (tuple0 >> 4u) & 0x7u);
             if (c_q0 == 0) {
                 htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
                                         mel_tmp, mel_remainingBits, mel_byteIdx,
-                                        melOut, 0u, melExp, rho0 != 0);
+                                        melOut, melBase, melExp, rho0 != 0);
             }
             #define MS_EMIT_R(_BIT, _SAMPLE, _EBIT) \
                 if ((rho0 & _BIT) != 0) { \
                     int m = Uq0 - (_EBIT); \
                     uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
                     htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
-                                            ms_byteIdx, magsgnOut, 0u, \
+                                            ms_byteIdx, magsgnOut, magsgnBase, \
                                             (_SAMPLE) & mask, uint(m)); \
                 }
             MS_EMIT_R(1, s0_0, int(tuple0) & 1)
@@ -3888,7 +3914,7 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                 int eQ1_0 = 0, eQ1_1 = 0, eQ1_2 = 0, eQ1_3 = 0;
                 #define UNPACK_TUPLE_R1(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
                     if ((_X) < width && (_Y) < height) { \
-                        ulong raw = tuples[((_Y) * width) + (_X)]; \
+                        ulong raw = tuples[tupleStart + ((_Y) * width) + (_X)]; \
                         bool sig = ((raw >> 63) & 1ul) != 0ul; \
                         int eQ = int((raw >> 56) & 0x7Ful); \
                         uint payload = uint(raw & 0xFFFFFFFFul); \
@@ -3921,19 +3947,19 @@ kernel void j2k_ht_cleanup_pass_emit_block(
                 uint t1idx = (uint(c_q1) << 8) | (uint(rho1) << 4) | uint(eps1);
                 tuple1 = uint(vlcTable1[t1idx]);
                 htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                     vlc_byteIdx, vlcOut, 0u,
+                                     vlc_byteIdx, vlcOut, vlcBase,
                                      tuple1 >> 8u, (tuple1 >> 4u) & 0x7u);
                 if (c_q1 == 0) {
                     htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
                                             mel_tmp, mel_remainingBits, mel_byteIdx,
-                                            melOut, 0u, melExp, rho1 != 0);
+                                            melOut, melBase, melExp, rho1 != 0);
                 }
                 #define MS_EMIT_R1(_BIT, _SAMPLE, _EBIT) \
                     if ((rho1 & _BIT) != 0) { \
                         int m = Uq1 - (_EBIT); \
                         uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
                         htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
-                                                ms_byteIdx, magsgnOut, 0u, \
+                                                ms_byteIdx, magsgnOut, magsgnBase, \
                                                 (_SAMPLE) & mask, uint(m)); \
                     }
                 MS_EMIT_R1(1, s1_0, int(tuple1) & 1)
@@ -3947,16 +3973,16 @@ kernel void j2k_ht_cleanup_pass_emit_block(
             uint2 e0u = uvlcTable[u_q0];
             uint2 e1u = uvlcTable[u_q1];
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  e0u.x & 0xFFu, (e0u.x >> 8u) & 0xFFu);
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  e1u.x & 0xFFu, (e1u.x >> 8u) & 0xFFu);
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  (e0u.x >> 16u) & 0xFFu, (e0u.x >> 24u) & 0xFFu);
             htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
-                                 vlc_byteIdx, vlcOut, 0u,
+                                 vlc_byteIdx, vlcOut, vlcBase,
                                  (e1u.x >> 16u) & 0xFFu, (e1u.x >> 24u) & 0xFFu);
 
             c_q0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2);
@@ -3966,23 +3992,21 @@ kernel void j2k_ht_cleanup_pass_emit_block(
     }
 
     // ----- finish steps (per CPU encoder) -----
-    htclnp_magsgn_finish(ms_tmp, ms_usedBits, ms_maxBits, ms_byteIdx, magsgnOut, 0u);
+    htclnp_magsgn_finish(ms_tmp, ms_usedBits, ms_maxBits, ms_byteIdx, magsgnOut, magsgnBase);
     htclnp_mel_flush(mel_state, mel_run, mel_threshold,
-                     mel_tmp, mel_remainingBits, mel_byteIdx, melOut, 0u);
+                     mel_tmp, mel_remainingBits, mel_byteIdx, melOut, melBase);
     // VLC: flush any partial byte (CPU `HTReverseBitEmitterConformant.finish`).
     if (vlc_usedBits > 0u) {
-        vlcOut[vlc_byteIdx] = (uchar)(vlc_tmp & 0xFFu);
+        vlcOut[vlcBase + vlc_byteIdx] = (uchar)(vlc_tmp & 0xFFu);
         vlc_byteIdx += 1u;
     }
     // Reverse the VLC region in-place to produce on-wire forward order.
     for (uint i = 0u; i < vlc_byteIdx / 2u; ++i) {
-        uchar a = vlcOut[i];
-        uchar b = vlcOut[vlc_byteIdx - 1u - i];
-        vlcOut[i] = b;
-        vlcOut[vlc_byteIdx - 1u - i] = a;
+        uchar a = vlcOut[vlcBase + i];
+        uchar b = vlcOut[vlcBase + vlc_byteIdx - 1u - i];
+        vlcOut[vlcBase + i] = b;
+        vlcOut[vlcBase + vlc_byteIdx - 1u - i] = a;
     }
 
-    byteCountsOut[0] = ms_byteIdx;
-    byteCountsOut[1] = mel_byteIdx;
-    byteCountsOut[2] = vlc_byteIdx;
+    byteCountsOut[tgIdx] = uint3(ms_byteIdx, mel_byteIdx, vlc_byteIdx);
 }
