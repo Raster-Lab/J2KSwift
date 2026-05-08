@@ -3313,3 +3313,676 @@ kernel void j2k_ht_vlc_emit_blocks_batched(
 
     byteCountsOut[tgIdx] = byteIdx;
 }
+
+// ===========================================================================
+// v7.1.0 I1.3b — unified Pass 3 cleanup-pass + 3-stream emit kernel
+// ===========================================================================
+//
+// Direct port of `HTBlockEncoderConformant.encode(preClassifiedTuples:)`
+// from `Sources/J2KCodec/J2KHTConformantBlockEncoder.swift` (lines
+// 162-628) to MSL. One threadgroup per block; thread 0 of each group
+// runs the entire cleanup-pass + 3-stream emit serially. Block-level
+// parallelism (one threadgroup per block) is what fills the GPU.
+//
+// **Why one big kernel** — the per-block byte budgets cannot be
+// derived from per-sample classification alone; the cleanup-pass
+// state machine (MEL run-length, VLC Huffman, U-value derivation)
+// determines them. Bit-packing primitives proven in I1.2 / I1.2b /
+// I1.2c / I1.2d are inlined here (MSL forbids kernel-from-kernel
+// calls). See `docs/V7_1_0_I1_3_DESIGN.md`.
+//
+// **Inputs**
+//   tuples[]            — UInt64 per sample, packed as
+//                         `sig:1 | eQ:7 | (24 unused) | payload:32`
+//                         in row-major (y * width + x) order. Same
+//                         format as `J2KMetalHTForwardClassifier`'s
+//                         output and `processQuadFromTuples`'s input.
+//   width, height       — block dimensions
+//   missingMSBs         — coefficient bit-budget reduction; p = 30 - missingMSBs
+//   vlcTable0, vlcTable1 — 2048-entry UInt16 lookup tables (initial
+//                         row + subsequent rows)
+//   uvlcTable           — 75-entry packed UVLCEntry table
+//                         (uint2: .x = pre|preLen|suf|sufLen,
+//                                 .y = ext|extLen)
+//   melExp              — 13-entry MEL exponent table
+//   outputMagSgnCap     — per-block upper-bound capacity for MagSgn region
+//   outputMelCap        — per-block upper-bound capacity for MEL region
+//   outputVlcCap        — per-block upper-bound capacity for VLC region
+//
+// **Outputs** (one block at offset blockIdx * cap_perStream)
+//   magsgnOut, melOut, vlcOut — emitted bytes (with FF-stuff applied
+//                              inline, matching CPU byte-for-byte)
+//   magsgnByteCount, melByteCount, vlcByteCount — actual emitted
+//                                                  byte counts (caller
+//                                                  uses to compact)
+
+// MARK: - cleanup-pass kernel state machine helpers (inline)
+
+// MagSgn LSB-first bit packer with FF-stuff + ms_terminate semantics
+// (mirrors `HTMagSgnEncoderConformant`). Used inline by the
+// cleanup-pass kernel below.
+inline void htclnp_magsgn_emit_bits(
+    thread uint& tmp,
+    thread uint& usedBits,
+    thread uint& maxBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase,
+    uint cwd,
+    uint count
+) {
+    uint c = count;
+    while (c > 0u) {
+        uint take = min(maxBits - usedBits, c);
+        uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+        tmp |= (cwd & mask) << usedBits;
+        usedBits += take;
+        cwd >>= take;
+        c -= take;
+        if (usedBits >= maxBits) {
+            uint b = tmp & 0xFFu;
+            output[outputBase + byteIdx] = (uchar)b;
+            byteIdx += 1u;
+            maxBits = (b == 0xFFu) ? 7u : 8u;
+            tmp = 0u;
+            usedBits = 0u;
+        }
+    }
+}
+
+inline void htclnp_magsgn_finish(
+    thread uint& tmp,
+    thread uint& usedBits,
+    thread uint& maxBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase
+) {
+    if (usedBits != 0u) {
+        uint padBits = maxBits - usedBits;
+        uint padMask = (padBits >= 32u) ? 0xFFFFFFFFu : ((1u << padBits) - 1u);
+        tmp |= padMask << usedBits;
+        uint b = tmp & 0xFFu;
+        if (b != 0xFFu) {
+            output[outputBase + byteIdx] = (uchar)b;
+            byteIdx += 1u;
+        }
+    } else if (maxBits == 7u) {
+        byteIdx -= 1u;
+    }
+}
+
+// MEL forward MSB-first bit emitter — used by the MEL coder below
+// for both the threshold-emit-1 path and the event-emit-0-then-bits
+// path. Mirrors `HTForwardBitEmitterConformant.emit(bit:)`.
+inline void htclnp_mel_emit_bit(
+    thread uint& tmp,
+    thread uint& remainingBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase,
+    uint bit
+) {
+    tmp = (tmp << 1) | (bit & 1u);
+    remainingBits -= 1u;
+    if (remainingBits == 0u) {
+        uint b = tmp & 0xFFu;
+        output[outputBase + byteIdx] = (uchar)b;
+        byteIdx += 1u;
+        remainingBits = (b == 0xFFu) ? 7u : 8u;
+        tmp = 0u;
+    }
+}
+
+inline void htclnp_mel_finish(
+    thread uint& tmp,
+    thread uint& remainingBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase
+) {
+    if (remainingBits != 8u) {
+        tmp <<= remainingBits;
+        output[outputBase + byteIdx] = (uchar)(tmp & 0xFFu);
+        byteIdx += 1u;
+    }
+}
+
+// MEL state machine — encodes one binary event. Mirrors
+// `HTMELEncoderConformant.encode(eventIsOne:)`.
+inline void htclnp_mel_encode_event(
+    thread int& state,
+    thread int& run,
+    thread int& threshold,
+    thread uint& tmp,
+    thread uint& remainingBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase,
+    constant uchar* melExp,
+    bool eventIsOne
+) {
+    if (!eventIsOne) {
+        run += 1;
+        if (run >= threshold) {
+            htclnp_mel_emit_bit(tmp, remainingBits, byteIdx, output, outputBase, 1u);
+            run = 0;
+            state = min(12, state + 1);
+            threshold = 1 << int(melExp[state]);
+        }
+    } else {
+        htclnp_mel_emit_bit(tmp, remainingBits, byteIdx, output, outputBase, 0u);
+        int t = int(melExp[state]);
+        while (t > 0) {
+            t -= 1;
+            htclnp_mel_emit_bit(tmp, remainingBits, byteIdx, output, outputBase,
+                                uint((run >> t) & 1));
+        }
+        run = 0;
+        state = max(0, state - 1);
+        threshold = 1 << int(melExp[state]);
+    }
+}
+
+inline void htclnp_mel_flush(
+    thread int& state,
+    thread int& run,
+    thread int& threshold,
+    thread uint& tmp,
+    thread uint& remainingBits,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase
+) {
+    // If a non-terminated zero run is open, emit a final 1 bit to
+    // close it (mirrors CPU `HTMELEncoderConformant.finish`).
+    if (run > 0) {
+        htclnp_mel_emit_bit(tmp, remainingBits, byteIdx, output, outputBase, 1u);
+    }
+    htclnp_mel_finish(tmp, remainingBits, byteIdx, output, outputBase);
+}
+
+// VLC reverse-bit emit — LSB-first within byte, byte SEQUENCE built
+// in REVERSE then flipped at terminate. Mirrors
+// `HTReverseBitEmitterConformant.encode(codeword:count:)`.
+inline void htclnp_vlc_emit_bits(
+    thread uint& tmp,
+    thread uint& usedBits,
+    thread bool& lastGreaterThan8F,
+    thread uint& byteIdx,
+    device uchar* output,
+    uint outputBase,
+    uint cwd,
+    uint count
+) {
+    uint c = count;
+    while (c > 0u) {
+        uint stuffPenalty = lastGreaterThan8F ? 1u : 0u;
+        uint availBits = 8u - stuffPenalty - usedBits;
+        uint take = min(availBits, c);
+        if (take > 0u) {
+            uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+            tmp |= (cwd & mask) << usedBits;
+            usedBits += take;
+            cwd >>= take;
+            c -= take;
+        }
+        uint remainingAfter = availBits - take;
+        if (remainingAfter == 0u) {
+            if (lastGreaterThan8F && tmp != 0x7Fu) {
+                lastGreaterThan8F = false;
+                continue;
+            }
+            output[outputBase + byteIdx] = (uchar)(tmp & 0xFFu);
+            byteIdx += 1u;
+            lastGreaterThan8F = (tmp > 0x8Fu);
+            tmp = 0u;
+            usedBits = 0u;
+        }
+    }
+}
+
+// MARK: - cleanup-pass kernel (single-block; one threadgroup per block)
+//
+// I1.3b-spike: dispatched as one threadgroup; thread 0 does the
+// whole serial cleanup-pass. blockIdx (threadgroup_position_in_grid)
+// is unused for now (single-block) — I1.3c will add multi-block.
+
+kernel void j2k_ht_cleanup_pass_emit_block(
+    device const ulong*  tuples              [[buffer(0)]],
+    constant     uint&   width               [[buffer(1)]],
+    constant     uint&   height              [[buffer(2)]],
+    constant     uint&   missingMSBs         [[buffer(3)]],
+    device const ushort* vlcTable0           [[buffer(4)]],
+    device const ushort* vlcTable1           [[buffer(5)]],
+    device const uint2*  uvlcTable           [[buffer(6)]],   // (.x = pre|preLen|suf|sufLen, .y = ext|extLen)
+    constant     uchar*  melExp              [[buffer(7)]],   // 13 entries
+    device       uchar*  magsgnOut           [[buffer(8)]],
+    device       uchar*  melOut              [[buffer(9)]],
+    device       uchar*  vlcOut              [[buffer(10)]],
+    device       uint*   byteCountsOut       [[buffer(11)]],  // [magsgn, mel, vlc]
+    uint tid                                 [[thread_position_in_threadgroup]]
+) {
+    if (tid != 0u) return;
+
+    // Block-level state: per-stream emit accumulators + cleanup-pass
+    // bookkeeping. All in registers (or LLVM's spill if too many).
+
+    // MagSgn emit state
+    uint ms_tmp = 0u;
+    uint ms_usedBits = 0u;
+    uint ms_maxBits = 8u;
+    uint ms_byteIdx = 0u;
+
+    // MEL coder state (state machine + bit emitter)
+    int  mel_state = 0;
+    int  mel_run = 0;
+    int  mel_threshold = 1 << int(melExp[0]);
+    uint mel_tmp = 0u;
+    uint mel_remainingBits = 8u;
+    uint mel_byteIdx = 0u;
+
+    // VLC reverse-bit emitter
+    uint vlc_tmp = 0x0Fu;
+    uint vlc_usedBits = 4u;
+    bool vlc_lastGreaterThan8F = true;
+    uint vlc_byteIdx = 1u;
+    vlcOut[0] = (uchar)0xFFu;   // sentinel at emit-order index 0
+
+    // p (= 30 - missingMSBs) is implicit in pre-classified tuple
+    // payloads, so this kernel doesn't need it directly. The argument
+    // stays for parity with the CPU `encode` signature.
+    (void)missingMSBs;
+
+    // Per-row context state. Sized to support up to 64-wide blocks
+    // (J2K HT codeblock max). guardedWidth ≤ ((64+3)/4)*2 + 2 = 34.
+    threadgroup uchar eVal[64];
+    threadgroup uchar cxVal[64];
+    for (uint i = 0u; i < 64u; ++i) {
+        eVal[i] = 0;
+        cxVal[i] = 0;
+    }
+
+    int c_q0 = 0;
+    int lep = 0;
+    int lcxp = 0;
+
+    // ----- helper inline lambda equivalents (Metal has no closures)
+    // We unpack tuples and build per-quad state inline below.
+
+    if (height > 0u) {
+        // --- Initial row of quads (y = 0..1) — uses vlcTable0 ---
+        uint spX = 0u;
+        while (spX < width) {
+            // q0 = processQuadFromTuples(spX, 0)
+            int rho0 = 0, eQMax0 = 0;
+            int eQ0_0 = 0, eQ0_1 = 0, eQ0_2 = 0, eQ0_3 = 0;
+            uint s0_0 = 0, s0_1 = 0, s0_2 = 0, s0_3 = 0;
+            // (col, row) layout: (0,0), (0,1), (1,0), (1,1)
+            // out-of-bounds → zero tuple
+            #define UNPACK_TUPLE(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
+                if ((_X) < width && (_Y) < height) { \
+                    ulong raw = tuples[((_Y) * width) + (_X)]; \
+                    bool sig = ((raw >> 63) & 1ul) != 0ul; \
+                    int eQ = int((raw >> 56) & 0x7Ful); \
+                    uint payload = uint(raw & 0xFFFFFFFFul); \
+                    if (sig) { rho0 |= _RHO_BIT; _SET_E = eQ; _SET_S = payload; if (eQ > eQMax0) eQMax0 = eQ; } \
+                }
+            UNPACK_TUPLE(spX,     0u, 1, eQ0_0, s0_0)
+            UNPACK_TUPLE(spX,     1u, 2, eQ0_1, s0_1)
+            UNPACK_TUPLE(spX + 1u,0u, 4, eQ0_2, s0_2)
+            UNPACK_TUPLE(spX + 1u,1u, 8, eQ0_3, s0_3)
+            #undef UNPACK_TUPLE
+
+            int Uq0 = max(eQMax0, 1);
+            int u_q0 = Uq0 - 1;
+            int eps0 = 0;
+            if (u_q0 > 0) {
+                if (eQ0_0 == eQMax0) eps0 |= 1;
+                if (eQ0_1 == eQMax0) eps0 |= 2;
+                if (eQ0_2 == eQMax0) eps0 |= 4;
+                if (eQ0_3 == eQMax0) eps0 |= 8;
+            }
+
+            eVal[lep] = (uchar)max((int)eVal[lep], eQ0_1); lep += 1;
+            eVal[lep] = (uchar)eQ0_3;
+            cxVal[lcxp] = cxVal[lcxp] | (uchar)((rho0 & 2) >> 1); lcxp += 1;
+            cxVal[lcxp] = (uchar)((rho0 & 8) >> 3);
+
+            uint t0idx = (uint(c_q0) << 8) | (uint(rho0) << 4) | uint(eps0);
+            uint tuple0 = uint(vlcTable0[t0idx]);
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 tuple0 >> 8u, (tuple0 >> 4u) & 0x7u);
+
+            if (c_q0 == 0) {
+                htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
+                                        mel_tmp, mel_remainingBits, mel_byteIdx,
+                                        melOut, 0u, melExp, rho0 != 0);
+            }
+
+            // emitQuadMagSgn for q0
+            // emit each significant sample: m = Uq - eBit; sample & ((1<<m)-1)
+            #define MS_EMIT(_BIT, _SAMPLE, _EBIT) \
+                if ((rho0 & _BIT) != 0) { \
+                    int m = Uq0 - (_EBIT); \
+                    uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
+                    htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
+                                            ms_byteIdx, magsgnOut, 0u, \
+                                            (_SAMPLE) & mask, uint(m)); \
+                }
+            MS_EMIT(1, s0_0, int(tuple0) & 1)
+            MS_EMIT(2, s0_1, (int(tuple0) >> 1) & 1)
+            MS_EMIT(4, s0_2, (int(tuple0) >> 2) & 1)
+            MS_EMIT(8, s0_3, (int(tuple0) >> 3) & 1)
+            #undef MS_EMIT
+
+            // Second quad of pair (might be out of bounds)
+            int rho1 = 0;
+            int u_q1 = 0;
+            uint tuple1 = 0u;
+            int Uq1 = 0;
+            uint s1_0 = 0, s1_1 = 0, s1_2 = 0, s1_3 = 0;
+            if (spX + 2u < width) {
+                int eQMax1 = 0;
+                int eQ1_0 = 0, eQ1_1 = 0, eQ1_2 = 0, eQ1_3 = 0;
+                #define UNPACK_TUPLE1(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
+                    if ((_X) < width && (_Y) < height) { \
+                        ulong raw = tuples[((_Y) * width) + (_X)]; \
+                        bool sig = ((raw >> 63) & 1ul) != 0ul; \
+                        int eQ = int((raw >> 56) & 0x7Ful); \
+                        uint payload = uint(raw & 0xFFFFFFFFul); \
+                        if (sig) { rho1 |= _RHO_BIT; _SET_E = eQ; _SET_S = payload; if (eQ > eQMax1) eQMax1 = eQ; } \
+                    }
+                UNPACK_TUPLE1(spX + 2u, 0u, 1, eQ1_0, s1_0)
+                UNPACK_TUPLE1(spX + 2u, 1u, 2, eQ1_1, s1_1)
+                UNPACK_TUPLE1(spX + 3u, 0u, 4, eQ1_2, s1_2)
+                UNPACK_TUPLE1(spX + 3u, 1u, 8, eQ1_3, s1_3)
+                #undef UNPACK_TUPLE1
+
+                int c_q1 = (rho0 >> 1) | (rho0 & 1);
+                Uq1 = max(eQMax1, 1);
+                u_q1 = Uq1 - 1;
+                int eps1 = 0;
+                if (u_q1 > 0) {
+                    if (eQ1_0 == eQMax1) eps1 |= 1;
+                    if (eQ1_1 == eQMax1) eps1 |= 2;
+                    if (eQ1_2 == eQMax1) eps1 |= 4;
+                    if (eQ1_3 == eQMax1) eps1 |= 8;
+                }
+                eVal[lep] = (uchar)max((int)eVal[lep], eQ1_1); lep += 1;
+                eVal[lep] = (uchar)eQ1_3;
+                cxVal[lcxp] = cxVal[lcxp] | (uchar)((rho1 & 2) >> 1); lcxp += 1;
+                cxVal[lcxp] = (uchar)((rho1 & 8) >> 3);
+
+                uint t1idx = (uint(c_q1) << 8) | (uint(rho1) << 4) | uint(eps1);
+                tuple1 = uint(vlcTable0[t1idx]);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     tuple1 >> 8u, (tuple1 >> 4u) & 0x7u);
+                if (c_q1 == 0) {
+                    htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
+                                            mel_tmp, mel_remainingBits, mel_byteIdx,
+                                            melOut, 0u, melExp, rho1 != 0);
+                }
+                #define MS_EMIT1(_BIT, _SAMPLE, _EBIT) \
+                    if ((rho1 & _BIT) != 0) { \
+                        int m = Uq1 - (_EBIT); \
+                        uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
+                        htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
+                                                ms_byteIdx, magsgnOut, 0u, \
+                                                (_SAMPLE) & mask, uint(m)); \
+                    }
+                MS_EMIT1(1, s1_0, int(tuple1) & 1)
+                MS_EMIT1(2, s1_1, (int(tuple1) >> 1) & 1)
+                MS_EMIT1(4, s1_2, (int(tuple1) >> 2) & 1)
+                MS_EMIT1(8, s1_3, (int(tuple1) >> 3) & 1)
+                #undef MS_EMIT1
+            }
+
+            // u-value encoding
+            #define UVLC_EMIT(_IDX) { \
+                uint2 e = uvlcTable[_IDX]; \
+                uint pre = e.x & 0xFFu; \
+                uint preLen = (e.x >> 8u) & 0xFFu; \
+                uint suf = (e.x >> 16u) & 0xFFu; \
+                uint sufLen = (e.x >> 24u) & 0xFFu; \
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F, \
+                                     vlc_byteIdx, vlcOut, 0u, pre, preLen); \
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F, \
+                                     vlc_byteIdx, vlcOut, 0u, suf, sufLen); \
+            }
+            // Initial row uses 4 different code paths depending on u_q0/u_q1.
+            if (u_q0 > 0 && u_q1 > 0) {
+                htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
+                                        mel_tmp, mel_remainingBits, mel_byteIdx,
+                                        melOut, 0u, melExp, min(u_q0, u_q1) > 2);
+            }
+            if (u_q0 > 2 && u_q1 > 2) {
+                uint2 e0 = uvlcTable[u_q0 - 2];
+                uint2 e1 = uvlcTable[u_q1 - 2];
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     e1.x & 0xFFu, (e1.x >> 8u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     (e1.x >> 16u) & 0xFFu, (e1.x >> 24u) & 0xFFu);
+            } else if (u_q0 > 2 && u_q1 > 0) {
+                uint2 e0 = uvlcTable[u_q0];
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     uint(u_q1 - 1), 1u);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
+            } else {
+                uint2 e0 = uvlcTable[u_q0];
+                uint2 e1 = uvlcTable[u_q1];
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     e0.x & 0xFFu, (e0.x >> 8u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     e1.x & 0xFFu, (e1.x >> 8u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     (e0.x >> 16u) & 0xFFu, (e0.x >> 24u) & 0xFFu);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     (e1.x >> 16u) & 0xFFu, (e1.x >> 24u) & 0xFFu);
+            }
+            #undef UVLC_EMIT
+
+            c_q0 = (rho1 >> 1) | (rho1 & 1);
+            spX += 4u;
+        }
+    }
+    if (lep + 1 < 64) eVal[lep + 1] = 0;
+
+    // --- Subsequent quad rows (y = 2, 4, ...) — uses vlcTable1 ---
+    uint y = 2u;
+    while (y < height) {
+        lep = 0;
+        int maxE = max(int(eVal[0]), int(eVal[1])) - 1;
+        eVal[0] = 0;
+        lcxp = 0;
+        c_q0 = int(cxVal[0]) + (int(cxVal[1]) << 2);
+        cxVal[0] = 0;
+
+        uint spX = 0u;
+        while (spX < width) {
+            int rho0 = 0, eQMax0 = 0;
+            int eQ0_0 = 0, eQ0_1 = 0, eQ0_2 = 0, eQ0_3 = 0;
+            uint s0_0 = 0, s0_1 = 0, s0_2 = 0, s0_3 = 0;
+            #define UNPACK_TUPLE_R(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
+                if ((_X) < width && (_Y) < height) { \
+                    ulong raw = tuples[((_Y) * width) + (_X)]; \
+                    bool sig = ((raw >> 63) & 1ul) != 0ul; \
+                    int eQ = int((raw >> 56) & 0x7Ful); \
+                    uint payload = uint(raw & 0xFFFFFFFFul); \
+                    if (sig) { rho0 |= _RHO_BIT; _SET_E = eQ; _SET_S = payload; if (eQ > eQMax0) eQMax0 = eQ; } \
+                }
+            UNPACK_TUPLE_R(spX,      y,      1, eQ0_0, s0_0)
+            UNPACK_TUPLE_R(spX,      y + 1u, 2, eQ0_1, s0_1)
+            UNPACK_TUPLE_R(spX + 1u, y,      4, eQ0_2, s0_2)
+            UNPACK_TUPLE_R(spX + 1u, y + 1u, 8, eQ0_3, s0_3)
+            #undef UNPACK_TUPLE_R
+
+            int kappaA = ((rho0 & (rho0 - 1)) != 0) ? max(1, maxE) : 1;
+            int Uq0 = max(eQMax0, kappaA);
+            int u_q0 = Uq0 - kappaA;
+            int eps0 = 0;
+            if (u_q0 > 0) {
+                if (eQ0_0 == eQMax0) eps0 |= 1;
+                if (eQ0_1 == eQMax0) eps0 |= 2;
+                if (eQ0_2 == eQMax0) eps0 |= 4;
+                if (eQ0_3 == eQMax0) eps0 |= 8;
+            }
+            eVal[lep] = (uchar)max((int)eVal[lep], eQ0_1); lep += 1;
+            maxE = max(int(eVal[lep]), int(eVal[lep + 1])) - 1;
+            eVal[lep] = (uchar)eQ0_3;
+            cxVal[lcxp] = cxVal[lcxp] | (uchar)((rho0 & 2) >> 1); lcxp += 1;
+            int c_q1 = int(cxVal[lcxp]) + (int(cxVal[lcxp + 1]) << 2);
+            cxVal[lcxp] = (uchar)((rho0 & 8) >> 3);
+
+            uint t0idx = (uint(c_q0) << 8) | (uint(rho0) << 4) | uint(eps0);
+            uint tuple0 = uint(vlcTable1[t0idx]);
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 tuple0 >> 8u, (tuple0 >> 4u) & 0x7u);
+            if (c_q0 == 0) {
+                htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
+                                        mel_tmp, mel_remainingBits, mel_byteIdx,
+                                        melOut, 0u, melExp, rho0 != 0);
+            }
+            #define MS_EMIT_R(_BIT, _SAMPLE, _EBIT) \
+                if ((rho0 & _BIT) != 0) { \
+                    int m = Uq0 - (_EBIT); \
+                    uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
+                    htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
+                                            ms_byteIdx, magsgnOut, 0u, \
+                                            (_SAMPLE) & mask, uint(m)); \
+                }
+            MS_EMIT_R(1, s0_0, int(tuple0) & 1)
+            MS_EMIT_R(2, s0_1, (int(tuple0) >> 1) & 1)
+            MS_EMIT_R(4, s0_2, (int(tuple0) >> 2) & 1)
+            MS_EMIT_R(8, s0_3, (int(tuple0) >> 3) & 1)
+            #undef MS_EMIT_R
+
+            int rho1 = 0;
+            int u_q1 = 0;
+            uint tuple1 = 0u;
+            int Uq1 = 0;
+            uint s1_0 = 0, s1_1 = 0, s1_2 = 0, s1_3 = 0;
+            if (spX + 2u < width) {
+                int eQMax1 = 0;
+                int eQ1_0 = 0, eQ1_1 = 0, eQ1_2 = 0, eQ1_3 = 0;
+                #define UNPACK_TUPLE_R1(_X, _Y, _RHO_BIT, _SET_E, _SET_S) \
+                    if ((_X) < width && (_Y) < height) { \
+                        ulong raw = tuples[((_Y) * width) + (_X)]; \
+                        bool sig = ((raw >> 63) & 1ul) != 0ul; \
+                        int eQ = int((raw >> 56) & 0x7Ful); \
+                        uint payload = uint(raw & 0xFFFFFFFFul); \
+                        if (sig) { rho1 |= _RHO_BIT; _SET_E = eQ; _SET_S = payload; if (eQ > eQMax1) eQMax1 = eQ; } \
+                    }
+                UNPACK_TUPLE_R1(spX + 2u, y,      1, eQ1_0, s1_0)
+                UNPACK_TUPLE_R1(spX + 2u, y + 1u, 2, eQ1_1, s1_1)
+                UNPACK_TUPLE_R1(spX + 3u, y,      4, eQ1_2, s1_2)
+                UNPACK_TUPLE_R1(spX + 3u, y + 1u, 8, eQ1_3, s1_3)
+                #undef UNPACK_TUPLE_R1
+
+                int kappaB = ((rho1 & (rho1 - 1)) != 0) ? max(1, maxE) : 1;
+                c_q1 |= ((rho0 & 4) >> 1) | ((rho0 & 8) >> 2);
+                Uq1 = max(eQMax1, kappaB);
+                u_q1 = Uq1 - kappaB;
+                int eps1 = 0;
+                if (u_q1 > 0) {
+                    if (eQ1_0 == eQMax1) eps1 |= 1;
+                    if (eQ1_1 == eQMax1) eps1 |= 2;
+                    if (eQ1_2 == eQMax1) eps1 |= 4;
+                    if (eQ1_3 == eQMax1) eps1 |= 8;
+                }
+                eVal[lep] = (uchar)max((int)eVal[lep], eQ1_1); lep += 1;
+                maxE = max(int(eVal[lep]), int(eVal[lep + 1])) - 1;
+                eVal[lep] = (uchar)eQ1_3;
+                cxVal[lcxp] = cxVal[lcxp] | (uchar)((rho1 & 2) >> 1); lcxp += 1;
+                c_q0 = int(cxVal[lcxp]) + (int(cxVal[lcxp + 1]) << 2);
+                cxVal[lcxp] = (uchar)((rho1 & 8) >> 3);
+
+                uint t1idx = (uint(c_q1) << 8) | (uint(rho1) << 4) | uint(eps1);
+                tuple1 = uint(vlcTable1[t1idx]);
+                htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                     vlc_byteIdx, vlcOut, 0u,
+                                     tuple1 >> 8u, (tuple1 >> 4u) & 0x7u);
+                if (c_q1 == 0) {
+                    htclnp_mel_encode_event(mel_state, mel_run, mel_threshold,
+                                            mel_tmp, mel_remainingBits, mel_byteIdx,
+                                            melOut, 0u, melExp, rho1 != 0);
+                }
+                #define MS_EMIT_R1(_BIT, _SAMPLE, _EBIT) \
+                    if ((rho1 & _BIT) != 0) { \
+                        int m = Uq1 - (_EBIT); \
+                        uint mask = (m >= 32) ? 0xFFFFFFFFu : ((1u << uint(m)) - 1u); \
+                        htclnp_magsgn_emit_bits(ms_tmp, ms_usedBits, ms_maxBits, \
+                                                ms_byteIdx, magsgnOut, 0u, \
+                                                (_SAMPLE) & mask, uint(m)); \
+                    }
+                MS_EMIT_R1(1, s1_0, int(tuple1) & 1)
+                MS_EMIT_R1(2, s1_1, (int(tuple1) >> 1) & 1)
+                MS_EMIT_R1(4, s1_2, (int(tuple1) >> 2) & 1)
+                MS_EMIT_R1(8, s1_3, (int(tuple1) >> 3) & 1)
+                #undef MS_EMIT_R1
+            }
+
+            // Subsequent rows: unconditional UVLC per quad pair.
+            uint2 e0u = uvlcTable[u_q0];
+            uint2 e1u = uvlcTable[u_q1];
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 e0u.x & 0xFFu, (e0u.x >> 8u) & 0xFFu);
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 e1u.x & 0xFFu, (e1u.x >> 8u) & 0xFFu);
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 (e0u.x >> 16u) & 0xFFu, (e0u.x >> 24u) & 0xFFu);
+            htclnp_vlc_emit_bits(vlc_tmp, vlc_usedBits, vlc_lastGreaterThan8F,
+                                 vlc_byteIdx, vlcOut, 0u,
+                                 (e1u.x >> 16u) & 0xFFu, (e1u.x >> 24u) & 0xFFu);
+
+            c_q0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2);
+            spX += 4u;
+        }
+        y += 2u;
+    }
+
+    // ----- finish steps (per CPU encoder) -----
+    htclnp_magsgn_finish(ms_tmp, ms_usedBits, ms_maxBits, ms_byteIdx, magsgnOut, 0u);
+    htclnp_mel_flush(mel_state, mel_run, mel_threshold,
+                     mel_tmp, mel_remainingBits, mel_byteIdx, melOut, 0u);
+    // VLC: flush any partial byte (CPU `HTReverseBitEmitterConformant.finish`).
+    if (vlc_usedBits > 0u) {
+        vlcOut[vlc_byteIdx] = (uchar)(vlc_tmp & 0xFFu);
+        vlc_byteIdx += 1u;
+    }
+    // Reverse the VLC region in-place to produce on-wire forward order.
+    for (uint i = 0u; i < vlc_byteIdx / 2u; ++i) {
+        uchar a = vlcOut[i];
+        uchar b = vlcOut[vlc_byteIdx - 1u - i];
+        vlcOut[i] = b;
+        vlcOut[vlc_byteIdx - 1u - i] = a;
+    }
+
+    byteCountsOut[0] = ms_byteIdx;
+    byteCountsOut[1] = mel_byteIdx;
+    byteCountsOut[2] = vlc_byteIdx;
+}
