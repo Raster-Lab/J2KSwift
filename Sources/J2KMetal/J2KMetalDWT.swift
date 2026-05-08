@@ -269,6 +269,59 @@ public struct J2KMetalDWTSubbandsInt32: Sendable {
     }
 }
 
+// MARK: - Int32 Decomposition Subbands (zero-copy view variant, v7.2.0 Phase A)
+
+#if canImport(Metal)
+/// View-backed result of a 2D wavelet decomposition with `Int32`
+/// subbands. Identical semantics to `J2KMetalDWTSubbandsInt32` but
+/// the four band stores are `J2KMetalSharedBufferView<Int32>` —
+/// each view exposes the GPU output buffer's CPU-visible memory
+/// directly, eliminating the readback memcpy that the Array-valued
+/// variant performs.
+///
+/// Used by the v7.2.0 encode-side UMA elimination on Apple Silicon.
+/// On platforms without unified memory, fall back to the Array
+/// variant.
+public struct J2KMetalDWTSubbandsInt32View: @unchecked Sendable {
+    public let ll: J2KMetalSharedBufferView<Int32>
+    public let lh: J2KMetalSharedBufferView<Int32>
+    public let hl: J2KMetalSharedBufferView<Int32>
+    public let hh: J2KMetalSharedBufferView<Int32>
+    public let llWidth: Int
+    public let llHeight: Int
+    public let originalWidth: Int
+    public let originalHeight: Int
+    /// Mirrors `J2KMetalDWTSubbandsInt32.tileOriginX`. Inert on the
+    /// forward-DWT producer side; reserved for symmetry with the
+    /// inverse path that consults parity for boundary lifting.
+    public let tileOriginX: Int
+    /// Mirrors `J2KMetalDWTSubbandsInt32.tileOriginY`.
+    public let tileOriginY: Int
+
+    public init(
+        ll: J2KMetalSharedBufferView<Int32>,
+        lh: J2KMetalSharedBufferView<Int32>,
+        hl: J2KMetalSharedBufferView<Int32>,
+        hh: J2KMetalSharedBufferView<Int32>,
+        llWidth: Int, llHeight: Int,
+        originalWidth: Int, originalHeight: Int,
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
+    ) {
+        self.ll = ll
+        self.lh = lh
+        self.hl = hl
+        self.hh = hh
+        self.llWidth = llWidth
+        self.llHeight = llHeight
+        self.originalWidth = originalWidth
+        self.originalHeight = originalHeight
+        self.tileOriginX = tileOriginX
+        self.tileOriginY = tileOriginY
+    }
+}
+#endif
+
 // MARK: - Multi-level Decomposition Result
 
 /// Result of a multi-level 2D wavelet decomposition.
@@ -1115,6 +1168,239 @@ public actor J2KMetalDWT {
         let pool = bufferPool
         let toReturn = inFlight
         Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return out
+    }
+
+    /// **v7.2.0 Phase A — UMA encode-side boundary elimination.**
+    ///
+    /// Same GPU dispatch as `forward2DInt32MultiLevelFused(image:width:
+    /// height:levels:tileOriginX:tileOriginY:)` but returns
+    /// `[J2KMetalDWTSubbandsInt32View]` instead of
+    /// `[J2KMetalDWTSubbandsInt32]`. Each band's `J2KMetalSharedBufferView<Int32>`
+    /// exposes the GPU output buffer's CPU-visible memory directly,
+    /// avoiding the readback memcpy that the Array variant performs
+    /// 4× per level × `levels` levels (= 20 boundaries on a typical
+    /// 5-level lossless encode of DX 6.41 MP, ~25 MB total memcpy
+    /// per encode).
+    ///
+    /// Lifetime: each band view holds a strong reference to its
+    /// underlying `MTLBuffer`. Scratch buffers (image-copy input,
+    /// vLow / vHigh per level) are returned to the pool immediately
+    /// after the CB completes; band buffers are returned via the
+    /// view's `release()` / `deinit` — caller controls when the
+    /// pool gets the buffers back.
+    ///
+    /// Bytes byte-identical to the Array variant. Used by the
+    /// encoder pipeline when `_gpuForward53Enabled && Metal &&
+    /// pixels >= threshold`. CPU fallback path (when the GPU
+    /// gates fail) continues to use `AcceleratedDWT2D.forwardDecomposition53`
+    /// and constructs SubbandInfo with `coefficients: [Int32]`.
+    public func forward2DInt32MultiLevelFusedView(
+        image: [Int32],
+        width: Int,
+        height: Int,
+        levels: Int,
+        tileOriginX: Int,
+        tileOriginY: Int
+    ) async throws -> [J2KMetalDWTSubbandsInt32View] {
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Image dimensions must be at least 2×2, got \(width)×\(height)")
+        }
+        guard image.count == width * height else {
+            throw J2KError.invalidParameter(
+                "Image size \(image.count) doesn't match dimensions \(width)×\(height)")
+        }
+        let maxLevels = maxDecompositionLevels(width: width, height: height)
+        let effectiveLevels = max(1, min(levels, maxLevels))
+
+        try await ensureInitialized()
+        let queue = try await metalDevice.makeFreshCommandQueue()
+        let device = queue.device
+        let stride32 = MemoryLayout<Int32>.stride
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create multi-level forward cb (view variant)")
+        }
+
+        // Scratch buffers — returned to pool immediately after CB
+        // completes. Band buffers (per-level llBuf/lhBuf/hlBuf/hhBuf)
+        // are NOT in this list; they ride along with the views.
+        var scratch: [any MTLBuffer] = []
+        struct LevelDispatch {
+            let llBuf: any MTLBuffer
+            let lhBuf: any MTLBuffer
+            let hlBuf: any MTLBuffer
+            let hhBuf: any MTLBuffer
+            let llWidth: Int
+            let llHeight: Int
+            let halfWH: Int
+            let halfHH: Int
+            let originalWidth: Int
+            let originalHeight: Int
+        }
+        var dispatched: [LevelDispatch] = []
+
+        var currentInput: any MTLBuffer = try await {
+            let buf = try await bufferPool.acquireBuffer(
+                device: device, size: image.count * stride32)
+            image.withUnsafeBytes { src in
+                buf.contents().copyMemory(
+                    from: src.baseAddress!, byteCount: src.count)
+            }
+            return buf
+        }()
+        // The initial image-copy buffer is scratch — its only
+        // consumer is the first level's vertical pass, which reads
+        // it once. After that level dispatches it can return to
+        // the pool. We can't return it before CB.completed() fires
+        // though; defer to the CB-completion epilogue below.
+        scratch.append(currentInput)
+        var curW = width
+        var curH = height
+        var curOX = tileOriginX
+        var curOY = tileOriginY
+
+        let vEvenPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalInt)
+        let vOddPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53VerticalIntOdd)
+        let hEvenPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalInt)
+        let hOddPipeline = try await shaderLibrary.computePipeline(
+            for: .dwtForward53HorizontalIntOdd)
+
+        for _ in 0..<effectiveLevels {
+            guard curW >= 2, curH >= 2 else { break }
+
+            let llW = ((curOX & 1) == 0) ? (curW + 1) / 2 : curW / 2
+            let llH = ((curOY & 1) == 0) ? (curH + 1) / 2 : curH / 2
+            let halfWH = curW - llW
+            let halfHH = curH - llH
+
+            let vLowBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: curW * llH * stride32)
+            scratch.append(vLowBuf)
+            let vHighBuf = try await bufferPool.acquireBuffer(
+                device: device, size: max(curW * halfHH, 1) * stride32)
+            scratch.append(vHighBuf)
+            // Band buffers — these survive to the views.
+            let llBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: llW * llH * stride32)
+            let hlBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * llH, 1) * stride32)
+            let lhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(llW * halfHH, 1) * stride32)
+            let hhBuf  = try await bufferPool.acquireBuffer(
+                device: device, size: max(halfWH * halfHH, 1) * stride32)
+
+            let vPipeline = ((curOY & 1) == 0) ? vEvenPipeline : vOddPipeline
+            let hPipeline = ((curOX & 1) == 0) ? hEvenPipeline : hOddPipeline
+
+            guard let enc1 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create vertical forward encoder (view variant)")
+            }
+            enc1.setComputePipelineState(vPipeline)
+            enc1.setBuffer(currentInput, offset: 0, index: 0)
+            enc1.setBuffer(vLowBuf,      offset: 0, index: 1)
+            enc1.setBuffer(vHighBuf,     offset: 0, index: 2)
+            var widthVal  = UInt32(curW)
+            var heightVal = UInt32(curH)
+            enc1.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+            enc1.setBytes(&heightVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            enc1.dispatchThreads(
+                MTLSize(width: curW, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: min(curW, 64), height: 1, depth: 1))
+            enc1.endEncoding()
+
+            guard let enc2 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError(
+                    "Failed to create horizontal forward encoder (view variant)")
+            }
+            enc2.setComputePipelineState(hPipeline)
+            enc2.setBuffer(vLowBuf, offset: 0, index: 0)
+            enc2.setBuffer(llBuf,   offset: 0, index: 1)
+            enc2.setBuffer(hlBuf,   offset: 0, index: 2)
+            var llHVal = UInt32(llH)
+            enc2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc2.setBytes(&llHVal,   length: MemoryLayout<UInt32>.stride, index: 4)
+            enc2.dispatchThreads(
+                MTLSize(width: 1, height: llH, depth: 1),
+                threadsPerThreadgroup: MTLSize(
+                    width: 1, height: min(llH, 64), depth: 1))
+            if halfHH > 0 {
+                enc2.setBuffer(vHighBuf, offset: 0, index: 0)
+                enc2.setBuffer(lhBuf,    offset: 0, index: 1)
+                enc2.setBuffer(hhBuf,    offset: 0, index: 2)
+                var halfHHVal = UInt32(halfHH)
+                enc2.setBytes(&widthVal,  length: MemoryLayout<UInt32>.stride, index: 3)
+                enc2.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+                enc2.dispatchThreads(
+                    MTLSize(width: 1, height: halfHH, depth: 1),
+                    threadsPerThreadgroup: MTLSize(
+                        width: 1, height: min(halfHH, 64), depth: 1))
+            }
+            enc2.endEncoding()
+
+            dispatched.append(LevelDispatch(
+                llBuf: llBuf, lhBuf: lhBuf, hlBuf: hlBuf, hhBuf: hhBuf,
+                llWidth: llW, llHeight: llH,
+                halfWH: halfWH, halfHH: halfHH,
+                originalWidth: curW, originalHeight: curH))
+
+            // The current level's LL is the next level's input. ARC
+            // keeps llBuf alive via `dispatched` so it won't be
+            // freed even though we drop currentInput's reference.
+            currentInput = llBuf
+            curW = llW
+            curH = llH
+            curOX = (curOX + 1) >> 1
+            curOY = (curOY + 1) >> 1
+        }
+
+        cb.commit()
+        await cb.completed()
+
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Multi-level fused parity-aware forward 5/3 GPU dispatch failed (view variant): " +
+                "\(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        // Hand scratch buffers back to the pool. Band buffers stay
+        // alive via the views below.
+        let pool = bufferPool
+        let toReturn = scratch
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        // Wrap each band buffer in a view. The view's deinit (or
+        // explicit release()) returns the buffer to the pool — so
+        // when the encoder pipeline finishes consuming the views
+        // (after entropy + rate-control + codestream emit), the
+        // buffers come back automatically.
+        var out: [J2KMetalDWTSubbandsInt32View] = []
+        out.reserveCapacity(dispatched.count)
+        for d in dispatched {
+            let llCount = d.llWidth * d.llHeight
+            let lhCount = d.llWidth * d.halfHH
+            let hlCount = d.halfWH * d.llHeight
+            let hhCount = d.halfWH * d.halfHH
+            let llView = J2KMetalSharedBufferView<Int32>(
+                buffer: d.llBuf, count: llCount, pool: pool)
+            let lhView = J2KMetalSharedBufferView<Int32>(
+                buffer: d.lhBuf, count: lhCount, pool: pool)
+            let hlView = J2KMetalSharedBufferView<Int32>(
+                buffer: d.hlBuf, count: hlCount, pool: pool)
+            let hhView = J2KMetalSharedBufferView<Int32>(
+                buffer: d.hhBuf, count: hhCount, pool: pool)
+            out.append(J2KMetalDWTSubbandsInt32View(
+                ll: llView, lh: lhView, hl: hlView, hh: hhView,
+                llWidth: d.llWidth, llHeight: d.llHeight,
+                originalWidth: d.originalWidth, originalHeight: d.originalHeight))
+        }
 
         return out
     }

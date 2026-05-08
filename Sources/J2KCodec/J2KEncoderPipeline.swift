@@ -2375,12 +2375,81 @@ struct EncoderPipeline: Sendable {
 
     // MARK: - Stage 3: Wavelet Transform
 
+    /// **v7.2.0 Phase A — UMA encode-side boundary elimination.**
+    ///
+    /// Polymorphic Int32 coefficient storage that lets `SubbandInfo`
+    /// (and downstream `DeferredCodeBlock`) carry either:
+    ///   - A Swift `[Int32]` (the historical case — CPU-produced or
+    ///     GPU-produced-then-readback path), OR
+    ///   - A `J2KMetalSharedBufferView<Int32>` directly over a
+    ///     `.storageModeShared` MTLBuffer (the v7.2.0 zero-copy path
+    ///     when the GPU forward 5/3 DWT is the producer).
+    ///
+    /// The two variants converge at consumer sites via
+    /// `withUnsafeBufferPointer { … }` — Swift arrays already expose
+    /// that API; `J2KMetalSharedBufferView` mirrors it. So the
+    /// entropy hot loop's coefficient access is unchanged for both
+    /// storage variants, and the GPU producer skips the
+    /// `readInt32Array(memcpy MTLBuffer.contents() → [Int32])`
+    /// readback that fired 4× per level × N levels (= 20 boundaries
+    /// on a typical 5-level lossless encode).
+    enum CoefficientStorage: Sendable {
+        case empty
+        case array([Int32])
+        #if canImport(Metal)
+        case view(J2KMetalSharedBufferView<Int32>)
+        #endif
+
+        var count: Int {
+            switch self {
+            case .empty:           return 0
+            case .array(let a):    return a.count
+            #if canImport(Metal)
+            case .view(let v):     return v.count
+            #endif
+            }
+        }
+
+        var isEmpty: Bool { count == 0 }
+
+        /// Calls `body` with an `UnsafeBufferPointer<Int32>` over the
+        /// storage. The pointer is valid only for the duration of
+        /// `body`; do not capture it.
+        func withUnsafeBufferPointer<R>(
+            _ body: (UnsafeBufferPointer<Int32>) throws -> R
+        ) rethrows -> R {
+            switch self {
+            case .empty:
+                return try body(UnsafeBufferPointer<Int32>(start: nil, count: 0))
+            case .array(let a):
+                return try a.withUnsafeBufferPointer(body)
+            #if canImport(Metal)
+            case .view(let v):
+                return try v.withUnsafeBufferPointer(body)
+            #endif
+            }
+        }
+
+        subscript(index: Int) -> Int32 {
+            switch self {
+            case .empty:
+                preconditionFailure("CoefficientStorage.empty subscripted")
+            case .array(let a):
+                return a[index]
+            #if canImport(Metal)
+            case .view(let v):
+                return v[index]
+            #endif
+            }
+        }
+    }
+
     /// Information about a subband within a decomposition.
     struct SubbandInfo: Sendable {
         let componentIndex: Int
         let level: Int
         let subband: J2KSubband
-        let coefficients: [Int32]
+        let coefficients: CoefficientStorage
         /// Raw Double DWT coefficients for the 9/7 irreversible path.
         /// When non-nil, quantization uses these instead of `coefficients`
         /// to avoid precision loss from premature Int32 rounding.
@@ -2395,6 +2464,25 @@ struct EncoderPipeline: Sendable {
         init(
             componentIndex: Int, level: Int, subband: J2KSubband,
             coefficients: [Int32], doubleCoefficients: [Double]?,
+            width: Int, height: Int,
+            floatCoefficients: [Float]? = nil
+        ) {
+            self.componentIndex = componentIndex
+            self.level = level
+            self.subband = subband
+            self.coefficients = coefficients.isEmpty ? .empty : .array(coefficients)
+            self.doubleCoefficients = doubleCoefficients
+            self.floatCoefficients = floatCoefficients
+            self.width = width
+            self.height = height
+        }
+
+        /// v7.2.0 Phase A — view-backed initializer used by the GPU
+        /// forward 5/3 DWT path.
+        init(
+            componentIndex: Int, level: Int, subband: J2KSubband,
+            coefficients: CoefficientStorage,
+            doubleCoefficients: [Double]?,
             width: Int, height: Int,
             floatCoefficients: [Float]? = nil
         ) {
@@ -2759,7 +2847,19 @@ struct EncoderPipeline: Sendable {
                             let setupMs = (Date().timeIntervalSinceReferenceDate - setupT0) * 1000.0
 
                             let dispatchT0 = Date().timeIntervalSinceReferenceDate
-                            let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFused(
+                            // v7.2.0 Phase A — call the view-returning
+                            // forward 5/3 producer to skip the 4× per
+                            // level × N levels readback memcpys. Each
+                            // returned `J2KMetalDWTSubbandsInt32View`
+                            // band is a `J2KMetalSharedBufferView<Int32>`
+                            // over a `.storageModeShared` MTLBuffer;
+                            // the entropy coder's `withUnsafeBufferPointer`
+                            // hot-path consumes the view identically
+                            // to a `[Int32]`. Buffers are returned to
+                            // the pool when the views are released
+                            // (after entropy + rate-control + codestream
+                            // emit complete).
+                            let gpuLevels = try await metalDWT.forward2DInt32MultiLevelFusedView(
                                 image: compData, width: width, height: height,
                                 levels: levels,
                                 tileOriginX: tileOriginX, tileOriginY: tileOriginY)
@@ -2774,26 +2874,28 @@ struct EncoderPipeline: Sendable {
                                 // Phase 4 fix: parity-aware band counts.
                                 // halfWH = ceil for odd uX, floor for even —
                                 // equivalent to (originalWidth - llWidth) in
-                                // both cases. Using `originalWidth / 2`
-                                // (floor) silently corrupted multi-tile bytes
-                                // at odd-uX tiles in the slice 3 wire-in.
+                                // both cases.
                                 let llW = level.llWidth
                                 let llH = level.llHeight
                                 let halfWH = level.originalWidth  - llW
                                 let halfHH = level.originalHeight - llH
-                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hl,
-                                    coefficients: level.hl, doubleCoefficients: nil,
+                                subbands.append(SubbandInfo(
+                                    componentIndex: compIdx, level: decomLevel, subband: .hl,
+                                    coefficients: .view(level.hl), doubleCoefficients: nil,
                                     width: halfWH, height: llH))
-                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .lh,
-                                    coefficients: level.lh, doubleCoefficients: nil,
+                                subbands.append(SubbandInfo(
+                                    componentIndex: compIdx, level: decomLevel, subband: .lh,
+                                    coefficients: .view(level.lh), doubleCoefficients: nil,
                                     width: llW, height: halfHH))
-                                subbands.append(SubbandInfo(componentIndex: compIdx, level: decomLevel, subband: .hh,
-                                    coefficients: level.hh, doubleCoefficients: nil,
+                                subbands.append(SubbandInfo(
+                                    componentIndex: compIdx, level: decomLevel, subband: .hh,
+                                    coefficients: .view(level.hh), doubleCoefficients: nil,
                                     width: halfWH, height: halfHH))
                             }
                             if let last = gpuLevels.last {
-                                subbands.insert(SubbandInfo(componentIndex: compIdx, level: 0, subband: .ll,
-                                    coefficients: last.ll, doubleCoefficients: nil,
+                                subbands.insert(SubbandInfo(
+                                    componentIndex: compIdx, level: 0, subband: .ll,
+                                    coefficients: .view(last.ll), doubleCoefficients: nil,
                                     width: last.llWidth, height: last.llHeight), at: 0)
                             }
                         } else {
@@ -3084,6 +3186,32 @@ struct EncoderPipeline: Sendable {
                 }
                 let quantizer = J2KQuantizer(parameters: params)
 
+                // v7.2.0 Phase A — for lossless reversible 5/3 with
+                // Int32 input, quantization is the identity map; the
+                // existing `coefficients.map { quantizeCoefficient(..., 1.0) }`
+                // call still allocates a fresh `[Int32]` even though
+                // the values don't change. For the UMA-elimination
+                // path the input may be a `J2KMetalSharedBufferView<Int32>`
+                // — materialising it into an Array here would re-add
+                // the readback memcpy we eliminated upstream. Instead,
+                // pass `info.coefficients` straight through as
+                // `CoefficientStorage` (bit-exact for lossless).
+                if config.useReversibleFilter
+                    && info.floatCoefficients == nil
+                    && info.doubleCoefficients == nil
+                {
+                    quantizedSubbands.append(SubbandInfo(
+                        componentIndex: info.componentIndex,
+                        level: info.level,
+                        subband: info.subband,
+                        coefficients: info.coefficients,
+                        doubleCoefficients: nil,
+                        width: info.width,
+                        height: info.height
+                    ))
+                    continue
+                }
+
                 let quantized: [Int32]
                 if let floatCoeffs = info.floatCoefficients {
                     // Use Float-precision path for GPU DWT output — avoids Float→Double conversion
@@ -3102,9 +3230,14 @@ struct EncoderPipeline: Sendable {
                         totalLevels: totalLevels
                     )
                 } else {
-                    // Use Int32-optimised quantize method for reversible 5/3
+                    // Lossy reversible-5/3 with Int32 input. Materialise
+                    // the storage into an Array here (one-time memcpy
+                    // for the lossy path; lossless took the bypass above).
+                    let int32Array: [Int32] = info.coefficients.withUnsafeBufferPointer { buf in
+                        Array(buf)
+                    }
                     quantized = try quantizer.quantize(
-                        coefficients: info.coefficients,
+                        coefficients: int32Array,
                         subband: info.subband,
                         decompositionLevel: info.level,
                         totalLevels: totalLevels
@@ -3160,7 +3293,11 @@ struct EncoderPipeline: Sendable {
         let resolutionLevel: Int
         let bitDepth: Int
         /// CoW reference to the subband's full coefficient array (Int32, quantized or lossless).
-        let subbandCoefficients: [Int32]
+        /// **v7.2.0 Phase A**: now polymorphic over Swift `[Int32]` and
+        /// `J2KMetalSharedBufferView<Int32>` so the GPU forward DWT
+        /// path can hand its output to the entropy coder without a
+        /// readback memcpy on Apple Silicon UMA.
+        let subbandCoefficients: CoefficientStorage
         /// Width of the subband (row stride in elements).
         let subbandWidth: Int
         /// Origin of this block within the subband.
@@ -3325,7 +3462,13 @@ struct EncoderPipeline: Sendable {
                     fusedInvStep = nil
                 }
 
-                let quantizedSubband: [Int32]
+                // v7.2.0 Phase A — `quantizedSubband` is now
+                // `CoefficientStorage` so the lossless / pass-through
+                // branch can carry a `J2KMetalSharedBufferView<Int32>`
+                // straight into `DeferredCodeBlock.subbandCoefficients`
+                // without an Array materialisation. The lossy paths
+                // produce a fresh `[Int32]` and wrap it via `.array(...)`.
+                let quantizedSubband: CoefficientStorage
                 if let floatCoeffs = info.floatCoefficients, var invStep = fusedInvStep {
                     #if canImport(Accelerate)
                     let n = vDSP_Length(floatCoeffs.count)
@@ -3333,19 +3476,19 @@ struct EncoderPipeline: Sendable {
                     vDSP_vsmul(floatCoeffs, 1, &invStep, &scaled, 1, n)
                     var result = [Int32](repeating: 0, count: floatCoeffs.count)
                     vDSP_vfix32(&scaled, 1, &result, 1, n)
-                    quantizedSubband = result
+                    quantizedSubband = .array(result)
                     #else
-                    quantizedSubband = floatCoeffs.map { val in
+                    quantizedSubband = .array(floatCoeffs.map { val in
                         let mag = Int32(abs(val) * invStep)
                         return val >= 0 ? mag : -mag
-                    }
+                    })
                     #endif
                 } else if let doubleCoeffs = info.doubleCoefficients, let invStep = fusedInvStep {
                     let dInvStep = Double(invStep)
-                    quantizedSubband = doubleCoeffs.map { val in
+                    quantizedSubband = .array(doubleCoeffs.map { val in
                         let mag = Int32(abs(val) * dInvStep)
                         return val >= 0 ? mag : -mag
-                    }
+                    })
                 } else {
                     quantizedSubband = info.coefficients
                 }
