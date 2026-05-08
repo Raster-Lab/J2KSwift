@@ -323,6 +323,18 @@ struct DecoderPipeline: Sendable {
     /// the GPU entropy code path on smaller per-tile sizes.
     nonisolated(unsafe) static var _gpuHTEntropyMultiTilePerTilePixelThreshold: Int = 1_048_576
 
+    /// v7.2.0 Phase E — gate flag for the cross-tile batched-entropy
+    /// decode path (`decodeMultiTileGPUBatched`). When true AND the
+    /// codestream is multi-tile + HT-conformant + lossless 5/3 with
+    /// a Metal session, the multi-tile decode path aggregates all
+    /// tiles' eligible HT codeblocks into a single GPU dispatch
+    /// before per-tile post-processing. Amortises the per-tile
+    /// MTLCommandBuffer overhead × N tiles which dominates wall-time
+    /// on small per-tile sizes (per V720PhaseEThresholdSweepTests).
+    /// Default ON — gate exists so tests / probes can opt out for
+    /// A/B comparison against the v7.1.1 per-tile-CB shape.
+    nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
+
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
     /// behaviour from `decodeWithGPUHT`). When this flag is true
@@ -583,6 +595,48 @@ struct DecoderPipeline: Sendable {
         tiles: [(tileIndex: Int, tileData: Data)],
         progress: ((DecoderProgressUpdate) -> Void)?
     ) async throws -> J2KImage {
+        // v7.2.0 Phase E — when the new cross-tile batched-entropy
+        // path is enabled and applicable, route to it. Falls back to
+        // the per-tile shape below for non-applicable codestreams
+        // (irreversible, sessionless, non-conformant HT, etc.).
+        //
+        // Per-tile pixel threshold gate matches the v7.1.1 hotfix:
+        // when per-tile pixels < `_gpuHTEntropyMultiTilePerTilePixelThreshold`
+        // the GPU compute itself is slower than CPU on Apple M2 (the
+        // V720PhaseEABTest measured +14% to +65% regressions across
+        // small-per-tile fixtures when the master batch was forced
+        // on regardless of threshold). Amortization eliminates the
+        // per-tile CB overhead but doesn't make the GPU compute
+        // faster than CPU on tiny tiles.
+        let useHT = metadata.configuration.useHTJ2K
+        let isReversible: Bool
+        if case .irreversible97 = metadata.configuration.waveletFilter {
+            isReversible = false
+        } else {
+            isReversible = true
+        }
+        let useConformant = useHT
+            && metadata.configuration.htj2kBlockFormat == .conformant
+        // Per-tile pixel count: tile dimensions live in `metadata.tileSize`
+        // when the codestream is multi-tile.
+        let perTilePx: Int = {
+            if metadata.tileSize.width > 0 && metadata.tileSize.height > 0 {
+                return metadata.tileSize.width * metadata.tileSize.height
+            }
+            return metadata.width * metadata.height
+        }()
+        let canBatch = Self._multiTileBatchedEntropyEnabled
+            && useHT && useConformant && isReversible
+            && metalSession != nil
+            && J2KGPUHTDispatch.isAvailable
+            && Self._gpuHTEntropyEnabled
+            && tiles.count >= 2
+            && perTilePx >= Self._gpuHTEntropyMultiTilePerTilePixelThreshold
+        if canBatch {
+            return try await decodeMultiTileGPUBatched(
+                metadata: metadata, tiles: tiles, progress: progress)
+        }
+
         let numComponents = metadata.componentCount
         var fullComponents: [[Double]] = (0..<numComponents).map { compIdx in
             let compInfo = metadata.components[compIdx]
@@ -635,6 +689,183 @@ struct DecoderPipeline: Sendable {
             }
             decodedTiles.append(contentsOf: chunkResults)
             tileIdx = end
+        }
+
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
+
+        for tile in decodedTiles {
+            compositeTile(tile, into: &fullComponents, metadata: metadata)
+        }
+
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
+        let image = try reconstructImage(fullComponents, metadata: metadata)
+        reportProgress(progress, stage: .imageReconstruction, stageProgress: 1.0)
+        return image
+    }
+
+    /// **v7.2.0 Phase E — cross-tile batched HT entropy decode.**
+    ///
+    /// Same observable behaviour as `decodeMultiTileGPU` (bit-exact
+    /// J2KImage output) but the per-tile GPU HT entropy dispatches
+    /// are amortised into a SINGLE shared MTLCommandBuffer across
+    /// all tiles. Eliminates the per-tile CB-overhead × N tiles cost
+    /// that V720PhaseEThresholdSweepTests measured as the dominant
+    /// factor in the 1.8× regression at 256K threshold (vs CPU
+    /// entropy at 1 MP threshold).
+    ///
+    /// Pipeline shape:
+    ///   1. Per-tile, sequentially: `extractTileData` → CodeBlockInfo[]
+    ///      (CPU-bound; cheap per tile).
+    ///   2. Aggregate every tile's eligible HT codeblocks into one
+    ///      flat `[GPUHTBlock]` array. Track per-tile index ranges.
+    ///   3. ONE `J2KGPUHTDispatch.decodeBatch` call decodes all the
+    ///      blocks across all tiles in a single GPU command buffer.
+    ///   4. Per tile, in parallel via `withThrowingTaskGroup`:
+    ///      slice the master result by tile range, hand the slice
+    ///      to `decodeTilePayloadGPU(... preBatchedGPUCoefficients:)`
+    ///      which skips its own dispatch and runs the slow-lane
+    ///      regroup → dequant → IDWT → dcShift on those coefficients.
+    ///
+    /// IDWT amortisation: not yet — multi-tile per-tile IDWT still
+    /// runs on CPU per the v6.3.0 E1.2 / v7.1.1 routing. Batching
+    /// IDWT is harder (per-tile geometry + scatter plans) and is
+    /// deferred to a follow-up PR if entropy amortisation alone
+    /// closes enough of the Kakadu gap.
+    private func decodeMultiTileGPUBatched(
+        metadata: CodestreamMetadata,
+        tiles: [(tileIndex: Int, tileData: Data)],
+        progress: ((DecoderProgressUpdate) -> Void)?
+    ) async throws -> J2KImage {
+        let numComponents = metadata.componentCount
+        var fullComponents: [[Double]] = (0..<numComponents).map { compIdx in
+            let compInfo = metadata.components[compIdx]
+            let w = metadata.width / compInfo.subsamplingX
+            let h = metadata.height / compInfo.subsamplingY
+            return [Double](repeating: 0.0, count: w * h)
+        }
+
+        reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
+
+        // Stage 1 + 2: per-tile codeBlock extract + cross-tile aggregation.
+        // We do this serially because extractTileData is fast (codestream
+        // unpack only — no entropy work yet) and the aggregation maintains
+        // one flat block array. Doing the codestream unpack in parallel
+        // would just contend on the global parser locks for marginal gain.
+        struct TileExtractedState {
+            let tileIndex: Int
+            let tileX: Int
+            let tileY: Int
+            let tileW: Int
+            let tileH: Int
+            let codeBlocks: [CodeBlockInfo]
+            // Range into the master `[GPUHTBlock]` array for blocks
+            // contributed by this tile. The map below translates from
+            // master-index → this-tile-codeBlock-index.
+            let masterRangeStart: Int
+            let perTileEligibleIndices: [Int]
+        }
+        var extracted: [TileExtractedState] = []
+        extracted.reserveCapacity(tiles.count)
+        var allMasterBlocks: [GPUHTBlock] = []
+        var masterToTileLocal: [(tileSlot: Int, tileLocalIdx: Int)] = []
+
+        for (tileSlot, t) in tiles.enumerated() {
+            let (tx, ty, tw, th) = metadata.tileDimensions(tileIndex: t.tileIndex)
+            var tileMeta = metadata
+            tileMeta.width = tw
+            tileMeta.height = th
+            tileMeta.tileSize = (width: tw, height: th)
+            let extT0 = DispatchTime.now()
+            let blocks = try extractTileData(
+                t.tileData, metadata: tileMeta,
+                tileOriginX: tx, tileOriginY: ty)
+            J2KDecodeTimings.recordExtractTileData(
+                Double(DispatchTime.now().uptimeNanoseconds - extT0.uptimeNanoseconds) / 1_000_000_000)
+
+            let masterStart = allMasterBlocks.count
+            var perTileEligible: [Int] = []
+            perTileEligible.reserveCapacity(blocks.count)
+            for (localIdx, block) in blocks.enumerated() {
+                guard !block.data.isEmpty, block.passCount > 0 else { continue }
+                allMasterBlocks.append(GPUHTBlock(
+                    width: block.width,
+                    height: block.height,
+                    data: [UInt8](block.data),
+                    missingMSBs: block.zeroBitPlanes))
+                masterToTileLocal.append((tileSlot, localIdx))
+                perTileEligible.append(localIdx)
+            }
+            extracted.append(TileExtractedState(
+                tileIndex: t.tileIndex,
+                tileX: tx, tileY: ty, tileW: tw, tileH: th,
+                codeBlocks: blocks,
+                masterRangeStart: masterStart,
+                perTileEligibleIndices: perTileEligible))
+        }
+
+        // Stage 3: ONE GPU dispatch for all tiles' HT entropy.
+        // J2KGPUHTDispatch.decodeBatch handles fallbacks and returns
+        // a flat result keyed by master block index.
+        var preBatchedPerTile: [[Int: [Int32]]] = Array(
+            repeating: [:], count: tiles.count)
+        if !allMasterBlocks.isEmpty, let session = metalSession {
+            let dispT0 = DispatchTime.now()
+            let masterResult = try await J2KGPUHTDispatch.decodeBatch(
+                blocks: allMasterBlocks, session: session)
+            let dispDt = Double(DispatchTime.now().uptimeNanoseconds - dispT0.uptimeNanoseconds) / 1_000_000_000
+            J2KDecodeTimings.recordGPUHTDispatch(dispDt)
+
+            // Distribute master results back per tile.
+            // `masterResult.decodedBlockIndices[i]` is a master-array
+            // index; map it to (tileSlot, tileLocalIdx) and record
+            // the coefficients in that tile's per-block dict.
+            for (resultIdx, masterIdx) in masterResult.decodedBlockIndices.enumerated() {
+                let mapping = masterToTileLocal[masterIdx]
+                preBatchedPerTile[mapping.tileSlot][mapping.tileLocalIdx] =
+                    masterResult.results[resultIdx].coefficients
+            }
+            // Ineligible master blocks fall through — their tiles
+            // run the slow-lane CPU decode for those blocks.
+        }
+
+        // Stage 4: per-tile post-processing (parallel). Each tile
+        // gets its slice of the master batch results via the
+        // `preBatchedGPUCoefficients` parameter — `decodeTilePayloadGPU`
+        // skips its own dispatch, runs the slow-lane regroup that
+        // builds [SubbandInfo] from these coefficients, then continues
+        // dequant + IDWT + dcShift.
+        let chunkSize = max(1, Self.maxInFlightTilesGPU)
+        var decodedTiles: [DecodedTile] = []
+        decodedTiles.reserveCapacity(tiles.count)
+        var tileSlot = 0
+        while tileSlot < tiles.count {
+            let end = min(tileSlot + chunkSize, tiles.count)
+            let chunkSlots = Array(tileSlot..<end)
+            let chunkResults = try await withThrowingTaskGroup(of: DecodedTile.self) { group in
+                for slot in chunkSlots {
+                    let info = extracted[slot]
+                    let preBatched = preBatchedPerTile[slot]
+                    let metadataCopy = metadata
+                    let tileData = tiles[slot].tileData
+                    let tileIndex = info.tileIndex
+                    group.addTask {
+                        try await self.decodeTilePayloadGPU(
+                            metadata: metadataCopy,
+                            tileIndex: tileIndex,
+                            tileData: tileData,
+                            preBatchedGPUCoefficients: preBatched.isEmpty ? nil : preBatched
+                        )
+                    }
+                }
+                var results: [DecodedTile] = []
+                results.reserveCapacity(chunkSlots.count)
+                for try await decoded in group {
+                    results.append(decoded)
+                }
+                return results
+            }
+            decodedTiles.append(contentsOf: chunkResults)
+            tileSlot = end
         }
 
         reportProgress(progress, stage: .tileExtraction, stageProgress: 1.0)
@@ -856,10 +1087,21 @@ struct DecoderPipeline: Sendable {
 
     /// Same as `decodeTilePayload` but routes the inverse wavelet transform
     /// through the GPU pipeline.
+    ///
+    /// **v7.2.0 Phase E** — `preBatchedGPUCoefficients` lets the
+    /// caller (`decodeMultiTileGPUBatched`) supply pre-decoded HT
+    /// entropy results obtained from a single shared GPU dispatch
+    /// across all tiles. When non-nil, this function skips its own
+    /// per-tile entropy GPU dispatch (the v7.1.1 1-MP per-tile gate)
+    /// and consumes the pre-batched dict instead. Saves the per-tile
+    /// MTLCommandBuffer overhead × N tiles which dominates wall-time
+    /// on small per-tile sizes (per the V720PhaseEThresholdSweepTests
+    /// finding).
     private func decodeTilePayloadGPU(
         metadata: CodestreamMetadata,
         tileIndex: Int,
-        tileData: Data
+        tileData: Data,
+        preBatchedGPUCoefficients: [Int: [Int32]]? = nil
     ) async throws -> DecodedTile {
         let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tileIndex)
         var tileMeta = metadata
@@ -914,13 +1156,19 @@ struct DecoderPipeline: Sendable {
         // px/tile lost 2.14× because per-tile GPU dispatch overhead
         // dominates). Below ~1 MP per tile fall back to CPU entropy
         // (the v7.0.0 behaviour) — recovers DX 4x4 to ~60 ms.
+        // v7.2.0 Phase E — pre-batched coefficients short-circuit. When
+        // the caller already ran one shared GPU dispatch for all tiles,
+        // we skip the per-tile dispatch and feed the pre-batched
+        // coefficients into the slow-lane regroup. Otherwise apply the
+        // v7.1.1 per-tile threshold gate.
         let perTilePixels = tileMeta.width * tileMeta.height
-        let useGPUEntropy =
-            perTilePixels >= Self._gpuHTEntropyMultiTilePerTilePixelThreshold
+        let useGPUEntropy = (preBatchedGPUCoefficients != nil)
+            || perTilePixels >= Self._gpuHTEntropyMultiTilePerTilePixelThreshold
         t0 = DispatchTime.now()
         let (decodedBlocks, gpuBatch) = try await applyEntropyDecoding(
             codeBlocks, metadata: tileMeta,
-            isGPUPath: useGPUEntropy, isMultiTilePerTile: true)
+            isGPUPath: useGPUEntropy, isMultiTilePerTile: true,
+            preBatchedGPUCoefficients: preBatchedGPUCoefficients)
         J2KDecodeTimings.recordEntropyDecoding(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1955,7 +2203,18 @@ struct DecoderPipeline: Sendable {
         // observed diff. Suppressing the fast-lane forces the slow-
         // lane regroup, which populates `[SubbandInfo]` correctly
         // for CPU IDWT consumption.
-        isMultiTilePerTile: Bool = false
+        isMultiTilePerTile: Bool = false,
+        // v7.2.0 Phase E — pre-batched GPU HT entropy results.
+        // When non-nil, the function skips its own per-tile GPU
+        // dispatch (the `gpuEarly` block) and instead consumes the
+        // supplied `[blockIdxWithinThisTile: [Int32]]` as if it had
+        // performed the dispatch itself. Used by
+        // `decodeMultiTileGPUBatched` to amortize the per-tile
+        // MTLCommandBuffer overhead across all tiles in one CB.
+        // The returned `batch: J2KGPUHTBatch?` is always nil on this
+        // path — the caller is responsible for the IDWT routing
+        // (multi-tile per-tile uses CPU IDWT, no batch needed).
+        preBatchedGPUCoefficients: [Int: [Int32]]? = nil
     ) async throws -> (subbands: [SubbandInfo], batch: J2KGPUHTBatch?) {
         let isIrreversible: Bool
         if case .irreversible97 = metadata.configuration.waveletFilter {
@@ -2062,6 +2321,14 @@ struct DecoderPipeline: Sendable {
             return false
         }()
         let gpuEarly: (preDecoded: [Int: [Int32]], batch: J2KGPUHTBatch?) = try await {
+            // v7.2.0 Phase E — pre-batched coefficients short-circuit.
+            // The caller (`decodeMultiTileGPUBatched`) already ran one
+            // big GPU dispatch for all tiles and is feeding this tile's
+            // slice in via `preBatchedGPUCoefficients`. Skip our own
+            // dispatch entirely and use the supplied dict.
+            if let pre = preBatchedGPUCoefficients {
+                return (pre, nil)
+            }
             // v6.2.0 D4: static flag only fires on GPU pipeline path
             guard (useGPUHT || (isGPUPath && Self._gpuHTEntropyEnabled)),
                   useHT, useConformant,
