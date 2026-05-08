@@ -3022,3 +3022,99 @@ kernel void j2k_ht_magsgn_emit_block(
 
     *byteCountOut = byteIdx;
 }
+
+// ---------------------------------------------------------------------------
+// v7.1.0 I1.2b — Pass 3 MagSgn batched byte-write (multi-block dispatch)
+// ---------------------------------------------------------------------------
+//
+// Same per-block bit-emit logic as `j2k_ht_magsgn_emit_block`, but
+// dispatched as one threadgroup per block. This is the production
+// shape of Pass 3: ~2,300 blocks per DX 2x2 tile each get their own
+// threadgroup. Apple M2's ~320 simultaneous threadgroups means each
+// of the 10 GPU cores sees ~7 in-flight threadgroups, which is what
+// the I1.0 design relies on to amortise the 31-idle-thread cost of
+// the per-block-serial bit-write.
+//
+// Per-block descriptor (uint2):
+//   .x = itemStart  — index into the flat items[] buffer
+//   .y = itemCount  — how many (codeword, count) pairs belong to this block
+//
+// Per-block output offset:
+//   offsets[blockIdx] — start byte index into output[] for this block.
+//   **MUST be 4-byte aligned**, and the gap between consecutive
+//   offsets must be ≥ the aligned-up byte budget for the block.
+//   Apple Silicon implements `device uchar*` stores as 32-bit RMW,
+//   so two threadgroups sharing a 4-byte word race — one wins, the
+//   other's byte gets clobbered. Aligning each block's region to a
+//   word boundary eliminates the race. The Swift wrapper helper
+//   `J2KMetalHTMagSgnEmit.alignedOffsets(byteBudgets:)` computes
+//   the canonical aligned offsets.
+//
+// Per-block byte count out:
+//   byteCountsOut[blockIdx] — emitted byte count, written by thread 0
+//   (raw count, not aligned-up).
+//
+// Bit-exactness: each block produces a stream byte-identical to
+// `HTMagSgnEncoderConformant` — same FF-stuffing, same terminate
+// rollback. Validated by `MetalHTForwardMagSgnEmitBatchedTests`'s
+// per-block-vs-CPU sweep + the alignment regression-guard test.
+
+kernel void j2k_ht_magsgn_emit_blocks_batched(
+    device const uint2* items                [[buffer(0)]],
+    device const uint2* blockDescriptors     [[buffer(1)]], // (itemStart, itemCount) per block
+    device const uint*  outputOffsets        [[buffer(2)]],
+    device       uchar* output               [[buffer(3)]],
+    device       uint*  byteCountsOut        [[buffer(4)]],
+    constant     uint&  blockCount           [[buffer(5)]],
+    uint tid                                 [[thread_position_in_threadgroup]],
+    uint tgIdx                               [[threadgroup_position_in_grid]]
+) {
+    if (tgIdx >= blockCount) return;
+    if (tid != 0u) return;
+
+    const uint2 desc = blockDescriptors[tgIdx];
+    const uint  itemStart    = desc.x;
+    const uint  itemCount    = desc.y;
+    const uint  outputOffset = outputOffsets[tgIdx];
+
+    uint tmp = 0u;
+    uint usedBits = 0u;
+    uint maxBits = 8u;
+    uint byteIdx = 0u;
+
+    for (uint i = 0u; i < itemCount; ++i) {
+        uint cwd = items[itemStart + i].x;
+        uint len = items[itemStart + i].y;
+        while (len > 0u) {
+            uint take = min(maxBits - usedBits, len);
+            uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+            tmp |= (cwd & mask) << usedBits;
+            usedBits += take;
+            cwd >>= take;
+            len -= take;
+            if (usedBits >= maxBits) {
+                uint b = tmp & 0xFFu;
+                output[outputOffset + byteIdx] = (uchar)b;
+                byteIdx += 1u;
+                maxBits = (b == 0xFFu) ? 7u : 8u;
+                tmp = 0u;
+                usedBits = 0u;
+            }
+        }
+    }
+
+    if (usedBits != 0u) {
+        uint padBits = maxBits - usedBits;
+        uint padMask = (padBits >= 32u) ? 0xFFFFFFFFu : ((1u << padBits) - 1u);
+        tmp |= padMask << usedBits;
+        uint b = tmp & 0xFFu;
+        if (b != 0xFFu) {
+            output[outputOffset + byteIdx] = (uchar)b;
+            byteIdx += 1u;
+        }
+    } else if (maxBits == 7u) {
+        byteIdx -= 1u;
+    }
+
+    byteCountsOut[tgIdx] = byteIdx;
+}
