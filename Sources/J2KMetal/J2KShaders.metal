@@ -2870,3 +2870,67 @@ kernel void j2k_subband_scatter_float_dequant(
     else if (d.targetSubband == 2) hlOut[dstIdx] = value;
     else hhOut[dstIdx] = value;
 }
+
+// MARK: - v7.1.0 I1.1 — inclusive prefix-sum (Pass 2 of approach C)
+//
+// Single-threadgroup inclusive scan over a UInt32 array. Used by
+// approach C's Pass 2 to convert per-block byte counts into per-block
+// byte offsets in the concatenated output buffer.
+//
+// Two-level scan within the threadgroup:
+//   1. Each thread loads its element (0 if past end).
+//   2. simd_prefix_inclusive_sum within each simdgroup → per-warp
+//      inclusive prefix-sum.
+//   3. Each warp's last thread writes its total to threadgroup memory.
+//   4. First simdgroup runs simd_prefix_exclusive_sum over the warp
+//      totals → per-warp prefix offsets.
+//   5. Each thread adds its warp's prefix to its local prefix-sum.
+//
+// Threadgroup size must be a multiple of `threads_per_simdgroup`
+// (32 on Apple Silicon). For DX 2x2 multi-tile fixtures we typically
+// have ~2,300 blocks per tile; this kernel handles N up to
+// `threadgroup_size` per dispatch (1024 on M2 → 1024 elements). For
+// larger N use multiple dispatches with a propagation pass; not
+// required for v7.1.0 corpus (we'll add multi-dispatch in I1.2 if
+// the byte-write step's per-block count exceeds 1024 per dispatch).
+kernel void j2k_prefix_sum_inclusive_uint32(
+    device const uint* input          [[buffer(0)]],
+    device       uint* output         [[buffer(1)]],
+    constant     uint& n              [[buffer(2)]],
+    uint tid          [[thread_position_in_threadgroup]],
+    uint sg_id        [[simdgroup_index_in_threadgroup]],
+    uint sg_lane      [[thread_index_in_simdgroup]],
+    uint sg_size      [[threads_per_simdgroup]],
+    uint tg_size      [[threads_per_threadgroup]]
+) {
+    // Phase 1: load this thread's element (or 0 if past end).
+    uint v = (tid < n) ? input[tid] : 0u;
+
+    // Phase 2: simd inclusive prefix-sum within the warp.
+    uint psum = simd_prefix_inclusive_sum(v);
+
+    // Phase 3: each warp's last lane stores its total in threadgroup mem.
+    threadgroup uint sg_totals[32]; // up to 32 simdgroups (32 × 32 = 1024 threads)
+    if (sg_lane == sg_size - 1u) {
+        sg_totals[sg_id] = psum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Phase 4: first simdgroup runs an exclusive prefix-sum over warp totals.
+    uint num_warps = (tg_size + sg_size - 1u) / sg_size;
+    if (sg_id == 0u) {
+        uint t = (sg_lane < num_warps) ? sg_totals[sg_lane] : 0u;
+        uint pt = simd_prefix_exclusive_sum(t);
+        if (sg_lane < num_warps) {
+            sg_totals[sg_lane] = pt;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Phase 5: add the warp's prefix to this thread's local prefix-sum.
+    psum += sg_totals[sg_id];
+
+    if (tid < n) {
+        output[tid] = psum;
+    }
+}

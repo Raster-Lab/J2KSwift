@@ -149,6 +149,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// CPU-side encoder consumes the tuple stream and emits the
     /// inherently-serial MagSgn / MEL / VLC byte streams.
     case htForwardClassifySamples = "j2k_ht_forward_classify_samples"
+    /// Inclusive prefix-sum over a UInt32 array (v7.1.0 I1.1, Pass 2 of
+    /// approach C). Single-threadgroup two-level scan: simd_prefix
+    /// within each warp, then a top-level scan over per-warp totals.
+    /// Handles N up to `threadgroup_size` (1024 on M2). Used to convert
+    /// per-block byte counts → per-block byte offsets for the GPU
+    /// byte-write pass.
+    case prefixSumInclusiveUInt32 = "j2k_prefix_sum_inclusive_uint32"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -3281,6 +3288,44 @@ enum J2KMetalShaderSource {
         else if (d.targetSubband == 1) lhOut[dstIdx] = value;
         else if (d.targetSubband == 2) hlOut[dstIdx] = value;
         else hhOut[dstIdx] = value;
+    }
+
+    // MARK: - v7.1.0 I1.1 — inclusive prefix-sum (Pass 2 of approach C)
+    //
+    // Single-threadgroup two-level scan. simd_prefix_inclusive_sum
+    // within each warp; the last lane of each warp publishes its
+    // total to threadgroup memory; warp 0 then exclusive-scans those
+    // totals; finally each thread adds its warp's prefix back to the
+    // intra-warp prefix to get the global inclusive scan.
+    //
+    // Mirrors the source kept in Sources/J2KMetal/J2KShaders.metal —
+    // duplicated here for the inline source-compile fallback path
+    // (taken when the bundled default.metallib can't be loaded).
+
+    kernel void j2k_prefix_sum_inclusive_uint32(
+        device const uint* input  [[buffer(0)]],
+        device       uint* output [[buffer(1)]],
+        constant     uint& n      [[buffer(2)]],
+        uint tid       [[thread_position_in_threadgroup]],
+        uint sg_id     [[simdgroup_index_in_threadgroup]],
+        uint sg_lane   [[thread_index_in_simdgroup]],
+        uint sg_size   [[threads_per_simdgroup]],
+        uint tg_size   [[threads_per_threadgroup]]
+    ) {
+        uint v = (tid < n) ? input[tid] : 0u;
+        uint psum = simd_prefix_inclusive_sum(v);
+        threadgroup uint sg_totals[32];
+        if (sg_lane == sg_size - 1u) sg_totals[sg_id] = psum;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint num_warps = (tg_size + sg_size - 1u) / sg_size;
+        if (sg_id == 0u) {
+            uint t = (sg_lane < num_warps) ? sg_totals[sg_lane] : 0u;
+            uint pt = simd_prefix_exclusive_sum(t);
+            if (sg_lane < num_warps) sg_totals[sg_lane] = pt;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        psum += sg_totals[sg_id];
+        if (tid < n) output[tid] = psum;
     }
     """
 }
