@@ -179,14 +179,14 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// when the would-be stuff byte's low 7 bits != 0x7F. Bit-exact
     /// with `HTReverseBitEmitterConformant`.
     case htVlcEmitBlocksBatched = "j2k_ht_vlc_emit_blocks_batched"
-    /// v7.1.0 I1.3b — unified Pass 3 cleanup-pass kernel
-    /// (single-block spike). Direct port of
-    /// `HTBlockEncoderConformant.encode(preClassifiedTuples:)` to
-    /// MSL: walks quads, runs MEL run-length + VLC Huffman + MagSgn
-    /// per-quad bit emit on GPU, producing 3 byte streams per block.
-    /// One threadgroup, thread 0 active; bit-exact with the CPU
-    /// reference per `MetalHTForwardCleanupPassEmitTests`.
-    case htCleanupPassEmitBlock = "j2k_ht_cleanup_pass_emit_block"
+    /// v7.1.0 I1.3c — unified Pass 3 cleanup-pass kernel (batched).
+    /// One threadgroup per block; per-block dimensions, tuple-stream
+    /// offset, and per-stream output offsets come from descriptor
+    /// arrays. blockCount=1 collapses to the I1.3b single-block path
+    /// — this is the canonical kernel for both cases. Bit-exact with
+    /// `HTBlockEncoderConformant.encode(preClassifiedTuples:)`;
+    /// validated by `MetalHTForwardCleanupPassEmitTests`.
+    case htCleanupPassEmitBlocksBatched = "j2k_ht_cleanup_pass_emit_blocks_batched"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
