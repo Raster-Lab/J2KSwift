@@ -2934,3 +2934,91 @@ kernel void j2k_prefix_sum_inclusive_uint32(
         output[tid] = psum;
     }
 }
+
+// ---------------------------------------------------------------------------
+// v7.1.0 I1.2 — Pass 3 byte-write kernel (MagSgn-only spike)
+// ---------------------------------------------------------------------------
+//
+// Per-block serial bit-emitter for the HT-conformant MagSgn stream.
+// One threadgroup per block; a single thread does the inherently-
+// serial bit-write while the rest of the warp idles. Block-level
+// parallelism (one threadgroup per block) is what keeps the GPU busy
+// — Apple M2 schedules ~320 simultaneous threadgroups; DX 2x2 emits
+// ~2,300 blocks per tile, so each core sees ~7 in-flight threadgroups.
+//
+// Direct port of `HTMagSgnEncoderConformant.encode + finish` from
+// `Sources/J2KCodec/J2KHTConformantMagSgnCoder.swift`. FF-stuffing
+// is applied inline (the next byte's high bit is reserved as a
+// 0 stuff-bit after every 0xFF). The terminate edge-cases match
+// the CPU reference 1:1 — the bit-exact regression tests in
+// `MetalHTForwardMagSgnEmitTests.swift` are the gate.
+//
+// Inputs (per block):
+//   - `items[]` — packed (codeword, count) pairs, uint2.
+//   - `itemCount` — how many items to consume.
+//   - `outputOffset` — starting byte index in `output[]` for this
+//     block's stream (computed by the I1.1 prefix-sum kernel; for
+//     the I1.2 spike's single-block tests it's just 0).
+//   - `output[]` — `device` byte buffer, written sequentially.
+//   - `byteCountOut` — written with the number of bytes the block
+//     emitted (post-finish, post-FF-trim).
+//
+// I1.2 scope is intentionally MagSgn-only single-block. Multi-block
+// dispatch + MEL/VLC + integration with classifier + prefix-sum
+// land in subsequent I1.2 / I1.3 PRs.
+
+kernel void j2k_ht_magsgn_emit_block(
+    device const uint2* items         [[buffer(0)]],
+    constant     uint&  itemCount     [[buffer(1)]],
+    device       uchar* output        [[buffer(2)]],
+    constant     uint&  outputOffset  [[buffer(3)]],
+    device       uint*  byteCountOut  [[buffer(4)]],
+    uint tid                          [[thread_position_in_threadgroup]]
+) {
+    if (tid != 0u) return;
+
+    uint tmp = 0u;
+    uint usedBits = 0u;
+    uint maxBits = 8u;
+    uint byteIdx = 0u;
+
+    for (uint i = 0u; i < itemCount; ++i) {
+        uint cwd = items[i].x;
+        uint len = items[i].y;
+        while (len > 0u) {
+            uint take = min(maxBits - usedBits, len);
+            uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+            tmp |= (cwd & mask) << usedBits;
+            usedBits += take;
+            cwd >>= take;
+            len -= take;
+            if (usedBits >= maxBits) {
+                uint b = tmp & 0xFFu;
+                output[outputOffset + byteIdx] = (uchar)b;
+                byteIdx += 1u;
+                maxBits = (b == 0xFFu) ? 7u : 8u;
+                tmp = 0u;
+                usedBits = 0u;
+            }
+        }
+    }
+
+    // finish() — pad with 1-bits, drop the padded byte if it's 0xFF,
+    // roll back the over-committed reserved-stuff slot if maxBits==7.
+    if (usedBits != 0u) {
+        uint padBits = maxBits - usedBits;
+        uint padMask = (padBits >= 32u) ? 0xFFFFFFFFu : ((1u << padBits) - 1u);
+        tmp |= padMask << usedBits;
+        uint b = tmp & 0xFFu;
+        if (b != 0xFFu) {
+            output[outputOffset + byteIdx] = (uchar)b;
+            byteIdx += 1u;
+        }
+    } else if (maxBits == 7u) {
+        // ms_terminate rollback — un-emit the byte that reserved a
+        // stuff-bit slot we never filled.
+        byteIdx -= 1u;
+    }
+
+    *byteCountOut = byteIdx;
+}
