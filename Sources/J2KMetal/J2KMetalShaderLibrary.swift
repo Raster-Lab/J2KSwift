@@ -45,8 +45,16 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse53Vertical = "j2k_dwt_inverse_53_vertical"
     /// Inverse 5/3 reversible wavelet transform (horizontal, integer / bit-exact).
     case dwtInverse53HorizontalInt = "j2k_dwt_inverse_53_horizontal_int"
+    /// v7.1.0 H2 — parity-aware odd-origin inverse 5/3 horizontal.
+    /// Bit-exact with `J2KDWT1DOptimized.inverseTransform53OddOriginSymmetric`.
+    /// Used for the multi-tile per-tile decode path when the band's
+    /// canvas origin is odd at the active decomposition level.
+    case dwtInverse53HorizontalIntOdd = "j2k_dwt_inverse_53_horizontal_int_odd"
     /// Inverse 5/3 reversible wavelet transform (vertical, integer / bit-exact).
     case dwtInverse53VerticalInt = "j2k_dwt_inverse_53_vertical_int"
+    /// v7.1.0 H2 — parity-aware odd-origin inverse 5/3 vertical.
+    /// Bit-exact with the CPU reference.
+    case dwtInverse53VerticalIntOdd = "j2k_dwt_inverse_53_vertical_int_odd"
     /// Forward 9/7 irreversible wavelet transform (horizontal).
     case dwtForward97Horizontal = "j2k_dwt_forward_97_horizontal"
     /// Forward 9/7 irreversible wavelet transform (vertical).

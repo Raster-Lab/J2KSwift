@@ -4010,3 +4010,152 @@ kernel void j2k_ht_cleanup_pass_emit_blocks_batched(
 
     byteCountsOut[tgIdx] = uint3(ms_byteIdx, mel_byteIdx, vlc_byteIdx);
 }
+
+// ---------------------------------------------------------------------------
+// v7.1.0 H2 — Inverse 5/3 Reversible DWT (parity-aware, odd-origin)
+// ---------------------------------------------------------------------------
+//
+// Direct port of `inverseTransform53OddOriginSymmetric` from
+// `Sources/J2KCodec/J2KDWT1DOptimized.swift` to MSL. The even-origin
+// inverse kernels above always assumed canvas origin (0, 0); for
+// multi-tile per-tile decode where the band's canvas origin is odd
+// at a given decomposition level, we need the parity-aware lifting
+// equations. ISO/IEC 15444-1 Annex F.4.1.1.
+//
+// **Differences vs even-origin inverse**:
+//   1. Step 1 (undo update on L) — for odd origin, only RIGHT mirror
+//      (`H[i+1] → H[highCount-1]` when `i+1 >= highCount`). NO left
+//      mirror — the lifting starts from `H[i]` itself (not `H[i-1]`).
+//   2. Step 2 (undo predict on H) — three regions:
+//        * H[0]   += L[0]                     (no left mirror)
+//        * H[i]   += ((L[i-1] + L[i]) >> 1)   for 1 ≤ i < min(highCount, lowCount)
+//        * H[lowCount] += L[lowCount-1]       (right tail when n odd)
+//   3. Interleave is **flipped**:
+//        * even origin: x[2i] = L, x[2i+1] = H
+//        * odd  origin: x[2i] = H, x[2i+1] = L
+//
+// This kernel writes directly to the output buffer at the final
+// interleaved positions. Step 1's L-update goes to output[2i+1];
+// step 2 reads those positions back as L_updated when computing
+// H_updated, which lands at output[2i]. The intra-row dependency
+// is sequential within the lifting steps but read-write doesn't
+// race because step 1 fills only odd-indexed slots and step 2
+// fills only even-indexed slots.
+//
+// Bit-exact with `J2KDWT1DOptimized.inverseTransform53OddOriginSymmetric`;
+// validated by `J2KMetalDWT53IntOddOriginBitExactTests`.
+
+kernel void j2k_dwt_inverse_53_horizontal_int_odd(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.y >= height) return;
+
+    uint row = gid.y;
+    // Odd origin: highCount = ceil(n/2), lowCount = floor(n/2).
+    uint lowCount  = width / 2;
+    uint highCount = width - lowCount;
+
+    uint lBase = row * lowCount;
+    uint hBase = row * highCount;
+    uint oBase = row * width;
+
+    // Edge case: lowCount == 0 (width = 1, n odd) — only H sample,
+    // goes to output[0] under odd interleave.
+    if (lowCount == 0) {
+        if (highCount > 0) {
+            output[oBase] = highpass[hBase];
+        }
+        return;
+    }
+
+    // Step 1: undo update on L.
+    //   L[i] -= ((H[i] + H[i+1] + 2) >> 2)
+    // Right mirror: H[i+1] → H[highCount - 1] when i+1 >= highCount.
+    // L_updated lands at output[2i + 1] (odd-origin interleave).
+    for (uint i = 0; i < lowCount; i++) {
+        int hLeft  = highpass[hBase + i];
+        int hRight = (i + 1 < highCount)
+            ? highpass[hBase + i + 1]
+            : highpass[hBase + highCount - 1];
+        output[oBase + 2 * i + 1] = lowpass[lBase + i] - ((hLeft + hRight + 2) >> 2);
+    }
+
+    // Step 2: undo predict on H.
+    //   H[0]   += L[0]                                  (left)
+    //   H[i]   += ((L[i-1] + L[i]) >> 1)                (interior, 1 ≤ i < min(highCount, lowCount))
+    //   H[lowCount] += L[lowCount-1]                    (right tail, n odd)
+    // H_updated lands at output[2i] (odd-origin interleave).
+    if (highCount > 0) {
+        // L[0] is at output[1] (already written in Step 1).
+        output[oBase] = highpass[hBase] + output[oBase + 1];
+    }
+    uint interiorEnd = min(highCount, lowCount);
+    for (uint i = 1; i < interiorEnd; i++) {
+        int lLeft  = output[oBase + 2 * (i - 1) + 1];
+        int lRight = output[oBase + 2 * i + 1];
+        output[oBase + 2 * i] = highpass[hBase + i] + ((lLeft + lRight) >> 1);
+    }
+    if (highCount > lowCount) {
+        // H[lowCount] += L[lowCount - 1]; output position 2 * lowCount.
+        int lLast = output[oBase + 2 * (lowCount - 1) + 1];
+        output[oBase + 2 * lowCount] = highpass[hBase + lowCount] + lLast;
+    }
+}
+
+// MARK: - Inverse 5/3 Reversible DWT (Vertical, integer / odd origin)
+
+kernel void j2k_dwt_inverse_53_vertical_int_odd(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= width) return;
+
+    uint col = gid.x;
+    // Odd origin (vertical): high → ceil, low → floor of height.
+    uint lowCount  = height / 2;
+    uint highCount = height - lowCount;
+
+    if (lowCount == 0) {
+        if (highCount > 0) {
+            output[col] = highpass[col];   // H → row 0 in odd interleave
+        }
+        return;
+    }
+
+    // Step 1: undo update on L (per-column lift). L_updated lands at
+    // output row (2 * i + 1), column `col`.
+    for (uint i = 0; i < lowCount; i++) {
+        int hTop = highpass[i * width + col];
+        int hBot = (i + 1 < highCount)
+            ? highpass[(i + 1) * width + col]
+            : highpass[(highCount - 1) * width + col];
+        output[(2 * i + 1) * width + col] = lowpass[i * width + col]
+                                          - ((hTop + hBot + 2) >> 2);
+    }
+
+    // Step 2: undo predict on H. H_updated lands at row (2 * i).
+    if (highCount > 0) {
+        output[col] = highpass[col] + output[width + col];   // H[0] += L[0]
+    }
+    uint interiorEnd = min(highCount, lowCount);
+    for (uint i = 1; i < interiorEnd; i++) {
+        int lTop = output[(2 * (i - 1) + 1) * width + col];
+        int lBot = output[(2 * i + 1) * width + col];
+        output[(2 * i) * width + col] = highpass[i * width + col]
+                                      + ((lTop + lBot) >> 1);
+    }
+    if (highCount > lowCount) {
+        int lLast = output[(2 * (lowCount - 1) + 1) * width + col];
+        output[(2 * lowCount) * width + col] = highpass[lowCount * width + col]
+                                              + lLast;
+    }
+}
