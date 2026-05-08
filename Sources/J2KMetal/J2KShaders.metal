@@ -3198,3 +3198,118 @@ kernel void j2k_ht_mel_emit_blocks_batched(
 
     byteCountsOut[tgIdx] = byteIdx;
 }
+
+// ---------------------------------------------------------------------------
+// v7.1.0 I1.2d — Pass 3 VLC batched byte-write (reverse bit-stream)
+// ---------------------------------------------------------------------------
+//
+// Direct port of `HTReverseBitEmitterConformant.encode + finish` from
+// `Sources/J2KCodec/J2KHTConformantBitStream.swift`.
+//
+// The VLC stream is the trickiest of the three Pass 3 emit kernels:
+//
+//   - Bytes are packed **LSB-first** within each byte but the byte
+//     SEQUENCE itself is built in REVERSE: the first emitted byte
+//     ends up at the **end** of the on-wire stream, the last emitted
+//     byte ends up at the start.
+//   - The first byte of the on-wire stream is always `0xFF` (sentinel,
+//     adjacent to the MagSgn region; ISO 15444-15).
+//   - Reverse FF-stuffing: when the previous emitted byte was
+//     `> 0x8F`, the next byte's **low** bit is reserved as a stuff
+//     bit (0). There's a deferred-emit optimization: if the byte
+//     after stuff would have low 7 bits != 0x7F, the stuff
+//     reservation is "released" and the high bit becomes a real
+//     data bit instead.
+//   - Initial state: `tmp = 0x0F`, `usedBits = 4`,
+//     `lastGreaterThan8F = true` — the 4 already-used bits represent
+//     the initial 0xFF sentinel's downstream adjacency.
+//
+// Strategy: emit bytes forward into the per-block region (the
+// sentinel goes at byteIdx=0, then each new emitted byte at
+// byteIdx=1, 2, …). After all bits have been packed and any partial
+// byte flushed by `finish()`, reverse the region in-place so the
+// on-wire forward order matches the CPU reference's
+// `emittedReversed.reversed()` return value.
+//
+// Same Apple-Silicon byte-store RMW alignment requirement as
+// I1.2b/I1.2c: per-block output offsets MUST be 4-byte aligned.
+
+kernel void j2k_ht_vlc_emit_blocks_batched(
+    device const uint2* items                [[buffer(0)]],
+    device const uint2* blockDescriptors     [[buffer(1)]],
+    device const uint*  outputOffsets        [[buffer(2)]],
+    device       uchar* output               [[buffer(3)]],
+    device       uint*  byteCountsOut        [[buffer(4)]],
+    constant     uint&  blockCount           [[buffer(5)]],
+    uint tid                                 [[thread_position_in_threadgroup]],
+    uint tgIdx                               [[threadgroup_position_in_grid]]
+) {
+    if (tgIdx >= blockCount) return;
+    if (tid != 0u) return;
+
+    const uint2 desc = blockDescriptors[tgIdx];
+    const uint  itemStart    = desc.x;
+    const uint  itemCount    = desc.y;
+    const uint  outputOffset = outputOffsets[tgIdx];
+
+    // Initial state: emittedReversed = [0xFF], tmp = 0x0F, usedBits = 4.
+    output[outputOffset + 0u] = (uchar)0xFFu;
+    uint byteIdx = 1u;
+
+    uint tmp = 0x0Fu;
+    uint usedBits = 4u;
+    bool lastGreaterThan8F = true;
+
+    for (uint i = 0u; i < itemCount; ++i) {
+        uint cwd = items[itemStart + i].x;
+        uint len = items[itemStart + i].y;
+        while (len > 0u) {
+            uint stuffPenalty = lastGreaterThan8F ? 1u : 0u;
+            uint availBits = 8u - stuffPenalty - usedBits;
+            uint take = min(availBits, len);
+            if (take > 0u) {
+                uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+                tmp |= (cwd & mask) << usedBits;
+                usedBits += take;
+                cwd >>= take;
+                len -= take;
+            }
+            uint remainingAfter = availBits - take;
+            if (remainingAfter == 0u) {
+                if (lastGreaterThan8F && tmp != 0x7Fu) {
+                    // Deferred stuff release: the "would-be" stuff
+                    // byte has only 7 real bits and tmp != 0x7F, so
+                    // we can sneak one more real bit into the high
+                    // position by dropping the stuff reservation.
+                    lastGreaterThan8F = false;
+                    continue;
+                }
+                output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+                byteIdx += 1u;
+                lastGreaterThan8F = (tmp > 0x8Fu);
+                tmp = 0u;
+                usedBits = 0u;
+            }
+        }
+    }
+
+    // finish(): flush any partial byte (no padding adjustment — the
+    // CPU reference appends `tmp` directly).
+    if (usedBits > 0u) {
+        output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+        byteIdx += 1u;
+    }
+
+    // Reverse the per-block region in-place. CPU returns
+    // `emittedReversed.reversed()`; we wrote the bytes forward into
+    // the region in emit order, so flipping produces the on-wire
+    // forward order.
+    for (uint i = 0u; i < byteIdx / 2u; ++i) {
+        uchar a = output[outputOffset + i];
+        uchar b = output[outputOffset + byteIdx - 1u - i];
+        output[outputOffset + i] = b;
+        output[outputOffset + byteIdx - 1u - i] = a;
+    }
+
+    byteCountsOut[tgIdx] = byteIdx;
+}

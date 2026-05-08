@@ -172,6 +172,13 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// group per block; same 4-byte-alignment requirement as I1.2b.
     /// Bit-exact with `HTForwardBitEmitterConformant`.
     case htMelEmitBlocksBatched = "j2k_ht_mel_emit_blocks_batched"
+    /// v7.1.0 I1.2d — Pass 3 VLC batched byte-write (reverse bit-
+    /// stream). LSB-first within each byte; the byte SEQUENCE is
+    /// built in reverse and flipped in-place at the end. Reverse
+    /// FF-stuffing on `> 0x8F` bytes with deferred-stuff release
+    /// when the would-be stuff byte's low 7 bits != 0x7F. Bit-exact
+    /// with `HTReverseBitEmitterConformant`.
+    case htVlcEmitBlocksBatched = "j2k_ht_vlc_emit_blocks_batched"
     /// MagSgn forward bit reader — port of `HTMagSgnDecoderConformant.read`
     /// to MSL. Each thread decodes one codeblock's MagSgn stream given a
     /// per-sample widths array. Bit-exact with the CPU reference.
@@ -3508,6 +3515,74 @@ enum J2KMetalShaderSource {
             tmp <<= remainingBits;
             output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
             byteIdx += 1u;
+        }
+        byteCountsOut[tgIdx] = byteIdx;
+    }
+
+    // MARK: - v7.1.0 I1.2d — Pass 3 VLC batched byte-write (reverse stream)
+    //
+    // LSB-first within each byte; bytes built forward in emit order,
+    // then reversed in-place at end. `lastGreaterThan8F` reverse-stuff
+    // rule with the deferred-stuff release when low-7 bits != 0x7F.
+
+    kernel void j2k_ht_vlc_emit_blocks_batched(
+        device const uint2* items                [[buffer(0)]],
+        device const uint2* blockDescriptors     [[buffer(1)]],
+        device const uint*  outputOffsets        [[buffer(2)]],
+        device       uchar* output               [[buffer(3)]],
+        device       uint*  byteCountsOut        [[buffer(4)]],
+        constant     uint&  blockCount           [[buffer(5)]],
+        uint tid                                 [[thread_position_in_threadgroup]],
+        uint tgIdx                               [[threadgroup_position_in_grid]]
+    ) {
+        if (tgIdx >= blockCount) return;
+        if (tid != 0u) return;
+        const uint2 desc = blockDescriptors[tgIdx];
+        const uint itemStart = desc.x;
+        const uint itemCount = desc.y;
+        const uint outputOffset = outputOffsets[tgIdx];
+        output[outputOffset + 0u] = (uchar)0xFFu;
+        uint byteIdx = 1u;
+        uint tmp = 0x0Fu;
+        uint usedBits = 4u;
+        bool lastGreaterThan8F = true;
+        for (uint i = 0u; i < itemCount; ++i) {
+            uint cwd = items[itemStart + i].x;
+            uint len = items[itemStart + i].y;
+            while (len > 0u) {
+                uint stuffPenalty = lastGreaterThan8F ? 1u : 0u;
+                uint availBits = 8u - stuffPenalty - usedBits;
+                uint take = min(availBits, len);
+                if (take > 0u) {
+                    uint mask = (take >= 32u) ? 0xFFFFFFFFu : ((1u << take) - 1u);
+                    tmp |= (cwd & mask) << usedBits;
+                    usedBits += take;
+                    cwd >>= take;
+                    len -= take;
+                }
+                uint remainingAfter = availBits - take;
+                if (remainingAfter == 0u) {
+                    if (lastGreaterThan8F && tmp != 0x7Fu) {
+                        lastGreaterThan8F = false;
+                        continue;
+                    }
+                    output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+                    byteIdx += 1u;
+                    lastGreaterThan8F = (tmp > 0x8Fu);
+                    tmp = 0u;
+                    usedBits = 0u;
+                }
+            }
+        }
+        if (usedBits > 0u) {
+            output[outputOffset + byteIdx] = (uchar)(tmp & 0xFFu);
+            byteIdx += 1u;
+        }
+        for (uint i = 0u; i < byteIdx / 2u; ++i) {
+            uchar a = output[outputOffset + i];
+            uchar b = output[outputOffset + byteIdx - 1u - i];
+            output[outputOffset + i] = b;
+            output[outputOffset + byteIdx - 1u - i] = a;
         }
         byteCountsOut[tgIdx] = byteIdx;
     }
