@@ -5,6 +5,79 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.2.0] — 2026-05-09
+
+**Encode-side UMA boundary elimination + cross-tile batched HT entropy decode**
+
+Foundation-and-measurable-wins release. DX in-process decode tightens
+from 65.5 ms → 60.0 ms (8.4 % faster vs v7.1.1); DX in-process encode
+tightens 54.8 ms → 50.9 ms (7.2 % faster). Kakadu gap on DX in-process
+decode goes from 2.66× → 2.43×. Closing the rest of the gap requires
+CPU SIMD on the HT entropy decoder (62.6 % of DX decode CPU work) —
+captured as the v7.3 arc in `V7_2_0_STATUS_AND_KAKADU_GAP.md`.
+
+### Added
+
+- **`J2KMetalSharedBufferView<Element: Sendable>`** — read-only typed
+  view over a `.storageModeShared` MTLBuffer. Exposes the buffer's
+  CPU-visible memory directly via `UnsafeBufferPointer`; no readback
+  memcpy. Holds a strong buffer reference and returns it to the pool
+  on `release()` / deinit.
+- **`J2KMetalDWTSubbandsInt32View`** + **`J2KMetalDWT.forward2DInt32MultiLevelFusedView`** —
+  view-backed counterpart to the array-returning forward 5/3 DWT
+  producer. Eliminates the 4× per-level × N-level readback memcpys
+  (= 20 boundaries on a typical 5-level lossless encode of DX).
+- **`EncoderPipeline.CoefficientStorage`** enum (`.empty` / `.array` /
+  `.view`) — polymorphic Int32 coefficient storage on `SubbandInfo`
+  and `DeferredCodeBlock`.
+- **`DecoderPipeline.decodeMultiTileGPUBatched`** — cross-tile batched
+  HT entropy decode. Aggregates every tile's eligible HT codeblocks
+  into one shared MTLCommandBuffer instead of N per-tile CBs.
+- **`DecoderPipeline._multiTileBatchedEntropyEnabled`** static flag
+  (default ON) for A/B comparison testing.
+- **`V720Phase0UMAProfileTests`** — UMA counter baseline per fixture.
+- **`V720PhaseEThresholdSweepTests`** — empirical sweep of the
+  multi-tile per-tile entropy/IDWT GPU thresholds.
+- **`V720PhaseEABTest`** — A/B `_multiTileBatchedEntropyEnabled` ON
+  vs OFF across 5 fixtures.
+
+### Changed
+
+- `J2KDecodeTimings.record*` calls added to `decodeTilePayload` and
+  `decodeTilePayloadGPU`. Pre-fix the multi-tile per-tile decode path
+  reported all-zero stage breakdowns for fixtures ≥ 500K px.
+- `applyEntropyDecoding` gains an optional
+  `preBatchedGPUCoefficients: [Int: [Int32]]?` parameter.
+- `SubbandInfo.coefficients` and `DeferredCodeBlock.subbandCoefficients`
+  changed type from `[Int32]` to `CoefficientStorage`. Internal API.
+- Lossless reversible 5/3 quantize stage bypasses identity-allocation
+  for view-backed inputs, keeping the GPU output buffer alive through
+  to the entropy coder.
+- `getVersion()` returns `"7.2.0"` (was stale at `"5.14.2"`).
+
+### Documentation
+
+- `V7_2_0_PROFILE.md` — Phase 0 baseline + plan revision (Option 3).
+- `V7_2_0_PHASE_E_FINDING.md` — empirical refutation of "lower
+  thresholds" + pivot to CB amortisation.
+- `V7_2_0_STATUS_AND_KAKADU_GAP.md` — end-of-overnight honest
+  assessment + v7.3 SIMD arc sketch.
+- `RELEASE_NOTES_v7.2.0.md` — full release notes.
+
+### Backward compatibility
+
+Codestream bytes byte-identical to v7.1.1. No public API breakage.
+SemVer rule: MINOR.
+
+### Known limitations
+
+- Kakadu gap remains 2.43× on DX in-process decode. v7.3 arc.
+- Phase A encode UMA wall benefit is foundation-only on default
+  routing (gate fires only on per-tile pixels ≥ 4 MP; default
+  planner picks 4x4 multi-tile for ≥3 MP fixtures).
+- Phase E batched-entropy gate (per-tile ≥ 1 MP) retained — lowering
+  it was empirically refuted (see `V7_2_0_PHASE_E_FINDING.md`).
+
 ## [5.34.0] — 2026-05-04
 
 **Strict bounded-rate mode — hard byte cap via codestream truncation**
