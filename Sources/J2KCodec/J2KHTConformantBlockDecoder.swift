@@ -297,15 +297,15 @@ fileprivate struct DecodeState {
             // whether the samples were significant and their
             // reconstructed magnitude bit widths. We use them only to
             // populate eVal/cxVal for the next row.
-            let eQ0 = recoverEQ(rho: rho0, baseX: x, baseY: 0)
-            eVal[lep] = max(eVal[lep], UInt8(eQ0.1)); lep += 1
-            eVal[lep] = UInt8(eQ0.3)
+            let eQ0 = recoverEQBottomRow(rho: rho0, baseX: x, baseY: 0)
+            eVal[lep] = max(eVal[lep], UInt8(eQ0.0)); lep += 1
+            eVal[lep] = UInt8(eQ0.1)
             cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
             cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
             if x + 2 < width {
-                let eQ1 = recoverEQ(rho: rho1, baseX: x + 2, baseY: 0)
-                eVal[lep] = max(eVal[lep], UInt8(eQ1.1)); lep += 1
-                eVal[lep] = UInt8(eQ1.3)
+                let eQ1 = recoverEQBottomRow(rho: rho1, baseX: x + 2, baseY: 0)
+                eVal[lep] = max(eVal[lep], UInt8(eQ1.0)); lep += 1
+                eVal[lep] = UInt8(eQ1.1)
                 cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
                 cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
             }
@@ -403,10 +403,10 @@ fileprivate struct DecodeState {
             //   lep[0] = max(lep[0], e_q[1]); lep++;
             //   max_e = max(lep[0], lep[1]) - 1;
             //   lep[0] = e_q[3];
-            let eQ0pair = recoverEQ(rho: rho0, baseX: x, baseY: y)
-            eVal[lep] = max(eVal[lep], UInt8(eQ0pair.1)); lep += 1
+            let eQ0pair = recoverEQBottomRow(rho: rho0, baseX: x, baseY: y)
+            eVal[lep] = max(eVal[lep], UInt8(eQ0pair.0)); lep += 1
             let maxEAfterQ0 = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-            eVal[lep] = UInt8(eQ0pair.3)
+            eVal[lep] = UInt8(eQ0pair.1)
 
             // Step 5: kappaB and MagSgn for quad 1.
             var kappaB = 1
@@ -418,10 +418,10 @@ fileprivate struct DecodeState {
                     rho: rho1, Uq: Uq1,
                     e_k: look1.e_k, e_1: look1.e_1)
 
-                let eQ1pair = recoverEQ(rho: rho1, baseX: x + 2, baseY: y)
-                eVal[lep] = max(eVal[lep], UInt8(eQ1pair.1)); lep += 1
+                let eQ1pair = recoverEQBottomRow(rho: rho1, baseX: x + 2, baseY: y)
+                eVal[lep] = max(eVal[lep], UInt8(eQ1pair.0)); lep += 1
                 maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-                eVal[lep] = UInt8(eQ1pair.3)
+                eVal[lep] = UInt8(eQ1pair.1)
             } else {
                 maxE = maxEAfterQ0
             }
@@ -560,47 +560,57 @@ fileprivate struct DecodeState {
         }
     }
 
-    /// Derive e_q for the 4 samples of a quad from the reconstructed
-    /// coefficients already placed in `coefs`. Returns a 4-tuple
-    /// indexed by in-quad position (col * 2 + row). Only indices 1
-    /// and 3 are used by the eVal bookkeeping, but the helper returns
-    /// all four for uniformity.
-    func recoverEQ(rho: Int, baseX: Int, baseY: Int)
-        -> (Int, Int, Int, Int)
+    /// **v7.3.0 Phase 3c — bottom-row-only `recoverEQ`.**
+    ///
+    /// Derive e_q for the bottom-row samples of a quad (in-quad
+    /// indices 1 and 3) from the reconstructed coefficients placed
+    /// in `coefs`. Returns `(eQ_pos1, eQ_pos3)`.
+    ///
+    /// Replaces the previous `recoverEQ -> (Int, Int, Int, Int)`
+    /// helper that computed all four positions but whose callers
+    /// only ever read indices 1 and 3 (the bottom-row eQ values
+    /// feed the `eVal` bookkeeping for the next decoding row;
+    /// indices 0 and 2 — top-row — were computed and immediately
+    /// discarded).
+    ///
+    /// On DX 4x4 the per-decode call count is ~1.2 M; the per-call
+    /// savings come from skipping two of the four iterations
+    /// (the bit-test + offset-derivation + bounds-check + work for
+    /// indices 0 and 2). Bit-identical to the previous helper at
+    /// the consumed-output level (callers read only `.1`/`.3`).
+    @inline(__always)
+    func recoverEQBottomRow(rho: Int, baseX: Int, baseY: Int)
+        -> (Int, Int)
     {
-        let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
-        var result = (0, 0, 0, 0)
-        for i in 0..<4 {
-            if (rho >> i) & 1 == 0 { continue }
-            let (dx, dy) = offsets[i]
-            let xi = baseX + dx
-            let yi = baseY + dy
-            if xi >= width || yi >= height { continue }
-            let mag = coefs[yi * width + xi] & 0x7FFF_FFFF
-            // Invert (v_n + 2) << (p - 1). Ignoring sign:
-            //   v_n + 2 = mag >> (p - 1)
-            //   v_n = (mag >> (p-1)) - 2
-            // Then eQ is position of top bit of (v_n + 1) in
-            // 2-indexed terms matching encoder's
-            // `eQ = 32 - leadingZeroBitCount(val)` convention where
-            // `val = 2μ_p - 1`.
-            let v_n = (mag >> (p &- 1)) &- 2
-            // v_n has bit structure `... e1 | payload | 1`, so
-            // effectively `v_n | 1 = (v_n + 1)` rounds to the encoder's
-            // `2μ_p - 1`.
-            // The encoder's eQ was `32 - leadingZeroBits(2μ_p - 1)`,
-            // i.e. 1-indexed position of MSB of (2μ_p - 1).
-            let twoMuMinusOne = v_n | 1
-            let eQ = 32 - twoMuMinusOne.leadingZeroBitCount
-            switch i {
-            case 0: result.0 = eQ
-            case 1: result.1 = eQ
-            case 2: result.2 = eQ
-            case 3: result.3 = eQ
-            default: break
+        // Position 1: in-quad (col=0, row=1) → (baseX, baseY+1)
+        var eQ1: Int = 0
+        if (rho >> 1) & 1 != 0 {
+            let yi = baseY + 1
+            if baseX < width && yi < height {
+                let mag = coefs[yi * width + baseX] & 0x7FFF_FFFF
+                // Invert (v_n + 2) << (p - 1). Ignoring sign:
+                //   v_n + 2 = mag >> (p - 1)
+                //   v_n = (mag >> (p-1)) - 2
+                // Then eQ = 32 - leadingZeroBits(v_n | 1), matching
+                // the encoder's `2μ_p - 1` convention.
+                let v_n = (mag >> (p &- 1)) &- 2
+                let twoMuMinusOne = v_n | 1
+                eQ1 = 32 - twoMuMinusOne.leadingZeroBitCount
             }
         }
-        return result
+        // Position 3: in-quad (col=1, row=1) → (baseX+1, baseY+1)
+        var eQ3: Int = 0
+        if (rho >> 3) & 1 != 0 {
+            let xi = baseX + 1
+            let yi = baseY + 1
+            if xi < width && yi < height {
+                let mag = coefs[yi * width + xi] & 0x7FFF_FFFF
+                let v_n = (mag >> (p &- 1)) &- 2
+                let twoMuMinusOne = v_n | 1
+                eQ3 = 32 - twoMuMinusOne.leadingZeroBitCount
+            }
+        }
+        return (eQ1, eQ3)
     }
 }
 
