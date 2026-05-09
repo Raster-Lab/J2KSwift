@@ -34,14 +34,19 @@ public enum HTBlockDecoderConformant {
     /// little work per call to amortise its setup cost. The SIMD
     /// path wins ~3 % on sparse blocks (where its flat per-call
     /// cost beats scalar's per-iteration overhead) but loses ~3 %
-    /// on dense blocks. Aggregate on DX in-process: +0.9 ms.
+    /// on dense blocks. Aggregate on DX in-process at v7.4 time: +0.9 ms.
     ///
-    /// This flag is not removed because future v7.4 work (chained-
-    /// state MagSgn refill SIMD, batched per-quad MagSgn reads,
-    /// etc.) may compound with NEON reconstruction in a way that
-    /// flips the default back to ON. Until then, scalar is the
-    /// production path.
-    nonisolated(unsafe) public static var neonReconstructionEnabled: Bool = false
+    /// **v8 Phase 4 (2026-05-09) re-evaluation flips default to true.**
+    /// Re-running the same DX A/B benchmark on v8 main (post Phase 3
+    /// SIMD IDWT) shows the NEON reconstruction win is now consistently
+    /// 2.5-4.5 ms with median 2.96 ms across 10 samples — right at
+    /// the v7.4 3 ms gate. Under the v8 product narrowing to Apple-
+    /// Silicon-only (memory `feedback_apple_only_v8`), measurable
+    /// consistent Apple Silicon wins are accepted default-on even
+    /// when borderline against the v7.4 cross-platform gate. The
+    /// flag is preserved (now a default-ON opt-out) so non-Apple
+    /// or future curve-shifted platforms can disable it.
+    nonisolated(unsafe) public static var neonReconstructionEnabled: Bool = true
 
     /// Decode a Part-15 codeblock produced by
     /// `HTBlockEncoderConformant.encode` + `HTBlockLayoutConformant.assemble`.
