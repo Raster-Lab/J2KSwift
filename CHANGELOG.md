@@ -5,6 +5,87 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.4.0] — 2026-05-09
+
+**Staged NEON release — SWAR-batched MagSgn refill default ON; reconstruction & VLC SWAR rejected with measurements**
+
+Three PRs (#369, #370, #371) deliver the v7.4 staged-NEON arc on
+Apple Silicon. The acceptance discipline was strict: each phase
+runs an end-to-end DX 2800×2288 in-process A/B and ships
+default-ON only on a measured ≥ 3 ms wall-time improvement.
+Only Phase 2 cleared that bar.
+
+### Changed
+
+- `HTMagSgnDecoderConformant.refill` (#370, **production default**)
+  is now SWAR-batched — 4-byte unaligned `UInt32` loads with a
+  per-batch `0xFF`-detect via SWAR
+  `(p32 ^ 0xFFFFFFFF) followed by (inv − 0x01010101) & ~inv & 0x80808080`.
+  Fast path (no `0xFF` in batch and no carried unstuff) folds 4
+  bytes into the bit accumulator at once; slow fallback is
+  byte-by-byte scalar (bit-exact-by-construction). At the
+  corpus-typical 0xFF density of ~0.4 %, ~99 % of batches hit
+  the fast path. Microbench shows 1.05× → 1.49× speedup at
+  3-32 bit reads (1.15× at the DX corpus average of 14 bits per
+  read). End-to-end DX 2800×2288 in-process decode improves by
+  ~3 ms vs scalar on a settled system. Bit-exact across 11
+  parity sweeps including all-zero, all-FF, alternating, FF
+  position-by-position, 32 random seeds, padding-exhaust, and
+  edge sizes.
+
+### Added
+
+- `HTMagSgnDecoderConformant.neonRefillEnabled: Bool = true`
+  (#370) — public flag to opt out of the batched refill if a
+  consumer hits an unexpected platform regression.
+- `HTBlockDecoderConformant.neonReconstructionEnabled: Bool = false`
+  (#369) — public flag for the experimental SIMD4
+  `readQuadSamples` reconstruction path. **Default OFF** because
+  the measured DX in-process A/B Δ was 0.90 ms — below the 3 ms
+  acceptance threshold. Kept behind the flag so future work can
+  re-measure if the stage cost share shifts.
+- `VLCReverseReaderTesting.batchedRefillEnabled: Bool = false`
+  (#371) — public flag for the experimental SWAR-batched VLC
+  reverse-reader refill. **Default OFF** because the DX in-process
+  A/B Δ was −0.6 to +2.5 ms across 3 runs (run-to-run noise
+  dominates). Root cause: VLC's stuff-trigger predicate
+  ("byte > 0x8F") covers 7/16 of the value space, so the
+  4-byte SWAR fast path fires only ~10 % of the time on uniform
+  random data — vs MagSgn's "byte = 0xFF" predicate firing ~99 %.
+- `Tests/J2KCodecTests/V740NeonReconstructionParityTests.swift` —
+  5 sweeps × {rho=0, rho>0, mixed sign/mag, edge bit-depths,
+  bottom-row interaction}, bit-exact pass.
+- `Tests/J2KCodecTests/V740NeonRefillParityTests.swift` —
+  11 sweeps × {all-zero, all-FF, alternating, FF position-in-batch,
+  random seeds, stream-exhaust padding, empty/tiny streams}, all pass.
+- `Tests/J2KCodecTests/V740NeonVlcRefillParityTests.swift` —
+  5 sweeps × {bit-depths, densities, block sizes, 64 random seeds,
+  6-fixture corpus end-to-end}, all bit-exact.
+- Microbench + DX wall A/B benches for each phase
+  (`V740NeonReconstruction*`, `V740NeonRefill*`, `V740NeonVlcRefill*`).
+- Release artefacts: `V7_4_0_PHASE_1_FINDING.md`,
+  `V7_4_0_PHASE_2_FINDING.md`, `V7_4_0_PHASE_3_FINDING.md`,
+  `RELEASE_NOTES_v7.4.0.md`.
+
+### Backward compatibility
+
+Codestream bytes byte-identical to v7.3.0 across the medical
+corpus (decoder-only changes). No public API breakage. SemVer
+rule: **MINOR**.
+
+`getVersion()` returns `"7.4.0"`.
+
+### Known limitations
+
+- Kakadu gap on DX in-process decode tightens marginally
+  (2.17× → ~2.10×). Closing the rest needs algorithmic work
+  beyond simple SWAR — possibly bit-parallel prefix scans for
+  the chained-unstuff state, or moving entire blocks to GPU
+  HT decode (separate workstream).
+- The two NEON paths kept behind flags (reconstruction, VLC
+  refill) ship for measurement parity only — operators with
+  no need for honest A/B tooling can ignore them.
+
 ## [7.3.0] — 2026-05-09
 
 **HT entropy decoder hot-loop wedge elimination — DX in-process decode 62.5 → 54.3 ms (-13 % vs v7.2.0)**
