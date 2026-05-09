@@ -211,7 +211,7 @@ let package = Package(
         // implementation rather than a duplicate.
         .target(
             name: "J2KDaemonCore",
-            dependencies: ["J2KDaemonProtocol"],
+            dependencies: ["J2KDaemonProtocol", "J2KCore", "J2KCodec"],
             path: "Sources/J2KDaemonCore"),
         // v8 Phase 6.4 — client-side wrapper around
         // NSXPCConnection. Auto-discovers the Mach service,
@@ -220,7 +220,7 @@ let package = Package(
         // back to in-process decode.
         .target(
             name: "J2KDaemonClient",
-            dependencies: ["J2KDaemonProtocol"],
+            dependencies: ["J2KDaemonProtocol", "J2KCore"],
             path: "Sources/J2KDaemonClient"),
         // v8 Phase 6.3 — XPC daemon executable. macOS-only.
         .executableTarget(
@@ -236,7 +236,7 @@ let package = Package(
             path: "Tests/J2KDaemonTests"),
         .testTarget(
             name: "J2KDaemonClientTests",
-            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore", "J2KDaemonClient"],
+            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore", "J2KDaemonClient", "J2KCore", "J2KCodec"],
             path: "Tests/J2KDaemonClientTests"),
         .executableTarget(
             name: "J2KTestApp",

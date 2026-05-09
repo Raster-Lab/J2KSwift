@@ -59,6 +59,56 @@ public let J2KDaemonMachServiceName = "com.raster.j2kd"
         reply: @escaping (_ echoedID: String,
                           _ daemonPID: Int32,
                           _ daemonUptimeSeconds: Double) -> Void)
+
+    /// **v8 Phase 6.5** — decode a JPEG 2000 codestream via the
+    /// daemon. The daemon holds a long-lived warm
+    /// `J2KMetalSession.processShared`, so single-shot CLI
+    /// callers get warm-decode performance without paying
+    /// per-process Metal cold-start.
+    ///
+    /// Reply tuple shape (NSXPCInterface marshalling
+    /// constraints — only @objc-compatible types):
+    /// - `success`: `true` if decode succeeded, `false` if any
+    ///   error occurred (check `errorMessage`)
+    /// - `width`, `height`: pixel dimensions
+    /// - `bitDepth`: bits per sample (e.g. 8, 12, 16)
+    /// - `signed`: whether components are signed
+    /// - `componentCount`: number of components (1 = grayscale,
+    ///   3 = RGB, etc.)
+    /// - `bigEndian`: byte order of the pixel data buffer (true
+    ///   = big-endian, the J2KSwift convention for ≥9-bit data)
+    /// - `pixelData`: raw decoded bytes for the FIRST component.
+    ///   Multi-component decodes pack components sequentially:
+    ///   width*height*bytesPerSample for component 0, then
+    ///   component 1, etc.
+    /// - `errorMessage`: nil on success, error description on
+    ///   failure
+    ///
+    /// **Marshalling**: the codestream and pixel data are
+    /// transmitted as `Data` payloads via XPC's standard
+    /// dictionary marshalling. For large images (e.g. DX 12.7 MB
+    /// codestream → 33 MB decoded pixels), XPC's automatic
+    /// out-of-line marshalling kicks in — no need for explicit
+    /// `xpc_shmem`. Phase 6.5 measures whether this is fast
+    /// enough; Phase 6.5b will add `xpc_shmem` if XPC's
+    /// auto-marshalling is the bottleneck.
+    ///
+    /// - Parameters:
+    ///   - codestream: the JPEG 2000 codestream bytes (J2K, JP2,
+    ///     or HTJ2K).
+    ///   - reply: closure invoked on the connection's reply
+    ///     queue with the result tuple.
+    func decode(
+        codestream: Data,
+        reply: @escaping (_ success: Bool,
+                          _ width: Int32,
+                          _ height: Int32,
+                          _ bitDepth: Int32,
+                          _ signed: Bool,
+                          _ componentCount: Int32,
+                          _ bigEndian: Bool,
+                          _ pixelData: Data,
+                          _ errorMessage: String?) -> Void)
 }
 
 #endif // os(macOS)
