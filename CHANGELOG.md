@@ -5,6 +5,83 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.3.0] — 2026-05-09
+
+**HT entropy decoder hot-loop wedge elimination — DX in-process decode 62.5 → 54.3 ms (-13 % vs v7.2.0)**
+
+Eight PRs (#359-#367) land bit-exact entropy-decoder optimisations
+that close ~60 % of the Kakadu gap on DX vs v7.1.0 (5.23× → 2.17×).
+The pattern that paid off: eliminate "compute-then-discard" wasted
+work before reaching for SIMD — three of the four biggest wins
+(bottom-row recoverEQ, rho=0 fast path, VLC consume-only) are
+scalar restructurings; only one (SIMD4 readQuadSamples) is true
+vectorisation.
+
+Also catches a critical regression that release-prep benchmarking
+caught: Phase 0's `J2KHTEntropyProfile` instrumentation bumps
+caused 30 %+ slowdown on multi-tile decode via cache-line
+contention from 16 parallel tile threads on the lockless global
+counters. Fixed in #367 before tagging.
+
+### Changed
+
+- `recoverEQ -> (Int, Int, Int, Int)` replaced with
+  `recoverEQBottomRow -> (Int, Int)` — every caller read only
+  `.1` and `.3`; indices 0 and 2 (top-row) were computed and
+  immediately discarded. Net 22-39 % block-decode speedup
+  including the side benefits of register-passing the smaller
+  tuple, eliminating the switch-i 4-way dispatch, and
+  hand-inlining the offset-array loads.
+- `readQuadSamples` post-MagSgn reconstruction now runs lane-
+  parallel via `SIMD4<UInt32>` arithmetic (4 NEON 128-bit
+  Q-register ops on Apple Silicon). 10-14 % faster on 64×64
+  blocks.
+- `readQuadSamples` and `recoverEQBottomRow` early-exit on
+  `rho == 0` — most quads on sparse-corpus blocks (~70 % at
+  typical 30 % density) hit this path. +19 % on sparse blocks.
+- `VLCReverseReader.peek` and `read` annotated `@inline(__always)`.
+- New `VLCReverseReader.consume(count:)` — refill-skip variant of
+  `read(count:)` for post-peek discard sites; replaces 8
+  occurrences of `_ = vlcReader.read(count: lookN.cwd_len)` and
+  skips the redundant `if bits < count { refill() }` branch.
+- Removed `J2KHTEntropyProfile.bumpXxx()` and `recordXxxNs()`
+  call sites from the HT decoder hot path (#367 critical fix).
+
+### Added
+
+- `Sources/J2KCodec/J2KHTEntropyProfile.swift` — count-based
+  process-global probe scaffolding (Phase 0). Production decoder
+  no longer calls bump methods; the struct is kept so future
+  optimisation work can re-enable the probe locally.
+- `V730Phase0EntropyProbe.testEntropyEngineBreakdown_LosslessCorpus`
+  — engine call breakdown across the medical corpus.
+- `V730Phase1aMagSgnMicrobench.testMagSgnReadThroughput_PerWidth`
+  — `HTMagSgnDecoderConformant.read` ns/call baseline.
+- `V730Phase3aBlockDecodeMicrobench.testBlockDecodeThroughput_PerSizeAndDensity`
+  — `HTBlockDecoderConformant.decode` ns/call baseline + density
+  sweep. (This microbench is the gate for v7.3+ entropy work.)
+- `RELEASE_NOTES_v7.3.0.md`, `CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md`,
+  `V7_3_0_PROFILE.md` — release artefacts.
+
+### Backward compatibility
+
+Codestream bytes byte-identical to v7.2.0 across the medical
+corpus. No public API breakage. SemVer rule: MINOR.
+
+`getVersion()` returns `"7.3.0"`.
+
+### Known limitations
+
+- Kakadu gap remains 2.17× on DX in-process decode. Closing the
+  rest requires CPU SIMD on the HT decoder's chained-state inner
+  loops (MagSgn refill in particular) — multi-day work parked
+  for a future release.
+- MagSgn refill is at the Apple M2 scalar ceiling. Further
+  headroom needs NEON byte-shuffle for the post-`0xFF` unstuff
+  prefix-scan.
+- Encode wall unchanged by v7.3 — all v7.3 work was on the
+  decode side.
+
 ## [7.2.0] — 2026-05-09
 
 **Encode-side UMA boundary elimination + cross-tile batched HT entropy decode**
