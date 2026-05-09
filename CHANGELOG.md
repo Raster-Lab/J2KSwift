@@ -5,6 +5,76 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.0] — 2026-05-10
+
+**Apple Silicon-first major release — Metal-first architecture, warm in-process beats Kakadu on 4/6 medical fixtures, optional `j2kd` XPC daemon for warm-CLI**
+
+A major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to beat Kakadu on the dominant Apple workloads — small/medium medical images, warm-process apps, and (with the optional XPC daemon) single-shot CLI users.
+
+**Headline measurement (warm in-process decode, Apple M2)**: J2KSwift in-process CPU is **26× / 5× / 3× / 2.3×** faster than Kakadu CLI on MR-small / CT / MR 886² / XA respectively. PX and DX (the two largest fixtures) remain 1.23× / 1.51× behind. SDK consumers get this performance via the new `J2KDecoder.preWarm()` API.
+
+**CLI cold-shot progression** (DX 2800×2288): pre-v8 134 ms → v8 Phase 1 91 ms → Phase 2 103 ms → Phase 3 91 ms → **Phase 4 89 ms (2.47× Kakadu gap)**. With the optional `j2kd` XPC daemon installed, the CLI gap closes further to **~1.5×** by amortising Metal cold-start across invocations.
+
+### Added
+
+- **`J2KDecoder.preWarm(includeWarmupDispatch: Bool = false)`** — public discoverable warm-session API. Once-per-app-startup; subsequent decodes use the warm session automatically. Cross-platform (macOS + iOS).
+- **`Sources/J2KDaemonProtocol/`** — `@objc J2KDaemonProtocol` (XPC RPC surface: `ping` + `decode`). Mach service name constant `com.raster.j2kd`.
+- **`Sources/J2KDaemonCore/`** — `J2KDaemonService` (NSXPCListenerDelegate-compatible), `J2KDaemonListenerDelegate`, `J2KDaemonActivityTracker`, `J2KDaemonLifecycle` (idle-timeout + signal handlers).
+- **`Sources/J2KDaemonClient/`** — `J2KDaemonClient` actor wrapping NSXPCConnection. Used by the CLI to route decode through the daemon when reachable.
+- **`Sources/J2KDaemon/`** — `j2kd` daemon executable. Runs under launchd as a per-user LaunchAgent (Mach service `com.raster.j2kd`).
+- **`Resources/launchd/com.raster.j2kd.plist`** — launchd plist template for installing `j2kd`.
+- **`j2k daemon-ping`** subcommand — verifies daemon install + measures round-trip ms.
+- **`j2k decode --no-daemon`** flag — explicit in-process opt-out (useful for benchmark scripts).
+- **`Tests/J2KDaemonTests`, `Tests/J2KDaemonClientTests`** — XPC protocol round-trip + lifecycle + client API tests (9 tests across 3 files).
+- **`Tests/J2KCodecTests/V8Phase61WarmDecoderAPITests.swift`** — cross-platform warm-decoder API contract tests (3 tests; pass on macOS AND iOS Simulator).
+- **`RELEASE_NOTES_v8.0.0.md`** + 14 phase-finding docs (`V8_0_0_PHASE_0_BASELINE.md` through `V8_0_0_PHASE_6_6_FINDING.md` + `V8_0_0_METAL_FIRST_STRATEGY.md`).
+
+### Changed (production defaults)
+
+- **CLI default routing flipped to CPU-first** (Phase 2). Default `j2k decode` no longer pays Metal cold-start tax for image sizes where GPU wouldn't win in single-shot mode. Saves 52-53 ms on default-mode CT/MR/DX invocations. Users who explicitly pass `--gpu` or `--gpu-ht` are unaffected.
+- **`SIMD4<Int32>` CPU 5/3 INT IDWT path** (Phase 3). Bit-exact with the scalar reference; -16 % iDWT accumulated cost on DX, -12 ms wall.
+- **NEON reconstruction default ON** (Phase 4). `HTBlockDecoderConformant.neonReconstructionEnabled = true`. Re-evaluation of v7.4 Phase 1 (rejected at Δ 0.90 ms) on the Phase 3 baseline shows median 2.96 ms across 10 samples — flipped to default ON under the Apple-only narrowing.
+- **Cold-start elimination** (Phase 1). `J2KMetalDevice.isAvailable` now caches its result; `DecoderPipeline.decode`'s gate condition reorders the cheap pixel-threshold check ahead of the Metal-availability check. Saves 40-47 ms on every CLI invocation that doesn't need GPU.
+- **`j2k batch decode`** now calls `preWarm()` before parallel dispatch (Phase 6.0), pulling Metal cold-start out of the first-file critical path. Cold-system 1st run drops from 889 ms to 193 ms (4.6× WIN over per-file CLI sum).
+- **`Package.swift` iOS minimum bumped 17 → 18** (Phase 6.1) — required for `OSAllocatedUnfairLock.withLock`. The only material API breakage in v8.
+- **`getVersion()` returns `"8.0.0"`**.
+
+### Fixed
+
+- **CLI `--no-gpu` flag now actually honoured** on the standard `decode` path (was silently ignored pre-v8). Behaves identically to the new `--no-daemon` flag in semantics: explicit opt-out from a routing path.
+
+### Backward compatibility
+
+- **Codestream bytes byte-identical to v7.5.1** — all v8 changes are decoder-side or CLI-routing.
+- **Public API additions only** — no removals or signature changes.
+- **iOS minimum bumped 17 → 18** — the only material break.
+- **CLI default routing changed** — see "Changed" above. Users with explicit `--gpu` / `--gpu-ht` flags are unaffected.
+
+### SemVer rule
+
+**MAJOR** (per RELEASING.md): default behaviour flipped (CLI default routing CPU-first) + iOS minimum bumped. Codestream bytes are unchanged from v7.5.1.
+
+### Known limitations
+
+- **PX (2459×1316) and DX (2800×2288) warm in-process decode** still trail Kakadu CLI by 1.23× / 1.51× respectively. The HTJ2K entropy decode hot-path on M2 is at the lever-ceiling per v7.4/v7.5 measurements; closing this gap further requires algorithmic redesign (bit-parallel prefix-scan SIMD on chained-unstuff state) or different hardware (M3/M4/A-series ratification).
+- **Daemon decode RPC ships single-component support only** (Phase 6.5). Multi-component (RGB) daemon RPC is deferred to Phase 6.5b. Single-component covers the medical-archive hot path (CT/MR/MG/PX/DX/XA are all monochrome).
+- **Daemon `xpc_shmem` path not yet wired** — XPC's auto out-of-line marshalling handles every fixture in the medical corpus today. Will revisit when image sizes routinely exceed 16 MB raw.
+- **`HTGPUForward53CrossCodecTests` warning**: GPU forward HT entropy is correctness-shipped but slower than CPU on Apple M2 (per v7.5.0 measurement). The flag remains default OFF.
+
+### Test Suite Results (release mode, 0 failures)
+
+- `J2KMedicalCorpusEncodePerformanceTests` — 2/2
+- `J2KMedicalCorpusPerformanceTests` — 2/2
+- `J2KStrictCrossCodecValidationTests` — 3/3
+- `HTTileParityMatrixTests` — 1/1 (12 cells × 3 decoders = 33/33 cross-codec bit-exact)
+- `MgRegressionTriageTest` — 2/2 (16+ MP HTJ2K bit-exact)
+- `V8Phase61WarmDecoderAPITests` — 3/3 (cross-platform warm-decoder API; runs on macOS AND iOS)
+- `J2KDaemonProtocolRoundTripTests` — 3/3
+- `J2KDaemonClientTests` — 3/3
+- `J2KDaemonLifecycleTests` — 3/3
+
+iOS Simulator (iPhone 17 Pro, iOS 26.x) — `V8Phase61WarmDecoderAPITests` 3/3.
+
 ## [7.5.0] — 2026-05-09
 
 **Perf-wash release — forward HT GPU entropy workstream closure with measurements**
