@@ -416,9 +416,14 @@ struct DecoderPipeline: Sendable {
         // Bytes byte-identical with the legacy CPU path on the
         // lossless reversible code path (cross-codec gate + 6/6
         // corpus pixel-identical from D1's GPUInverse53DefaultOnTests).
+        // v8 Phase 1 — reorder: cheap pixel-threshold check FIRST so
+        // `J2KMetalDWT.isAvailable` (which costs ~50 ms cold the first
+        // time Metal is touched per process) is avoided entirely when
+        // the image is too small to benefit from GPU. Saves ~50 ms on
+        // every CLI invocation that decodes an image below the threshold.
         if Self._gpuInverse53Enabled
-            && J2KMetalDWT.isAvailable
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
+            && J2KMetalDWT.isAvailable
         {
             // v6.3.0 E1.2 — routing widened to multi-tile.
             //
@@ -2281,7 +2286,16 @@ struct DecoderPipeline: Sendable {
         // regression gate.
         let pixelCount = metadata.width * metadata.height
         let dwtLevels = metadata.configuration.decompositionLevels
+        // v8 Phase 1 — also gate on `_gpuInverse53Enabled` BEFORE
+        // calling `J2KMetalDWT.isAvailable`. When --no-gpu is set
+        // via the CLI (or the env var/flag is otherwise off), GPU
+        // IDWT can never run, so this whole probe is wasted —
+        // worse, calling `J2KMetalDWT.isAvailable` here costs
+        // ~50 ms cold the first time Metal is touched per process.
+        // On small/medium CLI invocations this was the dominant
+        // overhead.
         let idwtWillBeGPU =
+            Self._gpuInverse53Enabled &&
             pixelCount >= 256 * 256 &&
             dwtLevels >= 1 &&
             metadata.configuration.waveletKernelConfiguration == nil &&
