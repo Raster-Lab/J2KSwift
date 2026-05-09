@@ -333,7 +333,17 @@ struct DecoderPipeline: Sendable {
     /// on small per-tile sizes (per V720PhaseEThresholdSweepTests).
     /// Default ON — gate exists so tests / probes can opt out for
     /// A/B comparison against the v7.1.1 per-tile-CB shape.
-    nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
+    /// **v7.5.1 hotfix**: defaulted to `false` because the original
+    /// PR #356 batched path silently corrupts decode output on
+    /// HTJ2K codestreams whose total sample count crosses 2^24
+    /// (≈ 16.78 M px) — confirmed reproducible on 16+ MP
+    /// mammography fixtures, where external decoders (OpenJPH,
+    /// Grok, Kakadu) decode the same J2KSwift-encoded bytes
+    /// bit-exactly. Until the cross-tile pre-batch indexing bug
+    /// is root-caused, the default falls back to the per-tile
+    /// path. The flag stays public so future repro work can
+    /// re-enable it for diagnosis.
+    nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = false
 
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
