@@ -1036,6 +1036,55 @@ public struct J2KDecoder: Sendable {
     /// Creates a new decoder.
     public init() {}
 
+    /// **v8 Phase 6.1** — warm the process-shared Metal session
+    /// once at app/SDK startup so subsequent decodes don't pay
+    /// the Metal cold-start tax (~50 ms on first GPU touch).
+    ///
+    /// **Cross-platform**: works identically on macOS (M-series)
+    /// and iOS/iPadOS (A-series). The warm session is held in-process
+    /// (`J2KMetalSession.processShared`), so it's compatible with
+    /// every Apple Silicon deployment shape — apps, app extensions,
+    /// daemons, command-line tools.
+    ///
+    /// Recommended usage pattern (SDK consumers):
+    ///
+    /// ```swift
+    /// // Once, at app/SDK startup
+    /// try await J2KDecoder.preWarm()
+    ///
+    /// // Subsequent decodes use the warm session automatically
+    /// let decoder = J2KDecoder()
+    /// for data in batch {
+    ///     let image = try await decoder.decode(data)
+    /// }
+    /// ```
+    ///
+    /// Without `preWarm()`, the first decode in a process pays the
+    /// Metal init cost serially. With it, that cost is paid up-front
+    /// (and overlapped with whatever else the app is doing at launch).
+    /// Phase 5 measurements show warm-process decode walls of
+    /// 0.58-54 ms across the medical corpus — beating Kakadu CLI
+    /// on 4 of 6 fixtures.
+    ///
+    /// Idempotent: subsequent calls within the same process are
+    /// near-instant. Safe to call from multiple SDK boundaries.
+    /// Failures (e.g. Metal unavailable on Linux) are caught and
+    /// silently swallowed — the decoder falls back to CPU paths.
+    ///
+    /// - Parameter includeWarmupDispatch: when `true` (default
+    ///   `false` here for the public API; the underlying
+    ///   `J2KMetalSession.preWarm` defaults to `true`), runs a tiny
+    ///   synthetic decode to exercise the buffer-pool first-fetch
+    ///   and Metal driver first-dispatch fence. Costs an additional
+    ///   few milliseconds; saves 10-20 ms on the actual first user
+    ///   decode. Recommended for batch / PACS workflows; skip for
+    ///   one-off decoders that may never run a real decode.
+    public static func preWarm(includeWarmupDispatch: Bool = false) async {
+        guard J2KMetalSession.isAvailable else { return }
+        try? await J2KMetalSession.processShared.preWarm(
+            includeWarmupDispatch: includeWarmupDispatch)
+    }
+
     /// v5.27.0: recommended decode API for an image of the given
     /// dimensions on a warm `J2KMetalSession`.
     ///
