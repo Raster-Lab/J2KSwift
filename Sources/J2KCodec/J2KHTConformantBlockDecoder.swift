@@ -244,13 +244,13 @@ fileprivate struct DecodeState {
                 if nextMELEvent() {
                     let head = Int(vlcReader.peek(maxBits: 7))
                     look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: true)
-                    _ = vlcReader.read(count: look0.cwd_len)
+                    vlcReader.consume(count: look0.cwd_len)
                     rho0 = look0.rho
                 }
             } else {
                 let head = Int(vlcReader.peek(maxBits: 7))
                 look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: true)
-                _ = vlcReader.read(count: look0.cwd_len)
+                vlcReader.consume(count: look0.cwd_len)
                 rho0 = look0.rho
             }
 
@@ -264,13 +264,13 @@ fileprivate struct DecodeState {
                         let head1 = Int(vlcReader.peek(maxBits: 7))
                         look1 = lookupVLC(c_q: c_q1, bits: head1,
                                           initialLine: true)
-                        _ = vlcReader.read(count: look1.cwd_len)
+                        vlcReader.consume(count: look1.cwd_len)
                         rho1 = look1.rho
                     }
                 } else {
                     let head1 = Int(vlcReader.peek(maxBits: 7))
                     look1 = lookupVLC(c_q: c_q1, bits: head1, initialLine: true)
-                    _ = vlcReader.read(count: look1.cwd_len)
+                    vlcReader.consume(count: look1.cwd_len)
                     rho1 = look1.rho
                 }
             }
@@ -342,13 +342,13 @@ fileprivate struct DecodeState {
                 if nextMELEvent() {
                     let head = Int(vlcReader.peek(maxBits: 7))
                     look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: false)
-                    _ = vlcReader.read(count: look0.cwd_len)
+                    vlcReader.consume(count: look0.cwd_len)
                     rho0 = look0.rho
                 }
             } else {
                 let head = Int(vlcReader.peek(maxBits: 7))
                 look0 = lookupVLC(c_q: c_q0, bits: head, initialLine: false)
-                _ = vlcReader.read(count: look0.cwd_len)
+                vlcReader.consume(count: look0.cwd_len)
                 rho0 = look0.rho
             }
             let kappaA = ((rho0 & (rho0 - 1)) != 0) ? max(1, maxE) : 1
@@ -369,13 +369,13 @@ fileprivate struct DecodeState {
                         let head1 = Int(vlcReader.peek(maxBits: 7))
                         look1 = lookupVLC(c_q: c_q1, bits: head1,
                                           initialLine: false)
-                        _ = vlcReader.read(count: look1.cwd_len)
+                        vlcReader.consume(count: look1.cwd_len)
                         rho1 = look1.rho
                     }
                 } else {
                     let head1 = Int(vlcReader.peek(maxBits: 7))
                     look1 = lookupVLC(c_q: c_q1, bits: head1, initialLine: false)
-                    _ = vlcReader.read(count: look1.cwd_len)
+                    vlcReader.consume(count: look1.cwd_len)
                     rho1 = look1.rho
                 }
                 cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
@@ -686,12 +686,14 @@ fileprivate struct VLCReverseReader {
         }
     }
 
+    @inline(__always)
     mutating func peek(maxBits: Int) -> UInt64 {
         if bits < maxBits { refill() }
         let m: UInt64 = (maxBits >= 64) ? ~UInt64(0) : ((UInt64(1) << maxBits) - 1)
         return tmp & m
     }
 
+    @inline(__always)
     mutating func read(count: Int) -> UInt64 {
         if bits < count { refill() }
         let m: UInt64 = (count >= 64) ? ~UInt64(0) : ((UInt64(1) << count) - 1)
@@ -699,5 +701,16 @@ fileprivate struct VLCReverseReader {
         tmp >>= count
         bits -= count
         return v
+    }
+
+    /// **v7.3.0 Phase 3e — consume-only.** Advance past `count` bits
+    /// that the caller has already inspected via a prior `peek`. No
+    /// bounds-check on `bits >= count` because peek already brought
+    /// us up to ≥ maxBits, and `count` (= cwd_len from the VLC
+    /// lookup) is always ≤ peek's `maxBits`. Discards the value.
+    @inline(__always)
+    mutating func consume(count: Int) {
+        tmp >>= count
+        bits -= count
     }
 }
