@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  v8 Phase 6.3 — launchd LaunchAgent template for the J2KSwift
+  XPC daemon (j2kd).
+
+  TEMPLATE — DO NOT INSTALL DIRECTLY. The `<string>` value of
+  `Program` MUST be replaced with the absolute path to your
+  installed `j2kd` binary before installing.
+
+  Install steps (manual; Phase 6.6 will add an installer script):
+
+    1. Build:    swift build -c release --product j2kd
+    2. Copy:     cp .build/release/j2kd /usr/local/bin/j2kd
+    3. Edit:     sed -i '' 's|<<J2KD_PATH>>|/usr/local/bin/j2kd|' \
+                   Resources/launchd/com.raster.j2kd.plist
+    4. Install:  cp Resources/launchd/com.raster.j2kd.plist \
+                   ~/Library/LaunchAgents/
+    5. Load:     launchctl load ~/Library/LaunchAgents/com.raster.j2kd.plist
+
+  Uninstall:
+
+    1. Unload:   launchctl unload ~/Library/LaunchAgents/com.raster.j2kd.plist
+    2. Remove:   rm ~/Library/LaunchAgents/com.raster.j2kd.plist
+
+  After install, the daemon starts on-demand on the first XPC
+  connection from a client (no need to keep it running with
+  KeepAlive=true). It exits when launchd asks (e.g. system
+  sleep, manual unload).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.raster.j2kd</string>
+
+    <key>Program</key>
+    <string><<J2KD_PATH>></string>
+
+    <!-- On-demand activation: launchd starts the daemon when
+         the first client connects to the Mach service. -->
+    <key>MachServices</key>
+    <dict>
+        <key>com.raster.j2kd</key>
+        <true/>
+    </dict>
+
+    <!-- LaunchAgent (per-user) rather than LaunchDaemon (system).
+         The daemon holds a Metal session, which needs an active
+         GUI session — that's a per-user resource. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- KeepAlive=false: don't restart on exit (Phase 6.6 will
+         add an idle-timeout that exits cleanly). -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- ProcessType=Interactive — daemon may need to wake up
+         quickly for CLI invocations rather than being throttled
+         like a background service. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <!-- Daemon logs. Useful for debugging during early phases;
+         can be silenced by deleting these keys post-Phase-6.6. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/j2kd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/j2kd.err.log</string>
+</dict>
+</plist>
