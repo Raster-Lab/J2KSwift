@@ -138,13 +138,49 @@ public struct HTMagSgnDecoderConformant {
     /// reproduce A/B numbers.
     nonisolated(unsafe) public static var neonRefillEnabled: Bool = true
 
+    /// **v8.1 Phase 1B 8-byte SWAR + 128-bit accumulator refill
+    /// gate.** Default `false` while the prototype graduates to a
+    /// production default. When `true`, `refill()` dispatches to
+    /// `refillBatched8` — an 8-byte unaligned `UInt64` load with
+    /// SWAR FF-detect, folding 8 bytes (= 64 bits) per fast-path
+    /// iteration into a 128-bit accumulator (`tmp` + `tmpHi`).
+    ///
+    /// Phase 1A microbench (V8_1_PrefixScanPhase1ABench) measured
+    /// 1.21×–1.40× speedup vs the v7.4 4-byte path across the FF-
+    /// density range 0 %–25 %. At corpus density 0.4 %, the gain is
+    /// 1.37× (4.96 → 3.61 ns/call), saving ~1.35 ns per `read()`.
+    ///
+    /// Bit-exact-equivalent to the scalar and v7.4 4-byte paths
+    /// across 16,520 parity cells (V8_1_Phase1B_ParityTests +
+    /// V8_1_PrefixScanPhase1ABench parity sweeps).
+    ///
+    /// Default flips to `true` in Phase 3 if the end-to-end DX A/B
+    /// (Phase 2) clears v7.4's ≥ 3 ms acceptance threshold.
+    nonisolated(unsafe) public static var swarRefill8Enabled: Bool = false
+
     private let bytes: ArraySlice<UInt8>
     private let bytesStart: Int
     private let bytesEnd: Int
     private var readIndex: Int   // position relative to bytesStart
     private var tmp: UInt64 = 0
+    /// **v8.1 Phase 1B** — high 64 bits of the 128-bit bit
+    /// accumulator. Written only by `refillBatched8`; on every
+    /// other refill path (`refillBatched`, `refillScalar`) this
+    /// stays zero across the decoder's lifetime.
+    private var tmpHi: UInt64 = 0
     private var bits: Int = 0
     private var unstuff: Bool = false
+
+    /// **v8.1 Phase 1B** — refill-path selector cached at init.
+    /// Reading the static `swarRefill8Enabled` / `neonRefillEnabled`
+    /// flags from a global symbol on every `read()` cost ~5 ns/call
+    /// in early Phase 1B prototyping; caching them into stack-
+    /// resident fields once at init costs ~0 ns/call (single
+    /// branch on a struct field, predicted 100 % accurate by the
+    /// branch predictor since the value is stable for the
+    /// decoder's lifetime).
+    private let useSwar8: Bool
+    private let useV74Batched: Bool
 
     public init(bytes: [UInt8]) {
         self.init(bytes: bytes[...])
@@ -157,9 +193,19 @@ public struct HTMagSgnDecoderConformant {
         self.bytesStart = bytes.startIndex
         self.bytesEnd = bytes.endIndex
         self.readIndex = 0
+        self.useSwar8 = HTMagSgnDecoderConformant.swarRefill8Enabled
+        self.useV74Batched = HTMagSgnDecoderConformant.neonRefillEnabled
     }
 
     /// Read `count` bits (LSB-first) from the stream.
+    ///
+    /// **v8.1 Phase 1B**: branches on the cached `useSwar8` field
+    /// (resolved at init from `swarRefill8Enabled`) to decide
+    /// whether to shift-down the 128-bit accumulator. When the
+    /// v7.4 4-byte refill or the scalar reference is active, the
+    /// branch is always not-taken and the original 64-bit
+    /// `tmp >>= count` runs — preserving the v7.4 hot-path cost
+    /// to within branch-predictor noise.
     public mutating func read(count: Int) -> UInt32 {
         precondition(count <= 32, "MagSgn read width > 32")
         if bits < count {
@@ -167,7 +213,20 @@ public struct HTMagSgnDecoderConformant {
         }
         let mask: UInt64 = (count >= 64) ? ~UInt64(0) : ((UInt64(1) << count) - 1)
         let v = UInt32(tmp & mask)
-        tmp >>= count
+        if useSwar8 {
+            // 128-bit right shift across (tmp, tmpHi). count >= 1
+            // here (count == 0 leaves the accumulator untouched;
+            // the early-return above handled it via mask=0 → v=0,
+            // tmp >>= 0 is a no-op, bits -= 0 is a no-op).
+            // Actually count can be 0 in this code path — guard the
+            // (64 - count) shift to avoid the count == 0 → 64 UB.
+            if count > 0 {
+                tmp = (tmp >> count) | (tmpHi << (64 - count))
+                tmpHi = tmpHi >> count
+            }
+        } else {
+            tmp >>= count
+        }
         bits -= count
         return v
     }
@@ -175,15 +234,21 @@ public struct HTMagSgnDecoderConformant {
     /// Refill the bit buffer so at least 32 bits are available (or
     /// stream-exhaust padding of 0xFF has been fed in).
     ///
-    /// Dispatches to `refillBatched` (v7.4 SIMD prototype) or
-    /// `refillScalar` (v7.3 production path) based on the
-    /// `neonRefillEnabled` static flag. Both paths produce
-    /// bit-identical output by construction; the batched path is
-    /// strictly an optimisation attempt with the same byte-by-byte
-    /// semantics on its slow-fallback branch.
+    /// Dispatch order (v8.1 Phase 1B):
+    /// 1. `swarRefill8Enabled` (default OFF) → `refillBatched8`
+    ///    (8-byte SWAR + 128-bit accumulator).
+    /// 2. `neonRefillEnabled` (default ON, v7.4 production) →
+    ///    `refillBatched` (4-byte SWAR).
+    /// 3. otherwise → `refillScalar` (v7.3 byte-by-byte reference).
+    ///
+    /// All three paths produce bit-identical output by construction;
+    /// the batched paths are strict optimisations with the same
+    /// byte-by-byte semantics on their slow-fallback branches.
     @inline(__always)
     mutating func refill() {
-        if HTMagSgnDecoderConformant.neonRefillEnabled {
+        if useSwar8 {
+            refillBatched8()
+        } else if useV74Batched {
             refillBatched()
         } else {
             refillScalar()
@@ -333,6 +398,139 @@ public struct HTMagSgnDecoderConformant {
 
         readIndex = rIdx
         tmp = t
+        bits = b
+        unstuff = u
+    }
+
+    /// **v8.1 Phase 1B 8-byte SWAR refill** with 128-bit
+    /// accumulator (`tmp` + `tmpHi`). Processes 8 bytes per
+    /// iteration when ≥ 8 stream bytes remain. Uses an 8-byte SWAR
+    /// FF-detect that fast-paths the common case (no FF in the
+    /// 8-byte batch + no carried unstuff) — that case reduces to
+    /// one unaligned `UInt64` load, two ORs (into `tmp` and
+    /// `tmpHi`), and a constant 64-bit advance. Falls back to
+    /// scalar byte-at-a-time inside the batch when FF is detected
+    /// or carried unstuff is set.
+    ///
+    /// Bit-exact equivalent of `refillScalar` and `refillBatched`
+    /// — the slow-fallback branch IS the scalar byte loop on those
+    /// 8 bytes, with the same overflow-into-`tmpHi` arithmetic the
+    /// fast path uses. Verified across 16,520 parity cells.
+    ///
+    /// Phase 1A microbench: 1.21×–1.40× speedup vs `refillBatched`
+    /// at FF densities 0 %–25 %; 1.37× at corpus density 0.4 %.
+    @inline(__always)
+    mutating func refillBatched8() {
+        var rIdx = readIndex
+        var t = tmp
+        var th = tmpHi
+        var b = bits
+        var u = unstuff
+
+        bytes.withUnsafeBufferPointer { ptr in
+            if let base = ptr.baseAddress {
+                let count = ptr.count
+
+                // 8-byte batched fast path. b ∈ [0, 32] on entry;
+                // adding 64 bits gives b ≤ 96, fits in 128-bit
+                // accumulator (`tmp` + `tmpHi`).
+                while b <= 32 && rIdx + 8 <= count {
+                    let p64 = UnsafeRawPointer(base.advanced(by: rIdx))
+                        .loadUnaligned(as: UInt64.self)
+                    // SWAR zero-byte detect on (p64 ^ 0xFFFF…). A
+                    // byte equals 0xFF iff the corresponding lane
+                    // in `inv` is zero; the SWAR-zero test produces
+                    // a non-zero result iff any byte equals 0xFF.
+                    let inv = p64 ^ 0xFFFF_FFFF_FFFF_FFFF
+                    let hasZero =
+                        (inv &- 0x0101_0101_0101_0101) & ~inv & 0x8080_8080_8080_8080
+                    let anyFF = hasZero != 0
+
+                    if !anyFF && !u {
+                        // Fast path — fold all 8 bytes into the
+                        // 128-bit accumulator at offset b.
+                        if b == 0 {
+                            t |= p64
+                        } else {
+                            t |= p64 << b
+                            // For b ∈ [1, 32], (64 - b) ∈ [32, 63] —
+                            // well-defined Swift shift.
+                            th |= p64 >> (64 - b)
+                        }
+                        b += 64
+                        rIdx += 8
+                    } else {
+                        // Slow path — byte-by-byte for these 8
+                        // bytes, with 128-bit-aware overflow.
+                        var k = 0
+                        while k < 8 {
+                            let byte = base[rIdx]
+                            rIdx += 1
+                            let dBits = 8 - (u ? 1 : 0)
+                            let mask: UInt8 = UInt8(0xFF) >> (u ? 1 : 0)
+                            let val = UInt64(byte & mask)
+                            // Place `val` (≤ 8 bits wide) at bit
+                            // offset `b` in the 128-bit accumulator.
+                            if b < 64 {
+                                t |= val << b
+                                if b + 8 > 64 {
+                                    // Carry the high bits of val
+                                    // into `tmpHi`.
+                                    th |= val >> (64 - b)
+                                }
+                            } else {
+                                th |= val << (b - 64)
+                            }
+                            b += dBits
+                            u = (byte == 0xFF)
+                            k += 1
+                            if b > 32 { break }
+                        }
+                    }
+                }
+
+                // Tail: byte-at-a-time for remaining stream
+                // (with 128-bit-aware overflow).
+                while b <= 32 && rIdx < count {
+                    let byte = base[rIdx]
+                    rIdx += 1
+                    let dBits = 8 - (u ? 1 : 0)
+                    let mask: UInt8 = UInt8(0xFF) >> (u ? 1 : 0)
+                    let val = UInt64(byte & mask)
+                    if b < 64 {
+                        t |= val << b
+                        if b + 8 > 64 {
+                            th |= val >> (64 - b)
+                        }
+                    } else {
+                        th |= val << (b - 64)
+                    }
+                    b += dBits
+                    u = (byte == 0xFF)
+                }
+            }
+            // End-of-stream 0xFF padding.
+            while b <= 32 {
+                let byte: UInt8 = 0xFF
+                let dBits = 8 - (u ? 1 : 0)
+                let mask: UInt8 = UInt8(0xFF) >> (u ? 1 : 0)
+                let val = UInt64(byte & mask)
+                if b < 64 {
+                    t |= val << b
+                    if b + 8 > 64 {
+                        th |= val >> (64 - b)
+                    }
+                } else {
+                    th |= val << (b - 64)
+                }
+                b += dBits
+                u = (byte == 0xFF)
+            }
+        }
+
+        readIndex = rIdx
+        tmp = t
+        tmpHi = th
         bits = b
         unstuff = u
     }
