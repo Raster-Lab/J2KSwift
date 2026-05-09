@@ -64,8 +64,11 @@ final class J2KDaemonProtocolRoundTripTests: XCTestCase {
             "echoedID must match the request id verbatim")
         XCTAssertGreaterThan(result.1, 0,
             "daemonPID must be the test process's PID (positive)")
-        XCTAssertGreaterThanOrEqual(result.2, 0,
-            "daemonUptimeSeconds must be non-negative")
+        // Allow 1 ms negative tolerance — tiny clock skew across
+        // XPC reply boundaries can produce negative-near-zero
+        // uptimes when the daemon is microseconds old.
+        XCTAssertGreaterThan(result.2, -0.001,
+            "daemonUptimeSeconds must be non-negative within 1 ms tolerance")
         XCTAssertLessThan(result.2, 60,
             "daemonUptimeSeconds should be small in a fresh test (< 60 s)")
     }

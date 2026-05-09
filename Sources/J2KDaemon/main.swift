@@ -1,15 +1,19 @@
 // main.swift
 //
-// v8 Phase 6.3 / 6.4 — `j2kd` daemon executable. Listens on a
-// Mach service registered by launchd, responds to XPC requests
-// from the `j2k` CLI client. Holds a long-lived
+// v8 Phase 6.3 / 6.4 / 6.6 — `j2kd` daemon executable.
+//
+// Listens on a Mach service registered by launchd, responds to
+// XPC requests from the `j2k` CLI client. Holds a long-lived
 // `J2KMetalSession.processShared` across requests so single-shot
 // CLI invocations get warm-decode performance.
 //
-// **Phase 6.4 refactor**: the daemon service implementation now
-// lives in `J2KDaemonCore` (so tests can use it without
-// duplicating code). This main.swift just wires the listener
-// to the production Mach service.
+// **Phase 6.6 lifecycle**:
+// - Idle-timeout: exits cleanly after 10 min of no activity
+//   (configurable via env var `J2KD_IDLE_TIMEOUT_SECONDS`).
+//   launchd will re-spawn on the next client connection.
+// - Signal handling: SIGTERM / SIGINT trigger a graceful
+//   exit (allows clean shutdown via `launchctl unload` or
+//   `kill -TERM`).
 //
 // **macOS-only**: this entire executable is gated `#if os(macOS)`.
 
@@ -26,20 +30,35 @@ struct J2KDaemonMain {
         // returns so the first ping has a sensible uptime.
         _ = J2KDaemonService.startTime
 
-        let delegate = J2KDaemonListenerDelegate()
+        // Phase 6.6 lifecycle — idle-timeout (default 10 min;
+        // override via J2KD_IDLE_TIMEOUT_SECONDS env var) +
+        // signal handlers for graceful shutdown.
+        let idleTimeout: TimeInterval = {
+            if let raw = ProcessInfo.processInfo.environment["J2KD_IDLE_TIMEOUT_SECONDS"],
+               let parsed = TimeInterval(raw),
+               parsed > 0 {
+                return parsed
+            }
+            return 600  // 10 minutes default
+        }()
+        let lifecycle = J2KDaemonLifecycle(idleTimeoutSeconds: idleTimeout)
+        lifecycle.start()
 
-        // Listen on the Mach service registered by launchd. When
-        // the daemon is started directly (no launchd), this
-        // listener doesn't get matched to any incoming
-        // connection — Phase 6.6 will add explicit "are we
-        // under launchd" detection + clearer error reporting.
+        // Listener delegate shares the lifecycle's activity
+        // tracker — every XPC request touches it, resetting the
+        // idle clock.
+        let delegate = J2KDaemonListenerDelegate(
+            activityTracker: lifecycle.tracker)
+
+        // Listen on the Mach service registered by launchd.
         let listener = NSXPCListener(machServiceName: J2KDaemonMachServiceName)
         listener.delegate = delegate
         listener.resume()
 
         // Block forever. The listener runs on its own queue;
         // dispatchMain() parks the main thread until SIGTERM /
-        // SIGKILL or launchd asks for exit.
+        // SIGKILL or launchd asks for exit (or idle-timeout
+        // fires).
         dispatchMain()
     }
 }
