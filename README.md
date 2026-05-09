@@ -8,31 +8,30 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 7.3.0
+**Current Version**: 7.4.0
 **Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, and HT-conformant (Part-15) lossless 5/3 medical-archive performance closing in on Kakadu (3,100+ tests, 100 % pass rate)
-**Previous Release**: 7.2.0 (encode UMA boundary elimination + cross-tile batched HT entropy decode)
+**Previous Release**: 7.3.0 (HT entropy decoder hot-loop wedge elimination)
 
 ## 📦 Release Status
 
-**v7.3.0** delivers a series of bit-exact entropy-decoder optimisations that shrink the Kakadu performance gap on the headline DX 2800×2288 medical fixture:
+**v7.4.0** ships the staged-NEON arc on Apple Silicon. Three phases were measured under a strict ≥ 3 ms DX in-process acceptance gate; only Phase 2 cleared it and ships default ON. The other two are landed behind opt-in flags so future work can re-measure if the cost shape shifts.
 
-- **SIMD readQuadSamples reconstruction** — 4-sample-per-quad lane-parallel `SIMD4<UInt32>` arithmetic
-- **Bottom-row-only `recoverEQBottomRow`** — eliminating top-row eQ work that callers always discarded (-34 % block-decode wall)
-- **rho == 0 fast-path** — skips ~70 % of quads on typical-density blocks with a 12-line early-exit
-- **VLC `consume(count:)`** — skips the redundant refill check after `peek` (-20 % on top of the rho fast-path)
-- **Critical fix** — removed Phase 0 instrumentation bumps that caused 30 %+ multi-tile decode regression via cache-line contention
+- **Phase 2 (production default)** — `HTMagSgnDecoderConformant.refill` SWAR-batched: 4-byte unaligned `UInt32` loads + SWAR `0xFF`-byte detect, fast-path 4-byte fold, scalar fallback for stuffed batches. Bit-exact across 11 parity sweeps. Microbench 1.05× → 1.49× per-call (1.15× at the DX corpus average of 14 bits per read).
+- **Phase 1 (opt-in flag)** — `readQuadSamples` SIMD4 reconstruction. DX A/B Δ = 0.90 ms — below the gate. `HTBlockDecoderConformant.neonReconstructionEnabled = false` by default.
+- **Phase 3 (opt-in flag)** — VLC reverse-reader SWAR refill. DX A/B Δ = noise (−0.6 to +2.5 ms). VLC's stuff-trigger byte distribution (≤ 0x8F) makes the SWAR fast-path fire only ~10 % of batches vs MagSgn's ~99 %. `VLCReverseReaderTesting.batchedRefillEnabled = false` by default.
 
-### Headline benchmark — DX 2800×2288 in-process decode (ms, median of 5)
+### Headline benchmark — DX 2800×2288 in-process decode (ms, median of 5, Apple M2)
 
 | version | wall ms | Δ vs prior | Kakadu gap |
 |---|---:|---:|---:|
 | v7.1.0 | 130.78 | (baseline) | 5.23× |
-| v7.2.0 | 62.51 | **-52 %** | 2.50× |
-| **v7.3.0** | **54.34** | **-13 %** | **2.17×** |
+| v7.2.0 | 62.51 | -52 % | 2.50× |
+| v7.3.0 | 54.34 | -13 % | 2.17× |
+| **v7.4.0** | **~52** | **~ -3 %** | **~ 2.10×** |
 
-v7.1.0 → v7.3.0 closes ~60 % of the Kakadu gap that v7.1.0 shipped with. Full benchmark across 6 medical fixtures × 3 versions × {CLI, in-process} × {encode, decode} is in [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md).
+(v7.4.0 measured on a settled system. Absolute wall is system-state-sensitive within ±5 ms; the measured Δ vs the v7.3-equivalent scalar refill is consistently positive across 4 of 5 samples.)
 
-See [RELEASE_NOTES_v7.3.0.md](RELEASE_NOTES_v7.3.0.md) for v7.3.0 details and [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full per-fixture × per-version benchmark comparison. The previous release's notes are at [RELEASE_NOTES_v7.2.0.md](RELEASE_NOTES_v7.2.0.md).
+See [RELEASE_NOTES_v7.4.0.md](RELEASE_NOTES_v7.4.0.md) for v7.4.0 details, [V7_4_0_PHASE_1_FINDING.md](V7_4_0_PHASE_1_FINDING.md), [V7_4_0_PHASE_2_FINDING.md](V7_4_0_PHASE_2_FINDING.md), and [V7_4_0_PHASE_3_FINDING.md](V7_4_0_PHASE_3_FINDING.md) for per-phase measurement detail, and [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full v7.1→v7.3 per-fixture comparison. Previous release's notes are at [RELEASE_NOTES_v7.3.0.md](RELEASE_NOTES_v7.3.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
