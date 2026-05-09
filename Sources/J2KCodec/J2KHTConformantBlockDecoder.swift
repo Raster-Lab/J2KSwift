@@ -670,6 +670,17 @@ public enum HTBlockDecoderConformantError: Error {
     case malformedBlock
 }
 
+/// **v7.4 VLC refill gate.** Default initially `false` — the
+/// scalar reference is the v7.3 production path; tests can flip
+/// to `true` to enable the SWAR-batched alternate path. Default
+/// flips to `true` only when DX in-process A/B measures ≥ 3 ms
+/// improvement (per v7.4 acceptance criterion) — see
+/// `V740NeonVlcRefillDXWallBenchmark` and
+/// `V7_4_0_PHASE_3_FINDING.md`.
+public enum VLCReverseReaderTesting {
+    nonisolated(unsafe) public static var batchedRefillEnabled: Bool = false
+}
+
 /// Forward bit reader over the reverse VLC stream. Reads LSB-first
 /// from `melVlcBytes[scup - 2]`'s high nibble, then through earlier
 /// bytes. Skips the last byte (which holds Scup's high 8 bits).
@@ -703,7 +714,24 @@ fileprivate struct VLCReverseReader {
         self.init(melVlcBytes: melVlcBytes[...], scup: scup)
     }
 
-    private mutating func refill() {
+    /// Refill dispatcher. Routes to `refillBatched` (v7.4 SWAR
+    /// prototype) or `refillScalar` (v7.3 production) per the
+    /// `VLCReverseReaderTesting.batchedRefillEnabled` flag.
+    @inline(__always)
+    mutating func refill() {
+        if VLCReverseReaderTesting.batchedRefillEnabled {
+            refillBatched()
+        } else {
+            refillScalar()
+        }
+    }
+
+    /// **Scalar reference path** — v7.3.0 production VLC refill.
+    /// Reverse-byte-iteration with per-byte unstuff handling
+    /// (FF-stuff rule: drop bit 7 only when prior byte was > 0x8F
+    /// AND this byte's low 7 bits are all ones).
+    @inline(__always)
+    mutating func refillScalar() {
         while bits <= 32 {
             let byte: UInt8
             if byteIdx >= 0 {
@@ -716,6 +744,116 @@ fileprivate struct VLCReverseReader {
             // > 0x8F AND this byte's low 7 bits are all ones
             // (i.e. val is 0x7F or 0xFF). Mirrors OpenJPH's
             // `rev_read8` precisely — see ojph_block_decoder64.cpp:322.
+            let t: Int = (unstuff && (Int(byte) & 0x7F) == 0x7F) ? 1 : 0
+            let dBits = 8 - t
+            let mask: UInt8 = (t == 1) ? 0x7F : 0xFF
+            let value = UInt64(byte & mask)
+            tmp |= value << bits
+            bits += dBits
+            unstuff = (byte > 0x8F)
+        }
+    }
+
+    /// **v7.4 SWAR-batched VLC refill prototype.** Reverse-byte
+    /// iteration in 4-byte batches. Mirrors Phase 2's MagSgn shape
+    /// but with VLC-specific stuff semantics:
+    ///
+    ///   - **MagSgn**: stuff fires when previous byte == 0xFF;
+    ///     fast-path test is "no byte == 0xFF in batch + no carried
+    ///     unstuff" (~99% of batches at corpus 0xFF density of 0.4%).
+    ///   - **VLC**: stuff fires when previous byte > 0x8F AND
+    ///     current byte's low 7 bits are all 1s (0x7F or 0xFF).
+    ///     Fast-path test is "no byte > 0x8F in batch + no carried
+    ///     unstuff" — bytes > 0x8F are 7/16 of the value space, so
+    ///     fast-path hit-rate on uniform random data is
+    ///     ~(9/16)^4 ≈ 10%. Real VLC bytes may hit higher or lower
+    ///     depending on the entropy-stream distribution; the DX A/B
+    ///     measures end-to-end reality.
+    ///
+    /// Bit-exact equivalent of `refillScalar` — the slow-fallback
+    /// branch IS the scalar code on those 4 bytes; the fast branch
+    /// only fires when the SWAR test guarantees no unstuff applies.
+    @inline(__always)
+    mutating func refillBatched() {
+        // Reverse direction means we need 4 bytes at byteIdx-3 ..
+        // byteIdx (decreasing as we consume). Load address = byteIdx-3.
+        // After load, the LSB of the UInt32 is memory[byteIdx-3] and
+        // the MSB is memory[byteIdx]. Byte-swap so byte 0 = the byte
+        // we'd consume FIRST in the scalar reverse iteration
+        // (memory[byteIdx]).
+        melVlcBytes.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return }
+            // `withUnsafeBufferPointer` on an ArraySlice yields a
+            // pointer at the slice's start (slice-element 0), not at
+            // the underlying array's index 0. So `byteIdx` is the
+            // correct offset into `base` directly — do NOT add
+            // `bytesStart` again here (that would double-offset).
+            // 4-byte batched fast path. byteIdx is slice-relative;
+            // we need byteIdx >= 3 to load 4 bytes at positions
+            // byteIdx-3 .. byteIdx.
+            while bits <= 32 && byteIdx >= 3 {
+                let raw = UnsafeRawPointer(base.advanced(by: byteIdx - 3))
+                    .loadUnaligned(as: UInt32.self)
+                // Byte-swap so the first-to-consume byte
+                // (memory[byteIdx]) is at lane 0 of `p32`.
+                let p32 = raw.byteSwapped
+                // SWAR detect: any byte > 0x8F. For each byte b,
+                // `(b + 0x70)` carries into the next byte iff b ≥
+                // 0x90, which would corrupt adjacent SWAR lanes.
+                // Per-lane test: use NEON SIMD compare. Swift's
+                // SIMD4<UInt8> .> is a single NEON instruction.
+                let bytes = SIMD4<UInt8>(
+                    UInt8(p32 & 0xFF),
+                    UInt8((p32 >> 8) & 0xFF),
+                    UInt8((p32 >> 16) & 0xFF),
+                    UInt8((p32 >> 24) & 0xFF))
+                let gt = bytes .> SIMD4<UInt8>(repeating: 0x8F)
+                let anyOver8F = any(gt)
+
+                if !anyOver8F && !unstuff {
+                    // Fast path — none of the 4 bytes are > 0x8F
+                    // and no unstuff carried in. Each byte
+                    // contributes its full 8 bits with no masking.
+                    tmp |= UInt64(p32) << bits
+                    bits += 32
+                    byteIdx -= 4
+                    // unstuff = (last consumed byte > 0x8F) =
+                    // (byte at byteIdx-3 in original index, which
+                    // is bytes[3]) > 0x8F. Since we tested all 4
+                    // bytes ≤ 0x8F, the new unstuff = false.
+                    // (left as-is — `unstuff` is already false on
+                    // entry to this branch)
+                } else {
+                    // Slow fallback — at least one byte > 0x8F or
+                    // carried unstuff. Process byte-by-byte (same
+                    // as scalar). Process exactly 4 bytes from
+                    // this batch, then re-check loop condition.
+                    var k = 0
+                    while k < 4 {
+                        let byte = base[byteIdx]
+                        byteIdx -= 1
+                        let t: Int = (unstuff && (Int(byte) & 0x7F) == 0x7F) ? 1 : 0
+                        let dBits = 8 - t
+                        let mask: UInt8 = (t == 1) ? 0x7F : 0xFF
+                        tmp |= UInt64(byte & mask) << bits
+                        bits += dBits
+                        unstuff = (byte > 0x8F)
+                        k += 1
+                        if bits > 32 { break }
+                    }
+                }
+            }
+        }
+        // Tail: byte-by-byte (incl. byteIdx < 3 stream-end + the
+        // 0-padding loop). Identical to scalar.
+        while bits <= 32 {
+            let byte: UInt8
+            if byteIdx >= 0 {
+                byte = melVlcBytes[bytesStart + byteIdx]
+                byteIdx -= 1
+            } else {
+                byte = 0
+            }
             let t: Int = (unstuff && (Int(byte) & 0x7F) == 0x7F) ? 1 : 0
             let dBits = 8 - t
             let mask: UInt8 = (t == 1) ? 0x7F : 0xFF
