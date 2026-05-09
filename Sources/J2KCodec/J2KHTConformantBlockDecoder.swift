@@ -99,7 +99,6 @@ fileprivate struct DecodeState {
     }
 
     mutating func nextMELEvent() -> Bool {
-        J2KHTEntropyProfile.bumpMel()
         melRun -= 2
         let isOne = (melRun == -1)
         if melRun < 0 {
@@ -115,7 +114,6 @@ fileprivate struct DecodeState {
     func lookupVLC(
         c_q: Int, bits: Int, initialLine: Bool
     ) -> (rho: Int, u_off: Int, cwd_len: Int, e_k: Int, e_1: Int) {
-        J2KHTEntropyProfile.bumpVlcLookup()
         let tbl = initialLine
             ? vlcDecoderTable0Conformant
             : vlcDecoderTable1Conformant
@@ -171,7 +169,6 @@ fileprivate struct DecodeState {
     mutating func decodeUVLCPairInitial(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
-        J2KHTEntropyProfile.bumpUvlc()
         if u_off0 == 0 && u_off1 == 0 { return (0, 0) }
         if u_off0 == 1 && u_off1 == 1 {
             let melEvent = nextMELEvent()
@@ -213,7 +210,6 @@ fileprivate struct DecodeState {
     mutating func decodeUVLCPairSubsequent(
         u_off0: Int, u_off1: Int
     ) -> (Int, Int) {
-        J2KHTEntropyProfile.bumpUvlc()
         let len0 = (u_off0 != 0) ? readPrefix() : 0
         let len1 = (u_off1 != 0) ? readPrefix() : 0
         let u0 = (u_off0 != 0) ? decodeFromPrefix(len0) : 0
@@ -224,11 +220,6 @@ fileprivate struct DecodeState {
     // MARK: - Row decoding
 
     mutating func decodeInitialRow() {
-        let _profileT0 = DispatchTime.now()
-        defer {
-            let dt = DispatchTime.now().uptimeNanoseconds &- _profileT0.uptimeNanoseconds
-            J2KHTEntropyProfile.recordInitialRowNs(dt)
-        }
         var lep = 0
         var lcxp = 0
         var c_q0 = 0
@@ -317,11 +308,6 @@ fileprivate struct DecodeState {
     }
 
     mutating func decodeSubsequentRow(y: Int) {
-        let _profileT0 = DispatchTime.now()
-        defer {
-            let dt = DispatchTime.now().uptimeNanoseconds &- _profileT0.uptimeNanoseconds
-            J2KHTEntropyProfile.recordSubsequentRowNs(dt)
-        }
         var lep = 0
         var lcxp = 0
         var maxE = max(Int(eVal[0]), Int(eVal[1])) - 1
@@ -451,7 +437,6 @@ fileprivate struct DecodeState {
         rho: Int, Uq: Int,
         e_k: Int, e_1: Int
     ) {
-        J2KHTEntropyProfile.bumpQuadSamples()
         // v7.3.0 Phase 3d — rho=0 fast path. When no samples in this
         // quad are significant there's no MagSgn read, no
         // reconstruction, no store. Most quads on a sparse block hit
@@ -472,19 +457,15 @@ fileprivate struct DecodeState {
         let m2 = Uq - ((e_k >> 2) & 1)
         let m3 = Uq - ((e_k >> 3) & 1)
         var p0: UInt32 = 0; if r0 != 0 {
-            J2KHTEntropyProfile.bumpMagsgnReadBits(m0)
             p0 = magsgnDec.read(count: m0)
         }
         var p1: UInt32 = 0; if r1 != 0 {
-            J2KHTEntropyProfile.bumpMagsgnReadBits(m1)
             p1 = magsgnDec.read(count: m1)
         }
         var p2: UInt32 = 0; if r2 != 0 {
-            J2KHTEntropyProfile.bumpMagsgnReadBits(m2)
             p2 = magsgnDec.read(count: m2)
         }
         var p3: UInt32 = 0; if r3 != 0 {
-            J2KHTEntropyProfile.bumpMagsgnReadBits(m3)
             p3 = magsgnDec.read(count: m3)
         }
 
