@@ -26,7 +26,20 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
     /// in `ping` replies. Captured at type init.
     nonisolated(unsafe) public static let startTime: Date = Date()
 
+    /// Optional activity tracker — when set, every method
+    /// touches the tracker so the daemon's idle-timeout clock
+    /// resets on each successful request. Set this from the
+    /// daemon executable's startup code; nil in tests that
+    /// don't care about lifecycle.
+    public let activityTracker: J2KDaemonActivityTracker?
+
     public override init() {
+        self.activityTracker = nil
+        super.init()
+    }
+
+    public init(activityTracker: J2KDaemonActivityTracker?) {
+        self.activityTracker = activityTracker
         super.init()
     }
 
@@ -34,6 +47,7 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
         requestID: String,
         reply: @escaping (String, Int32, Double) -> Void
     ) {
+        activityTracker?.touch()
         let pid = ProcessInfo.processInfo.processIdentifier
         let uptime = Date().timeIntervalSince(J2KDaemonService.startTime)
         reply(requestID, pid, uptime)
@@ -48,6 +62,7 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
         codestream: Data,
         reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void
     ) {
+        activityTracker?.touch()
         // Wrap the non-Sendable @objc reply closure in a class
         // that is @unchecked Sendable so we can transfer it to
         // a Task. NSXPCConnection's reply contract guarantees
@@ -102,11 +117,20 @@ private final class ReplyBox: @unchecked Sendable {
 /// `NSXPCListenerDelegate` — accepts every incoming connection,
 /// wires up the exported object, resumes the connection.
 ///
-/// Phase 6.6 will add `interruptionHandler` (per-connection
-/// state cleanup) and `invalidationHandler` (idle-timeout
-/// bookkeeping).
+/// **v8 Phase 6.6**: when constructed with an
+/// `activityTracker`, every accepted connection's exported
+/// service shares the same tracker so the daemon's idle-
+/// timeout clock resets on each XPC request.
 public final class J2KDaemonListenerDelegate: NSObject, NSXPCListenerDelegate {
+    public let activityTracker: J2KDaemonActivityTracker?
+
     public override init() {
+        self.activityTracker = nil
+        super.init()
+    }
+
+    public init(activityTracker: J2KDaemonActivityTracker?) {
+        self.activityTracker = activityTracker
         super.init()
     }
 
@@ -114,7 +138,7 @@ public final class J2KDaemonListenerDelegate: NSObject, NSXPCListenerDelegate {
         _ listener: NSXPCListener,
         shouldAcceptNewConnection conn: NSXPCConnection
     ) -> Bool {
-        let exported = J2KDaemonService()
+        let exported = J2KDaemonService(activityTracker: activityTracker)
         conn.exportedInterface = NSXPCInterface(with: J2KDaemonProtocol.self)
         conn.exportedObject = exported
         conn.resume()
