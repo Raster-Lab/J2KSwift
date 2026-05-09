@@ -392,6 +392,21 @@ extension J2KCLI {
         // automatically. Inert on Part 1 codestreams. Implies GPU
         // inverse DWT (uses J2KDecoder.decodeWithGPUHT internally).
         let useGPUHT        = options["gpu-ht"] != nil
+        // v8 Phase 1 — honor --no-gpu by setting the env vars that
+        // `DecoderPipeline._gpuInverse53Enabled` and `_gpuHTEntropyEnabled`
+        // read at their lazy static-let init. Must run before the
+        // decoder is touched. The previous CLI silently ignored
+        // --no-gpu for the standard `decode()` path because the
+        // gpuInverse53 default is ON, which paid ~50 ms of Metal
+        // cold-start init per CLI invocation even on fixtures the
+        // user explicitly requested to keep on CPU. Now --no-gpu
+        // flips the routing flags off for this process, eliminating
+        // the Metal load entirely.
+        let forceCPU = options["no-gpu"] != nil
+        if forceCPU {
+            setenv("J2K_GPU_INVERSE_53", "0", 1)
+            setenv("J2K_GPU_HT_ENTROPY", "0", 1)
+        }
         _ = (stripAlpha, scale, regionStr, outputFormat, bitDepthConvert)
 
         if verbose {

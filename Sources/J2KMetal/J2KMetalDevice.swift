@@ -117,13 +117,31 @@ public struct J2KMetalDeviceConfiguration: Sendable {
 /// fail with ``J2KError/unsupportedFeature(_:)``.
 public actor J2KMetalDevice {
     /// Whether Metal is available on this platform.
+    ///
+    /// **v8 Phase 1 fix**: cached. The previous implementation called
+    /// `MTLCreateSystemDefaultDevice()` on every access — and that
+    /// call costs ~50 ms cold (loads the Metal frameworks + creates
+    /// a default device). Every CLI invocation paying that on first
+    /// call is fine; the bug was that the gate at
+    /// `DecoderPipeline.decode` called `isAvailable` BEFORE the
+    /// cheap pixel-threshold check, so even tiny images that would
+    /// never use GPU still paid the 50 ms init. Caching makes
+    /// repeat in-process calls free; the gate-reorder in
+    /// `DecoderPipeline` makes the first-process-call avoidable
+    /// when the threshold rules out GPU.
     public static var isAvailable: Bool {
         #if canImport(Metal)
-        return MTLCreateSystemDefaultDevice() != nil
+        return _isAvailableCache
         #else
         return false
         #endif
     }
+
+    #if canImport(Metal)
+    nonisolated(unsafe) private static let _isAvailableCache: Bool = {
+        return MTLCreateSystemDefaultDevice() != nil
+    }()
+    #endif
 
     /// The configuration for this device.
     public let configuration: J2KMetalDeviceConfiguration
