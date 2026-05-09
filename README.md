@@ -8,17 +8,17 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 7.4.0
+**Current Version**: 7.5.0
 **Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, and HT-conformant (Part-15) lossless 5/3 medical-archive performance closing in on Kakadu (3,100+ tests, 100 % pass rate)
-**Previous Release**: 7.3.0 (HT entropy decoder hot-loop wedge elimination)
+**Previous Release**: 7.4.0 (staged-NEON release: SWAR-batched MagSgn refill default ON)
 
 ## 📦 Release Status
 
-**v7.4.0** ships the staged-NEON arc on Apple Silicon. Three phases were measured under a strict ≥ 3 ms DX in-process acceptance gate; only Phase 2 cleared it and ships default ON. The other two are landed behind opt-in flags so future work can re-measure if the cost shape shifts.
+**v7.5.0** is a perf-wash release that closes v7.1.0's deferred forward-HT-GPU-entropy promise with measurements. The path was correctness-shipped in v7.1.0 behind an opt-in flag; the perf gate was deferred to "v7.2.x" but never driven through. v7.5 finally measures it: GPU forward HT entropy is **slower than CPU on every corpus fixture**, including DX 2800×2288 (the production target) at **−22.4 ms (−44.6 %)**. Per-block GPU cost on Apple M2 is ~6.7× CPU per-block — even infinite cross-tile batching wouldn't close the gap.
 
-- **Phase 2 (production default)** — `HTMagSgnDecoderConformant.refill` SWAR-batched: 4-byte unaligned `UInt32` loads + SWAR `0xFF`-byte detect, fast-path 4-byte fold, scalar fallback for stuffed batches. Bit-exact across 11 parity sweeps. Microbench 1.05× → 1.49× per-call (1.15× at the DX corpus average of 14 bits per read).
-- **Phase 1 (opt-in flag)** — `readQuadSamples` SIMD4 reconstruction. DX A/B Δ = 0.90 ms — below the gate. `HTBlockDecoderConformant.neonReconstructionEnabled = false` by default.
-- **Phase 3 (opt-in flag)** — VLC reverse-reader SWAR refill. DX A/B Δ = noise (−0.6 to +2.5 ms). VLC's stuff-trigger byte distribution (≤ 0x8F) makes the SWAR fast-path fire only ~10 % of batches vs MagSgn's ~99 %. `VLCReverseReaderTesting.batchedRefillEnabled = false` by default.
+The classifier + cleanup-pass emit work is structurally CPU-friendly on M2 (chained per-sample state, cache-resident 4 KB codeblock data, vector-strong CPU). The flag stays default OFF; correctness is unchanged.
+
+**No production code changes.** Codestream bytes byte-identical to v7.4.0. The deliverable is the regression-detection benchmark + per-block cost analysis that closes a 6-month-old "deferred" promise honestly.
 
 ### Headline benchmark — DX 2800×2288 in-process decode (ms, median of 5, Apple M2)
 
@@ -27,11 +27,12 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 | v7.1.0 | 130.78 | (baseline) | 5.23× |
 | v7.2.0 | 62.51 | -52 % | 2.50× |
 | v7.3.0 | 54.34 | -13 % | 2.17× |
-| **v7.4.0** | **~52** | **~ -3 %** | **~ 2.10×** |
+| v7.4.0 | ~52 | ~ -3 % | ~ 2.10× |
+| **v7.5.0** | **~52** | **(no change)** | **~ 2.10×** |
 
-(v7.4.0 measured on a settled system. Absolute wall is system-state-sensitive within ±5 ms; the measured Δ vs the v7.3-equivalent scalar refill is consistently positive across 4 of 5 samples.)
+(v7.5.0 is decode-perf-equivalent to v7.4.0 — no code changes. The release closes the *encode-side* GPU forward HT entropy workstream out.)
 
-See [RELEASE_NOTES_v7.4.0.md](RELEASE_NOTES_v7.4.0.md) for v7.4.0 details, [V7_4_0_PHASE_1_FINDING.md](V7_4_0_PHASE_1_FINDING.md), [V7_4_0_PHASE_2_FINDING.md](V7_4_0_PHASE_2_FINDING.md), and [V7_4_0_PHASE_3_FINDING.md](V7_4_0_PHASE_3_FINDING.md) for per-phase measurement detail, and [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full v7.1→v7.3 per-fixture comparison. Previous release's notes are at [RELEASE_NOTES_v7.3.0.md](RELEASE_NOTES_v7.3.0.md).
+See [RELEASE_NOTES_v7.5.0.md](RELEASE_NOTES_v7.5.0.md) and [V7_5_0_PHASE_0_FINDING.md](V7_5_0_PHASE_0_FINDING.md) for the v7.5.0 measurement and recommendation. Prior release notes: [v7.4.0](RELEASE_NOTES_v7.4.0.md), [v7.3.0](RELEASE_NOTES_v7.3.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 

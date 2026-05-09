@@ -5,6 +5,52 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.5.0] — 2026-05-09
+
+**Perf-wash release — forward HT GPU entropy workstream closure with measurements**
+
+Closes the v7.1.0 release notes' "perf optimisation is v7.2.x" promise. v7.2 → v7.4 went elsewhere; v7.5 finally measures the forward HT GPU entropy A/B and concludes honestly: **the path is slower than CPU on every corpus fixture**, including DX 2800×2288 (the production target) where the regression is **−22.4 ms (−44.6 %)**. Per-block GPU cost on Apple M2 is ~6.7× CPU per-block — even infinite cross-tile batching wouldn't close the gap.
+
+The classifier + cleanup-pass emit work is structurally CPU-friendly on M2: chained per-sample state, cache-resident 4 KB codeblock data, vector-strong CPU. v7.3.0's HT decoder hot-loop wedge elimination already showed how aggressively the CPU side has been tuned (62.5 → 54.3 ms on DX decode in one release); the forward path benefits from the same CPU-side optimisations, leaving the GPU side without a structural win to capture on M2.
+
+**Empirical data is the deliverable.** Per RELEASING.md §3, perf-wash releases are explicitly acceptable when no actionable lever exists and the measurement closes a previously-deferred promise. The flag stays default OFF; correctness is unchanged.
+
+### Added
+
+- `Tests/J2KMetalTests/V750ForwardHTGPUEntropyPhase0Bench.swift` —
+  forward HT GPU entropy A/B benchmark with telemetry breakdown
+  (median of 5, all 6 corpus fixtures, dispatch + emit + other ms
+  per fire). Acts as a regression-detection probe — anyone who
+  attempts to flip `_gpuForwardHTEntropyEnabled = true` by default
+  on M2 will see this benchmark's negative Δ values immediately.
+- `V7_5_0_PHASE_0_FINDING.md` — per-block cost analysis,
+  recommendation to close the workstream out, reproduction
+  commands.
+- `RELEASE_NOTES_v7.5.0.md`.
+
+### Changed
+
+None in production code. `getVersion()` returns `"7.5.0"`.
+
+### Backward compatibility
+
+Codestream bytes byte-identical to v7.4.0 (no production code
+changes). No public API additions or removals. SemVer rule:
+**MINOR** (release artefacts + new test file).
+
+### Known limitations
+
+- The forward HT GPU entropy path remains correctness-shipped
+  but measurably slower than CPU on Apple M2 across the full
+  production corpus. The flag is preserved in case future
+  hardware (M3/M4/M5 or non-Apple GPUs) inverts the per-block
+  cost curve.
+- The Kakadu gap on DX in-process decode (~2.10× post-v7.4)
+  is structural per the v7.4 Phase 3 finding; closing it
+  further requires algorithmic redesign (bit-parallel
+  prefix-scan SIMD on chained-unstuff state) or different
+  hardware. Not in v7.5 scope.
+
 ## [7.4.0] — 2026-05-09
 
 **Staged NEON release — SWAR-batched MagSgn refill default ON; reconstruction & VLC SWAR rejected with measurements**
