@@ -14,6 +14,35 @@ import Foundation
 
 public enum HTBlockDecoderConformant {
 
+    /// **v7.4 NEON reconstruction gate.** Default `false` —
+    /// rigorous A/B benchmarking (`V740NeonDXWallBenchmark`,
+    /// `V740NeonReconstructionMicrobench`) measured the SIMD-vs-
+    /// scalar wall-time delta on DX 2800×2288 in-process decode at
+    /// only **0.90 ms (1.5 %)** at the v7.3.0 codebase state, well
+    /// below v7.4's 3 ms threshold for "default ON" enablement.
+    ///
+    /// The SIMD path is bit-exact-equivalent to the scalar reference
+    /// per `V740NeonReconstructionParityTests` (5/5 sweeps pass:
+    /// bit-depths, densities, block sizes, 32 random seeds, full
+    /// medical corpus end-to-end). Both paths are fully maintained;
+    /// callers (and tests) can flip this flag to A/B compare.
+    ///
+    /// Why scalar is the new default: at v7.3.0, after Phase 3c
+    /// (bottom-row recoverEQ) and Phase 3d (rho=0 fast path) had
+    /// landed, the readQuadSamples reconstruction body became a
+    /// smaller share of block-decode wall — leaving SIMD with too
+    /// little work per call to amortise its setup cost. The SIMD
+    /// path wins ~3 % on sparse blocks (where its flat per-call
+    /// cost beats scalar's per-iteration overhead) but loses ~3 %
+    /// on dense blocks. Aggregate on DX in-process: +0.9 ms.
+    ///
+    /// This flag is not removed because future v7.4 work (chained-
+    /// state MagSgn refill SIMD, batched per-quad MagSgn reads,
+    /// etc.) may compound with NEON reconstruction in a way that
+    /// flips the default back to ON. Until then, scalar is the
+    /// production path.
+    nonisolated(unsafe) public static var neonReconstructionEnabled: Bool = false
+
     /// Decode a Part-15 codeblock produced by
     /// `HTBlockEncoderConformant.encode` + `HTBlockLayoutConformant.assemble`.
     /// Returns the reconstructed `width * height` coefficient array
@@ -431,23 +460,91 @@ fileprivate struct DecodeState {
     /// parallel via `SIMD4<UInt32>`. Bit-identical to the scalar
     /// reference implementation by construction (same arithmetic,
     /// just executed lane-parallel).
+    /// Dispatcher. Routes to the SIMD or scalar implementation based
+    /// on the `_neonReconstructionEnabled` static flag. Both paths
+    /// share the rho=0 fast-path; only the per-lane reconstruction
+    /// arithmetic differs. Tests can flip the flag to A/B compare.
     @inline(__always)
     mutating func readQuadSamples(
         baseX: Int, baseY: Int,
         rho: Int, Uq: Int,
         e_k: Int, e_1: Int
     ) {
-        // v7.3.0 Phase 3d — rho=0 fast path. When no samples in this
-        // quad are significant there's no MagSgn read, no
-        // reconstruction, no store. Most quads on a sparse block hit
-        // this path (≈ 70 % of quads at corpus-typical 30 % density).
-        // Skipping the SIMD setup + 4 conditional stores saves ~5-10 ns
-        // per dead quad — measurable on sparse blocks.
         if rho == 0 { return }
-        // Serial MagSgn reads — the only step that must run in
-        // sequence (each read advances the shared bit cursor).
-        // Inactive lanes (rho bit = 0) read 0 so the SIMD lanes
-        // below produce harmless garbage that we won't store.
+        if DecodeState._neonReconstructionEnabled {
+            readQuadSamplesSIMD(
+                baseX: baseX, baseY: baseY,
+                rho: rho, Uq: Uq, e_k: e_k, e_1: e_1)
+        } else {
+            readQuadSamplesScalar(
+                baseX: baseX, baseY: baseY,
+                rho: rho, Uq: Uq, e_k: e_k, e_1: e_1)
+        }
+    }
+
+    /// **v7.4 NEON reconstruction prototype gate.**
+    ///
+    /// Reads from `HTBlockDecoderConformant.neonReconstructionEnabled`
+    /// — exposed publicly so tests can A/B compare. Default `true`
+    /// (Phase 3b's SIMD reconstruction has been the production path
+    /// since v7.3.0).
+    @inline(__always)
+    static var _neonReconstructionEnabled: Bool {
+        HTBlockDecoderConformant.neonReconstructionEnabled
+    }
+
+    /// **Scalar reference path.** The pre-Phase-3b implementation,
+    /// kept as the truth oracle for the SIMD path's bit-exactness
+    /// proof and as the fallback when the NEON gate is off.
+    /// Identical to the original `readQuadSamples` from before v7.3
+    /// other than minor bookkeeping (the `bumpQuadSamples` /
+    /// `bumpMagsgnReadBits` probe calls were removed in #367 along
+    /// with their SIMD-path counterparts).
+    @inline(__always)
+    mutating func readQuadSamplesScalar(
+        baseX: Int, baseY: Int,
+        rho: Int, Uq: Int,
+        e_k: Int, e_1: Int
+    ) {
+        let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        for i in 0..<4 {
+            let bit = (rho >> i) & 1
+            if bit == 0 { continue }
+            let eBit = (e_k >> i) & 1
+            let e1Bit = (e_1 >> i) & 1
+            let m = Uq - eBit
+            let payload = magsgnDec.read(count: m)
+            let sign = UInt32(payload & 1)
+            let mask: UInt32 = (m >= 32) ? ~UInt32(0)
+                                         : ((UInt32(1) << m) - 1)
+            var v_n: UInt32 = payload & mask
+            v_n |= UInt32(e1Bit) << m
+            v_n |= 1
+            let (dx, dy) = offsets[i]
+            let xi = baseX + dx
+            let yi = baseY + dy
+            if xi >= width || yi >= height { continue }
+            var coef: UInt32 = (v_n &+ 2) << (p &- 1)
+            if sign != 0 { coef |= 0x8000_0000 }
+            coefs[yi * width + xi] = coef
+        }
+    }
+
+    /// **NEON SIMD reconstruction path** (Phase 3b shape, kept as
+    /// `readQuadSamplesSIMD` so the dispatcher above can A/B against
+    /// `readQuadSamplesScalar`).
+    ///
+    /// Lane-parallel `SIMD4<UInt32>` reconstruction. The four samples
+    /// of a quad are independent in their reconstruction (mask + v_n
+    /// + coef + sign); only the MagSgn read itself is serial. SIMD4
+    /// on Apple Silicon maps to NEON 128-bit Q-register ops; each
+    /// shift/and/or below compiles to one instruction.
+    @inline(__always)
+    mutating func readQuadSamplesSIMD(
+        baseX: Int, baseY: Int,
+        rho: Int, Uq: Int,
+        e_k: Int, e_1: Int
+    ) {
         let r0 = (rho     ) & 1
         let r1 = (rho >> 1) & 1
         let r2 = (rho >> 2) & 1
@@ -456,80 +553,42 @@ fileprivate struct DecodeState {
         let m1 = Uq - ((e_k >> 1) & 1)
         let m2 = Uq - ((e_k >> 2) & 1)
         let m3 = Uq - ((e_k >> 3) & 1)
-        var p0: UInt32 = 0; if r0 != 0 {
-            p0 = magsgnDec.read(count: m0)
-        }
-        var p1: UInt32 = 0; if r1 != 0 {
-            p1 = magsgnDec.read(count: m1)
-        }
-        var p2: UInt32 = 0; if r2 != 0 {
-            p2 = magsgnDec.read(count: m2)
-        }
-        var p3: UInt32 = 0; if r3 != 0 {
-            p3 = magsgnDec.read(count: m3)
-        }
+        var p0: UInt32 = 0; if r0 != 0 { p0 = magsgnDec.read(count: m0) }
+        var p1: UInt32 = 0; if r1 != 0 { p1 = magsgnDec.read(count: m1) }
+        var p2: UInt32 = 0; if r2 != 0 { p2 = magsgnDec.read(count: m2) }
+        var p3: UInt32 = 0; if r3 != 0 { p3 = magsgnDec.read(count: m3) }
 
-        // Lane-parallel reconstruction. SIMD4<UInt32> on Apple
-        // Silicon maps directly to NEON 128-bit Q-register ops;
-        // each shift/and/or below is one instruction.
         let payloads = SIMD4<UInt32>(p0, p1, p2, p3)
         let ms = SIMD4<UInt32>(UInt32(m0), UInt32(m1), UInt32(m2), UInt32(m3))
-        // mask = (1 << m) - 1, where m ∈ [Uq - 1, Uq] and Uq is
-        // bounded by p (≤ 32 in practice; the (m >= 32) edge from
-        // the scalar branch corresponds to mask = ~0 = (1 << 32) - 1
-        // wraps in UInt32 — Swift's `&<<` returns 0 for shifts >=
-        // bit-width, so we synthesize the all-ones mask via NOT(0).
-        // For m == 0 (Uq == 0 with eBit == 0), payload contributes
-        // nothing — mask = 0, which `&-` of 1 - 1 produces correctly.
         let one = SIMD4<UInt32>(repeating: 1)
-        let zero = SIMD4<UInt32>(repeating: 0)
-        // Construct mask per lane. For m == 32 produce ~0 instead
-        // of (1 &<< 32) - 1 which is 0 - 1 = ~0 anyway via wrap, so
-        // single expression `((one &<< ms) &- one)` works for the
-        // typical m < 32 case AND for m == 32 (1 &<< 32 == 0 in
-        // Swift &<<; 0 &- 1 == ~0 in unsigned wrap).
+        // mask = (1 << m) - 1. For m == 32, `1 &<< 32` is 0 in Swift,
+        // and `0 &- 1` wraps to ~0 — same result as the scalar
+        // branch's `(m >= 32) ? ~0 : (1 << m) - 1`.
         let mask = (one &<< ms) &- one
-        // e1 bits per lane.
         let e1 = SIMD4<UInt32>(
             UInt32((e_1     ) & 1),
             UInt32((e_1 >> 1) & 1),
             UInt32((e_1 >> 2) & 1),
             UInt32((e_1 >> 3) & 1))
-        // signs: low bit of payload.
         let signs = payloads & one
-        // v_n = (payload & mask) | (e1 << m) | 1
         let v_n = (payloads & mask) | (e1 &<< ms) | one
-        // coef = (v_n + 2) << (p - 1); OR in sign bit at 31 when sign != 0
         let pShift = SIMD4<UInt32>(repeating: UInt32(p &- 1))
         var coefs4 = (v_n &+ SIMD4<UInt32>(repeating: 2)) &<< pShift
-        // sign mask: signs == 1 -> 0x8000_0000, signs == 0 -> 0
-        let signBit = SIMD4<UInt32>(repeating: 0x8000_0000)
-        // Branchless: signs is 0 or 1, so signs &<< 31 is 0 or 0x8000_0000
-        let signsApplied = signs &<< SIMD4<UInt32>(repeating: 31)
-        // But signs may be 0 even on inactive lanes — only apply
-        // when rho lane is set. We'll mask via rho gates at the
-        // store stage anyway.
-        coefs4 = coefs4 | signsApplied
-        // Suppress signBit in lanes where signs == 0.
-        _ = signBit  // keep the named constant for documentation
+        // signs is 0 or 1; `signs &<< 31` produces 0 or 0x8000_0000
+        // branchlessly. Inactive lanes produce harmless garbage that
+        // the rho-gated stores below skip.
+        coefs4 = coefs4 | (signs &<< SIMD4<UInt32>(repeating: 31))
 
-        // Conditional stores. For each lane, store coefs4[i] if
-        // rho-bit is set AND (baseX+dx, baseY+dy) is in-bounds.
-        // The per-lane offsets are the constant pattern (0,0),
-        // (0,1), (1,0), (1,1) — we hand-unroll the four stores
-        // since the indices are different per lane.
         if r0 != 0 {
-            let xi = baseX
             let yi = baseY
-            if xi < width && yi < height {
-                coefs[yi * width + xi] = coefs4[0]
+            if baseX < width && yi < height {
+                coefs[yi * width + baseX] = coefs4[0]
             }
         }
         if r1 != 0 {
-            let xi = baseX
             let yi = baseY + 1
-            if xi < width && yi < height {
-                coefs[yi * width + xi] = coefs4[1]
+            if baseX < width && yi < height {
+                coefs[yi * width + baseX] = coefs4[1]
             }
         }
         if r2 != 0 {
