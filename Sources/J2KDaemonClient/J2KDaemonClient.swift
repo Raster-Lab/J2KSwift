@@ -11,6 +11,7 @@
 #if os(macOS)
 
 import Foundation
+import J2KCore
 import J2KDaemonProtocol
 
 /// Errors raised by `J2KDaemonClient`.
@@ -112,6 +113,59 @@ public actor J2KDaemonClient {
             }
             proxy.ping(requestID: requestID) { id, pid, uptime in
                 cont.resume(returning: (id, pid, uptime))
+            }
+        }
+    }
+
+    /// **v8 Phase 6.5** — request the daemon decode a J2K
+    /// codestream. The daemon decodes via its warm
+    /// J2KMetalSession, marshals the resulting pixel data back
+    /// via XPC.
+    ///
+    /// Phase 6.5 returns the decoded `J2KImage`'s first
+    /// component (single-component grayscale is the dominant
+    /// medical-imaging shape). Multi-component (RGB) is Phase
+    /// 6.5b — the protocol surface allows extending later
+    /// without breaking compatibility.
+    ///
+    /// - Throws:
+    ///   - `J2KDaemonClientError.daemonUnavailable` if not connected
+    ///   - `J2KDaemonClientError.xpcInvocationError(String)` if
+    ///     the daemon-side decode failed (the wrapped string
+    ///     describes the J2K decode error)
+    public func decode(_ codestream: Data) async throws -> J2KImage {
+        guard let conn = connection else {
+            throw J2KDaemonClientError.daemonUnavailable
+        }
+
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<J2KImage, Error>) in
+            let proxy = conn.remoteObjectProxyWithErrorHandler { error in
+                cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                    "\(error)"))
+            } as? J2KDaemonProtocol
+            guard let proxy else {
+                cont.resume(throwing: J2KDaemonClientError.proxyUnavailable)
+                return
+            }
+            proxy.decode(codestream: codestream) { success, w, h, bd, signed, compCount, bigEndian, pixelData, errMsg in
+                if !success {
+                    cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                        errMsg ?? "decode failed (no message)"))
+                    return
+                }
+                let component = J2KComponent(
+                    index: 0,
+                    bitDepth: Int(bd),
+                    signed: signed,
+                    width: Int(w),
+                    height: Int(h),
+                    data: pixelData,
+                    sampleByteOrder: bigEndian ? .bigEndian : .littleEndian)
+                let image = J2KImage(
+                    width: Int(w),
+                    height: Int(h),
+                    components: [component])
+                cont.resume(returning: image)
             }
         }
     }

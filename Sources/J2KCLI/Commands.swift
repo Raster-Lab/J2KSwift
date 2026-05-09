@@ -7,6 +7,9 @@
 import Foundation
 import J2KCore
 import J2KCodec
+#if os(macOS)
+import J2KDaemonClient
+#endif
 
 extension J2KCLI {
     /// Parse command-line arguments into a dictionary.
@@ -433,12 +436,50 @@ extension J2KCLI {
         let decoder = J2KDecoder()
         let startDecode = Date()
         let decodedImage: J2KImage
+
+        // v8 Phase 6.5 — daemon-first decode with fallback.
+        // Try the daemon if --no-daemon was NOT explicitly
+        // passed AND the codestream's first component is plausibly
+        // grayscale single-component (the Phase 6.5 daemon RPC
+        // surface). If the daemon is unreachable or returns an
+        // error, fall back transparently to in-process decode.
+        // No user-facing "daemon used X path" output (use --verbose
+        // to see).
+        let noDaemon = options["no-daemon"] != nil
+        var usedDaemon = false
+        #if os(macOS)
+        if !noDaemon && !useGPUHT && !pipeInput {
+            let client = J2KDaemonClient()
+            do {
+                decodedImage = try await client.decode(encodedData)
+                usedDaemon = true
+                await client.close()
+            } catch {
+                // Fall back to in-process — daemon unavailable
+                // or daemon-side decode failed. No user-visible
+                // error; the in-process path always works.
+                if verbose {
+                    printInfo("(daemon unavailable, decoding in-process)", pipeMode: pipeOutput)
+                }
+                await client.close()
+                decodedImage = try await decoder.decode(encodedData)
+            }
+        } else if useGPUHT {
+            decodedImage = try await decoder.decodeWithGPUHT(encodedData)
+        } else {
+            decodedImage = try await decoder.decode(encodedData)
+        }
+        #else
         if useGPUHT {
             decodedImage = try await decoder.decodeWithGPUHT(encodedData)
         } else {
             decodedImage = try await decoder.decode(encodedData)
         }
+        #endif
         let decodeTime = Date().timeIntervalSince(startDecode)
+        if verbose && usedDaemon {
+            printInfo("(decoded via daemon at warm-process speed)", pipeMode: pipeOutput)
+        }
 
         // Header-only mode: print info and exit
         if headerOnly {
