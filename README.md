@@ -32,7 +32,7 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 
 v7.1.0 → v7.3.0 closes ~60 % of the Kakadu gap that v7.1.0 shipped with. Full benchmark across 6 medical fixtures × 3 versions × {CLI, in-process} × {encode, decode} is in [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md).
 
-v7.3.0 release notes will land alongside the tag — see [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full benchmark comparison and the per-PR commits (#359-#367) for change details. The previous release's notes are at [RELEASE_NOTES_v7.2.0.md](RELEASE_NOTES_v7.2.0.md).
+See [RELEASE_NOTES_v7.3.0.md](RELEASE_NOTES_v7.3.0.md) for v7.3.0 details and [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full per-fixture × per-version benchmark comparison. The previous release's notes are at [RELEASE_NOTES_v7.2.0.md](RELEASE_NOTES_v7.2.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
