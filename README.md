@@ -8,21 +8,31 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 2.4.0  
-**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, and hardware-accelerated performance (3,100+ tests, 100% pass rate)  
-**Previous Release**: 2.3.0 (JPEG XS Core Codec)
+**Current Version**: 7.3.0
+**Status**: Production-ready JPEG 2000 reference implementation with full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, and HT-conformant (Part-15) lossless 5/3 medical-archive performance closing in on Kakadu (3,100+ tests, 100 % pass rate)
+**Previous Release**: 7.2.0 (encode UMA boundary elimination + cross-tile batched HT entropy decode)
 
 ## 📦 Release Status
 
-**v2.4.0** delivers Phase 21 — Comprehensive CLI Enhancement:
-- 🖥️ **8 New CLI Commands** — `encode3d`, `decode3d`, `jpip server`, `jpip client`, `batch`, `compare`, `convert`, `completions`
-- 🧊 **3D Volumetric CLI** — encode/decode JP3D volumes from the command line with full tile/codeblock/region support
-- 📡 **JPIP Streaming CLI** — server with session management and client with interactive mode
-- ⚡ **Batch Processing** — parallel encode/decode/transcode of entire directories
-- 🔗 **Cross-Library Syntax** — unified flag naming for reuse across Raster-Lab compression tools
-- 🐚 **Shell Completions** — Bash, Zsh, and Fish completion generation
+**v7.3.0** delivers a series of bit-exact entropy-decoder optimisations that shrink the Kakadu performance gap on the headline DX 2800×2288 medical fixture:
 
-See [RELEASE_NOTES_v2.4.0.md](RELEASE_NOTES_v2.4.0.md) for v2.4.0 details, or [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md) for the previous release.
+- **SIMD readQuadSamples reconstruction** — 4-sample-per-quad lane-parallel `SIMD4<UInt32>` arithmetic
+- **Bottom-row-only `recoverEQBottomRow`** — eliminating top-row eQ work that callers always discarded (-34 % block-decode wall)
+- **rho == 0 fast-path** — skips ~70 % of quads on typical-density blocks with a 12-line early-exit
+- **VLC `consume(count:)`** — skips the redundant refill check after `peek` (-20 % on top of the rho fast-path)
+- **Critical fix** — removed Phase 0 instrumentation bumps that caused 30 %+ multi-tile decode regression via cache-line contention
+
+### Headline benchmark — DX 2800×2288 in-process decode (ms, median of 5)
+
+| version | wall ms | Δ vs prior | Kakadu gap |
+|---|---:|---:|---:|
+| v7.1.0 | 130.78 | (baseline) | 5.23× |
+| v7.2.0 | 62.51 | **-52 %** | 2.50× |
+| **v7.3.0** | **54.34** | **-13 %** | **2.17×** |
+
+v7.1.0 → v7.3.0 closes ~60 % of the Kakadu gap that v7.1.0 shipped with. Full benchmark across 6 medical fixtures × 3 versions × {CLI, in-process} × {encode, decode} is in [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md).
+
+v7.3.0 release notes will land alongside the tag — see [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) for the full benchmark comparison and the per-PR commits (#359-#367) for change details. The previous release's notes are at [RELEASE_NOTES_v7.2.0.md](RELEASE_NOTES_v7.2.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
