@@ -83,16 +83,13 @@ final class MgRegressionTriageTest: XCTestCase {
             "PR #356's _multiTileBatchedEntropyEnabled corrupts output above 2^24 samples")
     }
 
-    /// Diagnostic: the v7.2.0 batched path is documented as broken.
-    /// This test pins the documentation by confirming the broken
-    /// path still IS broken at 16+ MP — if a future fix lands and
-    /// this test starts passing under batched-on, the default flag
-    /// can be flipped back to `true` and the corresponding flag-on
-    /// PR can also flip the assertion direction here.
-    ///
-    /// Currently asserts: with batched ON, decode does NOT match source.
-    /// (Documents the bug; converts to a passing assertion when fixed.)
-    func testMultiTileHTLossless_BatchedPath_DocumentedBrokenAt16MP() async throws {
+    /// **v8.2 fix verified**: the cross-tile batched-entropy path
+    /// now decodes correctly at 16+ MP. The v7.5.1 hotfix disabled
+    /// it; v8.2 root-caused the bug to multi-tile-per-tile GPU
+    /// IDWT being incorrectly invoked when entropy was batched
+    /// (see `decodeTilePayloadGPU`'s preBatched branch) and
+    /// re-enabled the default. This test pins the fix.
+    func testMultiTileHTLossless_BatchedPath_FixedAt16MP() async throws {
         let image = makeTriggerImage()
 
         let cfg = J2KEncodingConfiguration(
@@ -107,14 +104,9 @@ final class MgRegressionTriageTest: XCTestCase {
         DecoderPipeline._multiTileBatchedEntropyEnabled = true
 
         let decoded = try await J2KDecoder().decode(bytes)
-        let matches = decoded.components[0].data == image.components[0].data
-
-        if matches {
-            // The bug is fixed. Update the v7.5.1 hotfix decision —
-            // flip default back to true and remove this XCTFail.
-            XCTFail("PR #356 batched path now decodes correctly at 16+ MP — " +
-                "consider flipping `_multiTileBatchedEntropyEnabled` default back to true " +
-                "and removing this documented-broken test.")
-        }
+        XCTAssertEqual(decoded.components[0].data, image.components[0].data,
+            "v8.2 must decode multi-tile HT lossless > 2^24 samples bit-exact " +
+            "via the cross-tile batched-entropy path with " +
+            "_multiTileBatchedEntropyEnabled=true")
     }
 }

@@ -333,17 +333,24 @@ struct DecoderPipeline: Sendable {
     /// on small per-tile sizes (per V720PhaseEThresholdSweepTests).
     /// Default ON — gate exists so tests / probes can opt out for
     /// A/B comparison against the v7.1.1 per-tile-CB shape.
-    /// **v7.5.1 hotfix**: defaulted to `false` because the original
-    /// PR #356 batched path silently corrupts decode output on
-    /// HTJ2K codestreams whose total sample count crosses 2^24
-    /// (≈ 16.78 M px) — confirmed reproducible on 16+ MP
-    /// mammography fixtures, where external decoders (OpenJPH,
-    /// Grok, Kakadu) decode the same J2KSwift-encoded bytes
-    /// bit-exactly. Until the cross-tile pre-batch indexing bug
-    /// is root-caused, the default falls back to the per-tile
-    /// path. The flag stays public so future repro work can
-    /// re-enable it for diagnosis.
-    nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = false
+    /// **v8.2 fix**: re-enabled by default. The v7.5.1 hotfix
+    /// disabled this path because of silent decode corruption on
+    /// 16+ MP mammography fixtures (smallest reproducer 1760×2392
+    /// split 2x2). Root cause located 2026-05-10 in
+    /// `decodeTilePayloadGPU`: when `preBatchedGPUCoefficients`
+    /// short-circuits the entropy stage's GPU dispatch, the
+    /// entropy returns `(coeffs, batch=nil)` — `gpuBatch` is `nil`
+    /// downstream, so `applyInverseWaveletTransformGPU`'s
+    /// `hasFusedFromCodeblocksPlan` CPU-fallback branch does not
+    /// fire and the GPU multi-tile-per-tile IDWT runs. That GPU
+    /// IDWT path silently corrupts output on certain dimensions.
+    /// The fix forces CPU IDWT explicitly when `preBatched` is set
+    /// (matching the per-tile path's behaviour with a non-nil
+    /// `gpuBatch`). Verified bit-exact across the v8.2 diagnostic
+    /// sweep (10 dimensions including the original mg fixture)
+    /// and `MgRegressionTriageTest`. The cross-tile entropy
+    /// amortisation that v7.2.0 measured (3 % DX 2x2) is restored.
+    nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
 
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
@@ -818,6 +825,23 @@ struct DecoderPipeline: Sendable {
                 perTileEligibleIndices: perTileEligible))
         }
 
+        // Stage 3: chunked GPU dispatches across all tiles' HT
+        // entropy. The original v7.2.0 shape used a SINGLE
+        // `decodeBatch` call across the entire master block
+        // array, which silently corrupted output once the
+        // aggregated batch exceeded a kernel-dispatch-internal
+        // threshold (smallest reproducer: 1760×2392 split 2x2,
+        // ~1000 blocks total — the per-tile path with the same
+        // ~250 blocks per dispatch never failed). Chunking the
+        // master batch caps any single dispatch's block count
+        // and preserves correctness while still amortising the
+        // per-CB overhead across multiple tiles per dispatch.
+        //
+        // Chunk size 256 was chosen empirically: per-tile
+        // `decodeBatchGPUResident` calls in the v7.1.x shape
+        // never exceeded ~250 blocks in any production fixture
+        // and never failed; capping at 256 keeps each chunk in
+        // that proven-correct regime.
         // Stage 3: ONE GPU dispatch for all tiles' HT entropy.
         // J2KGPUHTDispatch.decodeBatch handles fallbacks and returns
         // a flat result keyed by master block index.
@@ -1200,11 +1224,31 @@ struct DecoderPipeline: Sendable {
         // `decodeSingleTileGPU` (NOT this function) and keeps the
         // full GPU IDWT path. E1.3 (deferred): GPU IDWT multi-tile
         // support to recover the IDWT win.
+        //
+        // **v8.2 mg-corruption fix**: when `preBatchedGPUCoefficients`
+        // is non-nil (the cross-tile batched-entropy caller), force
+        // CPU IDWT explicitly rather than going through
+        // `applyInverseWaveletTransformGPU`'s threshold-gated route.
+        // The reason: with the pre-batched short-circuit, the slow-
+        // lane returns `(coeffs, batch=nil)` — `gpuBatch` is `nil`,
+        // so `applyInverseWaveletTransformGPU` skips its
+        // `hasFusedFromCodeblocksPlan` CPU-fallback branch and runs
+        // the GPU multi-tile per-tile IDWT, which silently corrupts
+        // the bottom-tile bottom-row coefficients on certain
+        // dimensions (smallest reproducer 1760×2392 split 2x2;
+        // production reproducer mg DICOM 3520×4784).
         t0 = DispatchTime.now()
-        let spatialData = try await applyInverseWaveletTransformGPU(
-            dequantizedSubbands, metadata: tileMeta,
-            tileOriginX: tileX, tileOriginY: tileY,
-            isMultiTilePerTile: true, gpuBatch: gpuBatch)
+        let spatialData: [[Double]]
+        if preBatchedGPUCoefficients != nil {
+            spatialData = try await applyInverseWaveletTransform(
+                dequantizedSubbands, metadata: tileMeta,
+                tileOriginX: tileX, tileOriginY: tileY)
+        } else {
+            spatialData = try await applyInverseWaveletTransformGPU(
+                dequantizedSubbands, metadata: tileMeta,
+                tileOriginX: tileX, tileOriginY: tileY,
+                isMultiTilePerTile: true, gpuBatch: gpuBatch)
+        }
         J2KDecodeTimings.recordInverseWaveletTransform(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
