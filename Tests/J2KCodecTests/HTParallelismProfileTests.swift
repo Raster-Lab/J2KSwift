@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTParallelismProfileTests.swift
 // v5.39 M2 — large-fixture HT parallelism feasibility study.
 //
@@ -250,3 +252,5 @@ final class HTParallelismProfileTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

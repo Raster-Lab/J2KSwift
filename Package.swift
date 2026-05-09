@@ -7,7 +7,7 @@ let package = Package(
     name: "J2KSwift",
     platforms: [
         .macOS(.v15),
-        .iOS(.v17),
+        .iOS(.v18),
         .tvOS(.v17),
         .watchOS(.v10),
         .visionOS(.v1)
@@ -85,6 +85,20 @@ let package = Package(
         .target(
             name: "J2KMetal",
             dependencies: ["J2KCore"],
+            // The .metal source file is documentation/reference
+            // material — regenerated via Scripts/build_metallib.sh
+            // and committed as `default.metallib`. Excluded from
+            // the build to avoid Xcode auto-discovering it as a
+            // Metal source target (which would compile a second
+            // metallib and collide with the pre-copied one in iOS
+            // Simulator builds).
+            //
+            // **v8 Phase 6.2 (iOS support)**: dropping
+            // `.process("J2KShaders.metal")` from resources +
+            // adding it to `exclude:` aligns macOS and iOS Xcode
+            // builds with the SwiftPM `swift build` behaviour
+            // (both rely on the pre-compiled metallib).
+            exclude: ["J2KShaders.metal"],
             resources: [
                 // v5.15: ship a pre-compiled `default.metallib`
                 // alongside the .metal source. SwiftPM's
@@ -97,8 +111,7 @@ let package = Package(
                 // with the source). The runtime path falls back to
                 // source-compiling J2KMetalShaderSource.kernelSource
                 // if the metallib is missing or corrupt.
-                .copy("default.metallib"),
-                .process("J2KShaders.metal")
+                .copy("default.metallib")
             ]),
         .target(
             name: "J2KVulkan",

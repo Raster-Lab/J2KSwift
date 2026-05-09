@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 import XCTest
 import Foundation
 @testable import J2KCore
@@ -92,3 +94,5 @@ final class MultiFileInputTests: XCTestCase {
         XCTAssertEqual(pgmOnly.count, 2)
     }
 }
+
+#endif // os(macOS)

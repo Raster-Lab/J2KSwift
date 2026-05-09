@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTNativeMultiTileSelfRoundtripTests.swift
 // v6-alpha3 step 6B slice 3 — end-to-end self-roundtrip tests
 // for the J2KSwift encoder + decoder on multi-tile codestreams.
@@ -160,3 +162,5 @@ final class HTNativeMultiTileSelfRoundtripTests: XCTestCase {
             label: "DX 2800×2288 4x4")
     }
 }
+
+#endif // os(macOS)

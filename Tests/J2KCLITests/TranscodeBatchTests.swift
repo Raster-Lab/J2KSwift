@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // TranscodeBatchTests.swift
 // J2KSwift
@@ -109,3 +111,5 @@ final class TranscodeBatchTests: XCTestCase {
         XCTAssertEqual(compressionRatio, 2.0, accuracy: 0.01)
     }
 }
+
+#endif // os(macOS)

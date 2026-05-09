@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 //
 // J2KCLITests.swift
 // J2KSwift
@@ -272,3 +274,5 @@ enum CLIArgumentParserTestHelper {
         }
     }
 }
+
+#endif // os(macOS)

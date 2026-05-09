@@ -1,3 +1,8 @@
+// v8 Phase 6.2 — gated to macOS: this test invokes OpenJPH/OpenJPEG
+// CLI binaries via Process() which is unavailable on iOS. The codec
+// behaviour these tests cover is platform-independent; the iOS
+// equivalent would call into a native library directly.
+#if os(macOS)
 // J2KHTBlockBenchmarkConformantTests.swift
 // Throughput benchmarks for the ISO/IEC 15444-15 block coder.
 //
@@ -281,3 +286,5 @@ final class HTBlockBenchmarkConformantTests: XCTestCase {
             Double(samples) / expandMin / 1_000_000))
     }
 }
+
+#endif // os(macOS)

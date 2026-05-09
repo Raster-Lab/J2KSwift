@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // JPIPEndToEndTests.swift
 // J2KSwift
@@ -112,3 +114,5 @@ final class JPIPEndToEndTests: XCTestCase {
             atPath: "/tmp/\(imageName)"))
     }
 }
+
+#endif // os(macOS)

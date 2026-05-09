@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTTileParityMatrixTests.swift
 // v6-alpha2 — parity matrix for the M4 multi-tile cross-decode bug.
 //
@@ -199,3 +201,5 @@ final class HTTileParityMatrixTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

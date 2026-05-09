@@ -243,6 +243,16 @@ extension J2KCLI {
         _ data: Data,
         transferSyntaxInfo: DICOMTransferSyntaxInfo
     ) throws -> J2KImage {
+        #if !os(macOS)
+        // iOS / iPadOS: Process / shell-spawned Python helpers are
+        // unavailable. Compressed-DICOM CLI loading is a macOS-only
+        // diagnostic feature (v8 Phase 6.2). iOS apps using J2KSwift
+        // should use a native DICOM library directly rather than
+        // shelling out to pydicom.
+        throw J2KError.invalidParameter(
+            "Compressed DICOM transfer syntax (\(transferSyntaxInfo.uid)) requires the Python helper, which is only available on macOS. iOS apps should use a native DICOM decoder directly."
+        )
+        #else
         let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "j2k-dicom-\(UUID().uuidString)",
             isDirectory: true
@@ -353,8 +363,10 @@ Path(metadata_path).write_text(json.dumps(metadata), encoding=\"utf-8\")
             numberOfFrames: metadata.numberOfFrames,
             pixelData: pixelData
         )
+        #endif // os(macOS)
     }
 
+    #if os(macOS)
     private static func resolveCompressedDICOMPythonExecutable() throws -> String {
         let environment = ProcessInfo.processInfo.environment
         var candidates: [String] = []
@@ -407,6 +419,7 @@ Path(metadata_path).write_text(json.dumps(metadata), encoding=\"utf-8\")
             return false
         }
     }
+    #endif // os(macOS)
 
     private static func makeDICOMImage(
         rows: Int,

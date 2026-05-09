@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 // J2KHTConformantMedicalRoundTripTests.swift
 // Downstream bug report reproduction: v5.1.0 `.conformant` HTJ2K
 // lossless round-trip mismatches pixel values on real DICOM
@@ -128,3 +130,5 @@ final class J2KHTConformantMedicalRoundTripTests: XCTestCase {
             label: "CT \(image.width)×\(image.height) bd=\(image.components[0].bitDepth) decomp=0")
     }
 }
+
+#endif // os(macOS)

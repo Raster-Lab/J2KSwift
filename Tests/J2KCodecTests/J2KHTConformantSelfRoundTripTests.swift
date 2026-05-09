@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KHTConformantSelfRoundTripTests.swift
 // Regression coverage for the v5.0.0 decoder-pipeline bug where
 // J2KSwift could not decode its own .conformant HTJ2K codestreams
@@ -252,3 +254,5 @@ final class J2KHTConformantSelfRoundTripTests: XCTestCase {
         XCTAssertEqual(extractBytes(decoded), pixels)
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTBottleneckDiagnosisTests.swift
 // v5.39 M3 — large-fixture HT performance bottleneck diagnosis.
 //
@@ -334,3 +336,5 @@ final class HTBottleneckDiagnosisTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

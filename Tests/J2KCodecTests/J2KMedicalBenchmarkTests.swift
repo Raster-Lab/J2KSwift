@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // Tests/J2KCodecTests/J2KMedicalBenchmarkTests.swift
 //
 // Comprehensive medical imaging benchmark: J2KSwift vs OpenJPEG 2.5.4
@@ -815,3 +817,5 @@ final class J2KMedicalBenchmarkTests: XCTestCase {
         XCTAssertEqual(r.j2kMAE, 0, "Lossless Mammo 2048 12-bit must achieve MAE=0")
     }
 }
+
+#endif // os(macOS)

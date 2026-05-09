@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // TranscodeLosslessTests.swift
 // J2KSwift
@@ -97,3 +99,5 @@ final class TranscodeLosslessTests: XCTestCase {
         XCTAssertEqual(mae, 1.6, accuracy: 0.01, "MAE should be average of absolute differences")
     }
 }
+
+#endif // os(macOS)

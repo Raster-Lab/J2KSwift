@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTMultiTileTrapReproducer.swift
 // v6-alpha3 step 4 — non-crash regression tests for the planner-
 // bypassed multi-tile encode path.
@@ -220,3 +222,5 @@ final class HTMultiTileTrapReproducer: XCTestCase {
         XCTAssertEqual(result.observations.count, 4)
     }
 }
+
+#endif // os(macOS)

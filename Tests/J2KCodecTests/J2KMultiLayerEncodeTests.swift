@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KMultiLayerEncodeTests.swift
 // v5.35.0b — multi-layer LRCP codestream round-trip + cross-codec
 // validation. The new packet emitter for strict bounded-rate mode
@@ -963,3 +965,5 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         XCTAssertEqual(decoded.height, img.height)
     }
 }
+
+#endif // os(macOS)

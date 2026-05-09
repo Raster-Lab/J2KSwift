@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTFairMultiTileBenchmarkHarness.swift
 // v6-alpha3 step 7 — benchmark harness scaffolding for step 8.
 //
@@ -324,3 +326,5 @@ final class HTFairMultiTileBenchmarkHarness: XCTestCase {
         print("or decode on a fixture where Kakadu currently wins.)")
     }
 }
+
+#endif // os(macOS)

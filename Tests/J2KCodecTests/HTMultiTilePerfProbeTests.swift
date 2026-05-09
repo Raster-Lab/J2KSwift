@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTMultiTilePerfProbeTests.swift
 // v5.39 M4 / v6-alpha1 — multi-tile prototype perf probe.
 //
@@ -159,3 +161,5 @@ final class HTMultiTilePerfProbeTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

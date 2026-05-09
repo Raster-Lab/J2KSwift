@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // CrossCodecTooling.swift
 // v5.38 lossless-only — shared helpers for cross-codec validation
 // against external reference codecs (OpenJPEG, OpenJPH, Grok, Kakadu).
@@ -378,3 +380,5 @@ enum CrossCodecTooling {
         return maxDiff
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KByteOrderRoundTripTests.swift
 //
 // v5.14.2: cross-format byte-order regression matrix.
@@ -259,3 +261,5 @@ final class J2KByteOrderRoundTripTests: XCTestCase {
         XCTAssertGreaterThan(pgmData.count, 0)
     }
 }
+
+#endif // os(macOS)

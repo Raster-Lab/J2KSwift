@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KHTOpenJPHInteropTests.swift
 // OpenJPH subprocess interop harness — the skeleton for M7's
 // bidirectional cross-codec validation.
@@ -103,3 +105,5 @@ final class HTOpenJPHInteropTests: XCTestCase {
             "OpenJPH lossless round-trip should be bit-exact")
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KHTEndToEndCrossCodecTests.swift
 // Full-codestream cross-codec validation: encode with J2KSwift's
 // public API using `htj2kBlockFormat: .conformant`, then hand the
@@ -242,3 +244,5 @@ final class HTEndToEndCrossCodecTests: XCTestCase {
             "J2KSwift `.conformant` → OpenJPH decode must be bit-exact")
     }
 }
+
+#endif // os(macOS)

@@ -926,6 +926,7 @@ public struct OpenJPEGBenchmarkRunner: Sendable {
         }
 
         guard let toolPath = OpenJPEGAvailability.findTool(tool) else { return false }
+        #if os(macOS)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: toolPath)
         task.arguments = args
@@ -938,6 +939,11 @@ public struct OpenJPEGBenchmarkRunner: Sendable {
         } catch {
             return false
         }
+        #else
+        // iOS: shell-spawned binaries unavailable; OpenJPEG benchmark
+        // is a macOS-only diagnostic feature (v8 Phase 6.2).
+        return false
+        #endif
     }
 
     /// Writes a NetPBM (PGM/PPM) file to disk.
