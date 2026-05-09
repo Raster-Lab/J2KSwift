@@ -79,6 +79,13 @@ struct J2KCLI {
                 try await completionsCommand(commandArgs)
             case "testapp":
                 try await testappCommand(commandArgs)
+            case "daemon-ping":
+                #if os(macOS)
+                try await daemonPingCommand(commandArgs)
+                #else
+                print("Error: daemon-ping is macOS-only (XPC unavailable on this platform)")
+                exit(1)
+                #endif
             case "version":
                 printVersion()
             case "help", "-h", "--help":
