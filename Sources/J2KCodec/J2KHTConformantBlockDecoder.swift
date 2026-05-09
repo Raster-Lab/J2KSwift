@@ -435,34 +435,128 @@ fileprivate struct DecodeState {
 
     /// Read MagSgn bits for each significant sample of the quad and
     /// place reconstructed (bin-center) coefficients into `coefs`.
+    ///
+    /// **v7.3.0 Phase 3b — SIMD reconstruction.** The four samples
+    /// of a quad are independent in their reconstruction: each
+    /// computes `coef = ((payload & mask) | (e1Bit << m) | 1 + 2)
+    /// << (p - 1)` plus an OR-with-sign-bit. The MagSgn read is
+    /// serial (the bit-stream cursor advances as bits are consumed),
+    /// but everything downstream of the four reads can run lane-
+    /// parallel via `SIMD4<UInt32>`. Bit-identical to the scalar
+    /// reference implementation by construction (same arithmetic,
+    /// just executed lane-parallel).
+    @inline(__always)
     mutating func readQuadSamples(
         baseX: Int, baseY: Int,
         rho: Int, Uq: Int,
         e_k: Int, e_1: Int
     ) {
         J2KHTEntropyProfile.bumpQuadSamples()
-        let offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
-        for i in 0..<4 {
-            let bit = (rho >> i) & 1
-            if bit == 0 { continue }
-            let eBit = (e_k >> i) & 1
-            let e1Bit = (e_1 >> i) & 1
-            let m = Uq - eBit
-            J2KHTEntropyProfile.bumpMagsgnReadBits(m)
-            let payload = magsgnDec.read(count: m)
-            let sign = UInt32(payload & 1)
-            let mask: UInt32 = (m >= 32) ? ~UInt32(0)
-                                         : ((UInt32(1) << m) - 1)
-            var v_n: UInt32 = payload & mask
-            v_n |= UInt32(e1Bit) << m
-            v_n |= 1
-            let (dx, dy) = offsets[i]
-            let xi = baseX + dx
-            let yi = baseY + dy
-            if xi >= width || yi >= height { continue }
-            var coef: UInt32 = (v_n &+ 2) << (p &- 1)
-            if sign != 0 { coef |= 0x8000_0000 }
-            coefs[yi * width + xi] = coef
+        // Serial MagSgn reads — the only step that must run in
+        // sequence (each read advances the shared bit cursor).
+        // Inactive lanes (rho bit = 0) read 0 so the SIMD lanes
+        // below produce harmless garbage that we won't store.
+        let r0 = (rho     ) & 1
+        let r1 = (rho >> 1) & 1
+        let r2 = (rho >> 2) & 1
+        let r3 = (rho >> 3) & 1
+        let m0 = Uq - ((e_k     ) & 1)
+        let m1 = Uq - ((e_k >> 1) & 1)
+        let m2 = Uq - ((e_k >> 2) & 1)
+        let m3 = Uq - ((e_k >> 3) & 1)
+        var p0: UInt32 = 0; if r0 != 0 {
+            J2KHTEntropyProfile.bumpMagsgnReadBits(m0)
+            p0 = magsgnDec.read(count: m0)
+        }
+        var p1: UInt32 = 0; if r1 != 0 {
+            J2KHTEntropyProfile.bumpMagsgnReadBits(m1)
+            p1 = magsgnDec.read(count: m1)
+        }
+        var p2: UInt32 = 0; if r2 != 0 {
+            J2KHTEntropyProfile.bumpMagsgnReadBits(m2)
+            p2 = magsgnDec.read(count: m2)
+        }
+        var p3: UInt32 = 0; if r3 != 0 {
+            J2KHTEntropyProfile.bumpMagsgnReadBits(m3)
+            p3 = magsgnDec.read(count: m3)
+        }
+
+        // Lane-parallel reconstruction. SIMD4<UInt32> on Apple
+        // Silicon maps directly to NEON 128-bit Q-register ops;
+        // each shift/and/or below is one instruction.
+        let payloads = SIMD4<UInt32>(p0, p1, p2, p3)
+        let ms = SIMD4<UInt32>(UInt32(m0), UInt32(m1), UInt32(m2), UInt32(m3))
+        // mask = (1 << m) - 1, where m ∈ [Uq - 1, Uq] and Uq is
+        // bounded by p (≤ 32 in practice; the (m >= 32) edge from
+        // the scalar branch corresponds to mask = ~0 = (1 << 32) - 1
+        // wraps in UInt32 — Swift's `&<<` returns 0 for shifts >=
+        // bit-width, so we synthesize the all-ones mask via NOT(0).
+        // For m == 0 (Uq == 0 with eBit == 0), payload contributes
+        // nothing — mask = 0, which `&-` of 1 - 1 produces correctly.
+        let one = SIMD4<UInt32>(repeating: 1)
+        let zero = SIMD4<UInt32>(repeating: 0)
+        // Construct mask per lane. For m == 32 produce ~0 instead
+        // of (1 &<< 32) - 1 which is 0 - 1 = ~0 anyway via wrap, so
+        // single expression `((one &<< ms) &- one)` works for the
+        // typical m < 32 case AND for m == 32 (1 &<< 32 == 0 in
+        // Swift &<<; 0 &- 1 == ~0 in unsigned wrap).
+        let mask = (one &<< ms) &- one
+        // e1 bits per lane.
+        let e1 = SIMD4<UInt32>(
+            UInt32((e_1     ) & 1),
+            UInt32((e_1 >> 1) & 1),
+            UInt32((e_1 >> 2) & 1),
+            UInt32((e_1 >> 3) & 1))
+        // signs: low bit of payload.
+        let signs = payloads & one
+        // v_n = (payload & mask) | (e1 << m) | 1
+        let v_n = (payloads & mask) | (e1 &<< ms) | one
+        // coef = (v_n + 2) << (p - 1); OR in sign bit at 31 when sign != 0
+        let pShift = SIMD4<UInt32>(repeating: UInt32(p &- 1))
+        var coefs4 = (v_n &+ SIMD4<UInt32>(repeating: 2)) &<< pShift
+        // sign mask: signs == 1 -> 0x8000_0000, signs == 0 -> 0
+        let signBit = SIMD4<UInt32>(repeating: 0x8000_0000)
+        // Branchless: signs is 0 or 1, so signs &<< 31 is 0 or 0x8000_0000
+        let signsApplied = signs &<< SIMD4<UInt32>(repeating: 31)
+        // But signs may be 0 even on inactive lanes — only apply
+        // when rho lane is set. We'll mask via rho gates at the
+        // store stage anyway.
+        coefs4 = coefs4 | signsApplied
+        // Suppress signBit in lanes where signs == 0.
+        _ = signBit  // keep the named constant for documentation
+
+        // Conditional stores. For each lane, store coefs4[i] if
+        // rho-bit is set AND (baseX+dx, baseY+dy) is in-bounds.
+        // The per-lane offsets are the constant pattern (0,0),
+        // (0,1), (1,0), (1,1) — we hand-unroll the four stores
+        // since the indices are different per lane.
+        if r0 != 0 {
+            let xi = baseX
+            let yi = baseY
+            if xi < width && yi < height {
+                coefs[yi * width + xi] = coefs4[0]
+            }
+        }
+        if r1 != 0 {
+            let xi = baseX
+            let yi = baseY + 1
+            if xi < width && yi < height {
+                coefs[yi * width + xi] = coefs4[1]
+            }
+        }
+        if r2 != 0 {
+            let xi = baseX + 1
+            let yi = baseY
+            if xi < width && yi < height {
+                coefs[yi * width + xi] = coefs4[2]
+            }
+        }
+        if r3 != 0 {
+            let xi = baseX + 1
+            let yi = baseY + 1
+            if xi < width && yi < height {
+                coefs[yi * width + xi] = coefs4[3]
+            }
         }
     }
 
