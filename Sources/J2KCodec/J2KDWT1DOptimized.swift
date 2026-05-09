@@ -281,9 +281,35 @@ public struct J2KDWT1DOptimizer: Sendable {
                     // First element (left boundary: symmetric hp[-1] = hp[0])
                     rp[0] = lp[0] &- ((hp[0] &+ hp[0] &+ 2) >> 2)
 
-                    // Interior elements - no boundary checks needed
-                    for i in 1..<min(lpSize, hpSize) {
+                    let interiorEnd = min(lpSize, hpSize)
+                    var i = 1
+                    // v8 Phase 3 — SIMD4<Int32> path, 4 iterations per
+                    // chunk. Bit-exact with scalar reference: every
+                    // operation is wrapping integer arithmetic with the
+                    // same shift semantics (Swift `>>` on signed integer
+                    // SIMDs is arithmetic per the SIMD protocol).
+                    while i &+ 4 <= interiorEnd {
+                        let lpVec = SIMD4<Int32>(
+                            lp[i], lp[i &+ 1], lp[i &+ 2], lp[i &+ 3])
+                        let hpL = SIMD4<Int32>(
+                            hp[i &- 1], hp[i], hp[i &+ 1], hp[i &+ 2])
+                        let hpR = SIMD4<Int32>(
+                            hp[i], hp[i &+ 1], hp[i &+ 2], hp[i &+ 3])
+                        // Match scalar: (hp_left + hp_right + 2) >> 2
+                        // Use explicit broadcast for the + 2 since
+                        // SIMD<>+Int is not always available.
+                        let avg = (hpL &+ hpR &+ SIMD4<Int32>(repeating: 2)) &>> SIMD4<Int32>(repeating: 2)
+                        let outVec = lpVec &- avg
+                        rp[i &* 2]          = outVec[0]
+                        rp[(i &+ 1) &* 2]   = outVec[1]
+                        rp[(i &+ 2) &* 2]   = outVec[2]
+                        rp[(i &+ 3) &* 2]   = outVec[3]
+                        i &+= 4
+                    }
+                    // scalar tail
+                    while i < interiorEnd {
                         rp[i &* 2] = lp[i] &- ((hp[i &- 1] &+ hp[i] &+ 2) >> 2)
+                        i &+= 1
                     }
 
                     // Last element if lpSize > hpSize (right boundary: symmetric)
@@ -298,8 +324,32 @@ public struct J2KDWT1DOptimizer: Sendable {
 
                     // Interior elements
                     let lastOdd = hpSize &- 1
-                    for i in 0..<lastOdd {
-                        rp[i &* 2 &+ 1] = hp[i] &+ ((rp[i &* 2] &+ rp[(i &+ 1) &* 2]) >> 1)
+                    var j = 0
+                    while j &+ 4 <= lastOdd {
+                        let evenL = SIMD4<Int32>(
+                            rp[j &* 2],
+                            rp[(j &+ 1) &* 2],
+                            rp[(j &+ 2) &* 2],
+                            rp[(j &+ 3) &* 2])
+                        let evenR = SIMD4<Int32>(
+                            rp[(j &+ 1) &* 2],
+                            rp[(j &+ 2) &* 2],
+                            rp[(j &+ 3) &* 2],
+                            rp[(j &+ 4) &* 2])
+                        let hpVec = SIMD4<Int32>(
+                            hp[j], hp[j &+ 1], hp[j &+ 2], hp[j &+ 3])
+                        let avg = (evenL &+ evenR) &>> SIMD4<Int32>(repeating: 1)
+                        let outVec = hpVec &+ avg
+                        rp[j &* 2 &+ 1]          = outVec[0]
+                        rp[(j &+ 1) &* 2 &+ 1]   = outVec[1]
+                        rp[(j &+ 2) &* 2 &+ 1]   = outVec[2]
+                        rp[(j &+ 3) &* 2 &+ 1]   = outVec[3]
+                        j &+= 4
+                    }
+                    // scalar tail
+                    while j < lastOdd {
+                        rp[j &* 2 &+ 1] = hp[j] &+ ((rp[j &* 2] &+ rp[(j &+ 1) &* 2]) >> 1)
+                        j &+= 1
                     }
 
                     // Last odd sample (boundary: even[hpSize] uses symmetric extension)
