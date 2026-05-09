@@ -47,6 +47,17 @@ let package = Package(
         .executable(
             name: "J2KTestApp",
             targets: ["J2KTestApp"]),
+        // v8 Phase 6.3 — XPC daemon (macOS-only). Long-lived
+        // process that holds J2KMetalSession warm across CLI
+        // invocations, listening on a Mach service registered
+        // via launchd. Skeleton scope: ping/pong only; decode
+        // RPC + shared-memory marshalling land in Phase 6.4-6.6.
+        .executable(
+            name: "j2kd",
+            targets: ["J2KDaemon"]),
+        .library(
+            name: "J2KDaemonProtocol",
+            targets: ["J2KDaemonProtocol"]),
     ],
     dependencies: [
         // Shared protocol surface for the Swift compression-library
@@ -180,6 +191,30 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
+        // v8 Phase 6.3 — XPC daemon protocol (macOS-only at the
+        // type level via #if os(macOS)). Shared between the
+        // daemon executable and the future CLI client.
+        .target(
+            name: "J2KDaemonProtocol",
+            path: "Sources/J2KDaemonProtocol"),
+        // v8 Phase 6.3 — XPC daemon executable. macOS-only.
+        // Skeleton scope: NSXPCListener on the Mach service
+        // registered via launchd, J2KDaemonProtocol.ping
+        // implementation. Build only on macOS — gating happens
+        // at the file level (#if os(macOS)) so the build
+        // system compiles to an empty binary on iOS rather
+        // than failing.
+        .executableTarget(
+            name: "J2KDaemon",
+            dependencies: ["J2KDaemonProtocol"],
+            path: "Sources/J2KDaemon",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]),
+        .testTarget(
+            name: "J2KDaemonTests",
+            dependencies: ["J2KDaemonProtocol"],
+            path: "Tests/J2KDaemonTests"),
         .executableTarget(
             name: "J2KTestApp",
             dependencies: ["J2KCore", "J2KCodec", "J2K3D"],
