@@ -58,6 +58,12 @@ let package = Package(
         .library(
             name: "J2KDaemonProtocol",
             targets: ["J2KDaemonProtocol"]),
+        .library(
+            name: "J2KDaemonCore",
+            targets: ["J2KDaemonCore"]),
+        .library(
+            name: "J2KDaemonClient",
+            targets: ["J2KDaemonClient"]),
     ],
     dependencies: [
         // Shared protocol surface for the Swift compression-library
@@ -186,35 +192,52 @@ let package = Package(
             path: "Sources/CZlib"),
         .executableTarget(
             name: "J2KCLI",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib", "J2KDaemonClient"],
             path: "Sources/J2KCLI",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
         // v8 Phase 6.3 — XPC daemon protocol (macOS-only at the
         // type level via #if os(macOS)). Shared between the
-        // daemon executable and the future CLI client.
+        // daemon executable, the daemon-side service, and the
+        // CLI client.
         .target(
             name: "J2KDaemonProtocol",
             path: "Sources/J2KDaemonProtocol"),
+        // v8 Phase 6.4 — daemon-side service implementation
+        // (J2KDaemonService, J2KDaemonListenerDelegate). Shared
+        // between the daemon executable and the test suite so
+        // the in-process round-trip tests use the real
+        // implementation rather than a duplicate.
+        .target(
+            name: "J2KDaemonCore",
+            dependencies: ["J2KDaemonProtocol"],
+            path: "Sources/J2KDaemonCore"),
+        // v8 Phase 6.4 — client-side wrapper around
+        // NSXPCConnection. Auto-discovers the Mach service,
+        // exposes a type-safe async ping API, surfaces
+        // "daemon unavailable" cleanly so callers can fall
+        // back to in-process decode.
+        .target(
+            name: "J2KDaemonClient",
+            dependencies: ["J2KDaemonProtocol"],
+            path: "Sources/J2KDaemonClient"),
         // v8 Phase 6.3 — XPC daemon executable. macOS-only.
-        // Skeleton scope: NSXPCListener on the Mach service
-        // registered via launchd, J2KDaemonProtocol.ping
-        // implementation. Build only on macOS — gating happens
-        // at the file level (#if os(macOS)) so the build
-        // system compiles to an empty binary on iOS rather
-        // than failing.
         .executableTarget(
             name: "J2KDaemon",
-            dependencies: ["J2KDaemonProtocol"],
+            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore"],
             path: "Sources/J2KDaemon",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
         .testTarget(
             name: "J2KDaemonTests",
-            dependencies: ["J2KDaemonProtocol"],
+            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore"],
             path: "Tests/J2KDaemonTests"),
+        .testTarget(
+            name: "J2KDaemonClientTests",
+            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore", "J2KDaemonClient"],
+            path: "Tests/J2KDaemonClientTests"),
         .executableTarget(
             name: "J2KTestApp",
             dependencies: ["J2KCore", "J2KCodec", "J2K3D"],

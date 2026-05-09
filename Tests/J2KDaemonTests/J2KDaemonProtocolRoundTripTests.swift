@@ -1,24 +1,19 @@
 // J2KDaemonProtocolRoundTripTests.swift
 //
-// v8 Phase 6.3 — skeleton in-process round-trip test for the
-// `J2KDaemonProtocol`. Validates the XPC protocol surface +
+// v8 Phase 6.3 / 6.4 — skeleton in-process round-trip test for
+// the `J2KDaemonProtocol`. Validates the XPC protocol surface +
 // listener delegate machinery without needing an installed
 // launchd Mach service.
 //
-// **Strategy**: use `NSXPCListener.anonymous()` to spin up an
-// in-process listener that exposes the same `J2KDaemonService`
-// implementation the daemon uses. The test then connects to
-// the listener via its endpoint and exercises `ping`. This
-// proves:
-//   1. The protocol is correctly @objc-marshalled (XPC requires it)
-//   2. The exported object responds with the expected payload
-//   3. Round-trip latency is observable
+// **Phase 6.4 refactor**: now imports `J2KDaemonCore` rather
+// than duplicating the service implementation locally.
+// Eliminates the test-only `TestJ2KDaemonService` class.
 //
-// What this DOESN'T test (deferred to Phase 6.4-6.6):
+// What this DOESN'T test (deferred to Phase 6.5-6.6):
 //   - launchd integration (real Mach service registration)
 //   - Cross-process IPC (this test is in-process via anonymous endpoint)
 //   - Daemon process lifecycle (idle timeout, signal handling)
-//   - Decode RPC (Phase 6.4)
+//   - Decode RPC (Phase 6.5)
 //   - Shared-memory marshalling for large images (Phase 6.5)
 
 #if os(macOS)
@@ -26,38 +21,7 @@
 import XCTest
 import Foundation
 import J2KDaemonProtocol
-
-/// Mirror of the daemon's `J2KDaemonService` — duplicated here
-/// rather than imported because the daemon is an `executableTarget`
-/// (not importable as a library). Phase 6.4 will refactor the
-/// service implementation into a library target so daemon AND
-/// tests can both consume it.
-final class TestJ2KDaemonService: NSObject, J2KDaemonProtocol {
-    let startTime: Date = Date()
-
-    func ping(
-        requestID: String,
-        reply: @escaping (String, Int32, Double) -> Void
-    ) {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let uptime = Date().timeIntervalSince(startTime)
-        reply(requestID, pid, uptime)
-    }
-}
-
-final class TestListenerDelegate: NSObject, NSXPCListenerDelegate {
-    let exported = TestJ2KDaemonService()
-
-    func listener(
-        _ listener: NSXPCListener,
-        shouldAcceptNewConnection conn: NSXPCConnection
-    ) -> Bool {
-        conn.exportedInterface = NSXPCInterface(with: J2KDaemonProtocol.self)
-        conn.exportedObject = exported
-        conn.resume()
-        return true
-    }
-}
+import J2KDaemonCore
 
 final class J2KDaemonProtocolRoundTripTests: XCTestCase {
 
@@ -67,7 +31,7 @@ final class J2KDaemonProtocolRoundTripTests: XCTestCase {
     /// contract test for Phase 6.3.
     func testPingRoundTrip_AnonymousInProcess() async throws {
         let listener = NSXPCListener.anonymous()
-        let delegate = TestListenerDelegate()
+        let delegate = J2KDaemonListenerDelegate()
         listener.delegate = delegate
         listener.resume()
         defer { listener.invalidate() }
@@ -90,13 +54,13 @@ final class J2KDaemonProtocolRoundTripTests: XCTestCase {
                 cont.resume(returning: ("nil-proxy", 0, 0))
                 return
             }
-            proxy.ping(requestID: "phase-6.3-skeleton") { id, pid, uptime in
+            proxy.ping(requestID: "phase-6.4-skeleton") { id, pid, uptime in
                 cont.resume(returning: (id, pid, uptime))
             }
         }
 
         // Validate the reply shape
-        XCTAssertEqual(result.0, "phase-6.3-skeleton",
+        XCTAssertEqual(result.0, "phase-6.4-skeleton",
             "echoedID must match the request id verbatim")
         XCTAssertGreaterThan(result.1, 0,
             "daemonPID must be the test process's PID (positive)")
