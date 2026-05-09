@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTTileOriginPropagationTests.swift
 // v6-alpha3 step 3 — verify the multi-tile dispatcher actually
 // passes per-tile image-coordinate origin into the encoder pipeline,
@@ -304,3 +306,5 @@ final class HTTileOriginPropagationTests: XCTestCase {
         print("Self-RT max diff: \(selfRT)  — XA cross-decode all pass (regression guard).")
     }
 }
+
+#endif // os(macOS)

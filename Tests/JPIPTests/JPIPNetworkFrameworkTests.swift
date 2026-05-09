@@ -155,7 +155,7 @@ final class JPIPNetworkFrameworkTests: XCTestCase {
     func testBackgroundTransferServiceTransferTask() async throws {
         let task = JPIPBackgroundTransferService.TransferTask(
             id: "test-123",
-            request: JPIPRequest(target: "test", channelID: nil),
+            request: JPIPRequest(target: "test"),
             status: .pending
         )
 

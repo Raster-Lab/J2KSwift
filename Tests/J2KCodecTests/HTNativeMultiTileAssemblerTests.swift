@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTNativeMultiTileAssemblerTests.swift
 // v6-alpha3 step 5 — structural + correctness gates for the native
 // multi-tile codestream assembler.
@@ -502,3 +504,5 @@ final class HTNativeMultiTileAssemblerTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KHTConformantOpenJPHCrossDecodeTests.swift
 // Phase 1 of the v5.15.0 HT encoder hardening plan — OpenJPH cross-decode.
 //
@@ -338,3 +340,5 @@ final class HTConformantOpenJPHCrossDecodeTests: XCTestCase {
         return String(format: "%.1f%%", Double(a) * 100 / Double(b))
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // ConvertCommandTests.swift
 // J2KSwift
@@ -402,3 +404,5 @@ final class ConvertCommandTests: XCTestCase {
         ["pgm", "ppm", "pnm", "raw", "bmp", "tiff"].contains(ext.lowercased())
     }
 }
+
+#endif // os(macOS)

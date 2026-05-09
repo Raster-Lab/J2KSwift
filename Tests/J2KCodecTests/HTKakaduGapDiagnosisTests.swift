@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTKakaduGapDiagnosisTests.swift
 // v6-alpha4 step 11 — diagnostic harness for the remaining Kakadu
 // HT-fair encode gap on XA / PX / DX after step 9 closed the MR
@@ -338,3 +340,5 @@ final class HTKakaduGapDiagnosisTests: XCTestCase {
         print("paths within the v6-alpha4 scope constraints.)")
     }
 }
+
+#endif // os(macOS)

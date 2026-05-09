@@ -219,6 +219,7 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
         let command = "which ffmpeg"
         #endif
 
+        #if os(macOS) || os(Linux) || os(Windows)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["sh", "-c", command]
@@ -230,6 +231,13 @@ public actor MJ2SoftwareEncoder: MJ2VideoEncoderProtocol {
         } catch {
             return false
         }
+        #else
+        // iOS / iPadOS / watchOS / tvOS: shell-spawned binaries
+        // unavailable. ffmpeg discovery via `which` is a macOS-only
+        // diagnostic; on iOS this software-encoder path is unused
+        // because the system's VideoToolbox is the real encode path.
+        return false
+        #endif
     }
 }
 

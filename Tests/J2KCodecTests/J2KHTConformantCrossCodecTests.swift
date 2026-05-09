@@ -1,3 +1,8 @@
+// v8 Phase 6.2 — gated to macOS: this test invokes OpenJPH/OpenJPEG
+// CLI binaries via Process() which is unavailable on iOS. The codec
+// behaviour these tests cover is platform-independent; the iOS
+// equivalent would call into a native library directly.
+#if os(macOS)
 // J2KHTCrossCodecConformantTests.swift
 // Direct bit-level comparison between J2KSwift's Part-15 block
 // encoder and OpenJPH's reference output on a known coefficient
@@ -322,3 +327,5 @@ final class HTCrossCodecConformantTests: XCTestCase {
             pixels: pixels, width: 8, height: 8)
     }
 }
+
+#endif // os(macOS)

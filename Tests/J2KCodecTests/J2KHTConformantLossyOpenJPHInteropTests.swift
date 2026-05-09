@@ -1,3 +1,8 @@
+// v8 Phase 6.2 — gated to macOS: this test invokes OpenJPH/OpenJPEG
+// CLI binaries via Process() which is unavailable on iOS. The codec
+// behaviour these tests cover is platform-independent; the iOS
+// equivalent would call into a native library directly.
+#if os(macOS)
 // J2KHTConformantLossyOpenJPHInteropTests.swift
 // v5.16.0 regression gate — lossy HT conformant must produce
 // codestreams that ojph_expand decodes to the same quality as
@@ -205,3 +210,5 @@ final class HTConformantLossyOpenJPHInteropTests: XCTestCase {
         return 10.0 * log10(Double(peak) * Double(peak) / mse)
     }
 }
+
+#endif // os(macOS)

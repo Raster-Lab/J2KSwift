@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // JPIPClientTests.swift
 // J2KSwift
@@ -123,3 +125,5 @@ final class JPIPClientTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

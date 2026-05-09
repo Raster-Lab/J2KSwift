@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // MultiSpectralCLITests.swift
 // J2KSwift
@@ -91,3 +93,5 @@ final class MultiSpectralCLITests: XCTestCase {
         XCTAssertEqual(opts["codec"], "j2k-lossless")
     }
 }
+
+#endif // os(macOS)

@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // J2KLosslessMedicalGateTests.swift
 // v5.38 lossless-only — milestone M1 scaffolding.
 //
@@ -639,3 +641,5 @@ final class J2KLosslessMedicalGateTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

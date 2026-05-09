@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 import XCTest
 @testable import J2KCodec
 @testable import J2KCore
@@ -2723,3 +2725,5 @@ final class J2KAcceleratedBenchmarkTest: XCTestCase {
         XCTAssertEqual(errCont, 0, "Continuous stream decode should be exact")
     }
 }
+
+#endif // os(macOS)

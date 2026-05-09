@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: invokes external CLIs via Process() (unavailable on iOS).
+#if os(macOS)
 // J2KPGMRoundTripTests.swift
 //
 // v5.14.1: regression gate for the lossless PGM round-trip
@@ -138,3 +140,5 @@ final class J2KPGMRoundTripTests: XCTestCase {
         try roundTripCLI(width: 512, height: 512, bitDepth: 16, useHTJ2K: true, seed: 0xCAFEBABE)
     }
 }
+
+#endif // os(macOS)

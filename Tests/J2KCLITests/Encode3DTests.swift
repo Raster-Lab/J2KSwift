@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // Encode3DTests.swift
 // J2KSwift
@@ -179,3 +181,5 @@ final class Encode3DTests: XCTestCase {
         XCTAssertEqual(volume.components[1].data, Data([10, 20, 30, 40]))
     }
 }
+
+#endif // os(macOS)

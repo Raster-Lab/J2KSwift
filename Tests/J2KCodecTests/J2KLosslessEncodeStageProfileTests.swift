@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // J2KLosslessEncodeStageProfileTests.swift
 // v5.38 M3 — per-stage profile of the lossless encode pipeline on
 // the medical corpus. Pure measurement; no code changes here.
@@ -153,3 +155,5 @@ final class J2KLosslessEncodeStageProfileTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

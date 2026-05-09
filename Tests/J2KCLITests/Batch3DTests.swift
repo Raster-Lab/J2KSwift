@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — J2KCLI is a macOS-only executable target. Tests gated accordingly.
+#if os(macOS)
 //
 // Batch3DTests.swift
 // J2KSwift
@@ -100,3 +102,5 @@ final class Batch3DTests: XCTestCase {
         XCTAssertEqual(sliceCount, 64)
     }
 }
+
+#endif // os(macOS)

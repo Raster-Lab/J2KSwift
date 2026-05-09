@@ -1,3 +1,5 @@
+// v8 Phase 6.2 — gated to macOS: depends on CrossCodecTooling (uses Process(), unavailable on iOS).
+#if os(macOS)
 // HTGPUForward53CrossCodecTests.swift
 //
 // v6-alpha5 Phase 8 — explicit external-decoder cross-codec
@@ -174,3 +176,5 @@ final class HTGPUForward53CrossCodecTests: XCTestCase {
         }
     }
 }
+
+#endif // os(macOS)

@@ -194,7 +194,15 @@ public struct OpenJPEGAvailability: Sendable {
     ///
     /// - Parameter path: The full path to the tool binary.
     /// - Returns: The parsed version string.
+    ///
+    /// **iOS note (v8 Phase 6.2)**: `Process` is unavailable on iOS.
+    /// This function returns "unavailable" on iOS — OpenJPEG CLI
+    /// interop is a macOS-only feature (no shell-spawned binaries
+    /// on iOS). The caller (`OpenJPEGAvailability.detect()`) treats
+    /// "unavailable" as "OpenJPEG not present," which is the correct
+    /// behaviour on iOS.
     private static func getToolVersion(path: String) -> String {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["-h"]
@@ -213,6 +221,9 @@ public struct OpenJPEGAvailability: Sendable {
         } catch {
             return "unknown"
         }
+        #else
+        return "unavailable"
+        #endif
     }
 }
 
@@ -416,6 +427,7 @@ public struct OpenJPEGCLIWrapper: Sendable {
         arguments: [String],
         outputPath: String?
     ) -> CLIResult {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: toolPath)
         process.arguments = arguments
@@ -454,6 +466,18 @@ public struct OpenJPEGCLIWrapper: Sendable {
             outputPath: outputPath,
             elapsedTime: elapsed
         )
+        #else
+        // iOS: no shell-spawned binaries. OpenJPEG CLI interop is
+        // a macOS-only diagnostic feature.
+        return CLIResult(
+            success: false,
+            exitCode: -1,
+            stdout: "",
+            stderr: "OpenJPEG CLI interop is unavailable on iOS",
+            outputPath: outputPath,
+            elapsedTime: 0
+        )
+        #endif
     }
 }
 
