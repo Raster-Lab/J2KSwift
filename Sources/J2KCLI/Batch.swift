@@ -129,6 +129,21 @@ extension J2KCLI {
     ) async throws -> BatchSummary {
         let outputSuffix = options["output-suffix"] ?? ".pgm"
 
+        // v8 Phase 6.0 — preWarm the shared Metal session before
+        // dispatching the parallel batch. Without this, the first
+        // file in the batch pays the ~50 ms Metal cold-start tax
+        // serially, then subsequent files benefit from the warm
+        // session. Calling preWarm() before the parallel dispatch
+        // pays the cold-start once up-front (and overlapped with
+        // launchd activation if any), so every file in the batch
+        // gets the warm path.
+        if J2KMetalSession.isAvailable {
+            // Best-effort preWarm — failure here is not fatal; the
+            // session lazy-inits on first decode anyway. The win is
+            // pulling that cold-start out of the parallel hot path.
+            try? await J2KMetalSession.processShared.preWarm(includeWarmupDispatch: false)
+        }
+
         return await processFilesInParallel(
             paths: paths,
             outputDir: outputDir,
