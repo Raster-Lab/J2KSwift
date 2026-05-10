@@ -14,6 +14,10 @@ concurrency:
 permissions:
   contents: read
 
+# v8.1.1 — opt into Node 24 for JS-based actions; see release.yml note.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   benchmark-macos:
     name: Performance Benchmarks (macOS - Apple Silicon)

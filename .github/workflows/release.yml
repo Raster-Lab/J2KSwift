@@ -13,6 +13,17 @@ on:
 permissions:
   contents: write
 
+# v8.1.1 — opt into Node 24 for all JavaScript-based actions per
+# GitHub's deprecation guidance (Node 20 forced-default 2026-06-02,
+# fully removed 2026-09-16). Both `actions/checkout@v4` and
+# `softprops/action-gh-release@v2` ship Node 20 binaries; this env
+# var instructs the runner to execute them under Node 24 instead,
+# eliminating the deprecation warnings without changing action
+# pin versions. See:
+# https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # Note: a `validate` job that ran `swift build -c release` was removed in
   # v6.0.1. The build cannot succeed in CI because Package.swift declares a
