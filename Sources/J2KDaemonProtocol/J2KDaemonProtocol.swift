@@ -142,6 +142,36 @@ public let J2KDaemonMachServiceName = "com.raster.j2kd"
                           _ componentCount: Int32,
                           _ bigEndian: Bool,
                           _ errorMessage: String?) -> Void)
+
+    /// **v8.8 (research)** — encode pixel data into an HT-conformant
+    /// JPEG 2000 codestream via the daemon. Symmetric to `decode`:
+    /// the daemon holds a long-lived warm `J2KMetalSession.processShared`,
+    /// so single-shot CLI encoders avoid per-process Metal cold-start.
+    ///
+    /// Cold-shot encode benefits modestly less than decode (encoder
+    /// is more CPU-bound), but is documented research direction per
+    /// `V8_8_RESEARCH_OVERNIGHT.md`. The same `--daemon auto` smart-
+    /// routing threshold applies (default in-process for small inputs).
+    ///
+    /// - Parameters:
+    ///   - pixelData: raw pixel bytes for a single grayscale component
+    ///     (medical-corpus shape; multi-component encode is a future
+    ///     extension). For ≥9-bit data the bytes are big-endian.
+    ///   - width: image width.
+    ///   - height: image height.
+    ///   - bitDepth: bits per sample (e.g. 8, 12, 16).
+    ///   - signed: whether the input pixel data is signed.
+    ///   - reply: closure invoked with the encoded codestream bytes
+    ///     (HT-conformant lossless 5/3 by default) plus success/error.
+    func encode(
+        pixelData: Data,
+        width: Int32,
+        height: Int32,
+        bitDepth: Int32,
+        signed: Bool,
+        reply: @escaping (_ success: Bool,
+                          _ codestream: Data,
+                          _ errorMessage: String?) -> Void)
 }
 
 #endif // os(macOS)

@@ -160,6 +160,57 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
             }
         }
     }
+
+    /// **v8.8 (research)** — encode pixel data into an HT-conformant
+    /// JPEG 2000 codestream. Uses lossless 5/3 + HT cleanup-only by
+    /// default (matches the medical-corpus product target).
+    public func encode(
+        pixelData: Data,
+        width: Int32,
+        height: Int32,
+        bitDepth: Int32,
+        signed: Bool,
+        reply: @escaping (Bool, Data, String?) -> Void
+    ) {
+        activityTracker?.touch()
+        let replyBox = EncodeReplyBox(reply)
+        Task.detached {
+            do {
+                // Build a J2KImage from the inline pixel bytes.
+                let component = J2KComponent(
+                    index: 0,
+                    bitDepth: Int(bitDepth),
+                    signed: signed,
+                    width: Int(width),
+                    height: Int(height),
+                    data: pixelData,
+                    sampleByteOrder: .bigEndian)
+                let image = J2KImage(
+                    width: Int(width),
+                    height: Int(height),
+                    components: [component])
+
+                // Default config: HT-conformant lossless 5/3 (the
+                // medical-corpus product target).
+                var cfg = J2KEncodingConfiguration(
+                    quality: 1.0,
+                    lossless: true,
+                    decompositionLevels: 5,
+                    qualityLayers: 1,
+                    progressionOrder: .lrcp,
+                    useHTJ2K: true,
+                    useReversibleFilter: true,
+                    htj2kBlockFormat: .conformant)
+                cfg.bitrateMode = .lossless
+                let encoder = J2KEncoder(encodingConfiguration: cfg)
+                let codestream = try await encoder.encode(image)
+
+                replyBox.reply(true, codestream, nil)
+            } catch {
+                replyBox.reply(false, Data(), "encode failed: \(error)")
+            }
+        }
+    }
 }
 
 /// Internal Sendable wrapper for the XPC reply closure. Safe
@@ -175,6 +226,14 @@ private final class ReplyBox: @unchecked Sendable {
 private final class FileReplyBox: @unchecked Sendable {
     let reply: (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void
     init(_ reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void) {
+        self.reply = reply
+    }
+}
+
+/// Companion wrapper for the v8.8 `encode` reply.
+private final class EncodeReplyBox: @unchecked Sendable {
+    let reply: (Bool, Data, String?) -> Void
+    init(_ reply: @escaping (Bool, Data, String?) -> Void) {
         self.reply = reply
     }
 }

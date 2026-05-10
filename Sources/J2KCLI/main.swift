@@ -201,6 +201,16 @@ struct J2KCLI {
             --timing                    Show detailed timing information
             --json                      Output results as JSON
 
+        ENCODE OPTIONS (daemon-related — v8.8 research):
+            --daemon                    Route encode via the j2kd XPC daemon
+                                        (warm-process speed; only works for
+                                        the default HT-conformant lossless
+                                        single-component shape).
+            --daemon auto               Route via daemon ONLY for ≥3 MP
+                                        images, where encode time amortises
+                                        the NSXPC proxy overhead.
+            --no-daemon                 Force in-process encode (default).
+
         DECODE OPTIONS:
             -i, --input PATH            Input J2K/JP2/JPX file
             -o, --output PATH           Output image file (optional)

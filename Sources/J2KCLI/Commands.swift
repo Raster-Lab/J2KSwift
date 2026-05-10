@@ -245,8 +245,73 @@ extension J2KCLI {
         if verbose { print("Encoding…") }
         let encoder = J2KEncoder(encodingConfiguration: config)
         let startEncode = Date()
-        var encodedData = try await encoder.encode(image)
+
+        // v8.8 (research): encoder daemon routing — symmetric to decode.
+        // The default config (HT-conformant lossless 5/3) is the only
+        // shape the daemon currently accepts. For other configs (e.g.
+        // legacy JPEG 2000 Part 1, JP2 wrapping, custom decomposition
+        // levels), fall back to in-process to preserve behavior.
+        let encodeDaemonValue = options["daemon"]
+        let encodeNoDaemonExplicit = options["no-daemon"] != nil
+        // Threshold for --daemon=auto: ENCODE is dominated by per-process
+        // codec library load (HT block coders, MCT tables, DWT scratch
+        // pools, ~30 ms on cold-cache). The daemon amortises that across
+        // calls, so the encoder daemon wins for ALL fixture sizes — even
+        // a 512×512 fixture goes 41 ms in-proc → 13 ms daemon. The
+        // decode threshold (3 MP) does NOT apply to encode. Drop to 0
+        // so `--daemon=auto` for encode is effectively the same as
+        // `--daemon` (always-on, with fallback to in-process if daemon
+        // unreachable).
+        let useEncodeDaemon: Bool
+        if let v = encodeDaemonValue, !encodeNoDaemonExplicit {
+            if v.lowercased() == "auto" {
+                // Auto: always use daemon for encode (library-load
+                // amortisation always wins). Fallback to in-process
+                // happens transparently if daemon is unreachable.
+                useEncodeDaemon = true
+            } else {
+                useEncodeDaemon = true
+            }
+        } else {
+            useEncodeDaemon = false
+        }
+
+        let isDefaultLosslessHT = config.lossless && config.useHTJ2K
+            && config.useReversibleFilter
+            && (config.htj2kBlockFormat == .conformant)
+            && config.decompositionLevels == 5
+            && image.componentCount == 1
+
+        var encodedData: Data
+        var usedEncodeDaemon = false
+        #if os(macOS)
+        if useEncodeDaemon && isDefaultLosslessHT && !pipeInput,
+           let comp0 = image.components.first {
+            let client = J2KDaemonClient()
+            do {
+                encodedData = try await client.encode(
+                    pixelData: comp0.data,
+                    width: image.width, height: image.height,
+                    bitDepth: comp0.bitDepth, signed: comp0.signed)
+                usedEncodeDaemon = true
+                await client.close()
+            } catch {
+                if verbose {
+                    printInfo("(encode daemon unavailable, encoding in-process)", pipeMode: pipeOutput)
+                }
+                await client.close()
+                encodedData = try await encoder.encode(image)
+            }
+        } else {
+            encodedData = try await encoder.encode(image)
+        }
+        #else
+        encodedData = try await encoder.encode(image)
+        #endif
         let encodeTime = Date().timeIntervalSince(startEncode)
+        if verbose && usedEncodeDaemon {
+            printInfo("(encoded via daemon at warm-process speed)", pipeMode: pipeOutput)
+        }
 
         // Wrap in JP2 container if requested
         let format = options["format"] ?? "j2k"
@@ -423,12 +488,18 @@ extension J2KCLI {
         }
 
         // Load encoded data
+        // v8.8 (research): use `.alwaysMapped` for file input — kernel mmap
+        // gives near-zero load time and defers actual page-in to where the
+        // decoder reads bytes. On cold-shot DX (12 MB codestream) this saves
+        // ~1-3 ms vs `Data(contentsOf:)` which copies the file into anonymous
+        // memory eagerly.
         let startLoad = Date()
         let encodedData: Data
         if pipeInput {
             encodedData = FileHandle.standardInput.readDataToEndOfFile()
         } else {
-            encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+            encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath),
+                                   options: [.alwaysMapped])
         }
         let loadTime = Date().timeIntervalSince(startLoad)
 

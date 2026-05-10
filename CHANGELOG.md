@@ -13,6 +13,11 @@ The v8.1.0 default of "daemon if installed" was tuned for cold-shot DX measureme
 
 v8.1.3 makes `j2kd` opt-in via `--daemon`, with `--no-daemon` preserved as a no-op alias for backward-compat. Codestream bytes byte-identical to v8.1.2.
 
+### Added
+
+- **Encoder daemon support** (`j2k encode --daemon` / `--daemon auto`): symmetric to decoder daemon, but with effectively-zero pixel threshold (encoder is library-load-dominated, daemon wins on every fixture). Corpus encode wall: 571.65 ms in-proc → 341.71 ms via daemon = **−40.2% (−229.93 ms across 6 fixtures)**. Bit-identical output verified by MD5-match.
+- **mmap'd codestream input** (`Data(contentsOf:options: [.alwaysMapped])`): defers page-in to where the decoder reads, saving ~3 ms on cold-shot DX decode (12 MB codestream). Saves ~5 ms corpus-wide.
+
 ### Changed
 
 - **`j2k decode` default**: in-process (no NSXPCConnection round-trip). Post-flip default = pre-flip `--no-daemon` behavior, byte-identical output.
