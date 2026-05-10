@@ -42,8 +42,10 @@ extension J2KCLI {
         let recoExt = URL(fileURLWithPath: reconstructedPath).pathExtension.lowercased()
         let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
 
+        // v8.9 (research): mmap'd input on both J2K paths.
         if j2kExts.contains(origExt) {
-            let data = try Data(contentsOf: URL(fileURLWithPath: originalPath))
+            let data = try Data(contentsOf: URL(fileURLWithPath: originalPath),
+                                options: [.alwaysMapped])
             let decoder = J2KDecoder()
             originalImage = try await decoder.decode(data)
         } else {
@@ -51,7 +53,8 @@ extension J2KCLI {
         }
 
         if j2kExts.contains(recoExt) {
-            let data = try Data(contentsOf: URL(fileURLWithPath: reconstructedPath))
+            let data = try Data(contentsOf: URL(fileURLWithPath: reconstructedPath),
+                                options: [.alwaysMapped])
             let decoder = J2KDecoder()
             reconstructedImage = try await decoder.decode(data)
         } else {

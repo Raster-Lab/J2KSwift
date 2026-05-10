@@ -31,10 +31,13 @@ extension J2KCLI {
         let jsonOutput   = options["json"]     != nil
         let validateOnly = options["validate"] != nil
 
-        // Load file data
+        // Load file data — v8.9 (research): mmap'd input. Info typically
+        // reads only the SIZ marker + COD/QCD (small prefix), so mmap
+        // makes the load near-instant regardless of file size.
         let data: Data
         do {
-            data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            data = try Data(contentsOf: URL(fileURLWithPath: filePath),
+                            options: [.alwaysMapped])
         } catch {
             print("Error: Cannot read file '\(filePath)': \(error.localizedDescription)")
             exit(1)
