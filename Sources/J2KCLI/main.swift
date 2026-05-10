@@ -86,6 +86,27 @@ struct J2KCLI {
                 print("Error: daemon-ping is macOS-only (XPC unavailable on this platform)")
                 exit(1)
                 #endif
+            case "daemon-install":
+                #if os(macOS)
+                try await daemonInstallCommand(commandArgs)
+                #else
+                print("Error: daemon-install is macOS-only (XPC unavailable on this platform)")
+                exit(1)
+                #endif
+            case "daemon-uninstall":
+                #if os(macOS)
+                try await daemonUninstallCommand(commandArgs)
+                #else
+                print("Error: daemon-uninstall is macOS-only (XPC unavailable on this platform)")
+                exit(1)
+                #endif
+            case "daemon-status":
+                #if os(macOS)
+                try await daemonStatusCommand(commandArgs)
+                #else
+                print("Error: daemon-status is macOS-only (XPC unavailable on this platform)")
+                exit(1)
+                #endif
             case "version":
                 printVersion()
             case "help", "-h", "--help":
@@ -131,6 +152,10 @@ struct J2KCLI {
             dump        OpenJPEG-compatible dump (opj_dump)
             completions Generate shell completions (bash/zsh/fish)
             testapp     Run test app in headless mode (CI/CD)
+            daemon-install    Install the j2kd XPC daemon (macOS, one-shot)
+            daemon-uninstall  Remove the j2kd XPC daemon
+            daemon-status     Report j2kd install + reachability state
+            daemon-ping       Probe the j2kd XPC daemon round-trip
             version     Print version information
             help        Show this help message
 

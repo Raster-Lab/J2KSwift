@@ -8,13 +8,15 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 8.0.1
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, optional `j2kd` macOS XPC daemon for warm-CLI single-shot. (3,100+ tests, 100 % pass rate.)
-**Previous Release**: 8.0.0 (Apple Silicon-first major release)
+**Current Version**: 8.1.0
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, optional `j2kd` macOS XPC daemon for warm-CLI single-shot — now one-command-installable. (3,100+ tests, 100 % pass rate.)
+**Previous Release**: 8.0.1 (silent-corruption hotfix + GPU IDWT root cause)
 
 ## 📦 Release Status
 
-**v8.0.1** is a silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause. Fixes the v7.5.1 mg silent-corruption (cross-tile batched HT entropy decode on 16+ MP mammography DICOM fixtures) AND root-causes / fixes the underlying GPU IDWT defect that produced the corruption — two distinct bugs in the GPU multi-tile-per-tile path, both surfacing only on tiles with non-zero canvas origin. `_multiTileBatchedEntropyEnabled` is back default-on; the v7.2.0 cross-tile entropy CB amortisation is restored. **Codestream bytes byte-identical to v8.0.0.** See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the full root-cause analysis and the per-tile mismatch progression table.
+**v8.1.0** turns the v8.0.0 manual 5-step `j2kd` daemon install into a single command (`j2k daemon-install`). End-to-end CLI gap on DX 2800×2288 closes from 72 ms cold-shot → ~55 ms with the daemon installed (–24 % wall). Codestream bytes byte-identical to v8.0.1; no decoder change. See [RELEASE_NOTES_v8.1.0.md](RELEASE_NOTES_v8.1.0.md) for the full deployment-push details.
+
+**v8.0.1** was a silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause. Fixes the v7.5.1 mg silent-corruption (cross-tile batched HT entropy decode on 16+ MP mammography DICOM fixtures) AND root-causes / fixes the underlying GPU IDWT defect that produced the corruption — two distinct bugs in the GPU multi-tile-per-tile path, both surfacing only on tiles with non-zero canvas origin. `_multiTileBatchedEntropyEnabled` is back default-on; the v7.2.0 cross-tile entropy CB amortisation is restored. **Codestream bytes byte-identical to v8.0.0.** See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the full root-cause analysis and the per-tile mismatch progression table.
 
 **v8.0.0** was a major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to beat Kakadu on the dominant Apple-Silicon workloads — small/medium medical images, warm-process apps, and (with the optional XPC daemon) single-shot CLI users.
 
@@ -46,20 +48,19 @@ This is the comparison user-facing apps care about: J2KSwift in-process (with `J
 
 The Phase 1-4 CPU optimisations cumulatively close the CLI gap from 4.0× to 2.47×. Installing the optional `j2kd` daemon (Phases 6.3-6.6) closes it further to ~1.5× by amortising Metal cold-start across CLI invocations.
 
-### `j2kd` XPC daemon — warm-CLI single-shot
+### `j2kd` XPC daemon — warm-CLI single-shot (one-command install)
 
 ```bash
-swift build -c release --product j2kd
-cp .build/release/j2kd /usr/local/bin/j2kd
-sed -i '' 's|<<J2KD_PATH>>|/usr/local/bin/j2kd|' Resources/launchd/com.raster.j2kd.plist
-cp Resources/launchd/com.raster.j2kd.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.raster.j2kd.plist
-j2k daemon-ping   # verify
+swift build -c release --product j2k --product j2kd
+.build/release/j2k daemon-install      # one shot: copies binary, writes plist, loads launchd
+.build/release/j2k daemon-status       # verify everything is ✓
 ```
+
+To remove later: `j2k daemon-uninstall`. The install layout is per-user (no sudo) — binary at `~/Library/Application Support/J2KSwift/j2kd`, plist at `~/Library/LaunchAgents/com.raster.j2kd.plist`.
 
 Idle timeout default 10 min; SIGTERM/SIGINT handled cleanly; launchd re-spawns on next client connection. Opt-out per call via `j2k decode --no-daemon`.
 
-See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the silent-corruption hotfix details. [RELEASE_NOTES_v8.0.0.md](RELEASE_NOTES_v8.0.0.md) covers the v8.0.0 major-version pivot and the 14 phase-finding documents (`V8_0_0_PHASE_0_BASELINE.md` through `V8_0_0_PHASE_6_6_FINDING.md`). Prior release notes: [v7.5.0](RELEASE_NOTES_v7.5.0.md), [v7.4.0](RELEASE_NOTES_v7.4.0.md), [v7.3.0](RELEASE_NOTES_v7.3.0.md).
+See [RELEASE_NOTES_v8.1.0.md](RELEASE_NOTES_v8.1.0.md) for the daemon adoption push details. [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the silent-corruption hotfix. [RELEASE_NOTES_v8.0.0.md](RELEASE_NOTES_v8.0.0.md) covers the v8.0.0 major-version pivot and the 14 phase-finding documents (`V8_0_0_PHASE_0_BASELINE.md` through `V8_0_0_PHASE_6_6_FINDING.md`). Prior release notes: [v7.5.0](RELEASE_NOTES_v7.5.0.md), [v7.4.0](RELEASE_NOTES_v7.4.0.md), [v7.3.0](RELEASE_NOTES_v7.3.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
