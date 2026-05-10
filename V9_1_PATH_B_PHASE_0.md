@@ -1,5 +1,7 @@
 # V9.1 Path B Phase 0 — encoder sub-stage breakdown + Phase 1 target selection
 
+> ⚠ **Update 2026-05-11**: Phase 1A microbench (`V91Phase1ABatchedClassifyMicrobench`) was run after this document was written and **REJECTED Candidate A** (batched per-quad SIMD pipeline). SIMD16 turned out to be 6× slower than scalar; SIMD4 only 1.22× faster. Reason: Swift's `SIMD<UInt32>` doesn't expose SIMD-wide clz/comparison primitives. The 96% loop-body finding stands but the recommended Phase 1 target is now different. **See `V9_1_PHASE_1A_NEGATIVE_RESULT.md` for the revised plan.**
+
 **Mission**: close the 3× CPU efficiency gap with Kakadu's HT encoder on Apple M2. J2KSwift in-process encode wall on DX 2800×2288 = 116 ms; Kakadu = 19.56 ms. v8.4 stage breakdown attributed 57% of encode CPU to HT entropy (~353 ms accumulated CPU on DX).
 
 **This document**: identifies which HT entropy sub-stage to attack first.
