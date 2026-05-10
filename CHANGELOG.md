@@ -5,6 +5,26 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.1] — 2026-05-10
+
+**CI Node 24 opt-in — pre-empts the 2026-09-16 Node 20 removal**
+
+Pure operational-hygiene release. No source-code changes beyond the version bump. Every workflow under `.github/workflows/` that uses Node-20-based actions now opts into Node 24 for JavaScript-based actions via the workflow-level env `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"`. This is GitHub's own recommended migration path; eliminates the deprecation warnings that started appearing 2025-09-19.
+
+### Changed
+
+- `.github/workflows/release.yml`, `.github/workflows/ci.yml`, `.github/workflows/conformance.yml`, `.github/workflows/code-quality.yml`, `.github/workflows/documentation.yml`, `.github/workflows/dicomkit-downstream.yml`, `.github/workflows/interactive-testing.yml`, `.github/workflows/jp3d-compliance.yml`, `.github/workflows/performance.yml`, `.github/workflows/create-release-branches.yml` — all gain workflow-level `env: FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"`.
+- `getVersion()` returns `"8.1.1"`.
+
+### Backward compatibility
+
+- Codestream bytes byte-identical to v8.1.0.
+- Action pin versions unchanged (`actions/checkout@v4`, `softprops/action-gh-release@v2`); only the Node runtime they execute under switches.
+
+### SemVer rule
+
+PATCH — pure CI hygiene; no public API change.
+
 ## [8.1.0] — 2026-05-10
 
 **`j2kd` XPC daemon adoption push — three new CLI subcommands turn the manual 5-step install into one command**

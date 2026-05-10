@@ -8,9 +8,9 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 8.1.0
+**Current Version**: 8.1.1
 **Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, optional `j2kd` macOS XPC daemon for warm-CLI single-shot — now one-command-installable. (3,100+ tests, 100 % pass rate.)
-**Previous Release**: 8.0.1 (silent-corruption hotfix + GPU IDWT root cause)
+**Previous Release**: 8.1.0 (j2kd XPC daemon adoption push — 3 new CLI subcommands)
 
 ## 📦 Release Status
 
