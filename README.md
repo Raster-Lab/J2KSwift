@@ -8,13 +8,15 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 8.0.0
+**Current Version**: 8.0.1
 **Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, optional `j2kd` macOS XPC daemon for warm-CLI single-shot. (3,100+ tests, 100 % pass rate.)
-**Previous Release**: 7.5.0 (perf-wash; closed forward-HT-GPU-entropy workstream)
+**Previous Release**: 8.0.0 (Apple Silicon-first major release)
 
 ## 📦 Release Status
 
-**v8.0.0** is a major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to beat Kakadu on the dominant Apple-Silicon workloads — small/medium medical images, warm-process apps, and (with the optional XPC daemon) single-shot CLI users.
+**v8.0.1** is a silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause. Fixes the v7.5.1 mg silent-corruption (cross-tile batched HT entropy decode on 16+ MP mammography DICOM fixtures) AND root-causes / fixes the underlying GPU IDWT defect that produced the corruption — two distinct bugs in the GPU multi-tile-per-tile path, both surfacing only on tiles with non-zero canvas origin. `_multiTileBatchedEntropyEnabled` is back default-on; the v7.2.0 cross-tile entropy CB amortisation is restored. **Codestream bytes byte-identical to v8.0.0.** See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the full root-cause analysis and the per-tile mismatch progression table.
+
+**v8.0.0** was a major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to beat Kakadu on the dominant Apple-Silicon workloads — small/medium medical images, warm-process apps, and (with the optional XPC daemon) single-shot CLI users.
 
 ### Headline measurement — warm in-process decode vs Kakadu CLI (Apple M2, release mode)
 
@@ -57,7 +59,7 @@ j2k daemon-ping   # verify
 
 Idle timeout default 10 min; SIGTERM/SIGINT handled cleanly; launchd re-spawns on next client connection. Opt-out per call via `j2k decode --no-daemon`.
 
-See [RELEASE_NOTES_v8.0.0.md](RELEASE_NOTES_v8.0.0.md) for the full v8.0.0 release notes and the 14 phase-finding documents (`V8_0_0_PHASE_0_BASELINE.md` through `V8_0_0_PHASE_6_6_FINDING.md`). Prior release notes: [v7.5.0](RELEASE_NOTES_v7.5.0.md), [v7.4.0](RELEASE_NOTES_v7.4.0.md), [v7.3.0](RELEASE_NOTES_v7.3.0.md).
+See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the silent-corruption hotfix details. [RELEASE_NOTES_v8.0.0.md](RELEASE_NOTES_v8.0.0.md) covers the v8.0.0 major-version pivot and the 14 phase-finding documents (`V8_0_0_PHASE_0_BASELINE.md` through `V8_0_0_PHASE_6_6_FINDING.md`). Prior release notes: [v7.5.0](RELEASE_NOTES_v7.5.0.md), [v7.4.0](RELEASE_NOTES_v7.4.0.md), [v7.3.0](RELEASE_NOTES_v7.3.0.md).
 
 ## 🖥️ J2KTestApp — GUI Testing Application
 
