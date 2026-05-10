@@ -116,9 +116,19 @@ public struct J2KMetalSession: Sendable {
         guard J2KMetalSession.isAvailable else { return }
 
         #if canImport(Metal)
+        // v8.8 (research): env-gated stage timestamps. Set
+        // J2K_PREWARM_TRACE=1 to emit stderr lines breaking preWarm
+        // into device-init + library-load + pipeline-compile, so we
+        // can decide whether MTLBinaryArchive caching would be worth
+        // implementing.
+        let trace = ProcessInfo.processInfo.environment["J2K_PREWARM_TRACE"] == "1"
+        let t0 = DispatchTime.now()
         try await device.initialize()
+        let tDeviceInit = DispatchTime.now()
         let queue = try await device.commandQueue()
+        let tQueue = DispatchTime.now()
         try await shaderLibrary.loadShaders(device: queue.device)
+        let tShaders = DispatchTime.now()
 
         // Decode-hot-path pipelines. Pre-compile in parallel so we
         // don't serialise the per-pipeline cost.
@@ -144,6 +154,16 @@ public struct J2KMetalSession: Sendable {
                 }
             }
             try await group.waitForAll()
+        }
+        let tPipelines = DispatchTime.now()
+        if trace {
+            let device_ms = Double(tDeviceInit.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1_000_000.0
+            let queue_ms = Double(tQueue.uptimeNanoseconds &- tDeviceInit.uptimeNanoseconds) / 1_000_000.0
+            let shaders_ms = Double(tShaders.uptimeNanoseconds &- tQueue.uptimeNanoseconds) / 1_000_000.0
+            let pipelines_ms = Double(tPipelines.uptimeNanoseconds &- tShaders.uptimeNanoseconds) / 1_000_000.0
+            let total_ms = Double(tPipelines.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1_000_000.0
+            let msg = "[preWarm-trace] device_init=\(String(format: "%.2f", device_ms)) queue=\(String(format: "%.2f", queue_ms)) loadShaders=\(String(format: "%.2f", shaders_ms)) compile_\(decodePipelines.count)_pipelines=\(String(format: "%.2f", pipelines_ms)) total=\(String(format: "%.2f", total_ms))\n"
+            FileHandle.standardError.write(msg.data(using: .utf8)!)
         }
 
         guard includeWarmupDispatch else { return }
