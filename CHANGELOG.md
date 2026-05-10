@@ -5,6 +5,31 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.2] — 2026-05-10
+
+**Lever-ceiling investigation suite — three projected-wash phase-0 reports (v8.5 + v8.6 + v8.7) close every remaining pure-perf branch on M2.**
+
+Pure investigation-only release. **No source-code changes** beyond the version bump. The deliverable is the empirical data that closes the v8.4 recommendation tree's remaining items: HT entropy consumer body redesign, encoder optimisation arc, and encoder algorithmic redesign. All three returned WASH against the v7.4 ≥3 ms DX wall acceptance threshold. Combined with the five prior decoder-side investigations (v6-alpha4, v7.4, v7.5, v8.1, v8.4), **eight independent investigations** now confirm the J2KSwift codec hot-path on Apple M2 + Swift release + macOS is at structural lever ceiling for both encode and decode.
+
+### Added
+
+- `Tests/J2KCodecTests/V8_5_HTConsumerBodyPhase0Bench.swift` — parity check + per-quad cost microbench for the HT entropy consumer body 4-sequential-reads vs 1-batched-read pattern. Returns 4-reads = 14.27 ns/quad, batched = 6.04 ns/quad, projecting 1.32 ms wall savings on DX (below 3 ms threshold).
+- `Tests/J2KCodecTests/V8_6_ForwardDWTPhase0Bench.swift` — per-sample cost microbench for the production `forward53_1D` lifting kernel. Reports 0.37 ns/sample at n=2048, confirming the kernel runs at memory-bandwidth-bound L1 throughput.
+- `Tests/J2KCodecTests/V8_7_ForwardDWTStageDecomposition.swift` — `forward2D_53Pooled` end-to-end + strip-transpose isolation bench. Decomposes the 25 ms DX 5-level DWT wall into its sub-stages.
+- `V8_5_HT_CONSUMER_BODY_FINDING.md`, `V8_6_FORWARD_DWT_FINDING.md`, `V8_7_ENCODER_REDESIGN_FINDING.md` — close-out documents for each investigation, including projected DX wall-savings tables and reopen criteria.
+
+### Changed
+
+- `getVersion()` returns `"8.1.2"`.
+
+### Backward compatibility
+
+- **Codestream bytes byte-identical to v8.1.1.** No production code changes; no public API additions.
+
+### SemVer rule
+
+PATCH — pure investigation deliverable; no production code changes; no public API change; no codestream byte change.
+
 ## [8.1.1] — 2026-05-10
 
 **CI Node 24 opt-in — pre-empts the 2026-09-16 Node 20 removal**
