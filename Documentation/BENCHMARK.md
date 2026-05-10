@@ -43,20 +43,35 @@ Median of 5 full-process CLI invocations per cell. Same encoded `.j2k` codestrea
 - J2KSwift wins on DX vs OpenJPH but trails Kakadu / Grok across the corpus on cold-shot CLI.
 - Reproducer: `python3 Scripts/benchmarks/cross_codec_decode_cli.py` (encodes via `j2k encode` first, then times all four decoders).
 
-### With `j2kd` daemon installed (v8.1.0+) — opt-in via `--daemon`
+### With `j2kd` daemon installed (v8.1.0+) — opt-in via `--daemon` (v8.1.3)
 
-Installing the daemon (`j2k daemon-install`) eliminates the per-invocation Metal cold-start on **truly cold-shot** scenarios (first invocation after boot, file cache evicted). On a fresh-boot DX, daemon-routed decode drops from 72.56 ms → ~55 ms — putting J2KSwift CLI within 1.5× of Kakadu's 29.70 ms (which itself includes Kakadu's own ~13 ms startup tax).
+Installing the daemon (`j2k daemon-install`) eliminates the per-invocation Metal cold-start on **truly cold-shot** scenarios (first invocation after boot, file cache evicted). On a fresh-boot DX, daemon-routed decode drops from 72.56 ms → ~55 ms — putting J2KSwift CLI within 1.5× of Kakadu's 29.70 ms.
 
-**v8.8 finding (2026-05-10)**: paired N=20 corpus A/B on warm-cache CLI loops shows the daemon path **regresses** on small/medium fixtures (CT/MR/XA: −5 to −7 ms each) due to NSXPCInterface proxy overhead, and is roughly equal on PX/DX. The daemon's sole genuine benefit is the FIRST cold-shot per session.
+**v8.8 finding (2026-05-10)**: paired N=20 corpus A/B on warm-cache CLI loops showed the daemon path **regresses** on small/medium fixtures (CT/MR/XA: −5 to −7 ms each) due to NSXPCInterface proxy overhead, and is roughly equal on PX/DX. The mechanism: NSXPC client-side machinery (~5 ms) overlaps with daemon-side decode time, so it's hidden when decode is the long pole (DX/PX) but exposed when decode is fast (CT/MR/XA). See `V8_8_DAEMON_FIXTURE_SCALING.md`.
 
-Effective with v8.8 (research-validated, default to ship in v8.1.3):
+Effective with v8.1.3 (default-flip to opt-in):
 
 ```bash
-j2k decode -i input.j2k -o output.pgm           # default: in-process (no proxy overhead)
-j2k decode -i input.j2k -o output.pgm --daemon  # opt-in: cold-shot benefit
+j2k decode -i input.j2k -o output.pgm                # default: in-process (no proxy overhead)
+j2k decode -i input.j2k -o output.pgm --daemon       # opt-in: always route via daemon
+j2k decode -i input.j2k -o output.pgm --daemon auto  # smart: route via daemon ONLY for ≥3 MB codestreams
+j2k decode -i input.j2k -o output.pgm --no-daemon    # legacy alias for default (in-process)
 ```
 
-The legacy `--no-daemon` flag is preserved as an explicit no-op alias for backward-compat.
+#### `--daemon auto` smart routing (v8.1.3)
+
+Threshold: codestream ≥ 3 MB → daemon (decode time amortises NSXPC proxy overhead). < 3 MB → in-process (no overhead exposed). Verified across the 6-fixture medical corpus:
+
+| Fixture | codestream | in-proc | `--daemon` | `--daemon auto` | auto picked |
+|---|---:|---:|---:|---:|:---:|
+| MR-small 180² | 45 KB | 5.73 ms | 7.60 ms | **5.75 ms** | in-proc ✓ |
+| CT 512² | 436 KB | 8.57 ms | 19.29 ms | **8.69 ms** | in-proc ✓ |
+| MR 886² | 169 KB | 12.20 ms | 24.89 ms | **12.06 ms** | in-proc ✓ |
+| XA 1024² | 1.6 MB | 16.47 ms | 28.59 ms | **16.84 ms** | in-proc ✓ |
+| PX 2459×1316 | 6.5 MB | 43.90 ms | 43.52 ms | **42.16 ms** | daemon ✓ |
+| DX 2800×2288 | 12.7 MB | 75.55 ms | 75.21 ms | **71.44 ms** | daemon ✓ |
+
+**Aggregate corpus wall**: in-proc 162.42 ms / `--daemon` 199.10 ms / `--daemon auto` 156.94 ms — auto is strictly the best across the corpus.
 
 ---
 

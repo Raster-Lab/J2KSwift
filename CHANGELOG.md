@@ -17,11 +17,12 @@ v8.1.3 makes `j2kd` opt-in via `--daemon`, with `--no-daemon` preserved as a no-
 
 - **`j2k decode` default**: in-process (no NSXPCConnection round-trip). Post-flip default = pre-flip `--no-daemon` behavior, byte-identical output.
 - **`j2k decode --daemon`** (new flag): opt-in, routes via the j2kd XPC daemon when reachable. Falls back to in-process if not.
+- **`j2k decode --daemon auto`** (new flag): smart-routing — uses daemon for codestreams ≥ 3 MB, in-process otherwise. Per `V8_8_DAEMON_FIXTURE_SCALING.md`, the 3 MB threshold corresponds to the inflection where daemon-side decode time exceeds NSXPCInterface proxy overhead and the proxy work overlaps with decode. Cross-corpus verified: routes correctly on all 6 medical fixtures, beats both `--daemon` (always-on) and `--no-daemon` aggregate wall.
 - **`j2k decode --no-daemon`** (legacy): preserved as no-op alias. Scripts using this flag continue to work bit-identically.
 - `Sources/J2KCore/J2KCore.swift` — `getVersion()` returns `"8.1.3"`.
-- `Sources/J2KCLI/Commands.swift` — toggles daemon-routing branch from `if !noDaemon` to `if useDaemon`.
-- `Sources/J2KCLI/main.swift` — DECODE OPTIONS help updated with `--daemon` / `--no-daemon` text + tradeoff guidance.
-- `Documentation/BENCHMARK.md` — daemon-installed section updated to describe opt-in behavior + warm-cache regression context.
+- `Sources/J2KCLI/Commands.swift` — toggles daemon-routing branch from `if !noDaemon` to `if useDaemon`; adds `--daemon auto` smart-routing.
+- `Sources/J2KCLI/main.swift` — DECODE OPTIONS help updated with `--daemon` / `--daemon auto` / `--no-daemon` text + tradeoff guidance.
+- `Documentation/BENCHMARK.md` — daemon-installed section updated to describe opt-in behavior + smart-routing + warm-cache regression context.
 
 ### Backward compatibility
 

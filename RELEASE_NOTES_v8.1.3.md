@@ -26,11 +26,12 @@ In typical user flows (DICOM viewer thumbnail loops, batch-convert scripts, IDE-
 
 ## Changed (default flip)
 
-| Behaviour                         | v8.1.2 (old)            | v8.1.3 (new)                    |
-|-----------------------------------|-------------------------|---------------------------------|
-| `j2k decode -i ... -o ...`        | daemon if reachable     | **in-process** (no proxy tax)   |
-| `j2k decode -i ... -o ... --daemon`   | (flag did not exist)    | **opt-in** daemon route         |
-| `j2k decode -i ... -o ... --no-daemon`| in-process              | in-process (no-op alias kept for backward-compat) |
+| Behaviour                                | v8.1.2 (old)            | v8.1.3 (new)                                                  |
+|------------------------------------------|-------------------------|---------------------------------------------------------------|
+| `j2k decode -i ... -o ...`               | daemon if reachable     | **in-process** (no proxy tax)                                 |
+| `j2k decode -i ... -o ... --daemon`      | (flag did not exist)    | **opt-in** daemon route                                       |
+| `j2k decode -i ... -o ... --daemon auto` | (flag did not exist)    | **smart**: daemon for codestream ≥ 3 MB, in-process otherwise |
+| `j2k decode -i ... -o ... --no-daemon`   | in-process              | in-process (no-op alias kept for backward-compat)             |
 
 Implementation: `Sources/J2KCLI/Commands.swift` — toggles the daemon-routing branch from `if !noDaemon` to `if useDaemon`. Falls back transparently to in-process if `--daemon` is set but the daemon is unreachable.
 
@@ -66,13 +67,30 @@ The default (in-process) is the right primitive for:
 ## Verification — corpus A/B post-flip
 
 ```
-default (post-flip):   161.95 ms  (= explicit --no-daemon: 157.60 ms; +4.35 ms within noise)
---daemon (opt-in):     243.08 ms  (Δ vs default: +81.13 ms — daemon overhead, by design)
+default (post-flip):     161.95 ms  (= explicit --no-daemon: 157.60 ms; +4.35 ms within noise)
+--daemon (opt-in):       243.08 ms  (Δ vs default: +81.13 ms — daemon overhead, by design)
 ```
 
 The default and the legacy `--no-daemon` flag produce equivalent timing (both in-process). The opt-in `--daemon` flag still routes to j2kd as before.
 
 Net improvement vs pre-flip default: **+20.44 ms across 6 medical fixtures** for the typical CLI loop user.
+
+## Smart routing (`--daemon auto`) verification
+
+Smart routing uses the codestream file size as a proxy for decode work. Threshold: 3 MB.
+
+| Fixture            | codestream | in-proc | `--daemon` | `--daemon auto` | auto picked |
+|--------------------|-----------:|--------:|-----------:|-----------------:|:-----------:|
+| MR-small 180²      |       45 KB|  5.73 ms|     7.60 ms|        **5.75 ms**| in-proc ✓   |
+| CT 512²            |      436 KB|  8.57 ms|    19.29 ms|        **8.69 ms**| in-proc ✓   |
+| MR 886²            |      169 KB| 12.20 ms|    24.89 ms|       **12.06 ms**| in-proc ✓   |
+| XA 1024²           |      1.6 MB| 16.47 ms|    28.59 ms|       **16.84 ms**| in-proc ✓   |
+| PX 2459×1316       |      6.5 MB| 43.90 ms|    43.52 ms|       **42.16 ms**| daemon  ✓   |
+| DX 2800×2288       |     12.7 MB| 75.55 ms|    75.21 ms|       **71.44 ms**| daemon  ✓   |
+
+**Aggregate corpus wall**: in-proc 162.42 ms / `--daemon` 199.10 ms / `--daemon auto` 156.94 ms. Smart routing is strictly the best across the corpus.
+
+The 3 MB threshold derivation is in [`V8_8_DAEMON_FIXTURE_SCALING.md`](V8_8_DAEMON_FIXTURE_SCALING.md): the NSXPC client-side machinery (~5 ms) overlaps with daemon-side decode; when decode takes longer than the proxy overhead (≥ 3 MB ≈ 3 MP at typical lossless compression), the overhead is hidden and the daemon's amortised Metal cold-start avoidance becomes a net win.
 
 ## Cross-codec parity matrix (re-validated)
 

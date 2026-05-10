@@ -447,16 +447,35 @@ extension J2KCLI {
         // (first invocation per session, no file cache, Metal not yet
         // initialised) — not the typical CLI loop case.
         //
-        // - `--daemon`     opt-in: route via j2kd if reachable
-        // - (no flag)      default: in-process decode (no proxy overhead)
-        // - `--no-daemon`  preserved as explicit no-op alias for clarity +
-        //                  backward-compat with anyone who scripted around
-        //                  the v8.1.x default
+        // - `--daemon`         opt-in: route via j2kd if reachable
+        // - `--daemon auto`    research: route via j2kd ONLY when
+        //                      codestream ≥ 3 MB (≈ 3 MP image), so the
+        //                      daemon's decode time amortises NSXPC
+        //                      proxy overhead (per V8_8_DAEMON_FIXTURE_SCALING.md)
+        // - (no flag)          default: in-process decode (no proxy overhead)
+        // - `--no-daemon`      preserved as explicit no-op alias for clarity +
+        //                      backward-compat with anyone who scripted
+        //                      around the v8.1.x default
         //
         // If the daemon is opt-in but unreachable, we transparently fall
         // back to in-process — the in-process path always works.
-        let useDaemon = options["daemon"] != nil
+        let daemonValue = options["daemon"]
         let noDaemonExplicit = options["no-daemon"] != nil
+        let useDaemon: Bool
+        if let v = daemonValue {
+            if v.lowercased() == "auto" {
+                // Research-mode threshold: 3 MB codestream ≈ 3 MP at
+                // typical lossless 5/3 ratios. Below this, daemon decode
+                // is shorter than NSXPC machinery and the overhead is
+                // exposed; above, decode time hides the proxy overhead.
+                useDaemon = encodedData.count >= 3 * 1024 * 1024
+            } else {
+                // --daemon (true), --daemon yes, --daemon true, etc. → opt-in.
+                useDaemon = true
+            }
+        } else {
+            useDaemon = false
+        }
         var usedDaemon = false
         #if os(macOS)
         if useDaemon && !noDaemonExplicit && !useGPUHT && !pipeInput {
