@@ -352,6 +352,16 @@ struct DecoderPipeline: Sendable {
     /// amortisation that v7.2.0 measured (3 % DX 2x2) is restored.
     nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
 
+    /// **v8.3 diagnostic-only**. When `false` (the default), the
+    /// v8.2 fix in `decodeTilePayloadGPU` forces CPU IDWT whenever
+    /// `preBatchedGPUCoefficients` is set, sidestepping the GPU
+    /// multi-tile-per-tile IDWT corruption documented in
+    /// V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md. When `true`, the v8.2
+    /// fix is bypassed and the GPU IDWT runs — used by v8.3
+    /// diagnostics to reproduce the underlying GPU IDWT bug for
+    /// root-cause work. PRODUCTION CODE MUST KEEP THIS FALSE.
+    nonisolated(unsafe) static var _v82_disableIDWTRoutingFix: Bool = false
+
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
     /// behaviour from `decodeWithGPUHT`). When this flag is true
@@ -1239,7 +1249,8 @@ struct DecoderPipeline: Sendable {
         // production reproducer mg DICOM 3520×4784).
         t0 = DispatchTime.now()
         let spatialData: [[Double]]
-        if preBatchedGPUCoefficients != nil {
+        if preBatchedGPUCoefficients != nil
+            && !Self._v82_disableIDWTRoutingFix {
             spatialData = try await applyInverseWaveletTransform(
                 dequantizedSubbands, metadata: tileMeta,
                 tileOriginX: tileX, tileOriginY: tileY)
@@ -4020,13 +4031,31 @@ struct DecoderPipeline: Sendable {
                 continue
             }
 
-            // Compute expected subband dimensions at each level
+            // Compute expected subband dimensions at each level.
+            //
+            // **v8.3 fix**: use the canvas-anchored ISO/IEC 15444-1
+            // Eq. B-15 spec formula (`bandX1 - bandX0`), matching
+            // the CPU path's `applyInverseWaveletTransform`. The
+            // previous naive `(pw + 1) / 2` recursion produced
+            // wrong dimensions on tiles whose canvas origin made
+            // an intermediate-depth band partition ODD-aligned
+            // (e.g. tile (0, 1) of 1760×2392 split 2x2: tcx0=880,
+            // depth 5 → naive recursion gives LL width 28, but the
+            // encoder produces width 27 per spec). Result was
+            // 100 % corruption of tiles with non-zero canvas X
+            // origin. CPU IDWT used the spec formula already.
             let compW = metadata.width / metadata.components[compIdx].subsamplingX
             let compH = metadata.height / metadata.components[compIdx].subsamplingY
-            var levelSizes: [(width: Int, height: Int)] = [(compW, compH)]
-            for _ in 0..<levels {
-                let (pw, ph) = levelSizes.last!
-                levelSizes.append(((pw + 1) / 2, (ph + 1) / 2))
+            let tcx0 = tileOriginX / metadata.components[compIdx].subsamplingX
+            let tcy0 = tileOriginY / metadata.components[compIdx].subsamplingY
+            var levelSizes: [(width: Int, height: Int)] = []
+            for d in 0...levels {
+                let denom = 1 << d
+                let bandX0 = EncoderPipeline.ceilDivIntegerOrigin(tcx0, denom)
+                let bandX1 = EncoderPipeline.ceilDivIntegerOrigin(tcx0 + compW, denom)
+                let bandY0 = EncoderPipeline.ceilDivIntegerOrigin(tcy0, denom)
+                let bandY1 = EncoderPipeline.ceilDivIntegerOrigin(tcy0 + compH, denom)
+                levelSizes.append((bandX1 - bandX0, bandY1 - bandY0))
             }
 
             let llSubband = compSubbands.first(where: { $0.subband == .ll })
