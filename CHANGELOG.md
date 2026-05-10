@@ -5,6 +5,35 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.4] — 2026-05-10
+
+**mmap'd codestream input propagated to other CLI subcommands**
+
+The v8.1.3 mmap input fix (`Data(contentsOf:options: [.alwaysMapped])`) was applied only to the single-file `decode` CLI in `Commands.swift`. Five additional CLI call sites still used eager `Data(contentsOf:)`. v8.1.4 propagates the same fix to all of them. Codestream bytes byte-identical to v8.1.3.
+
+### Changed
+
+- `Sources/J2KCLI/Batch.swift` — mmap on batch decode + batch transcode paths.
+- `Sources/J2KCLI/Decode3D.swift` — mmap on JP3D decode.
+- `Sources/J2KCLI/Info.swift` — mmap on info inspection.
+- `Sources/J2KCLI/Compare.swift` — mmap on both J2K comparison reads (×2).
+- `Sources/J2KCLI/Convert.swift` — mmap on J2K → image conversion.
+- `Sources/J2KCore/J2KCore.swift` — `getVersion()` returns `"8.1.4"`.
+
+### Backward compatibility
+
+- Codestream bytes byte-identical to v8.1.3.
+- All cross-codec parity tests preserved (12/12 cells × 3 decoders = 36/36 bit-exact, plus 3/3 strict tests).
+- No public API changes.
+
+### SemVer rule
+
+PATCH — bug fix (missed call sites in v8.1.3); no API removed; no codestream byte change.
+
+### Research provenance
+
+Productisation of the v8.9 research arc (`v8.9-research` branch). v8.9 ran 5 phase-0 probes; this is the only production-quality win. The other 4 probes (daemon batch RPC, daemon concurrent dispatch, CLI cold-shot decomposition, lazy encoder component init) projected wash or structural ceiling — the codec is at lever-ceiling on M2 + Swift release across 16 independent investigations (10 from v8.5–v8.8, 6 from v8.9 + earlier).
+
 ## [8.1.3] — 2026-05-10
 
 **`j2kd` daemon: opt-in default + smart-routing + encoder support; mmap'd CLI input**
