@@ -1450,7 +1450,13 @@ public actor J2KMetalDWT {
             let width = subbands.originalWidth
             let height = subbands.originalHeight
             let llH = subbands.llHeight
-            let halfHH = height / 2
+            // **v8.3 fix**: LH/HH row count is `H − llH`, not
+            // `H / 2`. For canvas-anchored partitioning at an ODD
+            // V origin, LL = floor(H/2) and LH/HH = ceil(H/2);
+            // `H / 2` under-counts by 1 for odd-H, ODD-V-origin
+            // tiles, leaving the last LH/HH row uninitialised in
+            // the colHigh buffer and corrupting the V IDWT output.
+            let halfHH = height - llH
 
             // LL: first level uploads from CPU; subsequent levels
             // reuse the previous level's output buffer GPU-resident.
@@ -3655,7 +3661,8 @@ public actor J2KMetalDWT {
         tileOriginX: Int = 0,
         tileOriginY: Int = 0
     ) async throws {
-        let halfHH = originalHeight / 2
+        // **v8.3 fix**: see `inverse2DInt32MultiLevelFused`.
+        let halfHH = originalHeight - llHeight
 
         // v7.1.0 H2.2 — select even-vs-odd kernel based on band
         // canvas origin parity per pass. Even origin (the historical
