@@ -5,6 +5,50 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.0] — 2026-05-10
+
+**`j2kd` XPC daemon adoption push — three new CLI subcommands turn the manual 5-step install into one command**
+
+Pure deployment-side work. Codestream bytes byte-identical to v8.0.1; no decoder change. The v8.4 lever-ceiling investigation (PR #402) confirmed the M2 + Swift release decoder hot path has no extractable single-codec wins remaining; this release pursues the highest-leverage move available — making the already-shipped `j2kd` daemon trivial to install.
+
+End-to-end CLI gap on DX 2800×2288 closes from 72 ms cold-shot → ~55 ms with daemon installed (–24 % wall) — the v8.0.0 phase 6 daemon work, now one command instead of five shell invocations.
+
+### Added
+
+- **`j2k daemon-install`** — locates `j2kd` (sibling of running `j2k` binary, then `.build/release/j2kd` in CWD; `--daemon-binary <path>` overrides), copies to `~/Library/Application Support/J2KSwift/j2kd`, writes the plist to `~/Library/LaunchAgents/com.raster.j2kd.plist`, runs `launchctl bootstrap` (modern; falls back to `launchctl load`), verifies install via real XPC ping. Per-user layout — no sudo. `--force` flag overwrites an existing install.
+- **`j2k daemon-uninstall`** — `launchctl bootout` (with legacy `unload` fallback), removes plist, removes binary. `--keep-binary` preserves binary for re-install.
+- **`j2k daemon-status`** — reports binary/plist presence, launchd service load state (`launchctl print`), and Mach service reachability via real XPC ping (the v8.0.0 `J2KDaemonClient.isAvailable` is optimistic; this command does the actual round-trip). Human-readable default; `--json` for scripting.
+- `Sources/J2KCLI/DaemonInstall.swift` — implementation of the three subcommands. macOS-only via `#if os(macOS)`.
+- `RELEASE_NOTES_v8.1.0.md`.
+
+### Changed
+
+- `Sources/J2KCLI/main.swift` — usage text now lists `daemon-install / daemon-uninstall / daemon-status / daemon-ping`. Dispatch added for the three new subcommands; iOS builds stub them to a "macOS-only" message.
+- `README.md` — `j2kd` install section replaces the manual 5-step shell flow with the one-command path.
+- `getVersion()` returns `"8.1.0"`.
+
+### Backward compatibility
+
+- **Codestream bytes byte-identical to v8.0.1** — no encoder/decoder change.
+- Public API additions only; no removals or signature changes.
+- The v8.0.0 manual install path still works; the new install command targets a different layout (`~/Library/Application Support/J2KSwift/` instead of `/usr/local/bin/`) so the two installs don't collide.
+
+### SemVer rule
+
+**MINOR** per RELEASING.md — new public CLI surface, no removals, no signature changes, codestream bytes unchanged.
+
+### iOS / iPadOS
+
+`j2kd` is macOS-only. iOS apps use `J2KDecoder.preWarm()` (shipped in v8.0.0 Phase 6.1) for the same warm-process effect. All three new subcommands are `#if os(macOS)`-gated; iOS builds compile clean.
+
+### Test Suite Results (release mode, 0 failures)
+
+- `J2KMedicalCorpusEncodePerformanceTests` — 2/2 (29.971 s)
+- `J2KMedicalCorpusPerformanceTests` — 2/2 (9.784 s)
+- `J2KStrictCrossCodecValidationTests` — 3/3 (0.481 s)
+
+Plus end-to-end install / status / ping / uninstall round-trip verified on Apple M2 / macOS 26.x.
+
 ## [8.0.1] — 2026-05-10
 
 **Silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause**
