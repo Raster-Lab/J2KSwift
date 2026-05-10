@@ -110,8 +110,20 @@ The codec hot-path AND the IPC layer AND the CLI layer AND the multi-tile dispat
 - `V9_0_MULTITILE_PARALLELISM_FINDING.md` — empirical parallelism efficiency data
 - `V9_0_KAKADU_GAP_ANALYSIS.md` — structural analysis of why pools won't close the gap
 - `V9_0_RESEARCH_SUMMARY.md` — this synthesis
+- `Scripts/benchmarks/cross_silicon_probe.py` — Path C infrastructure: reproducible cross-silicon benchmark driver with structured JSON output, system-state capture (memory pressure, load), and `compare` subcommand for diffing two prior runs.
+- `benchmark-results-Mac14_2-8.1.4-20260510.json` — M2 v8.1.4 baseline capture (stressed-state; system was at 8.5 GB compressor + 192 MB free pages, 2.53 load). Apples-to-apples reference point for any future M3/M4 probe under matched system conditions.
 
-No code changes. No production impact. The v9.0-research branch can stay open as a historical research artefact, similar to v8.8-research and v8.9-research.
+No production code changes. No API impact. The v9.0-research branch can stay open as a historical research artefact, similar to v8.8-research and v8.9-research.
+
+## Bonus finding: CLI exec tax on memory-pressured systems
+
+While capturing the M2 baseline, the cross-silicon probe surfaced a previously-undocumented behaviour: on a memory-pressured M2 (compressor >2 GB, free pages <500 MB), every CLI subprocess invocation pays an extra ~30 ms exec/page-swap tax. This compounds across the 4–5 codec arms × 6 fixtures × 10 invocations the probe runs, shifting the entire reported curve up by ~75% on small fixtures (MR-small 180²: 40 ms → 77 ms).
+
+Implications:
+- The `j2kd` daemon's advantage on small fixtures is partly explained by this — daemon mode avoids per-invocation fork/exec, so it amortises the page-swap tax.
+- Cold-shot benchmarks on memory-pressured laptops will systematically *under*-state the J2KSwift CLI's idle-system performance. The v8.1.4 CROSS_CODEC_REPORT numbers (warm-cache 39.67 ms MR-small in-proc) reflect lighter system load.
+- For cross-silicon comparability, both M2 and M3+/M4 probes should be run with similar memory pressure (ideally a fresh-rebooted system).
+- The `cross_silicon_probe.py` script now captures and reports these indicators at startup, with a warning when thresholds are exceeded.
 
 ## Next steps for the user
 
@@ -121,6 +133,10 @@ When you wake up, decide which path to take:
 
 2. **Path B — algorithmic rewrite**: pick ONE subsystem (DWT or HT entropy) and commit to a 6-12 month re-architecture. High effort, uncertain payoff (may close 30-50% of gap).
 
-3. **Path C — silicon probe**: borrow/buy an M3+ Mac and re-run the cross-codec benchmark. 1 week of measurement work. May reveal cross-silicon variations that shift the curve. Reusable infrastructure: `Scripts/benchmarks/cross_codec_{encode,decode}_cli.py`, `HTMultiTilePerfProbeTests`, `J2KMedicalCorpusEncodePerformanceTests`.
+3. **Path C — silicon probe**: borrow/buy an M3+ Mac and re-run the cross-codec benchmark. 1 week of measurement work. May reveal cross-silicon variations that shift the curve. Reusable infrastructure (all in tree):
+   - `Scripts/benchmarks/cross_silicon_probe.py` — single-command probe; outputs structured JSON tagged with hw_model + version + date; supports `compare a.json b.json` for diffing two silicon runs.
+   - `benchmark-results-Mac14_2-8.1.4-20260510.json` — the M2 baseline to diff against.
+   - `Scripts/benchmarks/cross_codec_{encode,decode}_cli.py` — original cross-codec drivers.
+   - `HTMultiTilePerfProbeTests`, `J2KMedicalCorpusEncodePerformanceTests` — Swift test-level probes.
 
 4. **Stop perf research**: 18 investigations is comprehensive. Move to product features (DICOM ecosystem integration, JP3D ROI decoder, SwiftUI plugins) where the engineering ROI is clear.
