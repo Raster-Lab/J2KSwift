@@ -28,7 +28,17 @@ Output:
 
     Structured for easy diffing across silicon generations to identify
     where each chip's curve falls relative to M2 (the v8.x reference).
+
+Methodology note:
+    The probe captures system state (vm.compressor_bytes_used, pages_free,
+    load_1min) at startup. On a memory-pressured M2 with 9+ GB in the
+    compressor, every CLI subprocess invocation pays ~30 ms of extra
+    exec/page-swap tax — so absolute numbers reflect stressed-state
+    measurement, not idle-system best-case. For cross-silicon
+    comparability, run on a fresh-rebooted system with <2 GB compressor
+    usage and >500 MB free pages.
 """
+from __future__ import annotations
 import subprocess, time, statistics, os, sys, json, hashlib, platform
 import shutil
 from pathlib import Path
@@ -98,6 +108,32 @@ def system_info() -> dict:
             [J2K, "version"], text=True).strip()
     except Exception:
         info["j2kswift_version"] = "unknown"
+
+    # Memory pressure indicators — large vm.compressor_bytes_used or low free
+    # pages slow every CLI invocation by ~30 ms (page-swap on exec). Capture
+    # for cross-system comparability — runs under heavy memory pressure are
+    # not directly comparable to runs on idle systems.
+    try:
+        info["vm_compressor_bytes"] = int(subprocess.check_output(
+            ["sysctl", "-n", "vm.compressor_bytes_used"], text=True).strip())
+    except Exception:
+        info["vm_compressor_bytes"] = 0
+    try:
+        vm_out = subprocess.check_output(["vm_stat"], text=True)
+        for line in vm_out.splitlines():
+            if "Pages free" in line:
+                info["pages_free"] = int(
+                    line.split(":")[1].strip().rstrip("."))
+            if "page size of" in line:
+                info["page_size"] = int(
+                    line.split("page size of")[1].split("bytes")[0].strip())
+    except Exception:
+        pass
+    # 1-min load average — indicates system load during the bench
+    try:
+        info["loadavg_1min"] = float(os.getloadavg()[0])
+    except Exception:
+        info["loadavg_1min"] = 0.0
     return info
 
 
@@ -232,6 +268,15 @@ def main():
     print(f"  mem_gb:      {info['mem_gb']}")
     print(f"  cores:       {info['cores_perf']}P + {info['cores_eff']}E")
     print(f"  J2KSwift:    {info['j2kswift_version']}")
+    compressor_gb = info.get("vm_compressor_bytes", 0) / (1024 ** 3)
+    free_mb = (info.get("pages_free", 0) * info.get("page_size", 0)) / (1024 ** 2)
+    print(f"  compressor:  {compressor_gb:.2f} GB used (>2 GB = pressure)")
+    print(f"  free pages:  {free_mb:.0f} MB (<500 MB = memory pressure)")
+    print(f"  load 1min:   {info.get('loadavg_1min', 0):.2f}")
+    if compressor_gb > 2.0 or free_mb < 500:
+        print("  ⚠ system is memory-pressured — every CLI invocation pays an")
+        print("    extra ~30 ms exec/page-swap tax. Numbers below reflect")
+        print("    stressed-state baseline, not idle-system best-case.")
     print()
     print("Encoding corpus...")
     enc_dir = f"/tmp/v9_silicon_bench"
