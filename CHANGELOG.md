@@ -5,6 +5,63 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.1] — 2026-05-10
+
+**Silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause**
+
+Fixes the v7.5.1 mg silent-corruption (cross-tile batched HT entropy decode) AND root-causes / fixes the underlying GPU multi-tile-per-tile 5/3 IDWT defect that produced the corruption. `_multiTileBatchedEntropyEnabled` is back default-on; the v7.2.0 cross-tile entropy CB amortisation is restored.
+
+Codestream bytes byte-identical to v8.0.0; no public API removals or signature changes.
+
+### Fixed
+
+- **mg silent-corruption (v8.2 / PR #399)** — `decodeMultiTileGPUBatched` (PR #356, v7.2.0) silently corrupted decode output on certain multi-tile codestreams; surfaced 2026-05-09 by an external 4-codec eval matrix on 16+ MP mammography DICOM fixtures. Root cause was NOT in the entropy decode — it was IDWT routing: when the entropy stage's pre-batched short-circuit returned `gpuBatch=nil`, `applyInverseWaveletTransformGPU` skipped its CPU-fallback branch and ran the buggy GPU multi-tile-per-tile IDWT. Fix: force CPU IDWT in `decodeTilePayloadGPU` when `preBatchedGPUCoefficients` is set, mirroring the per-tile path's effective behaviour.
+
+- **GPU multi-tile-per-tile 5/3 IDWT — two distinct correctness bugs (v8.3 / PR #400)**:
+  - **Bug #1**: `applyInverseWaveletTransformGPU` used naive `(pw + 1) / 2` ceil-div recursion for per-level subband dimensions, disagreeing with the encoder's canvas-anchored ISO/IEC 15444-1 Eq. B-15 partition at non-zero canvas X origin. Example: tile (0, 1) at depth 5 — naive gives 28, spec gives 27. Wholesale corruption (1.05 M of 1.05 M pixels in the failing tile). Fixed by switching to the spec formula.
+  - **Bug #2**: `encodeInverse2DInt32` + `inverse2DInt32MultiLevelFused` computed the LH/HH band row count as `originalHeight / 2`. For ODD canvas V origin: LL = `floor(H/2)`, LH/HH = `ceil(H/2)`. `H/2 = floor(H/2)` undercount → Pass 1 only processed `H/2` rows of LH/HH, leaving the last row of `colHigh` uninitialised; Pass 2 read all `ceil(H/2)` rows, picking up garbage. Fixed by `halfHH = originalHeight − llHeight`.
+
+  Per-tile mismatch progression on the smallest reproducer (1760×2392 split 2x2):
+
+  | tile | tcx0, tcy0 | pre-v8.3 | after Fix #1 | after Fix #1+#2 |
+  |---|---|---:|---:|---:|
+  | (0, 0) | 0, 0 | 0 | 0 | **0** |
+  | (0, 1) | 880, 0 | 1,048,207 | 0 | **0** |
+  | (1, 0) | 0, 1196 | 48,128 | 47,175 | **0** |
+  | (1, 1) | 880, 1196 | 1,049,385 | 47,357 | **0** |
+
+### Changed
+
+- **`_multiTileBatchedEntropyEnabled` default flipped `false` → `true`** — restores v7.2.0 phase-e cross-tile entropy CB amortisation. Decode output is bit-exact to v8.0.0's per-tile path; only the internal routing changes.
+- **`getVersion()` returns `"8.0.1"`**.
+
+### Added
+
+- `nonisolated(unsafe) public static var DecoderPipeline._v82_disableIDWTRoutingFix: Bool = false` — test-only diagnostic toggle. Must stay `false` in production.
+- `Tests/J2KCodecTests/V8_2_MgBatchedDiagnostic.swift` — 10-dimension sweep verifying the v8.2 routing fix.
+- `Tests/J2KCodecTests/V8_3_GPUIDWTRootCauseDiagnostic.swift` — GPU IDWT bit-exact verification (3 tests via the routing-fix bypass toggle).
+- `V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md` — v8.2 routing fix root cause.
+- `V8_3_0_GPU_IDWT_ROOT_CAUSE.md` — v8.3 two-bug root cause + per-tile localisation.
+
+### Backward compatibility
+
+- **Codestream bytes byte-identical to v8.0.0**.
+- Public API additions only; no removals or signature changes.
+- The `_multiTileBatchedEntropyEnabled` default flip restores pre-v7.5.1 behaviour for the internal routing — both old and new defaults produce bit-exact decode output, the new default is just faster on multi-tile fixtures.
+
+### SemVer rule
+
+**PATCH** — codestream bytes unchanged, no public API breakage, new test-only diagnostic toggle plus pure-bug-fix changes.
+
+### Test Suite Results (release mode, 0 failures)
+
+- `J2KMedicalCorpusEncodePerformanceTests` — 2/2 (29.910 s)
+- `J2KMedicalCorpusPerformanceTests` — 2/2 (9.672 s)
+- `J2KStrictCrossCodecValidationTests` — 3/3 (0.460 s)
+- `MgRegressionTriageTest` (assertion flipped — must PASS bit-exact at 16+ MP) — 2/2
+- `V8_2_MgBatchedDiagnostic` (10 cases) — 1/1
+- `V8_3_GPUIDWTRootCauseDiagnostic` (3 tests, GPU IDWT bypassing v8.2 fix) — 3/3
+
 ## [8.0.0] — 2026-05-10
 
 **Apple Silicon-first major release — Metal-first architecture, warm in-process beats Kakadu on 4/6 medical fixtures, optional `j2kd` XPC daemon for warm-CLI**
