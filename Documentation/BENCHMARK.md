@@ -47,7 +47,7 @@ Median of 5 full-process CLI invocations per cell. Same encoded `.j2k` codestrea
 
 Installing the daemon (`j2k daemon-install`) eliminates the per-invocation Metal cold-start on **truly cold-shot** scenarios (first invocation after boot, file cache evicted). On a fresh-boot DX, daemon-routed decode drops from 72.56 ms → ~55 ms — putting J2KSwift CLI within 1.5× of Kakadu's 29.70 ms.
 
-**v8.8 finding (2026-05-10)**: paired N=20 corpus A/B on warm-cache CLI loops showed the daemon path **regresses** on small/medium fixtures (CT/MR/XA: −5 to −7 ms each) due to NSXPCInterface proxy overhead, and is roughly equal on PX/DX. The mechanism: NSXPC client-side machinery (~5 ms) overlaps with daemon-side decode time, so it's hidden when decode is the long pole (DX/PX) but exposed when decode is fast (CT/MR/XA). See `V8_8_DAEMON_FIXTURE_SCALING.md`.
+**v8.1.3 finding (2026-05-10)**: paired N=20 corpus A/B on warm-cache CLI loops showed the daemon path **regresses** on small/medium fixtures (CT/MR/XA: −5 to −7 ms each) due to NSXPCInterface proxy overhead, and is roughly equal on PX/DX. The mechanism: NSXPC client-side machinery (~5 ms) overlaps with daemon-side decode time, so it's hidden when decode is the long pole (DX/PX) but exposed when decode is fast (CT/MR/XA). Full research provenance on the v8.8 research branch (PR #410, NOT for merge).
 
 Effective with v8.1.3 (default-flip to opt-in):
 
