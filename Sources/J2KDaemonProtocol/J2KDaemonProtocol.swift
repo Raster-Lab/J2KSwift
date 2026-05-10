@@ -109,6 +109,39 @@ public let J2KDaemonMachServiceName = "com.raster.j2kd"
                           _ bigEndian: Bool,
                           _ pixelData: Data,
                           _ errorMessage: String?) -> Void)
+
+    /// **v8.8 (research) — kept in-tree as RESEARCH artefact, NOT
+    /// for production use.**
+    ///
+    /// File-path-based decode. The intent was: bypass XPC bytes-
+    /// transfer overhead by having the daemon read the codestream
+    /// via `mmap` and write the decoded pixel data directly to a
+    /// destination file path. The hypothesis was that the ~5–6 ms
+    /// XPC bytes-transfer overhead measured by
+    /// `V8_8_DaemonOverheadDecomposition` could be eliminated.
+    ///
+    /// **Empirical result**: NO. On Apple M2 + NVMe SSD, writing
+    /// the 25 MB DX result to disk costs ~5–10 ms — same order as
+    /// the XPC OOL transfer it was trying to replace. `V8_8_DecodeFileBench`
+    /// shows decodeFile is **1 ms SLOWER** than the standard
+    /// `decode(Data)` path on warm DX. Disk I/O is not faster than
+    /// XPC's mach_msg shared-memory marshalling on M2.
+    ///
+    /// Method retained on the protocol so tests + future-investigators
+    /// can re-A/B without re-implementing. **Do not wire this into
+    /// production CLI**; the existing `decode(Data)` is the right
+    /// primitive on M2 + NSXPCConnection.
+    func decodeFile(
+        codestreamPath: String,
+        outputPath: String,
+        reply: @escaping (_ success: Bool,
+                          _ width: Int32,
+                          _ height: Int32,
+                          _ bitDepth: Int32,
+                          _ signed: Bool,
+                          _ componentCount: Int32,
+                          _ bigEndian: Bool,
+                          _ errorMessage: String?) -> Void)
 }
 
 #endif // os(macOS)

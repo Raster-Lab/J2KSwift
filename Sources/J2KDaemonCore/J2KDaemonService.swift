@@ -103,6 +103,58 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
             }
         }
     }
+
+    /// **v8.8 (research)** — file-path-based decode. Reads the
+    /// codestream from `codestreamPath` (mmap'd to avoid a buffer
+    /// copy), decodes via the warm `J2KDecoder`, and writes the
+    /// FIRST component's raw bytes to `outputPath`. Reply carries
+    /// only metadata — pixelData stays on disk.
+    ///
+    /// Saves ~6 ms on DX vs the `Data`-based `decode` path; see
+    /// `V8_8_DaemonOverheadDecomposition`.
+    public func decodeFile(
+        codestreamPath: String,
+        outputPath: String,
+        reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void
+    ) {
+        activityTracker?.touch()
+        let replyBox = FileReplyBox(reply)
+        Task.detached {
+            do {
+                // Read input via mmap (.alwaysMapped) — zero-copy load.
+                let url = URL(fileURLWithPath: codestreamPath)
+                let codestream = try Data(contentsOf: url, options: [.alwaysMapped])
+
+                await J2KDecoder.preWarm()
+                let decoder = J2KDecoder()
+                let image = try await decoder.decode(codestream)
+
+                guard let comp0 = image.components.first else {
+                    replyBox.reply(false, 0, 0, 0, false, 0, false,
+                                   "decoded image has zero components")
+                    return
+                }
+
+                // Write decoded pixel data directly to the destination
+                // path. Skip the temp-file dance — caller owns atomicity.
+                try comp0.data.write(to: URL(fileURLWithPath: outputPath))
+
+                replyBox.reply(
+                    true,
+                    Int32(image.width),
+                    Int32(image.height),
+                    Int32(comp0.bitDepth),
+                    comp0.signed,
+                    Int32(image.components.count),
+                    comp0.sampleByteOrder == .bigEndian,
+                    nil
+                )
+            } catch {
+                replyBox.reply(false, 0, 0, 0, false, 0, false,
+                               "decodeFile failed: \(error)")
+            }
+        }
+    }
 }
 
 /// Internal Sendable wrapper for the XPC reply closure. Safe
@@ -110,6 +162,14 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
 private final class ReplyBox: @unchecked Sendable {
     let reply: (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void
     init(_ reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void) {
+        self.reply = reply
+    }
+}
+
+/// Companion wrapper for the v8.8 `decodeFile` reply (no inline pixelData).
+private final class FileReplyBox: @unchecked Sendable {
+    let reply: (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void
+    init(_ reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void) {
         self.reply = reply
     }
 }
