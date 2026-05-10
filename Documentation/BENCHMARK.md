@@ -43,9 +43,20 @@ Median of 5 full-process CLI invocations per cell. Same encoded `.j2k` codestrea
 - J2KSwift wins on DX vs OpenJPH but trails Kakadu / Grok across the corpus on cold-shot CLI.
 - Reproducer: `python3 Scripts/benchmarks/cross_codec_decode_cli.py` (encodes via `j2k encode` first, then times all four decoders).
 
-### With `j2kd` daemon installed (v8.1.0+)
+### With `j2kd` daemon installed (v8.1.0+) — opt-in via `--daemon`
 
-Installing the daemon (`j2k daemon-install`) eliminates the per-invocation Metal cold-start. The DX cold-shot drops from 72.56 ms → ~55 ms — putting J2KSwift CLI within 1.5× of Kakadu's 29.70 ms (which itself includes Kakadu's own ~13 ms startup tax).
+Installing the daemon (`j2k daemon-install`) eliminates the per-invocation Metal cold-start on **truly cold-shot** scenarios (first invocation after boot, file cache evicted). On a fresh-boot DX, daemon-routed decode drops from 72.56 ms → ~55 ms — putting J2KSwift CLI within 1.5× of Kakadu's 29.70 ms (which itself includes Kakadu's own ~13 ms startup tax).
+
+**v8.8 finding (2026-05-10)**: paired N=20 corpus A/B on warm-cache CLI loops shows the daemon path **regresses** on small/medium fixtures (CT/MR/XA: −5 to −7 ms each) due to NSXPCInterface proxy overhead, and is roughly equal on PX/DX. The daemon's sole genuine benefit is the FIRST cold-shot per session.
+
+Effective with v8.8 (research-validated, default to ship in v8.1.3):
+
+```bash
+j2k decode -i input.j2k -o output.pgm           # default: in-process (no proxy overhead)
+j2k decode -i input.j2k -o output.pgm --daemon  # opt-in: cold-shot benefit
+```
+
+The legacy `--no-daemon` flag is preserved as an explicit no-op alias for backward-compat.
 
 ---
 

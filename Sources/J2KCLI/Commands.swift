@@ -437,27 +437,35 @@ extension J2KCLI {
         let startDecode = Date()
         let decodedImage: J2KImage
 
-        // v8 Phase 6.5 — daemon-first decode with fallback.
-        // Try the daemon if --no-daemon was NOT explicitly
-        // passed AND the codestream's first component is plausibly
-        // grayscale single-component (the Phase 6.5 daemon RPC
-        // surface). If the daemon is unreachable or returns an
-        // error, fall back transparently to in-process decode.
-        // No user-facing "daemon used X path" output (use --verbose
-        // to see).
-        let noDaemon = options["no-daemon"] != nil
+        // v8.8 (research): default flipped — daemon is now OPT-IN via
+        // `--daemon` instead of opt-out via `--no-daemon`.
+        //
+        // Reason: V8_8_VERIFICATION_REPORT measured a -20.98 ms regression
+        // across the medical corpus on warm-cache CLI loops (small/medium
+        // fixtures pay 5-7 ms NSXPCInterface proxy overhead each). The
+        // daemon's only meaningful benefit is on TRULY cold-shot scenarios
+        // (first invocation per session, no file cache, Metal not yet
+        // initialised) — not the typical CLI loop case.
+        //
+        // - `--daemon`     opt-in: route via j2kd if reachable
+        // - (no flag)      default: in-process decode (no proxy overhead)
+        // - `--no-daemon`  preserved as explicit no-op alias for clarity +
+        //                  backward-compat with anyone who scripted around
+        //                  the v8.1.x default
+        //
+        // If the daemon is opt-in but unreachable, we transparently fall
+        // back to in-process — the in-process path always works.
+        let useDaemon = options["daemon"] != nil
+        let noDaemonExplicit = options["no-daemon"] != nil
         var usedDaemon = false
         #if os(macOS)
-        if !noDaemon && !useGPUHT && !pipeInput {
+        if useDaemon && !noDaemonExplicit && !useGPUHT && !pipeInput {
             let client = J2KDaemonClient()
             do {
                 decodedImage = try await client.decode(encodedData)
                 usedDaemon = true
                 await client.close()
             } catch {
-                // Fall back to in-process — daemon unavailable
-                // or daemon-side decode failed. No user-visible
-                // error; the in-process path always works.
                 if verbose {
                     printInfo("(daemon unavailable, decoding in-process)", pipeMode: pipeOutput)
                 }

@@ -211,6 +211,15 @@ struct J2KCLI {
             --components N,M,...        Components to decode
             --colour-space / --color-space  Convert colour space
             --gpu / --no-gpu            Enable/disable GPU acceleration
+            --daemon                    Route decode via the j2kd XPC daemon
+                                        (warm-process speed for cold-shot;
+                                        adds ~5 ms NSXPC overhead so use
+                                        only on first invocation per session
+                                        or in scripts that issue ONE decode).
+                                        Requires `j2k daemon-install`. Falls
+                                        back to in-process if unreachable.
+            --no-daemon                 (Legacy alias; default behaviour as
+                                        of v8.8 — in-process, no overhead.)
             --verbose                   Verbose output
             --quiet                     Suppress non-error output
             --timing                    Show detailed timing information

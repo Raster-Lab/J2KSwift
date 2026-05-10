@@ -5,6 +5,36 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.3] — TBD
+
+**`j2kd` daemon flipped to opt-in (CLI warm-cache loop fix)**
+
+The v8.1.0 default of "daemon if installed" was tuned for cold-shot DX measurements (72 → 55 ms with daemon). v8.8 corpus verification (`V8_8_VERIFICATION_REPORT.md`) measured a **−20.98 ms regression across the 6-fixture medical corpus** on warm-cache CLI loops (NSXPCInterface proxy overhead is 5–7 ms per call, a large fraction of small/medium fixtures' decode time). The daemon's only meaningful benefit is the FIRST cold-shot per session.
+
+v8.1.3 makes `j2kd` opt-in via `--daemon`, with `--no-daemon` preserved as a no-op alias for backward-compat. Codestream bytes byte-identical to v8.1.2.
+
+### Changed
+
+- **`j2k decode` default**: in-process (no NSXPCConnection round-trip). Post-flip default = pre-flip `--no-daemon` behavior, byte-identical output.
+- **`j2k decode --daemon`** (new flag): opt-in, routes via the j2kd XPC daemon when reachable. Falls back to in-process if not.
+- **`j2k decode --no-daemon`** (legacy): preserved as no-op alias. Scripts using this flag continue to work bit-identically.
+- `Sources/J2KCore/J2KCore.swift` — `getVersion()` returns `"8.1.3"`.
+- `Sources/J2KCLI/Commands.swift` — toggles daemon-routing branch from `if !noDaemon` to `if useDaemon`.
+- `Sources/J2KCLI/main.swift` — DECODE OPTIONS help updated with `--daemon` / `--no-daemon` text + tradeoff guidance.
+- `Documentation/BENCHMARK.md` — daemon-installed section updated to describe opt-in behavior + warm-cache regression context.
+
+### Backward compatibility
+
+- Codestream bytes byte-identical to v8.1.2.
+- All cross-codec parity tests preserved (12/12 cells × 3 decoders = 36/36 bit-exact, plus 3/3 strict tests).
+- Public Swift API (`J2KDaemonClient.decode(_:)`) unchanged.
+- Scripts using `--no-daemon` continue to work (it's a no-op in v8.1.3).
+- Scripts that depended on the v8.1.x daemon-by-default behaviour need to add `--daemon` explicitly.
+
+### SemVer rule
+
+PATCH — bug fix (the v8.1.x daemon-on default was a tuning regression for the warm-cache CLI use case); no public API removed; no codestream byte change.
+
 ## [8.1.2] — 2026-05-10
 
 **Lever-ceiling investigation suite — three projected-wash phase-0 reports (v8.5 + v8.6 + v8.7) close every remaining pure-perf branch on M2.**
