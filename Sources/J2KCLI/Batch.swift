@@ -153,7 +153,10 @@ extension J2KCLI {
             quiet: quiet,
             showProgress: showProgress
         ) { inputPath, outputPath in
-            let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+            // v8.9 (research): mmap'd input — same fix as v8.1.3 single-file
+            // decode. Defers page-in to where the decoder reads bytes.
+            let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath),
+                                     options: [.alwaysMapped])
             let decoder = J2KDecoder()
             let image = try await decoder.decode(inputData)
             try saveImage(image, to: outputPath)
@@ -186,7 +189,9 @@ extension J2KCLI {
             quiet: quiet,
             showProgress: showProgress
         ) { inputPath, outputPath in
-            let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+            // v8.9 (research): mmap'd input.
+            let inputData = try Data(contentsOf: URL(fileURLWithPath: inputPath),
+                                     options: [.alwaysMapped])
             let containerFormat = detectContainerFormat(inputData)
             let codestreamData = extractCodestream(from: inputData, format: containerFormat)
 

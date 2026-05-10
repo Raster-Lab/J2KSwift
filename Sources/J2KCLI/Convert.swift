@@ -45,7 +45,9 @@ extension J2KCLI {
             let j2kExts = Set(["j2k", "jp2", "jpx", "jph", "j2c", "jpc"])
 
             if j2kExts.contains(inputExt) {
-                let data = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+                // v8.9 (research): mmap'd input.
+                let data = try Data(contentsOf: URL(fileURLWithPath: inputPath),
+                                    options: [.alwaysMapped])
                 let decoder = J2KDecoder()
                 image = try await decoder.decode(data)
             } else {
