@@ -63,24 +63,17 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
         reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void
     ) {
         activityTracker?.touch()
-        // Wrap the non-Sendable @objc reply closure in a class
-        // that is @unchecked Sendable so we can transfer it to
-        // a Task. NSXPCConnection's reply contract guarantees
-        // thread-safety per-call (the closure can be invoked
-        // from any thread), so wrapping in @unchecked Sendable
-        // is safe.
+        let tEntry = DispatchTime.now()
         let replyBox = ReplyBox(reply)
         Task.detached {
+            let tTaskStart = DispatchTime.now()
             do {
-                // Pre-warm if not already done. preWarm() is
-                // idempotent — subsequent calls are no-ops.
                 await J2KDecoder.preWarm()
+                let tPreWarmDone = DispatchTime.now()
                 let decoder = J2KDecoder()
                 let image = try await decoder.decode(codestream)
+                let tDecodeDone = DispatchTime.now()
 
-                // Marshal the FIRST component's bytes (Phase
-                // 6.5 ships single-component support; multi-
-                // component is Phase 6.5b).
                 guard let comp0 = image.components.first else {
                     replyBox.reply(false, 0, 0, 0, false, 0, false, Data(),
                           "decoded image has zero components")
@@ -97,9 +90,124 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
                     comp0.data,
                     nil
                 )
+                let tReplyEnqueued = DispatchTime.now()
+
+                // v8.8 (research): emit stage breakdown to stderr if
+                // J2KD_DECODE_TRACE=1 is set in the daemon's env.
+                if ProcessInfo.processInfo.environment["J2KD_DECODE_TRACE"] == "1" {
+                    let entryToTask = Double(tTaskStart.uptimeNanoseconds &- tEntry.uptimeNanoseconds) / 1_000_000.0
+                    let preWarm = Double(tPreWarmDone.uptimeNanoseconds &- tTaskStart.uptimeNanoseconds) / 1_000_000.0
+                    let decode = Double(tDecodeDone.uptimeNanoseconds &- tPreWarmDone.uptimeNanoseconds) / 1_000_000.0
+                    let reply = Double(tReplyEnqueued.uptimeNanoseconds &- tDecodeDone.uptimeNanoseconds) / 1_000_000.0
+                    FileHandle.standardError.write(
+                        "[j2kd-trace] entry→task=\(String(format: "%.2f", entryToTask)) ms preWarm=\(String(format: "%.2f", preWarm)) ms decode=\(String(format: "%.2f", decode)) ms reply=\(String(format: "%.2f", reply)) ms total_in_daemon=\(String(format: "%.2f", entryToTask + preWarm + decode + reply)) ms bytes_in=\(codestream.count) bytes_out=\(comp0.data.count)\n".data(using: .utf8)!)
+                }
             } catch {
                 replyBox.reply(false, 0, 0, 0, false, 0, false, Data(),
                       "decode failed: \(error)")
+            }
+        }
+    }
+
+    /// **v8.8 (research)** — file-path-based decode. Reads the
+    /// codestream from `codestreamPath` (mmap'd to avoid a buffer
+    /// copy), decodes via the warm `J2KDecoder`, and writes the
+    /// FIRST component's raw bytes to `outputPath`. Reply carries
+    /// only metadata — pixelData stays on disk.
+    ///
+    /// Saves ~6 ms on DX vs the `Data`-based `decode` path; see
+    /// `V8_8_DaemonOverheadDecomposition`.
+    public func decodeFile(
+        codestreamPath: String,
+        outputPath: String,
+        reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void
+    ) {
+        activityTracker?.touch()
+        let replyBox = FileReplyBox(reply)
+        Task.detached {
+            do {
+                // Read input via mmap (.alwaysMapped) — zero-copy load.
+                let url = URL(fileURLWithPath: codestreamPath)
+                let codestream = try Data(contentsOf: url, options: [.alwaysMapped])
+
+                await J2KDecoder.preWarm()
+                let decoder = J2KDecoder()
+                let image = try await decoder.decode(codestream)
+
+                guard let comp0 = image.components.first else {
+                    replyBox.reply(false, 0, 0, 0, false, 0, false,
+                                   "decoded image has zero components")
+                    return
+                }
+
+                // Write decoded pixel data directly to the destination
+                // path. Skip the temp-file dance — caller owns atomicity.
+                try comp0.data.write(to: URL(fileURLWithPath: outputPath))
+
+                replyBox.reply(
+                    true,
+                    Int32(image.width),
+                    Int32(image.height),
+                    Int32(comp0.bitDepth),
+                    comp0.signed,
+                    Int32(image.components.count),
+                    comp0.sampleByteOrder == .bigEndian,
+                    nil
+                )
+            } catch {
+                replyBox.reply(false, 0, 0, 0, false, 0, false,
+                               "decodeFile failed: \(error)")
+            }
+        }
+    }
+
+    /// **v8.8 (research)** — encode pixel data into an HT-conformant
+    /// JPEG 2000 codestream. Uses lossless 5/3 + HT cleanup-only by
+    /// default (matches the medical-corpus product target).
+    public func encode(
+        pixelData: Data,
+        width: Int32,
+        height: Int32,
+        bitDepth: Int32,
+        signed: Bool,
+        reply: @escaping (Bool, Data, String?) -> Void
+    ) {
+        activityTracker?.touch()
+        let replyBox = EncodeReplyBox(reply)
+        Task.detached {
+            do {
+                // Build a J2KImage from the inline pixel bytes.
+                let component = J2KComponent(
+                    index: 0,
+                    bitDepth: Int(bitDepth),
+                    signed: signed,
+                    width: Int(width),
+                    height: Int(height),
+                    data: pixelData,
+                    sampleByteOrder: .bigEndian)
+                let image = J2KImage(
+                    width: Int(width),
+                    height: Int(height),
+                    components: [component])
+
+                // Default config: HT-conformant lossless 5/3 (the
+                // medical-corpus product target).
+                var cfg = J2KEncodingConfiguration(
+                    quality: 1.0,
+                    lossless: true,
+                    decompositionLevels: 5,
+                    qualityLayers: 1,
+                    progressionOrder: .lrcp,
+                    useHTJ2K: true,
+                    useReversibleFilter: true,
+                    htj2kBlockFormat: .conformant)
+                cfg.bitrateMode = .lossless
+                let encoder = J2KEncoder(encodingConfiguration: cfg)
+                let codestream = try await encoder.encode(image)
+
+                replyBox.reply(true, codestream, nil)
+            } catch {
+                replyBox.reply(false, Data(), "encode failed: \(error)")
             }
         }
     }
@@ -110,6 +218,22 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
 private final class ReplyBox: @unchecked Sendable {
     let reply: (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void
     init(_ reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, Data, String?) -> Void) {
+        self.reply = reply
+    }
+}
+
+/// Companion wrapper for the v8.8 `decodeFile` reply (no inline pixelData).
+private final class FileReplyBox: @unchecked Sendable {
+    let reply: (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void
+    init(_ reply: @escaping (Bool, Int32, Int32, Int32, Bool, Int32, Bool, String?) -> Void) {
+        self.reply = reply
+    }
+}
+
+/// Companion wrapper for the v8.8 `encode` reply.
+private final class EncodeReplyBox: @unchecked Sendable {
+    let reply: (Bool, Data, String?) -> Void
+    init(_ reply: @escaping (Bool, Data, String?) -> Void) {
         self.reply = reply
     }
 }

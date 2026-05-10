@@ -245,8 +245,73 @@ extension J2KCLI {
         if verbose { print("Encoding…") }
         let encoder = J2KEncoder(encodingConfiguration: config)
         let startEncode = Date()
-        var encodedData = try await encoder.encode(image)
+
+        // v8.8 (research): encoder daemon routing — symmetric to decode.
+        // The default config (HT-conformant lossless 5/3) is the only
+        // shape the daemon currently accepts. For other configs (e.g.
+        // legacy JPEG 2000 Part 1, JP2 wrapping, custom decomposition
+        // levels), fall back to in-process to preserve behavior.
+        let encodeDaemonValue = options["daemon"]
+        let encodeNoDaemonExplicit = options["no-daemon"] != nil
+        // Threshold for --daemon=auto: ENCODE is dominated by per-process
+        // codec library load (HT block coders, MCT tables, DWT scratch
+        // pools, ~30 ms on cold-cache). The daemon amortises that across
+        // calls, so the encoder daemon wins for ALL fixture sizes — even
+        // a 512×512 fixture goes 41 ms in-proc → 13 ms daemon. The
+        // decode threshold (3 MP) does NOT apply to encode. Drop to 0
+        // so `--daemon=auto` for encode is effectively the same as
+        // `--daemon` (always-on, with fallback to in-process if daemon
+        // unreachable).
+        let useEncodeDaemon: Bool
+        if let v = encodeDaemonValue, !encodeNoDaemonExplicit {
+            if v.lowercased() == "auto" {
+                // Auto: always use daemon for encode (library-load
+                // amortisation always wins). Fallback to in-process
+                // happens transparently if daemon is unreachable.
+                useEncodeDaemon = true
+            } else {
+                useEncodeDaemon = true
+            }
+        } else {
+            useEncodeDaemon = false
+        }
+
+        let isDefaultLosslessHT = config.lossless && config.useHTJ2K
+            && config.useReversibleFilter
+            && (config.htj2kBlockFormat == .conformant)
+            && config.decompositionLevels == 5
+            && image.componentCount == 1
+
+        var encodedData: Data
+        var usedEncodeDaemon = false
+        #if os(macOS)
+        if useEncodeDaemon && isDefaultLosslessHT && !pipeInput,
+           let comp0 = image.components.first {
+            let client = J2KDaemonClient()
+            do {
+                encodedData = try await client.encode(
+                    pixelData: comp0.data,
+                    width: image.width, height: image.height,
+                    bitDepth: comp0.bitDepth, signed: comp0.signed)
+                usedEncodeDaemon = true
+                await client.close()
+            } catch {
+                if verbose {
+                    printInfo("(encode daemon unavailable, encoding in-process)", pipeMode: pipeOutput)
+                }
+                await client.close()
+                encodedData = try await encoder.encode(image)
+            }
+        } else {
+            encodedData = try await encoder.encode(image)
+        }
+        #else
+        encodedData = try await encoder.encode(image)
+        #endif
         let encodeTime = Date().timeIntervalSince(startEncode)
+        if verbose && usedEncodeDaemon {
+            printInfo("(encoded via daemon at warm-process speed)", pipeMode: pipeOutput)
+        }
 
         // Wrap in JP2 container if requested
         let format = options["format"] ?? "j2k"
@@ -423,12 +488,18 @@ extension J2KCLI {
         }
 
         // Load encoded data
+        // v8.8 (research): use `.alwaysMapped` for file input — kernel mmap
+        // gives near-zero load time and defers actual page-in to where the
+        // decoder reads bytes. On cold-shot DX (12 MB codestream) this saves
+        // ~1-3 ms vs `Data(contentsOf:)` which copies the file into anonymous
+        // memory eagerly.
         let startLoad = Date()
         let encodedData: Data
         if pipeInput {
             encodedData = FileHandle.standardInput.readDataToEndOfFile()
         } else {
-            encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath))
+            encodedData = try Data(contentsOf: URL(fileURLWithPath: inputPath),
+                                   options: [.alwaysMapped])
         }
         let loadTime = Date().timeIntervalSince(startLoad)
 
@@ -437,27 +508,54 @@ extension J2KCLI {
         let startDecode = Date()
         let decodedImage: J2KImage
 
-        // v8 Phase 6.5 — daemon-first decode with fallback.
-        // Try the daemon if --no-daemon was NOT explicitly
-        // passed AND the codestream's first component is plausibly
-        // grayscale single-component (the Phase 6.5 daemon RPC
-        // surface). If the daemon is unreachable or returns an
-        // error, fall back transparently to in-process decode.
-        // No user-facing "daemon used X path" output (use --verbose
-        // to see).
-        let noDaemon = options["no-daemon"] != nil
+        // v8.8 (research): default flipped — daemon is now OPT-IN via
+        // `--daemon` instead of opt-out via `--no-daemon`.
+        //
+        // Reason: V8_8_VERIFICATION_REPORT measured a -20.98 ms regression
+        // across the medical corpus on warm-cache CLI loops (small/medium
+        // fixtures pay 5-7 ms NSXPCInterface proxy overhead each). The
+        // daemon's only meaningful benefit is on TRULY cold-shot scenarios
+        // (first invocation per session, no file cache, Metal not yet
+        // initialised) — not the typical CLI loop case.
+        //
+        // - `--daemon`         opt-in: route via j2kd if reachable
+        // - `--daemon auto`    research: route via j2kd ONLY when
+        //                      codestream ≥ 3 MB (≈ 3 MP image), so the
+        //                      daemon's decode time amortises NSXPC
+        //                      proxy overhead (per V8_8_DAEMON_FIXTURE_SCALING.md)
+        // - (no flag)          default: in-process decode (no proxy overhead)
+        // - `--no-daemon`      preserved as explicit no-op alias for clarity +
+        //                      backward-compat with anyone who scripted
+        //                      around the v8.1.x default
+        //
+        // If the daemon is opt-in but unreachable, we transparently fall
+        // back to in-process — the in-process path always works.
+        let daemonValue = options["daemon"]
+        let noDaemonExplicit = options["no-daemon"] != nil
+        let useDaemon: Bool
+        if let v = daemonValue {
+            if v.lowercased() == "auto" {
+                // Research-mode threshold: 3 MB codestream ≈ 3 MP at
+                // typical lossless 5/3 ratios. Below this, daemon decode
+                // is shorter than NSXPC machinery and the overhead is
+                // exposed; above, decode time hides the proxy overhead.
+                useDaemon = encodedData.count >= 3 * 1024 * 1024
+            } else {
+                // --daemon (true), --daemon yes, --daemon true, etc. → opt-in.
+                useDaemon = true
+            }
+        } else {
+            useDaemon = false
+        }
         var usedDaemon = false
         #if os(macOS)
-        if !noDaemon && !useGPUHT && !pipeInput {
+        if useDaemon && !noDaemonExplicit && !useGPUHT && !pipeInput {
             let client = J2KDaemonClient()
             do {
                 decodedImage = try await client.decode(encodedData)
                 usedDaemon = true
                 await client.close()
             } catch {
-                // Fall back to in-process — daemon unavailable
-                // or daemon-side decode failed. No user-visible
-                // error; the in-process path always works.
                 if verbose {
                     printInfo("(daemon unavailable, decoding in-process)", pipeMode: pipeOutput)
                 }

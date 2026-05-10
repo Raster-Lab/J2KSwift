@@ -169,6 +169,96 @@ public actor J2KDaemonClient {
             }
         }
     }
+
+    /// **v8.8 (research)** — file-based decode. Asks the daemon to
+    /// read the codestream from `codestreamPath` and write the
+    /// decoded pixel data directly to `outputPath`, bypassing
+    /// XPC bytes-transfer for both directions.
+    ///
+    /// Returns metadata about the decoded image. The caller is
+    /// responsible for reading `outputPath` (via `Data(contentsOf:)`
+    /// or mmap) when it needs the pixels.
+    public struct DecodeFileResult: Sendable {
+        public let width: Int
+        public let height: Int
+        public let bitDepth: Int
+        public let signed: Bool
+        public let componentCount: Int
+        public let bigEndian: Bool
+    }
+
+    public func decodeFile(
+        codestreamPath: String,
+        outputPath: String
+    ) async throws -> DecodeFileResult {
+        guard let conn = connection else {
+            throw J2KDaemonClientError.daemonUnavailable
+        }
+
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<DecodeFileResult, Error>) in
+            let proxy = conn.remoteObjectProxyWithErrorHandler { error in
+                cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                    "\(error)"))
+            } as? J2KDaemonProtocol
+            guard let proxy else {
+                cont.resume(throwing: J2KDaemonClientError.proxyUnavailable)
+                return
+            }
+            proxy.decodeFile(codestreamPath: codestreamPath,
+                             outputPath: outputPath) {
+                success, w, h, bd, signed, compCount, bigEndian, errMsg in
+                if !success {
+                    cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                        errMsg ?? "decodeFile failed (no message)"))
+                    return
+                }
+                cont.resume(returning: DecodeFileResult(
+                    width: Int(w), height: Int(h),
+                    bitDepth: Int(bd), signed: signed,
+                    componentCount: Int(compCount),
+                    bigEndian: bigEndian))
+            }
+        }
+    }
+
+    /// **v8.8 (research)** — daemon-side encode. Sends pixel data
+    /// to the daemon, which encodes via warm Metal session and
+    /// returns the codestream. Symmetric to `decode(_:)`.
+    public func encode(
+        pixelData: Data,
+        width: Int,
+        height: Int,
+        bitDepth: Int,
+        signed: Bool
+    ) async throws -> Data {
+        guard let conn = connection else {
+            throw J2KDaemonClientError.daemonUnavailable
+        }
+
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
+            let proxy = conn.remoteObjectProxyWithErrorHandler { error in
+                cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                    "\(error)"))
+            } as? J2KDaemonProtocol
+            guard let proxy else {
+                cont.resume(throwing: J2KDaemonClientError.proxyUnavailable)
+                return
+            }
+            proxy.encode(pixelData: pixelData,
+                         width: Int32(width),
+                         height: Int32(height),
+                         bitDepth: Int32(bitDepth),
+                         signed: signed) {
+                success, codestream, errMsg in
+                if !success {
+                    cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                        errMsg ?? "encode failed (no message)"))
+                    return
+                }
+                cont.resume(returning: codestream)
+            }
+        }
+    }
 }
 
 #endif // os(macOS)

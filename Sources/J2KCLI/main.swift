@@ -201,6 +201,16 @@ struct J2KCLI {
             --timing                    Show detailed timing information
             --json                      Output results as JSON
 
+        ENCODE OPTIONS (daemon-related — v8.8 research):
+            --daemon                    Route encode via the j2kd XPC daemon
+                                        (warm-process speed; only works for
+                                        the default HT-conformant lossless
+                                        single-component shape).
+            --daemon auto               Route via daemon ONLY for ≥3 MP
+                                        images, where encode time amortises
+                                        the NSXPC proxy overhead.
+            --no-daemon                 Force in-process encode (default).
+
         DECODE OPTIONS:
             -i, --input PATH            Input J2K/JP2/JPX file
             -o, --output PATH           Output image file (optional)
@@ -211,6 +221,21 @@ struct J2KCLI {
             --components N,M,...        Components to decode
             --colour-space / --color-space  Convert colour space
             --gpu / --no-gpu            Enable/disable GPU acceleration
+            --daemon                    Route decode via the j2kd XPC daemon
+                                        (warm-process speed for cold-shot;
+                                        adds ~5 ms NSXPC overhead so use
+                                        only on first invocation per session
+                                        or in scripts that issue ONE decode).
+                                        Requires `j2k daemon-install`. Falls
+                                        back to in-process if unreachable.
+            --daemon auto               (Research) Route via daemon ONLY for
+                                        codestreams ≥ 3 MB (~3 MP), where
+                                        decode time amortises the NSXPC
+                                        proxy overhead. Smaller codestreams
+                                        decode in-process. See
+                                        V8_8_DAEMON_FIXTURE_SCALING.md.
+            --no-daemon                 (Legacy alias; default behaviour as
+                                        of v8.8 — in-process, no overhead.)
             --verbose                   Verbose output
             --quiet                     Suppress non-error output
             --timing                    Show detailed timing information

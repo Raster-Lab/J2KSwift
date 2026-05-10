@@ -109,6 +109,69 @@ public let J2KDaemonMachServiceName = "com.raster.j2kd"
                           _ bigEndian: Bool,
                           _ pixelData: Data,
                           _ errorMessage: String?) -> Void)
+
+    /// **v8.8 (research) — kept in-tree as RESEARCH artefact, NOT
+    /// for production use.**
+    ///
+    /// File-path-based decode. The intent was: bypass XPC bytes-
+    /// transfer overhead by having the daemon read the codestream
+    /// via `mmap` and write the decoded pixel data directly to a
+    /// destination file path. The hypothesis was that the ~5–6 ms
+    /// XPC bytes-transfer overhead measured by
+    /// `V8_8_DaemonOverheadDecomposition` could be eliminated.
+    ///
+    /// **Empirical result**: NO. On Apple M2 + NVMe SSD, writing
+    /// the 25 MB DX result to disk costs ~5–10 ms — same order as
+    /// the XPC OOL transfer it was trying to replace. `V8_8_DecodeFileBench`
+    /// shows decodeFile is **1 ms SLOWER** than the standard
+    /// `decode(Data)` path on warm DX. Disk I/O is not faster than
+    /// XPC's mach_msg shared-memory marshalling on M2.
+    ///
+    /// Method retained on the protocol so tests + future-investigators
+    /// can re-A/B without re-implementing. **Do not wire this into
+    /// production CLI**; the existing `decode(Data)` is the right
+    /// primitive on M2 + NSXPCConnection.
+    func decodeFile(
+        codestreamPath: String,
+        outputPath: String,
+        reply: @escaping (_ success: Bool,
+                          _ width: Int32,
+                          _ height: Int32,
+                          _ bitDepth: Int32,
+                          _ signed: Bool,
+                          _ componentCount: Int32,
+                          _ bigEndian: Bool,
+                          _ errorMessage: String?) -> Void)
+
+    /// **v8.8 (research)** — encode pixel data into an HT-conformant
+    /// JPEG 2000 codestream via the daemon. Symmetric to `decode`:
+    /// the daemon holds a long-lived warm `J2KMetalSession.processShared`,
+    /// so single-shot CLI encoders avoid per-process Metal cold-start.
+    ///
+    /// Cold-shot encode benefits modestly less than decode (encoder
+    /// is more CPU-bound), but is documented research direction per
+    /// `V8_8_RESEARCH_OVERNIGHT.md`. The same `--daemon auto` smart-
+    /// routing threshold applies (default in-process for small inputs).
+    ///
+    /// - Parameters:
+    ///   - pixelData: raw pixel bytes for a single grayscale component
+    ///     (medical-corpus shape; multi-component encode is a future
+    ///     extension). For ≥9-bit data the bytes are big-endian.
+    ///   - width: image width.
+    ///   - height: image height.
+    ///   - bitDepth: bits per sample (e.g. 8, 12, 16).
+    ///   - signed: whether the input pixel data is signed.
+    ///   - reply: closure invoked with the encoded codestream bytes
+    ///     (HT-conformant lossless 5/3 by default) plus success/error.
+    func encode(
+        pixelData: Data,
+        width: Int32,
+        height: Int32,
+        bitDepth: Int32,
+        signed: Bool,
+        reply: @escaping (_ success: Bool,
+                          _ codestream: Data,
+                          _ errorMessage: String?) -> Void)
 }
 
 #endif // os(macOS)
