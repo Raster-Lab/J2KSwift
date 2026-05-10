@@ -51,6 +51,7 @@ public struct HTMagSgnEncoderConformant {
 
     /// Emit the low-order `count` bits of `codeword`, LSB-first.
     public mutating func encode(codeword: UInt32, count: Int) {
+        J2KHTEntropyEncoderProfile.bumpMagsgnEncode(count)
         var cwd = codeword
         var len = count
         while len > 0 {

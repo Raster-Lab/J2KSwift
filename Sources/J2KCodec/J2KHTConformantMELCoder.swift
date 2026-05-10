@@ -50,6 +50,7 @@ public struct HTMELEncoderConformant {
     /// Encode a single MEL event. `eventIsOne == true` means a `1`
     /// event (the rare case that terminates a zero run).
     public mutating func encode(eventIsOne: Bool) {
+        J2KHTEntropyEncoderProfile.bumpMelEncode()
         if !eventIsOne {
             run += 1
             if run >= threshold {

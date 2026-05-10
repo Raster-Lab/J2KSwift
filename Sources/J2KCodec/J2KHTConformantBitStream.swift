@@ -142,6 +142,7 @@ public struct HTReverseBitEmitterConformant {
 
     /// Append a codeword of `count` bits, LSB-first.
     public mutating func encode(codeword: Int, count: Int) {
+        J2KHTEntropyEncoderProfile.bumpVlcEncode()
         var cwd = codeword
         var len = count
         while len > 0 {

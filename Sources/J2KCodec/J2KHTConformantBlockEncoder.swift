@@ -178,6 +178,11 @@ public enum HTBlockEncoderConformant {
                          "preClassifiedTuples count mismatch")
         }
 
+        // v9.1 Path B Phase 0 — coarse-wall instrumentation. One timer
+        // pair per block; negligible overhead at the per-block level
+        // (vs the per-quad budget that would dwarf the encode itself).
+        let _v91BlockStartNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+
         magsgnEnc.reset()
         melEnc.reset()
         vlcEnc.reset()
@@ -355,6 +360,7 @@ public enum HTBlockEncoderConformant {
                 eQ0: Int, eQ1: Int, eQ2: Int, eQ3: Int,
                 s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32)
         {
+            J2KHTEntropyEncoderProfile.bumpProcessQuad()
             // v6-alpha6 phase 1.1: GPU-pre-classified tuple stream.
             // Loop-invariant — optimiser hoists this branch.
             if preClassifiedTuples != nil {
@@ -416,6 +422,7 @@ public enum HTBlockEncoderConformant {
 
         // --- Initial row of quads (y = 0, 1) ---
 
+        let _v91ClassifyStartNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         var c_q0 = 0
         var y = 0
 
@@ -503,21 +510,32 @@ public enum HTBlockEncoderConformant {
                 if u_q0 > 2 && u_q1 > 2 {
                     let e0 = uvlcTableConformant[u_q0 - 2]
                     let e1 = uvlcTableConformant[u_q1 - 2]
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e1.suf), count: Int(e1.sufLen))
                 } else if u_q0 > 2 && u_q1 > 0 {
                     let e0 = uvlcTableConformant[u_q0]
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: u_q1 - 1, count: 1)
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
                 } else {
                     let e0 = uvlcTableConformant[u_q0]
                     let e1 = uvlcTableConformant[u_q1]
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
+                    J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                     vlcEnc.encode(codeword: Int(e1.suf), count: Int(e1.sufLen))
                 }
 
@@ -609,9 +627,13 @@ public enum HTBlockEncoderConformant {
                 // Subsequent rows use unconditional UVLC per quad.
                 let e0 = uvlcTableConformant[u_q0]
                 let e1 = uvlcTableConformant[u_q1]
+                J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                 vlcEnc.encode(codeword: Int(e0.pre), count: Int(e0.preLen))
+                J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                 vlcEnc.encode(codeword: Int(e1.pre), count: Int(e1.preLen))
+                J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                 vlcEnc.encode(codeword: Int(e0.suf), count: Int(e0.sufLen))
+                J2KHTEntropyEncoderProfile.bumpVlcUVLCEncode()
                 vlcEnc.encode(codeword: Int(e1.suf), count: Int(e1.sufLen))
 
                 c_q0 |= ((rho1 & 4) >> 1) | ((rho1 & 8) >> 2)
@@ -620,9 +642,20 @@ public enum HTBlockEncoderConformant {
             y += 2
         }
 
+        let _v91FinishStartNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let magsgnBytes = magsgnEnc.finish()
         let melBytes = melEnc.finish()
         let vlcBytes = vlcEnc.finish()
+        let _v91BlockEndNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+
+        // Record the three sub-stage wall-time slices.
+        J2KHTEntropyEncoderProfile.recordBlockClassifyNs(
+            _v91FinishStartNs &- _v91ClassifyStartNs)
+        J2KHTEntropyEncoderProfile.recordBlockFinishNs(
+            _v91BlockEndNs &- _v91FinishStartNs)
+        J2KHTEntropyEncoderProfile.recordBlockTotalNs(
+            _v91BlockEndNs &- _v91BlockStartNs)
+
         return (magsgnBytes, melBytes, vlcBytes)
     }
 }
