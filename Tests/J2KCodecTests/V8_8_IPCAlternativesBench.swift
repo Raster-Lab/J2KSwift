@@ -203,6 +203,72 @@ final class V8_8_IPCAlternativesBench: XCTestCase {
         errlog("")
     }
 
+    /// Probe 3d — mach_vm_remap: in-process page table remap.
+    /// Tests whether remapping pages (vs copying) reduces transfer cost.
+    /// In a cross-process scenario this would use mach_vm_remap with
+    /// the daemon's task port; intra-process (this bench) uses the
+    /// current task as both source and target.
+    func testProbe3d_mach_vm_remap() {
+        let runs = 7
+        var samples: [Double] = []
+
+        for _ in 0..<runs {
+            // Allocate a source region.
+            var src: vm_address_t = 0
+            let kr0 = vm_allocate(mach_task_self_, &src, vm_size_t(Self.bytes), VM_FLAGS_ANYWHERE)
+            XCTAssertEqual(kr0, KERN_SUCCESS, "vm_allocate failed")
+            // Touch every page in source to force fault-in.
+            let pSrc = UnsafeMutableRawPointer(bitPattern: UInt(src))!
+                .bindMemory(to: UInt32.self, capacity: Self.bytes / 4)
+            for i in stride(from: 0, to: Self.bytes / 4, by: 1024) {
+                pSrc[i] = UInt32(i)
+            }
+
+            // Time the remap (page-table operation, no byte copy).
+            let t0 = DispatchTime.now()
+            var dst: vm_address_t = 0
+            var curProt: vm_prot_t = 0
+            var maxProt: vm_prot_t = 0
+            let kr = vm_remap(
+                mach_task_self_,        // target task
+                &dst,                    // target address (out)
+                vm_size_t(Self.bytes),  // size
+                0,                       // mask (alignment)
+                VM_FLAGS_ANYWHERE,
+                mach_task_self_,        // source task
+                src,                     // source address
+                0,                       // copy = false (true would force COW copy)
+                &curProt,
+                &maxProt,
+                VM_INHERIT_NONE
+            )
+            let dt = DispatchTime.now().uptimeNanoseconds &- t0.uptimeNanoseconds
+            samples.append(Double(dt) / 1_000_000.0)
+            XCTAssertEqual(kr, KERN_SUCCESS, "vm_remap failed kr=\(kr)")
+
+            // Verify remapped region has the same data (touch it).
+            let pDst = UnsafeMutableRawPointer(bitPattern: UInt(dst))!
+                .bindMemory(to: UInt32.self, capacity: Self.bytes / 4)
+            var checksum: UInt32 = 0
+            for i in stride(from: 0, to: Self.bytes / 4, by: 1024) {
+                checksum = checksum &+ pDst[i]
+            }
+            XCTAssertNotEqual(checksum, 0)
+
+            // Cleanup.
+            vm_deallocate(mach_task_self_, dst, vm_size_t(Self.bytes))
+            vm_deallocate(mach_task_self_, src, vm_size_t(Self.bytes))
+        }
+        samples.sort()
+        let med = samples[runs / 2]
+
+        errlog("=== v8.8 — IPC Alternatives Probe 3d: mach_vm_remap (intra-process) ===")
+        errlog(String(format: "  vm_remap 25 MB pages:  median %.3f ms (n=%d)", med, runs))
+        errlog("  Cross-process vm_remap requires task ports + xpc_endpoint plumbing,")
+        errlog("  but per-page remap cost should be similar (page-table operation, not byte copy).")
+        errlog("")
+    }
+
     /// Synthesis: print a summary table comparing the three primitives
     /// against the measured NSXPCConnection ~2.5 ms baseline for the
     /// 25 MB result-transfer leg.
