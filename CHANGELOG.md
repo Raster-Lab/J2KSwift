@@ -5,6 +5,51 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.3] — 2026-05-10
+
+**`j2kd` daemon: opt-in default + smart-routing + encoder support; mmap'd CLI input**
+
+Four customer-facing CLI improvements derived from the v8.8 research arc (PR #410). The v8.1.0 default of "daemon if installed" was tuned for cold-shot DX measurements (72 → 55 ms with daemon). v8.8 corpus verification measured a **−20.98 ms regression across the 6-fixture medical corpus** on warm-cache CLI loops because NSXPCInterface proxy overhead is 5–7 ms per call — a large fraction of small/medium fixtures' decode time. The daemon's only meaningful benefit is the FIRST cold-shot per session.
+
+v8.1.3 makes `j2kd` opt-in for decode via `--daemon`, adds `--daemon auto` smart-routing (3 MB codestream threshold), introduces encoder daemon support (`j2k encode --daemon` saves **−40.2% on encode wall corpus-wide**), and uses mmap for CLI codestream input. Codestream bytes byte-identical to v8.1.2.
+
+### Added
+
+- **Encoder daemon support** (`j2k encode --daemon` / `--daemon auto`): new `J2KDaemonProtocol.encode(...)` method + daemon-side implementation + CLI routing. Symmetric to decoder daemon, but with effectively-zero pixel threshold (encoder is library-load-dominated, daemon wins on every fixture). Corpus encode wall: 571.65 ms in-proc → 341.71 ms via daemon = **−40.2% (−229.93 ms across 6 fixtures)**. Bit-identical output verified by MD5-match.
+- **`j2k decode --daemon auto`** smart-routing: 3 MB codestream-size threshold derived from daemon-overhead-vs-decode-time inflection point. Routes via daemon ONLY when decode time amortises NSXPC proxy overhead. Cross-corpus verified: routes correctly on all 6 medical fixtures, beats both `--daemon` (always-on) and `--no-daemon` aggregate wall.
+- **mmap'd codestream input** (`Data(contentsOf:options: [.alwaysMapped])`): defers page-in to where the decoder reads, saving ~3 ms on cold-shot DX decode (12 MB codestream). Saves ~5 ms corpus-wide.
+- `J2KDaemonClient.encode(pixelData:width:height:bitDepth:signed:)` async wrapper.
+- `J2KD_DECODE_TRACE=1` and `J2K_PREWARM_TRACE=1` env-gated stage instrumentation in the daemon for future investigators.
+
+### Changed
+
+- **`j2k decode` default**: in-process (no NSXPCConnection round-trip). Post-flip default = pre-flip `--no-daemon` behavior, byte-identical output.
+- **`j2k decode --daemon`** (new flag): opt-in, routes via the j2kd XPC daemon when reachable. Falls back to in-process if not.
+- **`j2k decode --no-daemon`** (legacy): preserved as no-op alias. Scripts using this flag continue to work bit-identically.
+- `Sources/J2KCore/J2KCore.swift` — `getVersion()` returns `"8.1.3"`.
+- `Sources/J2KCLI/Commands.swift` — toggles daemon-routing branch from `if !noDaemon` to `if useDaemon`; adds `--daemon auto` smart-routing for both decode and encode; adds mmap input.
+- `Sources/J2KCLI/main.swift` — DECODE OPTIONS + ENCODE OPTIONS help updated with `--daemon` / `--daemon auto` / `--no-daemon` text + tradeoff guidance.
+- `Sources/J2KDaemonProtocol/J2KDaemonProtocol.swift` — adds `encode(...)` method.
+- `Sources/J2KDaemonCore/J2KDaemonService.swift` — adds `encode(...)` implementation.
+- `Sources/J2KDaemonClient/J2KDaemonClient.swift` — adds `encode(...)` async wrapper.
+- `Documentation/BENCHMARK.md` — daemon-installed section updated to describe opt-in behavior + smart-routing + warm-cache regression context.
+
+### Backward compatibility
+
+- Codestream bytes byte-identical to v8.1.2.
+- All cross-codec parity tests preserved (12/12 cells × 3 decoders = 36/36 bit-exact, plus 3/3 strict tests).
+- Public Swift API (`J2KDaemonClient.decode(_:)`) unchanged.
+- Scripts using `--no-daemon` continue to work (it's a no-op in v8.1.3).
+- Scripts that depended on the v8.1.x daemon-by-default behaviour need to add `--daemon` explicitly.
+
+### SemVer rule
+
+PATCH — bug fix (the v8.1.x daemon-on default was a tuning regression for the warm-cache CLI use case); no public API removed; no codestream byte change.
+
+### Research provenance
+
+Productisation of the v8.8 research arc, kept open as **PR #410** (`v8.8-gcd-vs-taskgroup-phase0` branch, NOT for merge). Research artefacts include 12 lever-ceiling investigations (mmap probes, GCD vs TaskGroup, Accelerate framework sweep, AMX feasibility, IOSurface / mach_vm_remap / xpc_shmem alternatives, MTLBinaryArchive probe, daemon overhead decomposition, fixture-size scaling, cross-codec verification) plus the four production wins shipped here.
+
 ## [8.1.2] — 2026-05-10
 
 **Lever-ceiling investigation suite — three projected-wash phase-0 reports (v8.5 + v8.6 + v8.7) close every remaining pure-perf branch on M2.**
