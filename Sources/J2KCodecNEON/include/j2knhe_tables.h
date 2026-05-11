@@ -31,11 +31,11 @@ extern const uint16_t j2knhe_vlc_table0[2048];
 extern const uint16_t j2knhe_vlc_table1[2048];
 
 /// UVLC table — used for U-value (Uq - kappa) emit. The table has
-/// 33 entries indexed by `u_value` in [0, 32]; each entry packs
+/// 75 entries indexed by `u_value` in [0, 74]; each entry packs
 /// (prefix, prefix_len, suffix, suffix_len) into a uint32_t.
 /// See Swift uvlcTableConformant for the layout: bits 0..7 = pre,
 /// 8..15 = preLen, 16..23 = suf, 24..31 = sufLen.
-extern const uint32_t j2knhe_uvlc_table[33];
+extern const uint32_t j2knhe_uvlc_table[75];
 
 #ifdef __cplusplus
 }
