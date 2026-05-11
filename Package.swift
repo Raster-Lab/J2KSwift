@@ -83,11 +83,27 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
             ]),
+        // v9.4-research — custom C+NEON tier-1 HT block encoder. Plain C
+        // target with caller-owned-buffer entry point. No global statics,
+        // no allocator hits. Default-off behind J2K_NEON_HOT_PATH env var
+        // until the in-proc warm A/B clears the v9.3 baseline (see
+        // V9_4_NEON_HOT_PATH_RESEARCH.md decision matrix).
+        .target(
+            name: "J2KCodecNEON",
+            path: "Sources/J2KCodecNEON",
+            publicHeadersPath: "include",
+            cSettings: [
+                .unsafeFlags(
+                    ["-O3", "-fno-exceptions", "-fno-stack-protector",
+                     "-fno-math-errno", "-fstrict-aliasing"],
+                    .when(configuration: .release)),
+            ]),
         .target(
             name: "J2KCodec",
             dependencies: [
                 "J2KCore",
                 "J2KMetal",
+                "J2KCodecNEON",
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
             ],
             swiftSettings: [
