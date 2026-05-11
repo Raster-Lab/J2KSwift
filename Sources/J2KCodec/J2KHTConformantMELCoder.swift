@@ -49,7 +49,12 @@ public struct HTMELEncoderConformant {
 
     /// Encode a single MEL event. `eventIsOne == true` means a `1`
     /// event (the rare case that terminates a zero run).
+    /// v9.2 Path B Phase 1 — `@inline(__always)` to match the raw-pointer
+    /// mirror (HTMELEncoderRawConformant.encode); called per-quad-pair
+    /// when c_q == 0, totalling ~33K calls per DX encode.
+    @inline(__always)
     public mutating func encode(eventIsOne: Bool) {
+        J2KHTEntropyEncoderProfile.bumpMelEncode()
         if !eventIsOne {
             run += 1
             if run >= threshold {

@@ -1,0 +1,124 @@
+{
+  "system": {
+    "date": "2026-05-11T09:37:31.922211Z",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "hw_model": "Mac16,10",
+    "cpu_brand": "Apple M4",
+    "mem_gb": 16,
+    "cores_perf": 4,
+    "cores_eff": 6,
+    "j2kswift_version": "J2KSwift version 8.1.4",
+    "vm_compressor_bytes": 3298552512,
+    "page_size": 16384,
+    "pages_free": 101127,
+    "loadavg_1min": 4.212890625
+  },
+  "codestream_md5s": {
+    "mr_study_002_instance_000100": "f4add755ec268203a46f2e4b990e15ed",
+    "ct_study_001_instance_000001": "6c968561c0d38462cbbd8604389a6994",
+    "mr_study_001_instance_000001": "e29a2366ca1f16de4a0906f1a77de3ce",
+    "xa_study_001_instance_000001": "c7f1252aca8e17f5ef4ad4504f1c7463",
+    "px_study_001_instance_000001": "05c68da54364601cc75e87bcc5c8a71e",
+    "dx_study_002_instance_000001": "447a3a8ddeac34fa768b070ccfe8720f"
+  },
+  "encode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 39.11262549999994,
+      "j2kswift_daemon_auto": 39.91262499999992,
+      "openjph": 9.822812500000166,
+      "kakadu": 4.677125000000171
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 74.26810449999999,
+      "j2kswift_daemon_auto": 39.73625000000003,
+      "openjph": 9.6203334999998,
+      "kakadu": 4.755895999999815
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 73.68674949999976,
+      "j2kswift_daemon_auto": 40.272666999999984,
+      "openjph": 9.679437499999999,
+      "kakadu": 4.56145849999956
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 73.76037499999998,
+      "j2kswift_daemon_auto": 75.48539599999992,
+      "openjph": 19.571145999999207,
+      "kakadu": 9.908958500000509
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 77.72060400000002,
+      "j2kswift_daemon_auto": 75.3682289999995,
+      "openjph": 74.4480835000001,
+      "kakadu": 15.301603999999358
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 129.82672850000034,
+      "j2kswift_daemon_auto": 130.988812,
+      "openjph": 127.66064599999893,
+      "kakadu": 20.58472900000119
+    }
+  ],
+  "decode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 9.830250500000304,
+      "j2kswift_daemon_auto": 9.949208499999251,
+      "openjph": 4.593958499999218,
+      "kakadu": 4.706312500000642
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 9.9455414999996,
+      "j2kswift_daemon_auto": 10.123375000000046,
+      "openjph": 9.758500000001114,
+      "kakadu": 4.599854499999445
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 19.944833499999426,
+      "j2kswift_daemon_auto": 19.95670800000049,
+      "openjph": 9.708207999999274,
+      "kakadu": 9.837187999999664
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 19.819520999999618,
+      "j2kswift_daemon_auto": 20.01843800000014,
+      "openjph": 19.89145800000003,
+      "kakadu": 9.91000000000053
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 42.66912500000064,
+      "j2kswift_daemon_auto": 43.00808350000018,
+      "openjph": 39.75506199999934,
+      "kakadu": 20.055958500000415
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 75.39764600000076,
+      "j2kswift_daemon_auto": 75.80406199999956,
+      "openjph": 72.74881249999865,
+      "kakadu": 38.398062499998886
+    }
+  ]
+}

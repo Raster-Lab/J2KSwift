@@ -62,6 +62,98 @@ public enum HTBlockLayoutConformant {
         return block
     }
 
+    /// v9.2 Path B Phase 3 — assemble directly into a `Data`, skipping
+    /// the `[UInt8]` intermediate that the legacy `assemble(...) -> [UInt8]`
+    /// produces. Used by the hot per-block path in J2KEncoderPipeline,
+    /// which previously did `Data(blockBytes)` and paid one extra heap
+    /// allocation + one memcpy per block (~1584 blocks for DX). Bit-exact
+    /// equivalent of `assemble(magsgn:mel:vlc:)` wrapped in `Data(_:)`.
+    public static func assembleData(
+        magsgn: [UInt8],
+        mel: [UInt8],
+        vlc: [UInt8]
+    ) throws -> Data {
+        let scup = mel.count + vlc.count
+        if scup < 2 || scup > 4079 {
+            throw HTBlockLayoutConformantError.scupOutOfRange(scup)
+        }
+        let total = magsgn.count + scup
+        var data = Data(count: total)
+        data.withUnsafeMutableBytes { rawBuf in
+            let dst = rawBuf.bindMemory(to: UInt8.self).baseAddress!
+            magsgn.withUnsafeBufferPointer { src in
+                if let s = src.baseAddress, src.count > 0 {
+                    dst.update(from: s, count: src.count)
+                }
+            }
+            var off = magsgn.count
+            mel.withUnsafeBufferPointer { src in
+                if let s = src.baseAddress, src.count > 0 {
+                    (dst + off).update(from: s, count: src.count)
+                }
+            }
+            off += mel.count
+            vlc.withUnsafeBufferPointer { src in
+                if let s = src.baseAddress, src.count > 0 {
+                    (dst + off).update(from: s, count: src.count)
+                }
+            }
+            // Overwrite last 12 bits with Scup. Same logic as `assemble(...)`.
+            dst[total - 1] = UInt8(scup >> 4)
+            dst[total - 2] = (dst[total - 2] & 0xF0) | UInt8(scup & 0x0F)
+        }
+        return data
+    }
+
+    /// v9.2 Path B Phase 3 — raw-pointer-input variant. Avoids the
+    /// per-block `Array(UnsafeBufferPointer(...))` extraction allocations
+    /// that the v9.1 Phase 2c raw-engine path was forced into. The VLC
+    /// raw-engine buffer holds bytes in `emittedReversed` order (sentinel
+    /// at index 0); pass `vlcReversed: true` to reverse during copy.
+    /// Bit-exact equivalent of `assemble(magsgn:mel:vlc:)`.
+    public static func assembleDataFromRaw(
+        magsgnPtr: UnsafePointer<UInt8>, magsgnCount: Int,
+        melPtr: UnsafePointer<UInt8>, melCount: Int,
+        vlcPtr: UnsafePointer<UInt8>, vlcCount: Int,
+        vlcReversed: Bool
+    ) throws -> Data {
+        let scup = melCount + vlcCount
+        if scup < 2 || scup > 4079 {
+            throw HTBlockLayoutConformantError.scupOutOfRange(scup)
+        }
+        let total = magsgnCount + scup
+        var data = Data(count: total)
+        data.withUnsafeMutableBytes { rawBuf in
+            let dst = rawBuf.bindMemory(to: UInt8.self).baseAddress!
+            if magsgnCount > 0 {
+                dst.update(from: magsgnPtr, count: magsgnCount)
+            }
+            var off = magsgnCount
+            if melCount > 0 {
+                (dst + off).update(from: melPtr, count: melCount)
+            }
+            off += melCount
+            if vlcCount > 0 {
+                if vlcReversed {
+                    // Reverse-copy: vlcPtr[vlcCount-1] → dst[off],
+                    // vlcPtr[0] → dst[off+vlcCount-1].
+                    var dstPos = off
+                    var srcPos = vlcCount - 1
+                    while srcPos >= 0 {
+                        dst[dstPos] = vlcPtr[srcPos]
+                        dstPos &+= 1
+                        srcPos &-= 1
+                    }
+                } else {
+                    (dst + off).update(from: vlcPtr, count: vlcCount)
+                }
+            }
+            dst[total - 1] = UInt8(scup >> 4)
+            dst[total - 2] = (dst[total - 2] & 0xF0) | UInt8(scup & 0x0F)
+        }
+        return data
+    }
+
     /// Parse a Part-15 codeblock. Returns the MagSgn region (read
     /// forward from offset 0) and the combined MEL+VLC region (MEL
     /// read forward from its start, VLC read in reverse from the end

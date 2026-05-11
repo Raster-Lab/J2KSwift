@@ -141,7 +141,12 @@ public struct HTReverseBitEmitterConformant {
     }
 
     /// Append a codeword of `count` bits, LSB-first.
+    /// v9.2 Path B Phase 1 — `@inline(__always)` to match the raw-pointer
+    /// mirror (HTReverseBitEmitterRawConformant.encode); called for VLC
+    /// tuples + UVLC u-values, totalling ~1.3M calls per DX encode.
+    @inline(__always)
     public mutating func encode(codeword: Int, count: Int) {
+        J2KHTEntropyEncoderProfile.bumpVlcEncode()
         var cwd = codeword
         var len = count
         while len > 0 {
