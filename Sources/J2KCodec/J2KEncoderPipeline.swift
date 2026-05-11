@@ -4135,10 +4135,25 @@ struct EncoderPipeline: Sendable {
                             ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
                         let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
                             ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        // v9.5 Phase 5E: per-worker NEON output buffers.
+                        // Same 16 KB capacity as raw engines (HT spec
+                        // bound). Allocated only when the NEON hot path
+                        // is enabled; same lifetime as the worker scope
+                        // (deallocated below).
+                        let _useNEON = HTBlockEncoderConformant.useNEONHotPath
+                        let _neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        let _neonMelBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        let _neonVlcBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
                         defer {
                             _rawMagsgnBuf?.deallocate()
                             _rawMelBuf?.deallocate()
                             _rawVlcBuf?.deallocate()
+                            _neonMagsgnBuf?.deallocate()
+                            _neonMelBuf?.deallocate()
+                            _neonVlcBuf?.deallocate()
                         }
 
                         for i in range {
@@ -4252,7 +4267,10 @@ struct EncoderPipeline: Sendable {
                                 useSIMDClassification: Self._htSIMDClassificationEnabled,
                                 rawMagsgnBuf: _rawMagsgnBuf,
                                 rawMelBuf: _rawMelBuf,
-                                rawVlcBuf: _rawVlcBuf
+                                rawVlcBuf: _rawVlcBuf,
+                                neonMagsgnBuf: _neonMagsgnBuf,
+                                neonMelBuf: _neonMelBuf,
+                                neonVlcBuf: _neonVlcBuf
                             )
                             localResults.append((d.index, codeBlock))
                         }
@@ -4302,10 +4320,21 @@ struct EncoderPipeline: Sendable {
                 ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
             let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
                 ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            // v9.5 Phase 5E: per-worker NEON output buffers (sequential).
+            let _useNEON = HTBlockEncoderConformant.useNEONHotPath
+            let _neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _neonMelBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _neonVlcBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
             defer {
                 _rawMagsgnBuf?.deallocate()
                 _rawMelBuf?.deallocate()
                 _rawVlcBuf?.deallocate()
+                _neonMagsgnBuf?.deallocate()
+                _neonMelBuf?.deallocate()
+                _neonVlcBuf?.deallocate()
             }
 
             let isLossless = config.lossless
@@ -4419,7 +4448,10 @@ struct EncoderPipeline: Sendable {
                     useSIMDClassification: Self._htSIMDClassificationEnabled,
                     rawMagsgnBuf: _rawMagsgnBuf,
                     rawMelBuf: _rawMelBuf,
-                    rawVlcBuf: _rawVlcBuf
+                    rawVlcBuf: _rawVlcBuf,
+                    neonMagsgnBuf: _neonMagsgnBuf,
+                    neonMelBuf: _neonMelBuf,
+                    neonVlcBuf: _neonVlcBuf
                 )
                 results.append(codeBlock)
             }
@@ -4470,10 +4502,21 @@ struct EncoderPipeline: Sendable {
                 ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
             let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
                 ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            // v9.5 Phase 5E: per-worker NEON output buffers (sequential HT).
+            let _useNEON = HTBlockEncoderConformant.useNEONHotPath
+            let _neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _neonMelBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _neonVlcBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
             defer {
                 _rawMagsgnBuf?.deallocate()
                 _rawMelBuf?.deallocate()
                 _rawVlcBuf?.deallocate()
+                _neonMagsgnBuf?.deallocate()
+                _neonMelBuf?.deallocate()
+                _neonVlcBuf?.deallocate()
             }
 
             for pending in pendingBlocks {
@@ -4493,7 +4536,10 @@ struct EncoderPipeline: Sendable {
                     useSIMDClassification: Self._htSIMDClassificationEnabled,
                     rawMagsgnBuf: _rawMagsgnBuf,
                     rawMelBuf: _rawMelBuf,
-                    rawVlcBuf: _rawVlcBuf
+                    rawVlcBuf: _rawVlcBuf,
+                    neonMagsgnBuf: _neonMagsgnBuf,
+                    neonMelBuf: _neonMelBuf,
+                    neonVlcBuf: _neonVlcBuf
                 )
                 results.append(codeBlock)
             }
@@ -4601,10 +4647,21 @@ struct EncoderPipeline: Sendable {
                     ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
                 let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
                     ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                // v9.5 Phase 5E: per-worker NEON output buffers (parallel HT).
+                let _useNEON = HTBlockEncoderConformant.useNEONHotPath
+                let _neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                let _neonMelBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                let _neonVlcBuf: UnsafeMutablePointer<UInt8>? = _useNEON
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
                 defer {
                     _rawMagsgnBuf?.deallocate()
                     _rawMelBuf?.deallocate()
                     _rawVlcBuf?.deallocate()
+                    _neonMagsgnBuf?.deallocate()
+                    _neonMelBuf?.deallocate()
+                    _neonVlcBuf?.deallocate()
                 }
 
                 for index in range {
@@ -4625,7 +4682,10 @@ struct EncoderPipeline: Sendable {
                         useSIMDClassification: Self._htSIMDClassificationEnabled,
                         rawMagsgnBuf: _rawMagsgnBuf,
                         rawMelBuf: _rawMelBuf,
-                        rawVlcBuf: _rawVlcBuf
+                        rawVlcBuf: _rawVlcBuf,
+                        neonMagsgnBuf: _neonMagsgnBuf,
+                        neonMelBuf: _neonMelBuf,
+                        neonVlcBuf: _neonVlcBuf
                     )
                     orderedResults.write(codeBlock, at: pending.index)
                 }
@@ -5248,7 +5308,20 @@ struct EncoderPipeline: Sendable {
         // Phase 2c integration) which still works correctly.
         rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
         rawMelBuf: UnsafeMutablePointer<UInt8>? = nil,
-        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil
+        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil,
+        // v9.5 Phase 5E — optional pre-allocated NEON output buffers
+        // owned by the caller's worker scope. When non-nil AND
+        // `HTBlockEncoderConformant.useNEONHotPath == true` AND the
+        // block fits the C entry-point envelope, the encode routes
+        // through `encodeNEONIntoBuffers` + `assembleDataFromRaw(...,
+        // vlcReversed: false)`. Mirrors v9.1 Phase 2d raw-engine
+        // hoist; eliminates per-block buffer alloc + [UInt8]
+        // materialization. When nil, the existing per-call NEON path
+        // (via encodeViaNEONHotPath) applies through HTBlockEncoder-
+        // Conformant.encode.
+        neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
+        neonMelBuf: UnsafeMutablePointer<UInt8>? = nil,
+        neonVlcBuf: UnsafeMutablePointer<UInt8>? = nil
     ) throws -> J2KCodeBlock {
         let count = pending.width * pending.height
         precondition(pending.coefficients.count == count,
@@ -5345,6 +5418,56 @@ struct EncoderPipeline: Sendable {
                     dst[i] = sign | (mag << shift)
                 }
             }
+        }
+
+        // v9.5 Phase 5E — direct NEON dispatch with hoisted buffers.
+        // When the NEON path is enabled AND hoisted buffers are
+        // provided AND the block fits the C entry-point envelope,
+        // skip the entire HTBlockEncoderConformant + assembleData
+        // chain and call the C path directly. Eliminates per-block
+        // buffer alloc + [UInt8] materialization. Bit-exact verified
+        // by the existing 548+ assertion suite (V94NEONHotPath...,
+        // HTCrossCodec..., V91Phase2c..., etc.).
+        if HTBlockEncoderConformant.useNEONHotPath,
+           let nMag = neonMagsgnBuf,
+           let nMel = neonMelBuf,
+           let nVlc = neonVlcBuf,
+           pending.width >= 1, pending.width <= 64,
+           pending.height >= 1, pending.height <= 64,
+           missingMSBs < 30,
+           !useSIMDClassification
+        {
+            let rawCap = Self._rawEngineBufferCapacity
+            let counts = conformantInBuf.withUnsafeBufferPointer { buf in
+                HTBlockEncoderConformant.encodeNEONIntoBuffers(
+                    coefficients: buf,
+                    width: pending.width, height: pending.height,
+                    missingMSBs: missingMSBs,
+                    magsgnBuf: nMag, magsgnCap: rawCap,
+                    melBuf: nMel, melCap: rawCap,
+                    vlcBuf: nVlc, vlcCap: rawCap)
+            }
+            // NEON path outputs VLC in FORWARD on-wire order; matches
+            // assembleDataFromRaw with vlcReversed: false.
+            let blockData = try HTBlockLayoutConformant.assembleDataFromRaw(
+                magsgnPtr: nMag, magsgnCount: counts.magsgnCount,
+                melPtr: nMel, melCount: counts.melCount,
+                vlcPtr: nVlc, vlcCount: counts.vlcCount,
+                vlcReversed: false)
+            return J2KCodeBlock(
+                index: pending.index, x: pending.x, y: pending.y,
+                width: pending.width, height: pending.height,
+                subband: pending.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
+                data: blockData,
+                passeCount: 1,
+                zeroBitPlanes: missingMSBs,
+                passSegmentLengths: [blockData.count],
+                cumulativePassBytes: [blockData.count],
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation,
+                cumulativePassDistortion: [pending.coefficientSquaredSum])
         }
 
         if Self._rawPointerEnginesEnabled {
@@ -5514,7 +5637,14 @@ struct EncoderPipeline: Sendable {
         // is set.
         rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
         rawMelBuf: UnsafeMutablePointer<UInt8>? = nil,
-        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil
+        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil,
+        // v9.5 Phase 5E: optional pre-allocated NEON output buffers,
+        // owned by the caller's worker scope. Forwarded to
+        // encodeCodeBlockConformant which routes directly through the
+        // C entry point when these + NEON envelope match.
+        neonMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
+        neonMelBuf: UnsafeMutablePointer<UInt8>? = nil,
+        neonVlcBuf: UnsafeMutablePointer<UInt8>? = nil
     ) throws -> J2KCodeBlock {
         if config.htj2kBlockFormat == .conformant {
             return try encodeCodeBlockConformant(
@@ -5526,7 +5656,10 @@ struct EncoderPipeline: Sendable {
                 useSIMDClassification: useSIMDClassification,
                 rawMagsgnBuf: rawMagsgnBuf,
                 rawMelBuf: rawMelBuf,
-                rawVlcBuf: rawVlcBuf)
+                rawVlcBuf: rawVlcBuf,
+                neonMagsgnBuf: neonMagsgnBuf,
+                neonMelBuf: neonMelBuf,
+                neonVlcBuf: neonVlcBuf)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
