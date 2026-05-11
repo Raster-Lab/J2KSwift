@@ -302,11 +302,12 @@ final class V94NEONHotPathParityTests: XCTestCase {
         }
     }
 
-    func testRandomSweep_30trials() throws {
-        // Smaller initial sweep (30 trials) for Day 2b — once this
-        // passes we expand to 500-trial Day 3.
+    func testRandomSweep_500trials() throws {
+        // Day 3 — 500-trial random sweep across width/height/density/
+        // missing-MSBs space. Mirrors the V91Phase2cArrayVsRawParityTests
+        // 200-trial sweep + 250 additional trials in the v9.4 ranges.
         var seed: UInt64 = 0xCAFEBABE_DEADBEEF
-        for trial in 0..<30 {
+        for trial in 0..<500 {
             seed &+= 0x9E37_79B9_7F4A_7C15
             let w = 16 + Int((seed >> 8) % 49)   // [16, 64]
             let h = 16 + Int((seed >> 16) % 49)  // [16, 64]
