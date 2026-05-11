@@ -17,11 +17,37 @@
 // (`num_passes == 1`).
 
 import Foundation
+import J2KCodecNEON
 
 /// Cleanup-pass codeblock encoder (32-bit signed-magnitude path).
 /// Produces the three Part-15 sub-streams separately; wrap with
 /// `HTBlockLayoutConformant.assemble` to get the final on-wire block.
 public enum HTBlockEncoderConformant {
+
+    /// v9.4-research — custom C+NEON hot-path opt-in flag (env var
+    /// `J2K_NEON_HOT_PATH`, default false). Reads at module load.
+    /// Default OFF on research branch until the V94NEONHotPath parity
+    /// + measurement suite clears the v9.3 baseline per the decision
+    /// matrix in V9_4_NEON_HOT_PATH_RESEARCH.md. The C entry point
+    /// currently lives in J2KCodecNEON.j2knhe_encode_block_ht32 and
+    /// is a stub during Day 1 of the research arc; the gate is
+    /// scaffolded here but no dispatch routing yet.
+    nonisolated(unsafe) public static let useNEONHotPath: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_NEON_HOT_PATH"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            case "0", "false", "no": return false
+            default: break
+            }
+        }
+        return false
+    }()
+
+    /// v9.4-research — build identifier for the C+NEON path (or stub).
+    /// Exposed for telemetry / research-finding traceability.
+    public static var neonHotPathVersion: String {
+        return String(cString: j2knhe_version())
+    }
 
     /// Encode a codeblock's cleanup pass.
     ///
