@@ -159,30 +159,40 @@ public enum HTBlockEncoderConformant {
     /// identically to the SIMD-toggle overload above. Callers that
     /// don't need the tuple path can keep using the existing 3-emitter
     /// overload — both forward to this implementation.
-    public static func encode(
+    /// v9.1 Path B Phase 2c — internal generic encode-loop helper.
+    ///
+    /// Contains the per-quad classification + bit-emission logic, shared
+    /// between the Array-backed (HTMagSgnEncoderConformant) and raw-
+    /// pointer-backed (HTMagSgnEncoderRawConformant) variants. Each
+    /// public `encode` wrapper calls this helper then handles its own
+    /// finalization: the Array variant returns `[UInt8]` tuples via
+    /// `finish()`; the Raw variant returns `Int` byte counts via
+    /// `finishCount()`.
+    ///
+    /// **Bit-exact equivalent** between Array and Raw paths because the
+    /// loop body uses only protocol methods (`reset`, `encode(codeword:
+    /// count:)`, `encode(eventIsOne:)`) which both engine families
+    /// implement byte-for-byte identically. Verified by 200-trial
+    /// random-input sweeps in `V91Phase2aRawPointerPrototype` and
+    /// `V91Phase2bAllEnginesRawPrototype`.
+    ///
+    /// Wall instrumentation: the public wrappers measure block-total
+    /// and finish-time wall; this helper measures the row-loop wall
+    /// (recorded as `blockClassifyNs`).
+    @inline(__always)
+    internal static func encodeLoopGeneric<M: HTMagSgnEmitting,
+                                           L: HTMELEmitting,
+                                           V: HTVLCEmitting>(
         coefficients: UnsafeBufferPointer<UInt32>,
         width: Int,
         height: Int,
         missingMSBs: Int,
-        magsgnEnc: inout HTMagSgnEncoderConformant,
-        melEnc: inout HTMELEncoderConformant,
-        vlcEnc: inout HTReverseBitEmitterConformant,
+        magsgnEnc: inout M,
+        melEnc: inout L,
+        vlcEnc: inout V,
         useSIMDClassification: Bool,
         preClassifiedTuples: UnsafeBufferPointer<UInt64>?
-    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
-        precondition(coefficients.count == width * height,
-                     "coefficient count mismatch")
-        precondition(missingMSBs < 30, "missingMSBs must leave room for data")
-        if let tuples = preClassifiedTuples {
-            precondition(tuples.count == width * height,
-                         "preClassifiedTuples count mismatch")
-        }
-
-        // v9.1 Path B Phase 0 — coarse-wall instrumentation. One timer
-        // pair per block; negligible overhead at the per-block level
-        // (vs the per-quad budget that would dwarf the encode itself).
-        let _v91BlockStartNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-
+    ) {
         magsgnEnc.reset()
         melEnc.reset()
         vlcEnc.reset()
@@ -642,20 +652,108 @@ public enum HTBlockEncoderConformant {
             y += 2
         }
 
-        let _v91FinishStartNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let _v91ClassifyEndNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        J2KHTEntropyEncoderProfile.recordBlockClassifyNs(
+            _v91ClassifyEndNs &- _v91ClassifyStartNs)
+    }
+
+    /// v9.1 Path B Phase 2c — public encode wrapper for Array-backed
+    /// engines (HTMagSgnEncoderConformant et al.).
+    ///
+    /// Bit-identical to the prior monolithic implementation; the loop
+    /// body now lives in `encodeLoopGeneric`. Existing callers (the
+    /// 3-overload chain forwarding to this signature, plus
+    /// J2KEncoderPipeline.encodeCodeBlockConformant) work unchanged.
+
+    public static func encode(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int,
+        height: Int,
+        missingMSBs: Int,
+        magsgnEnc: inout HTMagSgnEncoderConformant,
+        melEnc: inout HTMELEncoderConformant,
+        vlcEnc: inout HTReverseBitEmitterConformant,
+        useSIMDClassification: Bool,
+        preClassifiedTuples: UnsafeBufferPointer<UInt64>?
+    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
+        precondition(coefficients.count == width * height,
+                     "coefficient count mismatch")
+        precondition(missingMSBs < 30, "missingMSBs must leave room for data")
+        if let tuples = preClassifiedTuples {
+            precondition(tuples.count == width * height,
+                         "preClassifiedTuples count mismatch")
+        }
+
+        let blockStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        encodeLoopGeneric(
+            coefficients: coefficients,
+            width: width, height: height, missingMSBs: missingMSBs,
+            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+            useSIMDClassification: useSIMDClassification,
+            preClassifiedTuples: preClassifiedTuples)
+        let finishStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let magsgnBytes = magsgnEnc.finish()
         let melBytes = melEnc.finish()
         let vlcBytes = vlcEnc.finish()
-        let _v91BlockEndNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-
-        // Record the three sub-stage wall-time slices.
-        J2KHTEntropyEncoderProfile.recordBlockClassifyNs(
-            _v91FinishStartNs &- _v91ClassifyStartNs)
-        J2KHTEntropyEncoderProfile.recordBlockFinishNs(
-            _v91BlockEndNs &- _v91FinishStartNs)
-        J2KHTEntropyEncoderProfile.recordBlockTotalNs(
-            _v91BlockEndNs &- _v91BlockStartNs)
-
+        let blockEnd = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        J2KHTEntropyEncoderProfile.recordBlockFinishNs(blockEnd &- finishStart)
+        J2KHTEntropyEncoderProfile.recordBlockTotalNs(blockEnd &- blockStart)
         return (magsgnBytes, melBytes, vlcBytes)
+    }
+
+    /// v9.1 Path B Phase 2c — public encode wrapper for raw-pointer
+    /// engines (HTMagSgnEncoderRawConformant et al.).
+    ///
+    /// Same loop body as the Array overload (via `encodeLoopGeneric`),
+    /// but the engines write to caller-owned
+    /// `UnsafeMutableBufferPointer<UInt8>` buffers and return byte
+    /// counts rather than allocating `[UInt8]` arrays. Used by the
+    /// per-worker pool in J2KEncoderPipeline to eliminate per-byte
+    /// `Array.append` ARC + capacity-grow contention measured at 5×
+    /// concurrent inflation on M2 (see V9_1_PHASE_2_BREAKTHROUGH.md).
+    ///
+    /// Caller is responsible for:
+    ///   1. Allocating each engine's underlying buffer (16 KB is safe
+    ///      for any 64×64 HT block at 30-bit precision).
+    ///   2. After this call returns, copying `buf[0..<count]` into the
+    ///      caller's downstream pipeline. The VLC count is in
+    ///      `emittedReversed` order — call `.reversed()` to get the
+    ///      forward on-wire byte order matching `HTReverseBitEmitter-
+    ///      Conformant.finish()`.
+
+    public static func encode(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int,
+        height: Int,
+        missingMSBs: Int,
+        magsgnEnc: inout HTMagSgnEncoderRawConformant,
+        melEnc: inout HTMELEncoderRawConformant,
+        vlcEnc: inout HTReverseBitEmitterRawConformant,
+        useSIMDClassification: Bool = false,
+        preClassifiedTuples: UnsafeBufferPointer<UInt64>? = nil
+    ) -> (magsgnCount: Int, melCount: Int, vlcCount: Int) {
+        precondition(coefficients.count == width * height,
+                     "coefficient count mismatch")
+        precondition(missingMSBs < 30, "missingMSBs must leave room for data")
+        if let tuples = preClassifiedTuples {
+            precondition(tuples.count == width * height,
+                         "preClassifiedTuples count mismatch")
+        }
+
+        let blockStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        encodeLoopGeneric(
+            coefficients: coefficients,
+            width: width, height: height, missingMSBs: missingMSBs,
+            magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+            useSIMDClassification: useSIMDClassification,
+            preClassifiedTuples: preClassifiedTuples)
+        let finishStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let magsgnCount = magsgnEnc.finishCount()
+        let melCount = melEnc.finishCount()
+        let vlcCount = vlcEnc.finishCount()
+        let blockEnd = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        J2KHTEntropyEncoderProfile.recordBlockFinishNs(blockEnd &- finishStart)
+        J2KHTEntropyEncoderProfile.recordBlockTotalNs(blockEnd &- blockStart)
+        return (magsgnCount, melCount, vlcCount)
     }
 }

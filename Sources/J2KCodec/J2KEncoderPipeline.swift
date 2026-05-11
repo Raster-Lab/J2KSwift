@@ -4919,6 +4919,33 @@ struct EncoderPipeline: Sendable {
         return false
     }()
 
+    /// v9.1 Path B Phase 2c — raw-pointer engine production integration.
+    ///
+    /// When `true`, `encodeCodeBlockConformant` routes through the
+    /// raw-pointer-backed HT block-encoder variant
+    /// (HTMagSgnEncoderRawConformant et al.) instead of the Array-
+    /// backed variant. This eliminates per-byte `Array.append` ARC +
+    /// capacity-grow contention measured at 5× concurrent inflation
+    /// on M2 (see V9_1_PHASE_2_BREAKTHROUGH.md).
+    ///
+    /// Opt-in via env var `J2K_RAW_POINTER_ENGINES=1`. Default OFF
+    /// pending A/B medical-corpus benchmark and cross-codec parity
+    /// validation. **Codestream is bit-exact** between Array and Raw
+    /// paths — verified by V91Phase2cArrayVsRawParityTests (200-trial
+    /// random sweep + sparse/dense/non-pow2 block sizes + missingMSBs
+    /// sweep). Default-flip gated on ≥3 ms DX wall improvement (v7.4
+    /// acceptance discipline).
+    nonisolated(unsafe) static var _rawPointerEnginesEnabled: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_RAW_POINTER_ENGINES"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            case "0", "false", "no": return false
+            default: break
+            }
+        }
+        return false
+    }()
+
     /// v6-alpha5 phase 2 — GPU forward 5/3 INT DWT for the lossless
     /// reversible encode path.
     ///
@@ -5196,13 +5223,55 @@ struct EncoderPipeline: Sendable {
             }
         }
 
-        let (ms, mel, vlc) = conformantInBuf.withUnsafeBufferPointer { buf in
-            HTBlockEncoderConformant.encode(
-                coefficients: buf,
-                width: pending.width, height: pending.height,
-                missingMSBs: missingMSBs,
-                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
-                useSIMDClassification: useSIMDClassification)
+        let ms: [UInt8]
+        let mel: [UInt8]
+        let vlc: [UInt8]
+        if Self._rawPointerEnginesEnabled {
+            // v9.1 Path B Phase 2c — raw-pointer engine path. Eliminates
+            // per-byte Array.append ARC + capacity-grow contention by
+            // writing bytes directly to caller-owned
+            // UnsafeMutableBufferPointer<UInt8> buffers. The buffers are
+            // allocated per call here (the simplest integration); a
+            // future pass will hoist them to the worker scope for full
+            // amortisation across blocks.
+            let rawCap = 16 * 1024
+            let mBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+            let lBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+            let vBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+            defer {
+                mBuf.deallocate()
+                lBuf.deallocate()
+                vBuf.deallocate()
+            }
+            var rawM = HTMagSgnEncoderRawConformant(buf: mBuf, capacity: rawCap)
+            var rawL = HTMELEncoderRawConformant(buf: lBuf, capacity: rawCap)
+            var rawV = HTReverseBitEmitterRawConformant(buf: vBuf, capacity: rawCap)
+            let counts = conformantInBuf.withUnsafeBufferPointer { buf in
+                HTBlockEncoderConformant.encode(
+                    coefficients: buf,
+                    width: pending.width, height: pending.height,
+                    missingMSBs: missingMSBs,
+                    magsgnEnc: &rawM, melEnc: &rawL, vlcEnc: &rawV,
+                    useSIMDClassification: useSIMDClassification)
+            }
+            ms = Array(UnsafeBufferPointer(start: mBuf, count: counts.magsgnCount))
+            mel = Array(UnsafeBufferPointer(start: lBuf, count: counts.melCount))
+            // VLC raw buffer holds bytes in emittedReversed order
+            // (sentinel-first). Reverse to forward on-wire order to
+            // match HTReverseBitEmitterConformant.finish() output.
+            vlc = Array(Array(UnsafeBufferPointer(start: vBuf, count: counts.vlcCount)).reversed())
+        } else {
+            let result = conformantInBuf.withUnsafeBufferPointer { buf in
+                HTBlockEncoderConformant.encode(
+                    coefficients: buf,
+                    width: pending.width, height: pending.height,
+                    missingMSBs: missingMSBs,
+                    magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+                    useSIMDClassification: useSIMDClassification)
+            }
+            ms = result.magsgn
+            mel = result.mel
+            vlc = result.vlc
         }
         let blockBytes = try HTBlockLayoutConformant.assemble(
             magsgn: ms, mel: mel, vlc: vlc)
