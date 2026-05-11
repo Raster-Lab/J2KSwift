@@ -1133,6 +1133,14 @@ struct EncoderPipeline: Sendable {
         iterConfig.lossless = false
         let inner = EncoderPipeline(config: iterConfig)
 
+        // v9.5 — per-stage J2KEncodeTimings capture on the strict-bounded
+        // bitrate path. Mirrors the instrumentation in `encode(_:)` and
+        // `runEncodeStagesForNativeAssembly`; the corpus benchmark
+        // tests reset/snapshot around `cpuEncoder.encode(...)` to
+        // derive per-stage means. Pre-v9.5 this path recorded nothing,
+        // so per-stage breakdown was identically zero.
+        var stageStart = CFAbsoluteTimeGetCurrent()
+
         var componentData = try inner.extractComponentData(from: image)
         for (compIdx, component) in image.components.enumerated() where !component.signed {
             let dcOffset = Int32(1 << (component.bitDepth - 1))
@@ -1140,22 +1148,47 @@ struct EncoderPipeline: Sendable {
                 for i in 0..<buf.count { buf[i] &-= dcOffset }
             }
         }
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordPreprocessing(t - stageStart)
+            stageStart = t
+        }
 
         let (transformedData, transformedFloatData) =
             try inner.applyColorTransform(componentData, image: image)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordColorTransform(t - stageStart)
+            stageStart = t
+        }
 
         let (decompositions, actualDecompositionLevels) =
             try await inner.applyWaveletTransform(
                 transformedData, floatComponents: transformedFloatData,
                 width: image.width, height: image.height)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordWaveletTransform(t - stageStart)
+            stageStart = t
+        }
 
         let adaptiveLossyStepSizes = inner.buildAdaptiveLossyStepSizes(
             decompositions, image: image, totalLevels: actualDecompositionLevels)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordQuantization(t - stageStart)
+            stageStart = t
+        }
 
         let codeBlocks = try await inner.applyEntropyCoding(
             decompositions, image: image,
             adaptiveStepSizes: adaptiveLossyStepSizes,
             totalLevels: actualDecompositionLevels)
+        do {
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordEntropyCoding(t - stageStart)
+            stageStart = t
+        }
 
         // Single-layer; the multi-precinct emission gives the truncation
         // granularity, so PCRD doesn't need to split layers.
@@ -1210,6 +1243,17 @@ struct EncoderPipeline: Sendable {
         let tileDataOffset = writer.count
         writer.writeBytes(tileData)
         writer.writeMarker(J2KMarker.eoc.rawValue)
+
+        do {
+            // v9.5 — codestream-assembly portion of this path includes
+            // SOC/SIZ/CAP/CPF/COD/QCD/COM marker writes + per-precinct
+            // packet emission + SOT/SOD/EOC framing. Rate-control isn't
+            // applied on this path (single layer; truncation happens
+            // post-encode on packet boundaries), so we attribute the
+            // post-entropy wall to codestreamGeneration directly.
+            let t = CFAbsoluteTimeGetCurrent()
+            J2KEncodeTimings.recordCodestreamGeneration(t - stageStart)
+        }
 
         let packetEndsInCodestream = packetEndsInTile.map { $0 + tileDataOffset }
         return EncodedCodestreamWithIndex(

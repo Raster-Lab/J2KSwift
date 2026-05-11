@@ -355,7 +355,11 @@ public struct J2KEncoder: Sendable {
             bitDepth: bitDepth,
             componentCount: componentCount,
             targetBpp: targetBpp)
-        let cachedGuess = await encodingConfiguration.qstepCache?.lookup(cacheKey)
+        // v9.6 — process-default fallback (see V9_6 research doc).
+        let activeCache: J2KQstepCache? =
+            encodingConfiguration.qstepCache
+            ?? (J2KQstepCache.useProcessDefault ? J2KQstepCache.shared : nil)
+        let cachedGuess = await activeCache?.lookup(cacheKey)
         let cacheHit = cachedGuess != nil
         let initialQstep = cachedGuess ?? Self.initialQstepGuess(
             targetBpp: targetBpp, bitDepth: bitDepth)
@@ -448,7 +452,7 @@ public struct J2KEncoder: Sendable {
         }
 
         if !bestEncoded.isEmpty {
-            await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+            await activeCache?.store(cacheKey, qstep: bestQstep)
         }
 
         let achievedBpp = Double(bestEncoded.count * 8) / Double(totalSamples)
@@ -508,7 +512,17 @@ public struct J2KEncoder: Sendable {
             bitDepth: bitDepth,
             componentCount: componentCount,
             targetBpp: targetBpp)
-        let cachedGuess = await encodingConfiguration.qstepCache?.lookup(cacheKey)
+        // v9.6 — process-default fallback: when the caller's
+        // configuration does not specify an explicit qstepCache,
+        // consult the process-wide shared cache (gated by
+        // `J2K_DISABLE_PROCESS_QSTEP_CACHE`). Batch workflows of
+        // similar-shape content now skip 2–3 qstep-search passes on
+        // every encode after the first. Explicit caller-supplied
+        // caches still take precedence.
+        let activeCache: J2KQstepCache? =
+            encodingConfiguration.qstepCache
+            ?? (J2KQstepCache.useProcessDefault ? J2KQstepCache.shared : nil)
+        let cachedGuess = await activeCache?.lookup(cacheKey)
         let cacheHit = cachedGuess != nil
         let initialQstep = cachedGuess ?? Self.initialQstepGuess(
             targetBpp: targetBpp, bitDepth: bitDepth)
@@ -620,7 +634,11 @@ public struct J2KEncoder: Sendable {
             throw J2KError.encodingError("strict bounded-rate search produced no result")
         }
 
-        await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+        // v9.6 — store converged qstep into whichever cache was used
+        // for the lookup (caller's explicit cache, else the process-
+        // default). Storing back to the explicit cache when one is
+        // present preserves the prior caller-isolated batching semantics.
+        await activeCache?.store(cacheKey, qstep: bestQstep)
 
         // Apply the strict cap via packet-boundary truncation.
         let capBytes = Int(cap.rounded(.down))
@@ -697,7 +715,11 @@ public struct J2KEncoder: Sendable {
             bitDepth: bitDepth,
             componentCount: componentCount,
             targetBpp: targetBpp)
-        let cachedGuess = await encodingConfiguration.qstepCache?.lookup(cacheKey)
+        // v9.6 — process-default fallback (see V9_6 research doc).
+        let activeCache: J2KQstepCache? =
+            encodingConfiguration.qstepCache
+            ?? (J2KQstepCache.useProcessDefault ? J2KQstepCache.shared : nil)
+        let cachedGuess = await activeCache?.lookup(cacheKey)
         let cacheHit = cachedGuess != nil
         let initialQstep = cachedGuess ?? Self.initialQstepGuess(
             targetBpp: targetBpp, bitDepth: bitDepth)
@@ -731,7 +753,7 @@ public struct J2KEncoder: Sendable {
             }
             if ratioErr < tolerance {
                 // Cache the successful qstep for future similar images.
-                await encodingConfiguration.qstepCache?.store(cacheKey, qstep: qstep)
+                await activeCache?.store(cacheKey, qstep: qstep)
                 let stats = J2KEncodeQstepStats(
                     iterations: iterationCount,
                     initialQstep: initialQstep,
@@ -870,7 +892,7 @@ public struct J2KEncoder: Sendable {
         // Convergence either succeeded above or fell back to closest-
         // achieved. Cache the best qstep regardless — even if we
         // didn't hit tolerance, this is the encoder's best estimate.
-        await encodingConfiguration.qstepCache?.store(cacheKey, qstep: bestQstep)
+        await activeCache?.store(cacheKey, qstep: bestQstep)
         let achievedBpp = Double(bestEncoded.count * 8) / Double(totalSamples)
         let stats = J2KEncodeQstepStats(
             iterations: iterationCount,
