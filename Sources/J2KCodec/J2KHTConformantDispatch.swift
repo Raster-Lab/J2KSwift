@@ -47,11 +47,13 @@ extension HTBlockEncoder {
             coefficients: input,
             width: width, height: height,
             missingMSBs: missingMSBs)
-        let block = try HTBlockLayoutConformant.assemble(
+        // v9.2 Path B Phase 3a — Data-returning assemble; one alloc per
+        // single-block encode.
+        let codedData = try HTBlockLayoutConformant.assembleData(
             magsgn: ms, mel: mel, vlc: vlc)
 
         return HTEncodedBlock(
-            codedData: Data(block),
+            codedData: codedData,
             passType: .htCleanup,
             melLength: mel.count,
             vlcLength: vlc.count,

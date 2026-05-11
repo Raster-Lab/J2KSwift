@@ -3822,7 +3822,10 @@ struct EncoderPipeline: Sendable {
                 continue
             }
             let enc = encoded[outcome.pendingIndex]
-            let blockBytes = try HTBlockLayoutConformant.assemble(
+            // v9.2 Path B Phase 3a — use Data-returning assemble to skip
+            // the [UInt8] intermediate (saves one heap alloc + memcpy
+            // per block on the GPU-forward path).
+            let blockData = try HTBlockLayoutConformant.assembleData(
                 magsgn: enc.magsgn, mel: enc.mel, vlc: enc.vlc)
             results.append(J2KCodeBlock(
                 index: d.index, x: d.x, y: d.y,
@@ -3830,11 +3833,11 @@ struct EncoderPipeline: Sendable {
                 subband: d.subband,
                 componentIndex: d.componentIndex,
                 resolutionLevel: d.resolutionLevel,
-                data: Data(blockBytes),
+                data: blockData,
                 passeCount: 1,
                 zeroBitPlanes: outcome.missingMSBs,
-                passSegmentLengths: [blockBytes.count],
-                cumulativePassBytes: [blockBytes.count],
+                passSegmentLengths: [blockData.count],
+                cumulativePassBytes: [blockData.count],
                 coefficientSquaredSum: outcome.coefficientSquaredSum,
                 bitPlanePopulation: outcome.bitPlanePopulation,
                 cumulativePassDistortion: [outcome.coefficientSquaredSum]))
@@ -4066,7 +4069,9 @@ struct EncoderPipeline: Sendable {
                 reason: .nonConformantFormat, blockCount: totalBlocks)
         }
 
-        let maxConcurrency = config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount
+        let _override = Self._maxEncodeWorkersOverride
+        let maxConcurrency = _override > 0 ? _override
+            : (config.maxThreads > 0 ? config.maxThreads : ProcessInfo.processInfo.processorCount)
         // Only use parallel dispatch when there are enough blocks to amortize
         // the GCD overhead and per-chunk buffer allocations. For small images
         // with ≤2× the core count of blocks, the sequential path (single set
@@ -5019,6 +5024,35 @@ struct EncoderPipeline: Sendable {
         return false
     }()
 
+    /// v9.2 Path B Phase 0c — encode worker-count override.
+    ///
+    /// When `J2K_MAX_ENCODE_WORKERS` is set to a positive integer, that
+    /// value is used as the encoder's TaskGroup worker count regardless
+    /// of `config.maxThreads` or `processorCount`. Default `0` means "use
+    /// the existing logic" (config.maxThreads if > 0, else
+    /// processorCount).
+    ///
+    /// Rationale: M4 has 4P + 6E cores (`processorCount = 10`), but
+    /// E-cores deliver only ~30-50% of P-core throughput. Splitting work
+    /// into 10 equal chunks creates a long tail where P-core chunks
+    /// finish in ~half the time of E-core chunks. Restricting workers
+    /// to P-core count alone (4) eliminates the tail at the cost of
+    /// some E-core idle time. The empirical sweet spot depends on
+    /// fixture size and the per-block work imbalance.
+    ///
+    /// Probe via:
+    ///   `J2K_MAX_ENCODE_WORKERS=4 swift test --filter Encode...`
+    ///
+    /// 0 = disabled, ≥1 = override. Always-on, no production code path
+    /// difference when unset.
+    nonisolated(unsafe) static var _maxEncodeWorkersOverride: Int = {
+        if let v = ProcessInfo.processInfo.environment["J2K_MAX_ENCODE_WORKERS"],
+           let n = Int(v), n >= 1 {
+            return n
+        }
+        return 0
+    }()
+
     /// v6-alpha5 phase 2 — GPU forward 5/3 INT DWT for the lossless
     /// reversible encode path.
     ///
@@ -5313,9 +5347,6 @@ struct EncoderPipeline: Sendable {
             }
         }
 
-        let ms: [UInt8]
-        let mel: [UInt8]
-        let vlc: [UInt8]
         if Self._rawPointerEnginesEnabled {
             // v9.1 Path B Phase 2c/2d — raw-pointer engine path.
             // Eliminates per-byte Array.append ARC + capacity-grow
@@ -5352,6 +5383,10 @@ struct EncoderPipeline: Sendable {
                     vBuf.deallocate()
                 }
             }
+            // v9.2 Path B Phase 3a — raw-engine path goes directly to
+            // `assembleDataFromRaw`, skipping the 4 per-block Array
+            // extraction allocs (magsgn, mel, vlc reversed, vlc final)
+            // that the pre-Phase-3a path paid before this point.
             var rawM = HTMagSgnEncoderRawConformant(buf: mBuf, capacity: rawCap)
             var rawL = HTMELEncoderRawConformant(buf: lBuf, capacity: rawCap)
             var rawV = HTReverseBitEmitterRawConformant(buf: vBuf, capacity: rawCap)
@@ -5363,27 +5398,40 @@ struct EncoderPipeline: Sendable {
                     magsgnEnc: &rawM, melEnc: &rawL, vlcEnc: &rawV,
                     useSIMDClassification: useSIMDClassification)
             }
-            ms = Array(UnsafeBufferPointer(start: mBuf, count: counts.magsgnCount))
-            mel = Array(UnsafeBufferPointer(start: lBuf, count: counts.melCount))
-            // VLC raw buffer holds bytes in emittedReversed order
-            // (sentinel-first). Reverse to forward on-wire order to
-            // match HTReverseBitEmitterConformant.finish() output.
-            vlc = Array(Array(UnsafeBufferPointer(start: vBuf, count: counts.vlcCount)).reversed())
-        } else {
-            let result = conformantInBuf.withUnsafeBufferPointer { buf in
-                HTBlockEncoderConformant.encode(
-                    coefficients: buf,
-                    width: pending.width, height: pending.height,
-                    missingMSBs: missingMSBs,
-                    magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
-                    useSIMDClassification: useSIMDClassification)
-            }
-            ms = result.magsgn
-            mel = result.mel
-            vlc = result.vlc
+            let blockData = try HTBlockLayoutConformant.assembleDataFromRaw(
+                magsgnPtr: mBuf, magsgnCount: counts.magsgnCount,
+                melPtr: lBuf, melCount: counts.melCount,
+                vlcPtr: vBuf, vlcCount: counts.vlcCount,
+                vlcReversed: true)
+            return J2KCodeBlock(
+                index: pending.index, x: pending.x, y: pending.y,
+                width: pending.width, height: pending.height,
+                subband: pending.subband,
+                componentIndex: pending.componentIndex,
+                resolutionLevel: pending.resolutionLevel,
+                data: blockData,
+                passeCount: 1,
+                zeroBitPlanes: missingMSBs,
+                passSegmentLengths: [blockData.count],
+                cumulativePassBytes: [blockData.count],
+                coefficientSquaredSum: pending.coefficientSquaredSum,
+                bitPlanePopulation: pending.bitPlanePopulation,
+                cumulativePassDistortion: [pending.coefficientSquaredSum])
         }
-        let blockBytes = try HTBlockLayoutConformant.assemble(
-            magsgn: ms, mel: mel, vlc: vlc)
+        let result = conformantInBuf.withUnsafeBufferPointer { buf in
+            HTBlockEncoderConformant.encode(
+                coefficients: buf,
+                width: pending.width, height: pending.height,
+                missingMSBs: missingMSBs,
+                magsgnEnc: &magsgnEnc, melEnc: &melEnc, vlcEnc: &vlcEnc,
+                useSIMDClassification: useSIMDClassification)
+        }
+        // v9.2 Path B Phase 3a — assembleData (Data-returning) skips
+        // the per-block `[UInt8]` intermediate that was wrapped in
+        // `Data(blockBytes)` pre-Phase-3a. Bit-exact equivalent of the
+        // legacy `assemble(...) -> [UInt8] + Data(_:)` two-step.
+        let blockData = try HTBlockLayoutConformant.assembleData(
+            magsgn: result.magsgn, mel: result.mel, vlc: result.vlc)
 
         // zeroBitPlanes is encoded into the packet-header tag tree as
         // missing_msbs. OpenJPH requires `missing_msbs < K_max`.
@@ -5410,11 +5458,11 @@ struct EncoderPipeline: Sendable {
             subband: pending.subband,
             componentIndex: pending.componentIndex,
             resolutionLevel: pending.resolutionLevel,
-            data: Data(blockBytes),
+            data: blockData,
             passeCount: 1,
             zeroBitPlanes: missingMSBs,
-            passSegmentLengths: [blockBytes.count],
-            cumulativePassBytes: [blockBytes.count],
+            passSegmentLengths: [blockData.count],
+            cumulativePassBytes: [blockData.count],
             coefficientSquaredSum: pending.coefficientSquaredSum,
             bitPlanePopulation: pending.bitPlanePopulation,
             cumulativePassDistortion: [pending.coefficientSquaredSum])

@@ -50,17 +50,99 @@ public struct HTMagSgnEncoderConformant {
     }
 
     /// Emit the low-order `count` bits of `codeword`, LSB-first.
+    /// v9.2 Path B Phase 1 — `@inline(__always)` so the optimizer inlines
+    /// this at the encodeLoopGeneric call site (~1.5M calls per DX encode;
+    /// the raw-pointer mirror in `HTMagSgnEncoderRawConformant.encode` has
+    /// been annotated since Phase 2c).
+    @inline(__always)
     public mutating func encode(codeword: UInt32, count: Int) {
         J2KHTEntropyEncoderProfile.bumpMagsgnEncode(count)
+        // v9.2 Path B Phase 2 — fast path for the common case where the
+        // whole codeword fits in the remaining bits of the current byte
+        // (no flush needed). Roughly half of MagSgn calls on a typical
+        // DX encode have `count ≤ maxBits - usedBits`. The fast path
+        // skips the while-loop + `min` + flush-check entirely. Bit-exact
+        // equivalent of the loop's first iteration when no flush would
+        // happen.
+        let avail = maxBits - usedBits
+        if count > 0 && count < avail {
+            let mask: UInt32 = (UInt32(1) << count) - 1
+            tmp |= (codeword & mask) << usedBits
+            usedBits += count
+            return
+        }
         var cwd = codeword
+        encodeInternal(cwd: &cwd, len: count)
+    }
+
+    /// v9.3 Path B Phase 3 — wide-codeword MagSgn emit. Packs up to 64
+    /// bits in one call, bit-exact equivalent of an equivalent number of
+    /// sequential 1-bit-to-32-bit `encode(codeword:count:)` calls whose
+    /// low-bit-first concatenation equals `codeword`'s low `count` bits.
+    ///
+    /// Use case: the per-quad `emitQuadMagSgn` packs up to 4 sample
+    /// payloads into one combined codeword to reduce the 1.5M
+    /// emit-call count on a DX encode by ~4× (one batched call per
+    /// significant quad instead of one call per significant sample).
+    /// Per-call fixed-overhead (function preamble, counter bump, fast-path
+    /// check) amortizes across the 4 sub-emissions, ~50-70% reduction
+    /// in MagSgn call overhead.
+    ///
+    /// `count` must be in `[0, 64]`. Bit-exact equivalent (per byte) of
+    /// `encode(codeword: UInt32(codeword & 0xFFFFFFFF), count: min(count, 32))`
+    /// followed by `encode(codeword: UInt32(codeword >> 32), count: max(0, count-32))`
+    /// when count > 32. Verified by HTMagSgnEncode64ParityTests sweep.
+    @inline(__always)
+    public mutating func encode64(codeword: UInt64, count: Int) {
+        J2KHTEntropyEncoderProfile.bumpMagsgnEncode(count)
+        if count == 0 { return }
+        let avail = maxBits - usedBits
+        if count < avail {
+            // Whole codeword fits in current byte. No flush, no loop.
+            let mask: UInt64 = (UInt64(1) << count) - 1
+            tmp |= UInt32(codeword & mask) << usedBits
+            usedBits += count
+            return
+        }
+        var cwd64 = codeword
         var len = count
-        while len > 0 {
-            let take = min(maxBits - usedBits, len)
+        // Process 8 bits at a time (one byte) until len <= 32, then
+        // fall through to the 32-bit-codeword loop body for the tail.
+        // Each byte goes through the byte-stuffing path identically to
+        // sequential single-byte writes.
+        while len > 32 {
+            let take = maxBits - usedBits  // 1-8 bits available in current byte
+            let mask: UInt64 = (UInt64(1) << take) - 1
+            tmp |= UInt32(cwd64 & mask) << usedBits
+            usedBits += take
+            cwd64 >>= take
+            len -= take
+            if usedBits >= maxBits {
+                let byte = UInt8(tmp & 0xFF)
+                bytes.append(byte)
+                maxBits = (byte == 0xFF) ? 7 : 8
+                tmp = 0
+                usedBits = 0
+            }
+        }
+        // Tail: len ≤ 32, can fit in a UInt32 codeword.
+        var cwd = UInt32(cwd64 & 0xFFFFFFFF)
+        encodeInternal(cwd: &cwd, len: len)
+    }
+
+    /// v9.3 — shared body for the encode and encode64 paths once the
+    /// codeword has been narrowed to UInt32 and the fast-path miss has
+    /// been determined. Pre-Phase-3, this was inlined inside `encode`.
+    @inline(__always)
+    private mutating func encodeInternal(cwd: inout UInt32, len: Int) {
+        var lenLocal = len
+        while lenLocal > 0 {
+            let take = min(maxBits - usedBits, lenLocal)
             let mask: UInt32 = (take >= 32) ? ~UInt32(0) : ((UInt32(1) << take) - 1)
             tmp |= (cwd & mask) << usedBits
             usedBits += take
             cwd >>= take
-            len -= take
+            lenLocal -= take
             if usedBits >= maxBits {
                 let byte = UInt8(tmp & 0xFF)
                 bytes.append(byte)

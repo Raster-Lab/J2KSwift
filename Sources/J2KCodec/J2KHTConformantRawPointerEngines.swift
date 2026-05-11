@@ -43,6 +43,10 @@ import Foundation
 public protocol HTMagSgnEmitting {
     mutating func reset()
     mutating func encode(codeword: UInt32, count: Int)
+    /// v9.3 Path B Phase 3 — batched 64-bit emit for the per-quad
+    /// `emitQuadMagSgn` packed-codeword path. Both Array and Raw
+    /// variants implement bit-exact equivalents.
+    mutating func encode64(codeword: UInt64, count: Int)
 }
 
 /// The MEL encoder operations used inside HTBlockEncoderConformant's
@@ -94,15 +98,64 @@ public struct HTMagSgnEncoderRawConformant: HTMagSgnEmitting {
     @inline(__always)
     public mutating func encode(codeword: UInt32, count: Int) {
         J2KHTEntropyEncoderProfile.bumpMagsgnEncode(count)
+        // v9.2 Phase 2a fast path (mirrors Array variant).
+        let avail = maxBits - usedBits
+        if count > 0 && count < avail {
+            let mask: UInt32 = (UInt32(1) << count) - 1
+            tmp |= (codeword & mask) << usedBits
+            usedBits += count
+            return
+        }
         var cwd = codeword
+        encodeInternal(cwd: &cwd, len: count)
+    }
+
+    /// v9.3 Path B Phase 3 — wide-codeword MagSgn emit; mirrors
+    /// `HTMagSgnEncoderConformant.encode64` for the raw-pointer path.
+    /// Bit-exact equivalent.
+    @inline(__always)
+    public mutating func encode64(codeword: UInt64, count: Int) {
+        J2KHTEntropyEncoderProfile.bumpMagsgnEncode(count)
+        if count == 0 { return }
+        let avail = maxBits - usedBits
+        if count < avail {
+            let mask: UInt64 = (UInt64(1) << count) - 1
+            tmp |= UInt32(codeword & mask) << usedBits
+            usedBits += count
+            return
+        }
+        var cwd64 = codeword
         var len = count
-        while len > 0 {
-            let take = min(maxBits - usedBits, len)
+        while len > 32 {
+            let take = maxBits - usedBits
+            let mask: UInt64 = (UInt64(1) << take) - 1
+            tmp |= UInt32(cwd64 & mask) << usedBits
+            usedBits += take
+            cwd64 >>= take
+            len -= take
+            if usedBits >= maxBits {
+                let byte = UInt8(tmp & 0xFF)
+                buf[idx] = byte
+                idx &+= 1
+                maxBits = (byte == 0xFF) ? 7 : 8
+                tmp = 0
+                usedBits = 0
+            }
+        }
+        var cwd = UInt32(cwd64 & 0xFFFFFFFF)
+        encodeInternal(cwd: &cwd, len: len)
+    }
+
+    @inline(__always)
+    private mutating func encodeInternal(cwd: inout UInt32, len: Int) {
+        var lenLocal = len
+        while lenLocal > 0 {
+            let take = min(maxBits - usedBits, lenLocal)
             let mask: UInt32 = (take >= 32) ? ~UInt32(0) : ((UInt32(1) << take) - 1)
             tmp |= (cwd & mask) << usedBits
             usedBits += take
             cwd >>= take
-            len -= take
+            lenLocal -= take
             if usedBits >= maxBits {
                 let byte = UInt8(tmp & 0xFF)
                 buf[idx] = byte

@@ -105,6 +105,11 @@ final class V91Phase1BBlockEncodeMicrobench: XCTestCase {
             var magsgn = HTMagSgnEncoderConformant()
             var mel = HTMELEncoderConformant()
             var vlc = HTReverseBitEmitterConformant()
+            // v9.2 Path B Phase 0: counters are opt-in; enable for the
+            // microbench so it can still report ns/quad. The harness
+            // still measures wall against the (warmer) production
+            // counter-disabled state in setUp/tearDown.
+            J2KHTEntropyEncoderProfile.setEnabled(true)
             J2KHTEntropyEncoderProfile.reset()
 
             let t0 = DispatchTime.now()
@@ -185,6 +190,11 @@ final class V91Phase1BBlockEncodeMicrobench: XCTestCase {
             var magsgn = HTMagSgnEncoderConformant()
             var mel = HTMELEncoderConformant()
             var vlc = HTReverseBitEmitterConformant()
+            // v9.2 Path B Phase 0: counters are opt-in; enable for the
+            // microbench so it can still report ns/quad. The harness
+            // still measures wall against the (warmer) production
+            // counter-disabled state in setUp/tearDown.
+            J2KHTEntropyEncoderProfile.setEnabled(true)
             J2KHTEntropyEncoderProfile.reset()
 
             let t0 = DispatchTime.now()

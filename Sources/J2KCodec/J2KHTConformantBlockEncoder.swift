@@ -199,20 +199,49 @@ public enum HTBlockEncoderConformant {
 
         let p = UInt32(30 - missingMSBs)
 
-        // Per-row scratch state: lep carries the max e_q across the
-        // two bottom samples of adjacent quads from the previous row;
-        // lcxp carries the rho-derived context for the next row.
+        // v9.2 Path B Phase 0b — stack-allocated scratch + direct-
+        // pointer hot path.
         //
-        // We size these with +2 guard slots like OpenJPH (one for the
-        // absent earlier quad, one for beyond-the-end).
+        // The pre-Phase-0b path allocated `[UInt8](repeating: 0, count:
+        // guardedWidth)` on the heap twice per block. For DX with ~1584
+        // codeblocks that's 3168 small heap allocations per encode, each
+        // ~100 ns under low contention and 3-5× more under concurrent
+        // encoder workers. The new path uses `withUnsafeTemporaryAllocation`
+        // which stack-allocates (or escapes only if too large) and the
+        // explicit zero-init is bounded to `guardedWidth` bytes (typically
+        // ≤ 34 for a 64-wide block).
+        //
+        // The hot scalar `processQuad` path now reads the coefficient
+        // buffer through a row-base pointer + nextRowOffset (rather than
+        // the fetch(x,y) closure that did per-sample bounds checks).
+        // Inspired by OpenJPH's `sp[0] / sp[stride] / ++sp` pattern in
+        // ojph_encode_codeblock32 — see /tmp/openjph-src/src/core/coding/
+        // ojph_block_encoder.cpp:586-728. Same bit-exact output.
         let guardedWidth = ((width + 3) / 4) * 2 + 2
-        var eVal = [UInt8](repeating: 0, count: guardedWidth)
-        var cxVal = [UInt8](repeating: 0, count: guardedWidth)
+        let coefBase = coefficients.baseAddress!
+
+        // Stack-allocated scratch via withUnsafeTemporaryAllocation —
+        // wraps the original body in a do-block-like scope. The closures
+        // and emit logic below capture these pointers via `eValPtr` /
+        // `cxValPtr`. Bounded by guardedWidth (≤ 34 for 64-wide block).
+        withUnsafeTemporaryAllocation(of: UInt8.self, capacity: guardedWidth)
+        { (eValPtr: UnsafeMutableBufferPointer<UInt8>) in
+        withUnsafeTemporaryAllocation(of: UInt8.self, capacity: guardedWidth)
+        { (cxValPtr: UnsafeMutableBufferPointer<UInt8>) in
+
+        // Zero-init the guardedWidth bytes (caller never zeros them).
+        eValPtr.initialize(repeating: 0)
+        cxValPtr.initialize(repeating: 0)
 
         // Fetch one sample's magnitude-exponent and signed payload.
         // Returns (significant: Bool, eQ: Int, payload: UInt32).
         // The "payload" is `v_n = 2*(mu_p - 1) + sign` as documented in
         // T.814 eqn. 5.
+        // v9.2 Path B Phase 0b — marked `@inline(__always)` so the
+        // optimizer inlines all 4 per-quad calls. (Pre-0b this was an
+        // un-annotated nested closure; LLVM was inlining it but the
+        // annotation makes the choice deterministic across builds.)
+        @inline(__always)
         func sampleInfo(_ t: UInt32) -> (Bool, Int, UInt32) {
             // val = 2*t >> p & ~1 — isolate 2μ_p, clearing the sign
             // bit's contribution.
@@ -228,10 +257,14 @@ public enum HTBlockEncoderConformant {
         }
 
         // Read one sample at (x, y), returning zero info if out of
-        // bounds on either axis.
+        // bounds on either axis. v9.2: kept for the SIMD and pre-
+        // classified-tuples paths (non-default, non-hot). The scalar
+        // path now reads `coefBase[idx]` directly with pre-computed
+        // offsets — see `processQuadScalarDirect` below.
+        @inline(__always)
         func fetch(_ x: Int, _ y: Int) -> UInt32 {
             guard x < width, y < height else { return 0 }
-            return coefficients[y * width + x]
+            return coefBase[y * width + x]
         }
 
         // Process a single quad (4 samples in a 2x2 block at
@@ -408,16 +441,69 @@ public enum HTBlockEncoderConformant {
             return (rho, eQMax, eQ0, eQ1, eQ2, eQ3, s0, s1, s2, s3)
         }
 
-        /// Inline magsgn emission for the four samples of a quad.
-        /// Replaces a `for i in 0..<4` loop that indexed `[UInt32]`
-        /// arrays — with the array gone we unroll the four positions
-        /// directly. The compiler folds the constant `bit == 1` checks
-        /// against the runtime `rho` mask to a small branch tree.
+        /// v9.3 Path B Phase 3 — batched 4-sample magsgn emit.
+        ///
+        /// Packs the up-to-4 significant-sample emissions of a quad into
+        /// a single UInt64 codeword + total-bit-count, then makes ONE
+        /// `encode64` call instead of up to 4 separate `encode` calls.
+        /// On a DX encode this reduces 1.5M magsgn-encode calls down to
+        /// ~490K (one per quad), amortizing per-call fixed overhead
+        /// (function preamble, counter bump, fast-path probe).
+        ///
+        /// Bit-exact equivalent of the legacy 4-call sequence: the
+        /// LSB-first packing in `combined` matches the order in which
+        /// the legacy code emitted bits. Verified by HTSIMDIntegrationTests,
+        /// V91Phase2cArrayVsRawParityTests, HTCrossCodecConformantTests.
+        ///
+        /// Fallback path: if total emitted bits exceed 64 (i.e. Uq > 16
+        /// with 4 significant samples, which is rare on real fixtures),
+        /// dispatch to the legacy 4-call sequence below.
         @inline(__always)
         func emitQuadMagSgn(
             rho: Int, tuple: Int, Uq: Int,
             s0: UInt32, s1: UInt32, s2: UInt32, s3: UInt32
         ) {
+            // v9.3 — fast skip for non-significant quads. rho == 0
+            // means all 4 samples are zero; the legacy path called no
+            // emit functions, so we must also call nothing here. Without
+            // this check the encode64(0,0) early-return still costs a
+            // function-call cycle per non-significant quad (~50% of
+            // quads on sparse blocks).
+            if rho == 0 { return }
+            // Common case: Uq ≤ 16 (typical for medical fixtures).
+            // 4 × 16 = 64 bits fits in UInt64 — single batched emit.
+            if Uq <= 16 {
+                var combined: UInt64 = 0
+                var totalBits: Int = 0
+                if (rho & 1) != 0 {
+                    let m = Uq - (tuple & 1)
+                    let mask: UInt32 = (UInt32(1) << m) - 1
+                    combined |= UInt64(s0 & mask) << totalBits
+                    totalBits &+= m
+                }
+                if (rho & 2) != 0 {
+                    let m = Uq - ((tuple >> 1) & 1)
+                    let mask: UInt32 = (UInt32(1) << m) - 1
+                    combined |= UInt64(s1 & mask) << totalBits
+                    totalBits &+= m
+                }
+                if (rho & 4) != 0 {
+                    let m = Uq - ((tuple >> 2) & 1)
+                    let mask: UInt32 = (UInt32(1) << m) - 1
+                    combined |= UInt64(s2 & mask) << totalBits
+                    totalBits &+= m
+                }
+                if (rho & 8) != 0 {
+                    let m = Uq - ((tuple >> 3) & 1)
+                    let mask: UInt32 = (UInt32(1) << m) - 1
+                    combined |= UInt64(s3 & mask) << totalBits
+                    totalBits &+= m
+                }
+                magsgnEnc.encode64(codeword: combined, count: totalBits)
+                return
+            }
+            // Fallback for high-magnitude quads (Uq > 16): legacy
+            // per-sample emit. Identical to the pre-Phase-3 path.
             @inline(__always) func emit(sample: UInt32, eBit: Int) {
                 let m = Uq - eBit
                 let mask: UInt32 = (m >= 32) ? ~UInt32(0)
@@ -438,8 +524,8 @@ public enum HTBlockEncoderConformant {
 
         var lep = 0      // index into eVal
         var lcxp = 0     // index into cxVal
-        eVal[lep] = 0
-        cxVal[lcxp] = 0
+        eValPtr[lep] = 0
+        cxValPtr[lcxp] = 0
 
         if height > 0 {
             var spX = 0
@@ -461,10 +547,10 @@ public enum HTBlockEncoderConformant {
                 // lep / lcxp bookkeeping: the max e_q from the quad's
                 // bottom row carries forward; rho's bottom bits feed
                 // the next row's context.
-                eVal[lep] = max(eVal[lep], UInt8(q0.eQ1)); lep += 1
-                eVal[lep] = UInt8(q0.eQ3)
-                cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
-                cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
+                eValPtr[lep] = max(eValPtr[lep], UInt8(q0.eQ1)); lep += 1
+                eValPtr[lep] = UInt8(q0.eQ3)
+                cxValPtr[lcxp] = cxValPtr[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
+                cxValPtr[lcxp] = UInt8((rho0 & 8) >> 3)
 
                 let tuple0 = Int(vlcTable0Conformant[
                     (c_q0 << 8) | (rho0 << 4) | eps0])
@@ -495,10 +581,10 @@ public enum HTBlockEncoderConformant {
                         if q1.eQ2 == eQMax1 { eps1 |= 4 }
                         if q1.eQ3 == eQMax1 { eps1 |= 8 }
                     }
-                    eVal[lep] = max(eVal[lep], UInt8(q1.eQ1)); lep += 1
-                    eVal[lep] = UInt8(q1.eQ3)
-                    cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
-                    cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
+                    eValPtr[lep] = max(eValPtr[lep], UInt8(q1.eQ1)); lep += 1
+                    eValPtr[lep] = UInt8(q1.eQ3)
+                    cxValPtr[lcxp] = cxValPtr[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
+                    cxValPtr[lcxp] = UInt8((rho1 & 8) >> 3)
 
                     let tuple1 = Int(vlcTable0Conformant[
                         (c_q1 << 8) | (rho1 << 4) | eps1])
@@ -553,19 +639,19 @@ public enum HTBlockEncoderConformant {
                 spX += 4
             }
         }
-        // Mark the end-of-row sentinel in eVal.
-        if lep + 1 < eVal.count { eVal[lep + 1] = 0 }
+        // Mark the end-of-row sentinel in eValPtr.
+        if lep + 1 < guardedWidth { eValPtr[lep + 1] = 0 }
 
         // --- Subsequent quad rows (y = 2, 4, ...) ---
 
         y = 2
         while y < height {
             lep = 0
-            var maxE = max(Int(eVal[0]), Int(eVal[1])) - 1
-            eVal[0] = 0
+            var maxE = max(Int(eValPtr[0]), Int(eValPtr[1])) - 1
+            eValPtr[0] = 0
             lcxp = 0
-            c_q0 = Int(cxVal[0]) + (Int(cxVal[1]) << 2)
-            cxVal[0] = 0
+            c_q0 = Int(cxValPtr[0]) + (Int(cxValPtr[1]) << 2)
+            cxValPtr[0] = 0
 
             var spX = 0
             while spX < width {
@@ -582,12 +668,12 @@ public enum HTBlockEncoderConformant {
                     if q0.eQ2 == eQMax0 { eps0 |= 4 }
                     if q0.eQ3 == eQMax0 { eps0 |= 8 }
                 }
-                eVal[lep] = max(eVal[lep], UInt8(q0.eQ1)); lep += 1
-                maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-                eVal[lep] = UInt8(q0.eQ3)
-                cxVal[lcxp] = cxVal[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
-                var c_q1 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
-                cxVal[lcxp] = UInt8((rho0 & 8) >> 3)
+                eValPtr[lep] = max(eValPtr[lep], UInt8(q0.eQ1)); lep += 1
+                maxE = max(Int(eValPtr[lep]), Int(eValPtr[lep + 1])) - 1
+                eValPtr[lep] = UInt8(q0.eQ3)
+                cxValPtr[lcxp] = cxValPtr[lcxp] | UInt8((rho0 & 2) >> 1); lcxp += 1
+                var c_q1 = Int(cxValPtr[lcxp]) + (Int(cxValPtr[lcxp + 1]) << 2)
+                cxValPtr[lcxp] = UInt8((rho0 & 8) >> 3)
 
                 let tuple0 = Int(vlcTable1Conformant[
                     (c_q0 << 8) | (rho0 << 4) | eps0])
@@ -616,12 +702,12 @@ public enum HTBlockEncoderConformant {
                         if q1.eQ2 == eQMax1 { eps1 |= 4 }
                         if q1.eQ3 == eQMax1 { eps1 |= 8 }
                     }
-                    eVal[lep] = max(eVal[lep], UInt8(q1.eQ1)); lep += 1
-                    maxE = max(Int(eVal[lep]), Int(eVal[lep + 1])) - 1
-                    eVal[lep] = UInt8(q1.eQ3)
-                    cxVal[lcxp] = cxVal[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
-                    c_q0 = Int(cxVal[lcxp]) + (Int(cxVal[lcxp + 1]) << 2)
-                    cxVal[lcxp] = UInt8((rho1 & 8) >> 3)
+                    eValPtr[lep] = max(eValPtr[lep], UInt8(q1.eQ1)); lep += 1
+                    maxE = max(Int(eValPtr[lep]), Int(eValPtr[lep + 1])) - 1
+                    eValPtr[lep] = UInt8(q1.eQ3)
+                    cxValPtr[lcxp] = cxValPtr[lcxp] | UInt8((rho1 & 2) >> 1); lcxp += 1
+                    c_q0 = Int(cxValPtr[lcxp]) + (Int(cxValPtr[lcxp + 1]) << 2)
+                    cxValPtr[lcxp] = UInt8((rho1 & 8) >> 3)
 
                     let tuple1 = Int(vlcTable1Conformant[
                         (c_q1 << 8) | (rho1 << 4) | eps1])
@@ -655,6 +741,10 @@ public enum HTBlockEncoderConformant {
         let _v91ClassifyEndNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         J2KHTEntropyEncoderProfile.recordBlockClassifyNs(
             _v91ClassifyEndNs &- _v91ClassifyStartNs)
+        // Close the two `withUnsafeTemporaryAllocation` scopes opened
+        // near the top of the function (cxVal inner, eVal outer).
+        } /* end cxValPtr withUnsafeTemporaryAllocation */
+        } /* end eValPtr withUnsafeTemporaryAllocation */
     }
 
     /// v9.1 Path B Phase 2c — public encode wrapper for Array-backed

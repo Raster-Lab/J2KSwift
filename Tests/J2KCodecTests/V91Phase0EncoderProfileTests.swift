@@ -110,6 +110,12 @@ final class V91Phase0EncoderProfileTests: XCTestCase {
             // Warmup.
             _ = try await encoder.encode(image)
 
+            // v9.2 Path B Phase 0: profile counters are now opt-in.
+            // Enable for this test (turn off afterwards to keep other
+            // suites at production speed).
+            J2KHTEntropyEncoderProfile.setEnabled(true)
+            defer { J2KHTEntropyEncoderProfile.setEnabled(false) }
+
             // Measured encode.
             J2KHTEntropyEncoderProfile.reset()
             let t0 = Date().timeIntervalSinceReferenceDate

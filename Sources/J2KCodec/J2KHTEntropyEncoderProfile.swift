@@ -47,14 +47,34 @@
 // call only add ~1 ms total. The trade is "exact per-stage time" for
 // "low overhead" — Phase 0 pays the cost of computing ratios offline.
 //
-// This file is designed to be deleted as a unit after Phase 0 ships:
-// `git rm Sources/J2KCodec/J2KHTEntropyEncoderProfile.swift` plus a
-// regex sweep of `J2KHTEntropyEncoderProfile.bump*` and `record*Ns`
-// call sites returns the codebase to its pre-probe shape.
+// v9.2 Path B Phase 0 — counters are now **opt-in**.
+//
+// The Phase 0 instrumentation was always-on during Phase 1A/1B/2 of the
+// research arc, so production builds paid the per-quad counter store
+// cost (~16 M `&+=` per DX encode against shared statics). Under
+// concurrent encode workers, these stores cause cache-line invalidation
+// across all CPU cores — the false sharing was a likely contributor
+// to the 5× per-block inflation observed in V91Phase2ConcurrentContentionProbe.
+//
+// Now: production reads `isEnabled` (a single read-only static load,
+// cached locally per-core, no contention). When `false` (default), all
+// `bump*` and `record*Ns` calls return immediately without touching
+// the counter statics. Tests that want the metrics call
+// `J2KHTEntropyEncoderProfile.setEnabled(true)` at setUp time.
+//
+// This file STILL exists (counters and snapshot API unchanged) so future
+// research phases can re-enable profiling without code surgery — but
+// production hot paths are no longer paying for diagnostic-only counters.
 
 import Foundation
 
 public enum J2KHTEntropyEncoderProfile {
+    /// v9.2 Path B Phase 0 — opt-in flag. Default `false`.
+    /// When `false`, all `bump*` and `record*Ns` calls are early-exit
+    /// no-ops. Tests that consume the counters must call
+    /// `setEnabled(true)` before exercising the encoder.
+    nonisolated(unsafe) private static var _isEnabled: Bool = false
+
     nonisolated(unsafe) private static var _processQuadCallCount: UInt64 = 0
     nonisolated(unsafe) private static var _vlcEncodeCallCount: UInt64 = 0
     nonisolated(unsafe) private static var _vlcUVLCEncodeCallCount: UInt64 = 0
@@ -66,6 +86,12 @@ public enum J2KHTEntropyEncoderProfile {
     nonisolated(unsafe) private static var _blockClassifyNs: UInt64 = 0
     nonisolated(unsafe) private static var _blockFinishNs: UInt64 = 0
     nonisolated(unsafe) private static var _blockCount: UInt64 = 0
+
+    public static var isEnabled: Bool { _isEnabled }
+
+    public static func setEnabled(_ enabled: Bool) {
+        _isEnabled = enabled
+    }
 
     public struct Snapshot: Sendable, CustomStringConvertible {
         public let processQuadCallCount: UInt64
@@ -109,23 +135,35 @@ public enum J2KHTEntropyEncoderProfile {
         }
     }
 
-    @inline(__always) public static func bumpProcessQuad() { _processQuadCallCount &+= 1 }
-    @inline(__always) public static func bumpVlcEncode() { _vlcEncodeCallCount &+= 1 }
-    @inline(__always) public static func bumpVlcUVLCEncode() { _vlcUVLCEncodeCallCount &+= 1 }
-    @inline(__always) public static func bumpMelEncode() { _melEncodeCallCount &+= 1 }
+    @inline(__always) public static func bumpProcessQuad() {
+        if _isEnabled { _processQuadCallCount &+= 1 }
+    }
+    @inline(__always) public static func bumpVlcEncode() {
+        if _isEnabled { _vlcEncodeCallCount &+= 1 }
+    }
+    @inline(__always) public static func bumpVlcUVLCEncode() {
+        if _isEnabled { _vlcUVLCEncodeCallCount &+= 1 }
+    }
+    @inline(__always) public static func bumpMelEncode() {
+        if _isEnabled { _melEncodeCallCount &+= 1 }
+    }
     @inline(__always) public static func bumpMagsgnEncode(_ bits: Int) {
-        _magsgnEncodeCallCount &+= 1
-        _magsgnEncodeBitsTotal &+= UInt64(bits)
+        if _isEnabled {
+            _magsgnEncodeCallCount &+= 1
+            _magsgnEncodeBitsTotal &+= UInt64(bits)
+        }
     }
     @inline(__always) public static func recordBlockTotalNs(_ ns: UInt64) {
-        _blockTotalNs &+= ns
-        _blockCount &+= 1
+        if _isEnabled {
+            _blockTotalNs &+= ns
+            _blockCount &+= 1
+        }
     }
     @inline(__always) public static func recordBlockClassifyNs(_ ns: UInt64) {
-        _blockClassifyNs &+= ns
+        if _isEnabled { _blockClassifyNs &+= ns }
     }
     @inline(__always) public static func recordBlockFinishNs(_ ns: UInt64) {
-        _blockFinishNs &+= ns
+        if _isEnabled { _blockFinishNs &+= ns }
     }
 
     public static func snapshot() -> Snapshot {
