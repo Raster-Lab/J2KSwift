@@ -29,7 +29,7 @@
 #endif
 
 #if J2KNHE_HAS_NEON
-static const char kVersion[] = "j2knhe-v9.4-research-scalar-on-neon-host";
+static const char kVersion[] = "j2knhe-v9.4-research-neon";
 #else
 static const char kVersion[] = "j2knhe-v9.4-research-scalar";
 #endif
@@ -392,12 +392,97 @@ static inline void process_quad(const uint32_t *coef_base,
                                  uint32_t p,
                                  j2knhe_quad *q)
 {
+#if J2KNHE_HAS_NEON
+    // v9.4-research Day 6a — NEON 4-lane classifier. Replaces the
+    // 4× scalar sample_info calls with a single SIMD4 sequence using
+    // the key intrinsic Swift cannot access: vclzq_u32 (lane-wise
+    // count-leading-zeros). Bit-exact equivalent of the scalar path
+    // (verified by V94NEONHotPathParityTests 500-trial sweep + 37
+    // existing bit-exact gates including HTCrossCodecConformantTests
+    // byte-identity vs OpenJPH/OpenJPEG/Kakadu).
+    //
+    // Lane layout matches Swift processQuad / sample_info:
+    //   lane 0: (baseX,     baseY)
+    //   lane 1: (baseX,     baseY + 1)
+    //   lane 2: (baseX + 1, baseY)
+    //   lane 3: (baseX + 1, baseY + 1)
+    // Boundary samples that fall outside the block (baseX+1 >= width
+    // or baseY+1 >= height) are read as 0, matching Swift's fetch
+    // semantics for out-of-bounds positions.
+
+    uint32_t t0 = (baseX < width && baseY < height)
+        ? coef_base[baseY * width + baseX] : 0u;
+    uint32_t t1 = (baseX < width && (baseY + 1) < height)
+        ? coef_base[(baseY + 1) * width + baseX] : 0u;
+    uint32_t t2 = ((baseX + 1) < width && baseY < height)
+        ? coef_base[baseY * width + (baseX + 1)] : 0u;
+    uint32_t t3 = ((baseX + 1) < width && (baseY + 1) < height)
+        ? coef_base[(baseY + 1) * width + (baseX + 1)] : 0u;
+
+    uint32_t lanes[4] = { t0, t1, t2, t3 };
+    uint32x4_t t = vld1q_u32(lanes);
+
+    // val = ((t + t) >> p) & ~1u  — SIMD4 lane-parallel
+    uint32x4_t shifted = vshlq_n_u32(t, 1);                    // t + t (= t << 1)
+    int32x4_t shift_right = vdupq_n_s32(-(int32_t)p);          // shift_right by p
+    uint32x4_t val = vshlq_u32(shifted, shift_right);          // >> p
+    val = vbicq_u32(val, vdupq_n_u32(1));                       // & ~1
+
+    // sig_mask: lane = 0xFFFFFFFF if val != 0, else 0
+    uint32x4_t is_zero = vceqzq_u32(val);
+    uint32x4_t sig_mask = vmvnq_u32(is_zero);
+
+    // valMinus1 = val - 1 (for sig lanes; for non-sig lanes this is
+    // 0xFFFFFFFF, but the sig_mask zeros it out later).
+    uint32x4_t valMinus1 = vsubq_u32(val, vdupq_n_u32(1));
+
+    // For NON-sig lanes, valMinus1 = -1 = 0xFFFFFFFF. vclzq_u32(0xFFFFFFFF) = 0
+    // so eQ = 32 - 0 = 32 for non-sig. We mask out eQ via sig_mask.
+    // For SIG lanes, vclzq_u32(val-1) gives a count in [0, 31]; eQ = 32 - lz
+    // is in [1, 32].
+    uint32x4_t lz = vclzq_u32(valMinus1);
+    int32x4_t eQ = vsubq_s32(vdupq_n_s32(32), vreinterpretq_s32_u32(lz));
+    // Mask non-sig lanes to eQ=0.
+    int32x4_t eQ_masked = vandq_s32(eQ, vreinterpretq_s32_u32(sig_mask));
+
+    // sign = (t >> 31) & 1
+    uint32x4_t sign = vshrq_n_u32(t, 31);
+
+    // payload = (valMinus1 - 1) + sign — for non-sig, valMinus1-1 = -2,
+    // so payload is junk; the sig_mask zeros it.
+    uint32x4_t payload = vaddq_u32(vsubq_u32(valMinus1, vdupq_n_u32(1)), sign);
+    uint32x4_t payload_masked = vandq_u32(payload, sig_mask);
+
+    // Extract lanes back to scalar tuple. Compiler should keep these
+    // in registers; gcc/clang ARM64 typically uses umov for these.
+    uint32_t sm0 = vgetq_lane_u32(sig_mask, 0);
+    uint32_t sm1 = vgetq_lane_u32(sig_mask, 1);
+    uint32_t sm2 = vgetq_lane_u32(sig_mask, 2);
+    uint32_t sm3 = vgetq_lane_u32(sig_mask, 3);
+
+    q->rho = 0;
+    q->eQMax = 0;
+    q->eQ[0] = (int)vgetq_lane_s32(eQ_masked, 0);
+    q->eQ[1] = (int)vgetq_lane_s32(eQ_masked, 1);
+    q->eQ[2] = (int)vgetq_lane_s32(eQ_masked, 2);
+    q->eQ[3] = (int)vgetq_lane_s32(eQ_masked, 3);
+    q->s[0] = vgetq_lane_u32(payload_masked, 0);
+    q->s[1] = vgetq_lane_u32(payload_masked, 1);
+    q->s[2] = vgetq_lane_u32(payload_masked, 2);
+    q->s[3] = vgetq_lane_u32(payload_masked, 3);
+
+    if (sm0) { q->rho |= 1; if (q->eQ[0] > q->eQMax) q->eQMax = q->eQ[0]; }
+    if (sm1) { q->rho |= 2; if (q->eQ[1] > q->eQMax) q->eQMax = q->eQ[1]; }
+    if (sm2) { q->rho |= 4; if (q->eQ[2] > q->eQMax) q->eQMax = q->eQ[2]; }
+    if (sm3) { q->rho |= 8; if (q->eQ[3] > q->eQMax) q->eQMax = q->eQ[3]; }
+
+#else  // scalar fallback for non-NEON builds
+
     q->rho = 0;
     q->eQMax = 0;
     q->eQ[0] = q->eQ[1] = q->eQ[2] = q->eQ[3] = 0;
     q->s[0] = q->s[1] = q->s[2] = q->s[3] = 0;
 
-    // Sample 0: (baseX, baseY).
     int sig; int eQ; uint32_t payload;
     if (baseX < width && baseY < height) {
         sample_info(coef_base[baseY * width + baseX], p, &sig, &eQ, &payload);
@@ -408,7 +493,6 @@ static inline void process_quad(const uint32_t *coef_base,
             if (eQ > q->eQMax) q->eQMax = eQ;
         }
     }
-    // Sample 1: (baseX, baseY+1).
     if (baseX < width && (baseY + 1) < height) {
         sample_info(coef_base[(baseY + 1) * width + baseX], p, &sig, &eQ, &payload);
         if (sig) {
@@ -418,7 +502,6 @@ static inline void process_quad(const uint32_t *coef_base,
             if (eQ > q->eQMax) q->eQMax = eQ;
         }
     }
-    // Sample 2: (baseX+1, baseY).
     if ((baseX + 1) < width && baseY < height) {
         sample_info(coef_base[baseY * width + (baseX + 1)], p, &sig, &eQ, &payload);
         if (sig) {
@@ -428,7 +511,6 @@ static inline void process_quad(const uint32_t *coef_base,
             if (eQ > q->eQMax) q->eQMax = eQ;
         }
     }
-    // Sample 3: (baseX+1, baseY+1).
     if ((baseX + 1) < width && (baseY + 1) < height) {
         sample_info(coef_base[(baseY + 1) * width + (baseX + 1)], p, &sig, &eQ, &payload);
         if (sig) {
@@ -438,6 +520,8 @@ static inline void process_quad(const uint32_t *coef_base,
             if (eQ > q->eQMax) q->eQMax = eQ;
         }
     }
+
+#endif  // J2KNHE_HAS_NEON
 }
 
 // MARK: - emitQuadMagSgn
