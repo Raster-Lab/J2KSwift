@@ -121,6 +121,220 @@ final class V94NEONHotPathParityTests: XCTestCase {
         }
     }
 
+    // MARK: - Block-level parity (Day 2b — scalar C vs Swift)
+
+    /// Encode `coefficients` (width × height row-major UInt32 sign-mag)
+    /// via BOTH the Swift v9.3 path and the C scalar path. Assert
+    /// byte-exact equality on (magsgn, mel, vlc).
+    private func assertBitExactParity(
+        _ coefficients: [UInt32],
+        width: Int, height: Int, missingMSBs: Int,
+        label: String, file: StaticString = #file, line: UInt = #line
+    ) {
+        // Swift v9.3 path
+        var swMag = HTMagSgnEncoderConformant()
+        var swMel = HTMELEncoderConformant()
+        var swVlc = HTReverseBitEmitterConformant()
+        let swResult = coefficients.withUnsafeBufferPointer { ptr in
+            HTBlockEncoderConformant.encode(
+                coefficients: ptr,
+                width: width, height: height,
+                missingMSBs: missingMSBs,
+                magsgnEnc: &swMag, melEnc: &swMel, vlcEnc: &swVlc,
+                useSIMDClassification: false,
+                preClassifiedTuples: nil)
+        }
+        // C scalar path
+        var cMagBuf = [UInt8](repeating: 0, count: 16384)
+        var cMelBuf = [UInt8](repeating: 0, count: 4096)
+        var cVlcBuf = [UInt8](repeating: 0, count: 4096)
+        var cMagLen: Int = 0
+        var cMelLen: Int = 0
+        var cVlcLen: Int = 0
+        let rc = coefficients.withUnsafeBufferPointer { coefPtr in
+            cMagBuf.withUnsafeMutableBufferPointer { magPtr in
+                cMelBuf.withUnsafeMutableBufferPointer { melPtr in
+                    cVlcBuf.withUnsafeMutableBufferPointer { vlcPtr in
+                        j2knhe_encode_block_ht32(
+                            coefPtr.baseAddress!,
+                            UInt32(width), UInt32(height),
+                            UInt32(missingMSBs),
+                            magPtr.baseAddress!, magPtr.count, &cMagLen,
+                            melPtr.baseAddress!, melPtr.count, &cMelLen,
+                            vlcPtr.baseAddress!, vlcPtr.count, &cVlcLen)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(rc, 0, "\(label): C encoder returned non-zero",
+                       file: file, line: line)
+        XCTAssertEqual(cMagLen, swResult.magsgn.count,
+                       "\(label): magsgn length mismatch (sw=\(swResult.magsgn.count) c=\(cMagLen))",
+                       file: file, line: line)
+        XCTAssertEqual(Array(cMagBuf[0..<cMagLen]), swResult.magsgn,
+                       "\(label): magsgn bytes differ",
+                       file: file, line: line)
+        XCTAssertEqual(cMelLen, swResult.mel.count,
+                       "\(label): mel length mismatch (sw=\(swResult.mel.count) c=\(cMelLen))",
+                       file: file, line: line)
+        XCTAssertEqual(Array(cMelBuf[0..<cMelLen]), swResult.mel,
+                       "\(label): mel bytes differ",
+                       file: file, line: line)
+        XCTAssertEqual(cVlcLen, swResult.vlc.count,
+                       "\(label): vlc length mismatch (sw=\(swResult.vlc.count) c=\(cVlcLen))",
+                       file: file, line: line)
+        XCTAssertEqual(Array(cVlcBuf[0..<cVlcLen]), swResult.vlc,
+                       "\(label): vlc bytes differ",
+                       file: file, line: line)
+    }
+
+    func testAllZeroBlock_64x64() throws {
+        let coefficients = [UInt32](repeating: 0, count: 64 * 64)
+        assertBitExactParity(coefficients, width: 64, height: 64,
+                             missingMSBs: 24, label: "AllZero64x64")
+    }
+
+    func testSingleSignificantSample_64x64() throws {
+        var block = [UInt32](repeating: 0, count: 64 * 64)
+        block[0] = 0x0000_0040  // magnitude 64, p=6
+        assertBitExactParity(block, width: 64, height: 64,
+                             missingMSBs: 24, label: "SingleSig64x64")
+    }
+
+    func testSingleSignificantSample_MidRow_64x64() throws {
+        var block = [UInt32](repeating: 0, count: 64 * 64)
+        block[32 * 64 + 16] = 0x8000_0080
+        assertBitExactParity(block, width: 64, height: 64,
+                             missingMSBs: 24, label: "MidRowSig64x64")
+    }
+
+    func testSparseSignificance_5pct_64x64() throws {
+        var block = [UInt32](repeating: 0, count: 64 * 64)
+        // 200 significant samples out of 4096 (~5%), stride pattern
+        let stride = (64 * 64) / 200
+        for i in 0..<200 {
+            let idx = i * stride
+            if idx < block.count {
+                block[idx] = (i & 1 == 0) ? 0x0000_0080 : 0x8000_0080
+            }
+        }
+        assertBitExactParity(block, width: 64, height: 64,
+                             missingMSBs: 24, label: "Sparse5pct64x64")
+    }
+
+    func testDenseSignificance_30pct_64x64() throws {
+        var block = [UInt32](repeating: 0, count: 64 * 64)
+        // ~30% significant, varied magnitudes. Use `truncatingIfNeeded`
+        // for the UInt64 → UInt32 cast since random `z` can exceed
+        // UInt32.max and the default initializer traps on overflow.
+        var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+        for i in 0..<block.count {
+            seed &+= 0x9E37_79B9_7F4A_7C15
+            var z = seed
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            z ^= (z >> 31)
+            if (z & 0xFF) < 76 {
+                let mag = UInt32(truncatingIfNeeded: z >> 8) & 0x003F
+                let sign: UInt32 = (z & 0x8000) != 0 ? 0x8000_0000 : 0
+                block[i] = sign | mag
+            }
+        }
+        assertBitExactParity(block, width: 64, height: 64,
+                             missingMSBs: 24, label: "Dense30pct64x64")
+    }
+
+    func testNonPow2_3x5() throws {
+        let block: [UInt32] = [
+            0x0000_0010, 0, 0x8000_0008,
+            0,           0x0000_0004, 0,
+            0x8000_0020, 0, 0,
+            0x0000_0001, 0x8000_0002, 0,
+            0,           0, 0x0000_0040,
+        ]
+        assertBitExactParity(block, width: 3, height: 5,
+                             missingMSBs: 24, label: "NonPow2 3x5")
+    }
+
+    func testNonPow2_47x39() throws {
+        var block = [UInt32](repeating: 0, count: 47 * 39)
+        // Significance pattern shaped to exercise edge-of-row boundary
+        // handling and odd quad-pair tail behaviour.
+        var seed: UInt64 = 0xBEEF_CAFE_FEED_FACE
+        for i in 0..<block.count {
+            seed &+= 0x9E37_79B9_7F4A_7C15
+            var z = seed
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z ^= (z >> 27)
+            if (z & 0xFF) < 38 {
+                block[i] = UInt32(truncatingIfNeeded: z & 0x80FF)
+            }
+        }
+        assertBitExactParity(block, width: 47, height: 39,
+                             missingMSBs: 24, label: "NonPow2 47x39")
+    }
+
+    func testMissingMSBsSweep_64x64() throws {
+        // p = 30 - missing_msbs. We sweep missing_msbs across
+        // {24, 20, 15, 10, 5, 1} corresponding to p ∈ {6, 10, 15, 20, 25, 29}.
+        for missing in [24, 20, 15, 10, 5, 1] {
+            var block = [UInt32](repeating: 0, count: 64 * 64)
+            let p = 30 - missing
+            // Generate samples with magnitudes that just exceed the
+            // significance threshold for this p.
+            var seed: UInt64 = UInt64(0xDEADBEEF) &+ UInt64(missing) &* 1000
+            for i in 0..<block.count {
+                seed &+= 0x9E37_79B9_7F4A_7C15
+                var z = seed
+                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                z ^= (z >> 31)
+                if (z & 0xFF) < 76 {
+                    // magnitude bits go in [0, 30-p) range
+                    let magWidth = 30 - p + 4
+                    let mag = UInt32(truncatingIfNeeded: z >> 8) & ((UInt32(1) << magWidth) - 1)
+                    let sign: UInt32 = (z & 0x8000) != 0 ? 0x8000_0000 : 0
+                    block[i] = sign | mag
+                }
+            }
+            assertBitExactParity(block, width: 64, height: 64,
+                                 missingMSBs: missing,
+                                 label: "MissingMSBs=\(missing)")
+        }
+    }
+
+    func testRandomSweep_30trials() throws {
+        // Smaller initial sweep (30 trials) for Day 2b — once this
+        // passes we expand to 500-trial Day 3.
+        var seed: UInt64 = 0xCAFEBABE_DEADBEEF
+        for trial in 0..<30 {
+            seed &+= 0x9E37_79B9_7F4A_7C15
+            let w = 16 + Int((seed >> 8) % 49)   // [16, 64]
+            let h = 16 + Int((seed >> 16) % 49)  // [16, 64]
+            let missing = 5 + Int((seed >> 24) % 24)  // [5, 28]
+            let density = Int((seed >> 32) % 128)  // [0, 127]
+            var block = [UInt32](repeating: 0, count: w * h)
+            var s = seed
+            for i in 0..<block.count {
+                s &+= 0x9E37_79B9_7F4A_7C15
+                var z = s
+                z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+                z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+                z ^= (z >> 31)
+                if (z & 0xFF) < UInt64(density) {
+                    let magWidth = 30 - (30 - missing) + 4
+                    let cap = (magWidth >= 31) ? UInt32(0x7FFF_FFFF)
+                                               : ((UInt32(1) << magWidth) - 1)
+                    let mag = UInt32(truncatingIfNeeded: z >> 8) & cap
+                    let sign: UInt32 = (z & 0x8000) != 0 ? 0x8000_0000 : 0
+                    block[i] = sign | mag
+                }
+            }
+            assertBitExactParity(block, width: w, height: h,
+                                 missingMSBs: missing,
+                                 label: "Random trial \(trial) [\(w)x\(h) m=\(missing) d=\(density)]")
+        }
+    }
+
     // MARK: - C dump helpers (Day 2a only; deleted once tables stable)
 
     private func dumpUInt16Array(name: String, values: [UInt16]) -> String {
