@@ -4120,6 +4120,21 @@ struct EncoderPipeline: Sendable {
                         // the inner resize check skips re-allocation
                         // for full-size blocks (the common case).
                         var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
+                        // v9.1 Phase 2d: per-worker raw-pointer engine
+                        // buffers. Allocated once per worker scope.
+                        let _useRawEngines = Self._rawPointerEnginesEnabled
+                        let _rawCap = Self._rawEngineBufferCapacity
+                        let _rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        let _rawMelBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                            ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                        defer {
+                            _rawMagsgnBuf?.deallocate()
+                            _rawMelBuf?.deallocate()
+                            _rawVlcBuf?.deallocate()
+                        }
 
                         for i in range {
                             let d = capturedDeferred[i]
@@ -4229,7 +4244,10 @@ struct EncoderPipeline: Sendable {
                                 conformantMel: &cMel,
                                 conformantVlc: &cVlc,
                                 conformantInBuf: &cInBuf,
-                                useSIMDClassification: Self._htSIMDClassificationEnabled
+                                useSIMDClassification: Self._htSIMDClassificationEnabled,
+                                rawMagsgnBuf: _rawMagsgnBuf,
+                                rawMelBuf: _rawMelBuf,
+                                rawVlcBuf: _rawVlcBuf
                             )
                             localResults.append((d.index, codeBlock))
                         }
@@ -4266,6 +4284,24 @@ struct EncoderPipeline: Sendable {
             var cVlc = HTReverseBitEmitterConformant()
             // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
             var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
+            // v9.1 Phase 2d: pre-allocate raw-pointer engine buffers
+            // ONCE per worker scope; reused across all blocks processed
+            // by this worker. Eliminates per-block buffer alloc when
+            // `_rawPointerEnginesEnabled` is set. The buffers are owned
+            // by this scope and freed via `defer { ... deallocate() }`.
+            let _useRawEngines = Self._rawPointerEnginesEnabled
+            let _rawCap = Self._rawEngineBufferCapacity
+            let _rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _rawMelBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            defer {
+                _rawMagsgnBuf?.deallocate()
+                _rawMelBuf?.deallocate()
+                _rawVlcBuf?.deallocate()
+            }
 
             let isLossless = config.lossless
             for d in deferred {
@@ -4375,7 +4411,10 @@ struct EncoderPipeline: Sendable {
                     conformantMel: &cMel,
                     conformantVlc: &cVlc,
                     conformantInBuf: &cInBuf,
-                    useSIMDClassification: Self._htSIMDClassificationEnabled
+                    useSIMDClassification: Self._htSIMDClassificationEnabled,
+                    rawMagsgnBuf: _rawMagsgnBuf,
+                    rawMelBuf: _rawMelBuf,
+                    rawVlcBuf: _rawVlcBuf
                 )
                 results.append(codeBlock)
             }
@@ -4417,6 +4456,20 @@ struct EncoderPipeline: Sendable {
             var cVlc = HTReverseBitEmitterConformant()
             // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
             var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
+            // v9.1 Phase 2d: per-worker raw-pointer engine buffers.
+            let _useRawEngines = Self._rawPointerEnginesEnabled
+            let _rawCap = Self._rawEngineBufferCapacity
+            let _rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _rawMelBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+            defer {
+                _rawMagsgnBuf?.deallocate()
+                _rawMelBuf?.deallocate()
+                _rawVlcBuf?.deallocate()
+            }
 
             for pending in pendingBlocks {
                 let codeBlock = try encodeCodeBlockHTJ2KFast(
@@ -4432,7 +4485,10 @@ struct EncoderPipeline: Sendable {
                     conformantMel: &cMel,
                     conformantVlc: &cVlc,
                     conformantInBuf: &cInBuf,
-                    useSIMDClassification: Self._htSIMDClassificationEnabled
+                    useSIMDClassification: Self._htSIMDClassificationEnabled,
+                    rawMagsgnBuf: _rawMagsgnBuf,
+                    rawMelBuf: _rawMelBuf,
+                    rawVlcBuf: _rawVlcBuf
                 )
                 results.append(codeBlock)
             }
@@ -4531,6 +4587,20 @@ struct EncoderPipeline: Sendable {
                 var cVlc = HTReverseBitEmitterConformant()
                 // v5.38 M9: reusable [UInt32] sign-magnitude buffer.
                 var cInBuf = [UInt32](repeating: 0, count: maxBlockSize)
+                // v9.1 Phase 2d: per-worker raw-pointer engine buffers.
+                let _useRawEngines = Self._rawPointerEnginesEnabled
+                let _rawCap = Self._rawEngineBufferCapacity
+                let _rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                let _rawMelBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                let _rawVlcBuf: UnsafeMutablePointer<UInt8>? = _useRawEngines
+                    ? UnsafeMutablePointer<UInt8>.allocate(capacity: _rawCap) : nil
+                defer {
+                    _rawMagsgnBuf?.deallocate()
+                    _rawMelBuf?.deallocate()
+                    _rawVlcBuf?.deallocate()
+                }
 
                 for index in range {
                     let pending = pendingBlocks[index]
@@ -4547,7 +4617,10 @@ struct EncoderPipeline: Sendable {
                         conformantMel: &cMel,
                         conformantVlc: &cVlc,
                         conformantInBuf: &cInBuf,
-                        useSIMDClassification: Self._htSIMDClassificationEnabled
+                        useSIMDClassification: Self._htSIMDClassificationEnabled,
+                        rawMagsgnBuf: _rawMagsgnBuf,
+                        rawMelBuf: _rawMelBuf,
+                        rawVlcBuf: _rawVlcBuf
                     )
                     orderedResults.write(codeBlock, at: pending.index)
                 }
@@ -5118,13 +5191,30 @@ struct EncoderPipeline: Sendable {
     /// Each encoder is `reset()` inside `HTBlockEncoderConformant.encode`
     /// before use, so prior block contents cannot leak into this
     /// output. **Bit-exact equivalent** of the no-arg overload.
+    /// Capacity of the per-worker raw-pointer engine output buffers.
+    /// HT block output is bounded by the spec; 16 KB per stream is safe
+    /// for any 64×64 block at 30-bit precision. Three buffers per
+    /// worker (one each for MagSgn, MEL, VLC) → 48 KB worker pool.
+    @usableFromInline internal static let _rawEngineBufferCapacity = 16 * 1024
+
     private func encodeCodeBlockConformant(
         _ pending: PendingCodeBlock,
         magsgnEnc: inout HTMagSgnEncoderConformant,
         melEnc: inout HTMELEncoderConformant,
         vlcEnc: inout HTReverseBitEmitterConformant,
         conformantInBuf: inout [UInt32],
-        useSIMDClassification: Bool
+        useSIMDClassification: Bool,
+        // v9.1 Phase 2d: optional pre-allocated raw-pointer engine
+        // buffers, owned by the caller's worker scope. When non-nil
+        // AND `_rawPointerEnginesEnabled == true`, the encode routes
+        // through the raw-pointer engine variant using these buffers;
+        // each is fresh-initialised per call via lightweight raw-engine
+        // constructors (no allocation in the hot path). When nil, the
+        // function falls back to per-call buffer allocation (initial
+        // Phase 2c integration) which still works correctly.
+        rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
+        rawMelBuf: UnsafeMutablePointer<UInt8>? = nil,
+        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil
     ) throws -> J2KCodeBlock {
         let count = pending.width * pending.height
         precondition(pending.coefficients.count == count,
@@ -5227,21 +5317,40 @@ struct EncoderPipeline: Sendable {
         let mel: [UInt8]
         let vlc: [UInt8]
         if Self._rawPointerEnginesEnabled {
-            // v9.1 Path B Phase 2c — raw-pointer engine path. Eliminates
-            // per-byte Array.append ARC + capacity-grow contention by
-            // writing bytes directly to caller-owned
-            // UnsafeMutableBufferPointer<UInt8> buffers. The buffers are
-            // allocated per call here (the simplest integration); a
-            // future pass will hoist them to the worker scope for full
-            // amortisation across blocks.
-            let rawCap = 16 * 1024
-            let mBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
-            let lBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
-            let vBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+            // v9.1 Path B Phase 2c/2d — raw-pointer engine path.
+            // Eliminates per-byte Array.append ARC + capacity-grow
+            // contention by writing bytes directly to caller-owned
+            // UnsafeMutableBufferPointer<UInt8> buffers.
+            //
+            // Buffer source priority:
+            //   1. If caller passed pre-allocated buffers (Phase 2d
+            //      per-worker hoisting), use them. No per-call alloc.
+            //   2. Else allocate per-call (Phase 2c initial integration).
+            //
+            // Both paths are bit-exact equivalent — only the buffer
+            // allocator changes.
+            let rawCap = Self._rawEngineBufferCapacity
+            let mBuf: UnsafeMutablePointer<UInt8>
+            let lBuf: UnsafeMutablePointer<UInt8>
+            let vBuf: UnsafeMutablePointer<UInt8>
+            let needsDealloc: Bool
+            if let pm = rawMagsgnBuf, let pl = rawMelBuf, let pv = rawVlcBuf {
+                mBuf = pm
+                lBuf = pl
+                vBuf = pv
+                needsDealloc = false
+            } else {
+                mBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+                lBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+                vBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: rawCap)
+                needsDealloc = true
+            }
             defer {
-                mBuf.deallocate()
-                lBuf.deallocate()
-                vBuf.deallocate()
+                if needsDealloc {
+                    mBuf.deallocate()
+                    lBuf.deallocate()
+                    vBuf.deallocate()
+                }
             }
             var rawM = HTMagSgnEncoderRawConformant(buf: mBuf, capacity: rawCap)
             var rawL = HTMELEncoderRawConformant(buf: lBuf, capacity: rawCap)
@@ -5350,7 +5459,14 @@ struct EncoderPipeline: Sendable {
         // one SIMD4<UInt32> pass; output bytes are identical to the
         // scalar path (verified by HTSIMDIntegrationTests over a
         // 25K random-block sweep).
-        useSIMDClassification: Bool = false
+        useSIMDClassification: Bool = false,
+        // v9.1 Phase 2d: optional pre-allocated raw-pointer engine
+        // buffers, owned by the caller's worker scope. Forwarded to
+        // encodeCodeBlockConformant when `_rawPointerEnginesEnabled`
+        // is set.
+        rawMagsgnBuf: UnsafeMutablePointer<UInt8>? = nil,
+        rawMelBuf: UnsafeMutablePointer<UInt8>? = nil,
+        rawVlcBuf: UnsafeMutablePointer<UInt8>? = nil
     ) throws -> J2KCodeBlock {
         if config.htj2kBlockFormat == .conformant {
             return try encodeCodeBlockConformant(
@@ -5359,7 +5475,10 @@ struct EncoderPipeline: Sendable {
                 melEnc: &conformantMel,
                 vlcEnc: &conformantVlc,
                 conformantInBuf: &conformantInBuf,
-                useSIMDClassification: useSIMDClassification)
+                useSIMDClassification: useSIMDClassification,
+                rawMagsgnBuf: rawMagsgnBuf,
+                rawMelBuf: rawMelBuf,
+                rawVlcBuf: rawVlcBuf)
         }
         let htEncoder = HTBlockEncoder(
             width: pending.width,
