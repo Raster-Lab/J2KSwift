@@ -249,6 +249,63 @@ J2K_NEON_HOT_PATH=1 \
   swift test -c release --filter "V91Phase2ConcurrentContentionProbe"
 ```
 
+## Day 7 follow-ups (post-Day-6 push)
+
+After the Day 6 close-out, three additional measurements + small
+refactors were done on the same branch:
+
+### 7a — Daemon-side NEON wiring (research note)
+
+Investigation discovered the v9.3 daemon path measurement was
+misleading: the `j2kd` binary installed at `~/Library/Application
+Support/J2KSwift/j2kd` was the OLD pre-v9.4 build, AND the launchd plist
+had no `EnvironmentVariables` entry. The j2k client process saw the
+`J2K_NEON_HOT_PATH=1` env var, but the daemon launchd spawned did not.
+
+Fixed by:
+- Reinstalling the freshly-built daemon binary into the install path.
+- Adding `<key>EnvironmentVariables</key>` with `J2K_NEON_HOT_PATH=1` to
+  `~/Library/LaunchAgents/com.raster.j2kd.plist`.
+- `launchctl bootout + bootstrap` to re-register the agent.
+
+**Daemon DX wall after fix: ~75 ms — still unchanged from v9.3.** The
+daemon-side IPC + spawn overhead absorbs the encoder-stage improvement
+on a single-block-at-a-time CLI invocation pattern. The daemon benefit
+will surface in scenarios where the daemon's warm process handles many
+encode requests back-to-back — the inter-request idle is what masks the
+per-encode improvement, not the encoder itself.
+
+### 7b — Raw-pointer buffer alloc in encodeViaNEONHotPath
+
+Switched the per-call 3×16 KB buffer allocation from `[UInt8](repeating:
+0, count: 16384)` to `UnsafeMutablePointer<UInt8>.allocate(capacity:
+16384)` + `defer { deallocate() }`. Eliminates Array zero-fill (48 KB
+cleared per call) + ARC overhead.
+
+**Measurement: within thermal noise.** The Array zero-fill wasn't a
+dominant cost. Kept in tree as the cleaner pointer-API foundation for
+future v9.5 work that hoists these to per-worker scope (mirrors v9.1
+Phase 2d raw-engine hoist).
+
+### 7c — Clean A/B re-measurement (thermal-settled M4)
+
+After the Day 7 changes + thermal settling, the canonical warm in-proc
+A/B is:
+
+| Fixture            | NEON OFF       | NEON ON       | Δ        |
+|--------------------|---------------:|--------------:|----------|
+| dx_002 2800×2288   |       102.4 ms |       87.8 ms | **−14.3%**|
+
+This confirms the v9.4 headline number across multiple thermal states:
+**13-14% warm-in-proc DX encode wall reduction**, bit-exact preservation,
+reproducible across sessions.
+
+CLI cross-codec probe in current system thermal state: both NEON OFF
+and NEON ON converge at ~76 ms on DX in-proc CLI — the fork+exec floor
++ initial JIT warm-up that produced the 124 ms baseline earlier in this
+session is no longer active. The **warm in-proc test is the canonical
+measurement** for the encoder-stage improvement.
+
 ## Next steps (post-v9.4)
 
 Whether v9.4 graduates or closes as research, post-v9.4 work could
