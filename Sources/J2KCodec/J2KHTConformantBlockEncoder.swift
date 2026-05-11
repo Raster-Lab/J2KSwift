@@ -49,6 +49,51 @@ public enum HTBlockEncoderConformant {
         return String(cString: j2knhe_version())
     }
 
+    /// v9.4-research — NEON hot path dispatch for the Array-engine
+    /// encode wrapper. When `useNEONHotPath` is set and the block fits
+    /// the C entry point's supported envelope (width/height ≤ 64,
+    /// missing_msbs < 30, no pre-classified tuples, no SIMD opt-in),
+    /// routes the entire row-quad loop into the
+    /// `j2knhe_encode_block_ht32` C entry point. Bit-exact equivalent of
+    /// the Swift path — verified by V94NEONHotPathParityTests (11 test
+    /// methods including 30-trial random sweep, all PASS).
+    ///
+    /// Caller-supplied capacity: 16 KB for each of magsgn/mel/vlc is
+    /// safe for any 64×64 block at 30-bit precision (per v9.1 Phase 2c
+    /// _rawEngineBufferCapacity). The function allocates the three
+    /// transient buffers internally; future v9.5 work may hoist them to
+    /// the encoder-pipeline per-worker scope (mirrors the Phase 2d
+    /// raw-engine buffer hoist).
+    @inline(__always)
+    internal static func encodeViaNEONHotPath(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int, height: Int, missingMSBs: Int
+    ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
+        let cap = 16384
+        var magBuf = [UInt8](repeating: 0, count: cap)
+        var melBuf = [UInt8](repeating: 0, count: cap)
+        var vlcBuf = [UInt8](repeating: 0, count: cap)
+        var magLen = 0, melLen = 0, vlcLen = 0
+        let coefPtr = coefficients.baseAddress!
+        let rc: Int32 = magBuf.withUnsafeMutableBufferPointer { mb in
+            return melBuf.withUnsafeMutableBufferPointer { lb in
+                return vlcBuf.withUnsafeMutableBufferPointer { vb in
+                    return j2knhe_encode_block_ht32(
+                        coefPtr, UInt32(width), UInt32(height),
+                        UInt32(missingMSBs),
+                        mb.baseAddress, mb.count, &magLen,
+                        lb.baseAddress, lb.count, &melLen,
+                        vb.baseAddress, vb.count, &vlcLen)
+                }
+            }
+        }
+        precondition(rc == 0,
+                     "j2knhe NEON hot path returned non-zero: \(rc)")
+        return (Array(magBuf[0..<magLen]),
+                Array(melBuf[0..<melLen]),
+                Array(vlcBuf[0..<vlcLen]))
+    }
+
     /// Encode a codeblock's cleanup pass.
     ///
     /// - Parameters:
@@ -801,6 +846,29 @@ public enum HTBlockEncoderConformant {
         }
 
         let blockStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+
+        // v9.4-research — NEON hot path dispatch. When the env-var gate
+        // is set and the block fits the C envelope, bypass the entire
+        // Swift encodeLoopGeneric + 3 engine finishes and route through
+        // the j2knhe_encode_block_ht32 C entry point. Bit-exact
+        // equivalent verified by V94NEONHotPathParityTests.
+        if useNEONHotPath
+            && width >= 1 && width <= 64
+            && height >= 1 && height <= 64
+            && missingMSBs < 30
+            && preClassifiedTuples == nil
+            && !useSIMDClassification
+        {
+            let result = encodeViaNEONHotPath(
+                coefficients: coefficients,
+                width: width, height: height,
+                missingMSBs: missingMSBs)
+            let blockEnd = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            J2KHTEntropyEncoderProfile.recordBlockClassifyNs(blockEnd &- blockStart)
+            J2KHTEntropyEncoderProfile.recordBlockTotalNs(blockEnd &- blockStart)
+            return result
+        }
+
         encodeLoopGeneric(
             coefficients: coefficients,
             width: width, height: height, missingMSBs: missingMSBs,
