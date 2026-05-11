@@ -55,43 +55,48 @@ public enum HTBlockEncoderConformant {
     /// missing_msbs < 30, no pre-classified tuples, no SIMD opt-in),
     /// routes the entire row-quad loop into the
     /// `j2knhe_encode_block_ht32` C entry point. Bit-exact equivalent of
-    /// the Swift path — verified by V94NEONHotPathParityTests (11 test
-    /// methods including 30-trial random sweep, all PASS).
+    /// the Swift path — verified by V94NEONHotPathParityTests.
     ///
-    /// Caller-supplied capacity: 16 KB for each of magsgn/mel/vlc is
-    /// safe for any 64×64 block at 30-bit precision (per v9.1 Phase 2c
-    /// _rawEngineBufferCapacity). The function allocates the three
-    /// transient buffers internally; future v9.5 work may hoist them to
-    /// the encoder-pipeline per-worker scope (mirrors the Phase 2d
-    /// raw-engine buffer hoist).
+    /// Day 7b: switched the internal triple-buffer alloc from `[UInt8]`
+    /// (which zero-fills 48 KB per call) to raw `UnsafeMutablePointer`
+    /// (no zero-fill; C entry point writes the bytes that matter). Drops
+    /// the per-block zero-fill cost and the ARC + capacity-check overhead.
+    /// The 16 KB per-stream capacity is sized for any 64×64 block at
+    /// 30-bit precision per the v9.1 Phase 2c _rawEngineBufferCapacity.
+    ///
+    /// Future v9.5 work: hoist these per-call allocations to per-worker
+    /// scope via J2KEncoderPipeline (mirrors the Phase 2d raw-engine
+    /// buffer hoist), eliminating ~9500 allocs per DX encode.
     @inline(__always)
     internal static func encodeViaNEONHotPath(
         coefficients: UnsafeBufferPointer<UInt32>,
         width: Int, height: Int, missingMSBs: Int
     ) -> (magsgn: [UInt8], mel: [UInt8], vlc: [UInt8]) {
         let cap = 16384
-        var magBuf = [UInt8](repeating: 0, count: cap)
-        var melBuf = [UInt8](repeating: 0, count: cap)
-        var vlcBuf = [UInt8](repeating: 0, count: cap)
+        let magBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: cap)
+        let melBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: cap)
+        let vlcBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: cap)
+        defer {
+            magBuf.deallocate()
+            melBuf.deallocate()
+            vlcBuf.deallocate()
+        }
         var magLen = 0, melLen = 0, vlcLen = 0
         let coefPtr = coefficients.baseAddress!
-        let rc: Int32 = magBuf.withUnsafeMutableBufferPointer { mb in
-            return melBuf.withUnsafeMutableBufferPointer { lb in
-                return vlcBuf.withUnsafeMutableBufferPointer { vb in
-                    return j2knhe_encode_block_ht32(
-                        coefPtr, UInt32(width), UInt32(height),
-                        UInt32(missingMSBs),
-                        mb.baseAddress, mb.count, &magLen,
-                        lb.baseAddress, lb.count, &melLen,
-                        vb.baseAddress, vb.count, &vlcLen)
-                }
-            }
-        }
+        let rc = j2knhe_encode_block_ht32(
+            coefPtr, UInt32(width), UInt32(height),
+            UInt32(missingMSBs),
+            magBuf, cap, &magLen,
+            melBuf, cap, &melLen,
+            vlcBuf, cap, &vlcLen)
         precondition(rc == 0,
                      "j2knhe NEON hot path returned non-zero: \(rc)")
-        return (Array(magBuf[0..<magLen]),
-                Array(melBuf[0..<melLen]),
-                Array(vlcBuf[0..<vlcLen]))
+        // Wrap into Array via UnsafeBufferPointer — single copy, no
+        // intermediate Array. Matches the existing return contract.
+        return (
+            Array(UnsafeBufferPointer(start: magBuf, count: magLen)),
+            Array(UnsafeBufferPointer(start: melBuf, count: melLen)),
+            Array(UnsafeBufferPointer(start: vlcBuf, count: vlcLen)))
     }
 
     /// Encode a codeblock's cleanup pass.

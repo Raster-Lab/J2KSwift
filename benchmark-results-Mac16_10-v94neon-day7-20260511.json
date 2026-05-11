@@ -1,0 +1,136 @@
+{
+  "system": {
+    "date": "2026-05-11T14:05:38.730140Z",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "hw_model": "Mac16,10",
+    "cpu_brand": "Apple M4",
+    "mem_gb": 16,
+    "cores_perf": 4,
+    "cores_eff": 6,
+    "j2kswift_version": "J2KSwift version 8.1.4",
+    "vm_compressor_bytes": 3219464128,
+    "page_size": 16384,
+    "pages_free": 18042,
+    "loadavg_1min": 2.1181640625
+  },
+  "codestream_md5s": {
+    "mr_study_002_instance_000100": "f4add755ec268203a46f2e4b990e15ed",
+    "ct_study_001_instance_000001": "6c968561c0d38462cbbd8604389a6994",
+    "mr_study_001_instance_000001": "e29a2366ca1f16de4a0906f1a77de3ce",
+    "xa_study_001_instance_000001": "c7f1252aca8e17f5ef4ad4504f1c7463",
+    "px_study_001_instance_000001": "05c68da54364601cc75e87bcc5c8a71e",
+    "dx_study_002_instance_000001": "447a3a8ddeac34fa768b070ccfe8720f"
+  },
+  "encode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 39.68877100000001,
+      "j2kswift_daemon_auto": 9.839561999999969,
+      "openjph": 4.898583499999997,
+      "grok": 4.578145499999908,
+      "kakadu": 4.53608350000001
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 39.96343799999991,
+      "j2kswift_daemon_auto": 19.980625000000085,
+      "openjph": 9.68099950000001,
+      "grok": 9.814125000000008,
+      "kakadu": 4.765333000000038
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 71.07199949999976,
+      "j2kswift_daemon_auto": 20.020166499999938,
+      "openjph": 10.075186999999763,
+      "grok": 10.079083500000197,
+      "kakadu": 4.936292000000009
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 39.865312500000144,
+      "j2kswift_daemon_auto": 39.68610400000006,
+      "openjph": 20.090832999999808,
+      "grok": 9.810750499999799,
+      "kakadu": 4.550562499999966
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 76.21229149999964,
+      "j2kswift_daemon_auto": 39.98445799999972,
+      "openjph": 75.94889599999988,
+      "grok": 19.923312500000012,
+      "kakadu": 9.889478999999923
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 77.16295799999972,
+      "j2kswift_daemon_auto": 73.35754149999917,
+      "openjph": 128.57275050000004,
+      "grok": 41.30458299999962,
+      "kakadu": 20.572812499999316
+    }
+  ],
+  "decode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 9.598895499999927,
+      "j2kswift_daemon_auto": 9.60529149999978,
+      "openjph": 4.661270499999759,
+      "grok": 4.514291500000489,
+      "kakadu": 4.48502049999977
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 9.82154150000003,
+      "j2kswift_daemon_auto": 9.844333499999358,
+      "openjph": 9.551957999999416,
+      "grok": 9.715625000000117,
+      "kakadu": 4.611103999999422
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 20.00829149999994,
+      "j2kswift_daemon_auto": 19.989520500000246,
+      "openjph": 9.523791500001266,
+      "grok": 9.593957999999958,
+      "kakadu": 9.572812499999195
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 19.987042000000343,
+      "j2kswift_daemon_auto": 20.04843749999985,
+      "openjph": 19.88839599999981,
+      "grok": 9.869854000000622,
+      "kakadu": 9.691521000000591
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 40.84256249999996,
+      "j2kswift_daemon_auto": 55.90560400000122,
+      "openjph": 39.83608299999997,
+      "grok": 19.84824949999986,
+      "kakadu": 19.793457999998765
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 76.67510450000049,
+      "j2kswift_daemon_auto": 75.7387085000012,
+      "openjph": 76.86364549999958,
+      "grok": 19.885729500000338,
+      "kakadu": 39.219249999998596
+    }
+  ]
+}
