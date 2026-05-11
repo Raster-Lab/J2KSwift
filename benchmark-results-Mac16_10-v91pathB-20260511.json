@@ -1,0 +1,124 @@
+{
+  "system": {
+    "date": "2026-05-11T08:35:39.028290Z",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "hw_model": "Mac16,10",
+    "cpu_brand": "Apple M4",
+    "mem_gb": 16,
+    "cores_perf": 4,
+    "cores_eff": 6,
+    "j2kswift_version": "J2KSwift version 8.1.4",
+    "vm_compressor_bytes": 2108804288,
+    "page_size": 16384,
+    "pages_free": 115877,
+    "loadavg_1min": 2.0361328125
+  },
+  "codestream_md5s": {
+    "mr_study_002_instance_000100": "f4add755ec268203a46f2e4b990e15ed",
+    "ct_study_001_instance_000001": "6c968561c0d38462cbbd8604389a6994",
+    "mr_study_001_instance_000001": "e29a2366ca1f16de4a0906f1a77de3ce",
+    "xa_study_001_instance_000001": "c7f1252aca8e17f5ef4ad4504f1c7463",
+    "px_study_001_instance_000001": "05c68da54364601cc75e87bcc5c8a71e",
+    "dx_study_002_instance_000001": "447a3a8ddeac34fa768b070ccfe8720f"
+  },
+  "encode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 39.50497900000005,
+      "j2kswift_daemon_auto": 39.782437499999986,
+      "openjph": 4.501811999999994,
+      "kakadu": 4.777458499999998
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 39.74631249999994,
+      "j2kswift_daemon_auto": 38.23208350000007,
+      "openjph": 9.562582999999902,
+      "kakadu": 4.547854499999948
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 40.09216699999985,
+      "j2kswift_daemon_auto": 39.89935400000011,
+      "openjph": 9.555478999999867,
+      "kakadu": 4.565688000000012
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 76.91747950000006,
+      "j2kswift_daemon_auto": 74.62279199999955,
+      "openjph": 19.604458500000366,
+      "kakadu": 4.497541499999702
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 77.3858540000001,
+      "j2kswift_daemon_auto": 78.74245850000028,
+      "openjph": 76.86747949999972,
+      "kakadu": 15.042124999999906
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 129.86406250000027,
+      "j2kswift_daemon_auto": 131.07472949999988,
+      "openjph": 128.65422899999948,
+      "kakadu": 19.994520500000057
+    }
+  ],
+  "decode": [
+    {
+      "fixture": "MR-small 180\u00b2",
+      "stem": "mr_study_002_instance_000100",
+      "j2kswift_inproc": 9.773083499999835,
+      "j2kswift_daemon_auto": 9.77702050000051,
+      "openjph": 4.552937499999743,
+      "kakadu": 4.572604499999855
+    },
+    {
+      "fixture": "CT 512\u00b2",
+      "stem": "ct_study_001_instance_000001",
+      "j2kswift_inproc": 9.952833500000757,
+      "j2kswift_daemon_auto": 9.87135449999954,
+      "openjph": 9.757187499999098,
+      "kakadu": 4.5663335000005745
+    },
+    {
+      "fixture": "MR 886\u00b2",
+      "stem": "mr_study_001_instance_000001",
+      "j2kswift_inproc": 19.716499500000317,
+      "j2kswift_daemon_auto": 19.92212500000079,
+      "openjph": 9.572583500000675,
+      "kakadu": 9.524436999999608
+    },
+    {
+      "fixture": "XA 1024\u00b2",
+      "stem": "xa_study_001_instance_000001",
+      "j2kswift_inproc": 20.10829199999975,
+      "j2kswift_daemon_auto": 20.030291500000352,
+      "openjph": 19.560041500000125,
+      "kakadu": 9.702312499999977
+    },
+    {
+      "fixture": "PX 2459\u00d71316",
+      "stem": "px_study_001_instance_000001",
+      "j2kswift_inproc": 42.23364599999968,
+      "j2kswift_daemon_auto": 42.211895500000374,
+      "openjph": 38.160666500000495,
+      "kakadu": 19.745332999999476
+    },
+    {
+      "fixture": "DX 2800\u00d72288",
+      "stem": "dx_study_002_instance_000001",
+      "j2kswift_inproc": 72.49749950000073,
+      "j2kswift_daemon_auto": 76.15514549999958,
+      "openjph": 75.71310450000013,
+      "kakadu": 38.7941879999989
+    }
+  ]
+}
