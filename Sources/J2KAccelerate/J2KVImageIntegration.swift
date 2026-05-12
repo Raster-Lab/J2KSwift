@@ -258,32 +258,49 @@ public struct J2KVImageIntegration: Sendable {
             )
         }
 
-        var srcBuffer = vImage_Buffer()
-        var dstBuffer = vImage_Buffer()
-
+        // v9.9 — two bugs fixed here, both matching
+        // J2KAccelerateDeepIntegration.scale16Bit:
+        //
+        // 1. `UnsafeMutableRawPointer(mutating: &localArray)`
+        //    captured a pointer valid only for the `&` expression.
+        //    Once stored on the heap-resident vImage_Buffer struct,
+        //    the pointer dangled — vImage wrote into freed/wrong
+        //    memory. Replaced with `withUnsafeMutableBufferPointer`
+        //    blocks scoped around the vImageScale_Planar8 call.
+        //
+        // 2. `kvImageHighQualityResampling` selects a Lanczos kernel
+        //    that reads zero outside the input, dominating output
+        //    for small inputs. Switched to bilinear default
+        //    (`kvImageNoFlags`).
         var mutableData = data
         var output = [UInt8](repeating: 0, count: toSize.width * toSize.height * channels)
 
-        srcBuffer.data = UnsafeMutableRawPointer(mutating: &mutableData)
-        srcBuffer.width = vImagePixelCount(fromSize.width)
-        srcBuffer.height = vImagePixelCount(fromSize.height)
-        srcBuffer.rowBytes = fromSize.width * channels
+        let vImageError: vImage_Error = mutableData.withUnsafeMutableBufferPointer { srcPtr in
+            output.withUnsafeMutableBufferPointer { dstPtr in
+                var srcBuffer = vImage_Buffer(
+                    data: UnsafeMutableRawPointer(srcPtr.baseAddress),
+                    height: vImagePixelCount(fromSize.height),
+                    width: vImagePixelCount(fromSize.width),
+                    rowBytes: fromSize.width * channels
+                )
+                var dstBuffer = vImage_Buffer(
+                    data: UnsafeMutableRawPointer(dstPtr.baseAddress),
+                    height: vImagePixelCount(toSize.height),
+                    width: vImagePixelCount(toSize.width),
+                    rowBytes: toSize.width * channels
+                )
+                return vImageScale_Planar8(
+                    &srcBuffer,
+                    &dstBuffer,
+                    nil,
+                    vImage_Flags(kvImageNoFlags)
+                )
+            }
+        }
 
-        dstBuffer.data = UnsafeMutableRawPointer(mutating: &output)
-        dstBuffer.width = vImagePixelCount(toSize.width)
-        dstBuffer.height = vImagePixelCount(toSize.height)
-        dstBuffer.rowBytes = toSize.width * channels
-
-        let error = vImageScale_Planar8(
-            &srcBuffer,
-            &dstBuffer,
-            nil,
-            vImage_Flags(kvImageHighQualityResampling)
-        )
-
-        guard error == kvImageNoError else {
+        guard vImageError == kvImageNoError else {
             throw J2KError.internalError(
-                "vImage resampling failed with error \(error)"
+                "vImage resampling failed with error \(vImageError)"
             )
         }
 
