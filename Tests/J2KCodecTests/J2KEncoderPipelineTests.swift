@@ -720,55 +720,84 @@ final class J2KEncoderPipelineTests: XCTestCase {
 
     /// Guards the matched-rate HTJ2K path against backsliding on a
     /// monochrome medical-style reversible-rate workload.
+    ///
+    /// v9.9 — thresholds adjusted for the Part-15 conformant block
+    /// format (default since PR #294). The pre-conformant `.custom`
+    /// block coder used multi-pass blocks, allowing PCRD-opt fine-
+    /// grained mid-block truncation and producing ~33 dB PSNR at
+    /// 1 bpp on this fixture. The conformant format uses single-pass
+    /// (cleanup-only) blocks per ISO/IEC 15444-15 spec, so PCRD-opt
+    /// can only include/exclude entire blocks — quality drops to
+    /// ~27 dB on the same input. Recovering the pre-conformant floor
+    /// requires either reverting to `.custom` (breaks OpenJPH/Kakadu
+    /// interop), enabling multi-layer PCRD-opt (~16 layers worth of
+    /// truncation granularity), or implementing post-encode codestream
+    /// truncation at packet boundaries (the strict-bounded qstep-
+    /// search path does this for `!useReversibleFilter` content,
+    /// reaching ~45-65 dB on the same corpus).
+    /// The threshold below tracks the current conformant floor; it
+    /// is a regression guard, not a target.
     func testHTJ2KMedicalQualityGapStaysControlledAtMatchedBitrate() async throws {
         let j2kPSNR = try await medicalStylePSNR(useHTJ2K: false, bitrate: 1.0, useReversibleFilter: true)
         let htj2kPSNR = try await medicalStylePSNR(useHTJ2K: true, bitrate: 1.0, useReversibleFilter: true)
 
         XCTAssertGreaterThan(
             htj2kPSNR,
-            32.9,
-            "HTJ2K PSNR regressed too far on the medical-style matched-rate path: \(htj2kPSNR) dB"
+            26.0,
+            "HTJ2K PSNR regressed below the .conformant block format floor: \(htj2kPSNR) dB"
         )
         XCTAssertLessThanOrEqual(
             j2kPSNR - htj2kPSNR,
-            7.1,
-            "HTJ2K quality gap widened too far versus J2K at the same bitrate: J2K=\(j2kPSNR) dB HTJ2K=\(htj2kPSNR) dB"
+            14.0,
+            "HTJ2K quality gap widened beyond the .conformant block format envelope: J2K=\(j2kPSNR) dB HTJ2K=\(htj2kPSNR) dB"
         )
     }
 
     /// Guards the matched-rate HTJ2K path against systematic bitrate overspend
     /// on medical-style single-component workloads.
+    ///
+    /// v9.9 — thresholds adjusted for the Part-15 `.conformant` block
+    /// format (see `testHTJ2KMedicalQualityGapStaysControlledAtMatched-
+    /// Bitrate` doc-comment). The bytes-envelope threshold also
+    /// widens: conformant codestreams carry cleanup-pass overhead that
+    /// the legacy `.custom` format did not, so HTJ2K naturally lands
+    /// 25–30 % over J2K at matched-rate even after PCRD-opt converges.
     func testHTJ2KMedicalCompressionEfficiencyStaysCloseToJ2KAtMatchedBitrate() async throws {
         let j2kStats = try await medicalStyleEncodeStats(useHTJ2K: false, bitrate: 1.0, useReversibleFilter: true)
         let htj2kStats = try await medicalStyleEncodeStats(useHTJ2K: true, bitrate: 1.0, useReversibleFilter: true)
 
         XCTAssertGreaterThan(
             htj2kStats.psnr,
-            32.9,
-            "HTJ2K medical matched-rate PSNR regressed too far while tightening compression: \(htj2kStats.psnr) dB"
+            26.0,
+            "HTJ2K medical matched-rate PSNR regressed below the .conformant floor: \(htj2kStats.psnr) dB"
         )
         XCTAssertLessThanOrEqual(
             Double(htj2kStats.encodedBytes),
-            Double(j2kStats.encodedBytes) * 1.23,
-            "HTJ2K should stay within a tighter matched-rate size envelope versus J2K on the medical-style path after the compression-efficiency tuning: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+            Double(j2kStats.encodedBytes) * 1.30,
+            "HTJ2K matched-rate size exceeded the .conformant overhead envelope versus J2K: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
         )
     }
 
     /// Guards the next-priority HTJ2K work at a slightly tighter medical bitrate,
     /// where wasteful late refinement passes were still inflating output size.
+    ///
+    /// v9.9 — threshold adjusted for the Part-15 `.conformant` block
+    /// format (single-pass blocks, lower PCRD-opt granularity). See
+    /// `testHTJ2KMedicalQualityGapStaysControlledAtMatchedBitrate` for
+    /// the full rationale.
     func testHTJ2KMedicalCompressionEfficiencyImprovesAtSubOneBitRate() async throws {
         let j2kStats = try await medicalStyleEncodeStats(useHTJ2K: false, bitrate: 0.75, useReversibleFilter: true)
         let htj2kStats = try await medicalStyleEncodeStats(useHTJ2K: true, bitrate: 0.75, useReversibleFilter: true)
 
         XCTAssertGreaterThan(
             htj2kStats.psnr,
-            31.0,
-            "HTJ2K sub-one-bit medical PSNR regressed too far: \(htj2kStats.psnr) dB"
+            23.0,
+            "HTJ2K sub-one-bit medical PSNR regressed below the .conformant floor: \(htj2kStats.psnr) dB"
         )
         XCTAssertLessThanOrEqual(
             Double(htj2kStats.encodedBytes),
-            Double(j2kStats.encodedBytes) * 1.25,
-            "HTJ2K should stay close to J2K size at the tighter medical bitrate after the entropy-efficiency fix: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
+            Double(j2kStats.encodedBytes) * 1.30,
+            "HTJ2K sub-one-bit size exceeded the .conformant overhead envelope versus J2K: J2K=\(j2kStats.encodedBytes) bytes HTJ2K=\(htj2kStats.encodedBytes) bytes"
         )
     }
 
@@ -820,6 +849,14 @@ final class J2KEncoderPipelineTests: XCTestCase {
 
     /// Guards the XA-style path, including the softer irreversible medical content
     /// that still showed a noticeable HTJ2K quality gap in the report.
+    ///
+    /// v9.9 — gap threshold relaxed from 2.9 to 5.0 dB. The XA fixture
+    /// (8-bit) doesn't trigger the 16-bit auto-promote path; it goes
+    /// through PCRD-opt on the `.conformant` block format, which has
+    /// the structural limitation documented on
+    /// `testHTJ2KMedicalQualityGapStaysControlledAtMatchedBitrate`.
+    /// The pre-conformant test threshold of 2.9 dB gap was set when
+    /// the encoder used multi-pass blocks.
     func testHTJ2KXAStyleCompressionEfficiencyImprovesAtMatchedBitrate() async throws {
         let j2kStats = try await modalityStyleEncodeStats(style: .xa, useHTJ2K: false, bitrate: 1.0, useReversibleFilter: false)
         let htj2kStats = try await modalityStyleEncodeStats(style: .xa, useHTJ2K: true, bitrate: 1.0, useReversibleFilter: false)
@@ -831,8 +868,8 @@ final class J2KEncoderPipelineTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             j2kStats.psnr - htj2kStats.psnr,
-            2.9,
-            "HTJ2K XA-style quality gap widened too far versus J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+            5.0,
+            "HTJ2K XA-style quality gap widened beyond the .conformant envelope versus J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
         )
         XCTAssertLessThanOrEqual(
             Double(htj2kStats.encodedBytes),
@@ -908,26 +945,36 @@ final class J2KEncoderPipelineTests: XCTestCase {
         //     cleanup-pass codestream overhead).
         //   - The 1.10× size cap permits only 5759 bytes for HT, forcing
         //     truncation well before full reconstruction.
-        //   - Observed HT PSNR inside the byte cap is ~62.4 dB.
-        // Moving this plateau requires one of: reducing HT cleanup-byte
-        // overhead (block-coder refactor), tighter LL-band quantization for
-        // smooth inputs, learned per-band reconstruction bias, or loosening
-        // the 1.10× size guard. Each is a distinct work item tracked in the
-        // optimization report. The 62.0 dB floor catches regressions in the
-        // landed double-midpoint fix and earlier reconstruction improvements
-        // without claiming a ceiling that has not been proven.
+        //
+        // v9.9 — threshold dropped from 55 dB to 30 dB. The pre-
+        // conformant measured plateau was 62.4 dB but that was on the
+        // `.custom` block coder with mid-block truncation. The
+        // `.conformant` block format (Part-15 spec, OpenJPH/Kakadu
+        // wire-compat, default since PR #294) uses cleanup-only blocks
+        // and lands at ~32 dB in the 1.10× byte cap — a structural
+        // property of conformant block coding on a smooth gradient,
+        // not a regression in J2KSwift's encoder. Re-tightening this
+        // threshold requires either reverting to `.custom`,
+        // implementing multi-layer PCRD-opt with finer truncation
+        // boundaries, or post-encode codestream truncation at packet
+        // granularity (the strict-bounded qstep path does this for
+        // 16-bit non-reversible content; 8-bit gradients like this
+        // test fall through to PCRD-opt). The 30 dB floor catches
+        // regressions in MagRef midpoint / SigProp significance
+        // handoff / sign-bit boundary without claiming a ceiling that
+        // hasn't been proven for the conformant format.
         XCTAssertGreaterThan(
             htj2kStats.psnr,
-            55.0,
-            "HTJ2K near-lossless quality regressed below measured plateau: \(htj2kStats.psnr) dB " +
+            30.0,
+            "HTJ2K near-lossless quality regressed below the .conformant plateau: \(htj2kStats.psnr) dB " +
             "(HT=\(htj2kStats.bytes) bytes, J2K=\(j2kStats.bytes) bytes, " +
             "ratio=\(Double(htj2kStats.bytes) / Double(j2kStats.bytes)))"
         )
         if j2kStats.psnr.isFinite {
             XCTAssertLessThanOrEqual(
                 j2kStats.psnr - htj2kStats.psnr,
-                8.0,
-                "HTJ2K near-lossless quality gap widened too far versus standard J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
+                40.0,
+                "HTJ2K near-lossless quality gap widened beyond the .conformant envelope versus standard J2K: J2K=\(j2kStats.psnr) dB HTJ2K=\(htj2kStats.psnr) dB"
             )
         }
         XCTAssertLessThanOrEqual(
