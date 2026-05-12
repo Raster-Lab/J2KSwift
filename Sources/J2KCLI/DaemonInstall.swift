@@ -324,8 +324,26 @@ extension J2KCLI {
         print("""
         Usage: j2k daemon-install [options]
 
-        Install the j2kd XPC daemon so subsequent `j2k decode` invocations
-        run at warm-process speed (no Metal cold-start tax per call).
+        Install the j2kd XPC daemon so subsequent `j2k encode` / `j2k decode`
+        invocations from the CLI run at warm-process speed (no Metal
+        cold-start tax per call).
+
+        WHEN TO USE THE DAEMON
+          ✓ CLI / scripts / batch pipelines / PACS tooling that shell out to
+            `j2k encode` or `j2k decode` once per image. The daemon eliminates
+            the per-process cold-start tax (~70 ms on DX 2800×2288 on M2).
+          ✗ SDK / in-process consumers (apps, app extensions, daemons that
+            link J2KSwift, server libraries embedding the codec). For these
+            shapes, call `J2KEncoder.encode(_:)` / `J2KDecoder.decode(_:)`
+            DIRECTLY. The library's process-shared Metal session amortises
+            cold-start naturally after the first call, and skipping the
+            XPC round-trip saves ~20 ms per call on DX on M2.
+
+        Measurement summary (Apple M2 medical corpus, post-v9.5):
+          DX 2800×2288 encode wall:
+            cold CLI invocation                  112 ms
+            warm `j2k --daemon` CLI invocation    62 ms   ← daemon's headline win
+            warm in-process J2KEncoder.encode()   42 ms   ← SDK consumer best path
 
         Options:
           --daemon-binary <path>  Explicit path to j2kd (default: search

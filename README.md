@@ -8,11 +8,22 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 8.1.1
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, optional `j2kd` macOS XPC daemon for warm-CLI single-shot — now one-command-installable. (3,100+ tests, 100 % pass rate.)
-**Previous Release**: 8.1.0 (j2kd XPC daemon adoption push — 3 new CLI subcommands)
+**Current Version**: 9.5.2
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, custom C+NEON HT block-encoder hot path (v9.4.0), optional `j2kd` macOS XPC daemon for warm-CLI single-shot — now one-command-installable. (3,100+ tests, 100 % pass rate.)
+**Previous Release**: 9.5.1 (vImage dangling-pointer crash hotfix)
+**Release process**: see [RELEASING.md](RELEASING.md). Every release MUST update this README (Current Version line + new Release Status paragraph) — see the Release artefacts checklist for the full requirements.
 
 ## 📦 Release Status
+
+**v9.5.2** is a doc-only patch correcting misleading `j2k daemon-install --help` text. The previous help implied the j2kd daemon is the right path for any consumer wanting warm-process speed; v10.0-research Phase 6 measurement on Apple M2 proves that's only true for CLI consumers. SDK consumers calling `J2KEncoder.encode(_:)` / `J2KDecoder.decode(_:)` directly already pay zero cold-start after the first call — and the daemon's XPC IPC adds ~20 ms of overhead per DX-class encode they don't need. The new help text spells out **when to use the daemon (✓ CLI / scripts / PACS tooling)** and **when NOT to (✗ SDK / in-process consumers)**, with a three-line measurement summary. Zero codec-core changes; codestream bytes byte-identical to v9.5.1. See [RELEASE_NOTES_v9.5.2.md](RELEASE_NOTES_v9.5.2.md).
+
+**v9.5.1** hotfixes two pre-existing production runtime crashes: (1) `vImage_Buffer.data` dangling-pointer write in `J2KAccelerateDeepIntegration.scale16Bit` + `J2KVImageIntegration.resample` (silent corruption + occasional crash on thumbnail/preview paths); (2) SIGSEGV in `J2KConcurrencyTuning.ScalabilityReport.description` (`%s` + Swift String CVarArg UB under Swift 6.x). Codestream bytes byte-identical to v9.5.0 on every default configuration. See [RELEASE_NOTES_v9.5.1.md](RELEASE_NOTES_v9.5.1.md).
+
+**v9.5.0** closes the v9.5–v9.8 research arc with three production wins: (1) daemon-encode large-fixture closure (DX warm via `j2k --daemon` 146 → 57 ms on M2 — 2.5× vs v9.4.0 warm, 1.8× vs cold same-binary); (2) process-default `J2KQstepCache.shared` for lossy 9/7 batches (M4 DX 99 → 29 ms, –71 %); (3) SIGTRAP fix in `encodeViaQstepSearch` refinement loop. Cross-codec parity matrix all-pass vs OpenJPH 0.27.0 / OpenJPEG / Kakadu HT. See [RELEASE_NOTES_v9.5.0.md](RELEASE_NOTES_v9.5.0.md).
+
+**v9.4.0** ships the first **custom C+NEON HT block encoder** as the production default on Apple Silicon — `J2KCodecNEON` SwiftPM C target, 4-sample-per-quad NEON classifier, batched MagSgn emit. DX warm in-proc 104.5 → 94.9 ms on M4 (–9 %); per-block 20,584 → 7,083 ns (2.91× single-thread). 548+ bit-exact assertions PASS including codestream byte-identity vs OpenJPH/OpenJPEG/Kakadu reference encoders. See [RELEASE_NOTES_v9.4.0.md](RELEASE_NOTES_v9.4.0.md).
+
+**v9.3.0** lands Path B encoder closure on Apple Silicon — 4 production wins (counter false-sharing removal, stack-resident scratch, Data-direct emit, MagSgn batched 4-sample emit). DX warm in-proc 124 → 104.5 ms on M4; Kakadu gap on daemon DX 4.39× → 3.69×. See [RELEASE_NOTES_v9.3.0.md](RELEASE_NOTES_v9.3.0.md).
 
 **v8.1.0** turns the v8.0.0 manual 5-step `j2kd` daemon install into a single command (`j2k daemon-install`). End-to-end CLI gap on DX 2800×2288 closes from 72 ms cold-shot → ~55 ms with the daemon installed (–24 % wall). Codestream bytes byte-identical to v8.0.1; no decoder change. See [RELEASE_NOTES_v8.1.0.md](RELEASE_NOTES_v8.1.0.md) for the full deployment-push details.
 
