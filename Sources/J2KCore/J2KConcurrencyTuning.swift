@@ -556,19 +556,31 @@ public struct J2KConcurrencyBenchmark: Sendable {
         }
 
         public var description: String {
+            // v9.9 — replaced `String(format: "%-8s ...", swiftStringLiteral)`
+            // with Swift string-interpolation. `%s` expects a C string
+            // (CChar*); passing a Swift String literal via varargs is
+            // undefined behaviour and SIGSEGVs at runtime on this
+            // toolchain. Numeric `%-d`/`%-f` specifiers are still
+            // fine via `CVarArg` conformance, but they're combined
+            // with `String(format:)` only for the numeric width
+            // formatting. The string fields use interpolation + manual
+            // padding.
             var lines: [String] = []
             lines.append("═══════════════════════════════════════════════════════════════")
             lines.append("Concurrency Scalability Report (\(itemCount) items)")
             lines.append("═══════════════════════════════════════════════════════════════")
-            lines.append(String(format: "  %-8s  %-12s  %-10s  %-10s", "Cores", "Time (ms)", "Speedup", "Efficiency"))
+            let pad: (String, Int) -> String = { s, n in
+                s.padding(toLength: n, withPad: " ", startingAt: 0)
+            }
+            lines.append("  \(pad("Cores", 8))  \(pad("Time (ms)", 12))  \(pad("Speedup", 10))  \(pad("Efficiency", 10))")
             lines.append("  " + String(repeating: "─", count: 48))
 
             for point in points {
-                lines.append(String(format: "  %-8d  %-12.4f  %-10.2fx  %-10.1f%%",
-                                    point.coreCount,
-                                    point.time * 1000,
-                                    point.speedup,
-                                    point.efficiency * 100))
+                let coresStr = pad(String(point.coreCount), 8)
+                let timeStr = pad(String(format: "%.4f", point.time * 1000), 12)
+                let speedStr = pad(String(format: "%.2fx", point.speedup), 10)
+                let effStr = pad(String(format: "%.1f%%", point.efficiency * 100), 10)
+                lines.append("  \(coresStr)  \(timeStr)  \(speedStr)  \(effStr)")
             }
 
             lines.append("")
