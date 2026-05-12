@@ -642,35 +642,61 @@ public struct J2KvImageDeepIntegration: Sendable {
             height: fromSize.height
         )
 
-        // Use vImage to scale the float buffer
+        // Use vImage to scale the float buffer.
+        //
+        // v9.9 — two bugs fixed here, both of which produced
+        // identically-zero output:
+        //
+        // 1. `vImage_Buffer(data: &array, ...)` captured an
+        //    UnsafeMutableRawPointer that was only valid for the
+        //    duration of the init expression. Once the init
+        //    returned, the pointer dangled — vImage was writing
+        //    into freed (or wrong) memory. Replaced with
+        //    `withUnsafeMutableBufferPointer` blocks that scope the
+        //    pointer to the actual vImageScale call.
+        //
+        // 2. `kvImageHighQualityResampling` selects a multi-tap
+        //    Lanczos kernel that reads zero outside the input
+        //    rectangle. For small inputs (e.g. 4×4) the kernel is
+        //    wider than the image and the output is dominated by
+        //    zero-padded reads regardless of input. Apple's
+        //    `vImageScale_PlanarF` does NOT honor
+        //    `kvImageEdgeExtend`. Switched to default bilinear
+        //    (`kvImageNoFlags`) which has a 2×2 kernel that always
+        //    falls inside the input. This API is used for
+        //    thumbnail/preview generation; production callers that
+        //    need Lanczos should call vImage directly with a
+        //    sufficiently large input.
         let dstPixelCount = toSize.width * toSize.height
         var scaledFloat = [Float](repeating: 0.0, count: dstPixelCount)
-
         var mutableFloatData = floatData
-        var srcBuffer = vImage_Buffer(
-            data: &mutableFloatData,
-            height: vImagePixelCount(fromSize.height),
-            width: vImagePixelCount(fromSize.width),
-            rowBytes: fromSize.width * MemoryLayout<Float>.size
-        )
 
-        var dstBuffer = vImage_Buffer(
-            data: &scaledFloat,
-            height: vImagePixelCount(toSize.height),
-            width: vImagePixelCount(toSize.width),
-            rowBytes: toSize.width * MemoryLayout<Float>.size
-        )
+        let vImageError: vImage_Error = mutableFloatData.withUnsafeMutableBufferPointer { srcPtr in
+            scaledFloat.withUnsafeMutableBufferPointer { dstPtr in
+                var srcBuffer = vImage_Buffer(
+                    data: srcPtr.baseAddress,
+                    height: vImagePixelCount(fromSize.height),
+                    width: vImagePixelCount(fromSize.width),
+                    rowBytes: fromSize.width * MemoryLayout<Float>.size
+                )
+                var dstBuffer = vImage_Buffer(
+                    data: dstPtr.baseAddress,
+                    height: vImagePixelCount(toSize.height),
+                    width: vImagePixelCount(toSize.width),
+                    rowBytes: toSize.width * MemoryLayout<Float>.size
+                )
+                return vImageScale_PlanarF(
+                    &srcBuffer,
+                    &dstBuffer,
+                    nil,
+                    vImage_Flags(kvImageNoFlags)
+                )
+            }
+        }
 
-        let error = vImageScale_PlanarF(
-            &srcBuffer,
-            &dstBuffer,
-            nil,
-            vImage_Flags(kvImageHighQualityResampling)
-        )
-
-        guard error == kvImageNoError else {
+        guard vImageError == kvImageNoError else {
             throw J2KError.internalError(
-                "vImage 16-bit scaling failed with error \(error)"
+                "vImage 16-bit scaling failed with error \(vImageError)"
             )
         }
 
