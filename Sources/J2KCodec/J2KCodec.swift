@@ -853,7 +853,14 @@ public struct J2KEncoder: Sendable {
         // conformant cleanup-only block format.
         var refinementIters = 0
         let maxRefinementIters = 3
-        while bestEncoded.count > Int(targetBytes * maxOvershootRatio),
+        // v9.8 — pre-existing bug fix: when `maxOvershootRatio` is
+        // `.infinity` (the path taken by `encodeWithQstepStats`),
+        // `Int(targetBytes * .infinity)` traps with SIGTRAP. Comparing
+        // in Double space lets `infinity` short-circuit cleanly:
+        // `Double(count) > .infinity` is always false, so the
+        // refinement loop is correctly disabled in the infinite-cap
+        // case.
+        while Double(bestEncoded.count) > targetBytes * maxOvershootRatio,
               refinementIters < maxRefinementIters {
             refinementIters += 1
             let currentRatio = Double(bestEncoded.count) / targetBytes

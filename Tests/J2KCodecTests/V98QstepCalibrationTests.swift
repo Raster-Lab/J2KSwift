@@ -147,34 +147,92 @@ final class V98QstepCalibrationTests: XCTestCase {
         }
     }
 
-    /// Calibration sweep — prints (stats, target_bpp, converged_qstep)
-    /// per fixture × bpp.  Used to regress the v9.8 initial-qstep
-    /// formula offline.
-    func testCalibrationSweep() async throws {
-        let bpps: [Double] = [0.5, 1.0, 2.0, 4.0]
-        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,target_bpp,converged_qstep,achieved_bpp,iterations")
-        for fx in Self.fixtures {
-            guard let img = try loadPGM(fx.filename) else { continue }
-            let stats = computeStats(image: img)
-            let pixels = img.width * img.height
-            for bpp in bpps {
-                var cfg = J2KEncodingConfiguration(
-                    quality: 1.0, lossless: false,
-                    decompositionLevels: 5, qualityLayers: 1,
-                    progressionOrder: .lrcp, useHTJ2K: true,
-                    useReversibleFilter: false,
-                    htj2kBlockFormat: .conformant)
-                cfg.bitrateMode = .constantBitrateViaQstep(
-                    bitsPerPixel: bpp, tolerance: 0.05, maxIterations: 8)
-                cfg.qstepCache = J2KQstepCache()  // fresh per-call
-                let enc = J2KEncoder(encodingConfiguration: cfg)
-                do {
-                    let r = try await enc.encodeWithQstepStats(img)
-                    print("V98_CAL_ROW \(fx.name),\(pixels),\(stats.maxAbs),\(String(format: "%.2f", stats.absMean)),\(String(format: "%.2f", stats.stdDev)),\(bpp),\(String(format: "%.4g", r.stats.convergedQstep)),\(String(format: "%.4f", r.stats.achievedBpp)),\(r.stats.iterations)")
-                } catch {
-                    print("V98_CAL_ERR \(fx.name),bpp=\(bpp),error=\(error)")
-                }
+    /// Helper that encodes one (fixture × bpp) and prints the result.
+    private func calibrateOne(_ fx: Fixture, bpp: Double) async throws {
+        guard let img = try loadPGM(fx.filename) else { return }
+        let stats = computeStats(image: img)
+        let pixels = img.width * img.height
+        print("V98_CAL_PROBE start \(fx.name) bpp=\(bpp)")
+        fflush(stdout)
+        var cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: true,
+            useReversibleFilter: false,
+            htj2kBlockFormat: .conformant)
+        cfg.bitrateMode = .constantBitrateViaQstep(
+            bitsPerPixel: bpp, tolerance: 0.05, maxIterations: 8)
+        cfg.qstepCache = J2KQstepCache()
+        let enc = J2KEncoder(encodingConfiguration: cfg)
+        do {
+            let r = try await enc.encodeWithQstepStats(img)
+            print("V98_CAL_ROW \(fx.name),\(pixels),\(stats.maxAbs),\(String(format: "%.2f", stats.absMean)),\(String(format: "%.2f", stats.stdDev)),\(String(format: "%.2f", (stats.absDiffH + stats.absDiffV) * 0.5)),\(bpp),\(String(format: "%.4g", r.stats.convergedQstep)),\(String(format: "%.4f", r.stats.achievedBpp)),\(r.stats.iterations)")
+        } catch {
+            print("V98_CAL_ERR \(fx.name),bpp=\(bpp),error=\(error)")
+        }
+        fflush(stdout)
+    }
+
+    func testCal_mr_002_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[0], bpp: 2.0)
+    }
+
+    func testCal_ct_001_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[1], bpp: 2.0)
+    }
+
+    func testCal_ct_003_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[2], bpp: 2.0)
+    }
+
+    func testCal_mr_001_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[3], bpp: 2.0)
+    }
+
+    func testCal_xa_001_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[4], bpp: 2.0)
+    }
+
+    func testCal_px_001_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[5], bpp: 2.0)
+    }
+
+    func testCal_dx_002_2bpp() async throws {
+        print("V98_CAL_HEADER name,pixels,max_abs,abs_mean,std_dev,mean_diff,target_bpp,converged_qstep,achieved_bpp,iterations")
+        try await calibrateOne(Self.fixtures[6], bpp: 2.0)
+    }
+
+    /// Probe ct_001 at .fixedQstep values to find which qstep crashes.
+    func testCt001FixedQstepSweep() async throws {
+        guard let img = try loadPGM(Self.fixtures[1].filename) else {
+            print("V98_PROBE missing ct_001")
+            return
+        }
+        let qsteps: [Double] = [1.0, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1_000_000.0, 1e9, 1e12]
+        for q in qsteps {
+            print("V98_PROBE fixed_qstep=\(q) starting")
+            fflush(stdout)
+            var cfg = J2KEncodingConfiguration(
+                quality: 1.0, lossless: false,
+                decompositionLevels: 5, qualityLayers: 1,
+                progressionOrder: .lrcp, useHTJ2K: true,
+                useReversibleFilter: false,
+                htj2kBlockFormat: .conformant)
+            cfg.bitrateMode = .fixedQstep(qstep: q)
+            let enc = J2KEncoder(encodingConfiguration: cfg)
+            do {
+                let data = try await enc.encode(img)
+                print("V98_PROBE fixed_qstep=\(q) ok, bytes=\(data.count)")
+            } catch {
+                print("V98_PROBE fixed_qstep=\(q) error=\(error)")
             }
+            fflush(stdout)
         }
     }
 }

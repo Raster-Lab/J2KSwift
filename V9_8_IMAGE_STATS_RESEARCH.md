@@ -1,6 +1,12 @@
 # v9.8 — Image-statistics-based initial qstep — research findings
 
 **Status:** Research infrastructure landed; full calibration deferred.
+Along the way, fixed a **pre-existing SIGTRAP crash** in
+`encodeViaQstepSearch`'s refinement loop (`Int(targetBytes *
+.infinity)` traps in Swift). That fix unblocks the previously-
+crashing `J2KCrossScaleRDQualityProbe` test suite and is a real
+production bug fix shipping with v9.8.
+
 The v9.7 pre-seed attempt closed as research due to the converged-
 qstep range spanning more than four orders of magnitude across the
 medical corpus. v9.8 explores the recommended fix: predict the
@@ -12,6 +18,59 @@ not intensity (`abs_mean`), not variance (`std_dev`), and not image
 size alone. A power-law fit is suggestive but not clean across all
 fixtures, so production-ready calibration is deferred to a follow-up
 sprint with a wider corpus and multi-bpp encode sweep.
+
+---
+
+## Pre-existing SIGTRAP fix (production)
+
+While instrumenting the calibration sweep,
+`encodeViaQstepSearch`'s post-loop refinement crashed with SIGTRAP
+when called from `encodeWithQstepStats` (which passes
+`maxOvershootRatio: .infinity`):
+
+```swift
+// Pre-fix (line 865 in J2KCodec.swift)
+while bestEncoded.count > Int(targetBytes * maxOvershootRatio),
+      refinementIters < maxRefinementIters {
+```
+
+`targetBytes * .infinity` evaluates to `.infinity`, and
+`Int(.infinity)` traps in Swift. The crash only fires on the path
+where the main qstep search exits without converging (i.e., for
+high-variance content where the bracket doesn't reach the true
+converged qstep within `maxIterations`). That's why mr_002
+(converges in 6 iter) worked while ct_001 / dx_002 / etc. crashed
+when the search hit iter=8 and fell through to the refinement loop.
+
+The fix compares in Double space so `.infinity` short-circuits
+cleanly:
+
+```swift
+// Post-fix
+while Double(bestEncoded.count) > targetBytes * maxOvershootRatio,
+      refinementIters < maxRefinementIters {
+```
+
+When `maxOvershootRatio = .infinity`, the right side is
+`.infinity`, and `Double(count) > .infinity` is always false, so
+the refinement loop is correctly disabled in the infinite-cap case.
+
+### Test impact
+
+- `J2KCrossScaleRDQualityProbe.testCrossScaleQstepVsPCRD` ↓
+  previously SIGTRAPped reliably; now passes (3.5 s).
+- `J2KCrossScaleRDQualityProbe.testCrossScaleRDPSNRSweep` ↓ also
+  now passes (1.1 s).
+- `J2KCrossScaleRDQualityProbe.testDX002LosslessRoundtripExact` ↓
+  passes (0.09 s).
+- `V98QstepCalibrationTests.testCal_*_2bpp` ↓ all 7 fixture-
+  scoped calibration tests now produce calibration data instead of
+  crashing.
+
+This was a real production bug — any caller of
+`encodeWithQstepStats` for content that wouldn't converge within
+`maxIterations` would crash. v9.8 ships this fix alongside the
+research infrastructure.
 
 ---
 
@@ -51,23 +110,78 @@ the converged qstep scales with the coefficient magnitudes.
 
 ## What the stats reveal (M4, J2KSwift medical corpus)
 
-| Fixture | pixels | dim | max_abs | abs_mean | std_dev | absDiffH | absDiffV | Converged qstep (2 bpp) |
-|---      |---:    |---  |---:     |---:      |---:     |---:      |---:      |---:                      |
-| mr_002  |  32400 | 180×180     | 32768 | 24350 | 26542 |  1192 |   903 | ~150 (strict mode)        |
-| ct_001  | 262144 | 512×512     | 32768 | 21319 | 23009 |  3870 |  4336 | ~150 (strict mode)        |
-| ct_003  | 262144 | 512×512     | 32768 | 23524 | 24848 |  3780 |  4135 | ~150 (strict mode)        |
-| mr_001  | 784996 | 886×886     | 32768 | 31474 | 31860 |   869 |  1054 | **0.63** (tight mode)     |
-| xa_001  |1048576 | 1024×1024   | 32768 | 16160 | 18298 |  6722 |  6587 | ~451                      |
-| px_001  |3236044 | 2459×1316   | 32767 | 16305 | 18777 | 12685 | 13652 | ~1000–1961                |
-| dx_002  |6406400 | 2800×2288   | 32768 | 19564 | 21740 | 10684 | 10214 | ~1961                     |
+### Stats from the corpus (M4, dc-shifted pixel values)
 
-Notes:
-- "strict mode" converged values are upper bounds (the `.constantBitrate`
-  strict-bounded path stops at any ratio in `[1, 4]`, so the qstep at
-  break may be lower than the true `ratio=1.0` qstep).
-- `mr_001`'s 0.63 was captured via `.constantBitrateViaQstep` (tight
-  tolerance, ratio close to 1.0) and is the only confidently-true
-  converged value in this set.
+| Fixture | pixels | dim | max_abs | abs_mean | std_dev | mean_neighbor_diff |
+|---      |---:    |---  |---:     |---:      |---:     |---:                |
+| mr_002  |  32400 | 180×180     | 32768 | 24350 | 26542 |  1047 |
+| ct_001  | 262144 | 512×512     | 32768 | 21319 | 23009 |  4103 |
+| ct_003  | 262144 | 512×512     | 32768 | 23524 | 24848 |  3957 |
+| mr_001  | 784996 | 886×886     | 32768 | 31474 | 31860 |   962 |
+| xa_001  |1048576 | 1024×1024   | 32768 | 16160 | 18298 |  6655 |
+| px_001  |3236044 | 2459×1316   | 32767 | 16305 | 18777 | 13168 |
+| dx_002  |6406400 | 2800×2288   | 32768 | 19564 | 21740 | 10449 |
+
+### Tight-tolerance qstep search results (post-SIGTRAP-fix, n=8 iter)
+
+The SIGTRAP fix unblocked the calibration sweep. Each fixture
+was encoded via `.constantBitrateViaQstep(bpp=2.0, tolerance=0.05,
+maxIterations=8)` with a fresh empty cache. Results:
+
+| Fixture | mean_diff | converged_qstep | achieved_bpp | iters | converged_within_tolerance |
+|---      |---:       |---:             |---:          |---:   |---                          |
+| mr_001  |   962     |     1.43        | 1.89         |  8    | no (close: ratio 0.95)     |
+| mr_002  |  1047     |   966           | 2.05         |  6    | **yes** (ratio 1.025)      |
+| ct_003  |  3957     |  1359           | 3.46         |  8    | no (search hit bracket cap) |
+| ct_001  |  4103     |  1501           | 3.28         |  8    | no                          |
+| xa_001  |  6655     |  1413           | 4.83         |  8    | no                          |
+| dx_002  | 10449     |  2047           | 5.63         |  8    | no                          |
+| px_001  | 13168     |  2102           | 6.08         |  8    | no                          |
+
+**Only mr_002 converged within ±5% in 8 iterations.** Every other
+fixture exited at the search's upper bracket cap with the output
+still substantially over the target. This reveals a second issue
+distinct from the v9.7 pre-seed problem: **the search's bracket
+widening is too slow for high-variance content**. The bracket
+factor at iter 1 is `max(8, log2(ratio)*8)`, but the converged
+qstep can be 10× to 100× the iter-1 refined qstep for synthetic /
+X-ray / mammography content. With `maxIterations=8`, the search
+runs out of iterations before walking up to the right neighbourhood.
+
+Implication for v9.8 predictor design:
+- The image-statistics predictor would need to land an initial
+  qstep accurate to within ~5× of the true converged value to
+  give the search enough headroom in 8 iterations.
+- Alternatively: increase `maxIterations` for `.constantBitrate-
+  ViaQstep` from the current default 8 to 16 or 32 when the iter-1
+  ratio indicates extreme overshoot. That's an algorithmic fix
+  orthogonal to the predictor.
+
+### What the data tells us about the texture-qstep relationship
+
+Even though most fixtures didn't converge, the iter-8 qstep is a
+LOWER BOUND for the true converged value. Combining with the
+strict-bounded debug from v9.6 (which let us see the upper bounds
+where bytes hit `[1, 4]` ratio), the true converged qsteps at 2 bpp
+roughly span:
+
+- mr_001 (texture 962): qstep ≈ 1.43 (very low; smooth content)
+- mr_002 (texture 1047): qstep ≈ 966 (mid; small image with texture)
+- ct_001 (texture 4103): qstep > 1500 (probably ~4000+, from earlier .fixedQstep sweep)
+- dx_002 (texture 10449): qstep > 2000 (probably ~5000-10000+)
+- px_001 (texture 13168): qstep > 2100 (probably ~5000-10000+)
+
+The qstep / texture ratio still varies dramatically (1.43/962 =
+0.0015 for mr_001 vs probably 5000/13168 = 0.38 for px_001), so a
+single-feature predictor (texture alone) is insufficient. Image
+size enters as a confound — px_001 has 100× more pixels than
+mr_002 so needs ~100× more aggressive quantization to hit the
+same bpp.
+
+A multi-feature predictor (`mean_diff`, `pixels`, `bpp`) is the
+minimum viable model. Calibration with extended `maxIterations`
+(or directly with `.fixedQstep` exhaustive sweeps) is the next
+step.
 
 ### Key observations
 
@@ -171,11 +285,15 @@ the safer engineering call.
 
 | Path | Purpose |
 |---|---|
-| `Tests/J2KCodecTests/V98QstepCalibrationTests.swift` | Stats harness + (currently-crashing) encoding calibration sweep |
+| `Sources/J2KCodec/J2KCodec.swift` | **SIGTRAP fix** in `encodeViaQstepSearch` refinement loop (`Int(.infinity)` → Double comparison) |
+| `Tests/J2KCodecTests/V98QstepCalibrationTests.swift` | Stats harness + per-fixture calibration tests (all 7 now run cleanly) |
 | `V9_8_IMAGE_STATS_RESEARCH.md` | This document |
 
-No production code changes. The `J2KQstepCache.shared` instance
-remains an empty `J2KQstepCache()` (v9.6 behaviour preserved).
+The SIGTRAP fix is a real production bug fix that unblocks anyone
+calling `J2KEncoder.encodeWithQstepStats(...)` on content that
+doesn't converge within `maxIterations`. The cache shipping
+behaviour (`J2KQstepCache.shared` as empty instance, v9.6) is
+unchanged.
 
 ---
 
