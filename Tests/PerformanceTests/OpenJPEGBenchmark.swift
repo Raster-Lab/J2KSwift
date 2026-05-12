@@ -805,13 +805,23 @@ final class HTJ2KBenchmarkTests: XCTestCase {
         XCTAssertNotNil(comp)
     }
 
+    /// v9.9 — assertion threshold updated from 3.0 to 10.0 to match the
+    /// current `performanceTarget` value for `.htj2kLossless` at
+    /// `.size256` (J2KOpenJPEGBenchmark.swift line 390). The encoder's
+    /// `performanceTarget` table was raised when HT encode's per-quad
+    /// allocator switched from `[Int]` / `[UInt32]` to fixed-size
+    /// scalar tuples, observed ~17–20× speedup at 256 px. The test
+    /// asserts that the documented target (not the achieved runtime
+    /// speed-up) matches the J2KOpenJPEGBenchmark constant — a
+    /// regression guard against the constant being changed without
+    /// updating the test.
     func testHTJ2KPerformanceTargetIs3x() {
         let config = BenchmarkConfiguration(imageSize: .size256, codingMode: .htj2kLossless,
                                             iterations: 1, warmupIterations: 0)
         let runner = OpenJPEGBenchmarkRunner(includeOpenJPEG: false)
         let data = BenchmarkTestImageGenerator.generate(config: config)
         if let comp = runner.runSingle(config: config, operation: .encode, imageData: data) {
-            XCTAssertEqual(comp.performanceTarget, 3.0, accuracy: 0.01)
+            XCTAssertEqual(comp.performanceTarget, 10.0, accuracy: 0.01)
         }
     }
 }
