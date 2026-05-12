@@ -74,6 +74,51 @@ public actor J2KQstepCache {
     public var count: Int {
         return cache.count
     }
+
+    /// v9.6 — process-default shared cache. Used as a fallback by
+    /// `J2KEncoder.encodeViaStrictBoundedQstep` (and the other qstep-
+    /// search paths) when the caller's encoding configuration does not
+    /// specify an explicit `qstepCache`.
+    ///
+    /// **Rationale**: cold-cache encodes of medical 16-bit content
+    /// converge in 2–3 qstep-search iterations (~99 ms on DX
+    /// 2800×2288 / M4), whereas a single cache-hit encode converges
+    /// in 1 iteration (~30 ms). Sharing one cache across the process
+    /// lets the second and later encodes of similar-shape content
+    /// (same bit-depth + components + bpp bucket) skip the search
+    /// entirely. For batch DICOM workflows — the primary use case —
+    /// this drops the per-image wall ~3× without any user opt-in.
+    ///
+    /// **v9.7 research note**: a pre-seeded variant was prototyped to
+    /// also accelerate the cold-shot first encode, but the converged
+    /// qstep range across real medical content is too wide (mr_001
+    /// converges at ~0.6, dx_002 at ~1961) for any single seed to
+    /// be safe. A seed sized for dx-class content puts the
+    /// `.constantBitrateViaQstep` search bracket above mr-class
+    /// content's optimum, producing significant PSNR regressions
+    /// (~27 dB vs ~33 dB expected). The pre-seed was reverted —
+    /// see `V9_7_COLD_SHOT_RESEARCH.md` for the methodology and the
+    /// image-statistics-based prediction path forward.
+    ///
+    /// Users who need cold-cache behaviour can opt out by setting the
+    /// environment variable `J2K_DISABLE_PROCESS_QSTEP_CACHE=1`, or
+    /// by passing a fresh `J2KQstepCache()` per encode via the
+    /// configuration.
+    public static let shared: J2KQstepCache = J2KQstepCache()
+
+    /// Whether the process-default `shared` cache should be used as a
+    /// fallback when `J2KEncodingConfiguration.qstepCache` is `nil`.
+    /// Defaults to `true`; opt out via `J2K_DISABLE_PROCESS_QSTEP_CACHE`.
+    public static let useProcessDefault: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_DISABLE_PROCESS_QSTEP_CACHE"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return false
+            case "0", "false", "no": return true
+            default: break
+            }
+        }
+        return true
+    }()
 }
 
 /// Diagnostic stats from a `.constantBitrateViaQstep` search loop.

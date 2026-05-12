@@ -74,6 +74,42 @@ public enum HTBlockEncoderConformant {
     /// Future v9.5 work: hoist these per-call allocations to per-worker
     /// scope via J2KEncoderPipeline (mirrors the Phase 2d raw-engine
     /// buffer hoist), eliminating ~9500 allocs per DX encode.
+    /// v9.5 Phase 5E — direct NEON dispatch with caller-owned hoisted
+    /// buffers. Used by J2KEncoderPipeline's per-worker scope to
+    /// eliminate the per-block allocation of three 16 KB buffers
+    /// (~9500 allocs per DX encode on the per-call path).
+    ///
+    /// Caller is responsible for:
+    ///   1. Allocating each output buffer (16 KB is safe for any 64×64
+    ///      HT block at 30-bit precision per
+    ///      J2KEncoderPipeline._rawEngineBufferCapacity).
+    ///   2. After this call returns, copying or passing
+    ///      `buf[0..<count]` into the downstream pipeline. VLC is in
+    ///      FORWARD on-wire order (matches Swift's
+    ///      `HTReverseBitEmitterConformant.finish()` output) —
+    ///      `assembleDataFromRaw` should be called with
+    ///      `vlcReversed: false` for the NEON path.
+    @inline(__always)
+    internal static func encodeNEONIntoBuffers(
+        coefficients: UnsafeBufferPointer<UInt32>,
+        width: Int, height: Int, missingMSBs: Int,
+        magsgnBuf: UnsafeMutablePointer<UInt8>, magsgnCap: Int,
+        melBuf: UnsafeMutablePointer<UInt8>, melCap: Int,
+        vlcBuf: UnsafeMutablePointer<UInt8>, vlcCap: Int
+    ) -> (magsgnCount: Int, melCount: Int, vlcCount: Int) {
+        var magLen = 0, melLen = 0, vlcLen = 0
+        let coefPtr = coefficients.baseAddress!
+        let rc = j2knhe_encode_block_ht32(
+            coefPtr, UInt32(width), UInt32(height),
+            UInt32(missingMSBs),
+            magsgnBuf, magsgnCap, &magLen,
+            melBuf, melCap, &melLen,
+            vlcBuf, vlcCap, &vlcLen)
+        precondition(rc == 0,
+                     "j2knhe NEON hot path returned non-zero: \(rc)")
+        return (magLen, melLen, vlcLen)
+    }
+
     @inline(__always)
     internal static func encodeViaNEONHotPath(
         coefficients: UnsafeBufferPointer<UInt32>,
