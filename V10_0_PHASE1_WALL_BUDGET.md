@@ -202,6 +202,74 @@ extract16 would also wash. (LLVM has been auto-vectorising the v5.38 M7
 specialised closed-form extract loop into NEON `vld1q_u8` + widen + store
 since the M7 commit per the v5.38 finding.)
 
+### Cross-check: entropy ns/quad on M2 (V95Phase5MicrobenchTests, n=200K)
+
+Re-ran the v9.5 microbench on M2 (release) for completeness:
+
+| profile          | block | mMSB | density | ns/block | ns/quad |
+|------------------|-------|-----:|--------:|---------:|--------:|
+| ct-like-sparse   | 32×32 |    8 |      5% |     2420 |     9.5 |
+| ct-like-mid      | 32×32 |    8 |     30% |     4345 |    17.0 |
+| ct-like-dense    | 32×32 |    8 |     80% |     6049 |    23.6 |
+| dx-like-sparse   | 64×64 |    5 |      5% |     9666 |     9.4 |
+| **dx-like-mid**  | 64×64 |    5 |     30% |   17689  |  **17.3** |
+| dx-like-dense    | 64×64 |    5 |     80% |   23280  |    22.7 |
+| high-mMSB-mid    | 64×64 |   12 |     30% |   19329  |    18.9 |
+
+Entropy is well above the 3-ns auto-vec threshold (9-24 ns/quad) — but this
+stage **already ships a C+NEON hot path as of v9.4.0**. The v9.5 Phase 5A
+research closed further entropy NEON optimisation as wash. Included here
+only as a reference point; entropy is excluded from v10's gate by definition.
+
+### Cross-check: tier-2 packet substage breakdown on M2
+
+From `Tier2WritePacketSubstageProfileTests.testTier2WritePacket_SubstageBreakdown_AcrossCorpus`:
+
+| fixture          | encode ms | tagBuild | tagInc | tagZBP | passes | length | rawData | tier-2 total |
+|------------------|----------:|---------:|-------:|-------:|-------:|-------:|--------:|-------------:|
+| MR-small 180²    |      0.72 |     0.02 |   0.00 |   0.00 |   0.00 |   0.00 |    0.01 |         0.03 |
+| CT 512²          |      2.72 |     0.01 |   0.00 |   0.01 |   0.00 |   0.00 |    0.03 |         0.05 |
+| MR 886²          |      2.21 |     0.11 |   0.03 |   0.02 |   0.00 |   0.00 |    0.03 |         0.19 |
+| XA 1024²         |      6.31 |     0.10 |   0.02 |   0.02 |   0.01 |   0.01 |    0.14 |         0.29 |
+| PX 2459×1316     |     19.66 |     0.97 |   0.14 |   0.14 |   0.04 |   0.09 |    0.75 |         2.13 |
+| **DX 2800×2288** | **47.41** | **2.06** |   0.18 |   0.17 |   0.06 |   0.12 |  **2.12** |     **4.70** |
+
+DX tier-2 wall ≈ 4.70 ms ≈ **~10 % of single-run encode wall**. Two columns
+dominate: `tagBuild` (per-band tag-tree construction) and `rawData` (memcpy
+of block payload). `rawData` is already a memcpy and cannot be made faster.
+`tagBuild` is per-block bookkeeping inherent to ISO 15444-1 §B.10 — not
+amenable to C/NEON beyond what LLVM already produces.
+
+### Cross-check: codestream marker substage breakdown on M2
+
+From `CodestreamMarkerSubstageProfileTests`:
+
+| fixture          | encode ms | siz/cap/cod/qcd (sum) | tileData | marker total |
+|------------------|----------:|----------------------:|---------:|-------------:|
+| MR-small 180²    |      0.64 |              <0.005   |    0.006 |        0.011 |
+| CT 512²          |      2.42 |              <0.003   |    0.009 |        0.012 |
+| MR 886²          |      4.87 |              <0.003   |    0.003 |        0.006 |
+| XA 1024²         |      8.50 |              <0.003   |    0.078 |        0.081 |
+| PX 2459×1316     |     32.24 |              <0.004   |    0.467 |        0.471 |
+| **DX 2800×2288** | **50.67** |              <0.004   | **0.765**|    **0.770** |
+
+DX codestream marker wall ≈ 0.77 ms ≈ **~1.5 % of single-run encode wall**.
+`tileData` (`writer.writeBytes(tileData)` — assembled tile bitstream memcpy)
+owns the bulk; all fixed-form marker segments combined are <4 µs total.
+No optimisation headroom.
+
+### Phase 1c summary table — five independent isolation cross-checks
+
+| Stage      | Isolation measurement (M2) | ns / sample (or quad) | Phase 2 gate? |
+|------------|---------------------------:|-----------------------|---------------|
+| DWT 5/3 forward DX | 19.14 ms (V96DWT, n=30) | 2.24 ns/coeff | **No** — at auto-vec ceiling |
+| Entropy DX-mid    | 17.3 ns/quad (V95P5, n=200K) | 17.3 ns/quad | **n/a** — out of v10 scope (C+NEON in v9.4) |
+| extract16         | derived from corpus       | ~1.98 ns/16-bit-pixel | **No** — at auto-vec ceiling |
+| Tier-2 DX         | 4.70 ms (~10 % wall)      | not unit-meaningful   | **No** — memcpy + branchy bookkeeping |
+| Codestream marker DX | 0.77 ms (~1.5 % wall)  | not unit-meaningful   | **No** — memcpy dominates |
+
+**Five independent measurements; all five confirm the close decision.**
+
 ## Limitations of this measurement (for any future re-run)
 
 - **Per-worker CPU sums vs wall**: substage accumulators measure CPU summed
