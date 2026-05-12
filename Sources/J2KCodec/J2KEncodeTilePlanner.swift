@@ -117,12 +117,26 @@ public struct J2KTileLayout: Sendable, CustomStringConvertible {
 /// small to support the encoder's decomposition depth.
 public enum J2KEncodeTilePlanner {
 
-    /// Cached env-var read at process startup. Only consulted when
-    /// the encoder explicitly opts into the planner-driven path; the
-    /// production default flow ignores it entirely.
-    nonisolated(unsafe) public static let envMode: J2KHTTileMode = {
+    /// v9.9 — initial env-var-derived mode, captured once at process
+    /// startup. The mutable `envMode` (below) reads this on first
+    /// access and lets tests override per-suite.
+    nonisolated(unsafe) private static let _initialEnvMode: J2KHTTileMode = {
         J2KHTTileMode.from(envValue: ProcessInfo.processInfo.environment["J2K_HT_TILE_MODE"])
     }()
+
+    /// Cached env-var read at process startup, mutable for tests.
+    /// Only consulted when the encoder explicitly opts into the
+    /// planner-driven path; the production default flow ignores it
+    /// entirely.
+    ///
+    /// **v9.9 — changed from `let` to `var`** so test suites like
+    /// `GPUForward53DefaultOnTests` can pin the planner to a specific
+    /// mode (typically `.single`) when verifying behaviour that
+    /// depends on per-image-size dispatch decisions. Production
+    /// callers continue to read whatever was set from
+    /// `J2K_HT_TILE_MODE` at process startup; tests save/restore via
+    /// `defer { J2KEncodeTilePlanner.envMode = prev }`.
+    nonisolated(unsafe) public static var envMode: J2KHTTileMode = _initialEnvMode
 
     /// Compute a tile layout for the given image.
     ///

@@ -29,6 +29,27 @@ import XCTest
 
 final class CodestreamMarkerSubstageProfileTests: XCTestCase {
 
+    // v9.9 — these tests verify `J2KCodestreamMarkerTimings` fires
+    // from the single-tile codestream-assembly path
+    // (`generateCodestreamWithIndex`). v7.0.0 flipped the planner
+    // default from `.single` to `.auto`, so MR 886² (the fixture
+    // used here) now routes through `J2KMultiTileEncoder` which has
+    // a separate codestream assembler that doesn't call
+    // `J2KCodestreamMarkerTimings.recordEncodeCall()`. Pin to
+    // `.single` to restore the assertion's pre-conditions.
+    private var _savedEnvMode: J2KHTTileMode!
+
+    override func setUp() {
+        super.setUp()
+        _savedEnvMode = J2KEncodeTilePlanner.envMode
+        J2KEncodeTilePlanner.envMode = .single
+    }
+
+    override func tearDown() {
+        J2KEncodeTilePlanner.envMode = _savedEnvMode
+        super.tearDown()
+    }
+
     private func loadPGM16(_ filename: String) -> J2KImage? {
         let here = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

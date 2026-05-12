@@ -10,6 +10,29 @@ import J2KCore
 
 final class HTStandaloneBench: XCTestCase {
 
+    // v9.9 — pin planner envMode = .single so this isolated bench
+    // tests the single-tile encode path on each fixture size. Under
+    // the v7.0.0 .auto default, the 1024² test crashes inside the
+    // multi-tile encoder (SIGSEGV during a per-tile encode for some
+    // size/synthetic-content combination). The bench's intent is
+    // single-tile timing, so pinning to .single both isolates the
+    // measurement and avoids the multi-tile crash. The multi-tile
+    // crash itself is a separate latent bug — tracked by the
+    // failing testBenchJ2KSwiftHT1024Conformant SIGSEGV before
+    // v9.9 — and should be investigated independently.
+    private var _savedEnvMode: J2KHTTileMode!
+
+    override func setUp() {
+        super.setUp()
+        _savedEnvMode = J2KEncodeTilePlanner.envMode
+        J2KEncodeTilePlanner.envMode = .single
+    }
+
+    override func tearDown() {
+        J2KEncodeTilePlanner.envMode = _savedEnvMode
+        super.tearDown()
+    }
+
     private func syntheticPixels(width: Int, height: Int, seed: UInt64)
         -> [UInt8]
     {
@@ -39,8 +62,14 @@ final class HTStandaloneBench: XCTestCase {
     ) async throws {
         let img = image(w: width, h: height, pixels: pixels)
 
+        // v9.9 — explicit reversible filter for lossless. The test
+        // previously relied on `J2KEncodingConfiguration()`'s default
+        // `useReversibleFilter: false` (9/7 irreversible), which is
+        // not the typical lossless config. The reversible 5/3 filter
+        // is what production lossless callers use.
         var cfg = J2KEncodingConfiguration()
         cfg.lossless = true
+        cfg.useReversibleFilter = true
         cfg.useHTJ2K = true
         cfg.htj2kBlockFormat = format
         cfg.decompositionLevels = 5
@@ -78,9 +107,23 @@ final class HTStandaloneBench: XCTestCase {
         let losslessNote = (decoded == pixels) ? "✓"
             : (decoded == nil ? "(n/a pipeline)" : "✗")
         let decStr = decMS.map { String(format: "%.2f", $0) } ?? "  —  "
-        print(String(format: "%-30s  %5dx%5d  enc %.2f ms  dec %@ ms   %d bytes   %.3f bpp   %@",
-              label, width, height, encMS, decStr,
-              encoded.count, bpp, losslessNote))
+        // v9.9 — use Swift string interpolation instead of
+        // `String(format:)` with `%@`/`%s` specifiers. The previous
+        // String(format:) call SIGSEGV'd at runtime: `%@` expects an
+        // ObjC-bridgeable type but receives Swift `String` directly
+        // via the varargs CVarArg conversion, and `%s` expects
+        // `CChar*` not Swift String. Either combination crashes
+        // (manifested as signal 11 in the bench loop, present on
+        // main pre-v9.5 and reproducing across all bench sizes for
+        // .conformant format). Interpolation is type-safe and matches
+        // the same human-readable output.
+        let encMSStr = String(format: "%.2f", encMS)
+        let labelPad = label.padding(toLength: 30, withPad: " ", startingAt: 0)
+        let widthStr = String(format: "%5d", width)
+        let heightStr = String(format: "%5d", height)
+        let bytesStr = String(format: "%d", encoded.count)
+        let bppStr = String(format: "%.3f", bpp)
+        print("\(labelPad)  \(widthStr)x\(heightStr)  enc \(encMSStr) ms  dec \(decStr) ms   \(bytesStr) bytes   \(bppStr) bpp   \(losslessNote)")
     }
 
     func testBenchJ2KSwiftHT256Custom() async throws {

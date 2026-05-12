@@ -46,10 +46,26 @@ final class J2KCoreTests: XCTestCase {
     }
 
     /// Tests version string.
+    ///
+    /// v9.9 — assertion updated. The original check pinned the
+    /// version to "2.0.0" (the release this test class was written
+    /// against). The codebase shipped v3.0, v5.x, v6.x, v7.x, v8.x,
+    /// v9.x since then; `getVersion()` now returns "9.4.0" (and will
+    /// move forward with each release). The test still serves as a
+    /// regression guard against an empty / malformed version string;
+    /// the substring check now accepts any valid semver-shaped
+    /// "MAJOR.MINOR.PATCH" rather than freezing a specific value.
     func testGetVersion() throws {
         let version = getVersion()
         XCTAssertFalse(version.isEmpty)
-        XCTAssertTrue(version.contains("2.0.0"))
+        // semver-shaped: at least MAJOR.MINOR.PATCH with digits.
+        let parts = version.split(separator: ".")
+        XCTAssertGreaterThanOrEqual(parts.count, 3,
+            "getVersion() must return a semver-shaped string, got \(version)")
+        for part in parts {
+            XCTAssertNotNil(Int(part),
+                "Each semver component must be numeric, got \(part) in \(version)")
+        }
     }
 
     // MARK: - J2KComponent Tests

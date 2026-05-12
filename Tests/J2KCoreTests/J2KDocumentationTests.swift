@@ -260,10 +260,22 @@ final class J2KDocumentationTests: XCTestCase {
     // MARK: - Week 293-295: v2.0 Release Preparation
 
     /// Verifies that getVersion() returns the current version string.
+    ///
+    /// v9.9 — relaxed from `hasPrefix("2.")` to a semver-shape check.
+    /// The codebase has moved through v3 / v5 / v6 / v7 / v8 / v9
+    /// since this test was written; the assertion now guards against
+    /// empty / malformed version strings without pinning to a stale
+    /// major version. See `J2KCoreTests.testGetVersion`.
     func testVersionReturns200() throws {
         let version = getVersion()
         XCTAssertFalse(version.isEmpty, "getVersion() must return a non-empty version string")
-        XCTAssertTrue(version.hasPrefix("2."), "getVersion() must return a v2.x version string")
+        let parts = version.split(separator: ".")
+        XCTAssertGreaterThanOrEqual(parts.count, 3,
+            "getVersion() must return semver-shaped string, got \(version)")
+        for part in parts {
+            XCTAssertNotNil(Int(part),
+                "Each semver component must be numeric, got \(part) in \(version)")
+        }
     }
 
     /// Verifies that the v2.0 release deliverables follow the expected naming convention.

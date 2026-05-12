@@ -27,6 +27,20 @@ import XCTest
 
 final class HTGPUForward53Phase9PolicyTests: XCTestCase {
 
+    // v9.9 — pin planner to single-tile so the gate-logic
+    // assertions test what they were written to test. See
+    // GPUForward53DefaultOnTests for the full rationale: v7.0.0
+    // flipped the planner default to `.auto`, splitting test
+    // fixtures into per-tile sizes below the GPU threshold so
+    // GPU never fires under default config.
+    private var _savedEnvMode: J2KHTTileMode!
+
+    override func setUp() {
+        super.setUp()
+        _savedEnvMode = J2KEncodeTilePlanner.envMode
+        J2KEncodeTilePlanner.envMode = .single
+    }
+
     // MARK: - Fixtures
 
     private func htConfig(decompositionLevels: Int = 5) -> J2KEncodingConfiguration {
@@ -59,10 +73,11 @@ final class HTGPUForward53Phase9PolicyTests: XCTestCase {
 
     /// Restore the gate flag and threshold to phase-3-default after
     /// every test, so tests stay isolated even if a previous test
-    /// crashed mid-way.
+    /// crashed mid-way. v9.9 also restores the planner envMode here.
     override func tearDown() {
         EncoderPipeline._gpuForward53Enabled = false
         EncoderPipeline._gpuForward53PixelThreshold = 4_000_000
+        J2KEncodeTilePlanner.envMode = _savedEnvMode
         super.tearDown()
     }
 

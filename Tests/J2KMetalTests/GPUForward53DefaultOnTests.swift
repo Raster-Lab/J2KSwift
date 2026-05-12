@@ -26,6 +26,28 @@ import XCTest
 
 final class GPUForward53DefaultOnTests: XCTestCase {
 
+    // v9.9 — this test suite verifies the GPU forward 5/3 dispatch
+    // GATE logic (per-image-size routing decisions), which assumes
+    // single-tile encode. v7.0.0 flipped the planner default from
+    // `.single` to `.auto`, so DX (6.4 MP) gets split into 4×4
+    // tiles of 700×572 each — 0.4 MP per tile, below the 3 MP GPU
+    // threshold. Under default `.auto`, GPU correctly never fires
+    // on per-tile dispatches. Pin to `.single` for the duration of
+    // this suite so the gate-logic assertions test what they were
+    // written to test.
+    private var _savedEnvMode: J2KHTTileMode!
+
+    override func setUp() {
+        super.setUp()
+        _savedEnvMode = J2KEncodeTilePlanner.envMode
+        J2KEncodeTilePlanner.envMode = .single
+    }
+
+    override func tearDown() {
+        J2KEncodeTilePlanner.envMode = _savedEnvMode
+        super.tearDown()
+    }
+
     private func loadPGM16(_ filename: String) -> J2KImage? {
         let here = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
