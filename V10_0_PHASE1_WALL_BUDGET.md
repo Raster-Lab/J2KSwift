@@ -10,13 +10,18 @@
 
 **Phase 2 decision: close v10.0 as research artefact.** No non-entropy stage
 clears the plan's gate (≥10 % of wall on DX *and* not already at a documented
-ceiling). The largest non-entropy CPU contributor is **DWT** (288 ms summed
-worker CPU on DX-12T), but the V8_6 finding established it is memory-bandwidth
-bound at 0.37 ns/sample on M-series — a C+NEON retrofit returns no measurable
-wall savings. Pre-processing `extract16` is the only other non-trivial stage
-(~5 ms summed CPU on DX-1T, ~12 % of wall by CPU but lower by wall when
-parallelised), but the size and per-byte cost make a C target unattractive on
-the cost/benefit ratio that v9.4 / v9.5 established.
+ceiling). Phase 1c isolation microbench confirms:
+
+- **DWT 5/3 forward on DX = 2.24 ns/coeff** (M2, n=30) — below the
+  V96DWTMicrobench's 3 ns auto-vec-ceiling threshold; hand-NEON DWT will
+  wash. DWT serial is ~50 % of DX wall already.
+- **extract16 = ~1.98 ns / 16-bit pixel** — also at auto-vec ceiling
+  (LLVM-vectorised since the v5.38 M7 closed-form loop).
+- **Tier-2, codestream-marker, rateCtrl: <2 % of wall each.**
+
+The largest non-entropy stage by CPU (DWT) is at the M2 memory-bandwidth
+ceiling per V8_6 finding and confirmed by the Phase 1c microbench. A C+NEON
+retrofit returns no measurable wall savings.
 
 ## Method + a critical methodology caveat
 
@@ -158,6 +163,44 @@ v9.5).
    wall-budget report, and a documented decision — meeting the plan's
    research-mode deliverable criteria. The branch can be merged to `main` as
    a research-mode update or kept on the side for future reference.
+
+## Phase 1c — DWT 5/3 forward in isolation (cross-check)
+
+`V96DWTMicrobenchTests.testDWTNsPerCoefficientAcrossShapes` re-run on M2
+(release, n=30 trials per shape) to confirm the V8_6 memory-bandwidth ceiling
+on this host:
+
+| Shape          | wall median | ns/coeff |
+|----------------|------------:|---------:|
+| ct-like 512²   |     0.66 ms |     1.90 |
+| xa-like 1024²  |     2.69 ms |     1.93 |
+| px-like 2459×1316 | 9.44 ms |     2.19 |
+| **dx-like 2800×2288** | **19.14 ms** | **2.24** |
+| mg-like 3520×4784 | 50.25 ms |     2.24 |
+
+Per the microbench's own decision rule (`<3 ns/coeff = auto-vec ceiling, NEON
+will wash`), **DX 5/3 forward DWT at 2.24 ns/coeff is firmly at the
+auto-vec ceiling on M2**. A hand-NEON or C+NEON DWT would not produce a
+measurable wall improvement — same conclusion the v9.5 entropy NEON arc
+reached for the entropy stage.
+
+The 19.14 ms DWT-in-isolation also bounds the maxT=12 wall budget:
+**DWT serially is already ~50 % of the 38.54 ms DX wall** observed at
+maxT=12. The remaining 50 % is entropy (also at ceiling per v9.4) overlapped
+with preprocess (sub-3 ns/16-bit-pixel based on the maxT=1 preproc CPU /
+pixel count ratio). Both at ceiling — confirming the close decision.
+
+### Cross-check: extract16 ns/pixel from corpus measurement
+
+From the corpus data at maxT=1 (least dispatcher noise):
+- DX preproc summed CPU: 12.69 ms
+- DX pixels: 6,406,400
+- → **~1.98 ns / 16-bit pixel** for the extract16 widening loop
+
+Already below the 3 ns/coeff threshold the V96DWT bench uses. Hand-SIMD
+extract16 would also wash. (LLVM has been auto-vectorising the v5.38 M7
+specialised closed-form extract loop into NEON `vld1q_u8` + widen + store
+since the M7 commit per the v5.38 finding.)
 
 ## Limitations of this measurement (for any future re-run)
 
