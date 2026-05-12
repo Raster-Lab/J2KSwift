@@ -78,14 +78,20 @@ single-stage optimisation effort returns no measurable wall savings.**
 **No production source changes.** The v10.0 arc is pure measurement +
 documentation.
 
+**Branching policy (2026-05-12 onwards):** the v10.0 deliverables (plan +
+Phase 1 data + this closure doc + scaffolding test) live on the
+`v10.0-research` branch and are **not merged to `main`**. Future
+research arcs link to commits on this branch directly. See
+`feedback_research_no_main_merge.md` for the rationale.
+
 The v9.9 commits on this branch (`748b054` vImage crash fix, `b15ede6`
 test-scaffolding fixes, `33cb20b`/`4863d4a` HTJ2K threshold fixes,
 `cb96ed6` qstep-search bracket widening) are **separate from the v10.0 arc**.
 The vImage production crash fix (`748b054`) shipped via the **v9.5.1
-hotfix** released the same day (PR #414). The remaining v9.9 commits stay
-on the research branch; the lossy qstep-bracket widening (`cb96ed6`) is
-parked scope per the lossless-only product directive (memory
-`feedback_lossless_only_v5_38`).
+hotfix** released the same day (PR #414, per the RELEASING.md hotfix
+flow). The remaining v9.9 commits stay on the research branch; the lossy
+qstep-bracket widening (`cb96ed6`) is parked scope per the lossless-only
+product directive (memory `feedback_lossless_only_v5_38`).
 
 ## Reproducing
 

@@ -161,8 +161,10 @@ v9.5).
    separate measurement pass when M-series hardware is available.
 3. The v10.0-research branch has produced fresh measurement data, an updated
    wall-budget report, and a documented decision — meeting the plan's
-   research-mode deliverable criteria. The branch can be merged to `main` as
-   a research-mode update or kept on the side for future reference.
+   research-mode deliverable criteria. **Per the 2026-05-12 policy
+   (`feedback_research_no_main_merge.md`), the branch stays on its own
+   reference; research deliverables are not merged to `main`.** Future
+   research arcs link to commits on this branch directly.
 
 ## Phase 1c — DWT 5/3 forward in isolation (cross-check)
 
