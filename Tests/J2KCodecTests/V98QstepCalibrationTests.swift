@@ -208,6 +208,96 @@ final class V98QstepCalibrationTests: XCTestCase {
         try await calibrateOne(Self.fixtures[6], bpp: 2.0)
     }
 
+    /// Binary-search for the converged qstep externally via .fixedQstep
+    /// encodes. Bypasses the search loop's bracket limits entirely.
+    /// Used to gather ground-truth calibration data for the v9.9
+    /// image-statistics predictor.
+    private func binarySearchConvergedQstep(
+        image: J2KImage, targetBytes: Int,
+        tolerance: Double = 0.01,
+        lower: Double = 0.001, upper: Double = 100000.0,
+        maxIters: Int = 20
+    ) async throws -> (qstep: Double, achievedBytes: Int, iters: Int) {
+        var lo = lower
+        var hi = upper
+        var best: (Double, Int) = (lo, 0)
+        var bestErr: Double = .infinity
+        for i in 0..<maxIters {
+            let mid = (lo * hi).squareRoot()  // log-space midpoint
+            var cfg = J2KEncodingConfiguration(
+                quality: 1.0, lossless: false,
+                decompositionLevels: 5, qualityLayers: 1,
+                progressionOrder: .lrcp, useHTJ2K: true,
+                useReversibleFilter: false,
+                htj2kBlockFormat: .conformant)
+            cfg.bitrateMode = .fixedQstep(qstep: mid)
+            let enc = J2KEncoder(encodingConfiguration: cfg)
+            let data = try await enc.encode(image)
+            let bytes = data.count
+            let ratio = Double(bytes) / Double(targetBytes)
+            let err = abs(ratio - 1.0)
+            if err < bestErr {
+                bestErr = err
+                best = (mid, bytes)
+            }
+            if err < tolerance { return (mid, bytes, i + 1) }
+            if bytes > targetBytes { lo = mid } else { hi = mid }
+            if (hi / lo) < 1.001 { break }
+        }
+        return (best.0, best.1, maxIters)
+    }
+
+    /// Full 28-point calibration sweep using external .fixedQstep binary
+    /// search to bypass the in-encoder qstep-search bracket limits. This
+    /// is the source-of-truth calibration for the v9.9 image-statistics
+    /// predictor. Per-test method (one per fixture × bpp combination so
+    /// each runs cleanly even if one fixture crashes).
+    private func fullCalibrate(_ fx: Fixture, bpp: Double) async throws {
+        guard let img = try loadPGM(fx.filename) else {
+            print("V99_FULLCAL_SKIP \(fx.name): fixture not found")
+            return
+        }
+        let stats = computeStats(image: img)
+        let pixels = img.width * img.height
+        let targetBytes = Int(Double(pixels) * bpp / 8.0)
+        let r = try await binarySearchConvergedQstep(
+            image: img, targetBytes: targetBytes,
+            tolerance: 0.01, maxIters: 24)
+        let achievedBpp = Double(r.achievedBytes * 8) / Double(pixels)
+        let textureMean = (stats.absDiffH + stats.absDiffV) * 0.5
+        print("V99_FULLCAL \(fx.name),\(pixels),\(stats.maxAbs),\(String(format: "%.2f", stats.absMean)),\(String(format: "%.2f", stats.stdDev)),\(String(format: "%.2f", textureMean)),\(bpp),\(String(format: "%.4g", r.qstep)),\(String(format: "%.4f", achievedBpp)),\(r.iters)")
+        fflush(stdout)
+    }
+
+    func testFullCal_mr_002() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[0], bpp: bpp) }
+    }
+    func testFullCal_ct_001() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[1], bpp: bpp) }
+    }
+    func testFullCal_ct_003() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[2], bpp: bpp) }
+    }
+    func testFullCal_mr_001() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[3], bpp: bpp) }
+    }
+    func testFullCal_xa_001() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[4], bpp: bpp) }
+    }
+    func testFullCal_px_001() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[5], bpp: bpp) }
+    }
+    func testFullCal_dx_002() async throws {
+        print("V99_FULLCAL_HEADER name,pixels,max_abs,abs_mean,std_dev,texture,bpp,converged_qstep,achieved_bpp,iters")
+        for bpp in [0.5, 1.0, 2.0, 4.0] { try await fullCalibrate(Self.fixtures[6], bpp: bpp) }
+    }
+
     /// Probe ct_001 at .fixedQstep values to find which qstep crashes.
     func testCt001FixedQstepSweep() async throws {
         guard let img = try loadPGM(Self.fixtures[1].filename) else {

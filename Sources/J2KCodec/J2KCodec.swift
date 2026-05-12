@@ -425,10 +425,18 @@ public struct J2KEncoder: Sendable {
                 // bit-depth medical (α ≈ 0.13 means doubling qstep
                 // ≈ halves bytes only on high-α content; for low-α
                 // we still scale by ratio as a first-order step).
+                //
+                // v9.9 — widened the refinement clamp and bracket
+                // factor (see encodeViaQstepSearch for the same
+                // rationale). The pre-v9.9 `±32×` clamp around the
+                // calibration prior was too narrow for the converged-
+                // qstep range observed on the medical corpus (5 orders
+                // of magnitude). Allow the refinement to land anywhere
+                // in `[1e-3, 1e6]` and let the bracket span ≥64× the
+                // refined value.
                 let refined = qstep * ratio
-                let prior = Self.initialQstepGuess(targetBpp: targetBpp, bitDepth: bitDepth)
-                qstep = max(prior / 32.0, min(prior * 32.0, refined))
-                let bracketFactor = max(8.0, abs(log2(ratio)) * 8.0)
+                qstep = max(0.001, min(1_000_000.0, refined))
+                let bracketFactor = max(64.0, abs(log2(ratio)) * 16.0)
                 lower = qstep / bracketFactor
                 upper = qstep * bracketFactor
             } else {
@@ -602,10 +610,11 @@ public struct J2KEncoder: Sendable {
             if passes >= maxP { break }
 
             if passes == 1 {
+                // v9.9 — widened refinement clamp and bracket factor
+                // (see encodeViaQstepSearch comment for full rationale).
                 let refined = qstep * ratio
-                let prior = Self.initialQstepGuess(targetBpp: targetBpp, bitDepth: bitDepth)
-                qstep = max(prior / 32.0, min(prior * 32.0, refined))
-                let bracketFactor = max(8.0, abs(log2(ratio)) * 8.0)
+                qstep = max(0.001, min(1_000_000.0, refined))
+                let bracketFactor = max(64.0, abs(log2(ratio)) * 16.0)
                 lower = qstep / bracketFactor
                 upper = qstep * bracketFactor
             } else {
@@ -779,19 +788,23 @@ public struct J2KEncoder: Sendable {
                 // quantization → smaller output).
                 let scaleHint = ratio
                 let refined = qstep * scaleHint
-                // Clamp to within an order of magnitude of the
-                // calibration prior (avoids runaway on outliers).
-                let priorGuess = Self.initialQstepGuess(
-                    targetBpp: targetBpp, bitDepth: bitDepth)
-                qstep = max(priorGuess / 32, min(priorGuess * 32, refined))
-                // v5.31.0 — widen the bracket when iter-1 ratio is
-                // far from 1.0. The previous fixed `±8×` bracket was
-                // too narrow for HT-conformant high-bitdepth content
-                // (16-bit medical) where the bytes-vs-qstep curve is
-                // very flat; iter-2..8 converge to upper-cap without
-                // hitting target. Scale the upper bracket by the
-                // observed ratio so we always have headroom to grow.
-                let bracketFactor = max(8.0, abs(log2(scaleHint)) * 8.0)
+                // v9.9 — widen the iter-1 refinement clamp and bracket
+                // factor. Calibration of the J2KSwift medical corpus
+                // showed converged qstep spans 5 orders of magnitude
+                // (mr_001 @ 2bpp ≈ 0.75 vs px_001 @ 0.5bpp ≈ 80580).
+                // The pre-v9.9 clamp `[priorGuess/32, priorGuess*32]`
+                // (= [0.47, 480] for 16-bit @ 2bpp) was 30–40× too
+                // narrow for high-variance content like dx_002 / mg_*.
+                // The pre-v9.9 bracket factor `max(8, log2(ratio)*8)`
+                // gave ≤ ~90× span — also insufficient when the iter-1
+                // ratio was 100s for medical X-ray. After v9.9, the
+                // refinement may land anywhere in `[1e-3, 1e6]` and
+                // the bracket spans 16× that range to leave plenty of
+                // headroom for the iter≥2 binary search. The cost is
+                // negligible: each iteration is one full encode, and
+                // landing closer on iter 1 means fewer iter≥2 walks.
+                qstep = max(0.001, min(1_000_000.0, refined))
+                let bracketFactor = max(64.0, abs(log2(scaleHint)) * 16.0)
                 lower = qstep / bracketFactor
                 upper = qstep * bracketFactor
                 continue
