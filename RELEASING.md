@@ -271,6 +271,7 @@ If `CompressionFamily` is ever pushed to a private GitHub repo, restore the Vali
 Before pushing the tag, every release should have on `main`:
 
 - [ ] `RELEASE_NOTES_vX.Y.Z.md` at repo root
+- [ ] **`README.md` updated** — `Current Version` line bumped to `X.Y.Z`, `Previous Release` line moved to the prior tag, **AND** a new paragraph appended to the `## 📦 Release Status` section summarising the release headline + a link to `RELEASE_NOTES_vX.Y.Z.md`. **Mandatory for every release type** (patch, minor, major, hotfix). Skipping this leaves the public-facing README stale and silently misleads consumers about the project's current state.
 - [ ] All work in the release explicitly tested by the mandatory commit gate (release mode, 0 failures)
 - [ ] If codestream bytes change vs previous tag, a `CROSS_VERSION_DELTA_REPORT.md` updated and committed (or a section appended) showing what's the same and what's not
 - [ ] If a new validation suite was added, listed in the Test Suite Results table of the release notes with cell count
