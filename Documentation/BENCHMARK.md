@@ -1,10 +1,82 @@
-# J2KSwift v8.1.1 — Performance Benchmark Report
+# J2KSwift — Performance Benchmark Report
+
+## Canonical warm cross-codec benchmark (v9.6+)
+
+**This is the authoritative methodology for any performance claim about
+J2KSwift on Apple Silicon. Every release that quotes encode/decode wall
+times in `RELEASE_NOTES_vX.Y.Z.md` MUST cite output produced by this
+script.**
+
+```bash
+# Prerequisites (one-time per host)
+swift build -c release --product j2k --product j2kd
+.build/release/j2k daemon-install --force
+brew install openjph grokj2k
+# Kakadu: install kdu_compress / kdu_expand to /usr/local/bin/
+python3 Scripts/benchmarks/generate_synthetic_corpus.py     # 26 fixtures
+
+# Run the canonical warm benchmark
+python3 Scripts/benchmarks/cross_codec_warm_bench.py \
+    --output benchmark-results-$(uname -m)-$(date +%Y%m%d).json
+```
+
+**Why warm-only.** Cold CLI invocations on the J2KSwift binary pay a
+~70 ms Swift-runtime + Metal init tax (Phase 6 measurement on M2) that
+external codec CLIs don't pay. Mixing cold + warm numbers in one
+comparison table distorts every claim. The `j2kd` daemon (v9.5.0)
+amortises the Swift cold-start across calls, putting J2KSwift on the
+same warm-start footing as OpenJPH / Grok / Kakadu CLIs.
+
+**Corpus (20 PGM + 13 DICOM fixtures, all deterministic).**
+- 7 real medical PGMs — `Tests/Fixtures/CrossCodec/*.pgm`
+- 13 synthetic medical PGMs across 8 modalities (MR / CT / XA / DX /
+  PX / MG / NM / CR) × 4 size tiers (256² → 1280²) — produced by
+  `Scripts/benchmarks/generate_synthetic_corpus.py`. Deterministic
+  LCG-seeded; byte-identical across hosts.
+- 13 synthetic DICOM fixtures (uncompressed Explicit VR LE, same pixel
+  data as the synthetic PGMs) — for J2KSwift native DICOM-input
+  measurement.
+
+**Three workloads measured per host.**
+
+| # | Workload | Codecs measured | What it tells us |
+|---|----------|-----------------|------------------|
+| 1 | PGM encode HT-conformant lossless | J2KSwift+daemon, OpenJPH, Grok, Kakadu | Apples-to-apples warm-CLI encode wall |
+| 2 | PGM decode | J2KSwift+daemon, OpenJPH, Grok, Kakadu | Apples-to-apples warm-CLI decode wall |
+| 3 | DICOM encode (PixelData → HT J2K) | J2KSwift only | DICOM-native workload (no cross-codec comparator — other CLIs are J2K-only) |
+
+**Per-cell stats.** Median of 7 timed runs after 2 discarded warmups.
+Cell = (fixture × codec × direction).
+
+**Cross-silicon claim methodology.** Run on each supported host class
+(M2, M3, M4, A-series) and label captured JSON files by host
+descriptor (e.g. `benchmark-results-Mac14_2-9.5.2-20260513.json`).
+Phase 6 of `v10.0-research` showed M2 and M4 produce materially
+different daemon-vs-in-proc curves, so "fastest on Apple Silicon"
+generalises only with per-class measurement.
+
+**SDK consumer guidance.** This script measures CLI shape (warm via
+daemon). For SDK consumers integrating J2KSwift into a long-lived
+process the correct measurement is the in-process performance tests
+in `Tests/J2KMetalTests/`. SDK numbers are typically ~20 ms faster
+than the daemon path on M2 DX (the XPC marshal cost) — see
+`V10_0_PHASE6_DAEMON_DECOMPOSITION.md` on the `v10.0-research` branch.
+
+---
+
+# J2KSwift v8.1.1 — Performance Benchmark Report (historical)
 
 **Date**: 2026-05-10
 **Hardware**: Apple M2 (8 CPU cores, 10 GPU cores, 16 GB unified memory)
 **OS**: macOS 26.x
 **Build**: Swift 6.2 release-mode
 **External codecs**: OpenJPH 0.27.0, Grok 20.3.0, Kakadu 8.4.1
+
+The body below is the v8.1.1 benchmark snapshot from 2026-05-10. It
+uses **cold CLI** numbers for J2KSwift (the daemon flag wasn't applied
+in those tables) and only covers the 7-fixture real corpus. It is
+retained for historical comparison; the v9.6+ canonical methodology
+above supersedes it for any new claim.
 
 This document consolidates the four-axis perf picture across the J2KSwift v8.1.1 release: **decode CLI walls** (what end-users observe), **decode warm in-process** (what SDK consumers observe via `J2KDecoder.preWarm()`), **encode CLI walls**, and **cross-codec parity** (correctness gate). Reproducer scripts live in `Scripts/benchmarks/` and re-run in <1 minute total.
 
