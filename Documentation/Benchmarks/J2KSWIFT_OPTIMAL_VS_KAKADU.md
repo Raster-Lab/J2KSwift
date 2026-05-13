@@ -28,7 +28,7 @@ Kakadu still leads on the largest 2-3 fixtures (PX 3 MP / DX 6 MP). For those, t
 
 | Component | Setting | Why |
 |---|---|---|
-| API surface | `J2KEncoder.encode(_:)` direct in-process call | Eliminates fork+exec + XPC marshal overhead (saves ~20 ms on DX per v10.0-research Phase 6) |
+| API surface | `J2KEncoder.encode(_:)` direct in-process call | Eliminates fork+exec + XPC marshal overhead. Isolated calls: 2-9 ms saved; sustained-load batch: up to 50 ms saved (see `DAEMON_OVERHEAD_METHODOLOGY_FINDING.md`) |
 | Encoder lifetime | One instance, reused across fixtures, after warmup | Cold-start amortised |
 | NEON hot path | `J2K_NEON_HOT_PATH=1` (default since v9.4.0) | Delivers −10 % to −21 % wall vs Swift-only entropy path |
 | Tile mode | `J2KEncodeTilePlanner.envMode = .auto` (default since v7.0.0) | Beats single-tile-GPU per Phase 5 measurement on post-v9.5 main |
@@ -127,7 +127,7 @@ The in-process J2KSwift decode is faster than `--daemon` decode by ~20 ms on M2 
 1. **M2-only.** Phase 6 of v10.0-research showed M4 produces a different daemon-vs-in-proc curve. Numbers may shift on M3+ / A-series silicon. Re-measure per host class for production claims.
 2. **HT-conformant lossless only.** Lossy 9/7 numbers are out of scope (v5.38+ product target).
 3. **Kakadu version may matter.** Measured against 8.4.x; Kakadu releases updates that can shift the gap in either direction.
-4. **In-process J2KSwift requires Swift integration.** This is the SDK shape — apps embedding J2KSwift. Pure CLI consumers shelling out to `j2k encode` should use `--daemon` (per `RELEASE_NOTES_v9.5.2.md` SDK-vs-CLI guidance), and the comparable Kakadu shape is its CLI. In CLI-vs-CLI warm (with j2kd daemon) J2KSwift trails Kakadu on every fixture because the j2kd XPC marshal adds ~20 ms that Kakadu CLI doesn't pay.
+4. **In-process J2KSwift requires Swift integration.** This is the SDK shape — apps embedding J2KSwift. Pure CLI consumers shelling out to `j2k encode` should use `--daemon` (per `RELEASE_NOTES_v9.5.2.md` SDK-vs-CLI guidance), and the comparable Kakadu shape is its CLI. In CLI-vs-CLI warm (with j2kd daemon) J2KSwift's per-call overhead vs in-proc is **2-9 ms under isolated invocations and 8-50 ms under sustained-load batch** (see `DAEMON_OVERHEAD_METHODOLOGY_FINDING.md` for controlled-measurement decomposition).
 
 ## Reproducing this comparison
 

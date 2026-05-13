@@ -132,7 +132,7 @@ This is J2KSwift's marketable strength — external CLIs (OpenJPH/Grok/Kakadu) a
 
 ### Step 5 — DON'T install the daemon for SDK use
 
-Per `Documentation/research/V10_0_PHASE6_DAEMON_DECOMPOSITION.md`: the j2kd daemon adds ~20 ms of XPC marshal overhead per DX-class encode vs in-process API calls. **SDK consumers should NOT use `j2k daemon-install`** — it's for CLI consumers only.
+The j2kd daemon adds **2-9 ms of overhead per encode under isolated calls (8-50 ms under sustained-load batch)** vs in-process API calls. See `Benchmarks/DAEMON_OVERHEAD_METHODOLOGY_FINDING.md` for the controlled-measurement decomposition. **SDK consumers should NOT use `j2k daemon-install`** — it's for CLI consumers only. The in-process path is faster and never penalised by system load.
 
 Verify you're not accidentally routing through the daemon: `J2KEncoder.encode(_:)` doesn't consult the daemon at all; you're safe by default.
 
@@ -200,7 +200,7 @@ If you embed J2KSwift's Swift API in your app/process and ALSO have `j2kd` insta
 |---|---|---|
 | Instantiating `J2KEncoder` per call | Allocation + NEON-buffer pool reset per encode | Reuse one encoder instance across calls |
 | Skipping `J2KDecoder.preWarm()` at app start | ~50 ms Metal init paid by your first user-visible decode | Call once during app init |
-| SDK consumer routing through `j2k --daemon` | +20 ms XPC marshal per DX-class encode | Call `J2KEncoder.encode(_:)` directly |
+| SDK consumer routing through `j2k --daemon` | +2-9 ms per DX-class encode under isolated calls (8-50 ms under sustained-load batch) | Call `J2KEncoder.encode(_:)` directly |
 | CLI consumer NOT installing the daemon | +70 ms Swift-runtime + Metal init per invocation | `j2k daemon-install --force` once per machine |
 | Pre-extracting DICOM pixel data with DCMTK before encode | DICOM parse cost paid twice (your extraction + J2KSwift would do it anyway) | Pass `.dcm` directly to `J2KEncoder.encode` |
 | Setting `J2K_NEON_HOT_PATH=0` in production env | Loses 10-21 % wall reduction the v9.4.0 hot path provides | Don't set it; default is `1` (on). Use only for diagnostics. |
