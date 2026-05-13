@@ -13,7 +13,7 @@ The first iteration of the search loop now ALSO acts as a probe: after observing
 bytes vs target, the encoder multiplicatively scales qstep by the ratio (in log space) and
 restarts the binary search with a tighter bracket [refined/8, refined×8].
 
-Empirical analysis ([V5_19_1_CALIBRATION.md](V5_19_1_CALIBRATION.md)) showed the qstep ↔ bpp
+Empirical analysis ([V5_19_1_CALIBRATION.md](../research/V5_19_1_CALIBRATION.md)) showed the qstep ↔ bpp
 relationship is content-dependent — single-static-calibration can't be accurate across all
 inputs. A 1-iteration probe outperforms any fixed table.
 

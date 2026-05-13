@@ -276,11 +276,11 @@ RELEASE_NOTES_v9.5.0.md                                    (this doc)
 
 ## Companion documents
 
-- [`V9_6_QSTEP_CACHE_RESEARCH.md`](V9_6_QSTEP_CACHE_RESEARCH.md) — qstep cache graduation
-- [`V9_5_BEAT_KAKADU_RESEARCH.md`](V9_5_BEAT_KAKADU_RESEARCH.md) — entropy NEON wash + Phase 5E rationale
-- [`V9_7_COLD_SHOT_RESEARCH.md`](V9_7_COLD_SHOT_RESEARCH.md) — pre-seed negative result
-- [`V9_8_IMAGE_STATS_RESEARCH.md`](V9_8_IMAGE_STATS_RESEARCH.md) — texture predictor finding
-- [`CROSS_CODEC_REPORT_main_bbee839.md`](CROSS_CODEC_REPORT_main_bbee839.md) — fresh M2 measurement
+- [`V9_6_QSTEP_CACHE_RESEARCH.md`](../research/V9_6_QSTEP_CACHE_RESEARCH.md) — qstep cache graduation
+- [`V9_5_BEAT_KAKADU_RESEARCH.md`](../research/V9_5_BEAT_KAKADU_RESEARCH.md) — entropy NEON wash + Phase 5E rationale
+- [`V9_7_COLD_SHOT_RESEARCH.md`](../research/V9_7_COLD_SHOT_RESEARCH.md) — pre-seed negative result
+- [`V9_8_IMAGE_STATS_RESEARCH.md`](../research/V9_8_IMAGE_STATS_RESEARCH.md) — texture predictor finding
+- [`CROSS_CODEC_REPORT_main_bbee839.md`](../benchmarks/CROSS_CODEC_REPORT_main_bbee839.md) — fresh M2 measurement
 
 ## Acknowledgements
 

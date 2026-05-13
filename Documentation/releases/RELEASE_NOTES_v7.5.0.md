@@ -137,6 +137,6 @@ Apple Silicon required (Metal). On non-Metal hosts the Phase 0 bench skips via `
 
 ## Companion documents
 
-- [V7_5_0_PHASE_0_FINDING.md](V7_5_0_PHASE_0_FINDING.md) — full per-block cost analysis + recommendation + reproduction.
+- [V7_5_0_PHASE_0_FINDING.md](../research/V7_5_0_PHASE_0_FINDING.md) — full per-block cost analysis + recommendation + reproduction.
 - [RELEASE_NOTES_v7.4.0.md](RELEASE_NOTES_v7.4.0.md) — prior release (staged-NEON arc).
 - [RELEASING.md](RELEASING.md) — canonical release process.

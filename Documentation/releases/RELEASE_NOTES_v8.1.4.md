@@ -73,5 +73,5 @@ swift test -c release --filter \
 ## References
 
 - v8.1.3 release: [`RELEASE_NOTES_v8.1.3.md`](RELEASE_NOTES_v8.1.3.md) — daemon opt-in default + smart-routing + encoder support + initial mmap input
-- v8.9 research summary: [`V8_9_RESEARCH_SUMMARY.md`](V8_9_RESEARCH_SUMMARY.md) (on the `v8.9-research` branch)
+- v8.9 research summary: [`V8_9_RESEARCH_SUMMARY.md`](../research/V8_9_RESEARCH_SUMMARY.md) (on the `v8.9-research` branch)
 - Cross-codec parity matrix: [`Documentation/BENCHMARK.md`](Documentation/BENCHMARK.md)
