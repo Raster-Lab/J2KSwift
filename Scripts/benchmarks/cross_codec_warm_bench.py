@@ -100,6 +100,8 @@ from typing import Optional
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 REAL_FIXTURE_DIR = os.path.join(REPO_ROOT, "Tests/Fixtures/CrossCodec")
 SYNTH_FIXTURE_DIR = os.path.join(REPO_ROOT, "Tests/Fixtures/CrossCodec/synthetic")
+MEDICAL_REAL_DIR = os.path.join(REPO_ROOT, "Tests/Fixtures/CrossCodec/medical-real")
+MEDICAL_REAL_MANIFEST = os.path.join(MEDICAL_REAL_DIR, "manifest.csv")
 J2K_BIN = os.path.join(REPO_ROOT, ".build/release/j2k")
 SCRATCH_DIR = "/tmp/j2kswift_warm_bench"
 
@@ -152,6 +154,31 @@ DCM_FIXTURES = [
     (f"{label} (DCM)", filename.replace(".pgm", ".dcm"), source, modality)
     for label, filename, source, modality in SYNTH_PGM
 ]
+
+
+def load_medical_real_fixtures() -> list[tuple[str, str, str, str]]:
+    """Load the 18 real medical PGM fixtures from manifest.csv.
+
+    Returns [] if the manifest is absent (graceful fallback for repos
+    that haven't yet generated the medical-real corpus).
+    """
+    if not os.path.isfile(MEDICAL_REAL_MANIFEST):
+        return []
+    out: list[tuple[str, str, str, str]] = []
+    import csv as _csv
+    with open(MEDICAL_REAL_MANIFEST) as f:
+        for row in _csv.DictReader(f):
+            label = (
+                f"{row['modality']} {row['width']}×{row['height']} "
+                f"({row['tier']}, real)"
+            )
+            out.append((label, row["filename"], "medical-real", row["modality"]))
+    # Sort by pixel count so the table reads small → large.
+    return sorted(out, key=lambda x: int(x[1].split("_")[3].split("x")[0]) *
+                                       int(x[1].split("_")[3].split("x")[1].split(".")[0]))
+
+
+MEDICAL_REAL_PGM = load_medical_real_fixtures()
 
 
 # -----------------------------------------------------------------------
@@ -365,9 +392,17 @@ def run_benchmark(args) -> dict:
     # a J2K input for the decode benchmark. Use --daemon so this is fast.
     encoded_inputs = {}
     print("Pre-encoding corpus (one warm encode per fixture, --daemon)...")
-    pgm_fixtures = REAL_PGM + (SYNTH_PGM if not args.quick else SYNTH_PGM[:3])
+    if args.quick:
+        pgm_fixtures = REAL_PGM[:2] + SYNTH_PGM[:3] + MEDICAL_REAL_PGM[:3]
+    else:
+        pgm_fixtures = REAL_PGM + SYNTH_PGM + MEDICAL_REAL_PGM
     for label, filename, source, modality in pgm_fixtures:
-        src_dir = REAL_FIXTURE_DIR if source == "real" else SYNTH_FIXTURE_DIR
+        if source == "real":
+            src_dir = REAL_FIXTURE_DIR
+        elif source == "medical-real":
+            src_dir = MEDICAL_REAL_DIR
+        else:
+            src_dir = SYNTH_FIXTURE_DIR
         src = os.path.join(src_dir, filename)
         if not os.path.exists(src):
             print(f"  ✗ missing: {src}")

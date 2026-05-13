@@ -27,12 +27,21 @@ comparison table distorts every claim. The `j2kd` daemon (v9.5.0)
 amortises the Swift cold-start across calls, putting J2KSwift on the
 same warm-start footing as OpenJPH / Grok / Kakadu CLIs.
 
-**Corpus (20 PGM + 13 DICOM fixtures, all deterministic).**
+**Corpus (38 PGM + 13 DICOM fixtures).**
 - 7 real medical PGMs — `Tests/Fixtures/CrossCodec/*.pgm`
 - 13 synthetic medical PGMs across 8 modalities (MR / CT / XA / DX /
   PX / MG / NM / CR) × 4 size tiers (256² → 1280²) — produced by
   `Scripts/benchmarks/generate_synthetic_corpus.py`. Deterministic
   LCG-seeded; byte-identical across hosts.
+- **18 real medical PGMs** at `Tests/Fixtures/CrossCodec/medical-real/`
+  spanning 6 modalities (CT / DX / MG / MR / PX / XA) × 3 size tiers
+  (small / mid / large). Derived from real DICOM source via
+  `Scripts/benchmarks/select_real_medical_corpus.py`. **PHI-safe** by
+  structural design: PGM has no metadata format, so patient identifiers /
+  dates / institutions / accession numbers / referring physicians cannot
+  be present in the output. Manifest at
+  `Tests/Fixtures/CrossCodec/medical-real/manifest.csv` with MD5s
+  for cross-host reproducibility checks.
 - 13 synthetic DICOM fixtures (uncompressed Explicit VR LE, same pixel
   data as the synthetic PGMs) — for J2KSwift native DICOM-input
   measurement.
