@@ -262,7 +262,7 @@ External decoder binaries on PATH for cross-codec tests:
 ## Companion documents
 
 - [`RELEASING.md`](RELEASING.md) — branching model + release flow (updated this release: cross-codec + medical benchmarks now mandatory inline in every release notes)
-- [`BENCHMARK_REPORT_v6_alpha5_phase9.md`](BENCHMARK_REPORT_v6_alpha5_phase9.md) — full HT-fair encode/decode tables + tile parity matrix + Phase 9 threshold-boundary sweep (v6.0.0 era; numbers stand for v6.1.0 since the GPU forward DWT bytes are unchanged)
+- [`BENCHMARK_REPORT_v6_alpha5_phase9.md`](../benchmarks/BENCHMARK_REPORT_v6_alpha5_phase9.md) — full HT-fair encode/decode tables + tile parity matrix + Phase 9 threshold-boundary sweep (v6.0.0 era; numbers stand for v6.1.0 since the GPU forward DWT bytes are unchanged)
 - [`CROSS_VERSION_DELTA_REPORT.md`](CROSS_VERSION_DELTA_REPORT.md) — v5.38.0 ↔ v6.0.0 byte-equality + per-fixture speed deltas (v6.1.0 preserves the v6.0.0 byte-equality on the unchanged paths and adds the new GPU-default routing on top)
 - [`MEDICAL_BENCHMARK_V6.md`](MEDICAL_BENCHMARK_V6.md) — phase-by-phase trajectory across v6-alpha2 → v6-alpha5 + cross-device tuning template
 - [`docs/V6_ALPHA6_GPU_FORWARD_HT_ENTROPY_PLAN.md`](docs/V6_ALPHA6_GPU_FORWARD_HT_ENTROPY_PLAN.md) — design doc for the entropy arc that produced the opt-in code now shipped

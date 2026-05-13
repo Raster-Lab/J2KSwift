@@ -216,8 +216,8 @@ swift test -c release --filter 'V740NeonVlcRefillMicrobench|V740NeonVlcRefillDXW
 
 ## Companion documents
 
-- [V7_4_0_PHASE_1_FINDING.md](V7_4_0_PHASE_1_FINDING.md) — full Phase 1 measurement report (NEON reconstruction rejected at 0.90 ms Δ).
-- [V7_4_0_PHASE_2_FINDING.md](V7_4_0_PHASE_2_FINDING.md) — full Phase 2 measurement report (SWAR MagSgn refill accepted at 3.70 ms Δ).
-- [V7_4_0_PHASE_3_FINDING.md](V7_4_0_PHASE_3_FINDING.md) — full Phase 3 measurement report (SWAR VLC refill rejected at noise-bound Δ).
+- [V7_4_0_PHASE_1_FINDING.md](../research/V7_4_0_PHASE_1_FINDING.md) — full Phase 1 measurement report (NEON reconstruction rejected at 0.90 ms Δ).
+- [V7_4_0_PHASE_2_FINDING.md](../research/V7_4_0_PHASE_2_FINDING.md) — full Phase 2 measurement report (SWAR MagSgn refill accepted at 3.70 ms Δ).
+- [V7_4_0_PHASE_3_FINDING.md](../research/V7_4_0_PHASE_3_FINDING.md) — full Phase 3 measurement report (SWAR VLC refill rejected at noise-bound Δ).
 - [CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md](CROSS_VERSION_BENCHMARK_v7.1_v7.2_v7.3.md) — six-fixture × three-version × {CLI, in-process} × {encode, decode} benchmark from the v7.3.0 release. Still the most-comprehensive cross-version comparison; v7.4.0's marginal contribution is captured in this document's Phase 2 section.
 - [RELEASING.md](RELEASING.md) — canonical release process.

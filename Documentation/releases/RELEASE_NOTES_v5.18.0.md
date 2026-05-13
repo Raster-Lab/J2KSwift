@@ -14,7 +14,7 @@ v5.16.0 surfaced the lossy HT conformant R-D gap. v5.16.0's design doc proposed 
 - **C. Fixed-qstep mode** — bypass PCRD-opt entirely; every block included unchanged.
 
 v5.18.0 ships **Option C** as the safest first iteration. Investigation during implementation
-([V5_18_0_DESIGN.md](V5_18_0_DESIGN.md)) revealed Option A doesn't actually help: J2KSwift's
+([V5_18_0_DESIGN.md](../research/V5_18_0_DESIGN.md)) revealed Option A doesn't actually help: J2KSwift's
 conformant cleanup pass already codes ALL bits per coefficient (FBCOT 1-pass — same as OpenJPH's
 default), so refinement passes would be redundant. Option B remains a v5.19.0+ candidate.
 

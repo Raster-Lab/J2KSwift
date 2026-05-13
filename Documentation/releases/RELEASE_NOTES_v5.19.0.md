@@ -11,7 +11,7 @@ outer binary-search loop on the quantization step. Hits target bpp within tolera
 v5.16.0 surfaced the lossy HT conformant R-D gap. v5.18.0 shipped `.fixedQstep` as the
 medical-grade-safe path for users willing to pick a qstep. v5.19.0 was originally planned as
 **Option B** (intra-block byte-level truncation in PCRD-opt), but investigation
-([V5_19_0_OPTION_B_INVESTIGATION.md](V5_19_0_OPTION_B_INVESTIGATION.md)) revealed Option B
+([V5_19_0_OPTION_B_INVESTIGATION.md](../research/V5_19_0_OPTION_B_INVESTIGATION.md)) revealed Option B
 requires decoder-side changes that risk the v5.16.0 ojph_expand interop gate. Pivoted to
 **Option D** (binary-search-on-qstep) — bounded scope, no decoder changes, gives users target-bpp
 convenience with fixed-qstep quality.

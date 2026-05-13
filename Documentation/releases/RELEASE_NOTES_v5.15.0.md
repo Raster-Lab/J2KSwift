@@ -75,7 +75,7 @@ losses). The gap appears to be in `J2KStepSizeCalculator` quantization-step sema
 HT-aware, plus a layer-truncation granularity mismatch (HT cleanup-pass-only vs EBCOT three-passes).
 
 This is multi-day work and is captured as the v5.16.0 motivation in
-[V5_15_0_PHASE3_RD_PARITY.md](V5_15_0_PHASE3_RD_PARITY.md).
+[V5_15_0_PHASE3_RD_PARITY.md](../research/V5_15_0_PHASE3_RD_PARITY.md).
 
 **Practical guidance for v5.15.0**: lossless HT conformant is the recommended default. Lossy HT
 users should fall back to EBCOT (`--htj2k-custom` or unset `--htj2k`) until v5.16.0 closes the

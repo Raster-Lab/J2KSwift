@@ -81,9 +81,9 @@ For each phase-0 wash to merit a Phase 1A implementation prototype, one of the f
 
 ## References
 
-- v8.5 close-out: [`V8_5_HT_CONSUMER_BODY_FINDING.md`](V8_5_HT_CONSUMER_BODY_FINDING.md) (PR #406)
-- v8.6 close-out: [`V8_6_FORWARD_DWT_FINDING.md`](V8_6_FORWARD_DWT_FINDING.md) (PR #407)
-- v8.7 close-out: [`V8_7_ENCODER_REDESIGN_FINDING.md`](V8_7_ENCODER_REDESIGN_FINDING.md) (PR #408)
+- v8.5 close-out: [`V8_5_HT_CONSUMER_BODY_FINDING.md`](../research/V8_5_HT_CONSUMER_BODY_FINDING.md) (PR #406)
+- v8.6 close-out: [`V8_6_FORWARD_DWT_FINDING.md`](../research/V8_6_FORWARD_DWT_FINDING.md) (PR #407)
+- v8.7 close-out: [`V8_7_ENCODER_REDESIGN_FINDING.md`](../research/V8_7_ENCODER_REDESIGN_FINDING.md) (PR #408)
 - v8.4 lever-ceiling close-out (3 probes): `V8_4_DECODE_LEVER_CEILING_CONFIRMED.md` (PR #402)
 - v8.1.0 release: [`RELEASE_NOTES_v8.1.0.md`](RELEASE_NOTES_v8.1.0.md)
 - v8.1.1 release: [`RELEASE_NOTES_v8.1.1.md`](RELEASE_NOTES_v8.1.1.md)
