@@ -400,8 +400,15 @@ def run_benchmark(args) -> dict:
 
     os.makedirs(SCRATCH_DIR, exist_ok=True)
     isolated = bool(getattr(args, "isolated", False))
+    in_proc = bool(getattr(args, "in_proc", False))
+    j2k_col = "J2KSwift+inproc" if in_proc else "J2KSwift+daemon"
     print(f"Runs: median of {runs} after {warmups} warmups (per fixture per codec per direction)")
-    print(f"Mode: {'ISOLATED (cool-down between cells; per-call SDK-design measurement)' if isolated else 'SUSTAINED (back-to-back; batch-pipeline-realism measurement)'}")
+    if in_proc:
+        print(f"Mode: IN-PROC (J2KSwift via `j2k inproc-bench`; one Swift launch per fixture, "
+              f"both encode+decode timed in-process — measures pure SDK wall, no CLI subprocess "
+              f"or XPC overhead)")
+    else:
+        print(f"Mode: {'ISOLATED (cool-down between cells; per-call SDK-design measurement)' if isolated else 'SUSTAINED (back-to-back; batch-pipeline-realism measurement)'}")
     print()
 
     # Pre-encode the corpus once with J2KSwift so other codecs have
@@ -432,10 +439,32 @@ def run_benchmark(args) -> dict:
     print(f"  {len(encoded_inputs)}/{len(pgm_fixtures)} pre-encoded.")
     print()
 
+    # In-proc bench cache: when --in-proc, pre-run `j2k inproc-bench` once
+    # per fixture (does both encode and decode in the same Swift process).
+    # Cached results substitute for the per-cell `bench()` call below so
+    # the J2KSwift column reflects pure in-process SDK timing rather than
+    # CLI subprocess + daemon-XPC overhead.
+    inproc_cache: dict = {}
+    if in_proc:
+        print("Pre-running in-proc bench (one Swift launch per fixture)...")
+        for filename, (j2k_path, src, label, source, modality) in encoded_inputs.items():
+            cmd = [J2K_BIN, "inproc-bench", src,
+                   "--runs", str(runs), "--warmups", str(warmups)]
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                if r.returncode == 0:
+                    inproc_cache[filename] = json.loads(r.stdout)
+                else:
+                    print(f"  ✗ inproc-bench failed for {filename}: {r.stderr.strip()[:120]}")
+            except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+                print(f"  ✗ inproc-bench error for {filename}: {e}")
+        print(f"  {len(inproc_cache)}/{len(encoded_inputs)} in-proc benched.")
+        print()
+
     # ============== WORKLOAD 1: PGM ENCODE (cross-codec) ==============
     print("## PGM encode wall — warm (median ms)")
     print()
-    header = ["Fixture", "Source", "J2KSwift+daemon"]
+    header = ["Fixture", "Source", j2k_col]
     for name in CODEC_CANDIDATES:
         if codec_paths[name]["encode"]:
             header.append(name)
@@ -446,10 +475,13 @@ def run_benchmark(args) -> dict:
     for filename, (j2k_path, src, label, source, modality) in encoded_inputs.items():
         row = {"label": label, "source": source, "modality": modality,
                "fixture": filename, "results": {}}
-        # J2KSwift + daemon
-        out = os.path.join(SCRATCH_DIR, f"warm_enc_{filename}.j2k")
-        r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
-        row["results"]["J2KSwift+daemon"] = r
+        # J2KSwift: in-proc cache or daemon CLI
+        if in_proc:
+            r = inproc_cache.get(filename, {}).get("encode")
+        else:
+            out = os.path.join(SCRATCH_DIR, f"warm_enc_{filename}.j2k")
+            r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
+        row["results"][j2k_col] = r
         row_cells = [label, source, f"{r['median']:.2f}" if r else "(err)"]
         # Other codecs
         for name in CODEC_CANDIDATES:
@@ -484,7 +516,7 @@ def run_benchmark(args) -> dict:
     print()
     print("## PGM decode wall — warm (median ms)")
     print()
-    header = ["Fixture", "Source", "J2KSwift+daemon"]
+    header = ["Fixture", "Source", j2k_col]
     for name in CODEC_CANDIDATES:
         if codec_paths[name]["decode"]:
             header.append(name)
@@ -495,9 +527,12 @@ def run_benchmark(args) -> dict:
     for filename, (j2k_path, src, label, source, modality) in encoded_inputs.items():
         row = {"label": label, "source": source, "modality": modality,
                "fixture": filename, "results": {}}
-        out = os.path.join(SCRATCH_DIR, f"warm_dec_{filename}.pgm")
-        r = bench(cmd_j2kswift_decode(j2k_path), out, runs, warmups, isolated=isolated)
-        row["results"]["J2KSwift+daemon"] = r
+        if in_proc:
+            r = inproc_cache.get(filename, {}).get("decode")
+        else:
+            out = os.path.join(SCRATCH_DIR, f"warm_dec_{filename}.pgm")
+            r = bench(cmd_j2kswift_decode(j2k_path), out, runs, warmups, isolated=isolated)
+        row["results"][j2k_col] = r
         row_cells = [label, source, f"{r['median']:.2f}" if r else "(err)"]
         for name in CODEC_CANDIDATES:
             dp = codec_paths[name]["decode"]
@@ -526,7 +561,7 @@ def run_benchmark(args) -> dict:
     print("(External codecs' CLIs are J2K-only; DICOM PixelData extraction")
     print("must be done separately for cross-codec DICOM comparison.)")
     print()
-    print("| Fixture | Modality | J2KSwift+daemon (DICOM→J2K) |")
+    print(f"| Fixture | Modality | {j2k_col} (DICOM→J2K) |")
     print("|---|---|---:|")
 
     dicom_fixtures = DCM_FIXTURES if not args.quick else DCM_FIXTURES[:3]
@@ -535,8 +570,18 @@ def run_benchmark(args) -> dict:
         src = os.path.join(SYNTH_FIXTURE_DIR, filename)
         if not os.path.exists(src):
             continue
-        out = os.path.join(SCRATCH_DIR, f"warm_dcm_{filename}.j2k")
-        r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
+        if in_proc:
+            cmd = [J2K_BIN, "inproc-bench", src,
+                   "--runs", str(runs), "--warmups", str(warmups),
+                   "--mode", "encode"]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                r = json.loads(proc.stdout).get("encode") if proc.returncode == 0 else None
+            except (subprocess.TimeoutExpired, json.JSONDecodeError):
+                r = None
+        else:
+            out = os.path.join(SCRATCH_DIR, f"warm_dcm_{filename}.j2k")
+            r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
         if r:
             dicom_results[filename] = {"label": label, "modality": modality, "results": r}
             print(f"| {label} | {modality} | {r['median']:.2f} |")
@@ -545,7 +590,7 @@ def run_benchmark(args) -> dict:
 
     # ============== SUMMARY ==============
     print()
-    print("## Summary — fixtures where J2KSwift+daemon WINS (median ≤ all measured codecs)")
+    print(f"## Summary — fixtures where {j2k_col} WINS (median ≤ all measured codecs)")
     print()
 
     def count_wins(direction_results):
@@ -553,21 +598,21 @@ def run_benchmark(args) -> dict:
         total = 0
         for fixture, row in direction_results.items():
             results = row["results"]
-            ours = results.get("J2KSwift+daemon")
+            ours = results.get(j2k_col)
             if not ours:
                 continue
             total += 1
             other_medians = [r["median"] for k, r in results.items()
-                             if k != "J2KSwift+daemon" and r]
+                             if k != j2k_col and r]
             if other_medians and ours["median"] <= min(other_medians):
                 wins += 1
         return wins, total
 
     enc_wins, enc_total = count_wins(encode_results)
     dec_wins, dec_total = count_wins(decode_results)
-    print(f"- PGM encode: J2KSwift+daemon wins on **{enc_wins}/{enc_total}** fixtures")
-    print(f"- PGM decode: J2KSwift+daemon wins on **{dec_wins}/{dec_total}** fixtures")
-    print(f"- DICOM encode: J2KSwift+daemon measured on **{len(dicom_results)}/{len(dicom_fixtures)}** fixtures (no cross-codec comparator — see note above)")
+    print(f"- PGM encode: {j2k_col} wins on **{enc_wins}/{enc_total}** fixtures")
+    print(f"- PGM decode: {j2k_col} wins on **{dec_wins}/{dec_total}** fixtures")
+    print(f"- DICOM encode: {j2k_col} measured on **{len(dicom_results)}/{len(dicom_fixtures)}** fixtures (no cross-codec comparator — see note above)")
 
     return {
         "host": cpu,
@@ -602,6 +647,13 @@ def main() -> int:
                          "vs ~77 ms in default sustained mode). Run-time ~3x "
                          "longer. See Documentation/Benchmarks/"
                          "DAEMON_OVERHEAD_METHODOLOGY_FINDING.md.")
+    ap.add_argument("--in-proc", dest="in_proc", action="store_true",
+                    help="Measure J2KSwift via in-process `j2k inproc-bench` "
+                         "(one Swift launch per fixture, both encode+decode "
+                         "timed in-process). Removes CLI subprocess + XPC "
+                         "overhead — reflects real SDK consumer wall. "
+                         "External codecs (Kakadu/OpenJPH/Grok) remain CLI "
+                         "since they have no in-process binding here.")
     args = ap.parse_args()
 
     results = run_benchmark(args)

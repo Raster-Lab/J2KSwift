@@ -107,6 +107,8 @@ struct J2KCLI {
                 print("Error: daemon-status is macOS-only (XPC unavailable on this platform)")
                 exit(1)
                 #endif
+            case "inproc-bench":
+                try await inProcBenchCommand(commandArgs)
             case "version":
                 printVersion()
             case "help", "-h", "--help":
