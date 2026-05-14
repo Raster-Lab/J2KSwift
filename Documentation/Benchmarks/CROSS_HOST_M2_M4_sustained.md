@@ -2,6 +2,69 @@
 
 _Generated 2026-05-14T14:32:30 from `Scripts/benchmarks/compare_hosts.py`._
 
+## What this report measures — plain English
+
+This report shows how fast each codec encodes and decodes test images on
+two different Apple chips — the **M2** and the newer **M4** — when the
+codec is **called via its command-line tool, repeatedly back-to-back**.
+This is the shape a batch-processing pipeline uses: a script (or a
+CI workflow) calls the tool once per image, immediately after the
+previous call finished.
+
+The timings include **everything** that happens between the moment the
+tool is invoked and the moment the output file is written:
+- The operating system starting the command-line program
+- The program loading its libraries
+- The actual encode / decode work
+- Writing the output file
+
+For J2KSwift specifically, the `j2k` command-line tool talks to a small
+background helper process (`j2kd`) so the program doesn't pay full
+startup cost on each invocation, but the round-trip between `j2k` and
+the helper still adds about **50–60 ms per call**. That overhead
+dominates the timings for small-to-medium images.
+
+**This is the most relevant report if you are:**
+- Running J2KSwift from a shell script, batch job, or CI pipeline
+- Comparing it head-to-head against `kdu_compress` / `ojph_compress` /
+  `grk_compress` in the same shape (CLI back-to-back)
+
+**Important caveat:** J2KSwift loses every test image in this mode
+(0/38 wins on both M2 and M4) because the command-line round-trip
+overhead dominates the actual encode work for most fixtures. The
+"raw encoder" picture — what an app calling J2KSwift as a library
+would see — is in
+[CROSS_HOST_M2_M4_inproc.md](CROSS_HOST_M2_M4_inproc.md), where
+J2KSwift wins 31 of 38 fixtures on M4.
+
+## How to read the columns
+
+| Term | Meaning |
+|---|---|
+| **ms** | Milliseconds. **Lower is better.** |
+| **fixture** | One test image. The corpus contains 38 of them, ranging from small thumbnails to high-resolution medical scans. |
+| **Source** | Where the fixture came from: `real` = original public medical images, `synth` = deterministic synthetic, `medical-real` = additional PHI-safe real medical fixtures. |
+| **codec** | The software doing the encode/decode. **J2KSwift+daemon** is ours, called via its CLI; *Kakadu*, *OpenJPH*, *Grok* are third-party CLIs. |
+| **M4 / M2** | Which Apple chip the test ran on. M4 is the newer, faster chip. |
+| **speedup** (e.g. `1.74×`) | How many times faster the newer chip is. `1.74×` ≈ 43 % less time. `1.00×` = no change. |
+| **wins** (in "Winner pattern" section) | How many of the 38 fixtures that codec was the fastest on. |
+
+Medical-imaging modality abbreviations in fixture names: **MR** =
+magnetic resonance, **CT** = computed tomography, **DX** = digital
+chest X-ray, **PX** = panoramic dental, **MG** = mammography, **XA** =
+angiography, **NM** = nuclear medicine, **CR** = computed radiography.
+
+## The other two reports (same data, different shape)
+
+- [CROSS_HOST_M2_M4_inproc.md](CROSS_HOST_M2_M4_inproc.md) — J2KSwift
+  called directly from app code (no command-line, no helper).
+  Use for SDK / library consumer claims.
+- [CROSS_HOST_M2_M4_isolated.md](CROSS_HOST_M2_M4_isolated.md) —
+  command-line shape with brief cool-downs between calls. Methodology
+  sanity-check.
+
+---
+
 ## Hosts and runs
 
 | # | Host | J2KSwift version | Captured | Source JSON |

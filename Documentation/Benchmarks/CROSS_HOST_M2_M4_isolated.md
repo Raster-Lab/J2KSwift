@@ -2,6 +2,55 @@
 
 _Generated 2026-05-14T14:32:32 from `Scripts/benchmarks/compare_hosts.py`._
 
+## What this report measures — plain English
+
+This report shows how fast each codec runs when its **command-line
+tool is invoked one call at a time, with a brief pause between each
+call** so the operating system doesn't have leftover state from the
+previous run. It's the **best-case command-line latency** — what
+you'd see if you ran the tool occasionally rather than in a tight
+batch loop.
+
+**Don't cite this report for marketing or competitive claims.** This
+mode exists mainly as a **methodology sanity-check** alongside the
+sustained-mode report:
+
+- If sustained-mode and isolated-mode numbers differ a lot, it means
+  back-to-back calls are slowing things down (cache contention, OS
+  scheduling, etc.).
+- If they're roughly equal (as they are here on both M2 and M4), the
+  command-line overhead is well-characterised and the codec is doing
+  the same work either way.
+
+The honest "this is how fast my codec is" reports for the two real
+audiences are:
+
+- **App developers / SDK consumers** —
+  [CROSS_HOST_M2_M4_inproc.md](CROSS_HOST_M2_M4_inproc.md). J2KSwift
+  wins 31 of 38 fixtures on M4 in that shape.
+- **Batch / pipeline / CLI consumers** —
+  [CROSS_HOST_M2_M4_sustained.md](CROSS_HOST_M2_M4_sustained.md).
+  All command-line tools are measured the same way.
+
+## How to read the columns
+
+| Term | Meaning |
+|---|---|
+| **ms** | Milliseconds. **Lower is better.** |
+| **fixture** | One test image. The corpus contains 38 of them, ranging from small thumbnails to high-resolution medical scans. |
+| **Source** | Where the fixture came from: `real` = original public medical images, `synth` = deterministic synthetic, `medical-real` = additional PHI-safe real medical fixtures. |
+| **codec** | The software doing the encode/decode. **J2KSwift+daemon** is ours, called via its CLI with cool-downs; *Kakadu*, *OpenJPH*, *Grok* are third-party CLIs. |
+| **M4 / M2** | Which Apple chip the test ran on. M4 is the newer, faster chip. |
+| **speedup** (e.g. `1.74×`) | How many times faster the newer chip is. `1.74×` ≈ 43 % less time. `1.00×` = no change. |
+| **wins** (in "Winner pattern" section) | How many of the 38 fixtures that codec was the fastest on. |
+
+Medical-imaging modality abbreviations in fixture names: **MR** =
+magnetic resonance, **CT** = computed tomography, **DX** = digital
+chest X-ray, **PX** = panoramic dental, **MG** = mammography, **XA** =
+angiography, **NM** = nuclear medicine, **CR** = computed radiography.
+
+---
+
 ## Hosts and runs
 
 | # | Host | J2KSwift version | Captured | Source JSON |
