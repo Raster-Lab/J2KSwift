@@ -266,10 +266,24 @@ def time_subprocess(cmd: list[str], output_path: Optional[str] = None) -> Option
     return elapsed
 
 
-def bench(cmd_factory, output_path: str, runs: int, warmups: int) -> Optional[dict]:
+def bench(cmd_factory, output_path: str, runs: int, warmups: int,
+          isolated: bool = False) -> Optional[dict]:
     """Run `cmd_factory(output_path)` `warmups + runs` times. Return
-    {median, min, max, samples} for the timed runs, or None on failure."""
-    for _ in range(warmups):
+    {median, min, max, samples} for the timed runs, or None on failure.
+
+    When `isolated` is True: bumps warmups (5 instead of caller-supplied
+    1-2) so the cell's daemon + cores are fully warm before timing
+    begins; runs timed calls BACK-TO-BACK (no within-cell sleep — that
+    would let the daemon idle and the cores power-gate down, inflating
+    per-call timing). Inter-cell + inter-fixture cool-down is handled
+    by the run_benchmark caller.
+
+    See DAEMON_OVERHEAD_METHODOLOGY_FINDING.md: isolated DX = ~57 ms
+    (this mode), sustained DX = ~77 ms (default mode); the gap is
+    accumulated scheduler/cache pressure across the full corpus.
+    """
+    effective_warmups = max(warmups, 5) if isolated else warmups
+    for _ in range(effective_warmups):
         time_subprocess(cmd_factory(output_path), output_path)
     samples = []
     for _ in range(runs):
@@ -385,7 +399,9 @@ def run_benchmark(args) -> dict:
         sys.exit(1)
 
     os.makedirs(SCRATCH_DIR, exist_ok=True)
+    isolated = bool(getattr(args, "isolated", False))
     print(f"Runs: median of {runs} after {warmups} warmups (per fixture per codec per direction)")
+    print(f"Mode: {'ISOLATED (cool-down between cells; per-call SDK-design measurement)' if isolated else 'SUSTAINED (back-to-back; batch-pipeline-realism measurement)'}")
     print()
 
     # Pre-encode the corpus once with J2KSwift so other codecs have
@@ -432,7 +448,7 @@ def run_benchmark(args) -> dict:
                "fixture": filename, "results": {}}
         # J2KSwift + daemon
         out = os.path.join(SCRATCH_DIR, f"warm_enc_{filename}.j2k")
-        r = bench(cmd_j2kswift_encode(src), out, runs, warmups)
+        r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
         row["results"]["J2KSwift+daemon"] = r
         row_cells = [label, source, f"{r['median']:.2f}" if r else "(err)"]
         # Other codecs
@@ -450,11 +466,19 @@ def run_benchmark(args) -> dict:
                 factory = cmd_kakadu_encode(src, ep)
             else:
                 continue
-            r = bench(factory, out, runs, warmups)
+            r = bench(factory, out, runs, warmups, isolated=isolated)
             row["results"][name] = r
             row_cells.append(f"{r['median']:.2f}" if r else "(err)")
         print("| " + " | ".join(row_cells) + " |")
         encode_results[filename] = row
+        if isolated:
+            time.sleep(1.0)   # per-fixture cool-down — drains pressure
+                              # accumulated across all codecs on this fixture
+
+    if isolated:
+        print()
+        print("(2 s cool-down before decode pass for cleaner isolation)")
+        time.sleep(2.0)
 
     # ============== WORKLOAD 2: PGM DECODE (cross-codec) ==============
     print()
@@ -472,7 +496,7 @@ def run_benchmark(args) -> dict:
         row = {"label": label, "source": source, "modality": modality,
                "fixture": filename, "results": {}}
         out = os.path.join(SCRATCH_DIR, f"warm_dec_{filename}.pgm")
-        r = bench(cmd_j2kswift_decode(j2k_path), out, runs, warmups)
+        r = bench(cmd_j2kswift_decode(j2k_path), out, runs, warmups, isolated=isolated)
         row["results"]["J2KSwift+daemon"] = r
         row_cells = [label, source, f"{r['median']:.2f}" if r else "(err)"]
         for name in CODEC_CANDIDATES:
@@ -488,11 +512,13 @@ def run_benchmark(args) -> dict:
                 factory = cmd_kakadu_decode(j2k_path, dp)
             else:
                 continue
-            r = bench(factory, out, runs, warmups)
+            r = bench(factory, out, runs, warmups, isolated=isolated)
             row["results"][name] = r
             row_cells.append(f"{r['median']:.2f}" if r else "(err)")
         print("| " + " | ".join(row_cells) + " |")
         decode_results[filename] = row
+        if isolated:
+            time.sleep(1.0)   # per-fixture cool-down
 
     # ============== WORKLOAD 3: DICOM ENCODE (J2KSwift-only) ==============
     print()
@@ -510,7 +536,7 @@ def run_benchmark(args) -> dict:
         if not os.path.exists(src):
             continue
         out = os.path.join(SCRATCH_DIR, f"warm_dcm_{filename}.j2k")
-        r = bench(cmd_j2kswift_encode(src), out, runs, warmups)
+        r = bench(cmd_j2kswift_encode(src), out, runs, warmups, isolated=isolated)
         if r:
             dicom_results[filename] = {"label": label, "modality": modality, "results": r}
             print(f"| {label} | {modality} | {r['median']:.2f} |")
@@ -570,6 +596,12 @@ def main() -> int:
     ap.add_argument("--warmups", type=int, default=2, help="Discarded warmups per cell (default 2)")
     ap.add_argument("--output", type=str, default=None, help="Write full results JSON to PATH")
     ap.add_argument("--quick", action="store_true", help="Subset corpus for fast smoke run")
+    ap.add_argument("--isolated", action="store_true",
+                    help="Add cool-down sleeps between calls + between cells. "
+                         "Produces per-call SDK-design measurements (~57 ms DX "
+                         "vs ~77 ms in default sustained mode). Run-time ~3x "
+                         "longer. See Documentation/Benchmarks/"
+                         "DAEMON_OVERHEAD_METHODOLOGY_FINDING.md.")
     args = ap.parse_args()
 
     results = run_benchmark(args)
