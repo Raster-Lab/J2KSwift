@@ -14,6 +14,7 @@
 		C1E270F5D25676DB85033C48 /* BenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70FDC5ED1E7BFEBF7124EF09 /* BenchView.swift */; };
 		C2BA9B529CF22014FEB015D2 /* J2KMetal in Frameworks */ = {isa = PBXBuildFile; productRef = 49A0DD107C3DE562CEBC57D2 /* J2KMetal */; };
 		E16C602F0D8589A23EF98C39 /* J2KCodec in Frameworks */ = {isa = PBXBuildFile; productRef = 7F5E032FADB220A988B63BC4 /* J2KCodec */; };
+		E9CDF2757549BD0786E65A07 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F71F1DC27C76692ACCC2B5F /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		70FDC5ED1E7BFEBF7124EF09 /* BenchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchView.swift; sourceTree = "<group>"; };
 		7A5AE987C58DD2C472057F14 /* BenchRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchRunner.swift; sourceTree = "<group>"; };
 		7D2C163E09502FB21B50A828 /* BenchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchModel.swift; sourceTree = "<group>"; };
+		8F71F1DC27C76692ACCC2B5F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 		9CA615944D80CBFD0CA7F68E /* J2KBenchApp */ = {
 			isa = PBXGroup;
 			children = (
+				8F71F1DC27C76692ACCC2B5F /* Assets.xcassets */,
 				7D2C163E09502FB21B50A828 /* BenchModel.swift */,
 				7A5AE987C58DD2C472057F14 /* BenchRunner.swift */,
 				70FDC5ED1E7BFEBF7124EF09 /* BenchView.swift */,
@@ -84,6 +87,7 @@
 			buildConfigurationList = CA1C8A5FD9C1EDB46FEE9BF2 /* Build configuration list for PBXNativeTarget "J2KBenchApp" */;
 			buildPhases = (
 				FC833DD9F0DE1CE405E261F2 /* Sources */,
+				CAEFEDA0B11C6BAF1101D469 /* Resources */,
 				DFFD08B0F9161535F315AD86 /* Frameworks */,
 			);
 			buildRules = (
@@ -136,6 +140,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		CAEFEDA0B11C6BAF1101D469 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E9CDF2757549BD0786E65A07 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		FC833DD9F0DE1CE405E261F2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -155,6 +170,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_PREVIEWS = YES;
@@ -165,7 +181,9 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = in.raster.j2k.bench;
+				PRODUCT_NAME = "J2K Bench";
 				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -175,6 +193,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_PREVIEWS = YES;
@@ -185,7 +204,9 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = in.raster.j2k.bench;
+				PRODUCT_NAME = "J2K Bench";
 				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
