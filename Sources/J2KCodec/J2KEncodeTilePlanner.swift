@@ -197,7 +197,20 @@ public enum J2KEncodeTilePlanner {
             // a separate hard limit; if the chosen multi-tile grid
             // would produce a tile smaller than `2^decompositionLevels`,
             // the planner falls back to single regardless.
-            if pixels >= 3_000_000 {
+            // v9.6 mammography override (2026-05-15) — the v8.7 corpus
+            // A/B (V8_7_ENCODER_REDESIGN_FINDING.md table at line 57-64)
+            // measured 4x4 regressing MG 3517×4784 by **-13.32 ms / -8.0%**
+            // (166.89 ms 2x2 vs 180.21 ms 4x4) on M2 cold-shot CLI walls.
+            // The 2x2 win on MG is data-supported and independent of the
+            // 4x4 wins on PX (+3.80 ms) and XA (+2.78 ms). Gate it on
+            // (pixels ≥ 12 MP AND min(w,h) ≥ 2400) so it catches MG
+            // (16.8 MP, min 3520) without touching XA (7.86 MP, min 2560)
+            // or DX (≤7.78 MP, min 2544) which both stay on the
+            // 4x4-wins-or-noise side of the v8.7 data.
+            let minDimension = min(imageWidth, imageHeight)
+            if pixels >= 12_000_000 && minDimension >= 2400 {
+                chosen = .tiles2x2
+            } else if pixels >= 3_000_000 {
                 chosen = .tiles4x4
             } else if pixels >= 500_000 {
                 chosen = .tiles2x2
