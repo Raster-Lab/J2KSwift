@@ -73,6 +73,24 @@ Reference data for sanity check vs the encoder analog:
 
 The baseline data is the calibration. The next session writes the scalar C port and re-runs this same harness with `V10_1_DecodeBlockCMicrobench` for a clean A/B.
 
+## MEL port result (2026-05-15, M2 release) — GATE CLEARED
+
+`V10_1_MELMicrobench.testPhaseD1Phase0_melMicrobench`:
+
+| Corpus            | Swift ns/call | C ns/call | Speedup |
+|-------------------|--------------:|----------:|--------:|
+| sparse 256B (00s) | 3.3           | 2.6       | **1.25×** |
+| dense 256B (FFs)  | 3.3           | 2.6       | **1.25×** |
+| random 256B       | 3.9           | 2.6       | **1.50×** |
+
+**Geometric mean: 1.33× (33% faster).** Clears the ≥10% Phase 0 gate decisively.
+
+Parity (`V10_1_MELParityTests`): 9 tests, 0 failures. Coverage includes empty/all-zero/all-FF dictionary cases, every-single-byte sweep (256 byte values), 00/FF + FF/00 alternating sequences, 256 random 1-64-byte streams, 64 large random streams (128-632 bytes, 512 runs each), and a 1024-pair sweep (every first byte × {00, 55, AA, FF} suffix).
+
+**Implication for the full D1 port.** The MEL state machine is the smallest of the three; per-block decode issues ~10K MEL `nextRun()` calls per 64×64 block at typical sparsities, so 1.33× on this piece projects to ~1.3 ns/call × 10K calls / block × 2048 blocks ≈ 26 ms accumulated CPU on DX, spread across 12 workers and stage parallelism to ~3-5 ms wall. That alone is at the v7.4 acceptance threshold; the VLC reverse-reader and MagSgn share-of-block speedups stack on top.
+
+The MEL signal is the **structural** lever the encoder analog used. The decoder side has it too. **Proceed to VLC reverse-reader.**
+
 ## Files in the probe (this branch only, do not merge to main)
 
 - `Documentation/research/V10_1_DECODE_C_PORT_PROBE.md` — this document.
