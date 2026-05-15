@@ -1,8 +1,24 @@
 # v10.1 — HT decode C+NEON port probe (Phase D1 Phase 0)
 
 **Branch:** `v10.1-research`
-**Status:** scoping + baseline measurement, no production code change
-**Goal:** decide whether to commit to a 4-6 week C+NEON port of `HTBlockDecoderConformant.decode(...)` by measuring the Phase 0 gate: **scalar-only C port ≥ 10% faster per-block than the Swift reference path** on M2 release.
+**Status:** **CLOSED 2026-05-15** — Phase 0 sub-gates cleared per state machine, but the projected DX wall savings (~1 ms after dilution) fell below the v7.4 3 ms acceptance threshold. Successor research arc opened on `v10.2-research` covering NEON SWAR retrofit (to lift MagSgn out of its tie with Swift production) and per-block integration (`j2knhd_decode_block_ht32`) with end-to-end DX wall measurement. See [`V10_2_DECODE_C_NEON_RETROFIT_PROBE.md`](V10_2_DECODE_C_NEON_RETROFIT_PROBE.md).
+**Goal (as scoped):** decide whether to commit to a 4-6 week C+NEON port of `HTBlockDecoderConformant.decode(...)` by measuring the Phase 0 gate: **scalar-only C port ≥ 10% faster per-block than the Swift reference path** on M2 release.
+
+## Close-out summary (2026-05-15)
+
+What the probe delivered:
+- **All three HT decoder state machines ported to scalar C** with bit-exact parity oracles (24 tests across MEL/MagSgn/VLC, 1800+ trial byte sequences, 0 failures).
+- **Per-state-machine microbench data**: MEL 1.33×, MagSgn 1.14×, VLC 1.83× vs Swift production.
+- **Phase 0 per-state-machine sub-gates all cleared** at ≥1.10×. The structural Swift/C boundary lever exists on the decode side, mirroring the v9.4 encoder analog.
+- **Honest wall projection** (`~1 ms DX after dilution`) showed the scalar-only ports do not justify production integration on their own.
+
+Why the arc closes here (rather than continuing on this branch):
+- The scalar-only port's verdict is now decisively measured. There is no remaining Phase D1 Phase 0 work on the scalar arc to do.
+- The two paths that COULD change the verdict (NEON retrofit, per-block integration with end-to-end wall measurement) are categorically different work that deserves its own branch + plan doc.
+- Per `feedback_research_no_main_merge`, research stays on its branch — v10.1-research keeps the scalar C ports + parity + microbench as a permanent reference, but no further commits land here.
+
+Successor arc (v10.2-research) inherits this branch's scalar C ports as foundation. MEL/VLC C paths are already at-or-above Swift production and stay scalar in v10.2; MagSgn gets the NEON retrofit; all three feed into a single `j2knhd_decode_block_ht32` integration entry point matched against the existing `HTBlockDecoderConformant.decode` Swift reference.
+
 
 ## Why this is the only un-tried structural lever for decode
 
