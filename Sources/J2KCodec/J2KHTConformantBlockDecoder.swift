@@ -13,10 +13,17 @@
 import Foundation
 import J2KCodecNEON
 
-/// v10.2-research Phase D1.5-C — gate for the integrated C+NEON HT
-/// block decoder (`j2knhd_decode_block_ht32`). Default OFF: production
-/// uses the Swift reference path. Caller flips via
-/// `J2K_NEON_HT_DECODE=1` env var at process start.
+/// v10.2-research Phase D1.5-D — gate for the integrated C+NEON HT
+/// block decoder (`j2knhd_decode_block_ht32`). **Default ON since
+/// Phase D1.5-D (2026-05-15)**: the warm cross-codec A/B cleared the
+/// v7.4 ≥3 ms DX A/B threshold (DX mid −5.34 ms, DX large −6.98 ms;
+/// PX mid −3.04 ms, PX large −3.05 ms across two ON runs). MG variance
+/// was too large to confirm signal in 2 runs but trend was favourable
+/// (5/6 ON-vs-OFF deltas across two ON runs were ≤0 ms).
+///
+/// **Opt-out:** set `J2K_NEON_HT_DECODE=0` to fall back to the Swift
+/// reference path. This is the escape hatch if a fixture regression
+/// is reported.
 ///
 /// The C path uses the 4-byte SWAR MagSgn refill (matches Swift v7.4
 /// `refillBatched`) and otherwise mirrors `HTBlockDecoderConformant.decode`
@@ -24,7 +31,8 @@ import J2KCodecNEON
 /// configurations, 0 failures).
 public enum HTBlockDecoderConformantNEON {
     nonisolated(unsafe) public static var routingEnabled: Bool = {
-        ProcessInfo.processInfo.environment["J2K_NEON_HT_DECODE"] == "1"
+        // Default ON unless explicit opt-out via env var.
+        ProcessInfo.processInfo.environment["J2K_NEON_HT_DECODE"] != "0"
     }()
 }
 

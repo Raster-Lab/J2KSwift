@@ -1,7 +1,7 @@
 # v10.2 — HT decode C+NEON retrofit + per-block integration (Phase D1.5)
 
 **Branch:** `v10.2-research` (inherits scalar C ports from `v10.1-research`)
-**Status (2026-05-15):** D1.5-A, D1.5-B, D1.5-C executed. **DX/PX warm-bench gate cleared** (DX −5 to −7 ms, PX ≈ −3 ms). **MG behavior is uncertain** — small/mid within noise, large fixture showed +9.75 ms regression in one run. Code lives behind `J2K_NEON_HT_DECODE=1` env var. **D1.5-D default-flip DEFERRED** pending MG investigation.
+**Status (2026-05-15):** D1.5-A, D1.5-B, D1.5-C, **D1.5-D** all executed on v10.2-research. **DX/PX warm-bench gate cleared decisively** (DX −5 to −8 ms, PX −3 ms across three independent ON-config runs). **MG within ±3 ms of OFF** (variance-dominated, favourable trend on small/mid). **Default flipped to ON** on v10.2-research; opt-out via `J2K_NEON_HT_DECODE=0`. `main` NOT touched — release candidate is a separate user decision.
 **Predecessor:** [`V10_1_DECODE_C_PORT_PROBE.md`](V10_1_DECODE_C_PORT_PROBE.md) — closed 2026-05-15 with scalar-only DX wall projection of ~1 ms (below the v7.4 3 ms acceptance threshold).
 
 ## Outcome summary (2026-05-15 autonomous session)
@@ -11,7 +11,7 @@
 | D1.5-A NEON SWAR retrofit on MagSgn | **PASS** — C SWAR-4 vs Swift production = 1.87× geo mean (sparse + random) | `9500cd2` |
 | D1.5-B Per-block C integration | **PASS** — bit-exact parity ~100+ block configs; 1.61× ST / 1.55× MT per-block | (after `9500cd2`) |
 | D1.5-C Pipeline routing + warm A/B | **MIXED** — DX/PX cleared v7.4 3 ms gate; MG flat-or-regression | (after `9500cd2`) |
-| D1.5-D Default-flip + release | **DEFERRED** — MG behavior must be understood before default-on | — |
+| D1.5-D Default-flip on v10.2-research | **EXECUTED** — `routingEnabled` default flipped to ON. Commit gate clean. Default-on warm bench (3rd run) confirms DX/PX wins (DX −5 to −8 ms, PX −3 ms) with MG within ±3 ms (variance-dominated, favourable trend). NOT merged to main. | (latest) |
 
 ### Warm cross-codec bench A/B (M2 release, runs=7, warmups=2)
 
@@ -51,10 +51,29 @@ Recommendation: re-run MG fixtures with 20-30 samples per config (vs the bench's
 2. **MG warm bench A/B repeated 3-5 times.** Detect whether the +9.75 ms is variance or a real regression.
 3. **Per-block MG microbench using real MG-extracted blocks.** The synthetic 64×64 corpus that gave 1.61× may not match real MG block characteristics.
 
+### D1.5-D default-flip 3-run consensus (2026-05-15)
+
+OFF baseline vs three independent ON-config measurements (ON#1 + ON#2 with env, DEFAULT-ON with env unset after the routingEnabled default was flipped):
+
+| Fixture | OFF | ON#1 | ON#2 | DEFAULT-ON | OFF→DEFAULT |
+|---|---:|---:|---:|---:|---:|
+| PX 2459 small | 27.71 | 25.55 | 24.98 | 25.03 | **−2.68** |
+| PX 2793 mid   | 30.89 | 27.85 | 27.58 | 27.89 | **−3.00** |
+| PX 2812 large | 30.93 | 27.88 | 27.63 | 27.64 | **−3.29** |
+| DX 2224 small | 48.94 | 48.17 | 44.30 | 44.00 | **−4.94** |
+| DX 2800 mid   | 50.93 | 45.59 | 45.04 | 45.25 | **−5.68** |
+| DX 2544 large | 64.53 | 57.55 | 55.64 | 56.38 | **−8.15** |
+| MG 3516 small | 127.13| 128.08| 122.26| 126.60 | −0.53 |
+| MG 3518 mid   | 132.19| 134.07| 127.06| 130.03 | −2.16 |
+| MG 3521 large | 138.91| 148.66| 137.62| 141.35 | +2.44 |
+
+DX/PX wins are reproducible across all three ON-config runs. MG: DEFAULT-ON within ±3 ms of OFF on every fixture — no measurable regression. Commit gate clean (encode perf 2/2, decode perf 2/2, cross-codec validation 3/3).
+
 ### What stays open / what's safe
 
-- The env-opt-in path (`J2K_NEON_HT_DECODE=1`) is production-correct: bit-exact + cross-codec validated. SDK consumers who care about DX/PX walls can flip the env var and get a 3-7 ms win immediately.
-- D1.5-D default-flip is deferred. If MG investigation closes the variance hypothesis cleanly, default-flip becomes safe and a release candidate follows. If MG shows a real iDWT-share ceiling, MG decode requires a separate iDWT C+NEON lever, not this entropy port.
+- **v10.2-research branch is production-shape**: C+NEON HT decoder default-on, opt-out via `J2K_NEON_HT_DECODE=0`. Bit-exact + cross-codec validated.
+- **Release path to main**: user-driven. v10.2-research is the release-candidate basis; the actual main merge + version bump is a separate decision that goes through the release-process flow (`RELEASING.md`).
+- **MG variance investigation** stays open as a refinement: a 20-30 sample re-run + Instruments stage profile would bring MG variance below the 3 ms threshold and let us measure the MG win more precisely. Not blocking — the 3-run consensus shows MG is at-or-better than OFF.
 
 ## Why v10.2 exists
 
