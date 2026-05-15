@@ -77,9 +77,32 @@ The baseline data is the calibration. The next session writes the scalar C port 
 
 | State machine | Parity | Microbench (C vs Swift scalar) | Microbench (C vs Swift production) | Gate |
 |---|---|---|---|---|
-| MEL | 9 tests, 0 failures | **1.33×** (geo mean) | n/a (Swift MEL has no SWAR variant) | **PASS** |
-| MagSgn | 7 tests, 0 failures | **1.39×** (geo mean) | **1.14×** (geo mean — washes on sparse/random) | MARGINAL vs production |
-| VLC reverse-reader | 8 tests, 0 failures | TBD next session | TBD next session | TBD |
+| MEL | 9 tests, 0 failures | **1.33×** (geo mean) | n/a (Swift MEL has no SWAR variant; scalar = production) | **PASS** |
+| MagSgn | 7 tests, 0 failures | **1.39×** (geo mean) | **1.14×** (washes on sparse/random; Swift v7.4 SWAR ties C scalar) | MARGINAL vs production |
+| VLC reverse-reader | 8 tests, 0 failures | **1.83×** (geo mean) | **1.83×** (Swift v7.4 SWAR is opt-in OFF by default → scalar = production) | **PASS — strongest of the three** |
+
+## Honest wall projection from the three state-machine ports
+
+Per-state-machine winning ratios vs Swift production (M2 release):
+- MEL:    1.33× (3.9 → 2.6 ns/call on random; gain holds across all corpora)
+- MagSgn: 1.14× (3.9 → 3.9 ns/call on sparse/random; only dense-FFs wins by 1.50×)
+- VLC:    1.83× (4.6 → 2.6 ns/call on random; gain holds across all corpora)
+
+Crude DX decode wall projection (entropy share = 57% per v8.4, 12-worker parallel = ~5× effective):
+- Entropy budget: 64 ms × 0.57 / 5 ≈ 7.3 ms entropy wall
+- Assume the three state machines contribute roughly equally to entropy CPU
+- Weighted speedup (geometric mean of 1.33, 1.14, 1.83): ~1.40×
+- Wall savings: 7.3 × (1 − 1/1.40) ≈ **2.1 ms**
+- Apply v9.4 encoder analog's observed dilution factor (~50%, projected 28.9% wall → actual 13%): **~1 ms wall**
+
+**That is below the v7.4 3 ms acceptance threshold.** Reading: the scalar-only D1 port DOES NOT justify the multi-week investment from the per-state-machine evidence alone.
+
+**Two paths that could change the verdict:**
+
+1. **NEON SWAR retrofit on MagSgn.** Swift's v7.4 4-byte SWAR + v8.1 8-byte SWAR refills are the production hot path; matching that in C would close the MagSgn gap and stack on top of MEL/VLC scalar wins. Encoder analog (v9.4) used NEON intrinsics to reach 2.91× single-thread, so the pattern is proven.
+2. **Per-block C decoder integration + end-to-end DX wall measurement.** The per-state-machine microbenches are bounded estimates; integrating MEL + VLC + MagSgn into a single C `j2knhd_decode_block_ht32` and measuring the actual warm DX wall via `J2KMedicalCorpusPerformanceTests` is the canonical decision input. The microbench-vs-wall mapping is uncertain enough that the scalar-only integrated bench could come in either above or below the projection.
+
+**Recommendation for the morning:** decide between (a) close D1 here on the projected sub-threshold scalar wall, accepting Kakadu's PX/DX/MG decode lead, or (b) commit one more week to NEON SWAR retrofit + per-block integration before deciding. Either is defensible from the current data.
 
 **Honest read of MagSgn:** the Swift production path runs v7.4 4-byte SWAR refill by default, which already eliminates most of the boundary cost the C scalar port would address. On sparse/random byte streams the C scalar TIES Swift production (3.9 ns/call each); only on dense-0xFF streams does C win (Swift SWAR fast-path falls through to byte-by-byte). So MagSgn alone doesn't justify the multi-week port — the C path would need its own NEON SWAR retrofit to clearly beat Swift production. The MEL win (1.33× vs Swift production, since MEL has no SWAR variant) is the unambiguous lever.
 
