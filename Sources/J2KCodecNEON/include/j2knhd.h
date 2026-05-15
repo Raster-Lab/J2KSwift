@@ -148,6 +148,43 @@ void j2knhd_vlc_consume(j2knhd_vlc_t *dec, int count);
 /// Bit-exact equivalent of `VLCReverseReader.read(count:)`.
 uint64_t j2knhd_vlc_read(j2knhd_vlc_t *dec, int count);
 
+// ---------------------------------------------------------------------------
+// Per-block HT decoder entry point.
+//
+// Integrated mirror of `HTBlockDecoderConformant.decode` in
+// Sources/J2KCodec/J2KHTConformantBlockDecoder.swift. Wires the three
+// state machines (MEL, VLC reverse-reader, MagSgn) into the row-dispatch
+// state machine and writes reconstructed sign-magnitude coefficients
+// into a caller-owned buffer.
+//
+// Tables are passed in (1024 entries each, UInt16). Swift caller wires
+// `vlcDecoderTable0Conformant` / `vlcDecoderTable1Conformant` from
+// J2KHTConformantTables.swift via `withUnsafeBufferPointer`.
+
+#define J2KNHD_OK             0
+#define J2KNHD_E_MALFORMED   -1   ///< block too small or Scup out of range
+#define J2KNHD_E_DIMENSIONS  -2   ///< width / height / missing_msbs out of range
+
+/// Decode an HT-conformant Part-15 codeblock.
+///
+/// - block / block_len: encoded block bytes (output of HTBlockLayoutConformant.assemble)
+/// - width / height: block sample dimensions, each in [1, 64]
+/// - missing_msbs: in [0, 29] per T.814 conformance
+/// - vlc_table0 / vlc_table1: 1024-entry decoder lookup tables (UInt16 each)
+/// - magsgn_use_swar4: when true, MagSgn refill uses v7.4 SWAR; else scalar
+/// - coefs_out: caller-owned buffer of width*height uint32 entries, written
+///              in row-major order, sign-magnitude (bit 31 = sign, magnitude
+///              in bits below p = 30 - missing_msbs)
+///
+/// Returns J2KNHD_OK or a J2KNHD_E_* negative error code.
+int j2knhd_decode_block_ht32(
+    const uint8_t *block, size_t block_len,
+    uint32_t width, uint32_t height, uint32_t missing_msbs,
+    const uint16_t *vlc_table0,
+    const uint16_t *vlc_table1,
+    bool magsgn_use_swar4,
+    uint32_t *coefs_out);
+
 #ifdef __cplusplus
 }
 #endif
