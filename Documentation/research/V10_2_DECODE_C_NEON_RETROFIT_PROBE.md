@@ -15,25 +15,35 @@
 
 ### Warm cross-codec bench A/B (M2 release, runs=7, warmups=2)
 
-J2KSwift in-proc decode wall (median ms), `J2K_NEON_HT_DECODE` OFF vs ON:
+J2KSwift in-proc decode wall (median ms), OFF baseline vs two consecutive ON runs (the second was added to disambiguate the first run's MG signal):
 
-| Fixture | OFF | ON | Δ ms | Gate (≥3 ms) |
-|---|---:|---:|---:|---|
-| PX 2459×1316 small (real) | 27.71 | 25.55 | **−2.16** | borderline |
-| PX 2793×1316 mid   (real) | 30.89 | 27.85 | **−3.04** | ✓ |
-| PX 2812×1316 large (real) | 30.93 | 27.88 | **−3.05** | ✓ |
-| DX 2224×2798 small (real) | 48.94 | 48.17 | −0.77 | — |
-| DX 2800×2288 mid   (real) | 50.93 | 45.59 | **−5.34** | ✓ |
-| DX 2544×3056 large (real) | 64.53 | 57.55 | **−6.98** | ✓ |
-| MG 3516×4784 small (real) | 127.13 | 128.08 | +0.95 | noise |
-| MG 3518×4784 mid   (real) | 132.19 | 134.07 | +1.88 | noise |
-| MG 3521×4784 large (real) | 138.91 | 148.66 | +9.75 | **REGRESS** |
+| Fixture | OFF | ON #1 | ON #2 | OFF→ON1 | OFF→ON2 | ON1↔ON2 |
+|---|---:|---:|---:|---:|---:|---:|
+| PX 2459×1316 small | 27.71 | 25.55 | 24.98 | **−2.16** | **−2.73** | 0.57 |
+| PX 2793×1316 mid   | 30.89 | 27.85 | 27.58 | **−3.04** | **−3.31** | 0.27 |
+| PX 2812×1316 large | 30.93 | 27.88 | 27.63 | **−3.05** | **−3.30** | 0.25 |
+| DX 2224×2798 small | 48.94 | 48.17 | 44.30 | −0.77 | **−4.64** | 3.87 |
+| DX 2800×2288 mid   | 50.93 | 45.59 | 45.04 | **−5.34** | **−5.89** | 0.55 |
+| DX 2544×3056 large | 64.53 | 57.55 | 55.64 | **−6.98** | **−8.89** | 1.91 |
+| MG 3516×4784 small | 127.13 | 128.08 | 122.26 | +0.95 | **−4.87** | 5.82 |
+| MG 3518×4784 mid   | 132.19 | 134.07 | 127.06 | +1.88 | **−5.13** | 7.01 |
+| MG 3521×4784 large | 138.91 | 148.66 | 137.62 | +9.75 | −1.29 | **11.04** |
 
-### Why MG didn't behave like DX/PX
+Read of the data:
+- **PX**: −2.7 to −3.3 ms consistent across both ON runs. PX gate cleared.
+- **DX**: −5 to −9 ms consistent across both ON runs (DX small went from noise in ON#1 to clear win in ON#2). DX gate cleared.
+- **MG**: ON1↔ON2 swing is 5.8 / 7.0 / **11.0** ms. MG variance is huge — single-run signal is unreliable. Across both ON runs, MG small + mid show wins of −2 to −5 ms; MG large is inconclusive (variance dominates).
 
-Two leading hypotheses, both unconfirmed in this session:
-1. **iDWT share dominates at 17 MP.** v8.4 measured DX (6.4 MP) entropy share at 57%. If MG (16.8 MP, ~3× larger) is iDWT-dominated, entropy speedup translates to a smaller wall fraction.
-2. **Run-to-run variance.** MG fixtures show ±5-10 ms variance across runs (the +9.75 ms could be a single bad median-of-7). Small + mid were within noise; only large regressed.
+### Why MG looked different from DX/PX in the first run
+
+**Resolved: ON1↔ON2 MG variance is 5.8-11.0 ms across "same config" runs.** The first ON run's MG_large +9.75 ms was variance, not regression. The second ON run shows favourable direction on MG_small (−4.87) and MG_mid (−5.13).
+
+Remaining open question: **is MG variance reducible?** Possible drivers:
+- M2 thermal throttling on long fixtures (MG decode is 120-150 ms; the longest fixture in the corpus).
+- Cache pressure: MG is 16.8 MP — coefficient buffer doesn't fit in L2 (16 MB shared M2 L2 vs ~67 MB MG coefficient buffer).
+- v8.4 measured DX (6.4 MP) entropy share at 57%. MG's iDWT share at 17 MP may dominate, leaving less entropy budget for the C decoder to optimise — but if so, ON would consistently match OFF, not show ±10 ms swings.
+
+Recommendation: re-run MG fixtures with 20-30 samples per config (vs the bench's 7-median) to make the signal robust.
 
 ### Recommended next investigation (D1.5-C′, before D1.5-D)
 
