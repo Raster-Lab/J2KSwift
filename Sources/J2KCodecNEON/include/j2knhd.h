@@ -75,12 +75,21 @@ typedef struct j2knhd_magsgn {
     uint64_t tmp;           ///< 64-bit bit buffer, LSB-first consumption
     int bits;               ///< valid bits in `tmp` (low-aligned)
     bool unstuff;           ///< if true, next byte's high bit is reserved
+    bool use_swar4;         ///< v10.2: select between scalar (false) and 4-byte SWAR (true) refill paths; set at init only
 } j2knhd_magsgn_t;
 
-/// Initialise a MagSgn decoder over `bytes[0..bytes_len)`.
+/// Initialise a MagSgn decoder over `bytes[0..bytes_len)`. Uses the
+/// scalar byte-at-a-time refill path (v10.1 reference).
 void j2knhd_magsgn_init(j2knhd_magsgn_t *dec,
                         const uint8_t *bytes,
                         size_t bytes_len);
+
+/// v10.2: initialise a MagSgn decoder routed through the 4-byte SWAR
+/// refill path (mirrors Swift v7.4 `refillBatched`). Bit-exact
+/// equivalent of the scalar path by construction.
+void j2knhd_magsgn_init_swar(j2knhd_magsgn_t *dec,
+                             const uint8_t *bytes,
+                             size_t bytes_len);
 
 /// Read `count` LSB-first bits from the stream. `count` MUST be in
 /// [0, 32]. Bit-exact equivalent of `HTMagSgnDecoderConformant.read(count:)`.
