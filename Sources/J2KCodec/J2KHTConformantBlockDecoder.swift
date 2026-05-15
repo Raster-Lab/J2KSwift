@@ -11,6 +11,22 @@
 // passes (M7).
 
 import Foundation
+import J2KCodecNEON
+
+/// v10.2-research Phase D1.5-C — gate for the integrated C+NEON HT
+/// block decoder (`j2knhd_decode_block_ht32`). Default OFF: production
+/// uses the Swift reference path. Caller flips via
+/// `J2K_NEON_HT_DECODE=1` env var at process start.
+///
+/// The C path uses the 4-byte SWAR MagSgn refill (matches Swift v7.4
+/// `refillBatched`) and otherwise mirrors `HTBlockDecoderConformant.decode`
+/// bit-exactly per `V10_2_DecodeBlockParityTests` (8 tests, ~100+ block
+/// configurations, 0 failures).
+public enum HTBlockDecoderConformantNEON {
+    nonisolated(unsafe) public static var routingEnabled: Bool = {
+        ProcessInfo.processInfo.environment["J2K_NEON_HT_DECODE"] == "1"
+    }()
+}
 
 public enum HTBlockDecoderConformant {
 
@@ -53,12 +69,22 @@ public enum HTBlockDecoderConformant {
     /// Returns the reconstructed `width * height` coefficient array
     /// in OpenJPH sign-magnitude convention (bit 31 = sign, magnitude
     /// in bits below `p = 30 - missingMSBs`).
+    ///
+    /// v10.2 Phase D1.5-C: routes to the integrated C+NEON hot path
+    /// (`j2knhd_decode_block_ht32`) when `HTBlockDecoderConformantNEON.routingEnabled`
+    /// is true (set by `J2K_NEON_HT_DECODE=1` env var). The C path is
+    /// bit-exact with the Swift reference per `V10_2_DecodeBlockParityTests`;
+    /// router fallback throws `malformedBlock` on any C-side error code.
     public static func decode(
         block: [UInt8],
         width: Int,
         height: Int,
         missingMSBs: Int
     ) throws -> [UInt32] {
+        if HTBlockDecoderConformantNEON.routingEnabled {
+            return try decodeViaNEONHotPath(
+                block: block, width: width, height: height, missingMSBs: missingMSBs)
+        }
         guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
             throw HTBlockDecoderConformantError.malformedBlock
         }
@@ -84,6 +110,35 @@ public enum HTBlockDecoderConformant {
         }
 
         return state.coefs
+    }
+
+    /// v10.2 Phase D1.5-C: route a single HT block through the
+    /// integrated C decoder (`j2knhd_decode_block_ht32`).
+    /// SWAR-4 MagSgn refill is enabled (matches Swift production
+    /// default `HTMagSgnDecoderConformant.neonRefillEnabled = true`).
+    private static func decodeViaNEONHotPath(
+        block: [UInt8],
+        width: Int, height: Int, missingMSBs: Int
+    ) throws -> [UInt32] {
+        var coefs = [UInt32](repeating: 0, count: width * height)
+        let rc: Int32 = block.withUnsafeBufferPointer { bp -> Int32 in
+            return vlcDecoderTable0Conformant.withUnsafeBufferPointer { t0 in
+                return vlcDecoderTable1Conformant.withUnsafeBufferPointer { t1 in
+                    return coefs.withUnsafeMutableBufferPointer { co in
+                        return j2knhd_decode_block_ht32(
+                            bp.baseAddress, bp.count,
+                            UInt32(width), UInt32(height), UInt32(missingMSBs),
+                            t0.baseAddress, t1.baseAddress,
+                            true,
+                            co.baseAddress)
+                    }
+                }
+            }
+        }
+        if rc != 0 {
+            throw HTBlockDecoderConformantError.malformedBlock
+        }
+        return coefs
     }
 }
 
