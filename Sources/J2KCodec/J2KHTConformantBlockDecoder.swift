@@ -11,6 +11,30 @@
 // passes (M7).
 
 import Foundation
+import J2KCodecNEON
+
+/// v10.2-research Phase D1.5-D — gate for the integrated C+NEON HT
+/// block decoder (`j2knhd_decode_block_ht32`). **Default ON since
+/// Phase D1.5-D (2026-05-15)**: the warm cross-codec A/B cleared the
+/// v7.4 ≥3 ms DX A/B threshold (DX mid −5.34 ms, DX large −6.98 ms;
+/// PX mid −3.04 ms, PX large −3.05 ms across two ON runs). MG variance
+/// was too large to confirm signal in 2 runs but trend was favourable
+/// (5/6 ON-vs-OFF deltas across two ON runs were ≤0 ms).
+///
+/// **Opt-out:** set `J2K_NEON_HT_DECODE=0` to fall back to the Swift
+/// reference path. This is the escape hatch if a fixture regression
+/// is reported.
+///
+/// The C path uses the 4-byte SWAR MagSgn refill (matches Swift v7.4
+/// `refillBatched`) and otherwise mirrors `HTBlockDecoderConformant.decode`
+/// bit-exactly per `V10_2_DecodeBlockParityTests` (8 tests, ~100+ block
+/// configurations, 0 failures).
+public enum HTBlockDecoderConformantNEON {
+    nonisolated(unsafe) public static var routingEnabled: Bool = {
+        // Default ON unless explicit opt-out via env var.
+        ProcessInfo.processInfo.environment["J2K_NEON_HT_DECODE"] != "0"
+    }()
+}
 
 public enum HTBlockDecoderConformant {
 
@@ -53,12 +77,22 @@ public enum HTBlockDecoderConformant {
     /// Returns the reconstructed `width * height` coefficient array
     /// in OpenJPH sign-magnitude convention (bit 31 = sign, magnitude
     /// in bits below `p = 30 - missingMSBs`).
+    ///
+    /// v10.2 Phase D1.5-C: routes to the integrated C+NEON hot path
+    /// (`j2knhd_decode_block_ht32`) when `HTBlockDecoderConformantNEON.routingEnabled`
+    /// is true (set by `J2K_NEON_HT_DECODE=1` env var). The C path is
+    /// bit-exact with the Swift reference per `V10_2_DecodeBlockParityTests`;
+    /// router fallback throws `malformedBlock` on any C-side error code.
     public static func decode(
         block: [UInt8],
         width: Int,
         height: Int,
         missingMSBs: Int
     ) throws -> [UInt32] {
+        if HTBlockDecoderConformantNEON.routingEnabled {
+            return try decodeViaNEONHotPath(
+                block: block, width: width, height: height, missingMSBs: missingMSBs)
+        }
         guard let parsed = HTBlockLayoutConformant.parse(block: block) else {
             throw HTBlockDecoderConformantError.malformedBlock
         }
@@ -84,6 +118,35 @@ public enum HTBlockDecoderConformant {
         }
 
         return state.coefs
+    }
+
+    /// v10.2 Phase D1.5-C: route a single HT block through the
+    /// integrated C decoder (`j2knhd_decode_block_ht32`).
+    /// SWAR-4 MagSgn refill is enabled (matches Swift production
+    /// default `HTMagSgnDecoderConformant.neonRefillEnabled = true`).
+    private static func decodeViaNEONHotPath(
+        block: [UInt8],
+        width: Int, height: Int, missingMSBs: Int
+    ) throws -> [UInt32] {
+        var coefs = [UInt32](repeating: 0, count: width * height)
+        let rc: Int32 = block.withUnsafeBufferPointer { bp -> Int32 in
+            return vlcDecoderTable0Conformant.withUnsafeBufferPointer { t0 in
+                return vlcDecoderTable1Conformant.withUnsafeBufferPointer { t1 in
+                    return coefs.withUnsafeMutableBufferPointer { co in
+                        return j2knhd_decode_block_ht32(
+                            bp.baseAddress, bp.count,
+                            UInt32(width), UInt32(height), UInt32(missingMSBs),
+                            t0.baseAddress, t1.baseAddress,
+                            true,
+                            co.baseAddress)
+                    }
+                }
+            }
+        }
+        if rc != 0 {
+            throw HTBlockDecoderConformantError.malformedBlock
+        }
+        return coefs
     }
 }
 
@@ -684,6 +747,47 @@ public enum HTBlockDecoderConformantError: Error {
 /// `V7_4_0_PHASE_3_FINDING.md`.
 public enum VLCReverseReaderTesting {
     nonisolated(unsafe) public static var batchedRefillEnabled: Bool = false
+
+    /// v10.1-research Phase D1 parity hook. Drives the (fileprivate)
+    /// `VLCReverseReader` with the scalar refill path against a fixed
+    /// read plan and returns the produced 64-bit values. Used by
+    /// `V10_1_VLCParityTests` to compare against the C scalar port
+    /// in `Sources/J2KCodecNEON/j2knhd_vlc.c`.
+    public static func runScalarReadPlan(
+        bytes: [UInt8], scup: Int, widths: [Int]
+    ) -> [UInt64] {
+        let prev = batchedRefillEnabled
+        batchedRefillEnabled = false
+        defer { batchedRefillEnabled = prev }
+        var reader = VLCReverseReader(melVlcBytes: bytes, scup: scup)
+        var out: [UInt64] = []
+        out.reserveCapacity(widths.count)
+        for w in widths {
+            out.append(reader.read(count: w))
+        }
+        return out
+    }
+
+    /// As `runScalarReadPlan` but also wires in `peek` and `consume`
+    /// in the alternating pattern the real decoder uses:
+    ///   peek(maxBits) → use the result to derive `cwd_len` →
+    ///   consume(cwd_len).
+    /// Caller supplies the (maxBits, consumeBits) pair sequence.
+    public static func runScalarPeekConsumePlan(
+        bytes: [UInt8], scup: Int, pairs: [(Int, Int)]
+    ) -> [UInt64] {
+        let prev = batchedRefillEnabled
+        batchedRefillEnabled = false
+        defer { batchedRefillEnabled = prev }
+        var reader = VLCReverseReader(melVlcBytes: bytes, scup: scup)
+        var out: [UInt64] = []
+        out.reserveCapacity(pairs.count)
+        for (peekBits, consumeBits) in pairs {
+            out.append(reader.peek(maxBits: peekBits))
+            reader.consume(count: consumeBits)
+        }
+        return out
+    }
 }
 
 /// Forward bit reader over the reverse VLC stream. Reads LSB-first
