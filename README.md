@@ -8,14 +8,16 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 9.5.2
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) reference implementation. Marketable claim: **"Fastest JPEG 2000 codec on Apple Silicon."** Full ISO/IEC 15444-4 conformance, verified OpenJPEG/OpenJPH/Kakadu interoperability, Metal-accelerated hot path, custom C+NEON HT block-encoder hot path (v9.4.0), optional `j2kd` macOS XPC daemon for warm-CLI single-shot — now one-command-installable. (3,100+ tests, 100 % pass rate.)
-**Previous Release**: 9.5.1 (vImage dangling-pointer crash hotfix)
+**Current Version**: 10.0.0
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v10.0.0 ships the **C+NEON HT decoder as the production default** (decoder analog of v9.4.0's encoder hot path) plus a recalibrated `recommendedDecodeAPI` router and an MG-only 2x2 tile override. DX warm decode wall reduced 5-8 ms across all medical-corpus fixtures; CT/PX `.auto` decode flipped 75-80 % faster; MG encode reduced 12-25 % via the 2x2 override. MG codestream bytes change vs v9.5.2 on the MG fixture (different tile layout — still HT-conformant lossless; OpenJPH/Grok/Kakadu decode bit-exactly). Decoder output is bit-identical to v9.5.2.
+**Previous Release**: 9.5.2 (doc-only patch: `j2k daemon-install --help` SDK vs CLI guidance)
 **Release process**: see [RELEASING.md](RELEASING.md). Every release MUST update this README (Current Version line + new Release Status paragraph) — see the Release artefacts checklist for the full requirements.
 
 ## 📦 Release Status
 
-**v9.5.2** is a doc-only patch correcting misleading `j2k daemon-install --help` text. The previous help implied the j2kd daemon is the right path for any consumer wanting warm-process speed; v10.0-research Phase 6 measurement on Apple M2 proves that's only true for CLI consumers. SDK consumers calling `J2KEncoder.encode(_:)` / `J2KDecoder.decode(_:)` directly already pay zero cold-start after the first call — and the daemon's XPC IPC adds ~20 ms of overhead per DX-class encode they don't need. The new help text spells out **when to use the daemon (✓ CLI / scripts / PACS tooling)** and **when NOT to (✗ SDK / in-process consumers)**, with a three-line measurement summary. Zero codec-core changes; codestream bytes byte-identical to v9.5.1. See [RELEASE_NOTES_v9.5.2.md](RELEASE_NOTES_v9.5.2.md).
+**v10.0.0** ships three coordinated wins on Apple M2: (1) **`recommendedDecodeAPI` recalibrated for v9.5.2 post-NEON** — `<500K → .cpu, 500K-15M → .decodeGPU, ≥15M → .cpu`; `.decodeWithGPUHT` removed from auto-routing; substitute-corpus `.auto` row drops 75-80 % on CT/PX/DX; (2) **MG-only 2x2 tile override in `J2KEncodeTilePlanner.auto`** — gate on `(pixels ≥ 12 MP AND min(w, h) ≥ 2400)`; MG encode wall drops 12-25 %; **MG codestream bytes change (MAJOR bump trigger)**; (3) **C+NEON HT decoder default-on** — new `j2knhd_decode_block_ht32` C entry; SWAR-4 MagSgn refill; per-block 1.61× single-thread / 1.55× 12-worker; cross-codec parity preserved; opt-out via `J2K_NEON_HT_DECODE=0`. Full bench numbers and migration notes in [RELEASE_NOTES_v10.0.0.md](RELEASE_NOTES_v10.0.0.md).
+
+**v9.5.2** is a doc-only patch correcting misleading `j2k daemon-install --help` text. The previous help implied the j2kd daemon is the right path for any consumer wanting warm-process speed; v10.0-research Phase 6 measurement on Apple M2 shows that's only true for CLI consumers. SDK consumers calling `J2KEncoder.encode(_:)` / `J2KDecoder.decode(_:)` directly already pay zero cold-start after the first call, while the daemon adds avoidable IPC and result-transfer overhead: about 2-9 ms in isolated measurements and 8-50 ms under sustained batch load. The help text spells out **when to use the daemon (CLI / scripts / PACS tooling)** and **when not to (SDK / in-process consumers)**. Zero codec-core changes; codestream bytes byte-identical to v9.5.1. See [RELEASE_NOTES_v9.5.2.md](RELEASE_NOTES_v9.5.2.md).
 
 **v9.5.1** hotfixes two pre-existing production runtime crashes: (1) `vImage_Buffer.data` dangling-pointer write in `J2KAccelerateDeepIntegration.scale16Bit` + `J2KVImageIntegration.resample` (silent corruption + occasional crash on thumbnail/preview paths); (2) SIGSEGV in `J2KConcurrencyTuning.ScalabilityReport.description` (`%s` + Swift String CVarArg UB under Swift 6.x). Codestream bytes byte-identical to v9.5.0 on every default configuration. See [RELEASE_NOTES_v9.5.1.md](RELEASE_NOTES_v9.5.1.md).
 
@@ -29,22 +31,16 @@ A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decodi
 
 **v8.0.1** was a silent-corruption hotfix + GPU multi-tile-per-tile 5/3 IDWT root cause. Fixes the v7.5.1 mg silent-corruption (cross-tile batched HT entropy decode on 16+ MP mammography DICOM fixtures) AND root-causes / fixes the underlying GPU IDWT defect that produced the corruption — two distinct bugs in the GPU multi-tile-per-tile path, both surfacing only on tiles with non-zero canvas origin. `_multiTileBatchedEntropyEnabled` is back default-on; the v7.2.0 cross-tile entropy CB amortisation is restored. **Codestream bytes byte-identical to v8.0.0.** See [RELEASE_NOTES_v8.0.1.md](RELEASE_NOTES_v8.0.1.md) for the full root-cause analysis and the per-tile mismatch progression table.
 
-**v8.0.0** was a major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to beat Kakadu on the dominant Apple-Silicon workloads — small/medium medical images, warm-process apps, and (with the optional XPC daemon) single-shot CLI users.
+**v8.0.0** was a major-version product pivot. v7.x targeted cross-platform performance and got within 25 % of OpenJPH and 2× of Kakadu globally. v8.0.0 narrows the product to **Apple Silicon (M-series macOS + A-series iOS/iPadOS)** and uses platform-native primitives (Metal, NSXPCConnection, launchd) to make the Swift SDK path fast for warm-process Apple applications. This is not a universal Kakadu-beating claim: Kakadu still leads sustained CLI runs, decode, and large-image batch workloads.
 
-### Headline measurement — warm in-process decode vs Kakadu CLI (Apple M2, release mode)
+### Benchmark position — SDK encode vs Kakadu CLI (Apple M2/M4, release mode)
 
-This is the comparison user-facing apps care about: J2KSwift in-process (with `J2KDecoder.preWarm()` called once at startup) vs Kakadu CLI invoked per file.
+J2KSwift has two different performance shapes:
 
-| fixture | warm CPU | Kakadu CLI | result |
-|---|---:|---:|:-:|
-| MR-small 180² | **0.58 ms** | 15 ms | **WIN 26×** |
-| CT 512² | **3.05 ms** | 15 ms | **WIN 5×** |
-| MR 886² | **5.60 ms** | 17 ms | **WIN 3×** |
-| XA 1024² | **7.89 ms** | 18 ms | **WIN 2.3×** |
-| PX 2459×1316 | 29.48 ms | 24 ms | 1.23× behind |
-| DX 2800×2288 | 54.41 ms | 36 ms | 1.51× behind |
+- **SDK / in-process**: app code calls `J2KEncoder.encode(_:)` or `J2KDecoder.decode(_:)` directly after process warmup. This is the shape DICOMKit and DICOM Studio use for their native codec path.
+- **CLI / daemon**: scripts invoke `j2k` once per file. This shape includes process, daemon IPC, and file I/O overhead.
 
-**4 of 6 fixtures win.** SDK consumers (PACS daemons, iOS/iPadOS DICOM viewers, image-processing pipelines) get this performance via the new `J2KDecoder.preWarm()` API.
+The focused M2 report shows J2KSwift in-process HT-conformant-lossless **encode** beating Kakadu CLI on 4 of 7 medical-corpus fixtures, mostly at <= 1 MP. The sustained cross-host CLI report shows J2KSwift+daemon winning **0 of 38** encode fixtures on both M2 and M4. Decode remains weaker: Kakadu leads the focused decode comparison by about 1.9-4.5x. See [J2KSWIFT_OPTIMAL_VS_KAKADU.md](Documentation/Benchmarks/J2KSWIFT_OPTIMAL_VS_KAKADU.md), [CROSS_HOST_M2_M4_inproc.md](Documentation/Benchmarks/CROSS_HOST_M2_M4_inproc.md), [CROSS_HOST_M2_M4_sustained.md](Documentation/Benchmarks/CROSS_HOST_M2_M4_sustained.md), and [DICOM_STUDIO_CLAIM_SCOPE_FINDING.md](Documentation/Benchmarks/DICOM_STUDIO_CLAIM_SCOPE_FINDING.md).
 
 ### CLI cold-shot progression — DX 2800×2288 (ms, median of 5)
 
@@ -116,11 +112,11 @@ J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Sw
 - **Fully Functional**: Complete encoder and decoder pipelines with JP3D, MJ2, and HTJ2K
 - **Apple-Silicon-First (v8.0.0+)**: macOS 15+ (M-series), iOS 18+ / iPadOS 18+ (A-series). Cross-platform builds (tvOS, watchOS, visionOS, Linux, Windows) still compile but performance is no longer a measurement criterion.
 - **Standards Compliant**: Full ISO/IEC 15444-4 conformance across Parts 1, 2, 3, 10, and 15
-- **Hardware Accelerated**: ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, Accelerate framework (1.5–10× faster than OpenJPEG)
+- **Hardware Accelerated**: ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, and Accelerate framework paths where the workload benefits
 - **Network Streaming**: JPIP protocol support for efficient 2D and 3D image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
 - **Well Documented**: DocC catalogues for 8 modules, 50+ guides, tutorials, and API documentation
-- **High Quality**: 100% test pass rate (2,900+ tests) with comprehensive test coverage
+- **High Quality**: broad conformance, interoperability, regression, and GUI test coverage; release claims should cite the exact suite and host that were run
 - **CLI Toolset**: Complete command-line tools for encoding, decoding, transcoding, 3D volumetric, JPIP streaming, batch processing, image comparison, format conversion, validation, and benchmarking
 
 ## 🚀 Quick Start
@@ -842,9 +838,9 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 
 ## 🧪 Testing
 
-### Test Statistics (v2.2.0)
-- **Total Tests**: 3,100+
-- **Passing**: 100% pass rate
+### Test Statistics
+- **Total Tests**: 3,100+ across the current project history
+- **Passing**: use the latest CI or local run for an exact pass rate; do not treat older README counts as a release guarantee
 - **Conformance Tests**: 304 (ISO/IEC 15444-4, Parts 1, 2, 3, 10, 15)
 - **Interoperability Tests**: 165 (OpenJPEG bidirectional)
 - **Integration Tests**: 200+ (end-to-end, stress, regression)
@@ -852,14 +848,14 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - **Phase 19 Tests**: 55+ (multi-spectral JP3D, Vulkan JP3D DWT, JPEG XS types)
 
 ### Test Coverage by Module
-- **J2KCore**: 100% of public APIs tested
-- **J2KCodec**: 100% pass rate (ARM Neon + Intel SSE/AVX SIMD validated)
-- **J2KFileFormat**: 100% pass rate
-- **J2KAccelerate**: 100% pass rate (deep vDSP/vImage/BLAS integration)
-- **J2KMetal**: 100% pass rate (GPU compute refactoring validated)
-- **J2KVulkan**: 100% pass rate (SPIR-V compute shaders)
-- **JPIP**: 100% pass rate (2D and 3D streaming)
-- **J2K3D**: 100% pass rate (JP3D volumetric)
+- **J2KCore**: public API and conformance coverage
+- **J2KCodec**: codec, ARM Neon, Intel SSE/AVX, and interoperability coverage
+- **J2KFileFormat**: JP2/JPH/JHC/MJ2 file-format coverage
+- **J2KAccelerate**: vDSP/vImage/BLAS integration coverage
+- **J2KMetal**: GPU compute regression coverage
+- **J2KVulkan**: SPIR-V compute shader coverage where enabled
+- **JPIP**: 2D and 3D streaming coverage
+- **J2K3D**: JP3D volumetric coverage
 
 ### Running Tests
 ```bash
@@ -998,8 +994,8 @@ This project represents a 295-week development effort following a comprehensive 
 
 ---
 
-**J2KSwift v2.4.0** — A production-ready, standards-compliant Swift implementation of JPEG 2000  
-**Status**: Full ISO/IEC 15444-4 conformance, verified OpenJPEG interoperability, hardware-accelerated performance, comprehensive CLI toolset, JPEG XS codec, multi-spectral JP3D  
+**J2KSwift** — A standards-focused Swift implementation of JPEG 2000 / HTJ2K
+**Status**: See the current-version and benchmark-position sections at the top of this README for the active performance and interoperability claims.
 **Next Release**: See [MILESTONES.md](MILESTONES.md) for roadmap
 
 For detailed information, see [CHANGELOG.md](CHANGELOG.md)
