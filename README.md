@@ -8,12 +8,14 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 10.0.0
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v10.0.0 ships the **C+NEON HT decoder as the production default** (decoder analog of v9.4.0's encoder hot path) plus a recalibrated `recommendedDecodeAPI` router and an MG-only 2x2 tile override. DX warm decode wall reduced 5-8 ms across all medical-corpus fixtures; CT/PX `.auto` decode flipped 75-80 % faster; MG encode reduced 12-25 % via the 2x2 override. MG codestream bytes change vs v9.5.2 on the MG fixture (different tile layout — still HT-conformant lossless; OpenJPH/Grok/Kakadu decode bit-exactly). Decoder output is bit-identical to v9.5.2.
-**Previous Release**: 9.5.2 (doc-only patch: `j2k daemon-install --help` SDK vs CLI guidance)
+**Current Version**: 10.1.0
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v10.1.0 ships **threadgroup-memory tiled Metal inverse 5/3 DWT kernels as the production default** — decode wall reduces 7–25 % across every medical-corpus fixture on Apple M2 vs v10.0.0. MG mammography sees the largest win at −24 % to −29 ms wall reduction on the 17 MP fixtures; the Kakadu gap on MG narrows from 1.79× (v10.0.0) to **1.45×**. Decoder output is bit-identical to v10.0.0; codestream bytes unchanged.
+**Previous Release**: 10.0.0 (C+NEON HT decoder default-on + router recalibration + MG 2x2 tile override)
 **Release process**: see [RELEASING.md](RELEASING.md). Every release MUST update this README (Current Version line + new Release Status paragraph) — see the Release artefacts checklist for the full requirements.
 
 ## 📦 Release Status
+
+**v10.1.0** ships **tiled Metal inverse 5/3 DWT kernels** as the production default — closes the iDWT bottleneck Phase 0 of v10.3-research identified (iDWT became 63% DX / 78% MG of decode wall after v10.0.0's NEON HT entropy default-on). Two new Metal kernels (`j2k_dwt_inverse_53_{horizontal,vertical}_int_tiled`) fuse step 1 + step 2 of the 5/3 lifting in one dispatch per pass via threadgroup memory + barrier, closing the kernel-boundary cost the prior split-step prototype regressed on. Bit-exact equivalent of the scalar kernel by construction. Warm cross-codec bench A/B (M2): every fixture clears v7.4's ≥3 ms acceptance threshold; **MG 3521×4784 large drops 138.91 → 109.58 ms (−21 %)**, **DX 2544×3056 large drops 64.53 → 56.78 ms (−12 %)**, all PX/DX/MG fixtures 7-25% faster. Cross-codec parity (OpenJPH/Grok/Kakadu) preserved. Codestream bytes byte-identical to v10.0.0 (decoder-only optimisation). Opt-out via `J2K_METAL_IDWT_TILED=0`. Full migration notes in [RELEASE_NOTES_v10.1.0.md](RELEASE_NOTES_v10.1.0.md).
 
 **v10.0.0** ships three coordinated wins on Apple M2: (1) **`recommendedDecodeAPI` recalibrated for v9.5.2 post-NEON** — `<500K → .cpu, 500K-15M → .decodeGPU, ≥15M → .cpu`; `.decodeWithGPUHT` removed from auto-routing; substitute-corpus `.auto` row drops 75-80 % on CT/PX/DX; (2) **MG-only 2x2 tile override in `J2KEncodeTilePlanner.auto`** — gate on `(pixels ≥ 12 MP AND min(w, h) ≥ 2400)`; MG encode wall drops 12-25 %; **MG codestream bytes change (MAJOR bump trigger)**; (3) **C+NEON HT decoder default-on** — new `j2knhd_decode_block_ht32` C entry; SWAR-4 MagSgn refill; per-block 1.61× single-thread / 1.55× 12-worker; cross-codec parity preserved; opt-out via `J2K_NEON_HT_DECODE=0`. Full bench numbers and migration notes in [RELEASE_NOTES_v10.0.0.md](RELEASE_NOTES_v10.0.0.md).
 
