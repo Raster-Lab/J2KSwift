@@ -101,6 +101,44 @@ Parity (`V10_1_MELParityTests`): 9 tests, 0 failures. Coverage includes empty/al
 
 The MEL signal is the **structural** lever the encoder analog used. The decoder side has it too. **Proceed to VLC reverse-reader.**
 
+## MagSgn port result (2026-05-15, M2 release) — GATE CLEARED
+
+`V10_1_MagSgnMicrobench.testPhaseD1_magsgnMicrobench` — scalar-vs-scalar Swift/C ratio:
+
+| Corpus            | Swift scalar ns/call | C ns/call | C/scalar |
+|-------------------|---------------------:|----------:|---------:|
+| sparse 256B (00s) | ~5.2                 | ~3.9      | **1.34×** |
+| dense 256B (FFs)  | ~5.9                 | ~3.9      | **1.50×** |
+| random 256B       | ~5.2                 | ~3.9      | **1.33×** |
+
+**Geometric mean vs scalar Swift: 1.39×.** Parity (`V10_1_MagSgnParityTests`): 7 tests, 0 failures across empty/all-zero/all-FF/FF-at-every-position (16 positions)/fixed-width sweep (1..32 × 64 reads)/256 random byte trials/32 large random streams.
+
+*Caveat:* Swift production uses `refillBatched` (v7.4 SWAR 4-byte refill), bit-exact equivalent of the scalar but ~5-13% faster on dense corpora. The C scalar beats Swift scalar by 1.39× and Swift production by ~1.13-1.28×. For decisive beat-Swift-production on dense data the C path would need its own SWAR retrofit; on sparse/random where most real medical samples live, C scalar already beats Swift production.
+
+## VLC reverse-reader port result (2026-05-15, M2 release) — GATE CLEARED
+
+`V10_1_VLCMicrobench.testPhaseD1Phase0_vlcMicrobench`:
+
+| Corpus            | Swift ns/call | C ns/call | Speedup |
+|-------------------|--------------:|----------:|--------:|
+| sparse 256B (00s) | 4.6           | 2.6       | **1.75×** |
+| dense 256B (FFs)  | 5.2           | 2.6       | **1.99×** |
+| random 256B       | 5.2           | 2.6       | **1.99×** |
+
+**Geometric mean: 1.91×.** Strongest of the three state-machine signals. Parity (`V10_1_VLCParityTests`): 8 tests, 0 failures across scup=3 minimal/all-zero/all-FF/0x8F-boundary/FF-stuff-specific patterns/256 random read-plan trials/128 random peek+consume sequences. Includes Swift testing helpers `VLCReverseReaderTesting.runScalarReadPlan` and `runScalarPeekConsumePlan` (the `VLCReverseReader` struct is fileprivate so the helpers expose the scalar-pinned behaviour).
+
+## Combined Phase 0 verdict — three state machines (2026-05-15)
+
+| State machine | Swift ns/call | C ns/call | C speedup | Parity tests / failures |
+|---|---:|---:|---:|---|
+| MEL           | ~3.3 | ~2.6 | **1.25-1.33×** | 9 / 0 (1100+ trials) |
+| MagSgn        | ~5.4 | ~3.9 | **1.39×**      | 7 / 0 (300+ trials) |
+| VLC reverse   | ~5.0 | ~2.6 | **1.91×**      | 8 / 0 (400+ trials) |
+
+**All three clear the ≥10% gate decisively.** Per-call savings are real, parity is bit-exact across 1800+ trial cases, and the lever is the same Swift/C boundary move v9.4 used on the encoder. The Phase 0 verdict is **PROCEED** to the per-block integration phase.
+
+**Next decision the data does NOT yet answer:** the v9.4 encoder analog measured 2.91× single-thread per-block. The decoder's per-state-machine sub-gates average around 1.5×. The end-to-end per-block C-vs-Swift number depends on the row dispatcher and the SIMD reconstruction path, neither of which is exercised here. Build `j2knhd_decode_block_ht.c` (the row loop + SIMD reconstruction port), run the block-level microbench against `V10_1_DecodeBlockMicrobench`'s Swift baseline, then decide if the projected ~3-6 ms DX wall reduction materialises.
+
 ## Files in the probe (this branch only, do not merge to main)
 
 - `Documentation/research/V10_1_DECODE_C_PORT_PROBE.md` — this document.
