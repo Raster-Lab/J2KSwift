@@ -1114,20 +1114,38 @@ public struct J2KDecoder: Sendable {
             includeWarmupDispatch: includeWarmupDispatch)
     }
 
-    /// v5.27.0: recommended decode API for an image of the given
-    /// dimensions on a warm `J2KMetalSession`.
+    /// Recommended decode API for an image of the given dimensions on
+    /// a warm `J2KMetalSession`. Thresholds re-calibrated for v9.5.2
+    /// post-NEON on Apple M2; see the rationale below.
     ///
-    /// Threshold derived from the v5.27.0 medical-corpus benchmark
-    /// on M2 (see MEDICAL_BENCHMARK.md "Decode Performance"):
-    ///   - ≤ 256×256 (65k px): CPU `decode` is within noise of GPU
-    ///     paths; either is fine. Defaults to CPU because cold-start
-    ///     Metal overhead penalises tiny one-off decodes.
-    ///   - 256×256 to ~1730×1730 (~3M px): `decodeGPU` is the clear
-    ///     winner (1.3–3.0× CPU); `decodeWithGPUHT` lags here because
-    ///     GPU HT dispatch overhead doesn't amortise.
-    ///   - ≥ 1730×1730 (~3M px): `decodeWithGPUHT` overtakes (3–4×
-    ///     CPU vs `decodeGPU`'s 3–3.7×) as the dispatch cost
-    ///     amortises.
+    /// **Apple M2 + v9.5.2 substitute-corpus calibration (2026-05-15):**
+    ///   - `pixels < 500_000` → `.cpu`. The v9.4 C+NEON hot path makes
+    ///     CPU decode faster than `.decodeGPU` for sub-megapixel images
+    ///     (e.g. CT 512² is 4.93× faster on `.cpu` at 2.37 ms vs
+    ///     `.decodeGPU`'s 11.56 ms). The v5.27 256² threshold predates
+    ///     the NEON hot path and now mis-routes CT/MR.
+    ///   - `500_000 ≤ pixels < 15_000_000` → `.decodeGPU`. GPU IDWT
+    ///     lift amortises over CPU HT entropy here. Substitute data
+    ///     (XA 1024², PX 2793×1316, DX 2544×3056) all win on this mode.
+    ///   - `pixels ≥ 15_000_000` → `.cpu`. Mammography-scale images
+    ///     (MG 3520×4784 = 16.84 MP) win on `.cpu` (125.93 ms) over
+    ///     both `.decodeGPU` (132.15 ms) and `.decodeWithGPUHT`
+    ///     (127.83 ms). Per-pass memory bandwidth saturates the GPU
+    ///     before the dispatch overhead pays back at this scale.
+    ///
+    /// **Why `.decodeWithGPUHT` is no longer recommended at any size:**
+    /// the substitute corpus showed it losing to `.decodeGPU` by
+    /// 1.85–3.29× on the 3–8 MP class where the old router selected
+    /// it (PX, DX); the v7.5.0 GPU-HT entropy investigation already
+    /// confirmed CPU HT entropy beats GPU HT on M2 across the corpus.
+    /// The API stays public for future-silicon or experiments; the
+    /// auto router just doesn't pick it on M2 v9.5.2.
+    ///
+    /// **Env override:** `J2K_AUTO_DECODE_API=cpu|decodeGPU|decodeWithGPUHT`
+    /// forces a specific recommendation regardless of dimensions.
+    /// Useful for incident response if a corpus-class regression is
+    /// discovered before a calibration patch ships. Unset / unrecognised
+    /// values fall through to the calibrated policy.
     ///
     /// Cold-start Metal overhead (~50 ms first decode on a fresh
     /// session) is unrelated to image size — for genuine one-off
@@ -1135,10 +1153,21 @@ public struct J2KDecoder: Sendable {
     public static func recommendedDecodeAPI(
         width: Int, height: Int
     ) -> J2KRecommendedDecodeAPI {
+        if let override = recommendedDecodeAPIEnvOverride() { return override }
         let pixels = width * height
-        if pixels < 256 * 256 { return .cpu }
-        if pixels < 3_000_000 { return .decodeGPU }
-        return .decodeWithGPUHT
+        if pixels < 500_000 { return .cpu }
+        if pixels >= 15_000_000 { return .cpu }
+        return .decodeGPU
+    }
+
+    private static func recommendedDecodeAPIEnvOverride() -> J2KRecommendedDecodeAPI? {
+        guard let raw = ProcessInfo.processInfo.environment["J2K_AUTO_DECODE_API"] else { return nil }
+        switch raw.lowercased() {
+        case "cpu": return .cpu
+        case "decodegpu", "gpu": return .decodeGPU
+        case "decodewithgpuht", "gpuht": return .decodeWithGPUHT
+        default: return nil
+        }
     }
 
     /// Decodes JPEG 2000 data into an image.
