@@ -1,8 +1,50 @@
 # v10.2 — HT decode C+NEON retrofit + per-block integration (Phase D1.5)
 
 **Branch:** `v10.2-research` (inherits scalar C ports from `v10.1-research`)
-**Status:** scoping; no production code change planned for main
+**Status (2026-05-15):** D1.5-A, D1.5-B, D1.5-C executed. **DX/PX warm-bench gate cleared** (DX −5 to −7 ms, PX ≈ −3 ms). **MG behavior is uncertain** — small/mid within noise, large fixture showed +9.75 ms regression in one run. Code lives behind `J2K_NEON_HT_DECODE=1` env var. **D1.5-D default-flip DEFERRED** pending MG investigation.
 **Predecessor:** [`V10_1_DECODE_C_PORT_PROBE.md`](V10_1_DECODE_C_PORT_PROBE.md) — closed 2026-05-15 with scalar-only DX wall projection of ~1 ms (below the v7.4 3 ms acceptance threshold).
+
+## Outcome summary (2026-05-15 autonomous session)
+
+| Phase | Outcome | Branch commit |
+|---|---|---|
+| D1.5-A NEON SWAR retrofit on MagSgn | **PASS** — C SWAR-4 vs Swift production = 1.87× geo mean (sparse + random) | `9500cd2` |
+| D1.5-B Per-block C integration | **PASS** — bit-exact parity ~100+ block configs; 1.61× ST / 1.55× MT per-block | (after `9500cd2`) |
+| D1.5-C Pipeline routing + warm A/B | **MIXED** — DX/PX cleared v7.4 3 ms gate; MG flat-or-regression | (after `9500cd2`) |
+| D1.5-D Default-flip + release | **DEFERRED** — MG behavior must be understood before default-on | — |
+
+### Warm cross-codec bench A/B (M2 release, runs=7, warmups=2)
+
+J2KSwift in-proc decode wall (median ms), `J2K_NEON_HT_DECODE` OFF vs ON:
+
+| Fixture | OFF | ON | Δ ms | Gate (≥3 ms) |
+|---|---:|---:|---:|---|
+| PX 2459×1316 small (real) | 27.71 | 25.55 | **−2.16** | borderline |
+| PX 2793×1316 mid   (real) | 30.89 | 27.85 | **−3.04** | ✓ |
+| PX 2812×1316 large (real) | 30.93 | 27.88 | **−3.05** | ✓ |
+| DX 2224×2798 small (real) | 48.94 | 48.17 | −0.77 | — |
+| DX 2800×2288 mid   (real) | 50.93 | 45.59 | **−5.34** | ✓ |
+| DX 2544×3056 large (real) | 64.53 | 57.55 | **−6.98** | ✓ |
+| MG 3516×4784 small (real) | 127.13 | 128.08 | +0.95 | noise |
+| MG 3518×4784 mid   (real) | 132.19 | 134.07 | +1.88 | noise |
+| MG 3521×4784 large (real) | 138.91 | 148.66 | +9.75 | **REGRESS** |
+
+### Why MG didn't behave like DX/PX
+
+Two leading hypotheses, both unconfirmed in this session:
+1. **iDWT share dominates at 17 MP.** v8.4 measured DX (6.4 MP) entropy share at 57%. If MG (16.8 MP, ~3× larger) is iDWT-dominated, entropy speedup translates to a smaller wall fraction.
+2. **Run-to-run variance.** MG fixtures show ±5-10 ms variance across runs (the +9.75 ms could be a single bad median-of-7). Small + mid were within noise; only large regressed.
+
+### Recommended next investigation (D1.5-C′, before D1.5-D)
+
+1. **Instruments stage profile on MG decode wall.** Confirm whether entropy or iDWT dominates the MG wall; if iDWT, the entropy lever is structurally limited on MG.
+2. **MG warm bench A/B repeated 3-5 times.** Detect whether the +9.75 ms is variance or a real regression.
+3. **Per-block MG microbench using real MG-extracted blocks.** The synthetic 64×64 corpus that gave 1.61× may not match real MG block characteristics.
+
+### What stays open / what's safe
+
+- The env-opt-in path (`J2K_NEON_HT_DECODE=1`) is production-correct: bit-exact + cross-codec validated. SDK consumers who care about DX/PX walls can flip the env var and get a 3-7 ms win immediately.
+- D1.5-D default-flip is deferred. If MG investigation closes the variance hypothesis cleanly, default-flip becomes safe and a release candidate follows. If MG shows a real iDWT-share ceiling, MG decode requires a separate iDWT C+NEON lever, not this entropy port.
 
 ## Why v10.2 exists
 
