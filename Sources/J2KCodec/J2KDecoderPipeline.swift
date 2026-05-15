@@ -352,32 +352,30 @@ struct DecoderPipeline: Sendable {
     /// amortisation that v7.2.0 measured (3 % DX 2x2) is restored.
     nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
 
-    /// **v10.3 — default `true`**. The v8.2 routing fix in
-    /// `decodeTilePayloadGPU` originally forced CPU IDWT whenever
-    /// `preBatchedGPUCoefficients` was set, sidestepping the GPU
-    /// multi-tile-per-tile IDWT corruption documented in
-    /// V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md. The underlying GPU IDWT
-    /// defect was ROOT-CAUSED AND FIXED in v8.3 (PR #400, two
-    /// single-line edits in `applyInverseWaveletTransformGPU`). The
-    /// routing fix stayed "defensively" per v6.3.0 measurement when
-    /// CPU IDWT was faster than GPU IDWT.
+    /// **v10.3 (refinement) — default `false`, but the predicate at the
+    /// call site (`decodeTilePayloadGPU` line ~1270) now gates on
+    /// per-tile pixel size.** Original behaviour: forced CPU IDWT
+    /// whenever `preBatchedGPUCoefficients` was set, to sidestep the
+    /// GPU multi-tile-per-tile IDWT corruption documented in
+    /// V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md (v8.3 root-caused and fixed
+    /// the underlying GPU defect, PR #400).
     ///
-    /// **Post-v10.0.0 re-measurement on v10.3-research 2026-05-15**
-    /// (D1.5-D entropy 1.6× faster shifted iDWT share to ~78 % MG /
-    /// ~63 % DX) flipped this trade-off:
-    ///   - MG 3518×4784 lossless HT-J2K decode wall:
-    ///     **133.32 → 101.71 ms (−31.61 ms / −23.7 %)** with the
-    ///     bypass active.
-    ///   - Bit-exact across the full medical-real corpus (9 fixtures
-    ///     MR/CT/XA/PX/DX/MG) per
-    ///     `V10_3_V82BypassCrossCodecCheck`.
-    ///   - V8_3_GPUIDWTRootCauseDiagnostic + V8_2_MgBatchedDiagnostic
-    ///     + MgRegressionTriageTest all PASS with the bypass active.
+    /// d117dcc shipped a global `false → true` flip that unlocked the
+    /// MG GPU IDWT win but regressed DX/PX in the substitute corpus.
+    /// This commit reverts the default to `false` and adds a per-tile
+    /// size predicate at the call site:
+    ///   - tile < 3 MP: CPU IDWT (keeps DX/PX 4x4 multi-tile wins)
+    ///   - tile ≥ 3 MP: GPU IDWT (captures MG 2x2 multi-tile win)
     ///
-    /// Set this to `false` only if a fixture-specific regression is
-    /// reported and traced to the GPU IDWT path. The v8.3 fix should
-    /// cover all classes the v8.2 workaround originally guarded.
-    nonisolated(unsafe) static var _v82_disableIDWTRoutingFix: Bool = true
+    /// Setting this flag to `true` overrides the size gate and forces
+    /// GPU IDWT for every tile regardless of size — kept for
+    /// diagnostic A/B (replicates d117dcc's behaviour for comparison).
+    ///
+    /// v8.3 conformance suite + V8_3_GPUIDWTRootCauseDiagnostic +
+    /// V8_2_MgBatchedDiagnostic + MgRegressionTriageTest +
+    /// V10_3_V82BypassCrossCodecCheck (9 medical-real fixtures
+    /// bit-exact) all PASS under both flag states.
+    nonisolated(unsafe) static var _v82_disableIDWTRoutingFix: Bool = false
 
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`
@@ -1264,10 +1262,30 @@ struct DecoderPipeline: Sendable {
         // the bottom-tile bottom-row coefficients on certain
         // dimensions (smallest reproducer 1760×2392 split 2x2;
         // production reproducer mg DICOM 3520×4784).
+        // v10.3 Phase 1A refinement (2026-05-15) — d117dcc shipped the
+        // v8.2 routing-fix bypass as a global flag flip, which unlocked
+        // the MG GPU IDWT win (-18 ms substitute) but ALSO regressed PX
+        // (+11 ms) and DX (+17 ms) because their multi-tile 4x4 layouts
+        // produce ~2 MP per tile, where CPU IDWT remains faster than
+        // GPU IDWT.
+        //
+        // Substitute-driver A/B finding (post-d117dcc, this branch):
+        //   - DX 4x4 tiles, ~2 MP each: CPU IDWT wins
+        //   - MG 2x2 tiles, ~4.2 MP each: GPU IDWT wins
+        // The trade-off flips at ~3 MP per tile. The predicate below
+        // routes CPU IDWT for tiles below that threshold and GPU IDWT
+        // above — capturing both modalities' wins simultaneously.
+        //
+        // The `_v82_disableIDWTRoutingFix` flag continues to override
+        // the size gate when set true (forces GPU IDWT regardless of
+        // tile size, used for diagnostic A/B).
+        let tilePixels = tileMeta.width * tileMeta.height
+        let useCPUIDWTForSmallTile = preBatchedGPUCoefficients != nil
+            && !Self._v82_disableIDWTRoutingFix
+            && tilePixels < 3_000_000
         t0 = DispatchTime.now()
         let spatialData: [[Double]]
-        if preBatchedGPUCoefficients != nil
-            && !Self._v82_disableIDWTRoutingFix {
+        if useCPUIDWTForSmallTile {
             spatialData = try await applyInverseWaveletTransform(
                 dequantizedSubbands, metadata: tileMeta,
                 tileOriginX: tileX, tileOriginY: tileY)
