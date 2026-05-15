@@ -73,6 +73,16 @@ Reference data for sanity check vs the encoder analog:
 
 The baseline data is the calibration. The next session writes the scalar C port and re-runs this same harness with `V10_1_DecodeBlockCMicrobench` for a clean A/B.
 
+## State-machine port progress (2026-05-15, M2 release)
+
+| State machine | Parity | Microbench (C vs Swift scalar) | Microbench (C vs Swift production) | Gate |
+|---|---|---|---|---|
+| MEL | 9 tests, 0 failures | **1.33×** (geo mean) | n/a (Swift MEL has no SWAR variant) | **PASS** |
+| MagSgn | 7 tests, 0 failures | **1.39×** (geo mean) | **1.14×** (geo mean — washes on sparse/random) | MARGINAL vs production |
+| VLC reverse-reader | 8 tests, 0 failures | TBD next session | TBD next session | TBD |
+
+**Honest read of MagSgn:** the Swift production path runs v7.4 4-byte SWAR refill by default, which already eliminates most of the boundary cost the C scalar port would address. On sparse/random byte streams the C scalar TIES Swift production (3.9 ns/call each); only on dense-0xFF streams does C win (Swift SWAR fast-path falls through to byte-by-byte). So MagSgn alone doesn't justify the multi-week port — the C path would need its own NEON SWAR retrofit to clearly beat Swift production. The MEL win (1.33× vs Swift production, since MEL has no SWAR variant) is the unambiguous lever.
+
 ## MEL port result (2026-05-15, M2 release) — GATE CLEARED
 
 `V10_1_MELMicrobench.testPhaseD1Phase0_melMicrobench`:

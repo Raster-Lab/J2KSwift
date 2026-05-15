@@ -684,6 +684,47 @@ public enum HTBlockDecoderConformantError: Error {
 /// `V7_4_0_PHASE_3_FINDING.md`.
 public enum VLCReverseReaderTesting {
     nonisolated(unsafe) public static var batchedRefillEnabled: Bool = false
+
+    /// v10.1-research Phase D1 parity hook. Drives the (fileprivate)
+    /// `VLCReverseReader` with the scalar refill path against a fixed
+    /// read plan and returns the produced 64-bit values. Used by
+    /// `V10_1_VLCParityTests` to compare against the C scalar port
+    /// in `Sources/J2KCodecNEON/j2knhd_vlc.c`.
+    public static func runScalarReadPlan(
+        bytes: [UInt8], scup: Int, widths: [Int]
+    ) -> [UInt64] {
+        let prev = batchedRefillEnabled
+        batchedRefillEnabled = false
+        defer { batchedRefillEnabled = prev }
+        var reader = VLCReverseReader(melVlcBytes: bytes, scup: scup)
+        var out: [UInt64] = []
+        out.reserveCapacity(widths.count)
+        for w in widths {
+            out.append(reader.read(count: w))
+        }
+        return out
+    }
+
+    /// As `runScalarReadPlan` but also wires in `peek` and `consume`
+    /// in the alternating pattern the real decoder uses:
+    ///   peek(maxBits) → use the result to derive `cwd_len` →
+    ///   consume(cwd_len).
+    /// Caller supplies the (maxBits, consumeBits) pair sequence.
+    public static func runScalarPeekConsumePlan(
+        bytes: [UInt8], scup: Int, pairs: [(Int, Int)]
+    ) -> [UInt64] {
+        let prev = batchedRefillEnabled
+        batchedRefillEnabled = false
+        defer { batchedRefillEnabled = prev }
+        var reader = VLCReverseReader(melVlcBytes: bytes, scup: scup)
+        var out: [UInt64] = []
+        out.reserveCapacity(pairs.count)
+        for (peekBits, consumeBits) in pairs {
+            out.append(reader.peek(maxBits: peekBits))
+            reader.consume(count: consumeBits)
+        }
+        return out
+    }
 }
 
 /// Forward bit reader over the reverse VLC stream. Reads LSB-first

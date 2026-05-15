@@ -55,6 +55,90 @@ void j2knhd_mel_init(j2knhd_mel_t *dec,
 /// Bit-exact equivalent of `HTMELDecoderConformant.nextRun()`.
 int64_t j2knhd_mel_next_run(j2knhd_mel_t *dec);
 
+// ---------------------------------------------------------------------------
+// MagSgn forward bit reader.
+//
+// LSB-first consumption; every byte that follows a 0xFF byte contributes
+// only 7 bits (its high bit is a reserved stuff bit). When the byte stream
+// is exhausted, 0xFF is fed (matches OpenJPH `frwd_read<X=0xFF>`).
+//
+// Swift reference: `HTMagSgnDecoderConformant` scalar path in
+// Sources/J2KCodec/J2KHTConformantMagSgnCoder.swift lines 191-385.
+// (The v7.4 4-byte SWAR + v8.1 8-byte SWAR refill paths are Swift-side
+// micro-optimisations that the scalar reference is the canonical truth
+// for; the C port ports the scalar path only.)
+
+typedef struct j2knhd_magsgn {
+    const uint8_t *bytes;
+    size_t bytes_len;
+    size_t read_index;
+    uint64_t tmp;           ///< 64-bit bit buffer, LSB-first consumption
+    int bits;               ///< valid bits in `tmp` (low-aligned)
+    bool unstuff;           ///< if true, next byte's high bit is reserved
+} j2knhd_magsgn_t;
+
+/// Initialise a MagSgn decoder over `bytes[0..bytes_len)`.
+void j2knhd_magsgn_init(j2knhd_magsgn_t *dec,
+                        const uint8_t *bytes,
+                        size_t bytes_len);
+
+/// Read `count` LSB-first bits from the stream. `count` MUST be in
+/// [0, 32]. Bit-exact equivalent of `HTMagSgnDecoderConformant.read(count:)`.
+uint32_t j2knhd_magsgn_read(j2knhd_magsgn_t *dec, int count);
+
+// ---------------------------------------------------------------------------
+// VLC reverse-byte reader.
+//
+// LSB-first bit accumulator over a byte buffer consumed in REVERSE.
+// The first byte read is `bytes[scup - 2]`, of which only the high
+// nibble (with possible top-bit unstuff) is consumed. Subsequent bytes
+// are `bytes[scup - 3]`, `bytes[scup - 4]`, etc. Once byte_idx drops
+// below 0 the stream is exhausted; further bits are 0 (unlike MEL /
+// MagSgn which pad with 0xFF).
+//
+// FF-stuff rule (different from MagSgn!): drop bit 7 only when the
+// PRIOR byte was > 0x8F AND the current byte's low 7 bits are all 1
+// (i.e. value is 0x7F or 0xFF). After consumption, `unstuff` is set
+// from `byte > 0x8F`.
+//
+// Swift reference: `VLCReverseReader` (fileprivate struct) in
+// Sources/J2KCodec/J2KHTConformantBlockDecoder.swift lines 692-899.
+// The C port mirrors `refillScalar` (lines 738-760), the production
+// path (the v7.4 SWAR `refillBatched` is bit-exact equivalent and
+// gated behind the `VLCReverseReaderTesting.batchedRefillEnabled`
+// opt-in flag, default false).
+
+typedef struct j2knhd_vlc {
+    const uint8_t *bytes;
+    size_t bytes_len;
+    int32_t scup;
+    int32_t byte_idx;       ///< signed; may go negative when stream exhausted
+    uint64_t tmp;           ///< 64-bit bit buffer, LSB-first consumption
+    int bits;               ///< valid bits in `tmp` (low-aligned)
+    bool unstuff;           ///< if true, prior byte was > 0x8F (FF-stuff carry)
+} j2knhd_vlc_t;
+
+/// Initialise a VLC reverse-reader. Consumes the high nibble of
+/// `bytes[scup - 2]` immediately (mirrors Swift `init(melVlcBytes:scup:)`).
+/// Bit-exact equivalent of `VLCReverseReader.init`.
+void j2knhd_vlc_init(j2knhd_vlc_t *dec,
+                     const uint8_t *bytes,
+                     size_t bytes_len,
+                     int32_t scup);
+
+/// Returns the low `max_bits` bits of the accumulator without
+/// consuming them. `max_bits` MUST be in [0, 64].
+/// Bit-exact equivalent of `VLCReverseReader.peek(maxBits:)`.
+uint64_t j2knhd_vlc_peek(j2knhd_vlc_t *dec, int max_bits);
+
+/// Consume `count` bits already inspected via a prior peek. Discards
+/// the value. Bit-exact equivalent of `VLCReverseReader.consume(count:)`.
+void j2knhd_vlc_consume(j2knhd_vlc_t *dec, int count);
+
+/// Read + return `count` low bits (combined peek + consume).
+/// Bit-exact equivalent of `VLCReverseReader.read(count:)`.
+uint64_t j2knhd_vlc_read(j2knhd_vlc_t *dec, int count);
+
 #ifdef __cplusplus
 }
 #endif
