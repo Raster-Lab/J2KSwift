@@ -55,6 +55,18 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     /// v7.1.0 H2 — parity-aware odd-origin inverse 5/3 vertical.
     /// Bit-exact with the CPU reference.
     case dwtInverse53VerticalIntOdd = "j2k_dwt_inverse_53_vertical_int_odd"
+    /// **v10.3 Phase 2-1** — 2D-thread-layout inverse 5/3 horizontal,
+    /// step 1 (undo update). Bit-exact equivalent of
+    /// `j2k_dwt_inverse_53_horizontal_int` by construction. Dispatched
+    /// with `gid.x = i ∈ [0, halfWidth)`, `gid.y = row`. Must be paired
+    /// with `dwtInverse53HorizontalInt2DStep2` in a separate encoder.
+    case dwtInverse53HorizontalInt2DStep1 = "j2k_dwt_inverse_53_horizontal_int_2d_step1"
+    /// v10.3 Phase 2-1 — 2D-layout inverse 5/3 horizontal step 2.
+    case dwtInverse53HorizontalInt2DStep2 = "j2k_dwt_inverse_53_horizontal_int_2d_step2"
+    /// v10.3 Phase 2-1 — 2D-layout inverse 5/3 vertical step 1.
+    case dwtInverse53VerticalInt2DStep1 = "j2k_dwt_inverse_53_vertical_int_2d_step1"
+    /// v10.3 Phase 2-1 — 2D-layout inverse 5/3 vertical step 2.
+    case dwtInverse53VerticalInt2DStep2 = "j2k_dwt_inverse_53_vertical_int_2d_step2"
     /// Forward 9/7 irreversible wavelet transform (horizontal).
     case dwtForward97Horizontal = "j2k_dwt_forward_97_horizontal"
     /// Forward 9/7 irreversible wavelet transform (vertical).

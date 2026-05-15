@@ -352,15 +352,32 @@ struct DecoderPipeline: Sendable {
     /// amortisation that v7.2.0 measured (3 % DX 2x2) is restored.
     nonisolated(unsafe) static var _multiTileBatchedEntropyEnabled: Bool = true
 
-    /// **v8.3 diagnostic-only**. When `false` (the default), the
-    /// v8.2 fix in `decodeTilePayloadGPU` forces CPU IDWT whenever
-    /// `preBatchedGPUCoefficients` is set, sidestepping the GPU
+    /// **v10.3 — default `true`**. The v8.2 routing fix in
+    /// `decodeTilePayloadGPU` originally forced CPU IDWT whenever
+    /// `preBatchedGPUCoefficients` was set, sidestepping the GPU
     /// multi-tile-per-tile IDWT corruption documented in
-    /// V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md. When `true`, the v8.2
-    /// fix is bypassed and the GPU IDWT runs — used by v8.3
-    /// diagnostics to reproduce the underlying GPU IDWT bug for
-    /// root-cause work. PRODUCTION CODE MUST KEEP THIS FALSE.
-    nonisolated(unsafe) static var _v82_disableIDWTRoutingFix: Bool = false
+    /// V8_2_0_MG_CORRUPTION_ROOT_CAUSE.md. The underlying GPU IDWT
+    /// defect was ROOT-CAUSED AND FIXED in v8.3 (PR #400, two
+    /// single-line edits in `applyInverseWaveletTransformGPU`). The
+    /// routing fix stayed "defensively" per v6.3.0 measurement when
+    /// CPU IDWT was faster than GPU IDWT.
+    ///
+    /// **Post-v10.0.0 re-measurement on v10.3-research 2026-05-15**
+    /// (D1.5-D entropy 1.6× faster shifted iDWT share to ~78 % MG /
+    /// ~63 % DX) flipped this trade-off:
+    ///   - MG 3518×4784 lossless HT-J2K decode wall:
+    ///     **133.32 → 101.71 ms (−31.61 ms / −23.7 %)** with the
+    ///     bypass active.
+    ///   - Bit-exact across the full medical-real corpus (9 fixtures
+    ///     MR/CT/XA/PX/DX/MG) per
+    ///     `V10_3_V82BypassCrossCodecCheck`.
+    ///   - V8_3_GPUIDWTRootCauseDiagnostic + V8_2_MgBatchedDiagnostic
+    ///     + MgRegressionTriageTest all PASS with the bypass active.
+    ///
+    /// Set this to `false` only if a fixture-specific regression is
+    /// reported and traced to the GPU IDWT path. The v8.3 fix should
+    /// cover all classes the v8.2 workaround originally guarded.
+    nonisolated(unsafe) static var _v82_disableIDWTRoutingFix: Bool = true
 
     /// v6.2.0 work item D2 — gate flag for routing decode through
     /// the **GPU HT entropy** decode path (the `useGPUHT = true`

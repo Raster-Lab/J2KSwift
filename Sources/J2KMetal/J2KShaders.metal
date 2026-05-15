@@ -730,6 +730,130 @@ kernel void j2k_dwt_inverse_53_vertical_int(
     }
 }
 
+// MARK: - v10.3 Phase 2-1 — 2D-layout Inverse 5/3 integer kernels (split steps)
+//
+// The scalar `j2k_dwt_inverse_53_*_int` kernels above dispatch ONE
+// thread per row (or column) and loop internally over the other axis.
+// On MG (3520×4784) that's only ~2400 threads in flight, severely
+// under-utilising the M2 GPU (~100K-thread sweet spot).
+//
+// The 2D-layout variants split the work:
+//   • Step 1 (undo update) — one thread per output even-position
+//     (gid.x = i ∈ [0, halfWidth), gid.y = row).
+//   • Step 2 (undo predict) — one thread per output odd-position
+//     (gid.x = i ∈ [0, halfWidthH), gid.y = row), dispatched in
+//     a SEPARATE encoder so step-1 writes are visible globally
+//     before step-2 reads them.
+//
+// Bit-exact equivalent of the scalar kernel by construction: same
+// arithmetic, same boundary conditions, just executed in a parallel
+// thread layout. The edge case (halfWidthH == 0 for horizontal,
+// halfHeight == 0 for vertical) is handled in step 1; caller must
+// skip step-2 dispatch when the corresponding half-dimension is 0.
+
+kernel void j2k_dwt_inverse_53_horizontal_int_2d_step1(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint i = gid.x;
+    uint halfWidth = (width + 1) / 2;
+    uint halfWidthH = width / 2;
+
+    if (row >= height || i >= halfWidth) return;
+
+    uint lBase = row * halfWidth;
+    uint hBase = row * halfWidthH;
+    uint oBase = row * width;
+
+    if (halfWidthH == 0) {
+        output[oBase + 2 * i] = lowpass[lBase + i];
+        return;
+    }
+
+    int dLeft = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+    int dRight = (i < halfWidthH)
+        ? highpass[hBase + i]
+        : highpass[hBase + halfWidthH - 1];
+    output[oBase + 2 * i] = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+}
+
+kernel void j2k_dwt_inverse_53_horizontal_int_2d_step2(
+    device const int* highpass [[buffer(0)]],
+    device int* output [[buffer(1)]],
+    constant uint& width [[buffer(2)]],
+    constant uint& height [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint i = gid.x;
+    uint halfWidthH = width / 2;
+
+    if (row >= height || i >= halfWidthH) return;
+
+    uint hBase = row * halfWidthH;
+    uint oBase = row * width;
+
+    int eLeft = output[oBase + 2 * i];
+    int eRight = (2 * i + 2 < width)
+        ? output[oBase + 2 * i + 2]
+        : output[oBase + 2 * i];
+    output[oBase + 2 * i + 1] = highpass[hBase + i] + ((eLeft + eRight) >> 1);
+}
+
+kernel void j2k_dwt_inverse_53_vertical_int_2d_step1(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint col = gid.x;
+    uint i = gid.y;
+    uint halfHeight = (height + 1) / 2;
+    uint halfHeightH = height / 2;
+
+    if (col >= width || i >= halfHeight) return;
+
+    if (halfHeightH == 0) {
+        output[(2 * i) * width + col] = lowpass[i * width + col];
+        return;
+    }
+
+    int dTop = (i > 0)
+        ? highpass[(i - 1) * width + col]
+        : highpass[col];
+    int dBot = (i < halfHeightH)
+        ? highpass[i * width + col]
+        : highpass[(halfHeightH - 1) * width + col];
+    output[(2 * i) * width + col] = lowpass[i * width + col] - ((dTop + dBot + 2) >> 2);
+}
+
+kernel void j2k_dwt_inverse_53_vertical_int_2d_step2(
+    device const int* highpass [[buffer(0)]],
+    device int* output [[buffer(1)]],
+    constant uint& width [[buffer(2)]],
+    constant uint& height [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint col = gid.x;
+    uint i = gid.y;
+    uint halfHeightH = height / 2;
+
+    if (col >= width || i >= halfHeightH) return;
+
+    int eTop = output[(2 * i) * width + col];
+    int eBot = (2 * i + 2 < height)
+        ? output[(2 * i + 2) * width + col]
+        : output[(2 * i) * width + col];
+    output[(2 * i + 1) * width + col] = highpass[i * width + col] + ((eTop + eBot) >> 1);
+}
+
 // MARK: - Forward ICT (Irreversible Colour Transform)
 
 kernel void j2k_ict_forward(
