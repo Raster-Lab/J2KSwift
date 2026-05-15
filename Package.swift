@@ -47,6 +47,13 @@ let package = Package(
         .executable(
             name: "J2KTestApp",
             targets: ["J2KTestApp"]),
+        // v10.5 cross-silicon arc — shareable SwiftUI bench app
+        // (iOS + macOS). Distribute to friends with iPhones for
+        // A-series captures during the v10.5 cross-silicon probe.
+        // See Documentation/research/V10_5_CROSS_SILICON_PROBE.md.
+        .executable(
+            name: "J2KBenchApp",
+            targets: ["J2KBenchApp"]),
         // v8 Phase 6.3 — XPC daemon (macOS-only). Long-lived
         // process that holds J2KMetalSession warm across CLI
         // invocations, listening on a Mach service registered
@@ -259,6 +266,23 @@ let package = Package(
             name: "J2KTestApp",
             dependencies: ["J2KCore", "J2KCodec", "J2K3D"],
             path: "Sources/J2KTestApp",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]),
+        // v10.5 cross-silicon arc — shareable SwiftUI bench app.
+        // Targets iOS (A-series) primarily but also builds for macOS
+        // so the developer can sanity-check the run shape before
+        // distributing. No daemon, no subprocess, no kdu_expand —
+        // pure in-process J2KSwift, so it works inside the iOS app
+        // sandbox. Info.plist is left in-tree as reference; Xcode
+        // auto-synthesises the app-bundle Info.plist from the
+        // INFOPLIST_KEY_* defaults SwiftPM emits when this target is
+        // selected as the run scheme.
+        .executableTarget(
+            name: "J2KBenchApp",
+            dependencies: ["J2KCore", "J2KCodec", "J2KMetal"],
+            path: "Sources/J2KBenchApp",
+            exclude: ["Info.plist", "README.md"],
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
