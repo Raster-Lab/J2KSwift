@@ -3646,6 +3646,38 @@ public actor J2KMetalDWT {
     /// by the v5.7.0 fused HT-cleanup → DWT path so the entire
     /// per-tile inverse DWT (across multiple decomposition levels)
     /// can stay in one command buffer with no intermediate readback.
+    /// **v10.3 Phase 2-1** — env-gated routing for the 2D-thread-layout
+    /// inverse 5/3 Int kernels. Default OFF; set
+    /// `J2K_METAL_IDWT_2D=1` to opt in. Bit-exact equivalent of the
+    /// scalar path per `V10_3_MetalIDWTInverse532DParityTests`.
+    nonisolated(unsafe) public static var inverse53Int2DLayoutEnabled: Bool = {
+        ProcessInfo.processInfo.environment["J2K_METAL_IDWT_2D"] == "1"
+    }()
+
+    /// **v10.3 Phase 2-2-tiled — DEFAULT-ON 2026-05-15**. Threadgroup-
+    /// memory tiled inverse 5/3 Int kernels: step 1 + step 2 in one
+    /// dispatch per pass via threadgroup memory + barrier, closing the
+    /// kernel-boundary cost that Phase 2-1's split-step regressed on
+    /// large fixtures.
+    ///
+    /// Phase 2-2-tiled gate results (M2 release, v10.3-research):
+    /// - `V10_3_MetalIDWTInverse53TiledParityTests`: 4/4 PASS (bit-exact)
+    /// - `J2KStrictCrossCodecValidationTests` with env on: 3/3 PASS
+    /// - Microbench: 1.27-6.44× speedup across substitute corpus; DX
+    ///   2544 +1.49× (-6.28 ms), MG 3520 +1.50× (-33.34 ms)
+    /// - Substitute A/B `.auto` row: MG −17.18 ms, DX 2544 neutral,
+    ///   PX −3.38 ms, no regressions ≥3 ms
+    ///
+    /// **Opt-out:** set `J2K_METAL_IDWT_TILED=0` to fall back to scalar
+    /// (or `J2K_METAL_IDWT_2D=1` for Phase 2-1's 2D-layout path).
+    ///
+    /// Takes precedence over `inverse53Int2DLayoutEnabled` when both
+    /// are set.
+    nonisolated(unsafe) public static var inverse53IntTiledEnabled: Bool = {
+        // Default ON unless explicit opt-out.
+        ProcessInfo.processInfo.environment["J2K_METAL_IDWT_TILED"] != "0"
+    }()
+
     public func encodeInverse2DInt32(
         into cb: any MTLCommandBuffer,
         ll: any MTLBuffer,
@@ -3671,6 +3703,38 @@ public actor J2KMetalDWT {
         // F.4.1.1 — different boundary mirror, flipped interleave).
         let hOddOrigin = (tileOriginX & 1) == 1
         let vOddOrigin = (tileOriginY & 1) == 1
+
+        // v10.3 Phase 2-2-tiled: threadgroup-memory tiled kernels.
+        // Takes precedence over 2D-layout when both are set. Available
+        // only for even-origin path.
+        let useTiled = Self.inverse53IntTiledEnabled && !hOddOrigin && !vOddOrigin
+        if useTiled {
+            try await encodeInverse2DInt32_Tiled(
+                into: cb,
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                colLow: colLow, colHigh: colHigh, output: output,
+                originalWidth: originalWidth,
+                originalHeight: originalHeight,
+                llHeight: llHeight, halfHH: halfHH)
+            return
+        }
+
+        // v10.3 Phase 2-1: 2D-layout kernels available only for the
+        // even-origin (production-default) path; odd-origin keeps the
+        // parity-aware scalar kernels unchanged.
+        let use2D = Self.inverse53Int2DLayoutEnabled && !hOddOrigin && !vOddOrigin
+
+        if use2D {
+            try await encodeInverse2DInt32_2DLayout(
+                into: cb,
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                colLow: colLow, colHigh: colHigh, output: output,
+                originalWidth: originalWidth,
+                originalHeight: originalHeight,
+                llHeight: llHeight, halfHH: halfHH)
+            return
+        }
+
         let hPipeline = try await shaderLibrary.computePipeline(
             for: hOddOrigin ? .dwtInverse53HorizontalIntOdd
                             : .dwtInverse53HorizontalInt)
@@ -3725,6 +3789,239 @@ public actor J2KMetalDWT {
             MTLSize(width: originalWidth, height: 1, depth: 1),
             threadsPerThreadgroup: MTLSize(width: min(originalWidth, 64), height: 1, depth: 1))
         enc2.endEncoding()
+    }
+
+    /// v10.3 Phase 2-1: 2D-thread-layout dispatch of the inverse 5/3
+    /// integer kernels. Splits each pass into two encoder dispatches
+    /// (step 1: undo update; step 2: undo predict) to expose massive
+    /// per-sample parallelism. Bit-exact equivalent of the scalar path.
+    private func encodeInverse2DInt32_2DLayout(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        colLow: any MTLBuffer,
+        colHigh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        llHeight: Int,
+        halfHH: Int
+    ) async throws {
+        // ---------------- Horizontal pass ----------------
+        // LL+HL → colLow (each row has `width` outputs, `llHeight` rows).
+        // LH+HH → colHigh (each row has `width` outputs, `halfHH` rows).
+        let hPipe1 = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53HorizontalInt2DStep1)
+        let hPipe2 = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53HorizontalInt2DStep2)
+
+        var widthVal = UInt32(originalWidth)
+        let halfWidth = (originalWidth + 1) / 2
+        let halfWidthH = originalWidth / 2
+
+        // -- Step 1 for both band-pairs in one encoder --
+        guard let encH1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create H step1 encoder")
+        }
+        encH1.setComputePipelineState(hPipe1)
+        // LL+HL → colLow (rows = llHeight)
+        encH1.setBuffer(ll, offset: 0, index: 0)
+        encH1.setBuffer(hl, offset: 0, index: 1)
+        encH1.setBuffer(colLow, offset: 0, index: 2)
+        var llHVal = UInt32(llHeight)
+        encH1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        encH1.setBytes(&llHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        let tgWidth1 = min(halfWidth, 32)
+        let tgHeight1 = min(llHeight, 8)
+        encH1.dispatchThreads(
+            MTLSize(width: halfWidth, height: llHeight, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: tgWidth1, height: tgHeight1, depth: 1))
+
+        if halfHH > 0 {
+            // LH+HH → colHigh (rows = halfHH)
+            encH1.setBuffer(lh, offset: 0, index: 0)
+            encH1.setBuffer(hh, offset: 0, index: 1)
+            encH1.setBuffer(colHigh, offset: 0, index: 2)
+            var halfHHVal = UInt32(halfHH)
+            encH1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            encH1.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            let tgHeight1b = min(halfHH, 8)
+            encH1.dispatchThreads(
+                MTLSize(width: halfWidth, height: halfHH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth1, height: tgHeight1b, depth: 1))
+        }
+        encH1.endEncoding()
+
+        // -- Step 2 in a SEPARATE encoder (memory barrier) --
+        if halfWidthH > 0 {
+            guard let encH2 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError("Failed to create H step2 encoder")
+            }
+            encH2.setComputePipelineState(hPipe2)
+            // LL+HL pair → colLow
+            encH2.setBuffer(hl, offset: 0, index: 0)
+            encH2.setBuffer(colLow, offset: 0, index: 1)
+            encH2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 2)
+            encH2.setBytes(&llHVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            let tgWidth2 = min(halfWidthH, 32)
+            let tgHeight2 = min(llHeight, 8)
+            encH2.dispatchThreads(
+                MTLSize(width: halfWidthH, height: llHeight, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgWidth2, height: tgHeight2, depth: 1))
+
+            if halfHH > 0 {
+                encH2.setBuffer(hh, offset: 0, index: 0)
+                encH2.setBuffer(colHigh, offset: 0, index: 1)
+                var halfHHVal = UInt32(halfHH)
+                encH2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 2)
+                encH2.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 3)
+                let tgHeight2b = min(halfHH, 8)
+                encH2.dispatchThreads(
+                    MTLSize(width: halfWidthH, height: halfHH, depth: 1),
+                    threadsPerThreadgroup: MTLSize(width: tgWidth2, height: tgHeight2b, depth: 1))
+            }
+            encH2.endEncoding()
+        }
+
+        // ---------------- Vertical pass ----------------
+        // colLow + colHigh → output. width columns × height rows.
+        let vPipe1 = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53VerticalInt2DStep1)
+        let vPipe2 = try await shaderLibrary.computePipeline(
+            for: .dwtInverse53VerticalInt2DStep2)
+
+        var hVal = UInt32(originalHeight)
+        let halfHeight = (originalHeight + 1) / 2
+        let halfHeightH = originalHeight / 2
+
+        guard let encV1 = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create V step1 encoder")
+        }
+        encV1.setComputePipelineState(vPipe1)
+        encV1.setBuffer(colLow, offset: 0, index: 0)
+        encV1.setBuffer(colHigh, offset: 0, index: 1)
+        encV1.setBuffer(output, offset: 0, index: 2)
+        encV1.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+        encV1.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+        let tgVw1 = min(originalWidth, 32)
+        let tgVh1 = min(halfHeight, 8)
+        encV1.dispatchThreads(
+            MTLSize(width: originalWidth, height: halfHeight, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: tgVw1, height: tgVh1, depth: 1))
+        encV1.endEncoding()
+
+        if halfHeightH > 0 {
+            guard let encV2 = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError("Failed to create V step2 encoder")
+            }
+            encV2.setComputePipelineState(vPipe2)
+            encV2.setBuffer(colHigh, offset: 0, index: 0)
+            encV2.setBuffer(output, offset: 0, index: 1)
+            encV2.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 2)
+            encV2.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            let tgVw2 = min(originalWidth, 32)
+            let tgVh2 = min(halfHeightH, 8)
+            encV2.dispatchThreads(
+                MTLSize(width: originalWidth, height: halfHeightH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgVw2, height: tgVh2, depth: 1))
+            encV2.endEncoding()
+        }
+    }
+
+    /// v10.3 Phase 2-2-tiled — threadgroup-memory tiled dispatch.
+    /// One encoder per pass (vs Phase 2-1's two); step 1 + step 2
+    /// happen inside a single kernel via threadgroup memory.
+    ///
+    /// Tile geometry matches the kernel constants:
+    /// - Horizontal: 32 cols × 8 rows per threadgroup → 64 output
+    ///   samples per row × 8 rows = 512 output samples per tg.
+    /// - Vertical: 32 cols × 8 row-pairs per threadgroup → 32 cols ×
+    ///   16 output rows = 512 output samples per tg.
+    private func encodeInverse2DInt32_Tiled(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        colLow: any MTLBuffer,
+        colHigh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        llHeight: Int,
+        halfHH: Int
+    ) async throws {
+        let hKernel = try await shaderLibrary.computePipeline(for: .dwtInverse53HorizontalIntTiled)
+        let vKernel = try await shaderLibrary.computePipeline(for: .dwtInverse53VerticalIntTiled)
+
+        var widthVal = UInt32(originalWidth)
+        let halfWidth = (originalWidth + 1) / 2
+
+        // ----- Pass 1: horizontal inverse, LL + HL → colLow -----
+        // Grid: halfWidth threads along x, llHeight along y.
+        // Threadgroup: (32, 8). Each threadgroup writes 64 output
+        // samples × 8 rows = 512 outputs.
+        do {
+            guard let enc = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError("Failed to create tiled h-enc LL+HL")
+            }
+            enc.setComputePipelineState(hKernel)
+            enc.setBuffer(ll, offset: 0, index: 0)
+            enc.setBuffer(hl, offset: 0, index: 1)
+            enc.setBuffer(colLow, offset: 0, index: 2)
+            var llHVal = UInt32(llHeight)
+            enc.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc.setBytes(&llHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            let tgX = 32
+            let tgY = min(llHeight, 8)
+            let gridX = max(halfWidth, 1)
+            let gridY = max(llHeight, 1)
+            enc.dispatchThreads(
+                MTLSize(width: gridX, height: gridY, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgX, height: tgY, depth: 1))
+            enc.endEncoding()
+        }
+        if halfHH > 0 {
+            guard let enc = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError("Failed to create tiled h-enc LH+HH")
+            }
+            enc.setComputePipelineState(hKernel)
+            enc.setBuffer(lh, offset: 0, index: 0)
+            enc.setBuffer(hh, offset: 0, index: 1)
+            enc.setBuffer(colHigh, offset: 0, index: 2)
+            var halfHHVal = UInt32(halfHH)
+            enc.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc.setBytes(&halfHHVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            let tgX = 32
+            let tgY = min(halfHH, 8)
+            enc.dispatchThreads(
+                MTLSize(width: max(halfWidth, 1), height: halfHH, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgX, height: tgY, depth: 1))
+            enc.endEncoding()
+        }
+
+        // ----- Pass 2: vertical inverse, colLow + colHigh → output -----
+        do {
+            guard let enc = cb.makeComputeCommandEncoder() else {
+                throw J2KError.internalError("Failed to create tiled v-enc")
+            }
+            enc.setComputePipelineState(vKernel)
+            enc.setBuffer(colLow, offset: 0, index: 0)
+            enc.setBuffer(colHigh, offset: 0, index: 1)
+            enc.setBuffer(output, offset: 0, index: 2)
+            var hVal = UInt32(originalHeight)
+            enc.setBytes(&widthVal, length: MemoryLayout<UInt32>.stride, index: 3)
+            enc.setBytes(&hVal, length: MemoryLayout<UInt32>.stride, index: 4)
+            let halfHeight = (originalHeight + 1) / 2
+            let tgX = min(originalWidth, 32)
+            let tgY = min(halfHeight, 8)
+            enc.dispatchThreads(
+                MTLSize(width: originalWidth, height: max(halfHeight, 1), depth: 1),
+                threadsPerThreadgroup: MTLSize(width: tgX, height: tgY, depth: 1))
+            enc.endEncoding()
+        }
     }
 
     private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {

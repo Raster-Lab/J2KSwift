@@ -730,6 +730,338 @@ kernel void j2k_dwt_inverse_53_vertical_int(
     }
 }
 
+// MARK: - v10.3 Phase 2-1 — 2D-layout Inverse 5/3 integer kernels (split steps)
+//
+// The scalar `j2k_dwt_inverse_53_*_int` kernels above dispatch ONE
+// thread per row (or column) and loop internally over the other axis.
+// On MG (3520×4784) that's only ~2400 threads in flight, severely
+// under-utilising the M2 GPU (~100K-thread sweet spot).
+//
+// The 2D-layout variants split the work:
+//   • Step 1 (undo update) — one thread per output even-position
+//     (gid.x = i ∈ [0, halfWidth), gid.y = row).
+//   • Step 2 (undo predict) — one thread per output odd-position
+//     (gid.x = i ∈ [0, halfWidthH), gid.y = row), dispatched in
+//     a SEPARATE encoder so step-1 writes are visible globally
+//     before step-2 reads them.
+//
+// Bit-exact equivalent of the scalar kernel by construction: same
+// arithmetic, same boundary conditions, just executed in a parallel
+// thread layout. The edge case (halfWidthH == 0 for horizontal,
+// halfHeight == 0 for vertical) is handled in step 1; caller must
+// skip step-2 dispatch when the corresponding half-dimension is 0.
+
+kernel void j2k_dwt_inverse_53_horizontal_int_2d_step1(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint i = gid.x;
+    uint halfWidth = (width + 1) / 2;
+    uint halfWidthH = width / 2;
+
+    if (row >= height || i >= halfWidth) return;
+
+    uint lBase = row * halfWidth;
+    uint hBase = row * halfWidthH;
+    uint oBase = row * width;
+
+    if (halfWidthH == 0) {
+        output[oBase + 2 * i] = lowpass[lBase + i];
+        return;
+    }
+
+    int dLeft = (i > 0) ? highpass[hBase + i - 1] : highpass[hBase];
+    int dRight = (i < halfWidthH)
+        ? highpass[hBase + i]
+        : highpass[hBase + halfWidthH - 1];
+    output[oBase + 2 * i] = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+}
+
+kernel void j2k_dwt_inverse_53_horizontal_int_2d_step2(
+    device const int* highpass [[buffer(0)]],
+    device int* output [[buffer(1)]],
+    constant uint& width [[buffer(2)]],
+    constant uint& height [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint i = gid.x;
+    uint halfWidthH = width / 2;
+
+    if (row >= height || i >= halfWidthH) return;
+
+    uint hBase = row * halfWidthH;
+    uint oBase = row * width;
+
+    int eLeft = output[oBase + 2 * i];
+    int eRight = (2 * i + 2 < width)
+        ? output[oBase + 2 * i + 2]
+        : output[oBase + 2 * i];
+    output[oBase + 2 * i + 1] = highpass[hBase + i] + ((eLeft + eRight) >> 1);
+}
+
+kernel void j2k_dwt_inverse_53_vertical_int_2d_step1(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint col = gid.x;
+    uint i = gid.y;
+    uint halfHeight = (height + 1) / 2;
+    uint halfHeightH = height / 2;
+
+    if (col >= width || i >= halfHeight) return;
+
+    if (halfHeightH == 0) {
+        output[(2 * i) * width + col] = lowpass[i * width + col];
+        return;
+    }
+
+    int dTop = (i > 0)
+        ? highpass[(i - 1) * width + col]
+        : highpass[col];
+    int dBot = (i < halfHeightH)
+        ? highpass[i * width + col]
+        : highpass[(halfHeightH - 1) * width + col];
+    output[(2 * i) * width + col] = lowpass[i * width + col] - ((dTop + dBot + 2) >> 2);
+}
+
+kernel void j2k_dwt_inverse_53_vertical_int_2d_step2(
+    device const int* highpass [[buffer(0)]],
+    device int* output [[buffer(1)]],
+    constant uint& width [[buffer(2)]],
+    constant uint& height [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint col = gid.x;
+    uint i = gid.y;
+    uint halfHeightH = height / 2;
+
+    if (col >= width || i >= halfHeightH) return;
+
+    int eTop = output[(2 * i) * width + col];
+    int eBot = (2 * i + 2 < height)
+        ? output[(2 * i + 2) * width + col]
+        : output[(2 * i) * width + col];
+    output[(2 * i + 1) * width + col] = highpass[i * width + col] + ((eTop + eBot) >> 1);
+}
+
+// MARK: - v10.3 Phase 2-2-tiled — Inverse 5/3 Int with threadgroup-memory tiling
+//
+// The Phase 2-1 split-step kernels (`*_2d_step1` + `*_2d_step2`) exposed
+// per-sample parallelism but required TWO encoder dispatches per pass.
+// On large fixtures (≥ 7 MP) the extra encoder overhead (~50 µs ×
+// 2 extra encoders per pass = 200-300 µs/decode) plus the cross-step
+// device-memory RAW dependency eats the parallelism gains: DX 2544×3056
+// regressed +1-8 ms end-to-end despite a 1.13× microbench speedup.
+//
+// The tiled variants do BOTH steps in a single kernel dispatch using
+// threadgroup memory to stage step-1's even-output between the steps.
+// Eliminates the cross-step kernel boundary AND keeps step-1 → step-2
+// data on-chip (no device-memory round-trip).
+//
+// Threadgroup geometry (horizontal):
+//   tg = (32 cols, 8 rows). Each thread computes one (even, odd) output
+//   pair → 32×2 = 64 outputs per row × 8 rows = 512 outputs per tg.
+//   Threadgroup memory: 8 rows × 33 evens × 4 bytes = 1056 B (right-halo
+//   even computed by thread 31 to give thread 31's odd its eRight).
+//
+// Bit-exact equivalent of the scalar kernel by construction (same
+// arithmetic, same symmetric boundary handling).
+
+kernel void j2k_dwt_inverse_53_horizontal_int_tiled(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]],
+    uint2 lid [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]]
+) {
+    // tg shape: 32 cols × 8 rows. Each thread computes 1 even + 1 odd
+    // (2 output samples). Right-halo even per row (the 33rd) is computed
+    // by thread.x == 31 so thread.x == 31's odd has its eRight on-chip.
+    threadgroup int tg_even[8][33];
+
+    uint row = gid.y;
+    if (row >= height) return;
+
+    uint halfWidth = (width + 1) / 2;
+    uint halfWidthH = width / 2;
+    uint lBase = row * halfWidth;
+    uint hBase = row * halfWidthH;
+    uint oBase = row * width;
+
+    uint t = lid.x;                 // 0..31 within threadgroup row
+    uint r = lid.y;                 // 0..7 within threadgroup
+    uint tile_base_i = tgid.x * 32; // first even index in this tile
+
+    // Edge case: halfWidthH == 0 → no step 2, just copy lowpass to evens.
+    if (halfWidthH == 0) {
+        uint i = tile_base_i + t;
+        if (i < halfWidth) output[oBase + 2 * i] = lowpass[lBase + i];
+        return;
+    }
+
+    // ----- Step 1 — compute thread t's even at i = tile_base_i + t -----
+    {
+        uint i = tile_base_i + t;
+        if (i < halfWidth) {
+            int dLeft = (i > 0)
+                ? highpass[hBase + i - 1]
+                : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            int e = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+            tg_even[r][t] = e;
+            output[oBase + 2 * i] = e;
+        }
+    }
+
+    // ----- Step 1 boundary — thread.x == 31 also computes the 33rd
+    // even (i = tile_base_i + 32) so its step-2 has eRight on-chip.
+    if (t == 31) {
+        uint i = tile_base_i + 32;
+        if (i < halfWidth) {
+            int dLeft = (i > 0)
+                ? highpass[hBase + i - 1]
+                : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            int e = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+            tg_even[r][32] = e;
+            // Don't write to device — the next tile's thread.x == 0
+            // also computes it and writes (idempotent same value).
+        } else {
+            // Past the right edge: symmetric-boundary fallback used by
+            // thread 31's step 2 when 2*(tile_base_i+31)+2 >= width.
+            tg_even[r][32] = tg_even[r][31];
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // ----- Step 2 — compute thread t's odd at i = tile_base_i + t -----
+    uint i = tile_base_i + t;
+    if (i < halfWidthH) {
+        int eLeft = tg_even[r][t];
+        int eRight = (2 * i + 2 < width)
+            ? tg_even[r][t + 1]
+            : tg_even[r][t];   // symmetric boundary
+        output[oBase + 2 * i + 1] = highpass[hBase + i] + ((eLeft + eRight) >> 1);
+    }
+}
+
+// MARK: - v10.3 Phase 2-2-tiled — Inverse 5/3 Int vertical, tiled
+//
+// Threadgroup geometry: 32 cols × 8 row-pairs. Each thread computes
+// one (even-row, odd-row) output pair → 32 × 2 = 64 output rows per
+// column × 8-tg-rows × tg.x columns. tg_even[8][33] holds the row-axis
+// halo evens; thread (x, 7) computes the boundary 33rd even.
+//
+// Memory access pattern is strided (stride = width × 4 bytes). The
+// 2D thread layout puts adjacent threads on adjacent columns → row-
+// pass writes coalesce naturally; column reads have one cache line
+// per thread but at least the SIMD group's 32 threads hit 32
+// consecutive columns of the same row.
+//
+// Bit-exact equivalent of `j2k_dwt_inverse_53_vertical_int` by
+// construction.
+
+kernel void j2k_dwt_inverse_53_vertical_int_tiled(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]],
+    uint2 lid [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]]
+) {
+    // tg shape: 32 cols × 8 row-pairs. Each thread computes 1 even-
+    // row output + 1 odd-row output for its column. The +1 halo even
+    // is computed by lid.y == 7 so lid.y == 7's odd has its eBot
+    // on-chip.
+    threadgroup int tg_even[33][32];
+
+    uint col = gid.x;
+    if (col >= width) return;
+
+    uint halfHeight = (height + 1) / 2;
+    uint halfHeightH = height / 2;
+
+    uint t = lid.x;                 // 0..31 within tg's column dim
+    uint r = lid.y;                 // 0..7 within tg's row-pair dim
+    uint tile_base_i = tgid.y * 8;  // first even-row index in this tile
+
+    // Edge case: halfHeightH == 0 → no step 2; copy lowpass rows.
+    if (halfHeightH == 0) {
+        uint i = tile_base_i + r;
+        if (i < halfHeight) {
+            output[(2 * i) * width + col] = lowpass[i * width + col];
+        }
+        return;
+    }
+
+    // ----- Step 1 — compute even-row output for (i = tile_base_i + r, col)
+    {
+        uint i = tile_base_i + r;
+        if (i < halfHeight) {
+            int dTop = (i > 0)
+                ? highpass[(i - 1) * width + col]
+                : highpass[col];
+            int dBot = (i < halfHeightH)
+                ? highpass[i * width + col]
+                : highpass[(halfHeightH - 1) * width + col];
+            int e = lowpass[i * width + col] - ((dTop + dBot + 2) >> 2);
+            tg_even[r][t] = e;
+            output[(2 * i) * width + col] = e;
+        }
+    }
+
+    // Boundary even: lid.y == 7 also computes the 9th even (r = 8)
+    // for the same column so r==7's odd has its eBot on-chip.
+    if (r == 7) {
+        uint i = tile_base_i + 8;
+        if (i < halfHeight) {
+            int dTop = (i > 0)
+                ? highpass[(i - 1) * width + col]
+                : highpass[col];
+            int dBot = (i < halfHeightH)
+                ? highpass[i * width + col]
+                : highpass[(halfHeightH - 1) * width + col];
+            int e = lowpass[i * width + col] - ((dTop + dBot + 2) >> 2);
+            tg_even[8][t] = e;
+        } else {
+            tg_even[8][t] = tg_even[7][t];
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // ----- Step 2 — compute odd-row output for (i = tile_base_i + r, col)
+    uint i = tile_base_i + r;
+    if (i < halfHeightH) {
+        int eTop = tg_even[r][t];
+        int eBot = (2 * i + 2 < height)
+            ? tg_even[r + 1][t]
+            : tg_even[r][t];   // symmetric boundary
+        output[(2 * i + 1) * width + col] = highpass[i * width + col]
+            + ((eTop + eBot) >> 1);
+    }
+}
+
 // MARK: - Forward ICT (Irreversible Colour Transform)
 
 kernel void j2k_ict_forward(
