@@ -68,8 +68,28 @@ This *also* confirms rank-3 of the new lever picture: **CPU iDWT (which the CPU 
 
 - **Phase 0 (done)**: documented the stage shift. Stage shares captured for DX/MG on production path.
 - **Phase 1B (done)**: wash. Current 15 MP CPU-fallback threshold is correct; do NOT raise it.
-- **Phase 1A**: skipped. The v8.2 multi-tile-IDWT-fallback edge case the architect flagged doesn't apply to the production path measured here (DX/MG are dispatched single-tile by `decode()`).
+- **Phase 1A (done — LANDED, see below)**: original conclusion that Phase 1A "doesn't apply to single-tile" was correct for the lossy-9/7 corpus path BUT wrong for the HT-J2K Lossless substitute path where Phase E2's 2x2 tile override fires on MG. Re-ran with a dedicated A/B harness (`V10_3_V82BypassMGAB.testV82Bypass_crossFixture`) and found MG saves **−20 to −38 ms / −16 to −26 %** across 3 MG fixtures, bit-exact. Default-flipped `_v82_disableIDWTRoutingFix` from `false` to `true` (commit `92de10c`).
 - **Stop**: no SIMD4 retrofit work (rank 6, low impact) without user sign-off on the re-prioritisation.
+
+## Phase 1A — RESULT (committed `92de10c`)
+
+The architect's framing applies on the **multi-tile-per-tile** path inside `decodeTilePayloadGPU` (line 1252). Phase E2's MG-only 2x2 tile override (landed in v10.0.0) makes MG codestreams multi-tile on the encoder side; each tile then routes through `decodeTilePayloadGPU` on decode → the v8.2 `preBatchedGPUCoefficients != nil` predicate fires → CPU IDWT fallback runs. That fallback was the bottleneck on MG.
+
+In-process cross-fixture A/B (lossless HT-J2K, M2 release, 7-run median per side, same process so thermals don't drift):
+
+| Fixture | v82 ON (ms) | v82 BYPASS (ms) | Δ ms | bit-exact |
+|---|---:|---:|---:|---|
+| CT 512² (single-tile) | 2.32 | 2.33 | +0.02 | YES |
+| PX 2793×1316 (4x4) | 27.55 | 27.69 | +0.13 | YES |
+| DX 2800×2288 (4x4) | 44.94 | 45.47 | +0.53 | YES |
+| DX 2544×3056 (4x4) | 57.36 | 56.72 | −0.64 | YES |
+| MG 3516×4784 (2x2) | 124.14 | 103.59 | **−20.55** | YES |
+| MG 3518×4784 (2x2) | 131.77 | 99.46 | **−32.31** | YES |
+| MG 3521×4784 (2x2) | 144.90 | 106.78 | **−38.12** | YES |
+
+Why the earlier Phase 0 single-tile measurement missed this: the medical corpus perf test uses lossy 9/7 (`useReversibleFilter: false`) where `preBatchedGPUCoefficients` is never set (GPU HT entropy is HT-specific). Phase 1A's win only fires on HT-J2K Lossless multi-tile, which is the v10.0.0 substitute corpus default for MG via E2.
+
+Commit gate clean: J2KMedicalCorpusEncodePerformanceTests 2/2, J2KMedicalCorpusPerformanceTests 2/2, J2KStrictCrossCodecValidationTests 3/3.
 
 ## Honest takeaway
 
