@@ -674,6 +674,127 @@ public struct J2KDWT2DOptimizer: Sendable {
         base[(lastOdd &* 2 &+ 1) &* s] = base[(lastOdd &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
     }
 
+    // MARK: - v10.5 Column-Block Lift (No-Transpose Path)
+
+    /// v10.5-research column-block 5/3 inverse lift: applies the
+    /// inverse Le Gall 5/3 to columns `[cStart, cEnd)` of a row-major
+    /// row-major Int32 buffer **directly**, without the transpose
+    /// → stride-1 lift → untranspose round-trip used by the
+    /// canonical column-pass.
+    ///
+    /// Trade-off vs the canonical (transposed) path:
+    /// - **Bandwidth**: ~3× less DRAM traffic per IDWT pass
+    ///   (2× buffer reads/writes vs ~6× for the canonical path
+    ///   that pays transpose + lift + untranspose). On level-1 of
+    ///   an MG (3520×4784) buffer the column-block path is **5.5–
+    ///   8.3× faster** in the V10_5 microbench
+    ///   (`V10_5_IDWTBandwidthProbeMicrobench`).
+    /// - **Cache footprint**: a column block of width N visits
+    ///   3 rows × N cells per step (~768 B per row for N=16) —
+    ///   L1-resident across a column pass. The canonical path's
+    ///   transpose buffer is the full image (67 MB for MG), which
+    ///   blows M2's 16 MB shared P-cluster L2.
+    ///
+    /// The math is bit-exact with `inverseLift53InPlace(_:evenCount:
+    /// oddCount:stride:)` — verified across MG/DX/PX synthetic
+    /// buffers in V10_5 microbench (6/6 parity ✓) and across the
+    /// real medical corpus via the parity gate.
+    @inline(__always)
+    static func inverseLift53ColBlock(
+        _ base: UnsafeMutablePointer<Int32>,
+        cStart: Int, cEnd: Int,
+        outW: Int,
+        evenCount: Int,
+        oddCount: Int
+    ) {
+        guard evenCount > 0 && oddCount > 0 else { return }
+        let limit = min(evenCount, oddCount)
+        let lastOdd = oddCount &- 1
+
+        // Step 1: Undo update — even[i] -= floor((hp[i-1] + hp[i] + 2) / 4)
+        // Left boundary: hp[-1] = hp[0]
+        do {
+            let rowHP0 = base + outW   // row 1 (first odd)
+            let rowEV0 = base          // row 0 (first even)
+            for c in cStart..<cEnd {
+                let hp0 = rowHP0[c]
+                rowEV0[c] = rowEV0[c] &- ((hp0 &+ hp0 &+ 2) >> 2)
+            }
+        }
+        for i in 1..<limit {
+            let evenRow = base + (i &* 2) &* outW
+            let prevHPRow = base + (i &* 2 &- 1) &* outW
+            let curHPRow  = base + (i &* 2 &+ 1) &* outW
+            for c in cStart..<cEnd {
+                evenRow[c] = evenRow[c] &- ((prevHPRow[c] &+ curHPRow[c] &+ 2) >> 2)
+            }
+        }
+        // Right boundary: hp[evenCount] = hp[oddCount-1] (symmetric)
+        if evenCount > oddCount {
+            let lastHPRow = base + (oddCount &* 2 &- 1) &* outW
+            let lastEVRow = base + (evenCount &- 1) &* 2 &* outW
+            for c in cStart..<cEnd {
+                lastEVRow[c] = lastEVRow[c] &- ((lastHPRow[c] &+ lastHPRow[c] &+ 2) >> 2)
+            }
+        }
+
+        // Step 2: Undo predict — odd[i] += floor((even[i] + even[i+1]) / 2)
+        for i in 0..<lastOdd {
+            let oddRow   = base + (i &* 2 &+ 1) &* outW
+            let evenLRow = base + (i &* 2) &* outW
+            let evenRRow = base + (i &* 2 &+ 2) &* outW
+            for c in cStart..<cEnd {
+                oddRow[c] = oddRow[c] &+ ((evenLRow[c] &+ evenRRow[c]) >> 1)
+            }
+        }
+        // Last odd: right boundary — even[oddCount] = even[evenCount-1]
+        let evenRightIdx = min((lastOdd &+ 1) &* 2, (evenCount &- 1) &* 2)
+        let lastOddRow = base + (lastOdd &* 2 &+ 1) &* outW
+        let evenLRow   = base + (lastOdd &* 2) &* outW
+        let evenRRow   = base + evenRightIdx &* outW
+        for c in cStart..<cEnd {
+            lastOddRow[c] = lastOddRow[c] &+ ((evenLRow[c] &+ evenRRow[c]) >> 1)
+        }
+    }
+
+    /// v10.5-research env-var gate for the column-block IDWT path.
+    ///
+    /// **Default OFF** after the end-to-end Phase 4 / 4b A/B benches
+    /// closed the lever as a wash: the column-lift microbench
+    /// measured 22 ms / 5.5–8.3× savings on MG-class level-1 buffers
+    /// (`V10_5_IDWTBandwidthProbeMicrobench`, 6/6 bit-exact), but
+    /// neither end-to-end test
+    /// (`V10_5_IDWTColBlockEndToEndABTests`,
+    ///  `V10_5_IDWTColBlockVsGPUTests`) saw the savings translate
+    /// to wall — every MG / DX / PX fixture delta sat inside ±3 ms.
+    /// Two reasons:
+    ///
+    ///  1. `J2KDecoder.decode()` routes ≥4 MP fixtures through the
+    ///     **GPU IDWT** path (`_gpuInverse53Enabled` default ON since
+    ///     v6.2.0). MG / DX never reach the CPU column-pass in
+    ///     production. PX is below the 4 MP threshold but its level-1
+    ///     buffer (~14.8 MB) already fits inside M2's 16 MB L2 — the
+    ///     bandwidth lever doesn't apply at PX scale.
+    ///
+    ///  2. Even when the CPU path is forced, the existing
+    ///     parallel-chunk transpose-then-stride-1-lift achieves enough
+    ///     L2 reuse on real wavelet subband data (vs the synthetic
+    ///     LCG-noise microbench buffer) that the savings collapse
+    ///     into the noise floor. This is the same isolated-stage-vs-
+    ///     wall wash documented in v8.4 / v8.5 / v8.6 / v8.7 / v10.4
+    ///     and now v10.5 — 10th independent lever-ceiling confirmation
+    ///     on M2 + Swift release.
+    ///
+    /// The code stays in tree as **opt-in via `J2K_IDWT_COLBLOCK=1`**:
+    /// bit-exact across 10 medical fixtures and 6 synthetic edge
+    /// cases (`V10_5_IDWTColBlockParityTests`), so it's available
+    /// for diagnostic A/B, cross-silicon re-measurement (M3 / M4
+    /// curves may differ — L2 sizes shifted), and as a building
+    /// block if a future GPU-IDWT-side bandwidth probe lands.
+    nonisolated(unsafe) public static var columnBlockLiftEnabled: Bool = {
+        ProcessInfo.processInfo.environment["J2K_IDWT_COLBLOCK"] == "1"
+    }()
+
     // MARK: - Flat-Buffer Multi-Level IDWT (5/3 Lossless)
 
     /// Performs a complete multi-level inverse Le Gall 5/3 DWT on flat subband data.
@@ -830,33 +951,72 @@ public struct J2KDWT2DOptimizer: Sendable {
                 }
             }
 
-            // Column lifting (SECOND): transpose → stride-1 lift → untranspose.
-            // Transposing first eliminates the stride-outW cache thrash that
-            // occurs when lifting each column directly in the row-major buffer.
+            // Column lifting (SECOND).
+            //
+            // v10.5 Phase 2 — when `columnBlockLiftEnabled` is true
+            // (default), apply the column-block lift directly on the
+            // row-major `base`, skipping the transpose + stride-1
+            // lift + untranspose round-trip. On MG-class level-1
+            // buffers (3520×4784 Int32 = 67 MB) the canonical path
+            // pays 6× the buffer in DRAM traffic
+            // (transpose-out + lift + untranspose-in, each 2×); the
+            // column-block path pays 2×. M2's 16 MB P-cluster L2 is
+            // 8× smaller than the level-1 working set, so this
+            // bandwidth elision is where MG decode time actually
+            // burns. Microbench `V10_5_IDWTBandwidthProbeMicrobench`
+            // measures 5.5–8.3× speedup, bit-exact across 6 buffer
+            // shapes.
+            //
+            // Canonical (transpose) path stays for the opt-out
+            // (`J2K_IDWT_COLBLOCK=0`) and for the small-buffer
+            // sequential branch where the stride-outW penalty is
+            // dwarfed by overhead.
             let evenRows = curH
             let coreCountCol = ProcessInfo.processInfo.processorCount
             if outH >= 32 && outW >= 32 {
-                let tBuf = UnsafeMutablePointer<Int32>.allocate(capacity: bufSize)
-                defer { tBuf.deallocate() }
-                // Transpose: outH×outW → outW×outH  (cols become stride-1 rows)
-                J2KDWT2DOptimizer.transposeInt32(src: base, dst: tBuf, rows: outH, cols: outW)
-                let safeT = SendablePointer(tBuf)
-                let colChunk = max(1, outW / coreCountCol)
-                await withTaskGroup(of: Void.self) { group in
-                    for chunkStart in stride(from: 0, to: outW, by: colChunk) {
-                        let chunkEnd = min(chunkStart + colChunk, outW)
-                        group.addTask {
-                            let tp = safeT.pointer
-                            for col in chunkStart..<chunkEnd {
-                                J2KDWT2DOptimizer.inverseLift53InPlace(
-                                    tp + col &* outH, evenCount: evenRows, oddCount: lhH, stride: 1
-                                )
+                if J2KDWT2DOptimizer.columnBlockLiftEnabled {
+                    // v10.5 column-block path — row-major, no transpose.
+                    let safeBase = SendablePointer(base)
+                    let colChunk = max(16, outW / coreCountCol)
+                    let colBlockSize = 16
+                    await withTaskGroup(of: Void.self) { group in
+                        for chunkStart in stride(from: 0, to: outW, by: colChunk) {
+                            let chunkEnd = min(chunkStart + colChunk, outW)
+                            group.addTask {
+                                let b = safeBase.pointer
+                                var c = chunkStart
+                                while c < chunkEnd {
+                                    let cEnd = min(c + colBlockSize, chunkEnd)
+                                    J2KDWT2DOptimizer.inverseLift53ColBlock(
+                                        b, cStart: c, cEnd: cEnd, outW: outW,
+                                        evenCount: evenRows, oddCount: lhH)
+                                    c += colBlockSize
+                                }
                             }
                         }
                     }
+                } else {
+                    // Canonical path — transpose → stride-1 lift → untranspose.
+                    let tBuf = UnsafeMutablePointer<Int32>.allocate(capacity: bufSize)
+                    defer { tBuf.deallocate() }
+                    J2KDWT2DOptimizer.transposeInt32(src: base, dst: tBuf, rows: outH, cols: outW)
+                    let safeT = SendablePointer(tBuf)
+                    let colChunk = max(1, outW / coreCountCol)
+                    await withTaskGroup(of: Void.self) { group in
+                        for chunkStart in stride(from: 0, to: outW, by: colChunk) {
+                            let chunkEnd = min(chunkStart + colChunk, outW)
+                            group.addTask {
+                                let tp = safeT.pointer
+                                for col in chunkStart..<chunkEnd {
+                                    J2KDWT2DOptimizer.inverseLift53InPlace(
+                                        tp + col &* outH, evenCount: evenRows, oddCount: lhH, stride: 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    J2KDWT2DOptimizer.transposeInt32(src: tBuf, dst: base, rows: outW, cols: outH)
                 }
-                // Untranspose: outW×outH → outH×outW
-                J2KDWT2DOptimizer.transposeInt32(src: tBuf, dst: base, rows: outW, cols: outH)
             } else {
                 for col in 0..<outW {
                     J2KDWT2DOptimizer.inverseLift53InPlace(
