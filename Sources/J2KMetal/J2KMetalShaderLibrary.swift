@@ -67,6 +67,15 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse53VerticalInt2DStep1 = "j2k_dwt_inverse_53_vertical_int_2d_step1"
     /// v10.3 Phase 2-1 — 2D-layout inverse 5/3 vertical step 2.
     case dwtInverse53VerticalInt2DStep2 = "j2k_dwt_inverse_53_vertical_int_2d_step2"
+    /// **v10.3 Phase 2-2-tiled** — threadgroup-memory tiled inverse 5/3
+    /// horizontal kernel. Does step 1 + step 2 in one dispatch via
+    /// threadgroup memory staging + a barrier between the steps. Closes
+    /// the kernel-boundary cost that Phase 2-1's split-step regressed on
+    /// large fixtures. Bit-exact equivalent of
+    /// `j2k_dwt_inverse_53_horizontal_int`.
+    case dwtInverse53HorizontalIntTiled = "j2k_dwt_inverse_53_horizontal_int_tiled"
+    /// v10.3 Phase 2-2-tiled — threadgroup-memory tiled inverse 5/3 vertical.
+    case dwtInverse53VerticalIntTiled = "j2k_dwt_inverse_53_vertical_int_tiled"
     /// Forward 9/7 irreversible wavelet transform (horizontal).
     case dwtForward97Horizontal = "j2k_dwt_forward_97_horizontal"
     /// Forward 9/7 irreversible wavelet transform (vertical).
