@@ -48,12 +48,15 @@ let package = Package(
             name: "J2KTestApp",
             targets: ["J2KTestApp"]),
         // v10.5 cross-silicon arc — shareable SwiftUI bench app
-        // (iOS + macOS). Distribute to friends with iPhones for
-        // A-series captures during the v10.5 cross-silicon probe.
-        // See Documentation/research/V10_5_CROSS_SILICON_PROBE.md.
-        .executable(
-            name: "J2KBenchApp",
-            targets: ["J2KBenchApp"]),
+        // lives in `Sources/J2KBenchApp/` as an xcodegen-generated
+        // xcodeproj wrapper, NOT a SwiftPM executable target.
+        // SwiftPM-emitted iOS executables aren't proper .app
+        // bundles (no Info.plist, no signing, no UIKit lifecycle),
+        // so they can't install on a device. The xcodeproj at
+        // Sources/J2KBenchApp/J2KBenchApp.xcodeproj wraps the same
+        // sources with automatic signing + provisioning. Re-generate
+        // after edits with `cd Sources/J2KBenchApp && xcodegen
+        // generate`. See Sources/J2KBenchApp/README.md.
         // v8 Phase 6.3 — XPC daemon (macOS-only). Long-lived
         // process that holds J2KMetalSession warm across CLI
         // invocations, listening on a Mach service registered
@@ -269,22 +272,10 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
-        // v10.5 cross-silicon arc — shareable SwiftUI bench app.
-        // Targets iOS (A-series) primarily but also builds for macOS
-        // so the developer can sanity-check the run shape before
-        // distributing. No daemon, no subprocess, no kdu_expand —
-        // pure in-process J2KSwift, so it works inside the iOS app
-        // sandbox. Info.plist is left in-tree as reference; Xcode
-        // auto-synthesises the app-bundle Info.plist from the
-        // INFOPLIST_KEY_* defaults SwiftPM emits when this target is
-        // selected as the run scheme.
-        .executableTarget(
-            name: "J2KBenchApp",
-            dependencies: ["J2KCore", "J2KCodec", "J2KMetal"],
-            path: "Sources/J2KBenchApp",
-            exclude: ["Info.plist", "README.md"],
-            swiftSettings: [
-                .unsafeFlags(["-parse-as-library"])
-            ]),
+        // J2KBenchApp deliberately omitted as a SwiftPM target —
+        // see the matching products comment above. Its sources are
+        // wired through `Sources/J2KBenchApp/J2KBenchApp.xcodeproj`
+        // instead, which produces a proper iOS .app bundle with
+        // automatic provisioning.
     ]
 )

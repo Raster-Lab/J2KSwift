@@ -18,20 +18,46 @@ OpenJPH / Grok) stay macOS-only.
 
 ## Running on your iPhone
 
-1. Open `Package.swift` in Xcode (File → Open → pick the J2KSwift dir).
-2. Select the **J2KBenchApp** scheme.
-3. Connect your iPhone via USB and pick it as the run destination.
-4. Hit **Run** (⌘R). Xcode auto-provisions on first run using your
-   Apple Development cert; trust the developer cert under
-   *Settings → General → VPN & Device Management* on the iPhone if
-   prompted.
-5. In the app, tap **Run Benchmark**. The bench takes 2–6 minutes
+The bench app ships as an iOS **`.xcodeproj`** wrapper at
+`Sources/J2KBenchApp/J2KBenchApp.xcodeproj` (generated from
+`project.yml` with [xcodegen](https://github.com/yonaskolb/XcodeGen)).
+SwiftPM-only executable targets aren't proper iOS `.app` bundles, so
+they can't sign or install on a device — the xcodeproj wraps the same
+sources with automatic provisioning.
+
+1. **One-time Xcode account setup.** Open Xcode → Settings → Accounts
+   → tap **+** → sign in with the Apple ID that owns your iOS
+   developer team. Free Apple IDs work too (7-day app lifetime per
+   install).
+2. Open `Sources/J2KBenchApp/J2KBenchApp.xcodeproj`.
+3. Click the **J2KBenchApp** target → **Signing & Capabilities** tab
+   → tick **Automatically manage signing** → pick your **Team** from
+   the dropdown. Xcode will generate a provisioning profile against
+   your Apple ID on first run. If the bundle ID `in.raster.j2k.bench`
+   collides with another developer's account, change it to anything
+   unique (e.g. `<yourdomain>.j2k.bench`).
+4. Connect your iPhone via USB. Pick it as the run destination at the
+   top of the Xcode window.
+5. Hit **Run** (⌘R). On first run, trust the developer cert under
+   *Settings → General → VPN & Device Management* on the iPhone.
+6. In the app, tap **Run Benchmark**. The bench takes 2–6 minutes
    depending on the device (large mammography fixtures dominate the
    wall time).
-6. Tap **Share JSON** when complete and AirDrop / Mail / Message the
+7. Tap **Share JSON** when complete and AirDrop / Mail / Message the
    file back. Filename is
    `benchmark-results-<model>-<j2k-version>-warm-inproc-<YYYYMMDD>.json`
    so it lands in the correct bucket on the compare side.
+
+### Regenerating the xcodeproj after source edits
+
+The xcodeproj is committed but the source of truth is `project.yml`.
+If you add a new Swift file, change the bundle ID, or bump the
+deployment target, regenerate with:
+
+```bash
+brew install xcodegen   # one-time
+cd Sources/J2KBenchApp && xcodegen generate
+```
 
 ## What it measures
 

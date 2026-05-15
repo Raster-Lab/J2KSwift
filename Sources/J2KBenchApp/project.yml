@@ -1,0 +1,80 @@
+# xcodegen spec for J2KBenchApp (iOS).
+#
+# Generates J2KBenchApp.xcodeproj that wraps the SwiftPM
+# J2KBenchApp sources as a real iOS .app target. Without this
+# wrapper, Xcode treats the SwiftPM executable as a plain Mach-O
+# and `IDEInstallCoreDeviceWorker` rejects the install on device
+# with "The executable is not codesigned".
+#
+# Regenerate after editing:
+#     cd Sources/J2KBenchApp && xcodegen generate
+#
+# Then in Xcode:
+#     open Sources/J2KBenchApp/J2KBenchApp.xcodeproj
+#     Pick J2KBenchApp scheme → your iPhone → ⌘R
+
+name: J2KBenchApp
+options:
+  bundleIdPrefix: in.raster.j2k
+  deploymentTarget:
+    iOS: "18.0"
+  developmentLanguage: en
+
+packages:
+  J2KSwift:
+    path: ../..
+
+targets:
+  J2KBenchApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: .
+        excludes:
+          - "Info.plist"
+          - "README.md"
+          - "project.yml"
+          - "J2KBenchApp.xcodeproj"
+    info:
+      path: Info.plist
+      properties:
+        CFBundleName: J2K Bench
+        CFBundleShortVersionString: 10.1.0
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: ""
+        UIRequiredDeviceCapabilities:
+          - arm64
+          - metal
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        # Each tester must override DEVELOPMENT_TEAM in Xcode →
+        # Signing & Capabilities (or pass DEVELOPMENT_TEAM=<id>
+        # on the xcodebuild command line) so automatic signing can
+        # fetch a provisioning profile against their own Apple ID.
+        # The bundle ID also needs to be unique per team — Xcode
+        # will offer to rename it on the first build if there's a
+        # clash on the developer portal.
+        PRODUCT_BUNDLE_IDENTIFIER: in.raster.j2k.bench
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: "YES"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    dependencies:
+      - package: J2KSwift
+        product: J2KCore
+      - package: J2KSwift
+        product: J2KCodec
+      - package: J2KSwift
+        product: J2KMetal
