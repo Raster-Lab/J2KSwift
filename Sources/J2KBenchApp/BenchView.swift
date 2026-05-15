@@ -104,56 +104,82 @@ struct BenchView: View {
     }
 
     // MARK: - Results
+    //
+    // Layout: one horizontal ScrollView wraps a fixed-width table
+    // (fixture column + 4 timing columns). Small phones (iPhone SE)
+    // can't fit all columns at once, so the whole table scrolls
+    // left/right as a unit while staying vertically scrollable.
+
+    private static let fixtureColumnWidth: CGFloat = 140
+    private static let timingColumnWidth: CGFloat = 72
+    private static var tableWidth: CGFloat {
+        fixtureColumnWidth + timingColumnWidth * 4 + 24
+    }
 
     private var resultsList: some View {
-        List {
-            Section {
-                resultsHeader
-                ForEach(BenchModel.corpus) { fixture in
-                    resultRow(fixture)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Median ms per fixture — swipe \u{2190}\u{2192} to see more columns")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    resultsHeader
+                    Divider()
+                    ForEach(BenchModel.corpus) { fixture in
+                        resultRow(fixture)
+                        Divider()
+                    }
                 }
-            } header: {
-                Text("Median ms per fixture (lower is better)")
-                    .font(.caption2)
+                .frame(width: Self.tableWidth, alignment: .leading)
             }
         }
-        .listStyle(.plain)
     }
 
     private var resultsHeader: some View {
-        HStack {
-            Text("Fixture").bold().frame(width: 130, alignment: .leading)
-            Spacer()
-            Text("Enc").bold().frame(width: 50, alignment: .trailing)
-            Text("CPU").bold().frame(width: 50, alignment: .trailing)
-            Text("GPU").bold().frame(width: 50, alignment: .trailing)
-            Text("GPUHT").bold().frame(width: 60, alignment: .trailing)
+        HStack(spacing: 0) {
+            Text("Fixture").bold()
+                .frame(width: Self.fixtureColumnWidth, alignment: .leading)
+            Text("Encode").bold()
+                .frame(width: Self.timingColumnWidth, alignment: .trailing)
+            Text("Dec CPU").bold()
+                .frame(width: Self.timingColumnWidth, alignment: .trailing)
+            Text("Dec GPU").bold()
+                .frame(width: Self.timingColumnWidth, alignment: .trailing)
+            Text("Dec GPUHT").bold()
+                .frame(width: Self.timingColumnWidth, alignment: .trailing)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     private func resultRow(_ fixture: BenchFixture) -> some View {
         let r = model.results[fixture.id]
-        return HStack {
-            VStack(alignment: .leading) {
-                Text(fixture.id).font(.caption2)
-                Text("\(fixture.modality) · \(fixture.width)×\(fixture.height)")
+        return HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(fixture.id).font(.caption.weight(.medium))
+                Text("\(fixture.modality) \u{00b7} \(fixture.width)\u{00d7}\(fixture.height)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 130, alignment: .leading)
-            Spacer()
-            ms(r?.encode.median).frame(width: 50, alignment: .trailing)
-            ms(r?.decodeCPU.median).frame(width: 50, alignment: .trailing)
-            ms(r?.decodeGPU.median).frame(width: 50, alignment: .trailing)
-            ms(r?.decodeWithGPUHT.median).frame(width: 60, alignment: .trailing)
+            .frame(width: Self.fixtureColumnWidth, alignment: .leading)
+
+            ms(r?.encode.median).frame(width: Self.timingColumnWidth, alignment: .trailing)
+            ms(r?.decodeCPU.median).frame(width: Self.timingColumnWidth, alignment: .trailing)
+            ms(r?.decodeGPU.median).frame(width: Self.timingColumnWidth, alignment: .trailing)
+            ms(r?.decodeWithGPUHT.median).frame(width: Self.timingColumnWidth, alignment: .trailing)
         }
         .font(.caption.monospacedDigit())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private func ms(_ value: Double?) -> Text {
-        guard let value else { return Text("—").foregroundStyle(.tertiary) }
+        guard let value else { return Text("\u{2014}").foregroundStyle(.tertiary) }
         return Text(String(format: "%.1f", value))
     }
 
