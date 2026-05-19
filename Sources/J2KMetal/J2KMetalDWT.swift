@@ -3678,6 +3678,41 @@ public actor J2KMetalDWT {
         ProcessInfo.processInfo.environment["J2K_METAL_IDWT_TILED"] != "0"
     }()
 
+    /// v10.5 Phase 2-3-fused — opt-in gate for the single-kernel
+    /// H+V fused inverse 5/3 Int dispatch. Default **OFF**; set
+    /// `J2K_METAL_IDWT_FUSED=1` to enable.
+    ///
+    /// The fused kernel collapses the v10.3 Phase 2-2-tiled pair
+    /// (`*_horizontal_int_tiled` + `*_vertical_int_tiled`) into one
+    /// dispatch per IDWT level. It eliminates the colLow/colHigh
+    /// device-memory round-trip (~2× DRAM saving per level) and
+    /// drops the per-level encoder overhead from 3 dispatches to 1.
+    ///
+    /// Bit-exact equivalent of the tiled pair (`V10_5_MetalIDWTInverse53FusedParityTests`:
+    /// 3/3 PASS across small / odd / medical corpus dimensions).
+    /// Takes precedence over `inverse53IntTiledEnabled` when both
+    /// are set; available only for even-origin (no tile-origin
+    /// canvas adjustment).
+    ///
+    /// **Why default OFF** (per `V10_5_METAL_IDWT_FUSED_FINDING.md`):
+    /// end-to-end warm A/B on the medical corpus showed the lever
+    /// works on MG-class (16.8 MP) fixtures — MG small +5.97–7.84 ms
+    /// (5.9-7.6% wall), MG mid +2.35–5.85 ms (2.4-6.0%) — but MG
+    /// large flips sign run-to-run (+2.96 → -4.38 ms), indicating
+    /// run variance ≈ 5 ms that sits at the v7.4 3 ms acceptance
+    /// gate. Smaller fixtures (DX / PX / XA / CT) sit inside ±1 ms
+    /// of the tiled baseline.
+    ///
+    /// The lever is preserved opt-in for:
+    ///   - diagnostic A/B and cross-silicon re-measurement (M3+/A-series
+    ///     L2 / DRAM curves differ),
+    ///   - future routing-recalibration work that might pin the fused
+    ///     path to ≥12 MP via a pixel-count gate similar to
+    ///     `_gpuInverse53PixelThreshold`.
+    nonisolated(unsafe) public static var inverse53IntFusedEnabled: Bool = {
+        ProcessInfo.processInfo.environment["J2K_METAL_IDWT_FUSED"] == "1"
+    }()
+
     public func encodeInverse2DInt32(
         into cb: any MTLCommandBuffer,
         ll: any MTLBuffer,
@@ -3703,6 +3738,22 @@ public actor J2KMetalDWT {
         // F.4.1.1 — different boundary mirror, flipped interleave).
         let hOddOrigin = (tileOriginX & 1) == 1
         let vOddOrigin = (tileOriginY & 1) == 1
+
+        // v10.5 Phase 2-3-fused: single-kernel H+V dispatch. Takes
+        // precedence over the tiled pair when both are opt-in.
+        // Available only for the even-origin path (no canvas-origin
+        // parity branch).
+        let useFused = Self.inverse53IntFusedEnabled && !hOddOrigin && !vOddOrigin
+        if useFused {
+            try await encodeInverse2DInt32_Fused(
+                into: cb,
+                ll: ll, lh: lh, hl: hl, hh: hh,
+                output: output,
+                originalWidth: originalWidth,
+                originalHeight: originalHeight,
+                llHeight: llHeight, halfHH: halfHH)
+            return
+        }
 
         // v10.3 Phase 2-2-tiled: threadgroup-memory tiled kernels.
         // Takes precedence over 2D-layout when both are set. Available
@@ -4022,6 +4073,68 @@ public actor J2KMetalDWT {
                 threadsPerThreadgroup: MTLSize(width: tgX, height: tgY, depth: 1))
             enc.endEncoding()
         }
+    }
+
+    /// v10.5 Phase 2-3-fused — single-kernel H+V inverse 5/3 Int.
+    ///
+    /// Collapses the v10.3 Phase 2-2-tiled pair into one dispatch,
+    /// holding the H-pass output in threadgroup memory across the
+    /// V pass. Eliminates the colLow/colHigh device round-trip;
+    /// 3 kernel dispatches per level → 1.
+    ///
+    /// Threadgroup geometry: (32, 10). Each tg produces a 32-col ×
+    /// 16-row output tile; rows lid.y == 0 and lid.y == 9 are halo
+    /// rows that only contribute to the V-pass halo (their output
+    /// is not written).
+    private func encodeInverse2DInt32_Fused(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        llHeight: Int,
+        halfHH: Int
+    ) async throws {
+        let kernel = try await shaderLibrary.computePipeline(for: .dwtInverse53FusedIntTiled)
+        guard let enc = cb.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create fused IDWT encoder")
+        }
+        enc.setComputePipelineState(kernel)
+        enc.setBuffer(ll, offset: 0, index: 0)
+        enc.setBuffer(hl, offset: 0, index: 1)
+        enc.setBuffer(lh, offset: 0, index: 2)
+        enc.setBuffer(hh, offset: 0, index: 3)
+        enc.setBuffer(output, offset: 0, index: 4)
+
+        var widthVal = UInt32(originalWidth)
+        var heightVal = UInt32(originalHeight)
+        var llWVal = UInt32((originalWidth + 1) / 2)
+        var llHVal = UInt32(llHeight)
+        var halfHHVal = UInt32(halfHH)
+        enc.setBytes(&widthVal,   length: MemoryLayout<UInt32>.stride, index: 5)
+        enc.setBytes(&heightVal,  length: MemoryLayout<UInt32>.stride, index: 6)
+        enc.setBytes(&llWVal,     length: MemoryLayout<UInt32>.stride, index: 7)
+        enc.setBytes(&llHVal,     length: MemoryLayout<UInt32>.stride, index: 8)
+        enc.setBytes(&halfHHVal,  length: MemoryLayout<UInt32>.stride, index: 9)
+
+        // Grid: thread.x covers output cols (0..width). thread.y covers
+        // input low-band rows with halo: 1 halo + 8 body + 1 halo per tg.
+        //
+        // Number of row-tiles = ⌈llHeight / 8⌉ (each body covers 8 input
+        // low-band rows). gridY = numRowTiles × tgY.
+        let tgX = 32
+        let tgY = 10  // 8 body rows + 2 halo rows (lid.y == 0, lid.y == 9)
+        let gridX = max(originalWidth, 1)
+        let tgRowsBody = tgY - 2              // 8 body input rows per tile
+        let numRowTiles = max(1, (llHeight + tgRowsBody - 1) / tgRowsBody)
+        let gridY = numRowTiles * tgY
+        enc.dispatchThreads(
+            MTLSize(width: gridX, height: gridY, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: tgX, height: tgY, depth: 1))
+        enc.endEncoding()
     }
 
     private func readInt32Array(from buffer: MTLBuffer, elementCount: Int) -> [Int32] {
