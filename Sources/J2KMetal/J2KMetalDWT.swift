@@ -3710,11 +3710,21 @@ public actor J2KMetalDWT {
     /// Phase 2-2-tiled pair where it has consistent win/wash
     /// telemetry.
     ///
-    /// Opt-in via `J2K_METAL_IDWT_FUSED=1` for diagnostic A/B,
+    /// **v10.3.0 (2026-05-20): default flipped from OFF to ON.** Paired
+    /// with the `_gpuHTEntropyEnabled` flag flip (default ON → OFF in
+    /// v10.3.0). With the GPU HT entropy regression eliminated, the
+    /// remaining MG-class wall budget is dominated by IDWT, where the
+    /// fused-kernel +2.6 to +4.7 ms median improvement holds. The
+    /// 12 MP pixel-threshold gate confines the fused path to MG-class
+    /// fixtures only — DX/PX/XA/CT stay on the v10.1.0 Phase 2-2-tiled
+    /// pair where they have consistent win/wash telemetry.
+    ///
+    /// **Opt-out via `J2K_METAL_IDWT_FUSED=0`** for diagnostic A/B,
     /// cross-silicon re-measurement (M3+/A-series L2 / DRAM curves
-    /// differ), or production trial.
+    /// differ), or production rollback.
     nonisolated(unsafe) public static var inverse53IntFusedEnabled: Bool = {
-        ProcessInfo.processInfo.environment["J2K_METAL_IDWT_FUSED"] == "1"
+        // Default ON unless explicit opt-out.
+        ProcessInfo.processInfo.environment["J2K_METAL_IDWT_FUSED"] != "0"
     }()
 
     /// v10.5 Phase 2-3-fused — per-level pixel-count threshold for
