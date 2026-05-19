@@ -78,10 +78,16 @@ final class V10_5_MetalIDWTInverse53FusedMicrobench: XCTestCase {
     ) async throws -> Stats {
         let prevTiled = J2KMetalDWT.inverse53IntTiledEnabled
         let prevFused = J2KMetalDWT.inverse53IntFusedEnabled
+        let prevThreshold = J2KMetalDWT.inverse53IntFusedPixelThreshold
         defer {
             J2KMetalDWT.inverse53IntTiledEnabled = prevTiled
             J2KMetalDWT.inverse53IntFusedEnabled = prevFused
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = prevThreshold
         }
+        // Microbench lowers threshold to 0 so we measure the fused
+        // path's raw cost across the full size sweep, including
+        // sub-12 MP fixtures where production routes back to tiled.
+        J2KMetalDWT.inverse53IntFusedPixelThreshold = 0
         switch path {
         case "tiled":
             J2KMetalDWT.inverse53IntTiledEnabled = true

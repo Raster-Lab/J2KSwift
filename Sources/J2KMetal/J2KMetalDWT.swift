@@ -3694,24 +3694,43 @@ public actor J2KMetalDWT {
     /// are set; available only for even-origin (no tile-origin
     /// canvas adjustment).
     ///
-    /// **Why default OFF** (per `V10_5_METAL_IDWT_FUSED_FINDING.md`):
-    /// end-to-end warm A/B on the medical corpus showed the lever
-    /// works on MG-class (16.8 MP) fixtures — MG small +5.97–7.84 ms
-    /// (5.9-7.6% wall), MG mid +2.35–5.85 ms (2.4-6.0%) — but MG
-    /// large flips sign run-to-run (+2.96 → -4.38 ms), indicating
-    /// run variance ≈ 5 ms that sits at the v7.4 3 ms acceptance
-    /// gate. Smaller fixtures (DX / PX / XA / CT) sit inside ±1 ms
-    /// of the tiled baseline.
+    /// **Why default OFF** (per `V10_5_METAL_IDWT_FUSED_FINDING.md`
+    /// and the 10-trial variance bench
+    /// `V10_5_MetalIDWTInverse53FusedVarianceTests`):
+    ///   - MG small (16.8 MP) — median +4.68 ms, 70% positive (RELIABLE WIN)
+    ///   - MG mid (16.8 MP) — median +2.64 ms, 70% positive
+    ///   - MG large (16.8 MP) — median +7.67 ms BUT 50% positive,
+    ///     std 8.27 ms (high run-to-run variance, coin-flip per decode)
+    ///   - DX / PX / XA / CT — wash (no win, no regression) at the
+    ///     per-level scale where the bandwidth lever doesn't apply
     ///
-    /// The lever is preserved opt-in for:
-    ///   - diagnostic A/B and cross-silicon re-measurement (M3+/A-series
-    ///     L2 / DRAM curves differ),
-    ///   - future routing-recalibration work that might pin the fused
-    ///     path to ≥12 MP via a pixel-count gate similar to
-    ///     `_gpuInverse53PixelThreshold`.
+    /// The lever is gated by `inverse53IntFusedPixelThreshold` so
+    /// that even when opt-in is set, only ≥12 MP per-level passes
+    /// take the fused path. Below threshold stays on the v10.3
+    /// Phase 2-2-tiled pair where it has consistent win/wash
+    /// telemetry.
+    ///
+    /// Opt-in via `J2K_METAL_IDWT_FUSED=1` for diagnostic A/B,
+    /// cross-silicon re-measurement (M3+/A-series L2 / DRAM curves
+    /// differ), or production trial.
     nonisolated(unsafe) public static var inverse53IntFusedEnabled: Bool = {
         ProcessInfo.processInfo.environment["J2K_METAL_IDWT_FUSED"] == "1"
     }()
+
+    /// v10.5 Phase 2-3-fused — per-level pixel-count threshold for
+    /// the fused IDWT dispatch. Defaults to **12 000 000** (12 MP),
+    /// the boundary the variance bench established: above 12 MP
+    /// (MG class) the fused path has a positive median lift; below
+    /// 12 MP (DX 7.7 MP / PX 3.7 MP / XA 1 MP / CT 0.26 MP) the
+    /// lever doesn't apply and the path was wash or marginally
+    /// regressed.
+    ///
+    /// This mirrors `_gpuInverse53PixelThreshold = 4_000_000` —
+    /// per-level pixel-count gate inside the GPU dispatch.
+    ///
+    /// Mutable so tests / diagnostics can lower the threshold to
+    /// force the fused path on smaller fixtures for A/B work.
+    nonisolated(unsafe) public static var inverse53IntFusedPixelThreshold: Int = 12_000_000
 
     public func encodeInverse2DInt32(
         into cb: any MTLCommandBuffer,
@@ -3742,8 +3761,15 @@ public actor J2KMetalDWT {
         // v10.5 Phase 2-3-fused: single-kernel H+V dispatch. Takes
         // precedence over the tiled pair when both are opt-in.
         // Available only for the even-origin path (no canvas-origin
-        // parity branch).
-        let useFused = Self.inverse53IntFusedEnabled && !hOddOrigin && !vOddOrigin
+        // parity branch) AND when this per-level pixel count is at
+        // or above `inverse53IntFusedPixelThreshold` (12 MP default
+        // — the boundary the variance bench established for the
+        // fused-vs-tiled crossover; below threshold, the tiled pair
+        // is at least as fast).
+        let levelPixelCount = originalWidth * originalHeight
+        let useFused = Self.inverse53IntFusedEnabled
+            && !hOddOrigin && !vOddOrigin
+            && levelPixelCount >= Self.inverse53IntFusedPixelThreshold
         if useFused {
             try await encodeInverse2DInt32_Fused(
                 into: cb,
