@@ -267,3 +267,33 @@ External CLI tools must be installed:
 - `RELEASE_NOTES_v8.0.0.md` — original Apple-Silicon-first product pivot, decoder optimisation arc
 - `RELEASE_NOTES_v8.1.0.md` — `j2kd` daemon adoption push
 - `RELEASE_NOTES_v8.1.1.md` — CI Node 24 opt-in
+- `research/V10_5_METAL_IDWT_FUSED_FINDING.md` — v10.2.0 opt-in fused H+V IDWT kernel data set + variance bench
+
+## v10.2.0 — opt-in fused IDWT variance bench (M2 release, 10 interleaved trials)
+
+`V10_5_MetalIDWTInverse53FusedVarianceTests`. Per-trial Δ = tiled (v10.1.0
+production) − fused (v10.2.0 opt-in). Positive = fused faster.
+
+| Fixture            | Δ med  | Δ mean | Δ std  | frac > 0 | verdict       |
+|--------------------|-------:|-------:|-------:|---------:|---------------|
+| MG small 3516×4784 | +4.68  | +3.56  |  5.74  |     70%  | RELIABLE WIN  |
+| MG mid 3518×4784   | +2.64  | +2.18  |  5.48  |     70%  | BORDERLINE    |
+| MG large 3521×4784 | +7.67  | +1.49  |  8.27  |     50%  | BORDERLINE    |
+| DX large 2544×3056 | +0.55  | +0.35  |  0.60  |     70%  | BORDERLINE    |
+| PX large 2812×1316 | +0.02  | −0.31  |  0.65  |     50%  | RELIABLE WASH |
+
+The 12 MP pixel threshold routes DX (7.7 MP) and PX (3.7 MP) back through
+the v10.1.0 tiled pair when the env var is set, so the table is purely
+diagnostic for those rows — production behaviour is unchanged below the
+threshold.
+
+Re-run with:
+
+```bash
+swift test -c release --filter "V10_5_MetalIDWTInverse53FusedVarianceTests"
+```
+
+`J2K_METAL_IDWT_FUSED` is gated by `inverse53IntFusedEnabled` (default
+OFF in production, lowered to ON inside the test). The test also
+lowers `inverse53IntFusedPixelThreshold` to 0 so the fused path runs
+at all sizes — otherwise sub-MG rows would silently compare tiled-vs-tiled.

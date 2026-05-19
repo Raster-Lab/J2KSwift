@@ -76,6 +76,14 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse53HorizontalIntTiled = "j2k_dwt_inverse_53_horizontal_int_tiled"
     /// v10.3 Phase 2-2-tiled — threadgroup-memory tiled inverse 5/3 vertical.
     case dwtInverse53VerticalIntTiled = "j2k_dwt_inverse_53_vertical_int_tiled"
+    /// **v10.5 Phase 2-3-fused** — single-kernel inverse 5/3 Int that
+    /// collapses the horizontal + vertical passes into one threadgroup
+    /// dispatch via 10-row tg-memory tiles with 1-row halo. Eliminates
+    /// the colLow/colHigh device-memory round-trip the
+    /// `*_horizontal_int_tiled` + `*_vertical_int_tiled` pair pays.
+    /// Opt-in via `J2K_METAL_IDWT_FUSED=1`; bit-exact equivalent of
+    /// the tiled pair.
+    case dwtInverse53FusedIntTiled = "j2k_dwt_inverse_53_fused_int_tiled"
     /// Forward 9/7 irreversible wavelet transform (horizontal).
     case dwtForward97Horizontal = "j2k_dwt_forward_97_horizontal"
     /// Forward 9/7 irreversible wavelet transform (vertical).

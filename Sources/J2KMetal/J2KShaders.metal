@@ -1062,6 +1062,330 @@ kernel void j2k_dwt_inverse_53_vertical_int_tiled(
     }
 }
 
+// MARK: - v10.5 Phase 2-3-fused — Inverse 5/3 Int H+V fused-tile kernel
+//
+// The v10.3 Phase 2-2-tiled pair (`*_horizontal_int_tiled` +
+// `*_vertical_int_tiled`) shipped default-on in v10.1.0 and already
+// fuses step 1 + step 2 within each pass via threadgroup memory.
+// But the H pass still writes its colLow/colHigh outputs to device
+// memory, and the V pass reads them back — 2× full-image DRAM round-
+// trip per IDWT level (134 MB at MG L1).
+//
+// This v10.5 probe collapses both passes into one kernel by holding
+// the H-pass output in threadgroup memory across the V pass's lift.
+// Bandwidth math:
+//   - Current pair (per level at MG L1):
+//       LL+HL read → colLow write     = 67 MB
+//       LH+HH read → colHigh write    = 67 MB
+//       colLow+colHigh read → output  = 134 MB
+//                                Total ≈ 268 MB
+//   - Fused (per level at MG L1):
+//       LL+HL+LH+HH read → output     = 134 MB total
+//   2× less DRAM traffic per level. Plus 3 → 1 kernel dispatch
+//   reduction per level (saves 2 × ~80 µs = 160 µs encoder overhead
+//   per level × 5 levels = 0.8 ms).
+//
+// Threadgroup geometry: (32, 10). Each tg covers 32 output cols ×
+// 16 output rows = 512 output samples. The 10 lid.y dimension splits
+// into:
+//   r = 0       — top halo (H-pass only, no output written)
+//   r ∈ [1..9)  — body row-pair (1 even-row output + 1 odd-row output)
+//   r = 9       — bottom halo (H-pass only, no output written)
+//
+// Threadgroup memory: tg_lo[10][32] + tg_hi[10][32] = 2560 bytes (Int32),
+// well under Apple Silicon's 32 KB / 64 KB tg memory budget.
+//
+// Halo handling:
+//   - V-pass halo (top/bottom row): r=0 and r=9 compute one extra H row each.
+//   - H-pass halo (left/right col): each H lift reads col t-1 or t+1
+//     directly from device when at tile edge (uncoalesced cost is small —
+//     2 cells × 32 rows per tg = 64 extra device reads).
+//
+// Bit-exact equivalent of the v10.3 Phase 2-2-tiled pair by construction
+// — same arithmetic, same symmetric boundary handling. Verified by
+// `V10_5_MetalIDWTInverse53FusedParityTests`.
+
+kernel void j2k_dwt_inverse_53_fused_int_tiled(
+    device const int* ll [[buffer(0)]],
+    device const int* hl [[buffer(1)]],
+    device const int* lh [[buffer(2)]],
+    device const int* hh [[buffer(3)]],
+    device int* output [[buffer(4)]],
+    constant uint& width [[buffer(5)]],
+    constant uint& height [[buffer(6)]],
+    constant uint& llW [[buffer(7)]],
+    constant uint& llH [[buffer(8)]],
+    constant uint& halfHH [[buffer(9)]],
+    uint2 lid [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]])
+{
+    threadgroup int tg_lo[10][32];  // H-pass output for LL+HL band, 10 input rows
+    threadgroup int tg_hi[10][32];  // H-pass output for LH+HH band, 10 input rows
+
+    uint t = lid.x;          // 0..31 — output col within tile
+    uint r = lid.y;          // 0..9  — input row within tile (incl. halo at r=0, r=9)
+
+    uint tile_col = tgid.x * 32;
+    uint tile_row_lo = tgid.y * 8;   // first low-band input row in tile body
+
+    // The 10 thread rows map to input rows [tile_row_lo - 1, tile_row_lo + 9):
+    //   lid.y = 0     → halo row  (tile_row_lo - 1)
+    //   lid.y = 1..8  → body rows (tile_row_lo .. tile_row_lo + 8)
+    //   lid.y = 9     → halo row  (tile_row_lo + 8) (== "even[r+1]" for V step 2)
+    int ir_signed = int(tile_row_lo) + int(r) - 1;
+
+    uint out_col = tile_col + t;
+    // NB: do NOT early-return at out_col >= width. Threads past the image
+    // right edge must still populate their tg_lo / tg_hi cells (they may
+    // be read by in-bounds neighbour threads in Stage B for the symmetric-
+    // extension halo). Bound-check happens only at the output-write step.
+
+    uint hlW = width - llW;       // = width / 2
+
+    // ----- Phase 1: H lift for both bands ------------------------------------
+    //
+    // For each thread (t, r), compute one H-output cell in EACH of tg_lo / tg_hi.
+    // The H lift on a row produces:
+    //   even col output at t=0,2,4,...   from LL band lift
+    //   odd col output at  t=1,3,5,...   from HL band lift (depends on even col)
+    //
+    // To respect data dependency (odd needs adjacent evens), we do:
+    //   Stage A: each thread with t%2==0 computes its even cell
+    //   threadgroup_barrier
+    //   Stage B: each thread with t%2==1 computes its odd cell
+
+    // Stage A — even cols (t == 0,2,4,...,30): compute LL-band lift
+    if ((t & 1u) == 0u) {
+        uint icol = (tile_col + t) >> 1;   // input col in LL/LH band space
+
+        // Low band (LL+HL → tg_lo)
+        if (ir_signed >= 0 && uint(ir_signed) < llH && icol < llW) {
+            int dLeft, dRight;
+            if (hlW == 0u) {
+                dLeft = 0; dRight = 0;
+            } else {
+                uint il_left  = (icol > 0u) ? (icol - 1u) : 0u;
+                uint il_right = (icol < hlW) ? icol : (hlW - 1u);
+                dLeft  = hl[uint(ir_signed) * hlW + il_left];
+                dRight = hl[uint(ir_signed) * hlW + il_right];
+            }
+            tg_lo[r][t] = (hlW == 0u)
+                ? ll[uint(ir_signed) * llW + icol]
+                : ll[uint(ir_signed) * llW + icol] - ((dLeft + dRight + 2) >> 2);
+        } else {
+            tg_lo[r][t] = 0;
+        }
+
+        // High band (LH+HH → tg_hi). LH/HH have halfHH rows.
+        // The "high-band input row index" = ir_signed (same row index as low band).
+        if (ir_signed >= 0 && uint(ir_signed) < halfHH && icol < llW) {
+            int dLeft, dRight;
+            if (hlW == 0u) {
+                dLeft = 0; dRight = 0;
+            } else {
+                uint il_left  = (icol > 0u) ? (icol - 1u) : 0u;
+                uint il_right = (icol < hlW) ? icol : (hlW - 1u);
+                dLeft  = hh[uint(ir_signed) * hlW + il_left];
+                dRight = hh[uint(ir_signed) * hlW + il_right];
+            }
+            tg_hi[r][t] = (hlW == 0u)
+                ? lh[uint(ir_signed) * llW + icol]
+                : lh[uint(ir_signed) * llW + icol] - ((dLeft + dRight + 2) >> 2);
+        } else {
+            tg_hi[r][t] = 0;
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Stage B — odd cols (t == 1,3,5,...,31): compute HL-band lift
+    if ((t & 1u) == 1u) {
+        uint icol = (tile_col + t) >> 1;   // input col in HL/HH band space
+
+        // eRight selection (shared between low and high band):
+        //   - If next output col (out_col + 1) is past image right edge:
+        //         symmetric ext → eRight = eLeft
+        //   - Else if next output col is within this tile (t < 31u, t+1 even
+        //     col already computed in Stage A):
+        //         eRight = tg_{lo,hi}[r][t + 1]
+        //   - Else (t == 31u, next col is in the next tile):
+        //         recompute the next tile's first even directly from device
+        //         (cross-tile read — small extra cost at tile boundary)
+        uint next_out_col = tile_col + t + 1u;
+
+        // Low band (HL → tg_lo)
+        if (ir_signed >= 0 && uint(ir_signed) < llH && icol < hlW) {
+            int eLeft  = tg_lo[r][t - 1];
+            int eRight;
+            if (next_out_col >= width) {
+                eRight = eLeft;   // symmetric ext past image right
+            } else if (t < 31u) {
+                eRight = tg_lo[r][t + 1];
+            } else {
+                // Cross-tile: recompute next tile's t=0 even.
+                uint icol_n = icol + 1u;
+                if (icol_n < llW) {
+                    int dL, dR;
+                    if (hlW == 0u) {
+                        dL = 0; dR = 0;
+                    } else {
+                        uint il_left  = (icol_n > 0u) ? (icol_n - 1u) : 0u;
+                        uint il_right = (icol_n < hlW) ? icol_n : (hlW - 1u);
+                        dL = hl[uint(ir_signed) * hlW + il_left];
+                        dR = hl[uint(ir_signed) * hlW + il_right];
+                    }
+                    eRight = (hlW == 0u)
+                        ? ll[uint(ir_signed) * llW + icol_n]
+                        : ll[uint(ir_signed) * llW + icol_n] - ((dL + dR + 2) >> 2);
+                } else {
+                    eRight = eLeft;
+                }
+            }
+            tg_lo[r][t] = hl[uint(ir_signed) * hlW + icol] + ((eLeft + eRight) >> 1);
+        } else {
+            tg_lo[r][t] = 0;
+        }
+
+        // High band (HH → tg_hi)
+        if (ir_signed >= 0 && uint(ir_signed) < halfHH && icol < hlW) {
+            int eLeft  = tg_hi[r][t - 1];
+            int eRight;
+            if (next_out_col >= width) {
+                eRight = eLeft;
+            } else if (t < 31u) {
+                eRight = tg_hi[r][t + 1];
+            } else {
+                uint icol_n = icol + 1u;
+                if (icol_n < llW) {
+                    int dL, dR;
+                    if (hlW == 0u) {
+                        dL = 0; dR = 0;
+                    } else {
+                        uint il_left  = (icol_n > 0u) ? (icol_n - 1u) : 0u;
+                        uint il_right = (icol_n < hlW) ? icol_n : (hlW - 1u);
+                        dL = hh[uint(ir_signed) * hlW + il_left];
+                        dR = hh[uint(ir_signed) * hlW + il_right];
+                    }
+                    eRight = (hlW == 0u)
+                        ? lh[uint(ir_signed) * llW + icol_n]
+                        : lh[uint(ir_signed) * llW + icol_n] - ((dL + dR + 2) >> 2);
+                } else {
+                    eRight = eLeft;
+                }
+            }
+            tg_hi[r][t] = hh[uint(ir_signed) * hlW + icol] + ((eLeft + eRight) >> 1);
+        } else {
+            tg_hi[r][t] = 0;
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // ----- Phase 2: V lift across rows for output col `out_col` --------------
+    //
+    // After Phase 1, tg_lo[r][t] holds the H-output of LL+HL band at
+    // input row (tile_row_lo + r - 1) and output col (tile_col + t).
+    // tg_hi[r][t] holds the H-output of LH+HH band at the same row+col.
+    //
+    // V lift step 1 — compute even output row at output index 2*input_row_idx:
+    //   even_out[2*i] = tg_lo[i] - ((tg_hi[i-1] + tg_hi[i] + 2) >> 2)
+    //
+    // V lift step 2 — compute odd output row at output index 2*input_row_idx + 1:
+    //   odd_out[2*i+1] = tg_hi[i] + ((even_out[2*i] + even_out[2*(i+1)]) >> 1)
+
+    // Each thread with r in [1..9) emits one even output row.
+    // Each thread with r in [1..9) also emits one odd output row.
+    if (r >= 1u && r <= 8u && out_col < width) {
+        // input row index in low band = tile_row_lo + r - 1
+        uint i_lo = tile_row_lo + r - 1u;
+        uint even_out_row = 2u * i_lo;
+
+        if (even_out_row < height && uint(ir_signed) < llH) {
+            // V step 1 — even row
+            int dTop, dBot;
+            int hp_top_row_idx = int(r) - 1;  // tg row index for prev odd in high band
+            int hp_cur_row_idx = int(r);
+
+            // If we're at the global top (i_lo == 0), dTop uses hp at row 0
+            // (symmetric: hp[-1] = hp[0]).
+            if (i_lo == 0u) {
+                dTop = tg_hi[1][t];    // tg_hi[r=1] corresponds to i=0 (since r=0 is i=-1 halo)
+            } else {
+                dTop = tg_hi[hp_top_row_idx][t];
+            }
+
+            // If high-band row index >= halfHH, fall back to symmetric (hp[halfHH] = hp[halfHH-1])
+            if (i_lo < halfHH) {
+                dBot = tg_hi[hp_cur_row_idx][t];
+            } else if (halfHH > 0u) {
+                // i_lo == halfHH (== llH - 1 typically for odd height): use last hp row
+                dBot = tg_hi[hp_top_row_idx][t];
+            } else {
+                dBot = 0;
+            }
+
+            int even_val = (halfHH == 0u)
+                ? tg_lo[r][t]
+                : tg_lo[r][t] - ((dTop + dBot + 2) >> 2);
+
+            output[even_out_row * width + out_col] = even_val;
+
+            // Stash even_val back into tg_lo for step 2's read by another thread.
+            // (tg_lo[r][t] is no longer needed in the original form after this write.)
+            tg_lo[r][t] = even_val;
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (r >= 1u && r <= 8u && out_col < width) {
+        uint i_lo = tile_row_lo + r - 1u;
+        uint odd_out_row = 2u * i_lo + 1u;
+        // i_hi (high-band input row idx) = i_lo when both bands sized the same
+        // Odd output exists only for i_lo < halfHH
+
+        if (odd_out_row < height && i_lo < halfHH) {
+            // V step 2 — odd row
+            int eTop = tg_lo[r][t];               // even output at row 2*i_lo
+            int eBot;
+
+            uint i_next = i_lo + 1u;
+            uint even_next_row = 2u * i_next;
+            if (even_next_row < height && i_next < llH) {
+                // Need the next even output (which is tg_lo[r+1][t] OR for
+                // r==8, the halo row r=9 — but r=9 only computed its H-pass,
+                // not its V-step-1 even output). Special-case r==8: compute
+                // the next even output inline using tg_lo[9][t] and tg_hi.
+                if (r < 8u) {
+                    eBot = tg_lo[r + 1u][t];   // already-computed even at next input row
+                } else {
+                    // r == 8 → next is r=9 (halo). Compute the even output
+                    // for input row i_next = tile_row_lo + 8 = i_lo + 1.
+                    // halo row tg_hi[9][t] holds hp at i_next, tg_hi[r=8][t] = hp at i_lo.
+                    int dT = tg_hi[8][t];   // hp at i_lo
+                    int dB;
+                    if (i_next < halfHH) {
+                        dB = tg_hi[9][t];   // hp at i_next
+                    } else if (halfHH > 0u) {
+                        dB = tg_hi[8][t];
+                    } else {
+                        dB = 0;
+                    }
+                    eBot = (halfHH == 0u)
+                        ? tg_lo[9][t]
+                        : tg_lo[9][t] - ((dT + dB + 2) >> 2);
+                }
+            } else {
+                // Past the bottom: symmetric extension → eBot = eTop.
+                eBot = eTop;
+            }
+
+            int odd_val = tg_hi[r][t] + ((eTop + eBot) >> 1);
+            output[odd_out_row * width + out_col] = odd_val;
+        }
+    }
+}
+
 // MARK: - Forward ICT (Irreversible Colour Transform)
 
 kernel void j2k_ict_forward(
