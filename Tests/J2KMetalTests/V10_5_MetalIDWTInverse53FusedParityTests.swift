@@ -74,10 +74,18 @@ final class V10_5_MetalIDWTInverse53FusedParityTests: XCTestCase {
     ) async throws -> [Int32] {
         let prevTiled = J2KMetalDWT.inverse53IntTiledEnabled
         let prevFused = J2KMetalDWT.inverse53IntFusedEnabled
+        let prevThreshold = J2KMetalDWT.inverse53IntFusedPixelThreshold
         defer {
             J2KMetalDWT.inverse53IntTiledEnabled = prevTiled
             J2KMetalDWT.inverse53IntFusedEnabled = prevFused
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = prevThreshold
         }
+        // Parity tests lower the pixel threshold to 0 so the fused
+        // kernel actually runs on small/odd dimensions — otherwise
+        // production's 12 MP gate would silently re-route those
+        // fixtures through the tiled pair and hide fused-kernel
+        // boundary bugs from the parity oracle.
+        J2KMetalDWT.inverse53IntFusedPixelThreshold = 0
         switch path {
         case "scalar":
             J2KMetalDWT.inverse53IntTiledEnabled = false

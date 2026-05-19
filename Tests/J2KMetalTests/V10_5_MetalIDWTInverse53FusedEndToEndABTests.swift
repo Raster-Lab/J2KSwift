@@ -114,6 +114,14 @@ final class V10_5_MetalIDWTInverse53FusedEndToEndABTests: XCTestCase {
         var rows: [Row] = []
         var skipped: [String] = []
 
+        let prevThreshold = J2KMetalDWT.inverse53IntFusedPixelThreshold
+        defer { J2KMetalDWT.inverse53IntFusedPixelThreshold = prevThreshold }
+        // Lower threshold to 0 so the fused path actually runs at all
+        // sizes; otherwise production's 12 MP gate would silently
+        // route smaller fixtures back through tiled and the A/B
+        // would compare tiled-vs-tiled on those rows.
+        J2KMetalDWT.inverse53IntFusedPixelThreshold = 0
+
         for fix in Self.corpus {
             guard let image = try loadPGM16(fix.filename) else {
                 skipped.append(fix.label); continue
