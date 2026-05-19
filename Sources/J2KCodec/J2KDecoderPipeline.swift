@@ -408,10 +408,23 @@ struct DecoderPipeline: Sendable {
             default: break
             }
         }
-        // v6.2.0 D4: default ON (paired with `_gpuInverse53Enabled`).
-        // The bug that prevented this in D3 (#316) is fixed via the
-        // `isGPUPath` parameter on `applyEntropyDecoding`.
-        return true
+        // v10.3.0 (2026-05-20): default flipped from ON to OFF after the
+        // v10.7-research engagement check + 10-trial variance bench
+        // (V10_7_GPUHTEntropyEngagementCheck + V10_7_GPUHTEntropyFlagFlipVarianceTests)
+        // showed `_gpuHTEntropyEnabled = true` regresses MG decode by
+        // 19-27 ms median (100% of trials positive) with zero impact
+        // on non-MG fixtures.
+        //
+        // The v6.2.0 D4 default-on was correct at the time (+37 % DX
+        // win measured) but the CPU HT path got significantly faster
+        // post-v10.0 D1.5-D (NEON HT decoder default-on) — the GPU HT
+        // entropy path is now slower than CPU+NEON on multi-tile
+        // mammography workloads.
+        //
+        // Opt-in via `J2K_GPU_HT_ENTROPY_DECODE=1` is preserved for
+        // cross-silicon re-evaluation (M3/M4/A-series may flip the
+        // crossover) and diagnostic A/B.
+        return false
     }
 
     /// Decodes a JPEG 2000 codestream through the full pipeline.

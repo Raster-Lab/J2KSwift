@@ -268,6 +268,32 @@ External CLI tools must be installed:
 - `RELEASE_NOTES_v8.1.0.md` — `j2kd` daemon adoption push
 - `RELEASE_NOTES_v8.1.1.md` — CI Node 24 opt-in
 - `research/V10_5_METAL_IDWT_FUSED_FINDING.md` — v10.2.0 opt-in fused H+V IDWT kernel data set + variance bench
+- `releases/RELEASE_NOTES_v10.3.0.md` — v10.3.0 two default-flips closing MG decode gap to Kakadu
+
+## v10.3.0 — `_gpuHTEntropyEnabled` ON → OFF flag-flip variance bench (M2 release, 10 interleaved trials)
+
+`V10_7_GPUHTEntropyFlagFlipVarianceTests`. Per-trial Δ = decode(flag-ON)
+− decode(flag-OFF). Positive Δ = flag-OFF wins.
+
+| Fixture            | ON med | OFF med | Δ med   | Δ std | Δ min  | Δ max  | frac OFF wins |
+|--------------------|-------:|--------:|--------:|------:|-------:|-------:|--------------:|
+| MG small 3516×4784 | 101.97 |   81.10 | **+20.72** | 4.33  | +18.45 | +34.18 | **100%** |
+| MG mid 3518×4784   |  99.88 |   79.41 | **+21.48** | 4.47  | +10.59 | +24.60 | **100%** |
+| MG large 3521×4784 | 110.85 |   87.05 | **+24.49** | 2.26  | +19.88 | +27.43 | **100%** |
+| DX large 2544×3056 |  56.48 |   56.13 |  +0.02  | 1.02  |  −1.62 |  +2.61 | 60% (noise) |
+| PX large 2812×1316 |  29.37 |   29.48 |  +0.02  | 0.75  |  −1.45 |  +1.29 | 50% (noise) |
+| XA 1024²           |   8.01 |    8.04 |  +0.01  | 0.61  |  −0.78 |  +1.34 | 60% (noise) |
+| CT 512²            |   2.97 |    2.93 |  +0.06  | 0.37  |  −0.60 |  +0.82 | 60% (noise) |
+
+Cleanest signal in the v10 series. Every MG trial wins (n=10 per fixture);
+non-MG fixtures sit inside ±0.06 ms median (single-tile decode doesn't
+engage the multi-tile per-tile GPU HT entropy code path the flag gates).
+
+Re-run with:
+
+```bash
+swift test -c release --filter "V10_7_GPUHTEntropyFlagFlipVarianceTests"
+```
 
 ## v10.2.0 — opt-in fused IDWT variance bench (M2 release, 10 interleaved trials)
 
