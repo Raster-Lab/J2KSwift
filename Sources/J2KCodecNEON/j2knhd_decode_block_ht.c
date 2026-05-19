@@ -23,6 +23,13 @@
 
 #include "j2knhd.h"
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#define J2KNHD_HAVE_NEON 1
+#else
+#define J2KNHD_HAVE_NEON 0
+#endif
+
 #define J2KNHD_MAX_BLOCK_DIM 64
 
 typedef struct {
@@ -39,6 +46,7 @@ typedef struct {
     uint8_t          cxVal[((J2KNHD_MAX_BLOCK_DIM + 3) / 4) * 2 + 2];
     size_t           scratch_count;
     int64_t          mel_run;
+    bool             reconstruct_use_simd;        ///< v10.6: select between scalar (false) and NEON SIMD (true) per-quad reconstruction
 } j2knhd_decode_state_t;
 
 // ---- helpers ----------------------------------------------------------------
@@ -139,9 +147,9 @@ static inline void decode_uvlc_pair_subsequent(j2knhd_decode_state_t *s,
 }
 
 // Sample reconstruction (scalar). Mirrors readQuadSamplesScalar.
-static inline void read_quad_samples(j2knhd_decode_state_t *s,
-                                     int baseX, int baseY,
-                                     int rho, int Uq, int e_k, int e_1) {
+static inline void read_quad_samples_scalar(j2knhd_decode_state_t *s,
+                                            int baseX, int baseY,
+                                            int rho, int Uq, int e_k, int e_1) {
     if (rho == 0) return;
     static const int offsets[4][2] = { {0,0}, {0,1}, {1,0}, {1,1} };
     for (int i = 0; i < 4; i++) {
@@ -164,6 +172,101 @@ static inline void read_quad_samples(j2knhd_decode_state_t *s,
         if (sign != 0) coef |= 0x80000000u;
         s->coefs[(size_t)yi * s->width + (size_t)xi] = coef;
     }
+}
+
+#if J2KNHD_HAVE_NEON
+// v10.6-research: NEON SIMD reconstruction. Mirrors
+// `HTBlockDecoderConformant.readQuadSamplesSIMD` in the Swift codec.
+// MagSgn reads are still serial (the bit stream is sequential), but the
+// post-read arithmetic — mask/v_n/coef/sign build — runs lane-parallel
+// in a single NEON 128-bit register.
+//
+// Bit-exact equivalent of `read_quad_samples_scalar` by construction:
+// same arithmetic, same boundary semantics. The lane-parallel path
+// uses NEON `vshlq_u32` which produces 0 when the shift count is ≥ 32
+// — matching Swift's `1 &<< 32 = 0` wraparound on `(1 << m) - 1`
+// (yielding `~0u`), so the `m == 32` edge case is bit-exact too.
+static inline void read_quad_samples_simd(j2knhd_decode_state_t *s,
+                                          int baseX, int baseY,
+                                          int rho, int Uq, int e_k, int e_1) {
+    if (rho == 0) return;
+
+    int r0 = (rho     ) & 1;
+    int r1 = (rho >> 1) & 1;
+    int r2 = (rho >> 2) & 1;
+    int r3 = (rho >> 3) & 1;
+
+    int32_t mArr[4];
+    mArr[0] = (int32_t)(Uq - ((e_k     ) & 1));
+    mArr[1] = (int32_t)(Uq - ((e_k >> 1) & 1));
+    mArr[2] = (int32_t)(Uq - ((e_k >> 2) & 1));
+    mArr[3] = (int32_t)(Uq - ((e_k >> 3) & 1));
+
+    // Serial MagSgn reads — the bit stream is sequential per quad.
+    uint32_t pArr[4] = { 0u, 0u, 0u, 0u };
+    if (r0) pArr[0] = j2knhd_magsgn_read(&s->mag, (int)mArr[0]);
+    if (r1) pArr[1] = j2knhd_magsgn_read(&s->mag, (int)mArr[1]);
+    if (r2) pArr[2] = j2knhd_magsgn_read(&s->mag, (int)mArr[2]);
+    if (r3) pArr[3] = j2knhd_magsgn_read(&s->mag, (int)mArr[3]);
+
+    uint32x4_t payloads = vld1q_u32(pArr);
+    int32x4_t  ms       = vld1q_s32(mArr);
+    uint32x4_t one      = vdupq_n_u32(1u);
+
+    // mask = (1 << m) - 1. For m == 32, vshlq_u32(1, 32) → 0 per ARMv8,
+    // and 0 - 1 wraps to 0xFFFFFFFF (bit-exact with the Swift scalar
+    // `(m >= 32) ? ~0 : (1 << m) - 1` branch).
+    uint32x4_t mask = vsubq_u32(vshlq_u32(one, ms), one);
+
+    uint32_t e1Arr[4];
+    e1Arr[0] = (uint32_t)((e_1     ) & 1);
+    e1Arr[1] = (uint32_t)((e_1 >> 1) & 1);
+    e1Arr[2] = (uint32_t)((e_1 >> 2) & 1);
+    e1Arr[3] = (uint32_t)((e_1 >> 3) & 1);
+    uint32x4_t e1v = vld1q_u32(e1Arr);
+
+    uint32x4_t signs = vandq_u32(payloads, one);
+    uint32x4_t v_n   = vorrq_u32(vorrq_u32(
+                          vandq_u32(payloads, mask),
+                          vshlq_u32(e1v, ms)), one);
+
+    int32x4_t  pShift   = vdupq_n_s32((int32_t)s->p - 1);
+    int32x4_t  signShift= vdupq_n_s32(31);
+    uint32x4_t coefs4   = vshlq_u32(vaddq_u32(v_n, vdupq_n_u32(2u)), pShift);
+    coefs4 = vorrq_u32(coefs4, vshlq_u32(signs, signShift));
+
+    uint32_t coefsArr[4];
+    vst1q_u32(coefsArr, coefs4);
+
+    // Conditional per-lane stores. The bounds check + rho gate match
+    // the scalar path exactly so inactive lanes leave coefs[] unmodified.
+    static const int offsets[4][2] = { {0,0}, {0,1}, {1,0}, {1,1} };
+    int rs[4] = { r0, r1, r2, r3 };
+    for (int i = 0; i < 4; i++) {
+        if (rs[i] == 0) continue;
+        int dx = offsets[i][0], dy = offsets[i][1];
+        int xi = baseX + dx;
+        int yi = baseY + dy;
+        if ((uint32_t)xi >= s->width || (uint32_t)yi >= s->height) continue;
+        s->coefs[(size_t)yi * s->width + (size_t)xi] = coefsArr[i];
+    }
+}
+#endif // J2KNHD_HAVE_NEON
+
+// v10.6 dispatcher — routes to SIMD or scalar reconstruction based on
+// the per-decode `reconstruct_use_simd` flag. SIMD path is only built
+// on NEON-capable targets; on non-NEON builds (Linux x86_64 CI) we
+// always take the scalar path regardless of the flag.
+static inline void read_quad_samples(j2knhd_decode_state_t *s,
+                                     int baseX, int baseY,
+                                     int rho, int Uq, int e_k, int e_1) {
+#if J2KNHD_HAVE_NEON
+    if (s->reconstruct_use_simd) {
+        read_quad_samples_simd(s, baseX, baseY, rho, Uq, e_k, e_1);
+        return;
+    }
+#endif
+    read_quad_samples_scalar(s, baseX, baseY, rho, Uq, e_k, e_1);
 }
 
 // recoverEQBottomRow — derive bottom-row e_q (positions 1 + 3) from
@@ -385,6 +488,7 @@ int j2knhd_decode_block_ht32(
     const uint16_t *vlc_table0,
     const uint16_t *vlc_table1,
     bool magsgn_use_swar4,
+    bool reconstruct_use_simd,
     uint32_t *coefs_out
 ) {
     // Validate dimensions.
@@ -419,6 +523,7 @@ int j2knhd_decode_block_ht32(
     s.vlc_table0 = vlc_table0;
     s.vlc_table1 = vlc_table1;
     s.scratch_count = ((size_t)(width + 3) / 4) * 2 + 2;
+    s.reconstruct_use_simd = reconstruct_use_simd;
     memset(s.eVal,  0, sizeof(s.eVal));
     memset(s.cxVal, 0, sizeof(s.cxVal));
     memset(coefs_out, 0, sizeof(uint32_t) * (size_t)width * (size_t)height);

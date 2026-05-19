@@ -102,7 +102,8 @@ final class V10_2_DecodeBlockCMicrobench: XCTestCase {
                                     bp.baseAddress, bp.count,
                                     UInt32(corpus.width), UInt32(corpus.height), 0,
                                     t0p.baseAddress, t1p.baseAddress,
-                                    useSwar, co.baseAddress)
+                                    useSwar, /* reconstruct_use_simd */ false,
+                                    co.baseAddress)
                             }
                         }
                     }
@@ -155,7 +156,8 @@ final class V10_2_DecodeBlockCMicrobench: XCTestCase {
                                     bp.baseAddress, bp.count,
                                     UInt32(corpus.width), UInt32(corpus.height), 0,
                                     t0p.baseAddress, t1p.baseAddress,
-                                    useSwar, co.baseAddress)
+                                    useSwar, /* reconstruct_use_simd */ false,
+                                    co.baseAddress)
                             }
                         }
                     }
@@ -201,7 +203,9 @@ final class V10_2_DecodeBlockCMicrobench: XCTestCase {
                                     return j2knhd_decode_block_ht32(
                                         bp.baseAddress, bp.count,
                                         UInt32(corpus.width), UInt32(corpus.height), 0,
-                                        t0p.baseAddress, t1p.baseAddress, true, co.baseAddress)
+                                        t0p.baseAddress, t1p.baseAddress,
+                                        true, /* reconstruct_use_simd */ false,
+                                        co.baseAddress)
                                 }
                             }
                         }

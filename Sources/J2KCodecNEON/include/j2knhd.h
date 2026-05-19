@@ -172,6 +172,11 @@ uint64_t j2knhd_vlc_read(j2knhd_vlc_t *dec, int count);
 /// - missing_msbs: in [0, 29] per T.814 conformance
 /// - vlc_table0 / vlc_table1: 1024-entry decoder lookup tables (UInt16 each)
 /// - magsgn_use_swar4: when true, MagSgn refill uses v7.4 SWAR; else scalar
+/// - reconstruct_use_simd: when true, per-quad sample reconstruction uses
+///   the v10.6 NEON SIMD path (lane-parallel mask/v_n/coef build matching
+///   Swift's `readQuadSamplesSIMD`); when false, the scalar reference path
+///   (matching `readQuadSamplesScalar`). Bit-exact across paths by
+///   construction; the choice is a perf knob only.
 /// - coefs_out: caller-owned buffer of width*height uint32 entries, written
 ///              in row-major order, sign-magnitude (bit 31 = sign, magnitude
 ///              in bits below p = 30 - missing_msbs)
@@ -183,6 +188,7 @@ int j2knhd_decode_block_ht32(
     const uint16_t *vlc_table0,
     const uint16_t *vlc_table1,
     bool magsgn_use_swar4,
+    bool reconstruct_use_simd,
     uint32_t *coefs_out);
 
 #ifdef __cplusplus

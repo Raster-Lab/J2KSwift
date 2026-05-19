@@ -34,6 +34,27 @@ public enum HTBlockDecoderConformantNEON {
         // Default ON unless explicit opt-out via env var.
         ProcessInfo.processInfo.environment["J2K_NEON_HT_DECODE"] != "0"
     }()
+
+    /// v10.6-research — per-quad sample reconstruction SIMD gate inside
+    /// the integrated C+NEON HT decoder (`j2knhd_decode_block_ht32`).
+    /// Default **OFF**; set `J2K_NEON_HT_RECONSTRUCT_SIMD=1` to enable.
+    ///
+    /// The lane-parallel reconstruction mirrors Swift's
+    /// `readQuadSamplesSIMD` (default-on in the Swift fallback path
+    /// since v8 Phase 4). It is bit-exact equivalent of
+    /// `read_quad_samples_scalar` by construction (verified in
+    /// `V10_6_NEONReconstructionParityTests`).
+    ///
+    /// **Why opt-in initially**: a comparable Swift-side SIMD
+    /// reconstruction shipped default-on in v8 Phase 4 measured at
+    /// the v7.4 3 ms acceptance gate boundary (median 2.96 ms across
+    /// 10 samples on DX). The C-side port projects similar wall
+    /// behaviour but needs its own A/B run before any default-flip;
+    /// the lever ceiling on M2 + Swift release has held across 10+
+    /// prior investigations.
+    nonisolated(unsafe) public static var reconstructionSIMDEnabled: Bool = {
+        ProcessInfo.processInfo.environment["J2K_NEON_HT_RECONSTRUCT_SIMD"] == "1"
+    }()
 }
 
 public enum HTBlockDecoderConformant {
@@ -124,11 +145,20 @@ public enum HTBlockDecoderConformant {
     /// integrated C decoder (`j2knhd_decode_block_ht32`).
     /// SWAR-4 MagSgn refill is enabled (matches Swift production
     /// default `HTMagSgnDecoderConformant.neonRefillEnabled = true`).
+    ///
+    /// v10.6: the `reconstruct_use_simd` flag selects between the
+    /// scalar reference reconstruction path (`read_quad_samples_scalar`)
+    /// and the NEON SIMD path (`read_quad_samples_simd`, lane-parallel
+    /// mask/v_n/coef build). The C-side path mirrors the Swift
+    /// `readQuadSamplesSIMD` path bit-exactly. Default OFF; opt-in via
+    /// `HTBlockDecoderConformantNEON.reconstructionSIMDEnabled = true`
+    /// or the `J2K_NEON_HT_RECONSTRUCT_SIMD=1` env var.
     private static func decodeViaNEONHotPath(
         block: [UInt8],
         width: Int, height: Int, missingMSBs: Int
     ) throws -> [UInt32] {
         var coefs = [UInt32](repeating: 0, count: width * height)
+        let useReconstructionSIMD = HTBlockDecoderConformantNEON.reconstructionSIMDEnabled
         let rc: Int32 = block.withUnsafeBufferPointer { bp -> Int32 in
             return vlcDecoderTable0Conformant.withUnsafeBufferPointer { t0 in
                 return vlcDecoderTable1Conformant.withUnsafeBufferPointer { t1 in
@@ -138,6 +168,7 @@ public enum HTBlockDecoderConformant {
                             UInt32(width), UInt32(height), UInt32(missingMSBs),
                             t0.baseAddress, t1.baseAddress,
                             true,
+                            useReconstructionSIMD,
                             co.baseAddress)
                     }
                 }

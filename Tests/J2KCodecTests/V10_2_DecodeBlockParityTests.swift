@@ -57,8 +57,11 @@ final class V10_2_DecodeBlockParityTests: XCTestCase {
             block: block, width: width, height: height, missingMSBs: missingMSBs)
     }
 
-    /// Decode block bytes via the C port.
-    private func decodeC(block: [UInt8], width: Int, height: Int, missingMSBs: Int, useSwar: Bool) -> [UInt32]? {
+    /// Decode block bytes via the C port. `useSimd` selects between the
+    /// scalar reference reconstruction and the v10.6 NEON SIMD path
+    /// (added with `reconstruct_use_simd` parameter to
+    /// `j2knhd_decode_block_ht32`).
+    private func decodeC(block: [UInt8], width: Int, height: Int, missingMSBs: Int, useSwar: Bool, useSimd: Bool = false) -> [UInt32]? {
         var coefs = [UInt32](repeating: 0, count: width * height)
         let rc: Int32 = block.withUnsafeBufferPointer { bp -> Int32 in
             return vlcDecoderTable0Conformant.withUnsafeBufferPointer { t0 in
@@ -69,6 +72,7 @@ final class V10_2_DecodeBlockParityTests: XCTestCase {
                             UInt32(width), UInt32(height), UInt32(missingMSBs),
                             t0.baseAddress, t1.baseAddress,
                             useSwar,
+                            useSimd,
                             co.baseAddress)
                     }
                 }
