@@ -655,7 +655,11 @@ final class J2KAdvancedDecodingTests: XCTestCase {
         }
     }
 
-    func testDecodeRegionDirectThrowsNotImplemented() async {
+    func testDecodeRegionDirectWithEmptyDataThrowsDecodeError() async {
+        // v10.6.0: decodeRegion `.direct` now WORKS (true ROI decode —
+        // entropy-skip for off-region code-blocks). Empty data should
+        // still throw a decode error from the underlying decode, just
+        // not `notImplemented`.
         let decoder = J2KDecoder()
         let data = Data()
         let region = J2KRegion(x: 0, y: 0, width: 100, height: 100)
@@ -663,14 +667,11 @@ final class J2KAdvancedDecodingTests: XCTestCase {
 
         do {
             _ = try await decoder.decodeRegion(data, options: options)
-            XCTFail("Expected notImplemented error")
-        } catch let error as J2KError {
-            guard case .notImplemented = error else {
-                XCTFail("Expected notImplemented error, got \(error)")
-                return
-            }
+            XCTFail("Expected a decode error on empty data")
         } catch {
-            XCTFail("Expected J2KError.notImplemented, got \(error)")
+            if case J2KError.notImplemented = error {
+                XCTFail("decodeRegion(.direct) must no longer throw notImplemented (v10.6.0)")
+            }
         }
     }
 

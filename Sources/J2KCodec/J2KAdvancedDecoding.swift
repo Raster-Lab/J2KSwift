@@ -482,27 +482,42 @@ extension J2KDecoder {
 
     /// Decodes a specific region of interest from a JPEG 2000 image.
     ///
+    /// **v10.6.0 — true ROI decode (`.direct` strategy)**: the decoder
+    /// keeps only the code-blocks whose inverse-DWT spatial footprint
+    /// overlaps the requested region and skips the dominant entropy
+    /// decode stage for the rest. The inverse DWT still runs full-tile
+    /// (off-region code-blocks reconstruct as zeros), then the result
+    /// is cropped to the region. The cropped output is bit-identical
+    /// to a full `decode()` followed by the same crop — every block
+    /// influencing an in-region pixel is retained.
+    ///
+    /// - `.fullImageExtraction` decodes the whole image then crops —
+    ///   simple, no entropy saving, useful when several regions will
+    ///   be extracted from one decode.
+    /// - `.direct` / `.cached` skip entropy decode for off-region
+    ///   code-blocks. Faster for a single region of a large image.
+    ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
     ///   - options: ROI decoding options.
     /// - Returns: The decoded region as an image.
     /// - Throws: ``J2KError`` if decoding fails.
     public func decodeRegion(_ data: Data, options: J2KROIDecodingOptions) async throws -> J2KImage {
-        // Placeholder implementation
-        // In reality, this would:
-        // 1. Identify code-blocks that overlap with the region
-        // 2. Decode only those code-blocks
-        // 3. Extract and reconstruct the requested region
-
         switch options.strategy {
         case .fullImageExtraction:
-            // Decode full image then extract
+            // Decode full image then extract.
             let fullImage = try await decode(data)
             return try extractRegion(from: fullImage, region: options.region)
 
         case .direct, .cached:
-            // Direct decoding (not yet implemented)
-            throw J2KError.notImplemented("Direct ROI decoding not yet fully implemented")
+            // True ROI decode — entropy decode is skipped for code-blocks
+            // outside the region's inverse-DWT footprint. The pipeline
+            // still produces a full-dimension image (the inverse DWT runs
+            // full-tile); cropping yields the region. `.cached` has no
+            // cache layer yet, so it falls back to the direct decode per
+            // its documented behaviour.
+            let fullImage = try await decodeRegionDirect(data: data, region: options.region)
+            return try extractRegion(from: fullImage, region: options.region)
         }
     }
 
@@ -716,17 +731,24 @@ extension J2KDecoder {
     private func extractRegion(from image: J2KImage, region: J2KRegion) throws -> J2KImage {
         try region.validate(imageWidth: image.width, imageHeight: image.height)
 
-        // Create new components with extracted data
+        // Create new components with extracted data. Samples may be 1 or 2
+        // bytes wide — medical fixtures are 16-bit, so the crop copies
+        // `bytesPerSample` bytes per pixel rather than assuming 8-bit.
         let regionComponents = image.components.map { component in
-            var regionData = Data(count: region.width * region.height)
+            let bytesPerSample = (component.bitDepth + 7) / 8
+            let srcStride = component.width
+            let dstRowBytes = region.width * bytesPerSample
+            var regionData = Data(count: region.height * dstRowBytes)
 
-            for y in 0..<region.height {
-                let srcY = region.y + y
-                let dstOffset = y * region.width
-                let srcOffset = srcY * image.width + region.x
-
-                for x in 0..<region.width {
-                    regionData[dstOffset + x] = component.data[srcOffset + x]
+            component.data.withUnsafeBytes { srcRaw in
+                regionData.withUnsafeMutableBytes { dstRaw in
+                    guard let src = srcRaw.baseAddress, let dst = dstRaw.baseAddress else { return }
+                    for y in 0..<region.height {
+                        let srcY = region.y + y
+                        let srcOffset = (srcY * srcStride + region.x) * bytesPerSample
+                        let dstOffset = y * dstRowBytes
+                        memcpy(dst + dstOffset, src + srcOffset, dstRowBytes)
+                    }
                 }
             }
 
@@ -738,7 +760,8 @@ extension J2KDecoder {
                 height: region.height,
                 subsamplingX: component.subsamplingX,
                 subsamplingY: component.subsamplingY,
-                data: regionData
+                data: regionData,
+                sampleByteOrder: component.sampleByteOrder
             )
         }
 

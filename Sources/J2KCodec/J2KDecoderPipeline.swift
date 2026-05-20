@@ -266,6 +266,20 @@ struct DecoderPipeline: Sendable {
     /// (preserves v10.4.0 and earlier behaviour).
     var outputDimensions: (width: Int, height: Int)? = nil
 
+    /// v10.6.0 ROI decode — region of interest in full-image pixel
+    /// coordinates. When set, `extractTileData` keeps only code-blocks
+    /// whose inverse-DWT spatial footprint (plus a conservative
+    /// synthesis-filter halo) overlaps the region; entropy decode is
+    /// skipped for the rest. The inverse DWT still runs full-tile —
+    /// off-region blocks reconstruct as zeros, which is harmless
+    /// because the caller crops to the region afterwards. Every block
+    /// influencing an in-region pixel is retained, so the cropped
+    /// output is bit-identical to a full decode + crop.
+    ///
+    /// Set by `J2KDecoder.decodeRegion(_:options:)` for the `.direct`
+    /// strategy. nil = no spatial filtering (full decode).
+    var regionOfInterest: J2KRegion? = nil
+
     // MARK: - v6.2.0 — GPU inverse 5/3 INT DWT routing gate
     //
     // Originally proposed as a default-on flip mirroring v6.1.0's
@@ -604,7 +618,7 @@ struct DecoderPipeline: Sendable {
         t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: metadata,
-            maxResolutionLevel: partialResolutionLevel)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -886,7 +900,7 @@ struct DecoderPipeline: Sendable {
             let blocks = try extractTileData(
                 t.tileData, metadata: tileMeta,
                 tileOriginX: tx, tileOriginY: ty,
-                maxResolutionLevel: partialResolutionLevel)
+                maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
             J2KDecodeTimings.recordExtractTileData(
                 Double(DispatchTime.now().uptimeNanoseconds - extT0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1030,7 +1044,7 @@ struct DecoderPipeline: Sendable {
         var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: metadata,
-            maxResolutionLevel: partialResolutionLevel)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -1171,7 +1185,7 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY,
-            maxResolutionLevel: partialResolutionLevel)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1251,7 +1265,7 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY,
-            maxResolutionLevel: partialResolutionLevel)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
         // v7.1.0 H1.1 — multi-tile per-tile entropy on GPU.
@@ -2000,7 +2014,17 @@ struct DecoderPipeline: Sendable {
         // This saves the dominant entropy decode stage when the
         // caller wants a partial-resolution output. Stage B.2 will
         // also truncate the inverse DWT to skip iDWT levels.
-        maxResolutionLevel: Int? = nil
+        maxResolutionLevel: Int? = nil,
+        // v10.6.0 ROI decode — region of interest in full-image pixel
+        // coordinates. When non-nil, code-blocks whose inverse-DWT
+        // spatial footprint (plus a conservative synthesis-filter
+        // halo) does not overlap the region are dropped after parsing
+        // — entropy decode is skipped for them, just like the B.1
+        // resolution filter above. The LL band is always kept. Every
+        // block influencing an in-region pixel is retained, so a full
+        // decode + crop and an ROI decode + crop produce bit-identical
+        // region pixels.
+        regionOfInterest: J2KRegion? = nil
     ) throws -> [CodeBlockInfo] {
         var blocks: [CodeBlockInfo] = []
 
@@ -2210,6 +2234,37 @@ struct DecoderPipeline: Sendable {
             let keepThreshold = N - r
             blocks = blocks.filter { block in
                 block.level == 0 || block.level > keepThreshold
+            }
+        }
+
+        // v10.6.0 ROI decode — apply spatial code-block filter. A
+        // code-block at decomposition depth d holds band samples that
+        // upsample to full-image pixels at scale 2^d. Its image-space
+        // footprint is the band rect scaled by 2^d, anchored at the
+        // tile origin, expanded by a synthesis-filter halo. A block is
+        // kept iff that footprint overlaps the requested region.
+        if let roi = regionOfInterest {
+            // Halo per side, in image pixels, scaled by the block's
+            // decomposition depth. The inverse-DWT influence radius of
+            // one band sample is bounded by ρ·2^d for filter half-width
+            // ρ (ρ ≈ 2 for the reversible 5/3, ≈ 4 for the 9/7).
+            // haloFactor = 8 is a deliberately generous bound — over-
+            // keeping costs a little entropy work, under-keeping would
+            // corrupt the region, so the filter errs toward keeping.
+            let haloFactor = 8
+            blocks = blocks.filter { block in
+                // The LL band feeds every resolution level — always keep.
+                if block.level == 0 { return true }
+                let d = block.level                  // decomposition depth
+                let scale = 1 << d                   // band sample → image pixel
+                let halo = haloFactor << d
+                let fpX0 = tileOriginX + block.x * scale - halo
+                let fpX1 = tileOriginX + (block.x + block.width) * scale + halo
+                let fpY0 = tileOriginY + block.y * scale - halo
+                let fpY1 = tileOriginY + (block.y + block.height) * scale + halo
+                let overlapsX = fpX0 < (roi.x + roi.width) && fpX1 > roi.x
+                let overlapsY = fpY0 < (roi.y + roi.height) && fpY1 > roi.y
+                return overlapsX && overlapsY
             }
         }
 
