@@ -623,15 +623,21 @@ final class J2KAdvancedDecodingTests: XCTestCase {
         }
     }
 
-    func testDecodeResolutionThrowsNotImplemented() {
+    func testDecodeResolutionWithEmptyDataThrowsDecodeError() async {
+        // v10.4.0: decodeResolution now WORKS (decode-then-downsample Phase 1).
+        // Empty data should still throw a decode error from the underlying
+        // decode() call, just not `notImplemented`.
         let decoder = J2KDecoder()
         let data = Data()
         let options = J2KResolutionDecodingOptions(level: 2)
-
-        XCTAssertThrowsError(try decoder.decodeResolution(data, options: options)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected notImplemented error")
-                return
+        do {
+            _ = try await decoder.decodeResolution(data, options: options)
+            XCTFail("Expected a decode error on empty data")
+        } catch {
+            // Any J2KError is acceptable — the point is we no longer throw
+            // `notImplemented`.
+            if case J2KError.notImplemented = error {
+                XCTFail("decodeResolution must no longer throw notImplemented (v10.4.0 Phase 1)")
             }
         }
     }
