@@ -270,6 +270,29 @@ External CLI tools must be installed:
 - `research/V10_5_METAL_IDWT_FUSED_FINDING.md` — v10.2.0 opt-in fused H+V IDWT kernel data set + variance bench
 - `releases/RELEASE_NOTES_v10.3.0.md` — v10.3.0 two default-flips closing MG decode gap to Kakadu
 - `releases/RELEASE_NOTES_v10.4.0.md` — v10.4.0 partial-resolution decode Phase 1 (decode-then-downsample)
+- `releases/RELEASE_NOTES_v10.5.0.md` — v10.5.0 true partial-resolution decode (3-8× thumbnail speedup)
+
+## v10.5.0 — true partial-resolution decode wall by level
+
+`V10_10_StageB1EntropyFilterBench` (M2 release, lossless HT corpus, 7 trials).
+`decodeResolution(level: r)` decode wall vs full `decode()`:
+
+| Fixture | px | decode() | L4 | L3 | L2 | L1 | L0 (thumb) | L0 speedup |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| CT 512² | 262 K | 2.55 | 1.03 | 0.63 | 0.45 | 0.37 | **0.33** | **7.69×** |
+| PX 2459×1316 | 3.24 M | 26.62 | 12.44 | 7.68 | 5.93 | 5.38 | **5.12** | **5.20×** |
+| DX 2800×2288 | 6.41 M | 47.08 | 21.41 | 13.91 | 11.85 | 10.02 | **9.59** | **4.91×** |
+| MG mid 3518×4784 | 16.83 M | 82.48 | 43.88 | 30.76 | 27.29 | 27.64 | **26.81** | **3.08×** |
+
+True partial decode: code-block filter (Stage B.1) skips entropy for
+higher-resolution bands; iDWT truncation (Stage B.2) skips the inverse
+transform for skipped levels and outputs reduced-dimension data directly.
+
+Re-run with:
+
+```bash
+swift test -c release --filter "V10_10_StageB1EntropyFilterBench"
+```
 
 ## v10.4.0 — partial-resolution decode Phase 1 smoke
 
