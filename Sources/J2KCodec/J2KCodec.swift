@@ -1200,6 +1200,41 @@ public struct J2KDecoder: Sendable {
         return try await pipeline.decode(data)
     }
 
+    /// v10.5.0 Stage B.1+B.2 — internal entry point that sets up
+    /// the pipeline for partial-resolution decode:
+    ///   - `partialResolutionLevel = level` (B.1) — extract filters
+    ///     code-blocks to skip entropy decode for higher-resolution
+    ///     bands
+    ///   - `outputDimensions = (W, H) >> (N - level)` (B.2) —
+    ///     downstream stages allocate reduced buffers; the inverse
+    ///     DWT truncates to `level` steps and outputs reduced data
+    ///     directly
+    ///
+    /// Returns an image already at the requested resolution; no
+    /// downsample step needed. For level = N (full resolution), the
+    /// pipeline behaves exactly as `decode()` (byte-identical).
+    func decodePartialResolution(data: Data, level: Int) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
+        pipeline.partialResolutionLevel = level
+
+        // Compute reduced output dimensions from a metadata peek.
+        // The peek pays one extra codestream parse (~2-5 ms) — small
+        // relative to the partial-decode savings on large fixtures.
+        // For level == N (full resolution) outputDimensions stays
+        // nil and the decode behaves identically to `decode()`.
+        let metadata = try DecoderPipeline.peekMetadata(data)
+        let N = metadata.configuration.decompositionLevels
+        if level >= 0 && level < N {
+            let halvings = N - level
+            let factor = 1 << halvings
+            let outW = (metadata.width + factor - 1) / factor
+            let outH = (metadata.height + factor - 1) / factor
+            pipeline.outputDimensions = (width: outW, height: outH)
+        }
+        return try await pipeline.decode(data)
+    }
+
     /// Decodes JPEG 2000 data into an image with progress reporting.
     ///
     /// - Parameters:
