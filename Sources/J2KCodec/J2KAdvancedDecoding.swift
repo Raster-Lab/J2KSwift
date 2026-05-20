@@ -508,18 +508,17 @@ extension J2KDecoder {
 
     /// Decodes a JPEG 2000 image at a specific resolution level.
     ///
-    /// **v10.4.0 — Phase 1 implementation (decode-then-downsample)**:
-    /// runs the full decode and downsamples to the target resolution
-    /// using power-of-2 averaging. This produces correct API output
-    /// (right-dimensioned `J2KImage`) but does NOT yet save decode
-    /// time — both entropy decode and full inverse DWT still execute.
+    /// **v10.5.0 — Phase 2 Stage B.1 (entropy filter)**: skips entropy
+    /// decode for code-blocks at higher decomposition levels than
+    /// needed for the target resolution. Saves the dominant entropy
+    /// decode stage on partial-resolution requests. iDWT still runs
+    /// all levels (with zeros for filtered detail bands) and the
+    /// output is then downsampled to the target dimensions.
     ///
-    /// Phase 2 (future): true partial-resolution decode will:
-    ///   - filter code-blocks by decomposition level before entropy
-    ///   - truncate inverse DWT at the target level
-    ///   - output reduced-dimension spatial data directly
-    /// Projected Phase 2 win: 5-30× speedup for thumbnail (level 0)
-    /// use cases. Tracked in v10.10-research; multi-week scope.
+    /// Phase 1 (v10.4.0) was decode-then-downsample only. Stage B.1
+    /// adds the entropy-skip win. **Stage B.2 (future)** will also
+    /// truncate the inverse DWT and remove the downsample step,
+    /// completing the projected ~13× thumbnail speedup.
     ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
@@ -527,8 +526,11 @@ extension J2KDecoder {
     /// - Returns: The decoded image at the requested resolution (or full if `upscale = true`).
     /// - Throws: ``J2KError`` if decoding fails.
     public func decodeResolution(_ data: Data, options: J2KResolutionDecodingOptions) async throws -> J2KImage {
-        // Phase 1: decode-then-downsample.
-        let fullImage = try await decode(data)
+        // Stage B.1: route through `decodePartialResolution` which sets
+        // the `partialResolutionLevel` instance var on the pipeline.
+        // The downstream extract stage filters code-blocks; the entropy
+        // stage operates on the reduced set.
+        let fullImage = try await decodePartialResolution(data: data, level: options.level)
 
         // Determine target dimensions from `options.level`.
         // Resolution level 0 = lowest (thumbnail = full / 2^N for N decomp levels).
