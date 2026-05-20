@@ -508,19 +508,203 @@ extension J2KDecoder {
 
     /// Decodes a JPEG 2000 image at a specific resolution level.
     ///
+    /// **v10.4.0 — Phase 1 implementation (decode-then-downsample)**:
+    /// runs the full decode and downsamples to the target resolution
+    /// using power-of-2 averaging. This produces correct API output
+    /// (right-dimensioned `J2KImage`) but does NOT yet save decode
+    /// time — both entropy decode and full inverse DWT still execute.
+    ///
+    /// Phase 2 (future): true partial-resolution decode will:
+    ///   - filter code-blocks by decomposition level before entropy
+    ///   - truncate inverse DWT at the target level
+    ///   - output reduced-dimension spatial data directly
+    /// Projected Phase 2 win: 5-30× speedup for thumbnail (level 0)
+    /// use cases. Tracked in v10.10-research; multi-week scope.
+    ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
     ///   - options: Resolution decoding options.
-    /// - Returns: The decoded image at the requested resolution.
+    /// - Returns: The decoded image at the requested resolution (or full if `upscale = true`).
     /// - Throws: ``J2KError`` if decoding fails.
-    public func decodeResolution(_ data: Data, options: J2KResolutionDecodingOptions) throws -> J2KImage {
-        // Placeholder implementation
-        // In reality, this would:
-        // 1. Decode only the required wavelet subbands
-        // 2. Perform partial inverse DWT up to the target level
-        // 3. Optionally upscale to original dimensions
+    public func decodeResolution(_ data: Data, options: J2KResolutionDecodingOptions) async throws -> J2KImage {
+        // Phase 1: decode-then-downsample.
+        let fullImage = try await decode(data)
 
-        throw J2KError.notImplemented("Resolution progressive decoding not yet fully implemented")
+        // Determine target dimensions from `options.level`.
+        // Resolution level 0 = lowest (thumbnail = full / 2^N for N decomp levels).
+        // Resolution level N = full resolution.
+        // We don't have direct access to N here without parsing the codestream
+        // a second time, so we expose the level-to-factor mapping via the
+        // image's `width` / `height` and the conventional N=5 default for
+        // production encodes. Callers that need precise mapping should call
+        // `J2KCodestreamMetadata.parse(data)` to learn N.
+        //
+        // For Phase 1, the caller's `options.level` is interpreted as the
+        // *output reduction factor in halvings*: level 0 → ⌈W/32⌉×⌈H/32⌉ (5
+        // halvings, assuming N=5), level 5 → full. This matches the JP2K
+        // resolution-level convention for the default 5-level decomposition.
+        let halvingsFromFull = max(0, 5 - options.level)
+        let downscaleFactor = 1 << halvingsFromFull
+
+        if downscaleFactor <= 1 && !options.upscale {
+            // Full resolution requested — return as-is.
+            return fullImage
+        }
+
+        let targetW = max(1, (fullImage.width + downscaleFactor - 1) / downscaleFactor)
+        let targetH = max(1, (fullImage.height + downscaleFactor - 1) / downscaleFactor)
+
+        let scaled = try Self.downscaleByPowerOf2(
+            image: fullImage,
+            targetWidth: targetW,
+            targetHeight: targetH,
+            factor: downscaleFactor)
+
+        if options.upscale {
+            // Re-scale back up to original dimensions via nearest-neighbour.
+            // (Bit-loss reconstruction; a true partial decode would not pay
+            // this round-trip.)
+            return try Self.upscaleByPowerOf2(
+                image: scaled, targetWidth: fullImage.width,
+                targetHeight: fullImage.height,
+                factor: downscaleFactor)
+        }
+        return scaled
+    }
+
+    /// Power-of-2 downscale via block-average (separable). Handles both
+    /// 8-bit and 16-bit components.
+    private static func downscaleByPowerOf2(
+        image: J2KImage, targetWidth: Int, targetHeight: Int, factor: Int
+    ) throws -> J2KImage {
+        guard factor >= 1 else {
+            throw J2KError.invalidParameter("downscale factor must be ≥ 1")
+        }
+        if factor == 1 { return image }
+
+        let scaledComponents: [J2KComponent] = image.components.map { comp in
+            let srcW = comp.width
+            let bytesPerSample = (comp.bitDepth + 7) / 8
+            let dstBytes = targetWidth * targetHeight * bytesPerSample
+            var dst = Data(count: dstBytes)
+
+            comp.data.withUnsafeBytes { srcRaw in
+                dst.withUnsafeMutableBytes { dstRaw in
+                    if bytesPerSample == 2 {
+                        // 16-bit big-endian samples per the rest of the codebase.
+                        let src = srcRaw.bindMemory(to: UInt8.self).baseAddress!
+                        let out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                        for dy in 0..<targetHeight {
+                            for dx in 0..<targetWidth {
+                                var sum: UInt32 = 0
+                                var cnt: UInt32 = 0
+                                for ky in 0..<factor {
+                                    let sy = dy * factor + ky
+                                    if sy >= comp.height { continue }
+                                    for kx in 0..<factor {
+                                        let sx = dx * factor + kx
+                                        if sx >= srcW { continue }
+                                        let off = (sy * srcW + sx) * 2
+                                        let v = (UInt32(src[off]) << 8) | UInt32(src[off + 1])
+                                        sum &+= v
+                                        cnt &+= 1
+                                    }
+                                }
+                                let avg: UInt32 = cnt == 0 ? 0 : sum / cnt
+                                let outOff = (dy * targetWidth + dx) * 2
+                                out[outOff]     = UInt8(truncatingIfNeeded: (avg >> 8) & 0xFF)
+                                out[outOff + 1] = UInt8(truncatingIfNeeded: avg & 0xFF)
+                            }
+                        }
+                    } else {
+                        // 8-bit fallback.
+                        let src = srcRaw.bindMemory(to: UInt8.self).baseAddress!
+                        let out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                        for dy in 0..<targetHeight {
+                            for dx in 0..<targetWidth {
+                                var sum: UInt32 = 0
+                                var cnt: UInt32 = 0
+                                for ky in 0..<factor {
+                                    let sy = dy * factor + ky
+                                    if sy >= comp.height { continue }
+                                    for kx in 0..<factor {
+                                        let sx = dx * factor + kx
+                                        if sx >= srcW { continue }
+                                        sum &+= UInt32(src[sy * srcW + sx])
+                                        cnt &+= 1
+                                    }
+                                }
+                                out[dy * targetWidth + dx] = UInt8(cnt == 0 ? 0 : sum / cnt)
+                            }
+                        }
+                    }
+                }
+            }
+
+            return J2KComponent(
+                index: comp.index, bitDepth: comp.bitDepth, signed: comp.signed,
+                width: targetWidth, height: targetHeight,
+                subsamplingX: comp.subsamplingX, subsamplingY: comp.subsamplingY,
+                data: dst,
+                sampleByteOrder: comp.sampleByteOrder)
+        }
+
+        return J2KImage(
+            width: targetWidth, height: targetHeight,
+            components: scaledComponents,
+            colorSpace: image.colorSpace)
+    }
+
+    /// Nearest-neighbour upscale (only used when `options.upscale = true`).
+    private static func upscaleByPowerOf2(
+        image: J2KImage, targetWidth: Int, targetHeight: Int, factor: Int
+    ) throws -> J2KImage {
+        guard factor >= 1 else {
+            throw J2KError.invalidParameter("upscale factor must be ≥ 1")
+        }
+        if factor == 1 { return image }
+
+        let upscaled: [J2KComponent] = image.components.map { comp in
+            let bytesPerSample = (comp.bitDepth + 7) / 8
+            let dstBytes = targetWidth * targetHeight * bytesPerSample
+            var dst = Data(count: dstBytes)
+            comp.data.withUnsafeBytes { srcRaw in
+                dst.withUnsafeMutableBytes { dstRaw in
+                    if bytesPerSample == 2 {
+                        let src = srcRaw.bindMemory(to: UInt8.self).baseAddress!
+                        let out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                        for dy in 0..<targetHeight {
+                            let sy = min(comp.height - 1, dy / factor)
+                            for dx in 0..<targetWidth {
+                                let sx = min(comp.width - 1, dx / factor)
+                                let srcOff = (sy * comp.width + sx) * 2
+                                let dstOff = (dy * targetWidth + dx) * 2
+                                out[dstOff]     = src[srcOff]
+                                out[dstOff + 1] = src[srcOff + 1]
+                            }
+                        }
+                    } else {
+                        let src = srcRaw.bindMemory(to: UInt8.self).baseAddress!
+                        let out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                        for dy in 0..<targetHeight {
+                            let sy = min(comp.height - 1, dy / factor)
+                            for dx in 0..<targetWidth {
+                                let sx = min(comp.width - 1, dx / factor)
+                                out[dy * targetWidth + dx] = src[sy * comp.width + sx]
+                            }
+                        }
+                    }
+                }
+            }
+            return J2KComponent(
+                index: comp.index, bitDepth: comp.bitDepth, signed: comp.signed,
+                width: targetWidth, height: targetHeight,
+                subsamplingX: comp.subsamplingX, subsamplingY: comp.subsamplingY,
+                data: dst,
+                sampleByteOrder: comp.sampleByteOrder)
+        }
+        return J2KImage(width: targetWidth, height: targetHeight,
+                        components: upscaled, colorSpace: image.colorSpace)
     }
 
     /// Decodes a JPEG 2000 image up to a specific quality layer.
