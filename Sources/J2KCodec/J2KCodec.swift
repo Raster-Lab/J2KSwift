@@ -1200,6 +1200,24 @@ public struct J2KDecoder: Sendable {
         return try await pipeline.decode(data)
     }
 
+    /// v10.5.0 Stage B.1 — internal entry point that sets
+    /// `pipeline.partialResolutionLevel` before the decode runs, so
+    /// the extract stage filters code-blocks to only those needed
+    /// for the target resolution. The entropy decode then operates
+    /// on the reduced block set — the dominant stage savings.
+    ///
+    /// Returns the full-dimension image (with zeroed-out detail bands
+    /// above the kept range). Callers that want reduced-dimension
+    /// output (e.g. `decodeResolution`) downsample after this call —
+    /// Stage B.2 will replace that with iDWT truncation for the
+    /// remaining ~50% of the projected thumbnail speedup.
+    func decodePartialResolution(data: Data, level: Int) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
+        pipeline.partialResolutionLevel = level
+        return try await pipeline.decode(data)
+    }
+
     /// Decodes JPEG 2000 data into an image with progress reporting.
     ///
     /// - Parameters:

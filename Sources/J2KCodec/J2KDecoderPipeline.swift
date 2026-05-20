@@ -237,6 +237,21 @@ struct DecoderPipeline: Sendable {
     /// behaviour (per-decode Metal init).
     var metalSession: J2KMetalSession? = nil
 
+    /// v10.5.0 Stage B.1 — partial-resolution decode target level.
+    /// When non-nil, `extractTileData` filters code-blocks to only
+    /// those needed for resolution level `r ∈ [0, N]` where
+    /// `N = metadata.configuration.decompositionLevels`:
+    ///   - `r = 0` → only the LL (deepest); thumbnail output
+    ///   - `r = N` → all blocks; full decode
+    ///   - `r ∈ (0, N)` → LL + deepest r detail levels
+    ///
+    /// Set by `J2KDecoder.decodeResolution(_:options:)` via the
+    /// public API. Stage B.1 saves the dominant entropy decode stage
+    /// for skipped blocks; Stage B.2 (future) will also truncate
+    /// the inverse DWT. Phase 1 (v10.4.0) decode-then-downsample
+    /// is the fallback path when this is `nil`.
+    var partialResolutionLevel: Int? = nil
+
     // MARK: - v6.2.0 — GPU inverse 5/3 INT DWT routing gate
     //
     // Originally proposed as a default-on flip mirroring v6.1.0's
@@ -557,7 +572,9 @@ struct DecoderPipeline: Sendable {
         // Stages 2-4: same as CPU path
         reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
         t0 = DispatchTime.now()
-        let codeBlocks = try extractTileData(tileData, metadata: metadata)
+        let codeBlocks = try extractTileData(
+            tileData, metadata: metadata,
+            maxResolutionLevel: partialResolutionLevel)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -838,7 +855,8 @@ struct DecoderPipeline: Sendable {
             let extT0 = DispatchTime.now()
             let blocks = try extractTileData(
                 t.tileData, metadata: tileMeta,
-                tileOriginX: tx, tileOriginY: ty)
+                tileOriginX: tx, tileOriginY: ty,
+                maxResolutionLevel: partialResolutionLevel)
             J2KDecodeTimings.recordExtractTileData(
                 Double(DispatchTime.now().uptimeNanoseconds - extT0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -980,7 +998,9 @@ struct DecoderPipeline: Sendable {
         // Stage 2: Extract tile data
         reportProgress(progress, stage: .tileExtraction, stageProgress: 0.0)
         var t0 = DispatchTime.now()
-        let codeBlocks = try extractTileData(tileData, metadata: metadata)
+        let codeBlocks = try extractTileData(
+            tileData, metadata: metadata,
+            maxResolutionLevel: partialResolutionLevel)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -1120,7 +1140,8 @@ struct DecoderPipeline: Sendable {
         var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
-            tileOriginX: tileX, tileOriginY: tileY)
+            tileOriginX: tileX, tileOriginY: tileY,
+            maxResolutionLevel: partialResolutionLevel)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1199,7 +1220,8 @@ struct DecoderPipeline: Sendable {
         var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
-            tileOriginX: tileX, tileOriginY: tileY)
+            tileOriginX: tileX, tileOriginY: tileY,
+            maxResolutionLevel: partialResolutionLevel)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
         // v7.1.0 H1.1 — multi-tile per-tile entropy on GPU.
@@ -1924,7 +1946,21 @@ struct DecoderPipeline: Sendable {
         // per ISO/IEC 15444-1 B.7. Default (0, 0) preserves
         // single-tile and 32-aligned multi-tile decode bit-for-bit.
         tileOriginX: Int = 0,
-        tileOriginY: Int = 0
+        tileOriginY: Int = 0,
+        // v10.5.0 Stage B.1 — partial-resolution decode filter.
+        // When non-nil, code-blocks at decomposition levels outside
+        // the kept range are dropped after parsing (their data bytes
+        // are still consumed from the stream to keep the reader in
+        // sync, but they don't enter the result array). Filter rule:
+        //   keep iff (block.level == 0)           // LL (deepest)
+        //         OR (block.level > N - r)        // details at deepest r levels
+        // where N = metadata.configuration.decompositionLevels and
+        // r = maxResolutionLevel ∈ [0, N]. nil = full decode.
+        //
+        // This saves the dominant entropy decode stage when the
+        // caller wants a partial-resolution output. Stage B.2 will
+        // also truncate the inverse DWT to skip iDWT levels.
+        maxResolutionLevel: Int? = nil
     ) throws -> [CodeBlockInfo] {
         var blocks: [CodeBlockInfo] = []
 
@@ -2120,6 +2156,20 @@ struct DecoderPipeline: Sendable {
                         reader.setByteStuffing(true)
                     }
                 }
+            }
+        }
+
+        // v10.5.0 Stage B.1 — apply partial-resolution filter.
+        if let r = maxResolutionLevel {
+            let N = levels
+            // Resolution level r ∈ [0, N]. Keep blocks where:
+            //   level == 0           → the LL (deepest), always needed
+            //   level > N - r        → detail bands at the deepest r levels
+            // r = 0 → only LL (thumbnail, smallest output).
+            // r = N → all blocks (full decode, no filtering).
+            let keepThreshold = N - r
+            blocks = blocks.filter { block in
+                block.level == 0 || block.level > keepThreshold
             }
         }
 
