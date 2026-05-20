@@ -98,8 +98,33 @@ the layer loop runs once and reduces to today's behaviour.
 - Phase 2: `decodeQuality(layer: L)` consistent with `kdu_expand -layers L`.
 - Mandatory commit gate.
 
-## Status
+## Status — Phase 1 + Phase 2 complete (v10.9.0 candidate)
 
-Phase 0 done — bug diagnosed, test surface established, plan written.
-Phase 1 (the multi-layer packet-decode rework) is the substantial
-implementation and is the active work.
+**Phase 1 — multi-layer packet decode — done.** `extractTileData`
+routes to a new `extractTileDataMultiLayer` when `qualityLayers > 1`:
+a layer loop, persistent per-precinct `J2KTagTree`s, per-block
+`Lblock`/pass/data accumulation. The single-layer path is byte-exact
+unchanged (separate branch). `decode()` of the Kakadu 2/3/4-layer
+lossless fixtures is now **bit-identical to the original image** —
+the conformance bug is fixed.
+
+**Phase 2 — `decodeQuality` — done.** `decodeQuality(layer: L)`
+decodes layers `0...L` (sets `DecoderPipeline.maxQualityLayer`, which
+caps `extractTileDataMultiLayer`'s loop) + optional component subset.
+`cumulative: false` throws `notImplemented` (not an image).
+
+**Validation — `V10_15_MultiLayerDecodeTests` 3/3 PASS:**
+- multi-layer `decode()` (L2/L3/L4) bit-exact to the original (lossless).
+- `decodeQuality(layer: last)` ≡ `decode()`.
+- `decodeQuality(layer: L)` for L = 0,1,2 is **bit-identical to
+  `kdu_expand -layers (L+1)`** — full cross-codec conformance, including
+  the lossy layer-truncated reconstructions; quality is monotonic in L;
+  the last layer is lossless.
+
+Single-layer regression: mandatory commit gate 7/7 PASS; the v10.5–v10.8
+partial-decode suites (resolution / ROI / tile-skip / decodePartial)
+26/26 PASS — single-layer decode is untouched.
+
+Shipped as **v10.9.0** — a Part-1 conformance fix (`decode()` now
+correct on multi-layer input) plus the `decodeQuality` API. The
+partial-decode API surface is now 4/4 implemented.

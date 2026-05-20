@@ -783,19 +783,56 @@ extension J2KDecoder {
 
     /// Decodes a JPEG 2000 image up to a specific quality layer.
     ///
+    /// **v10.9.0** — quality-layer progressive decode. A multi-layer
+    /// (LRCP) codestream distributes each code-block's coding passes
+    /// across `qualityLayers` quality layers, layer 0 carrying the
+    /// coarsest contribution. `decodeQuality(layer: L)` reconstructs
+    /// the image from layers `0...L`, discarding the refinement in
+    /// higher layers — a lower-bitrate, lower-quality preview.
+    ///
+    /// Decoding *every* layer (`layer == qualityLayers - 1`) is the
+    /// same as `decode()`. On a single-layer codestream the only
+    /// valid `layer` is 0 and the result equals `decode()`.
+    ///
+    /// `cumulative` must be `true` (decode layers `0...layer`) — the
+    /// only image-meaningful semantics; `cumulative: false`
+    /// (single-layer refinement delta) throws ``J2KError/notImplemented(_:)``.
+    /// `components` selects an image-component subset.
+    ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
     ///   - options: Quality decoding options.
-    /// - Returns: The decoded image at the requested quality.
-    /// - Throws: ``J2KError`` if decoding fails.
-    public func decodeQuality(_ data: Data, options: J2KQualityDecodingOptions) throws -> J2KImage {
-        // Placeholder implementation
-        // In reality, this would:
-        // 1. Parse packet headers
-        // 2. Decode only packets up to the target layer
-        // 3. Reconstruct the image with available quality
+    /// - Returns: The decoded image at the requested quality layer.
+    /// - Throws: ``J2KError`` if decoding fails or an unsupported option is requested.
+    public func decodeQuality(_ data: Data, options: J2KQualityDecodingOptions) async throws -> J2KImage {
+        let metadata = try DecoderPipeline.peekMetadata(data)
+        let layers = max(1, metadata.configuration.qualityLayers)
+        try options.validate(maxLayers: layers, componentCount: metadata.componentCount)
 
-        throw J2KError.notImplemented("Quality progressive decoding not yet fully implemented")
+        guard options.cumulative else {
+            throw J2KError.notImplemented(
+                "decodeQuality: non-cumulative (single-layer refinement delta) decode — "
+                + "only cumulative quality decode (layers 0...layer) is supported")
+        }
+
+        // Decode layers 0...options.layer. On a single-layer codestream
+        // this is a plain decode (maxQualityLayer is ignored).
+        var image = try await decodeQualityLayers(data: data, maxLayer: options.layer)
+
+        // Component selection.
+        if let comps = options.components {
+            let selected = comps.compactMap { idx in
+                image.components.first(where: { $0.index == idx })
+            }
+            guard selected.count == comps.count else {
+                throw J2KError.invalidParameter(
+                    "decodeQuality: requested components \(comps) not all present in the decoded image")
+            }
+            image = J2KImage(
+                width: image.width, height: image.height,
+                components: selected, colorSpace: image.colorSpace)
+        }
+        return image
     }
 
     // MARK: - Helper Methods
