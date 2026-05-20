@@ -647,15 +647,20 @@ final class J2KAdvancedDecodingTests: XCTestCase {
         }
     }
 
-    func testDecodeQualityThrowsNotImplemented() {
+    func testDecodeQualityWithEmptyDataThrowsDecodeError() async {
+        // v10.9.0: decodeQuality now WORKS (quality-layer progressive
+        // decode on top of multi-layer packet decode). Empty data
+        // still throws a decode error from the underlying parse, just
+        // not `notImplemented`.
         let decoder = J2KDecoder()
         let data = Data()
-        let options = J2KQualityDecodingOptions(layer: 2)
-
-        XCTAssertThrowsError(try decoder.decodeQuality(data, options: options)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected notImplemented error")
-                return
+        let options = J2KQualityDecodingOptions(layer: 0)
+        do {
+            _ = try await decoder.decodeQuality(data, options: options)
+            XCTFail("Expected a decode error on empty data")
+        } catch {
+            if case J2KError.notImplemented = error {
+                XCTFail("decodeQuality must no longer throw notImplemented (v10.9.0)")
             }
         }
     }

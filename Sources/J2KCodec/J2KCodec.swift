@@ -1251,6 +1251,19 @@ public struct J2KDecoder: Sendable {
         return try await pipeline.decode(data)
     }
 
+    /// v10.9.0 quality-layer decode — internal entry point for
+    /// `decodeQuality`. Sets `pipeline.maxQualityLayer` so the
+    /// multi-layer packet decode (`extractTileDataMultiLayer`)
+    /// processes only quality layers `0...maxLayer`. On a single-layer
+    /// codestream `maxQualityLayer` is ignored and this is a plain
+    /// `decode()`.
+    func decodeQualityLayers(data: Data, maxLayer: Int) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
+        pipeline.maxQualityLayer = maxLayer
+        return try await pipeline.decode(data)
+    }
+
     /// Decodes JPEG 2000 data into an image with progress reporting.
     ///
     /// - Parameters:

@@ -280,6 +280,14 @@ struct DecoderPipeline: Sendable {
     /// strategy. nil = no spatial filtering (full decode).
     var regionOfInterest: J2KRegion? = nil
 
+    /// v10.9.0 quality-layer decode — when set, the multi-layer packet
+    /// decode (`extractTileDataMultiLayer`) processes only quality
+    /// layers `0...maxQualityLayer`, discarding the refinement carried
+    /// by higher layers. nil = decode every layer (full quality). Has
+    /// no effect on single-layer codestreams. Set by
+    /// `J2KDecoder.decodeQuality(_:options:)`.
+    var maxQualityLayer: Int? = nil
+
     // MARK: - v6.2.0 — GPU inverse 5/3 INT DWT routing gate
     //
     // Originally proposed as a default-on flip mirroring v6.1.0's
@@ -618,7 +626,8 @@ struct DecoderPipeline: Sendable {
         t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: metadata,
-            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -900,7 +909,8 @@ struct DecoderPipeline: Sendable {
             let blocks = try extractTileData(
                 t.tileData, metadata: tileMeta,
                 tileOriginX: tx, tileOriginY: ty,
-                maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
+                maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
             J2KDecodeTimings.recordExtractTileData(
                 Double(DispatchTime.now().uptimeNanoseconds - extT0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1044,7 +1054,8 @@ struct DecoderPipeline: Sendable {
         var t0 = DispatchTime.now()
         let codeBlocks = try extractTileData(
             tileData, metadata: metadata,
-            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordExtractTileData(dt / 1000)
@@ -1218,7 +1229,8 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY,
-            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
 
@@ -1305,7 +1317,8 @@ struct DecoderPipeline: Sendable {
         let codeBlocks = try extractTileData(
             tileData, metadata: tileMeta,
             tileOriginX: tileX, tileOriginY: tileY,
-            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest)
+            maxResolutionLevel: partialResolutionLevel, regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
         J2KDecodeTimings.recordExtractTileData(
             Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000_000)
         // v7.1.0 H1.1 — multi-tile per-tile entropy on GPU.
@@ -2064,7 +2077,11 @@ struct DecoderPipeline: Sendable {
         // block influencing an in-region pixel is retained, so a full
         // decode + crop and an ROI decode + crop produce bit-identical
         // region pixels.
-        regionOfInterest: J2KRegion? = nil
+        regionOfInterest: J2KRegion? = nil,
+        // v10.9.0 quality-layer decode — caps the multi-layer packet
+        // decode at layers `0...maxQualityLayer`. nil = all layers.
+        // Ignored for single-layer codestreams.
+        maxQualityLayer: Int? = nil
     ) throws -> [CodeBlockInfo] {
         var blocks: [CodeBlockInfo] = []
 
@@ -2105,8 +2122,24 @@ struct DecoderPipeline: Sendable {
         }
 
         // LRCP progression: layer × resolution × component × precinct.
-        // Single layer for now; precincts iterated in raster order per
-        // (res, comp).
+        //
+        // v10.9.0 — codestreams with more than one quality layer need
+        // the layer-aware packet decode. The loop below handles the
+        // single-layer case (the common path, byte-exact unchanged);
+        // multi-layer codestreams route to `extractTileDataMultiLayer`.
+        if metadata.configuration.qualityLayers > 1 {
+            let mlBlocks = try extractTileDataMultiLayer(
+                tileData, metadata: metadata,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                maxQualityLayer: maxQualityLayer)
+            return applyPartialDecodeFilters(
+                mlBlocks, levels: levels,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                maxResolutionLevel: maxResolutionLevel, regionOfInterest: regionOfInterest)
+        }
+
+        // Single-layer packet decode — precincts iterated in raster
+        // order per (resolution, component).
         for resLevel in 0...levels {
             for compIdx in 0..<numComponents {
                 let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
@@ -2263,40 +2296,45 @@ struct DecoderPipeline: Sendable {
             }
         }
 
-        // v10.5.0 Stage B.1 — apply partial-resolution filter.
+        return applyPartialDecodeFilters(
+            blocks, levels: levels,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+            maxResolutionLevel: maxResolutionLevel, regionOfInterest: regionOfInterest)
+    }
+
+    /// Applies the v10.5.0 Stage B.1 partial-resolution code-block
+    /// filter and the v10.6.0 ROI spatial filter. Factored out of
+    /// `extractTileData` so the single-layer and multi-layer packet
+    /// decode paths share one implementation.
+    private func applyPartialDecodeFilters(
+        _ blocks: [CodeBlockInfo], levels: Int,
+        tileOriginX: Int, tileOriginY: Int,
+        maxResolutionLevel: Int?, regionOfInterest: J2KRegion?
+    ) -> [CodeBlockInfo] {
+        var blocks = blocks
+
+        // v10.5.0 Stage B.1 — partial-resolution filter. Keep blocks
+        // where level == 0 (the LL, always needed) OR level > N - r
+        // (detail bands at the deepest r levels).
         if let r = maxResolutionLevel {
-            let N = levels
-            // Resolution level r ∈ [0, N]. Keep blocks where:
-            //   level == 0           → the LL (deepest), always needed
-            //   level > N - r        → detail bands at the deepest r levels
-            // r = 0 → only LL (thumbnail, smallest output).
-            // r = N → all blocks (full decode, no filtering).
-            let keepThreshold = N - r
+            let keepThreshold = levels - r
             blocks = blocks.filter { block in
                 block.level == 0 || block.level > keepThreshold
             }
         }
 
-        // v10.6.0 ROI decode — apply spatial code-block filter. A
-        // code-block at decomposition depth d holds band samples that
-        // upsample to full-image pixels at scale 2^d. Its image-space
-        // footprint is the band rect scaled by 2^d, anchored at the
-        // tile origin, expanded by a synthesis-filter halo. A block is
-        // kept iff that footprint overlaps the requested region.
+        // v10.6.0 ROI decode — spatial code-block filter. A code-block
+        // at decomposition depth d holds band samples that upsample to
+        // full-image pixels at scale 2^d; its image-space footprint is
+        // the band rect scaled by 2^d, anchored at the tile origin,
+        // expanded by a conservative 8·2^d synthesis-filter halo. A
+        // block is kept iff that footprint overlaps the region.
         if let roi = regionOfInterest {
-            // Halo per side, in image pixels, scaled by the block's
-            // decomposition depth. The inverse-DWT influence radius of
-            // one band sample is bounded by ρ·2^d for filter half-width
-            // ρ (ρ ≈ 2 for the reversible 5/3, ≈ 4 for the 9/7).
-            // haloFactor = 8 is a deliberately generous bound — over-
-            // keeping costs a little entropy work, under-keeping would
-            // corrupt the region, so the filter errs toward keeping.
             let haloFactor = 8
             blocks = blocks.filter { block in
-                // The LL band feeds every resolution level — always keep.
                 if block.level == 0 { return true }
-                let d = block.level                  // decomposition depth
-                let scale = 1 << d                   // band sample → image pixel
+                let d = block.level
+                let scale = 1 << d
                 let halo = haloFactor << d
                 let fpX0 = tileOriginX + block.x * scale - halo
                 let fpX1 = tileOriginX + (block.x + block.width) * scale + halo
@@ -2309,6 +2347,227 @@ struct DecoderPipeline: Sendable {
         }
 
         return blocks
+    }
+
+    /// v10.9.0 — multi-layer (LRCP) packet decode per ISO/IEC 15444-1
+    /// B.10. The single-layer `extractTileData` loop reads one packet
+    /// per `(resolution, component, precinct)`; a codestream with
+    /// `qualityLayers > 1` emits `layer × resolution × component ×
+    /// precinct` packets, with each code-block's coding passes
+    /// distributed across the layers it contributes to.
+    ///
+    /// This routine adds the layer loop, persists the per-precinct
+    /// inclusion / zero-bit-plane tag-trees and the per-block `Lblock`
+    /// state across layers, and accumulates each block's passes and
+    /// data into a single `CodeBlockInfo`. When `maxQualityLayer` is
+    /// set, only layers `0...maxQualityLayer` are processed — the
+    /// basis for `decodeQuality`.
+    private func extractTileDataMultiLayer(
+        _ tileData: Data, metadata: CodestreamMetadata,
+        tileOriginX: Int, tileOriginY: Int,
+        maxQualityLayer: Int?
+    ) throws -> [CodeBlockInfo] {
+        let cbWidth = metadata.configuration.codeBlockSize.width
+        let cbHeight = metadata.configuration.codeBlockSize.height
+        let levels = metadata.configuration.decompositionLevels
+        let tileWidth = metadata.tileSize.width
+        let tileHeight = metadata.tileSize.height
+        let numComponents = metadata.components.count
+        let totalLayers = max(1, metadata.configuration.qualityLayers)
+        let lastLayer = min(maxQualityLayer ?? (totalLayers - 1), totalLayers - 1)
+
+        var reader = J2KBitReader(data: tileData)
+        reader.setByteStuffing(true)
+
+        let precinctExps = metadata.configuration.precinctExponents
+        func bandPrecinctSize(forRes res: Int) -> (w: Int, h: Int) {
+            guard let exps = precinctExps, res < exps.count else {
+                return (1 << 15, 1 << 15)
+            }
+            let pp = exps[res]
+            let wExp = res == 0 ? pp.widthExp : max(0, pp.widthExp - 1)
+            let hExp = res == 0 ? pp.heightExp : max(0, pp.heightExp - 1)
+            return (1 << wExp, 1 << hExp)
+        }
+
+        struct PrecinctKey: Hashable {
+            let res: Int, comp: Int, subband: J2KSubband, py: Int, px: Int
+        }
+        struct BlockAccum {
+            var included = false
+            var lblock = 3
+            var zeroBitPlanes = 0
+            var passCount = 0
+            var data = Data()
+            var componentIndex = 0
+            var decomLevel = 0
+            var subband: J2KSubband = .ll
+            var x = 0, y = 0, width = 0, height = 0
+            var bandKb = 0
+            var emitOrder = 0
+        }
+
+        var inclusionTrees: [PrecinctKey: J2KTagTree] = [:]
+        var zbpTrees: [PrecinctKey: J2KTagTree] = [:]
+        var blockAccums: [PrecinctKey: [BlockAccum]] = [:]
+        var emitCounter = 0
+
+        for layer in 0...lastLayer {
+            for resLevel in 0...levels {
+                for compIdx in 0..<numComponents {
+                    let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
+                    let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
+                    let (sbWRef, sbHRef) = Self.subbandDimensions(
+                        tileWidth: tileWidth, tileHeight: tileHeight,
+                        tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                        levels: levels, resLevel: resLevel, subband: referenceSubband)
+                    guard sbWRef > 0 && sbHRef > 0 else { continue }
+                    let (pw, ph) = bandPrecinctSize(forRes: resLevel)
+                    let numPrecinctsX = max(1, (sbWRef + pw - 1) / pw)
+                    let numPrecinctsY = max(1, (sbHRef + ph - 1) / ph)
+
+                    for py in 0..<numPrecinctsY {
+                        for px in 0..<numPrecinctsX {
+                            guard reader.bytesRemaining > 0 || reader.bitOffset > 0 else { break }
+                            let notEmpty = try reader.readBit()
+                            guard notEmpty else {
+                                try reader.alignToByte()
+                                continue
+                            }
+
+                            // Blocks that contribute data in THIS
+                            // packet, in header order — the packet
+                            // body is read in the same order.
+                            var layerContrib: [(pkey: PrecinctKey, leaf: Int, length: Int)] = []
+
+                            for subband in subbands {
+                                let (sbWidth, sbHeight) = Self.subbandDimensions(
+                                    tileWidth: tileWidth, tileHeight: tileHeight,
+                                    tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                                    levels: levels, resLevel: resLevel, subband: subband)
+                                guard sbWidth > 0 && sbHeight > 0 else { continue }
+                                let (tbx0, tby0) = Self.subbandCanvasOrigin(
+                                    tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                                    levels: levels, resLevel: resLevel, subband: subband)
+                                let pStartX = px * pw
+                                let pStartY = py * ph
+                                let pEndX = min(pStartX + pw, sbWidth)
+                                let pEndY = min(pStartY + ph, sbHeight)
+                                guard pEndX > pStartX, pEndY > pStartY else { continue }
+                                let firstCanvasX = (tbx0 + pStartX) / cbWidth
+                                let firstCanvasY = (tby0 + pStartY) / cbHeight
+                                let lastCanvasX  = (tbx0 + pEndX + cbWidth  - 1) / cbWidth
+                                let lastCanvasY  = (tby0 + pEndY + cbHeight - 1) / cbHeight
+                                let pBlocksX = lastCanvasX - firstCanvasX
+                                let pBlocksY = lastCanvasY - firstCanvasY
+                                let pBlockCount = pBlocksX * pBlocksY
+                                guard pBlockCount > 0 else { continue }
+
+                                let bandKey = subband == .ll
+                                    ? "LL_0" : "\(subband.rawValue)_\(resLevel)"
+                                let kb = metadata.bandKbValues[bandKey]
+                                    ?? (metadata.components[compIdx].bitDepth + metadata.quantizationGuardBits)
+                                let decomLevel = resLevel == 0 ? 0 : (levels - resLevel + 1)
+
+                                let pkey = PrecinctKey(
+                                    res: resLevel, comp: compIdx, subband: subband, py: py, px: px)
+                                var accums = blockAccums[pkey]
+                                    ?? Array(repeating: BlockAccum(), count: pBlockCount)
+                                var incTree = inclusionTrees[pkey]
+                                    ?? J2KTagTree(width: pBlocksX, height: pBlocksY)
+                                var zbpTree = zbpTrees[pkey]
+                                    ?? J2KTagTree(width: pBlocksX, height: pBlocksY)
+
+                                for leaf in 0..<pBlockCount {
+                                    var accum = accums[leaf]
+                                    if !accum.included {
+                                        let inc = try incTree.decode(
+                                            reader: &reader, leafIndex: leaf,
+                                            threshold: Int32(layer + 1))
+                                        if !inc {
+                                            accums[leaf] = accum
+                                            continue
+                                        }
+                                        accum.included = true
+                                        var zbp: Int32 = 0
+                                        while !(try zbpTree.decode(
+                                            reader: &reader, leafIndex: leaf, threshold: zbp + 1)) {
+                                            zbp += 1
+                                            if zbp > 100 { break }
+                                        }
+                                        accum.zeroBitPlanes = Int(zbp)
+                                        // Block geometry — computed once.
+                                        let localY = leaf / pBlocksX
+                                        let localX = leaf % pBlocksX
+                                        let canvasStartX = (firstCanvasX + localX) * cbWidth
+                                        let canvasStartY = (firstCanvasY + localY) * cbHeight
+                                        let tileStartX = max(pStartX, canvasStartX - tbx0)
+                                        let tileEndX   = min(pEndX, canvasStartX + cbWidth - tbx0)
+                                        let tileStartY = max(pStartY, canvasStartY - tby0)
+                                        let tileEndY   = min(pEndY, canvasStartY + cbHeight - tby0)
+                                        accum.componentIndex = compIdx
+                                        accum.decomLevel = decomLevel
+                                        accum.subband = subband
+                                        accum.x = tileStartX
+                                        accum.y = tileStartY
+                                        accum.width = tileEndX - tileStartX
+                                        accum.height = tileEndY - tileStartY
+                                        accum.bandKb = kb
+                                        accum.emitOrder = emitCounter
+                                        emitCounter += 1
+                                    } else {
+                                        // Already included — one bit signals
+                                        // whether it contributes this layer.
+                                        let contributes = try reader.readBit()
+                                        if !contributes {
+                                            accums[leaf] = accum
+                                            continue
+                                        }
+                                    }
+                                    let passes = try Self.decodeCodingPasses(&reader)
+                                    while try reader.readBit() { accum.lblock += 1 }
+                                    let passLog = passes > 1 ? Int(log2(Double(passes))) : 0
+                                    let length = Int(try reader.readBits(accum.lblock + passLog))
+                                    accum.passCount += passes
+                                    accums[leaf] = accum
+                                    layerContrib.append((pkey, leaf, length))
+                                }
+
+                                inclusionTrees[pkey] = incTree
+                                zbpTrees[pkey] = zbpTree
+                                blockAccums[pkey] = accums
+                            }
+
+                            // Packet body — code-block data bytes, header order.
+                            try reader.alignToByte()
+                            reader.setByteStuffing(false)
+                            for contrib in layerContrib {
+                                let d = try reader.readBytes(contrib.length)
+                                if var accums = blockAccums[contrib.pkey] {
+                                    accums[contrib.leaf].data.append(d)
+                                    blockAccums[contrib.pkey] = accums
+                                }
+                            }
+                            reader.setByteStuffing(true)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Emit one CodeBlockInfo per included block, first-inclusion order.
+        var included: [BlockAccum] = []
+        for accums in blockAccums.values {
+            for a in accums where a.included { included.append(a) }
+        }
+        included.sort { $0.emitOrder < $1.emitOrder }
+        return included.map { a in
+            CodeBlockInfo(
+                componentIndex: a.componentIndex, level: a.decomLevel, subband: a.subband,
+                x: a.x, y: a.y, width: a.width, height: a.height,
+                data: a.data, passCount: a.passCount,
+                zeroBitPlanes: a.zeroBitPlanes, bandKb: a.bandKb)
+        }
     }
 
     /// Computes subband dimensions for a given resolution level and subband type.
