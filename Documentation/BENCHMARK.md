@@ -269,6 +269,25 @@ External CLI tools must be installed:
 - `RELEASE_NOTES_v8.1.1.md` — CI Node 24 opt-in
 - `research/V10_5_METAL_IDWT_FUSED_FINDING.md` — v10.2.0 opt-in fused H+V IDWT kernel data set + variance bench
 - `releases/RELEASE_NOTES_v10.3.0.md` — v10.3.0 two default-flips closing MG decode gap to Kakadu
+- `releases/RELEASE_NOTES_v10.4.0.md` — v10.4.0 partial-resolution decode Phase 1 (decode-then-downsample)
+
+## v10.4.0 — partial-resolution decode Phase 1 smoke
+
+`J2KDecoder.decodeResolution(_:options:)` API now works (was `notImplemented`).
+Phase 1 is decode-then-downsample — provides working API surface; no perf
+upgrade yet (Phase 2 will add code-block filter + iDWT truncation for the
+~13× projected thumbnail speedup).
+
+Smoke tests (`V10_10_DecodeResolutionSmokeTests`): 3/3 PASS
+  - Output dimensions correct at all 6 resolution levels (0..5)
+  - `upscale: true` reconstructs original dimensions
+  - `level == 5` byte-identical to `decode()`
+
+Re-run with:
+
+```bash
+swift test -c release --filter "V10_10_DecodeResolutionSmokeTests"
+```
 
 ## v10.3.0 — `_gpuHTEntropyEnabled` ON → OFF flag-flip variance bench (M2 release, 10 interleaved trials)
 
