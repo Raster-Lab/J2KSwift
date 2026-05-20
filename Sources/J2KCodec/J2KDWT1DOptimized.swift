@@ -674,6 +674,80 @@ public struct J2KDWT2DOptimizer: Sendable {
         base[(lastOdd &* 2 &+ 1) &* s] = base[(lastOdd &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
     }
 
+    /// v10.13 ROI Stage 3 — windowed inverse 5/3 lift. Produces
+    /// `even[i]` and `odd[i]` correct for every pair `i` in
+    /// `[pairFrom, pairTo)`, leaving the rest of the interleaved
+    /// buffer untouched.
+    ///
+    /// **Exact by loop-restriction, not approximation.** The 5/3
+    /// inverse decomposes into two steps with a tight forward
+    /// dependency: Step 1 (undo update) computes `even[i]` from the
+    /// *input* high-pass samples only — never from other evens — so a
+    /// windowed Step 1 is just a sub-range of the loop. Step 2 (undo
+    /// predict) computes `odd[i]` from `even[i]` and `even[i+1]`. So
+    /// producing pairs `[pairFrom, pairTo)` needs evens
+    /// `[pairFrom, pairTo+1)` (Step 1) then odds `[pairFrom, pairTo)`
+    /// (Step 2) — no halo, no boundary approximation. The arithmetic
+    /// per sample is bit-identical to `inverseLift53InPlace`; only the
+    /// loop bounds change. The true-boundary special cases (`i == 0`,
+    /// the `evenCount > oddCount` right even, the last odd) are applied
+    /// exactly when the window includes those indices.
+    ///
+    /// Assumes `evenCount ∈ {oddCount, oddCount + 1}` — the 5/3 dyadic
+    /// invariant `inverseLift53InPlace` already relies on.
+    @inline(__always)
+    static func inverseLift53InPlaceWindowed(
+        _ base: UnsafeMutablePointer<Int32>,
+        evenCount: Int,
+        oddCount: Int,
+        stride s: Int,
+        pairFrom: Int,
+        pairTo: Int
+    ) {
+        guard evenCount > 0 && oddCount > 0 else { return }
+        let pf = max(0, pairFrom)
+        let pt = min(pairTo, max(evenCount, oddCount))
+        guard pf < pt else { return }
+
+        // Step 1 — undo update. Compute even[i] for i in [pf, evenEnd).
+        // Step 2's odd[pt-1] reads even[pt], hence the +1.
+        let evenEnd = min(pt &+ 1, evenCount)
+        let normalEnd = min(evenCount, oddCount)   // normal even formula: i in [1, normalEnd)
+        var i = pf
+        while i < evenEnd {
+            if i == 0 {
+                let hp0 = base[s]
+                base[0] = base[0] &- ((hp0 &+ hp0 &+ 2) >> 2)
+            } else if i < normalEnd {
+                let prevHP = base[(i &* 2 &- 1) &* s]
+                let curHP  = base[(i &* 2 &+ 1) &* s]
+                base[(i &* 2) &* s] = base[(i &* 2) &* s] &- ((prevHP &+ curHP &+ 2) >> 2)
+            } else if i == evenCount &- 1 && evenCount > oddCount {
+                let lastHP = base[(oddCount &* 2 &- 1) &* s]
+                base[(i &* 2) &* s] = base[(i &* 2) &* s] &- ((lastHP &+ lastHP &+ 2) >> 2)
+            }
+            i &+= 1
+        }
+
+        // Step 2 — undo predict. Compute odd[i] for i in [pf, oddEnd).
+        let oddEnd = min(pt, oddCount)
+        let lastOdd = oddCount &- 1
+        i = pf
+        while i < oddEnd {
+            if i < lastOdd {
+                let evenL = base[(i &* 2) &* s]
+                let evenR = base[(i &* 2 &+ 2) &* s]
+                base[(i &* 2 &+ 1) &* s] = base[(i &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
+            } else {
+                let evenRightIdx = min((lastOdd &+ 1) &* 2, (evenCount &- 1) &* 2)
+                let evenL = base[lastOdd &* 2 &* s]
+                let evenR = base[evenRightIdx &* s]
+                base[(lastOdd &* 2 &+ 1) &* s] = base[(lastOdd &* 2 &+ 1) &* s] &+ ((evenL &+ evenR) >> 1)
+            }
+            i &+= 1
+        }
+    }
+
     // MARK: - Flat-Buffer Multi-Level IDWT (5/3 Lossless)
 
     /// Performs a complete multi-level inverse Le Gall 5/3 DWT on flat subband data.
@@ -877,6 +951,209 @@ public struct J2KDWT2DOptimizer: Sendable {
         currentBuf.deallocate()
 
         return (data: result, width: curW, height: curH)
+    }
+
+    // MARK: - Row-Windowed Multi-Level IDWT (5/3, ROI Stage 3)
+
+    /// v10.13 ROI Stage 3 — row-windowed multi-level inverse 5/3 DWT.
+    ///
+    /// Reconstructs only output rows `[outRowLo, outRowHi)` of the full
+    /// tile (all columns), leaving the rest of the returned buffer
+    /// zero. ROI decode only needs the region's rows, so the inverse
+    /// DWT skips the rest.
+    ///
+    /// **Correctness — exact, not approximate.** Each level's row pass
+    /// is the *unchanged* full-width `inverseLift53InPlace`; the column
+    /// pass is `inverseLift53InPlaceWindowed`, which is exact by
+    /// loop-restriction. The per-level row window propagates with
+    /// `parentRows` — `[lo>>1, ((hi+1)>>1)+1)` — which is the *tight*
+    /// support of the 5/3 inverse column lift, with no halo. So output
+    /// rows in `[outRowLo, outRowHi)` are bit-identical to the full
+    /// `inverseTransformMultiLevel53`.
+    ///
+    /// `subbands` must be deepest-first, matching the full overload.
+    public func inverseTransformMultiLevel53RowWindowed(
+        ll: [Int32], llW: Int, llH: Int,
+        subbands: [(lh: [Int32], lhW: Int, lhH: Int,
+                     hl: [Int32], hlW: Int, hlH: Int,
+                     hh: [Int32], hhW: Int, hhH: Int)],
+        outRowLo: Int, outRowHi: Int
+    ) -> (data: [Int32], width: Int, height: Int) {
+        guard !subbands.isEmpty else {
+            return (data: ll, width: llW, height: llH)
+        }
+        let n = subbands.count
+
+        // Per-level dimensions. levelH[it] is the height entering
+        // iteration it; levelH[n] is the full-tile height.
+        var levelW = [Int](repeating: 0, count: n + 1)
+        var levelH = [Int](repeating: 0, count: n + 1)
+        levelW[0] = llW; levelH[0] = llH
+        for it in 0..<n {
+            levelW[it + 1] = levelW[it] + subbands[it].hlW
+            levelH[it + 1] = levelH[it] + subbands[it].lhH
+        }
+        let fullW = levelW[n], fullH = levelH[n]
+
+        // The coarser-level row window needed to produce a child row
+        // window. Exact support of the 5/3 inverse column lift.
+        func parentRows(_ lo: Int, _ hi: Int, extent: Int) -> (Int, Int) {
+            let pA = lo >> 1
+            let pB = ((hi + 1) >> 1) + 1
+            return (max(0, min(pA, extent)), max(0, min(pB, extent)))
+        }
+
+        // Propagate the output row window from finest to coarsest.
+        // winLo/winHi[it] = rows of iteration it's output that must
+        // be correct.
+        var winLo = [Int](repeating: 0, count: n)
+        var winHi = [Int](repeating: 0, count: n)
+        winLo[n - 1] = max(0, min(outRowLo, fullH))
+        winHi[n - 1] = max(0, min(outRowHi, fullH))
+        if winHi[n - 1] < winLo[n - 1] { winHi[n - 1] = winLo[n - 1] }
+        var bk = n - 2
+        while bk >= 0 {
+            let (lo, hi) = parentRows(winLo[bk + 1], winHi[bk + 1], extent: levelH[bk + 1])
+            winLo[bk] = lo; winHi[bk] = hi
+            bk -= 1
+        }
+        let (llWinLo, llWinHi) = parentRows(winLo[0], winHi[0], extent: llH)
+        _ = (llWinLo, llWinHi)   // LL is fully available; window unused for input.
+
+        // Working buffer, raw pointer carried between levels.
+        var currentBuf = UnsafeMutablePointer<Int32>.allocate(capacity: max(llW * llH, 1))
+        ll.withUnsafeBufferPointer { src in
+            currentBuf.initialize(from: src.baseAddress!, count: llW * llH)
+        }
+        var curW = llW, curH = llH
+
+        for it in 0..<n {
+            let lv = subbands[it]
+            let lhH = lv.lhH, hlW = lv.hlW
+            let outW = curW + hlW
+            let outH = curH + lhH
+            let bufSize = max(outW * outH, 1)
+            let base = UnsafeMutablePointer<Int32>.allocate(capacity: bufSize)
+            base.initialize(repeating: 0, count: bufSize)
+
+            let oLo = winLo[it], oHi = winHi[it]
+            // Pairs covering the output row window.
+            let pA = oLo >> 1
+            let pB = (oHi + 1) >> 1
+            // Base rows the column pass reads (and the row pass must
+            // fill). Step 1 of the windowed column lift computes
+            // even[pA] from odd[pA-1] = base row 2·pA-1, so the band
+            // starts one row below 2·pA.
+            let rbLo = max(0, 2 * pA - 1)
+            let rbHi = min(outH, 2 * pB + 2)
+
+            let curBufSize = curW * curH
+
+            // --- Scatter (only base rows in [rbLo, rbHi)) ---
+            // LL → even rows / low cols.
+            do {
+                var r = max(0, (rbLo + 1) / 2)
+                let rEnd = min(curH, (rbHi + 1) / 2)
+                while r < rEnd {
+                    let dstRow = 2 * r
+                    if dstRow >= rbLo && dstRow < rbHi {
+                        precondition(dstRow * outW + curW <= bufSize, "LL dst OOB")
+                        precondition((r + 1) * curW <= curBufSize, "LL src OOB")
+                        (base + dstRow * outW).update(from: currentBuf + r * curW, count: curW)
+                    }
+                    r += 1
+                }
+            }
+            // LH → odd rows / low cols.
+            if lhH > 0 {
+                lv.lh.withUnsafeBufferPointer { src in
+                    guard let p = src.baseAddress else { return }
+                    let srcCount = src.count
+                    let copyW = min(curW, lv.lhW)
+                    var r = max(0, rbLo / 2)
+                    let rEnd = min(lhH, rbHi / 2 + 1)
+                    while r < rEnd {
+                        let dstRow = 2 * r + 1
+                        if dstRow >= rbLo && dstRow < rbHi {
+                            precondition(dstRow * outW + copyW <= bufSize, "LH dst OOB")
+                            precondition(r * lv.lhW + copyW <= srcCount, "LH src OOB")
+                            (base + dstRow * outW).update(from: p + r * lv.lhW, count: copyW)
+                        }
+                        r += 1
+                    }
+                }
+            }
+            // HL → even rows / high cols.
+            if hlW > 0 {
+                lv.hl.withUnsafeBufferPointer { src in
+                    guard let p = src.baseAddress else { return }
+                    let srcCount = src.count
+                    let copyW = min(hlW, lv.hlW)
+                    var r = max(0, (rbLo + 1) / 2)
+                    let rEnd = min(lv.hlH, (rbHi + 1) / 2)
+                    while r < rEnd {
+                        let dstRow = 2 * r
+                        if dstRow >= rbLo && dstRow < rbHi {
+                            precondition(dstRow * outW + curW + copyW <= bufSize, "HL dst OOB")
+                            precondition(r * lv.hlW + copyW <= srcCount, "HL src OOB")
+                            (base + dstRow * outW + curW).update(from: p + r * lv.hlW, count: copyW)
+                        }
+                        r += 1
+                    }
+                }
+            }
+            // HH → odd rows / high cols.
+            if hlW > 0 {
+                lv.hh.withUnsafeBufferPointer { src in
+                    guard let p = src.baseAddress else { return }
+                    let srcCount = src.count
+                    let copyW = min(hlW, lv.hhW)
+                    var r = max(0, rbLo / 2)
+                    let rEnd = min(lv.hhH, rbHi / 2 + 1)
+                    while r < rEnd {
+                        let dstRow = 2 * r + 1
+                        if dstRow >= rbLo && dstRow < rbHi {
+                            precondition(dstRow * outW + curW + copyW <= bufSize, "HH dst OOB")
+                            precondition(r * lv.hhW + copyW <= srcCount, "HH src OOB")
+                            (base + dstRow * outW + curW).update(from: p + r * lv.hhW, count: copyW)
+                        }
+                        r += 1
+                    }
+                }
+            }
+
+            // --- Row pass: full-width inverse lift for rows [rbLo, rbHi). ---
+            let lowCols = curW
+            var tmp = [Int32](unsafeUninitializedCapacity: outW) { _, s in s = outW }
+            tmp.withUnsafeMutableBufferPointer { tmpBuf in
+                let tp = tmpBuf.baseAddress!
+                for r in rbLo..<rbHi {
+                    precondition(r >= 0 && (r + 1) * outW <= bufSize, "row pass OOB")
+                    let rowBase = base + r * outW
+                    for i in 0..<lowCols { tp[i * 2] = rowBase[i] }
+                    for i in 0..<hlW { tp[i * 2 + 1] = rowBase[lowCols + i] }
+                    J2KDWT2DOptimizer.inverseLift53InPlace(
+                        tp, evenCount: lowCols, oddCount: hlW, stride: 1)
+                    rowBase.update(from: tp, count: outW)
+                }
+            }
+
+            // --- Column pass: windowed inverse lift, pairs [pA, pB). ---
+            for col in 0..<outW {
+                J2KDWT2DOptimizer.inverseLift53InPlaceWindowed(
+                    base + col, evenCount: curH, oddCount: lhH, stride: outW,
+                    pairFrom: pA, pairTo: pB)
+            }
+
+            currentBuf.deallocate()
+            currentBuf = base
+            curW = outW
+            curH = outH
+        }
+
+        let result = Array(UnsafeBufferPointer(start: currentBuf, count: fullW * fullH))
+        currentBuf.deallocate()
+        return (data: result, width: fullW, height: fullH)
     }
 
     // MARK: - Parity-Aware 2D Inverse (v6-alpha3 step 6B slice 2)
