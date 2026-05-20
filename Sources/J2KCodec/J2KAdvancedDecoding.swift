@@ -526,52 +526,30 @@ extension J2KDecoder {
     /// - Returns: The decoded image at the requested resolution (or full if `upscale = true`).
     /// - Throws: ``J2KError`` if decoding fails.
     public func decodeResolution(_ data: Data, options: J2KResolutionDecodingOptions) async throws -> J2KImage {
-        // Stage B.1: route through `decodePartialResolution` which sets
-        // the `partialResolutionLevel` instance var on the pipeline.
-        // The downstream extract stage filters code-blocks; the entropy
-        // stage operates on the reduced set.
-        let fullImage = try await decodePartialResolution(data: data, level: options.level)
+        // v10.5.0 Stage B.1 + B.2 — true partial-resolution decode:
+        // the pipeline filters code-blocks at extract (B.1) and
+        // truncates the inverse DWT at the target level (B.2),
+        // producing reduced-dimension output directly. No
+        // downsample step needed.
+        let partial = try await decodePartialResolution(data: data, level: options.level)
 
-        // Determine target dimensions from `options.level`.
-        // Resolution level 0 = lowest (thumbnail = full / 2^N for N decomp levels).
-        // Resolution level N = full resolution.
-        // We don't have direct access to N here without parsing the codestream
-        // a second time, so we expose the level-to-factor mapping via the
-        // image's `width` / `height` and the conventional N=5 default for
-        // production encodes. Callers that need precise mapping should call
-        // `J2KCodestreamMetadata.parse(data)` to learn N.
-        //
-        // For Phase 1, the caller's `options.level` is interpreted as the
-        // *output reduction factor in halvings*: level 0 → ⌈W/32⌉×⌈H/32⌉ (5
-        // halvings, assuming N=5), level 5 → full. This matches the JP2K
-        // resolution-level convention for the default 5-level decomposition.
-        let halvingsFromFull = max(0, 5 - options.level)
-        let downscaleFactor = 1 << halvingsFromFull
-
-        if downscaleFactor <= 1 && !options.upscale {
-            // Full resolution requested — return as-is.
-            return fullImage
-        }
-
-        let targetW = max(1, (fullImage.width + downscaleFactor - 1) / downscaleFactor)
-        let targetH = max(1, (fullImage.height + downscaleFactor - 1) / downscaleFactor)
-
-        let scaled = try Self.downscaleByPowerOf2(
-            image: fullImage,
-            targetWidth: targetW,
-            targetHeight: targetH,
-            factor: downscaleFactor)
-
-        if options.upscale {
-            // Re-scale back up to original dimensions via nearest-neighbour.
-            // (Bit-loss reconstruction; a true partial decode would not pay
-            // this round-trip.)
+        if options.upscale && partial.width != 0 && partial.height != 0 {
+            // Caller wants original dimensions: upscale via nearest-
+            // neighbour. We need to know the original codestream dims
+            // — peek the metadata.
+            let originalMetadata = try DecoderPipeline.peekMetadata(data)
+            let origW = originalMetadata.width
+            let origH = originalMetadata.height
+            if partial.width == origW && partial.height == origH {
+                return partial
+            }
+            let factor = max(1, origW / partial.width)
             return try Self.upscaleByPowerOf2(
-                image: scaled, targetWidth: fullImage.width,
-                targetHeight: fullImage.height,
-                factor: downscaleFactor)
+                image: partial,
+                targetWidth: origW, targetHeight: origH,
+                factor: factor)
         }
-        return scaled
+        return partial
     }
 
     /// Power-of-2 downscale via block-average (separable). Handles both
