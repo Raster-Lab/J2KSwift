@@ -1158,6 +1158,32 @@ struct DecoderPipeline: Sendable {
         let rgb: [[Double]]
     }
 
+    /// v10.6.0 ROI Stage 1 skipped entropy decode for off-region
+    /// code-blocks but still ran the inverse DWT full-tile. v10.7.0
+    /// Stage 2 — tile-granular skip: when `regionOfInterest` is set and
+    /// a tile lies entirely outside it, every pixel the tile would
+    /// produce is cropped away by `decodeRegion`. JPEG 2000 tiles
+    /// decode independently — no inverse-DWT halo crosses a tile
+    /// boundary — so the whole tile (entropy, dequant, inverse DWT,
+    /// colour transform, DC shift) can be skipped. Returns a
+    /// correctly-shaped zero `DecodedTile` to short-circuit with, or
+    /// nil when the tile overlaps the region and must be decoded.
+    private func roiSkippedTile(
+        tileX: Int, tileY: Int, tileW: Int, tileH: Int,
+        metadata: CodestreamMetadata
+    ) -> DecodedTile? {
+        guard let roi = regionOfInterest else { return nil }
+        let overlaps = tileX < roi.x + roi.width && tileX + tileW > roi.x
+                    && tileY < roi.y + roi.height && tileY + tileH > roi.y
+        if overlaps { return nil }
+        let zeroRGB: [[Double]] = metadata.components.map { comp in
+            let w = max(0, tileW / comp.subsamplingX)
+            let h = max(0, tileH / comp.subsamplingY)
+            return [Double](repeating: 0, count: w * h)
+        }
+        return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: zeroRGB)
+    }
+
     /// End-to-end decode of a single tile (extract → entropy → dequant →
     /// IDWT → colour transform → DC level unshift). Pure function on
     /// `tileMeta` and `tileData`; safe to invoke concurrently across tiles
@@ -1169,6 +1195,13 @@ struct DecoderPipeline: Sendable {
         tileData: Data
     ) async throws -> DecodedTile {
         let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tileIndex)
+
+        // v10.7.0 ROI Stage 2 — skip tiles entirely outside the region.
+        if let skipped = roiSkippedTile(
+            tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, metadata: metadata) {
+            return skipped
+        }
+
         var tileMeta = metadata
         tileMeta.width = tileW
         tileMeta.height = tileH
@@ -1246,6 +1279,13 @@ struct DecoderPipeline: Sendable {
         preBatchedGPUCoefficients: [Int: [Int32]]? = nil
     ) async throws -> DecodedTile {
         let (tileX, tileY, tileW, tileH) = metadata.tileDimensions(tileIndex: tileIndex)
+
+        // v10.7.0 ROI Stage 2 — skip tiles entirely outside the region.
+        if let skipped = roiSkippedTile(
+            tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, metadata: metadata) {
+            return skipped
+        }
+
         var tileMeta = metadata
         tileMeta.width = tileW
         tileMeta.height = tileH
